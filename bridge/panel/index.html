@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Harness</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --fg:#e6e8ee; --dim:#8b93a7;
+          --ok:#3fb68b; --warn:#e0a458; --accent:#5b8def; --bad:#e05d5d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:720px; margin:40px auto; padding:0 20px; }
+  h1 { font-size:20px; } h1 span { color:var(--dim); font-weight:400; }
+  .card { background:var(--card); border-radius:12px; padding:18px 20px; margin:14px 0;
+          display:flex; align-items:center; gap:14px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--dim); flex:none; }
+  .dot.on { background:var(--ok); } .dot.installed { background:var(--warn); }
+  .grow { flex:1; } .meta { color:var(--dim); font-size:13px; }
+  button { background:var(--accent); border:0; color:#fff; padding:8px 14px;
+           border-radius:8px; font-size:14px; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid #333a4a; color:var(--fg); }
+  button:disabled { opacity:.4; cursor:default; }
+  dialog { background:var(--card); color:var(--fg); border:1px solid #2a3040;
+           border-radius:12px; max-width:480px; padding:22px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog ul { padding-left:18px; } dialog li { margin:6px 0; }
+  pre { background:#0c0e12; padding:10px; border-radius:8px; font-size:12px;
+        max-height:200px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI Harness <span>· control panel</span></h1>
+  <div id="components"></div>
+  <p class="meta">Gearbox routing and one-click updates arrive in M1–M2.
+     Nothing installs or runs without your approval.</p>
+</main>
+
+<dialog id="dlg">
+  <h3 id="dlg-title"></h3>
+  <ul id="dlg-plan"></ul>
+  <p class="meta">Approve to run these steps now.</p>
+  <div style="display:flex; gap:10px; justify-content:flex-end">
+    <button class="ghost" onclick="dlg.close()">Cancel</button>
+    <button id="dlg-approve">Approve &amp; install</button>
+  </div>
+  <pre id="dlg-log" hidden></pre>
+</dialog>
+
+<script>
+const dlg = document.getElementById('dlg');
+
+async function refresh() {
+  const s = await (await fetch('/api/status')).json();
+  const el = document.getElementById('components');
+  el.innerHTML = '';
+  for (const [name, c] of Object.entries(s.components)) {
+    const state = c.running ? 'running' : c.installed ? 'installed (stopped)' : 'not installed';
+    const dot = c.running ? 'on' : c.installed ? 'installed' : '';
+    const btn = c.running
+      ? `<button class="ghost" onclick="act('${name}','stop')">Stop</button>`
+      : c.installed
+        ? `<button onclick="act('${name}','start')">Start</button>`
+        : `<button onclick="planInstall('${name}')">Install</button>`;
+    el.insertAdjacentHTML('beforeend', `
+      <div class="card">
+        <div class="dot ${dot}"></div>
+        <div class="grow">
+          <div style="text-transform:capitalize"><strong>${name}</strong></div>
+          <div class="meta">${state} · pin ${c.pin} · port ${c.port ?? '—'}</div>
+        </div>
+        ${btn}
+      </div>`);
+  }
+}
+
+async function planInstall(name) {
+  const p = await (await fetch(`/api/components/${name}/plan`)).json();
+  document.getElementById('dlg-title').textContent = `Install ${name}`;
+  document.getElementById('dlg-plan').innerHTML =
+    p.plan.map(x => `<li>${x}</li>`).join('');
+  const log = document.getElementById('dlg-log');
+  log.hidden = true; log.textContent = '';
+  const approve = document.getElementById('dlg-approve');
+  approve.disabled = false;
+  approve.onclick = async () => {
+    approve.disabled = true;
+    log.hidden = false; log.textContent = 'Installing… (this can take several minutes)';
+    const r = await (await fetch(`/api/components/${name}/install`, {method:'POST'})).json();
+    log.textContent = r.log || (r.ok ? 'Done.' : 'Failed.');
+    if (r.ok) setTimeout(() => { dlg.close(); refresh(); }, 1200);
+  };
+  dlg.showModal();
+}
+
+async function act(name, verb) {
+  await fetch(`/api/components/${name}/${verb}`, {method:'POST'});
+  setTimeout(refresh, 800);
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

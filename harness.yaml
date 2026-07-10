@@ -1,0 +1,32 @@
+# Harness — single source of truth for pins, ports, endpoints.
+# Every change to a pin should be a git commit (that's your rollback history).
+
+components:
+  hermes:
+    repo: https://github.com/NousResearch/hermes-agent.git
+    pin: v2026.7.7.2          # release tag — never track a branch
+    installed: false
+    enabled: false
+    mcp_port: 8721            # hermes mcp_serve endpoint for the bridge
+  odysseus:
+    repo: https://github.com/pewdiepie-archdaemon/odysseus.git
+    pin: 168f593096ccc1d2f2a8a6edb08a2456f30c99c7   # main branch commit
+    installed: false
+    enabled: false
+    port: 7860                # native macOS default (7000 often held by AirPlay)
+
+bridge:
+  port: 8700                  # control panel + API
+  gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)
+
+inference:
+  endpoints:
+    cookbook:  { url: "http://127.0.0.1:8000/v1",  kind: local }   # Odysseus Cookbook serve
+    ollama:    { url: "http://127.0.0.1:11434/v1", kind: local }   # optional
+    lmstudio:  { url: "http://127.0.0.1:1234/v1",  kind: local }   # optional (MLX models)
+  cloud: []                   # e.g. anthropic, openrouter — keys live in .env, never here
+
+paths:
+  vendor: ./vendor
+  skills: ./skills
+  data: ./data                # gitignored: venvs, logs, staging checkouts
