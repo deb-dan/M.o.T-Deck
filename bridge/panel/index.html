@@ -613,6 +613,7 @@ function renderSessions(){
       <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}</div>
       <div class="cs-act">
         <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
+        <button title="Duplicate" onclick="duplicateSession('${s.id}')">⎘</button>
         <button class="cs-del" title="Delete" onclick="armDelete('${s.id}', this)">✕</button>
       </div>`;
     el.appendChild(it);
@@ -635,6 +636,19 @@ async function selectSession(sid){
       else if (m.role === 'assistant') addMsg('assistant', m.content || '');
     }
     scrollChat();
+  } catch {}
+}
+
+async function duplicateSession(sid){
+  if (chatBusy) return;
+  const s = chatSessions.find(x => x.id === sid);
+  const name = ((s && s.name) || 'Chat') + ' (copy)';
+  try {
+    const r = await (await fetch(`/api/ody/session/${sid}/duplicate`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})})).json();
+    if (r.error || !r.id) return;
+    await loadSessions();
+    await selectSession(r.id);
   } catch {}
 }
 

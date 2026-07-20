@@ -13,6 +13,29 @@
 
 `agent-kit/DELEGATION-DOCTRINE.md` applies to this project in full, with **one amendment (2026-07-20): all UI design / look-and-feel work is Fable 5 only** — builder subagents may implement UI solely from a Fable-authored, decision-free spec. See `08_Interface_Strategy.md` §Governance.
 
+## ⚠️ FABLE-5 CONTINUITY / HANDOFF RULE (critical — Debi 2026-07-20)
+
+If Fable 5's context/token runs out mid-work, any other model (Opus/Sonnet/etc., or a fresh session) that picks this up MUST follow this rule so nothing is lost or invented:
+- **Do FUNCTION only, never new look-and-feel.** Build/finish features in the EXISTING editorial design system already in `bridge/panel/index.html` (the `:root` vars, serif/mono/cream/gold, restrained, consistent). Apply the established language; do NOT author new colors, layouts, type scales, or "styles inspired by X". That is Fable's job.
+- **Leave a marker, don't guess.** Where a real aesthetic decision is needed, ship the working function in the plainest in-system form and add a `<!-- FABLE: style this -->` note (or a CLAUDE.md TODO) for Fable to refine when back. Never block a feature on styling.
+- **Aesthetic references Debi likes (for the Fable pass, NOT to copy):** OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio. Fable authors a decision-free spec from these; builders implement.
+- Everything else (backend, proxies, wiring, Bridge, scripts) is normal engineering — any model proceeds per the delegation doctrine (read code, one evidenced hypothesis, no trial-and-error).
+
+## Active roadmap (agreed with Debi 2026-07-20, in order)
+
+1. **Chat-pane polish** (in progress): session **duplicate** (DONE below), **attach file**, **in-chat model picker**. NOTE: the model picker is intentionally deferred to land WITH the Models pane (step 2) — it only does something once >1 model exists to pick.
+2. **Models pane** (promotes old M2 "gearbox/model browser"): the real gap — the harness has NO model UI today (the sidebar "Models" entry is a stub `alert('Gearbox lands in M2')`). Build list / switch / **download** + runner fan-out. Design (Debi): "best of both worlds" — click a model → an **LM-Studio-style detail page** (HuggingFace model card/README + download options with quant/size + a fit indicator like "Full GPU Offload Possible") PLUS **Jan-hub-style fit pills** ("Fits / May be slow / Won't fit"). **Open design question (Debi undecided, fine either way):** do this as a **Models pane in Mission Control** (default plan — expose Jan's *capability*, don't clone Jan) OR add a dedicated **Jan tab** like the Odysseus/Hermes tabs. Decide when building; leaning Models pane to avoid over-meshing.
+3. **jan-browser-mcp** wired into Hermes/Odysseus (+ a "Browse" toggle button in the Chat pane, agent or chat). It's a Chrome extension running a tiny local server (:8181) exposing browser control **as an MCP server** — so we register it as an MCP for Hermes/Odysseus (both speak MCP); the user installs the extension once. Compose, don't fork.
+4. **Fable visual pass** on the chat/session rail + panes (references above).
+5. **(M5, later) parallel-worktree orchestrator** — maps onto Hermes's existing `delegate_task` tool + worktree-aware terminal backends; one orchestrator dispatching agents across git worktrees, then merging. On-brand, advanced.
+
+## Research findings feeding the roadmap (2026-07-20, web-verified)
+
+- **Jan model management IS exposeable.** Jan is OpenAI-compatible; the **`jan` CLI (v0.7.8+)** can start the server, **list models, and manage config**; GUI-downloaded models are auto-available to the CLI. Jan's model hub shows fit pills + quant tiers. Caveat to spike before building step 2: whether headless `jan serve` on :6767 exposes download/hub endpoints, or whether **download must go via the `jan` CLI / Jan's management API** (either works, changes plumbing only).
+- **jan-browser-mcp** = Chrome extension + tiny local server (:8181), browser automation (click/type/navigate/screenshot/a11y-tree/extract) exposed as MCP. Fits our MCP-native components directly.
+- **cate** (github.com/0-AI-UG/cate, MIT): Electron infinite-canvas IDE (editor/terminal/browser/agent panels, git-worktree sidebar, per-chat model memory). Different app class (Electron/React) → **inspiration only**, not a dependency. Borrow: in-app browser panels, worktree UI, per-chat model memory (pairs with the per-session model picker).
+- **Odysseus endpoints discovered** (for the proxy, all under `/api`): sessions `GET /api/sessions`, create `POST /api/session`, rename `PATCH /api/session/{id}` (form `name`), delete `POST /api/session/{id}/delete`, **fork/duplicate `POST /api/session/{id}/fork`** (json `{keep_count}` → returns `{id,name,kept}`), history `GET /api/history/{id}`, **models `GET /api/models`** (per-user, cached), per-session model switch via `PATCH /api/session/{id}` (form `model`+`endpoint_id`).
+
 ## Doc map
 
 | File | Contents |

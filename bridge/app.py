@@ -414,6 +414,25 @@ async def ody_session_rename(sid: str, req: Request) -> JSONResponse:
         return JSONResponse({"ok": False})
 
 
+@app.post("/api/ody/session/{sid}/duplicate")
+async def ody_session_duplicate(sid: str, req: Request) -> JSONResponse:
+    """Duplicate a session (Odysseus fork, copying all messages), then name it '<src> (copy)'."""
+    try:
+        name = (await req.json()).get("name", "").strip()
+    except Exception:
+        name = ""
+    try:
+        r = await _ody_req("POST", f"/api/session/{sid}/fork", json={"keep_count": 1_000_000})
+        if r.status_code != 200:
+            return JSONResponse({"error": r.text[:500]}, status_code=502)
+        new_id = r.json().get("id")
+        if new_id and name:
+            await _ody_req("PATCH", f"/api/session/{new_id}", data={"name": name})
+        return JSONResponse({"id": new_id, "name": name})
+    except Exception as e:
+        return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
 @app.post("/api/ody/session/{sid}/delete")
 async def ody_session_delete(sid: str) -> JSONResponse:
     try:
