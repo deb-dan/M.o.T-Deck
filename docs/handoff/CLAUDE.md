@@ -44,8 +44,14 @@ If Fable 5's context/token runs out mid-work, the ONLY model that may pick this 
 - **Slice 3 — Fable visual pass** on the pane.
 - **Open question (Debi, either OK):** Models *pane* in Mission Control (default) vs a dedicated *Jan tab*. Leaning pane.
 
-**SPIKE PENDING (Debi, Mac — needed before slice 1 so parsing isn't guessed):** run and paste:
-`jan models list` · `jan --version` · `curl -s http://127.0.0.1:6767/v1/models` · `curl -s "https://huggingface.co/api/models?search=qwen3&filter=gguf&sort=downloads&limit=2"`
+**SPIKE DONE (2026-07-20) — confirmed output shapes:**
+- `jan models list` → **JSON array**, fields per model: `id`, `name` (pretty), `size_bytes`, `engine` ("llamacpp"), `embedding` (bool), `capabilities` ([]), `model_path`, `mmproj_path`. (jan 0.8.3.)
+- runner `GET :6767/v1/models` → `{data:[{id, status.value:"loaded", architecture.input_modalities:["text","image"], meta.n_ctx, meta.size, …}]}`. **Current model IS vision-capable** (text+image, mmproj present) → image attach viable later.
+- HF `GET /api/models?search=…&filter=gguf&sort=downloads&limit=N` → array of `{id (repo), name/modelId, downloads, likes, tags[], pipeline_tag, createdAt}`. (Works from the Mac Bridge; sandbox network is locked so HF/jan can't be tested in cowork — Mac-verify.)
+
+**Concurrent-download answer (Debi asked):** `jan serve <hf-repo>` = download+load+serve ONE active model (no separate `jan pull`). So you can't parallel-download 2-5 that way (port + 64 GB + single-active). Plan: slice-2 download = serial "Download & Load" (switch runner to it). A **parallel download queue** (Bridge fetches GGUFs straight into `~/…/Jan/data/llamacpp/models/<id>/` with progress, no load) is an explicit later enhancement (Debi agreed).
+
+**Slice 1 CODE DONE (Mac-verify pending, 2026-07-20):** Bridge `GET /api/models` (`jan models list` JSON → installed; active = `runner.model`; runner_up), `POST /api/models/switch {id}` (writes runner.model via line-scan, background thread restarts runner + re-fans-out to Hermes/Odysseus IF running — their configs bind the model name), `GET /api/models/switch-status` (poll). Panel: sidebar "Models" stub replaced → `#view-models` pane lists installed models, marks the live one, Switch button (disabled on active), progress via switch-status poll. `id` may be a local id OR an HF repo id (slice 2 uses that for download). Panel-only + bridge → bridge restart, no app rebuild. `<!-- FABLE: style this -->` marker left on the pane.
 
 ## Research findings feeding the roadmap (2026-07-20, web-verified)
 

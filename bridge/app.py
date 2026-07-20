@@ -483,6 +483,97 @@ async def ody_chat(req: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+# ── Models pane (M2) — list installed via `jan models list`, switch the runner ──
+def _jan_bin() -> str:
+    import os, shutil
+    for p in (shutil.which("jan"), os.path.expanduser("~/.local/bin/jan"), "/usr/local/bin/jan"):
+        if p and os.path.exists(p):
+            return p
+    return "jan"
+
+
+def _set_runner_model(new_id: str) -> None:
+    """Rewrite runner.model in harness.yaml (line-scan, preserves everything else)."""
+    import re
+    p = ROOT / "harness.yaml"
+    lines = p.read_text().split("\n")
+    in_runner = False
+    for i, ln in enumerate(lines):
+        if re.match(r'^runner:\s*$', ln):
+            in_runner = True; continue
+        if in_runner and re.match(r'^\S', ln):
+            in_runner = False
+        if in_runner and re.match(r'^  model:', ln):
+            lines[i] = f"  model: {new_id}"
+            break
+    p.write_text("\n".join(lines))
+
+
+@app.get("/api/models")
+def api_models() -> JSONResponse:
+    """Installed models (`jan models list` → JSON), plus the active runner model + state."""
+    import json as _json
+    installed, err = [], None
+    try:
+        r = subprocess.run([_jan_bin(), "models", "list"],
+                           capture_output=True, text=True, timeout=25)
+        for m in _json.loads(r.stdout or "[]"):
+            installed.append({
+                "id": m.get("id"), "name": m.get("name") or m.get("id"),
+                "size_bytes": m.get("size_bytes"), "engine": m.get("engine"),
+                "embedding": bool(m.get("embedding")),
+                "capabilities": m.get("capabilities") or []})
+    except Exception as e:
+        err = str(e)[:200]
+    rc = cfg().get("runner", {})
+    port = rc.get("port")
+    return JSONResponse({
+        "installed": installed, "active": rc.get("model"),
+        "runner_up": _port_alive_sync(int(port)) if port else False,
+        "error": err})
+
+
+_SWITCH = {"busy": False, "log": ""}
+
+
+def _do_switch(new_id: str, restart_hermes: bool, restart_ody: bool) -> None:
+    try:
+        _SWITCH.update(busy=True, log=f"loading {new_id}…")
+        _script("start_component.sh", "runner")
+        if restart_hermes:
+            _SWITCH["log"] = "re-wiring Hermes…"; _script("start_component.sh", "hermes")
+        if restart_ody:
+            _SWITCH["log"] = "re-wiring Odysseus…"; _script("start_component.sh", "odysseus")
+        _SWITCH["log"] = f"active: {new_id}"
+    except Exception as e:
+        _SWITCH["log"] = f"switch error: {str(e)[:200]}"
+    finally:
+        _SWITCH["busy"] = False
+
+
+@app.post("/api/models/switch")
+async def api_switch_model(req: Request) -> JSONResponse:
+    """Switch the runner's model (also loads/downloads it), then re-fan-out the new
+    model NAME to any running Hermes/Odysseus (their configs bind the name). Runs in
+    the background — poll /api/models/switch-status. `id` may be a local id OR a
+    HuggingFace repo id (jan serve auto-downloads)."""
+    if _SWITCH["busy"]:
+        return JSONResponse({"ok": False, "log": "a switch is already in progress"}, status_code=409)
+    new_id = ((await req.json()).get("id") or "").strip()
+    if not new_id:
+        return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
+    c = cfg()
+    hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
+    _set_runner_model(new_id)
+    threading.Thread(target=_do_switch, args=(new_id, hermes_up, ody_up), daemon=True).start()
+    return JSONResponse({"ok": True, "log": "switch started"})
+
+
+@app.get("/api/models/switch-status")
+def api_switch_status() -> JSONResponse:
+    return JSONResponse(dict(_SWITCH))
+
+
 @app.post("/api/open")
 async def open_external(req: Request) -> JSONResponse:
     """Open an http(s) URL in the user's default browser (panel links inside the app's webview)."""
