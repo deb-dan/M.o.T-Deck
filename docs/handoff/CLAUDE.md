@@ -15,7 +15,7 @@
 
 ## ⚠️ FABLE-5 CONTINUITY / HANDOFF RULE (critical — Debi 2026-07-20)
 
-If Fable 5's context/token runs out mid-work, any other model (Opus/Sonnet/etc., or a fresh session) that picks this up MUST follow this rule so nothing is lost or invented:
+If Fable 5's context/token runs out mid-work, the ONLY model that may pick this up is **Opus 4.8 (high reasoning)** — not Sonnet, not any other model. Whoever continues MUST follow this rule so nothing is lost or invented:
 - **Do FUNCTION only, never new look-and-feel.** Build/finish features in the EXISTING editorial design system already in `bridge/panel/index.html` (the `:root` vars, serif/mono/cream/gold, restrained, consistent). Apply the established language; do NOT author new colors, layouts, type scales, or "styles inspired by X". That is Fable's job.
 - **Leave a marker, don't guess.** Where a real aesthetic decision is needed, ship the working function in the plainest in-system form and add a `<!-- FABLE: style this -->` note (or a CLAUDE.md TODO) for Fable to refine when back. Never block a feature on styling.
 - **Aesthetic references Debi likes (for the Fable pass, NOT to copy):** OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio. Fable authors a decision-free spec from these; builders implement.
@@ -28,6 +28,24 @@ If Fable 5's context/token runs out mid-work, any other model (Opus/Sonnet/etc.,
 3. **jan-browser-mcp** wired into Hermes/Odysseus (+ a "Browse" toggle button in the Chat pane, agent or chat). It's a Chrome extension running a tiny local server (:8181) exposing browser control **as an MCP server** — so we register it as an MCP for Hermes/Odysseus (both speak MCP); the user installs the extension once. Compose, don't fork.
 4. **Fable visual pass** on the chat/session rail + panes (references above).
 5. **(M5, later) parallel-worktree orchestrator** — maps onto Hermes's existing `delegate_task` tool + worktree-aware terminal backends; one orchestrator dispatching agents across git worktrees, then merging. On-brand, advanced.
+
+## Models pane — confirmed Jan CLI surface + build plan (2026-07-20)
+
+**Jan CLI facts (from official docs, jan.ai/docs/desktop/cli — CLI is v0.7.8+, we have 0.8.3):**
+- `jan models list` — list installed models (in the shared Jan data folder; desktop + CLI share it).
+- `jan models load <id>` — alias for `jan serve <id>`.
+- `jan serve <MODEL_ID>` — MODEL_ID can be a local id OR a **HuggingFace repo id** (e.g. `unsloth/Qwen3.5-9B-GGUF`); **if not downloaded, Jan auto-downloads from HF then serves.** → this IS our download path (no separate `jan pull`). Downloading a new model = `jan serve <hf-repo>` (which also makes it active). We already run `jan serve <model> --port 6767 --api-key … --detach` as the runner.
+- Since Jan 0.8.0 llama-server runs in **router mode**; `--ctx-size/--n-gpu-layers/--fit` are **ignored** — per-model context comes from `<data-folder>/llamacpp/router.preset.ini` (desktop-authored). (Matches our M1 finding: preset forced 95536.)
+- HF model browser (LM-Studio-style detail): use the HuggingFace public API — `GET https://huggingface.co/api/models?search=<q>&filter=gguf&sort=downloads&limit=N` (list) + `GET /api/models/<repo>` (files/siblings → quant/size) + `…/<repo>/raw/main/README.md` (model card). Fit pill = model file size vs the box's 64 GB. The Bridge runs on the Mac (real internet) so it can call HF; the cowork sandbox CANNOT (network locked) → HF/jan shapes must be spiked on the Mac.
+
+**Build plan (slices, each Mac-verified like M0/M1):**
+- **Slice 1 — model view + switch.** Bridge: `GET /api/models` (shell `jan models list` → installed; active = `runner.model` in harness.yaml; running state) and `POST /api/models/switch {id}` (write `runner.model`, restart runner, then RE-FAN-OUT to Hermes+Odysseus — their configs bind the model *name*, so a switch must re-patch `~/.hermes/config.yaml` + re-seed Odysseus, i.e. restart those components too). Models pane replaces the sidebar stub `alert('Gearbox lands in M2')`.
+- **Slice 2 — HF browser + download.** Search → results → LM-Studio-style detail (card + quant/size + fit pill) → "Download & Load" = `POST /api/models/switch` with an HF repo id (jan serve auto-downloads). Jan-hub-style fit pills alongside.
+- **Slice 3 — Fable visual pass** on the pane.
+- **Open question (Debi, either OK):** Models *pane* in Mission Control (default) vs a dedicated *Jan tab*. Leaning pane.
+
+**SPIKE PENDING (Debi, Mac — needed before slice 1 so parsing isn't guessed):** run and paste:
+`jan models list` · `jan --version` · `curl -s http://127.0.0.1:6767/v1/models` · `curl -s "https://huggingface.co/api/models?search=qwen3&filter=gguf&sort=downloads&limit=2"`
 
 ## Research findings feeding the roadmap (2026-07-20, web-verified)
 
