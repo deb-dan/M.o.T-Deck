@@ -136,12 +136,19 @@
   .cmsg details.sources summary { display:inline-block; font:10.5px var(--mono); letter-spacing:.1em;
                    color:var(--gold); border:1px solid var(--line2); border-radius:7px;
                    padding:3px 10px; cursor:pointer; list-style:none; }
-  .cmsg details.sources .slist { padding:10px 0 2px 4px; }
-  .cmsg details.sources .sitem { font:11.5px var(--mono); color:var(--dim); padding:3px 0;
-                   letter-spacing:.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .cmsg details.sources .sitem a { color:var(--fg); text-decoration:none; }
-  .cmsg details.sources .sitem a:hover { color:var(--gold); }
-  .cmsg details.sources .sitem .host { color:var(--faint); margin-left:8px; }
+  .cmsg details.sources .slist { display:flex; flex-wrap:wrap; gap:8px; padding:10px 0 2px 2px; }
+  .cmsg details.sources .sitem { max-width:250px; border:1px solid var(--line);
+                   border-radius:9px; padding:6px 11px; overflow:hidden; }
+  .cmsg details.sources .sitem a { display:block; font:12px -apple-system, sans-serif;
+                   color:var(--fg); text-decoration:none; white-space:nowrap;
+                   overflow:hidden; text-overflow:ellipsis; }
+  .cmsg details.sources .sitem:hover { border-color:var(--gold); }
+  .cmsg details.sources .sitem:hover a { color:var(--cream); }
+  .cmsg details.sources .sitem .host { display:block; font:10px var(--mono); color:var(--faint);
+                   letter-spacing:.08em; margin-top:2px; }
+  .cmsg .body b { color:var(--cream); font-weight:600; }
+  .cmsg .body code { font:12.5px var(--mono); color:var(--gold); background:var(--card);
+                   border-radius:5px; padding:1px 5px; }
   #thinking { font:italic 12.5px var(--serif); color:var(--faint); padding:2px 0 2px 20px; }
   .cmsg details.think { margin:0 0 10px 20px; }
   .cmsg details.think summary { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
@@ -499,6 +506,13 @@ function setMode(m) {
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
+// Minimal, safe markdown: escape everything, then re-introduce **bold** and `code` only.
+function mdLite(s){
+  return esc(s)
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+}
+
 async function initChat() {
   const stamp = document.getElementById('chat-stamp');
   try {
@@ -522,7 +536,8 @@ function addMsg(role, text) {
   wrap.className = 'cmsg ' + role;
   const who = role === 'user' ? 'You' : (chatModel || 'Assistant');
   wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
-  wrap.querySelector('.body').textContent = text;
+  if (role === 'assistant' && text) wrap.querySelector('.body').innerHTML = mdLite(text);
+  else wrap.querySelector('.body').textContent = text;
   document.getElementById('chat-msgs').appendChild(wrap);
   return wrap;
 }
@@ -565,6 +580,7 @@ async function sendChat() {
           if (payload === '[DONE]') {
             think.remove(); chatBusy = false;
             const od = holder.querySelector('details.think'); if (od) od.open = false;
+            body.innerHTML = mdLite(body.textContent);   // render **bold** / `code` once complete
             break;
           }
           let j; try { j = JSON.parse(payload); } catch { continue; }
@@ -607,8 +623,9 @@ async function sendChat() {
             for (const s of items) {
               const url = s.url || s.link || '';
               let host = ''; try { host = new URL(url).hostname.replace('www.',''); } catch {}
+              const title = (s.title || host || 'source').slice(0, 60);
               const it = document.createElement('div'); it.className = 'sitem';
-              it.innerHTML = `<a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(s.title || url || 'source')}</a><span class="host">${esc(host)}</span>`;
+              it.innerHTML = `<a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(title)}</a><span class="host">${esc(host)}</span>`;
               list.appendChild(it);
             }
             holder.appendChild(det);

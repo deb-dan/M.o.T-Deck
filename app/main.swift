@@ -11,7 +11,7 @@ import WebKit
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
     var window: NSWindow!
     var panelWV: WKWebView!      // Mission Control (:8700)
     var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         odyWV = WKWebView(frame: .zero, configuration: odyCfg)
         for wv in [panelWV!, odyWV!] {
             wv.translatesAutoresizingMaskIntoConstraints = false
+            wv.uiDelegate = self          // route target=_blank links to the default browser
             container.addSubview(wv)
         }
         odyWV.isHidden = true
@@ -157,6 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             FileManager.default.createFile(atPath: path, contents: nil)
         }
         return path
+    }
+
+    // target=_blank / new-window requests → open in the user's default browser.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url { NSWorkspace.shared.open(url) }
+        return nil
     }
 
     func applicationWillTerminate(_ notification: Notification) {
