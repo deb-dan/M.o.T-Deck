@@ -21,6 +21,16 @@ If Fable 5's context/token runs out mid-work, the ONLY model that may pick this 
 - **Aesthetic references Debi likes (for the Fable pass, NOT to copy):** OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio. Fable authors a decision-free spec from these; builders implement.
 - Everything else (backend, proxies, wiring, Bridge, scripts) is normal engineering — any model proceeds per the delegation doctrine (read code, one evidenced hypothesis, no trial-and-error).
 
+## FABLE-5 UI QUEUE (pending visual passes — accumulated, Debi-flagged)
+
+These are look-and-feel only (Fable's lane). The FUNCTION is built + Mac-verified in the existing editorial system; each spot has a `<!-- FABLE: style this -->` marker in `bridge/panel/index.html`. Reference feel Debi likes: **OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio.**
+1. **Chat + session rail** (`#view-chat`, `#chat-sessions`) — restyle to the reference chat feel (rail, message bubbles, input row).
+2. **Models pane** (`#view-models`, `#models-browse`, `.hfrow`, `.mrow`) — LM-Studio/Jan/Cherry feel; **model card RICH rendering** (`mdCard`) currently strips images/tables to plain text — Fable should do a proper rendered card (images, tables, headings) if desired.
+3. **BROWSE chip** (`#mode-browse`) — too prominent/large; size it as a subtle chip beside Agent/Chat.
+4. General: typographic hierarchy + colour restraint + whitespace (the "premium vs ordinary" levers already noted in M2 findings).
+
+**Engineering notes recorded for continuity (Opus-4.8-high lane, NOT Fable):** Browse wiring writes Hermes `mcp_servers` directly to `~/.hermes/config.yaml` (NOT `hermes mcp add` — its interactive prompts + live-connect would hang a subprocess; yaml round-trip preserves other keys, drops only comments/order). One Browse control flips BOTH components (toggling off removes from both). Full detail in the Browse-slice-2 note below.
+
 ## Active roadmap (agreed with Debi 2026-07-20, in order)
 
 1. **Chat-pane polish** (in progress): session **duplicate** (DONE below), **attach file**, **in-chat model picker**. NOTE: the model picker is intentionally deferred to land WITH the Models pane (step 2) — it only does something once >1 model exists to pick.
