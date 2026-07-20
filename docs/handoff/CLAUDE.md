@@ -25,15 +25,22 @@
 ## State (2026-07-20)
 
 - **Code moved: the scaffold now lives at `./harness/`** (git repo + vendor submodules intact; `data/` venvs and `dist/` were regenerated on the Mac via `./scripts/bootstrap.sh`). The old `Harness project` folder is a frozen archive.
-- **M0 Hermes half DONE (verified 2026-07-20).** Bridge online :8700; Hermes green via `hermes serve` :9119; `scripts/test_hermes.sh` returned `PASS` — Hermes executed a shell tool call through Jan (`Qwen3_6-35B-A3B-…-IQ4_XS` @ :1337). Latest repo commit family: `d786fb8` (+ Jan-side context fix, no code).
-- **Remaining M0:** install Odysseus natively from the panel (:7860), first chat round-trip, both cards green. Then the 04 §Prototypes spikes before M1.
+- **M0 COMPLETE (verified 2026-07-20).** Both components green under the Bridge (:8700), each proven end-to-end:
+  - **Hermes** green via `hermes serve` :9119; `scripts/test_hermes.sh` = `PASS` (real shell tool call through Jan).
+  - **Odysseus** green :7860; real chat reply from `Qwen3_6-35B-A3B-…-IQ4_XS` @ Jan :1337, ~60 tok/s. One-button install AND connect from the panel (admin/admin123; Jan endpoint auto-seeded as default model via `scripts/seed_odysseus_jan.py`).
+  - Latest repo tip: `4c0ffba`. Odysseus pin bumped to `e57f60bd` (old `168f5930` had a chat NameError).
 - All licensing verified from LICENSE files: Hermes MIT, Odysseus MIT, Jan Apache-2.0; only SearXNG is AGPL.
 
 ## Next actions (in order)
 
-1. **Install Odysseus** from the panel (native Python, :7860). Bridge writes `.env` (`LLM_HOST` → Jan :1337, `SEARXNG_INSTANCE`, `APP_PORT: 7860`). Expect its Start/health to be simpler than Hermes — a normal web server on a real port, no daemon ambiguity.
-2. **First full handshake:** Odysseus answers a chat through Jan; Hermes already proven. Both cards green = M0 complete.
-3. Then the 04 §Prototypes spikes (headless Jan, CLI download, WKWebView embed, native SearXNG) before M1 commitment.
+1. **Post-M0 spikes (04 §Prototypes)** before committing to M1: headless Jan (`jan serve` :6767), CLI model download, WKWebView embed of :7860, native SearXNG on macOS/arm64.
+2. **M1** — runner slot (make Jan a managed headless component behind the adapter) + the one-switch provisioning pipeline (dependency closure, config fan-out, Repair verb). Odysseus/Hermes connect steps built in M0 (`seed_odysseus_jan.py`, Hermes config patch) are the seeds of this.
+3. **M2 interface (08)** — reskin/deep-link the Odysseus webview into a Mission Control tab (Fable-only UI work).
+
+## Operating preconditions (both components)
+
+- **Jan desktop must be running** with Settings → Local API Server ON (:1337) and the model **loaded at ≥64K context** (Context Size 65536, reload). Both Hermes and Odysseus depend on this until M1's runner slot manages the endpoint.
+- Start: `./scripts/start.sh` (bridge), then panel Start (or `./scripts/start_component.sh hermes|odysseus`). Odysseus login: admin / admin123 — **change after first login**.
 
 ## Operating preconditions (Hermes)
 
@@ -50,6 +57,15 @@ Recorded so no one re-fights these. Format: symptom → root cause → evidence 
 4. **"Context length exceeded (43 tokens). Cannot compress further."** → NOT a Hermes config problem. `model.context_length` is honored internally and passes Hermes's hard **64,000-token minimum gate** (`agent/model_metadata.py:185`, `agent_init.py:1842`), but it is **never sent to the server**. The real limit is the context window the **model is loaded at in Jan** (llama.cpp `n_ctx`). Jan's default was too small for Hermes's system-prompt + 70+ tool schemas → Jan rejected the request → Hermes compressed to ~43 tokens, couldn't shrink further, bailed (`agent/conversation_loop.py:3624`). → FIXED **Jan-side**: set the model's Context Size to ≥65536 and reload. Keep `model.context_length: 65536` in `~/.hermes/config.yaml` (needed to pass the gate + match the real window).
 
 **Process lesson (Debi, 2026-07-20):** stop trial-and-error patching. "Cannot compress further" against a llama.cpp backend = server-side window rejection — diagnosable from the source on first sight. Standard now: read the code, form ONE evidenced hypothesis, then act. Both Opus subagent investigations produced the correct fix in a single pass — delegate subtle debugging early.
+
+## Verified learnings — failure archaeology (M0 Odysseus, 2026-07-20)
+
+5. **Odysseus chat 500'd: `NameError: _explicit_web_intent`.** → upstream bug in pin `168f5930` (used before assignment in `routes/chat_routes.py`); every chat failed. Jan itself confirmed fine via direct curl. → FIXED by pin-bump to `e57f60bd` (assigns it at line 882); verified deps/schema/setup unchanged first. Lesson: a generic "Internal Server Error" → read the component's own log (`data/logs/odysseus.log`) for the traceback; isolate server-vs-client with a direct curl to the endpoint.
+6. **Odysseus "connect" seed created 0 rows silently.** → seed run by absolute path put the *script* dir on `sys.path`, not cwd, so `import core` failed; `|| true` swallowed it. → FIXED: `sys.path.insert(0, os.getcwd())` in `seed_odysseus_jan.py`. Lesson: never `|| true` a step whose failure matters — surface it.
+7. **Odysseus pid never written → panel Stop said "no pid file".** → `( cd X && nohup … & echo $! > ../../data/pid )` backgrounds the `cd`, so `echo` ran from the wrong cwd and `../../data` pointed outside the project. → FIXED: `cd` applied to whole subshell + ABSOLUTE pid/log paths + stale-port kill before launch.
+8. **Pin-bump blocked by dirty submodule.** → Odysseus rewrote its own `scripts/odysseus-backup`/`-memory` at runtime, so `git checkout <newpin>` aborted. → FIX before any Odysseus pin-bump: `git -C vendor/odysseus reset --hard` (upstream files, safe to discard), then `./scripts/bootstrap.sh --yes`.
+
+**Git sync (reaffirmed):** stale `.git/modules/vendor/*/index.lock` from the sandbox blocks bootstrap → `rm -f` them (safe, nothing running). Always `git fetch origin && git reset --hard origin/main` to sync; `installed:true` now committed so resets don't revert install state.
 
 ## Git sync rule (important — cost us a full cycle)
 
