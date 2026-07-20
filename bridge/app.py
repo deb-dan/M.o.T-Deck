@@ -300,3 +300,111 @@ def update(name: str) -> JSONResponse:
     return JSONResponse(
         {"ok": False, "log": "updater lands in M1 — see docs/harness-architecture.md §6.1"},
         status_code=501)
+
+
+# ── Rung D: native chat pane — Bridge-side proxy to Odysseus's API ────────────
+# The panel (:8700) cannot call Odysseus (:7860) from the browser (CORS default
+# allows only portless localhost origins), so the Bridge proxies server-to-server,
+# holding an admin login session (cookie `odysseus_session`, 7-day TTL, re-login on 401).
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+
+ODY_BASE = "http://127.0.0.1:7860"
+_ody = httpx.AsyncClient(base_url=ODY_BASE, timeout=httpx.Timeout(30, read=None))
+
+
+async def _ody_login() -> bool:
+    comp = cfg().get("components", {}).get("odysseus", {})
+    r = await _ody.post("/api/auth/login", json={
+        "username": comp.get("admin_user", "admin"),
+        "password": comp.get("admin_password", "admin123"),
+        "remember": True, "totp_code": None})
+    return r.status_code == 200 and r.json().get("ok") is True
+
+
+async def _ody_req(method: str, path: str, **kw) -> httpx.Response:
+    r = await _ody.request(method, path, **kw)
+    if r.status_code in (401, 403):          # session expired/absent → login once, retry
+        if await _ody_login():
+            r = await _ody.request(method, path, **kw)
+    return r
+
+
+@app.get("/api/ody/health")
+async def ody_health() -> dict:
+    try:
+        r = await _ody_req("GET", "/api/sessions")
+        return {"up": r.status_code == 200}
+    except Exception:
+        return {"up": False}
+
+
+@app.post("/api/ody/ensure-session")
+async def ody_ensure_session(req: Request) -> JSONResponse:
+    """Find (by name) or create the pane's chat session, bound to the default endpoint."""
+    body = await req.json()
+    name = body.get("name") or "Mission Control"
+    try:
+        r = await _ody_req("GET", "/api/sessions")
+        if r.status_code == 200:
+            for s in r.json():
+                if s.get("name") == name and not s.get("archived"):
+                    return JSONResponse({"id": s["id"], "model": s.get("model"), "reused": True})
+        r = await _ody_req("POST", "/api/session",
+                           data={"name": name, "endpoint_id": "local-jan"})
+        if r.status_code == 200:
+            j = r.json()
+            return JSONResponse({"id": j["id"], "model": j.get("model"), "reused": False})
+        return JSONResponse({"error": r.text[:500]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
+@app.get("/api/ody/history/{sid}")
+async def ody_history(sid: str) -> JSONResponse:
+    try:
+        r = await _ody_req("GET", f"/api/history/{sid}")
+        return JSONResponse(r.json() if r.status_code == 200 else {"history": []})
+    except Exception:
+        return JSONResponse({"history": []})
+
+
+@app.post("/api/ody/chat")
+async def ody_chat(req: Request) -> StreamingResponse:
+    """Stream a chat turn: re-emit Odysseus's SSE (delta / tool events / [DONE]) to the panel."""
+    body = await req.json()
+    fields = {
+        "session": body.get("session", ""),
+        "message": body.get("message", ""),
+        "mode": body.get("mode", "agent"),
+        "allow_web_search": "true" if body.get("allow_web_search", True) else "false",
+        "allow_bash": "true" if body.get("allow_bash", False) else "false",
+    }
+
+    async def gen():
+        try:
+            async with _ody.stream("POST", "/api/chat_stream", data=fields,
+                                   headers={"X-Tz-Offset": str(body.get("tz_offset", 0))}) as r:
+                if r.status_code in (401, 403):
+                    await _ody_login()
+                    yield 'data: {"type":"retry"}\n\n'
+                    async with _ody.stream("POST", "/api/chat_stream", data=fields) as r2:
+                        async for chunk in r2.aiter_raw():
+                            yield chunk
+                    return
+                async for chunk in r.aiter_raw():
+                    yield chunk
+        except Exception as e:
+            yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/api/ody/stop/{sid}")
+async def ody_stop(sid: str) -> JSONResponse:
+    try:
+        r = await _ody_req("POST", f"/api/chat/stop/{sid}")
+        return JSONResponse({"ok": r.status_code == 200})
+    except Exception:
+        return JSONResponse({"ok": False})

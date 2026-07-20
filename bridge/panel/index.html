@@ -110,6 +110,39 @@
         font:11px var(--mono); max-height:220px; overflow:auto; white-space:pre-wrap;
         color:var(--dim); margin-top:14px; }
 
+  /* ---------- chat pane (Rung D, native) ---------- */
+  #chat-scroll { max-width:760px; margin-top:6px; }
+  .cmsg { margin:0 0 30px; }
+  .cmsg .who { font:10.5px var(--mono); letter-spacing:.22em; text-transform:uppercase;
+               color:var(--faint); margin-bottom:8px; }
+  .cmsg.user .who { text-align:right; color:var(--dim); }
+  .cmsg.user .body { margin-left:20%; text-align:left; color:var(--cream);
+                     background:var(--card); border:1px solid var(--line);
+                     border-radius:14px 14px 4px 14px; padding:14px 18px; }
+  .cmsg.assistant .who { color:var(--gold); }
+  .cmsg.assistant .body { border-left:1px solid var(--gold); padding:2px 0 2px 20px;
+                          color:var(--fg); font-size:15px; line-height:1.75;
+                          white-space:pre-wrap; overflow-wrap:break-word; }
+  .cmsg .toolline { font:11px var(--mono); color:var(--faint); letter-spacing:.06em;
+                    padding:3px 0 3px 20px; }
+  .cmsg .toolline b { color:var(--dim); font-weight:400; }
+  .cmsg .srcchip { display:inline-block; font:10.5px var(--mono); letter-spacing:.1em;
+                   color:var(--gold); border:1px solid var(--line2); border-radius:7px;
+                   padding:3px 10px; margin:8px 0 0 20px; }
+  #thinking { font:italic 12.5px var(--serif); color:var(--faint); padding:2px 0 2px 20px; }
+  #chat-bar { max-width:760px; margin-top:8px; border-top:1px solid var(--line); padding-top:14px; }
+  #chat-modes { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .mode-chip { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
+               color:var(--dim); border:1px solid var(--line2); border-radius:7px;
+               padding:5px 12px; cursor:pointer; }
+  .mode-chip.on { color:#171420; background:var(--gold); border-color:var(--gold); }
+  .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; }
+  #chat-inputrow { display:flex; gap:10px; align-items:flex-end; }
+  #chat-input { flex:1; resize:none; background:var(--card); color:var(--cream);
+                border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
+                font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
+  #chat-input:focus { border-color:var(--gold); }
+
   /* ---------- command palette ---------- */
   #palette { padding:0; overflow:hidden; }
   #palette input { width:100%; background:transparent; border:0; outline:0; color:var(--cream);
@@ -127,7 +160,8 @@
   <div class="build">local · studio</div>
   <div class="navlbl">Workspace</div>
   <nav>
-    <a class="on"><span class="ico">◫</span> Mission Control</a>
+    <a id="nav-mc" class="on" onclick="showView('mc')"><span class="ico">◫</span> Mission Control</a>
+    <a id="nav-chat" onclick="showView('chat')"><span class="ico">✳</span> Chat</a>
     <a onclick="alert('Gearbox lands in M2')"><span class="ico">⇄</span> Models</a>
     <a onclick="alert('Policies UI lands in M2')"><span class="ico">§</span> Policies</a>
     <a onclick="showLogs()"><span class="ico">≣</span> Logs</a>
@@ -143,19 +177,46 @@
     <span class="chip" onclick="refresh(true)">↻&nbsp;&nbsp;Refresh</span>
   </div>
 
-  <div class="kicker"><span class="num">I.</span><span class="rule"></span>
-    <span class="lbl">Mission Control</span></div>
-  <h1>Mission Control</h1>
-  <div class="sub">Status of every component, every port, every pin.</div>
-  <div class="stamp" id="stamp">—</div>
+  <div id="view-mc">
+    <div class="kicker"><span class="num">I.</span><span class="rule"></span>
+      <span class="lbl">Mission Control</span></div>
+    <h1>Mission Control</h1>
+    <div class="sub">Status of every component, every port, every pin.</div>
+    <div class="stamp" id="stamp">—</div>
 
-  <div class="grid" id="cards"></div>
+    <div class="grid" id="cards"></div>
 
-  <div class="metrics" id="metrics"></div>
+    <div class="metrics" id="metrics"></div>
 
-  <div class="activity">
-    <div class="k">Recent activity</div>
-    <div id="feed"><div class="row"><span class="tag">boot</span><span>panel loaded</span></div></div>
+    <div class="activity">
+      <div class="k">Recent activity</div>
+      <div id="feed"><div class="row"><span class="tag">boot</span><span>panel loaded</span></div></div>
+    </div>
+  </div>
+
+  <div id="view-chat" hidden>
+    <div class="kicker"><span class="num">II.</span><span class="rule"></span>
+      <span class="lbl">Chat</span></div>
+    <h1>Chat</h1>
+    <div class="sub">The local stack, spoken to directly — agent tools included.</div>
+    <div class="stamp" id="chat-stamp">CONNECTING…</div>
+
+    <div id="chat-scroll">
+      <div id="chat-msgs"></div>
+    </div>
+
+    <div id="chat-bar">
+      <div id="chat-modes">
+        <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')">Agent</span>
+        <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
+        <span class="mode-note" id="chat-note">web search on · shell off</span>
+      </div>
+      <div id="chat-inputrow">
+        <textarea id="chat-input" rows="2" placeholder="Message the harness…"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+        <button class="primary" id="chat-send" onclick="sendChat()">Send</button>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -394,9 +455,128 @@ async function showLogs() {
   logdlg.showModal();
 }
 
+/* ---------- chat pane (Rung D, native) ---------- */
+let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
+
+function showView(v) {
+  document.getElementById('view-mc').hidden = (v !== 'mc');
+  document.getElementById('view-chat').hidden = (v !== 'chat');
+  document.getElementById('nav-mc').classList.toggle('on', v === 'mc');
+  document.getElementById('nav-chat').classList.toggle('on', v === 'chat');
+  if (v === 'chat' && !chatSid) initChat();
+  if (v === 'chat') document.getElementById('chat-input').focus();
+}
+
+function setMode(m) {
+  chatMode = m;
+  document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
+  document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
+  document.getElementById('chat-note').textContent =
+    m === 'agent' ? 'web search on · shell off' : 'plain model — no tools';
+}
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+async function initChat() {
+  const stamp = document.getElementById('chat-stamp');
+  try {
+    const r = await (await fetch('/api/ody/ensure-session', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'Mission Control'})})).json();
+    if (r.error) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MISSION CONTROL'; return; }
+    chatSid = r.id; chatModel = (r.model || '').split('-').slice(0,2).join('-') || 'model';
+    stamp.textContent = (r.model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
+    const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
+    const msgs = (h.history || []).slice(-30);
+    for (const m of msgs) {
+      if (m.role === 'user') addMsg('user', m.content || '');
+      else if (m.role === 'assistant') addMsg('assistant', m.content || '');
+    }
+    scrollChat();
+  } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+}
+
+function addMsg(role, text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cmsg ' + role;
+  const who = role === 'user' ? 'You' : (chatModel || 'Assistant');
+  wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
+  wrap.querySelector('.body').textContent = text;
+  document.getElementById('chat-msgs').appendChild(wrap);
+  return wrap;
+}
+
+function scrollChat(){ const m=document.getElementById('chat-msgs'); m.lastElementChild?.scrollIntoView({block:'end'}); }
+
+async function sendChat() {
+  if (chatBusy || !chatSid) return;
+  const inp = document.getElementById('chat-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  chatBusy = true; document.getElementById('chat-send').disabled = true;
+  addMsg('user', text); scrollChat();
+
+  const holder = addMsg('assistant', '');
+  const body = holder.querySelector('.body');
+  const think = document.createElement('div');
+  think.id = 'thinking'; think.textContent = 'thinking…'; think.hidden = true;
+  holder.insertBefore(think, body);
+
+  try {
+    const resp = await fetch('/api/ody/chat', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session:chatSid, message:text, mode:chatMode,
+                            allow_web_search:true, allow_bash:false,
+                            tz_offset:-new Date().getTimezoneOffset()})});
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const part of parts) {
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6);
+          if (payload === '[DONE]') { think.remove(); chatBusy=false; break; }
+          let j; try { j = JSON.parse(payload); } catch { continue; }
+          if (j.delta !== undefined) {
+            if (j.thinking) { think.hidden = false; }
+            else { think.hidden = true; body.textContent += j.delta; }
+          } else if (j.type === 'model_info' || j.type === 'model_actual') {
+            chatModel = j.model || chatModel;
+            holder.querySelector('.who').textContent = chatModel;
+          } else if (j.type === 'tool_start') {
+            const t = document.createElement('div'); t.className = 'toolline';
+            t.innerHTML = `· <b>${esc(j.tool || 'tool')}</b> running…`;
+            holder.insertBefore(t, body);
+          } else if (j.type === 'web_sources') {
+            const c = document.createElement('div'); c.className = 'srcchip';
+            c.textContent = `${(j.data || []).length} web sources`;
+            holder.appendChild(c);
+          } else if (j.type === 'proxy_error') {
+            body.textContent += `\n[proxy error: ${j.error}]`;
+          }
+        }
+      }
+      scrollChat();
+    }
+  } catch (e) {
+    body.textContent += `\n[stream error: ${e}]`;
+  } finally {
+    think.remove?.();
+    chatBusy = false; document.getElementById('chat-send').disabled = false;
+    scrollChat();
+  }
+}
+
 /* ---------- command palette ---------- */
 const commands = () => {
   const cmds = [
+    {t:'Open chat', k:'✳', f:()=>showView('chat')},
+    {t:'Mission Control', k:'◫', f:()=>showView('mc')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:showLogs},
   ];

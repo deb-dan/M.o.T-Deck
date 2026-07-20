@@ -16,6 +16,8 @@ components:
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
     depends_on: [runner, searxng]   # model endpoint + private search (one-switch closure)
+    admin_user: admin         # used by the Bridge's chat-pane proxy (server-side login)
+    admin_password: admin123  # keep in sync if you change the Odysseus account
   searxng:
     repo: https://github.com/searxng/searxng.git
     pin: main                 # shallow clone; source-only project (not on PyPI)
