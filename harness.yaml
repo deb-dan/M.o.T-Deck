@@ -8,12 +8,14 @@ components:
     installed: true
     enabled: false
     port: 9119                # hermes serve REST API (persistent surface)
+    depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
   odysseus:
     repo: https://github.com/pewdiepie-archdaemon/odysseus.git
     pin: e57f60bd343a748af9c855b73ba998ea8b3b652c   # 2026-07-20; fixes chat_routes NameError _explicit_web_intent (old pin 168f5930 was broken)
     installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
+    depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
 
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).

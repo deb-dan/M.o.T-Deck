@@ -247,12 +247,12 @@ function cardHTML(name, c, isBridge) {
       // The runner is the jan CLI — no git install; just Start/Stop.
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
-        : `<button class="primary" onclick="act('${name}','start')">Start</button>`;
+        : `<button class="primary" onclick="startWithPlan('${name}')">Start</button>`;
     } else {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
         : c.installed
-          ? `<button class="primary" onclick="act('${name}','start')">Start</button>
+          ? `<button class="primary" onclick="startWithPlan('${name}')">Start</button>
              <button onclick="planInstall('${name}')">Reinstall</button>`
           : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
     }
@@ -271,6 +271,7 @@ async function planInstall(name) {
   const log = document.getElementById('dlg-log');
   log.hidden = true; log.textContent = '';
   const btn = document.getElementById('dlg-approve');
+  btn.textContent = 'Approve & install';
   btn.disabled = false;
   btn.onclick = async () => {
     btn.disabled = true;
@@ -280,6 +281,36 @@ async function planInstall(name) {
     log.textContent = r.log || (r.ok ? 'Done.' : 'Failed.');
     feed('install', `${name} ${r.ok ? 'complete' : 'FAILED — see log'}`);
     if (r.ok) setTimeout(()=>{ dlg.close(); refresh(); }, 1000);
+  };
+  dlg.showModal();
+}
+
+async function startWithPlan(name) {
+  // One-switch start: if dependencies must come up too, show a single approval dialog.
+  let plan;
+  try { plan = await (await fetch(`/api/components/${name}/start-plan`)).json(); }
+  catch { return act(name, 'start'); }
+  const deps = (plan.to_start || []).filter(n => n !== name);
+  if (deps.length === 0) return act(name, 'start');   // nothing extra to bring up
+
+  document.getElementById('dlg-title').textContent = `Start ${name}`;
+  document.getElementById('dlg-plan').innerHTML = plan.steps.map(s => {
+    const tag = s.running ? 'already running' : (s.note || 'start');
+    return `<li>${s.name}${s.name===name?' (this)':''} — <span style="color:var(--dim)">${tag}</span></li>`;
+  }).join('');
+  const log = document.getElementById('dlg-log');
+  log.hidden = true; log.textContent = '';
+  const btn = document.getElementById('dlg-approve');
+  btn.textContent = 'Approve & start';
+  btn.disabled = false;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    log.hidden = false; log.textContent = 'Provisioning… bringing up dependencies in order (model load can take ~90s).';
+    feed('start', `${name} + deps provisioning`);
+    const r = await (await fetch(`/api/components/${name}/start`, {method:'POST'})).json();
+    log.textContent = r.log || (r.ok ? 'Done.' : 'Failed.');
+    feed('start', `${name} ${r.ok ? 'up (with deps)' : 'FAILED — see log'}`);
+    if (r.ok) setTimeout(()=>{ dlg.close(); refresh(); }, 1200);
   };
   dlg.showModal();
 }

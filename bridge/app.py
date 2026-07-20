@@ -52,6 +52,32 @@ async def _port_alive(port: int) -> bool:
         return False
 
 
+async def _running(name: str, c: dict) -> bool:
+    """Is a component (or the runner) currently up?"""
+    if name == "runner":
+        rc = c.get("runner") or {}
+        rport = rc.get("port")
+        return await _port_alive(int(rport)) if rport else False
+    comp = c.get("components", {}).get(name, {})
+    port = comp.get("port") or comp.get("mcp_port")
+    return (await _port_alive(int(port)) if port else False) or _pid_alive(name)
+
+
+def _deps(name: str, c: dict) -> list:
+    if name == "runner":
+        return (c.get("runner") or {}).get("depends_on", [])
+    return c.get("components", {}).get(name, {}).get("depends_on", [])
+
+
+def _closure(name: str, c: dict, acc: list) -> list:
+    """Dependency-ordered list ending with `name` (deps first, deduped)."""
+    for d in _deps(name, c):
+        _closure(d, c, acc)
+    if name not in acc:
+        acc.append(name)
+    return acc
+
+
 @app.get("/")
 def panel() -> FileResponse:
     return FileResponse(PANEL / "index.html")
@@ -134,10 +160,40 @@ def install(name: str) -> JSONResponse:
         status_code=200 if ok else 500)
 
 
+_NOTES = {"runner": "launches headless Jan + loads the model (~60–90s)"}
+
+
+@app.get("/api/components/{name}/start-plan")
+async def start_plan(name: str) -> dict:
+    """The dependency-ordered list that a Start of `name` will bring up."""
+    c = cfg()
+    steps = []
+    for n in _closure(name, c, []):
+        steps.append({"name": n, "running": await _running(n, c), "note": _NOTES.get(n, "")})
+    return {"target": name, "steps": steps,
+            "to_start": [s["name"] for s in steps if not s["running"]]}
+
+
 @app.post("/api/components/{name}/start")
-def start(name: str) -> JSONResponse:
-    r = _script("start_component.sh", name)
-    return JSONResponse({"ok": r.returncode == 0, "log": r.stdout + r.stderr})
+async def start(name: str) -> JSONResponse:
+    """One-switch start: bring up the whole dependency closure in order, skipping
+    anything already running, stopping (and reporting) at the first failure."""
+    c = cfg()
+    results = []
+    for n in _closure(name, c, []):
+        if await _running(n, c):
+            results.append(f"{n}: already running")
+            continue
+        r = _script("start_component.sh", n)
+        if r.returncode == 0:
+            results.append(f"{n}: started")
+        else:
+            tail = (r.stdout + r.stderr)[-2000:]
+            results.append(f"{n}: FAILED")
+            return JSONResponse(
+                {"ok": False, "log": "\n".join(results) + f"\n\n--- {n} output ---\n{tail}"},
+                status_code=500)
+    return JSONResponse({"ok": True, "log": "\n".join(results)})
 
 
 @app.post("/api/components/{name}/stop")
