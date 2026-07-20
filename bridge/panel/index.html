@@ -227,6 +227,16 @@
   #mb-go { font:11px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--gold);
       background:transparent; border:1px solid var(--line2); border-radius:10px; padding:0 18px; cursor:pointer; }
   #mb-go:hover { border-color:var(--gold); }
+  #mb-fmt, #mb-sort { background:var(--card); color:var(--dim); border:1px solid var(--line2);
+      border-radius:10px; font:10.5px var(--mono); letter-spacing:.04em; padding:0 8px; cursor:pointer; }
+  .hfcard { margin-top:11px; border-top:1px solid var(--line); padding-top:12px; max-height:360px; overflow-y:auto;
+      font:12.5px -apple-system,sans-serif; color:var(--dim); line-height:1.65;
+      scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  .hfcard b { color:var(--cream); font-weight:600; }
+  .hfcard code { font:11.5px var(--mono); color:var(--gold); background:var(--bg); border-radius:4px; padding:1px 4px; }
+  .hfcard pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px;
+      overflow-x:auto; font:11px var(--mono); color:var(--dim); }
+  .hfcard a { color:var(--gold); text-decoration:none; }
   #mb-results { margin-top:14px; display:flex; flex-direction:column; gap:10px; }
   .hfrow { border:1px solid var(--line); border-radius:11px; padding:13px 16px; }
   .hfrow .hfname { font:13.5px -apple-system,sans-serif; color:var(--cream); word-break:break-all; }
@@ -343,8 +353,17 @@
     <div id="models-browse">
       <span class="cs-title">Download a model</span>
       <div class="mb-searchrow">
-        <input id="mb-q" placeholder="Search HuggingFace GGUF models… (qwen3, llama, gemma …)"
+        <input id="mb-q" placeholder="Search HuggingFace models… (qwen3, llama, gemma …)"
           onkeydown="if(event.key==='Enter'){hfSearch();}">
+        <select id="mb-fmt" onchange="hfSearch()" title="File format">
+          <option value="gguf">GGUF</option>
+          <option value="mlx">MLX</option>
+        </select>
+        <select id="mb-sort" onchange="hfSearch()" title="Sort">
+          <option value="downloads">Most downloaded</option>
+          <option value="recent">Most recent</option>
+          <option value="match">Best match</option>
+        </select>
         <button id="mb-go" onclick="hfSearch()">Search</button>
       </div>
       <div id="mb-results"></div>
@@ -810,25 +829,55 @@ async function hfSearch(){
   const q = document.getElementById('mb-q').value.trim();
   const res = document.getElementById('mb-results');
   if (!q){ res.innerHTML = ''; return; }
+  const fmt = document.getElementById('mb-fmt').value;
+  const sort = document.getElementById('mb-sort').value;
   res.innerHTML = '<div class="cs-empty">Searching HuggingFace…</div>';
   try {
-    const list = await (await fetch('/api/models/hf?q=' + encodeURIComponent(q))).json();
+    const url = '/api/models/hf?q=' + encodeURIComponent(q) + '&fmt=' + fmt + '&sort=' + sort;
+    const list = await (await fetch(url)).json();
     if (list.error){ res.innerHTML = '<div class="cs-empty">HF error: ' + esc(list.error) + '</div>'; return; }
-    if (!list.length){ res.innerHTML = '<div class="cs-empty">No GGUF models found.</div>'; return; }
+    if (!list.length){ res.innerHTML = '<div class="cs-empty">No ' + fmt.toUpperCase() + ' models found.</div>'; return; }
     res.innerHTML = '';
     for (const m of list){
       const row = document.createElement('div'); row.className = 'hfrow';
       row.innerHTML = `<div class="hfname">${esc(m.repo)}</div>
         <div class="hfmeta">▼ ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0}${m.pipeline ? (' · ' + esc(m.pipeline)) : ''}</div>
         <div class="hfactions">
+          <button onclick="hfCard('${m.repo}', this)">Model card</button>
           <button onclick="hfDetails('${m.repo}', this)">Files &amp; fit</button>
           <button onclick="hfDownload('${m.repo}', this)">Download &amp; Load</button>
-          <button onclick="openExt(event, 'https://huggingface.co/${m.repo}')">Model card ↗</button>
+          <button onclick="openExt(event, 'https://huggingface.co/${m.repo}')">HF ↗</button>
         </div>
+        <div class="hfcard" hidden></div>
         <div class="hffiles" hidden></div>`;
       res.appendChild(row);
     }
   } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; }
+}
+
+// Light, safe markdown for the in-app model card (images stripped; links open externally).
+function mdCard(md){
+  md = (md || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '');            // drop images
+  let h = esc(md);
+  h = h.replace(/```([\s\S]*?)```/g, (m, c) => '<pre>' + c + '</pre>');
+  h = h.replace(/^#{1,6}\s?(.*)$/gm, '<b>$1</b>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" onclick="openExt(event,this.href)">$1</a>');
+  h = h.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+  return h;
+}
+
+async function hfCard(repo, btn){
+  const box = btn.closest('.hfrow').querySelector('.hfcard');
+  if (!box.hidden){ box.hidden = true; return; }
+  box.hidden = false; box.innerHTML = '<div class="cs-empty">Loading model card…</div>';
+  try {
+    const d = await (await fetch('/api/models/hf/card?repo=' + encodeURIComponent(repo))).json();
+    box.innerHTML = (d.markdown && d.markdown.trim())
+      ? mdCard(d.markdown)
+      : '<div class="cs-empty">No README found — try HF ↗.</div>';
+  } catch { box.innerHTML = '<div class="cs-empty">Failed to load model card.</div>'; }
 }
 
 function fitPill(bytes){
@@ -845,11 +894,19 @@ async function hfDetails(repo, btn){
   box.hidden = false; box.innerHTML = '<div class="cs-empty">Loading files…</div>';
   try {
     const d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
-    if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No GGUF files listed.</div>'; return; }
+    if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }
     box.innerHTML = '';
+    if (d.kind === 'mlx'){
+      // MLX repo = one model split across .safetensors → single fit on the summed size.
+      const head = document.createElement('div'); head.className = 'hffile';
+      head.innerHTML = `${fitPill(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span>`;
+      box.appendChild(head);
+    }
     for (const f of d.files){
       const line = document.createElement('div'); line.className = 'hffile';
-      line.innerHTML = `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span>`;
+      line.innerHTML = d.kind === 'mlx'
+        ? `<span style="color:var(--faint)">${esc(f.filename)} · ${fmtGB(f.size_bytes)}</span>`
+        : `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span>`;
       box.appendChild(line);
     }
   } catch { box.innerHTML = '<div class="cs-empty">Failed to load files.</div>'; }

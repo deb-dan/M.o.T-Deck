@@ -579,17 +579,26 @@ _HF = httpx.AsyncClient(base_url="https://huggingface.co", timeout=httpx.Timeout
 
 
 @app.get("/api/models/hf")
-async def hf_search(q: str = "", limit: int = 20) -> JSONResponse:
-    """Search HuggingFace for GGUF models, most-downloaded first."""
+async def hf_search(q: str = "", sort: str = "downloads", fmt: str = "gguf",
+                    limit: int = 25) -> JSONResponse:
+    """Search HuggingFace. sort: downloads | recent | match. fmt: gguf | mlx."""
     q = (q or "").strip()
     if not q:
         return JSONResponse([])
+    params = {"search": q, "limit": limit}
+    if fmt in ("gguf", "mlx"):
+        params["filter"] = fmt
+    if sort == "downloads":
+        params["sort"] = "downloads"; params["direction"] = "-1"
+    elif sort == "recent":
+        params["sort"] = "lastModified"; params["direction"] = "-1"
+    # sort == "match" → HuggingFace relevance ranking (no sort param)
     try:
-        r = await _HF.get("/api/models", params={
-            "search": q, "filter": "gguf", "sort": "downloads", "limit": limit})
+        r = await _HF.get("/api/models", params=params)
         out = [{"repo": m.get("id") or m.get("modelId"),
                 "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
-                "pipeline": m.get("pipeline_tag"), "updated": m.get("createdAt")}
+                "pipeline": m.get("pipeline_tag"),
+                "updated": m.get("lastModified") or m.get("createdAt")}
                for m in (r.json() if r.status_code == 200 else []) if (m.get("id") or m.get("modelId"))]
         return JSONResponse(out)
     except Exception as e:
@@ -598,22 +607,43 @@ async def hf_search(q: str = "", limit: int = 20) -> JSONResponse:
 
 @app.get("/api/models/hf/files")
 async def hf_files(repo: str) -> JSONResponse:
-    """GGUF files (name + size) in a repo, for the LM-Studio-style detail + fit pill."""
+    """Weight files + sizes for the detail/fit view. GGUF → per-file (each a model);
+    else MLX (.safetensors) → the whole repo is one model (summed size)."""
     try:
         meta = await _HF.get(f"/api/models/{repo}")
         tree = await _HF.get(f"/api/models/{repo}/tree/main")
-        files = []
+        gguf, mlx = [], []
         if tree.status_code == 200:
             for it in tree.json():
-                path = it.get("path", "")
-                if path.lower().endswith(".gguf"):
-                    files.append({"filename": path, "size_bytes": it.get("size")})
+                p = it.get("path", ""); low = p.lower()
+                if low.endswith(".gguf"):
+                    gguf.append({"filename": p, "size_bytes": it.get("size")})
+                elif low.endswith(".safetensors"):
+                    mlx.append({"filename": p, "size_bytes": it.get("size")})
         m = meta.json() if meta.status_code == 200 else {}
-        return JSONResponse({"repo": repo, "files": files,
-                             "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
-                             "tags": m.get("tags", [])})
+        base = {"repo": repo, "downloads": m.get("downloads", 0),
+                "likes": m.get("likes", 0), "tags": m.get("tags", [])}
+        if gguf:
+            return JSONResponse({**base, "kind": "gguf", "files": gguf})
+        return JSONResponse({**base, "kind": "mlx", "files": mlx,
+                             "total_size": sum((f["size_bytes"] or 0) for f in mlx)})
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=502)
+
+
+@app.get("/api/models/hf/card")
+async def hf_card(repo: str) -> JSONResponse:
+    """The model's README (front-matter stripped), rendered in-app instead of the browser."""
+    try:
+        r = await _HF.get(f"/{repo}/raw/main/README.md")
+        text = r.text if r.status_code == 200 else ""
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) == 3:
+                text = parts[2]
+        return JSONResponse({"repo": repo, "markdown": text[:20000]})
+    except Exception as e:
+        return JSONResponse({"repo": repo, "markdown": "", "error": str(e)[:200]})
 
 
 @app.post("/api/open")
