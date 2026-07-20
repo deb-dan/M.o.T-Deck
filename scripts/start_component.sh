@@ -43,9 +43,11 @@ case "$NAME" in
     # Clear any stale server on the port so a restart can bind cleanly.
     lsof -ti tcp:7860 2>/dev/null | xargs kill 2>/dev/null || true
     sleep 1
-    # Connect (idempotent): (re)wire Odysseus to the local Jan endpoint as default model,
-    # picking up whatever model Jan is currently serving. Runs before the server boots.
-    ( cd vendor/odysseus && python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
+    # Connect (idempotent): (re)wire Odysseus to the harness RUNNER endpoint (:6767 + key)
+    # as default model. Runs before the server boots.
+    R_ENDPOINT=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
+    R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    ( cd vendor/odysseus && JAN_BASE_URL="$R_ENDPOINT" JAN_API_KEY="$R_KEY" python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
     # Start server. cd applies to the whole subshell (Odysseus expects cwd=vendor/odysseus);
     # pid + log use ABSOLUTE paths so the earlier '../../ from wrong cwd' bug can't recur.
     (
@@ -64,30 +66,32 @@ case "$NAME" in
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
     source data/hermes-venv/bin/activate
-    # M0: point Hermes's model at the harness endpoint (Jan). Patches ONLY the three
-    # model.* keys, preserving the rest of an existing config; creates a minimal file if absent.
+    # M1: point Hermes at the harness RUNNER endpoint (:6767 + key). Patches ONLY the
+    # managed model.* keys, preserving the rest of an existing config; creates minimal if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
-    BASE_URL=$(awk '/^  hermes_llm:/{f=1; next} f && /^    base_url:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*base_url:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
-    MODEL=$(awk '/^  hermes_llm:/{f=1; next} f && /^    model:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
+    KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    CTXLEN=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
-    CTXLEN=$(awk '/^  hermes_llm:/{f=1; next} f && /^    context_length:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*context_length:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
     if [[ -z "$MODEL" ]]; then
-      MODEL=$(curl -sf -m 4 "${BASE_URL%/}/models" \
+      MODEL=$(curl -sf -m 4 -H "Authorization: Bearer $KEY" "${BASE_URL%/}/models" \
         | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
     fi
     if [[ -z "$MODEL" ]]; then
-      echo "ERROR: could not reach ${BASE_URL} or no model available."
-      echo "Open Jan, enable Settings -> Local API Server, and make sure a model is downloaded."
+      echo "ERROR: could not reach the runner at ${BASE_URL} or no model available."
+      echo "Start the Runner first (panel → Runner → Start)."
       exit 1
     fi
     mkdir -p "$(dirname "$HCFG")"
-    HCFG="$HCFG" BASE_URL="$BASE_URL" MODEL="$MODEL" CTXLEN="$CTXLEN" python3 - <<'PYPATCH'
+    HCFG="$HCFG" BASE_URL="$BASE_URL" MODEL="$MODEL" CTXLEN="$CTXLEN" KEY="$KEY" python3 - <<'PYPATCH'
 import os, re
 path = os.environ["HCFG"]
 managed = {"default": os.environ["MODEL"], "provider": "custom",
-           "base_url": os.environ["BASE_URL"], "context_length": os.environ["CTXLEN"]}
-order = ["default", "provider", "base_url", "context_length"]
+           "base_url": os.environ["BASE_URL"], "api_key": os.environ["KEY"],
+           "context_length": os.environ["CTXLEN"]}
+order = ["default", "provider", "base_url", "api_key", "context_length"]
 def block():
     return "model:\n" + "".join(f"  {k}: {managed[k]}\n" for k in order)
 if not os.path.exists(path):
@@ -103,7 +107,7 @@ else:
                 if k not in seen: out.append(f'  {k}: {managed[k]}')
             in_model = False
         if in_model:
-            m = re.match(r'^  (default|provider|base_url|context_length):', ln)
+            m = re.match(r'^  (default|provider|base_url|api_key|context_length):', ln)
             if m:
                 k = m.group(1); seen.add(k); out.append(f'  {k}: {managed[k]}'); continue
         out.append(ln)
@@ -111,7 +115,7 @@ else:
         for k in order:
             if k not in seen: out.append(f'  {k}: {managed[k]}')
     open(path, "w").write("\n".join(out))
-print(f"[harness] Hermes model -> {managed['default']} @ {managed['base_url']} (ctx {managed['context_length']})")
+print(f"[harness] Hermes -> {managed['default']} @ {managed['base_url']} (key set, ctx {managed['context_length']})")
 PYPATCH
     PORT=9119
     pkill -f "hermes serve" 2>/dev/null || true   # clear any stale server

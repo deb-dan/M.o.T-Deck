@@ -19,7 +19,8 @@ import os
 import sys
 import urllib.request
 
-BASE_URL = os.environ.get("JAN_BASE_URL", "http://127.0.0.1:1337/v1")
+BASE_URL = os.environ.get("JAN_BASE_URL", "http://127.0.0.1:6767/v1")
+API_KEY = os.environ.get("JAN_API_KEY", "").strip() or None   # headless runner needs a key
 NAME = "Jan (local)"
 ENDPOINT_ID = "local-jan"          # stable caller-supplied String PK (idempotent)
 
@@ -28,7 +29,10 @@ def _discover_model(base_url: str) -> str:
     """Ask the live endpoint for its first model id. Empty string if unreachable —
     Odysseus then auto-discovers at runtime (model_refresh_mode='auto')."""
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=4) as r:
+        req = urllib.request.Request(base_url.rstrip("/") + "/models")
+        if API_KEY:
+            req.add_header("Authorization", f"Bearer {API_KEY}")
+        with urllib.request.urlopen(req, timeout=4) as r:
             data = json.load(r).get("data") or []
             return data[0]["id"] if data else ""
     except Exception:
@@ -58,7 +62,7 @@ def main() -> int:
         # Mirror routes/cookbook_routes.py local self-hosted endpoint construction.
         ep.name = NAME
         ep.base_url = BASE_URL
-        ep.api_key = None
+        ep.api_key = API_KEY   # runner key (headless Jan requires it); None if unset
         ep.is_enabled = True
         ep.model_type = "llm"
         ep.endpoint_kind = "local"
