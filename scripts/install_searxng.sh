@@ -24,7 +24,8 @@ uv venv data/searxng-venv --python "$PY" 2>/dev/null || true
 source data/searxng-venv/bin/activate
 uv pip install -U pip setuptools wheel
 uv pip install -U pyyaml msgspec typing-extensions pybind11   # build prereqs first
-uv pip install --use-pep517 --no-build-isolation -e vendor/searxng
+# --use-pep517 is a real-pip flag (uv pip doesn't accept it) — use the venv's pip here.
+"$ROOT/data/searxng-venv/bin/pip" install --use-pep517 --no-build-isolation -e vendor/searxng
 deactivate
 
 # 3. settings.yml — merge over SearXNG defaults; localhost-only, no Redis (limiter off),
