@@ -11,12 +11,19 @@ case "$NAME" in
     ROOT="$(pwd)"
     # shellcheck disable=SC1091
     source data/odysseus-venv/bin/activate
+    # Clear any stale server on the port so a restart can bind cleanly.
+    lsof -ti tcp:7860 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
     # Connect (idempotent): (re)wire Odysseus to the local Jan endpoint as default model,
     # picking up whatever model Jan is currently serving. Runs before the server boots.
     ( cd vendor/odysseus && python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
-    ( cd vendor/odysseus && \
-      nohup python -m uvicorn app:app --host 127.0.0.1 --port 7860 \
-        >>../../data/logs/odysseus.log 2>&1 & echo $! > ../../data/odysseus.pid )
+    # Start server. cd applies to the whole subshell (Odysseus expects cwd=vendor/odysseus);
+    # pid + log use ABSOLUTE paths so the earlier '../../ from wrong cwd' bug can't recur.
+    (
+      cd vendor/odysseus
+      nohup python -m uvicorn app:app --host 127.0.0.1 --port 7860 >>"$ROOT/data/logs/odysseus.log" 2>&1 &
+      echo $! > "$ROOT/data/odysseus.pid"
+    )
     sleep 2
     if kill -0 "$(cat data/odysseus.pid)" 2>/dev/null; then
       echo "[harness] odysseus starting → http://127.0.0.1:7860 (login: admin / admin123 — change it)"
