@@ -284,7 +284,14 @@ def stop(name: str) -> JSONResponse:
         subprocess.run(["kill", pid.read_text().strip()], check=False)
         pid.unlink(missing_ok=True)
         return JSONResponse({"ok": True})
-    return JSONResponse({"ok": False, "log": "no pid file"})
+    # No pid file (e.g. the process was started outside the panel) — fall back to
+    # killing whatever holds the component's port. Same lesson as the runner.
+    comp = cfg().get("components", {}).get(name, {})
+    port = comp.get("port") or comp.get("mcp_port")
+    if port:
+        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill 2>/dev/null", shell=True, check=False)
+        return JSONResponse({"ok": True, "log": f"no pid file — killed by port :{port}"})
+    return JSONResponse({"ok": False, "log": "no pid file and no port to kill by"})
 
 
 @app.post("/api/components/{name}/update")
