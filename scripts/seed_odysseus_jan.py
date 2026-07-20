@@ -36,6 +36,9 @@ def _discover_model(base_url: str) -> str:
 
 
 def main() -> int:
+    # Invoked by absolute path, so the script's dir (not cwd) is on sys.path by default.
+    # Odysseus modules (core.*, src.*) live in cwd (= vendor/odysseus) — put it first.
+    sys.path.insert(0, os.getcwd())
     try:
         from core.database import get_db_session, ModelEndpoint
         from src.settings import load_settings, save_settings
