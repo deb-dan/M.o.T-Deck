@@ -58,6 +58,8 @@
 
 1. **Web/search: install native SearXNG** (04 §Prototypes + shared-search). Web search ALREADY works via the `ddgs` DuckDuckGo fallback; SearXNG is the privacy upgrade (self-hosted, no queries to DDG) and the planned shared backend for Odysseus DeepResearch + MCP search. Native from-source build on macOS/arm64 is the riskiest install so far (compiled deps) — do install-first, verify, then wrap as a managed component.
 2. **Rung D native panes (future):** native Mission Control screens over Odysseus's API in the editorial aesthetic — the real "premium" path (see design findings above).
+   - **Debi request (2026-07-20):** when the unified interface lands, expose a **search-backend chooser** (SearXNG vs others). Maps directly onto Odysseus's existing `search_provider` + `search_fallback_chain` settings (src/settings.py) — a UI setting + fan-out, not new engineering.
+   - **Backlog:** investigate Jan desktop's native web-search (MCP or built-in tool?) for possible later incorporation.
 2. **Web/search:** install the native SearXNG component (04 §Prototypes spike + shared-search) so Deep Research + Agent web_search use it instead of the DDG fallback.
 3. Optional M1 polish: cross-dependency health cascade, install-time closure.
 
