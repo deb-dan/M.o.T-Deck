@@ -188,6 +188,7 @@ const logdlg = document.getElementById('logdlg');
 const palette = document.getElementById('palette');
 let lastStatus = null;
 let lastProv = {};      // previous provisioning snapshot (for transition detection)
+let lastDegraded = {};  // previous degraded flags (for transition detection)
 let pollTimer = null;   // adaptive poll timer
 
 function feed(tag, msg) {
@@ -236,10 +237,13 @@ async function refresh(manual) {
     running:true, installed:true, pin:'local', port:8700 }, true));
 
   for (const [name, c] of Object.entries(s.components)) {
+    if (c.degraded && !lastDegraded[name]) feed('health', `${name} degraded — health lost`);
+    lastDegraded[name] = !!c.degraded;
     cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false, prov[name]));
     const p = prov[name], st = p && p.state;
     const cls = (st === 'starting' || st === 'pending') ? 'warn'
               : (st === 'failed' || st === 'blocked') ? 'bad'
+              : c.degraded ? 'bad'
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     side.insertAdjacentHTML('beforeend',
       `<a><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
@@ -281,6 +285,8 @@ function cardHTML(name, c, isBridge, prov) {
     state = ps === 'starting' ? 'Starting…' : ps === 'pending' ? 'Pending…' : 'Blocked';
   } else if (ps === 'failed') {
     dot = 'bad'; state = 'Failed';
+  } else if (c.degraded) {
+    dot = 'bad'; state = 'Degraded';   // was started, health now failing (crashed)
   } else {
     dot = c.running ? 'ok' : c.installed ? 'warn' : '';
     state = c.running ? 'Online' : c.installed ? 'Stopped' : 'Not installed';
@@ -291,6 +297,9 @@ function cardHTML(name, c, isBridge, prov) {
     } else if (ps === 'failed') {
       actions = `<button class="primary" onclick="startWithPlan('${name}')">Retry</button>
                  <button onclick="showProvLog('${name}')">View log</button>`;
+    } else if (c.degraded) {
+      actions = `<button class="primary" onclick="startWithPlan('${name}')">Restart</button>
+                 <button onclick="act('${name}','stop')">Stop</button>`;
     } else if (name === 'runner') {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`

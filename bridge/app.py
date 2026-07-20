@@ -95,6 +95,24 @@ def _port_alive_sync(port: int) -> bool:
         return False
 
 
+def _expected_path(name: str) -> Path:
+    return ROOT / "data" / f"{name}.expected"
+
+
+def _mark_expected(name: str) -> None:
+    try:
+        _expected_path(name).write_text("1")
+    except Exception:
+        pass
+
+
+def _clear_expected(name: str) -> None:
+    try:
+        _expected_path(name).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _running_sync(name: str, c: dict) -> bool:
     if name == "runner":
         rc = c.get("runner") or {}
@@ -116,11 +134,13 @@ def _provision(target: str) -> None:
     for i, n in enumerate(order):
         if _running_sync(n, c):
             PROV[n] = {"state": "on", "detail": "already running"}
+            _mark_expected(n)
             continue
         PROV[n] = {"state": "starting", "detail": _NOTES.get(n, "starting…")}
         r = _script("start_component.sh", n)
         if r.returncode == 0:
             PROV[n] = {"state": "on", "detail": "started"}
+            _mark_expected(n)   # expected-up now; if it later dies → degraded
         else:
             PROV[n] = {"state": "failed", "detail": (r.stdout + r.stderr)[-1500:]}
             for m in order[i + 1:]:
@@ -145,20 +165,24 @@ async def status() -> dict:
     }
     for name, comp in c["components"].items():
         port = comp.get("port") or comp.get("mcp_port")
+        running = (await _port_alive(int(port)) if port else False) or _pid_alive(name)
         out["components"][name] = {
             "installed": bool(comp.get("installed")),
             "pin": str(comp.get("pin")),
-            "running": (await _port_alive(int(port)) if port else False) or _pid_alive(name),
+            "running": running,
+            "degraded": _expected_path(name).exists() and not running,
             "port": port,
         }
     # M1 runner slot: a managed component, but launched via the jan CLI (no git install).
     rc = c.get("runner")
     if rc:
         rport = rc.get("port")
+        rrunning = await _port_alive(int(rport)) if rport else False
         out["components"]["runner"] = {
             "installed": True,  # the jan CLI is the "install"; always available once Jan ran once
             "pin": str(rc.get("model") or rc.get("adapter") or "jan"),
-            "running": await _port_alive(int(rport)) if rport else False,
+            "running": rrunning,
+            "degraded": _expected_path("runner").exists() and not rrunning,
             "port": rport,
             "kind": "runner",
         }
@@ -238,6 +262,8 @@ def start(name: str) -> JSONResponse:
 
 @app.post("/api/components/{name}/stop")
 def stop(name: str) -> JSONResponse:
+    _clear_expected(name)   # intentional stop → not "degraded", just "stopped"
+    PROV.pop(name, None)    # drop any stale provisioning overlay for this component
     # Runner (jan) must be stopped by PORT — its child router survives a PID kill (spike learning).
     if name == "runner":
         rc = cfg().get("runner", {})
