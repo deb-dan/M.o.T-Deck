@@ -37,6 +37,16 @@
 2. **M1** — runner slot (make Jan a managed headless component behind the adapter) + the one-switch provisioning pipeline (dependency closure, config fan-out, Repair verb). Odysseus/Hermes connect steps built in M0 (`seed_odysseus_jan.py`, Hermes config patch) are the seeds of this.
 3. **M2 interface (08)** — reskin/deep-link the Odysseus webview into a Mission Control tab (Fable-only UI work).
 
+## Post-M0 spike results (2026-07-20)
+
+**Headless Jan runner (`jan serve`) — PROVEN, M1-ready.** CLI 0.8.3 at `~/.local/bin/jan`. `jan serve <model> --port 6767 --api-key <KEY> --detach` serves standalone with desktop Jan QUIT (no desktop dependency), ~78 tok/s on the Qwen 35B. M1 runner-adapter facts, all verified:
+- **Auth:** headless :6767 REQUIRES a key (unlike desktop :1337 which was keyless). `--api-key <KEY>` sets it; clients send `Authorization: Bearer <KEY>`. `LLAMA_API_KEY` env (set by Jan) is overridden by the flag. → M1: Bridge launches with a known key and fans it out to Hermes (`model.api_key`) and Odysseus (`model_endpoints.api_key`).
+- **Stop by PORT, not PID:** `jan serve --detach` prints a supervisor PID, but the child llama-server router holds :6767 and SURVIVES `kill <pid>` → orphan blocks the next bind (cost us a confusing 401 from the stale server). → M1 stop = `lsof -ti tcp:6767 | xargs kill -9`.
+- **Context:** the desktop-authored `router.preset.ini` wins over `--ctx-size` (loaded at 95536 despite `--ctx-size 65536`). ≥64K satisfied here; M1 must ensure the preset/flag yields ≥64K for any model.
+- **Health probe:** `GET /v1/models` returns 200 with rich metadata WITHOUT a key; only chat needs the key.
+- Metal shader compile warning appears in serve.log but is non-fatal (model loads + serves).
+- Remaining spikes (not yet run): native SearXNG on macOS/arm64, WKWebView embed of :7860, HF API model query, `jan serve <hf-repo>` CLI download.
+
 ## Operating preconditions (both components)
 
 - **Jan desktop must be running** with Settings → Local API Server ON (:1337) and the model **loaded at ≥64K context** (Context Size 65536, reload). Both Hermes and Odysseus depend on this until M1's runner slot manages the endpoint.
