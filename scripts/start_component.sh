@@ -149,7 +149,14 @@ PYPATCH
     lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     : > data/logs/hermes.log
-    nohup hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
+    # HERMES_DESKTOP=1: make the dashboard run its OWN cron ticker so scheduled jobs
+    # fire without a running messaging gateway (Hermes has no standalone cron daemon —
+    # normally the gateway fires cron). Side effects of this flag: it also exposes two
+    # desktop-only tools (read_terminal/close_terminal) that are inert outside the
+    # Electron app, and adds minor desktop framing to the system prompt. NOTE: if the
+    # gateway is later run as a component, BOTH would fire cron (no cross-process lock)
+    # → dedupe then (single ticker). See CLAUDE.md.
+    nohup env HERMES_DESKTOP=1 hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
     echo $! > data/hermes.pid
     up=0
     for _ in $(seq 1 25); do
