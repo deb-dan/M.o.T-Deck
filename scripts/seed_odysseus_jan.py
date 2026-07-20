@@ -54,7 +54,10 @@ def main() -> int:
     model_json = json.dumps([model]) if model else None
 
     with get_db_session() as db:
-        ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == BASE_URL).first()
+        # Match by the STABLE id, not base_url: when the runner endpoint changes
+        # (e.g. :1337 -> :6767) we must UPDATE the existing row, not insert a
+        # duplicate id (that collides on the PK and silently rolls back).
+        ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ENDPOINT_ID).first()
         created = ep is None
         if created:
             ep = ModelEndpoint(id=ENDPOINT_ID, name=NAME, base_url=BASE_URL)
