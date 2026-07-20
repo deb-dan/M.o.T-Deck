@@ -329,6 +329,8 @@
           <div id="chat-modes">
             <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')">Agent</span>
             <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
+            <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
+              title="Browser control via the Browser MCP extension (agent mode)">Browse</span>
             <span class="mode-note" id="chat-note">web search on · shell off</span>
           </div>
           <div id="chat-inputrow">
@@ -671,7 +673,29 @@ async function initChat() {
     const pick = (want && list.find(s => s.id === want)) || list[0];
     if (pick) await selectSession(pick.id);
     else await newSession();
+    refreshBrowse();
   } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+}
+
+async function refreshBrowse(){
+  try {
+    const s = await (await fetch('/api/browse/status')).json();
+    document.getElementById('mode-browse').classList.toggle('on', !!s.on);
+  } catch {}
+}
+
+async function toggleBrowse(){
+  const chip = document.getElementById('mode-browse');
+  const on = !chip.classList.contains('on');
+  chip.style.opacity = '.5';
+  try {
+    const r = await (await fetch('/api/browse/toggle', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({on})})).json();
+    chip.classList.toggle('on', !!r.on);
+    const note = document.getElementById('chat-note');
+    if (r.on) note.textContent = 'browser ON · install the Browser MCP Chrome extension + connect a tab';
+    else note.textContent = (chatMode === 'agent' ? 'web search on · shell off' : 'plain model — no tools');
+  } catch {} finally { chip.style.opacity = ''; }
 }
 
 async function loadSessions(){

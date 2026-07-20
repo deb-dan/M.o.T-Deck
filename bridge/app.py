@@ -663,3 +663,44 @@ async def ody_stop(sid: str) -> JSONResponse:
         return JSONResponse({"ok": r.status_code == 200})
     except Exception:
         return JSONResponse({"ok": False})
+
+
+# ── Browse: register the stdio Browser MCP (browsermcp.io) in Odysseus so the
+# chat's agent mode gains browser control. The user installs the Chrome extension
+# once; the MCP shows "connected" after they connect a tab. (Hermes + the http
+# jan-browser-mcp are follow-up slices — see CLAUDE.md.)
+_BROWSERMCP = {"name": "browsermcp", "transport": "stdio",
+               "command": "npx", "args": '["@browsermcp/mcp"]'}
+
+
+async def _ody_find_mcp(name: str):
+    r = await _ody_req("GET", "/api/mcp/servers")
+    lst = r.json() if r.status_code == 200 else []
+    if not isinstance(lst, list):
+        lst = []
+    return next((s for s in lst if s.get("name") == name), None)
+
+
+@app.get("/api/browse/status")
+async def browse_status() -> JSONResponse:
+    try:
+        s = await _ody_find_mcp("browsermcp")
+        return JSONResponse({"on": bool(s), "connected": (s or {}).get("status") == "connected"})
+    except Exception:
+        return JSONResponse({"on": False})
+
+
+@app.post("/api/browse/toggle")
+async def browse_toggle(req: Request) -> JSONResponse:
+    on = bool((await req.json()).get("on"))
+    try:
+        existing = await _ody_find_mcp("browsermcp")
+        if on and not existing:
+            r = await _ody_req("POST", "/api/mcp/servers", data=_BROWSERMCP)
+            return JSONResponse({"ok": r.status_code == 200, "on": True, "log": r.text[:300]})
+        if not on and existing:
+            r = await _ody_req("DELETE", f"/api/mcp/servers/{existing['id']}")
+            return JSONResponse({"ok": r.status_code == 200, "on": False})
+        return JSONResponse({"ok": True, "on": on})
+    except Exception as e:
+        return JSONResponse({"ok": False, "log": str(e)[:200]}, status_code=502)
