@@ -195,7 +195,7 @@ async def status() -> dict:
 
 @app.get("/api/logs/{name}")
 def logs(name: str, lines: int = 40) -> dict:
-    if name not in ("bridge", "hermes", "odysseus"):
+    if name not in ("bridge", "hermes", "odysseus", "searxng", "runner"):
         raise HTTPException(404, "unknown log")
     f = ROOT / "data" / "logs" / f"{name}.log"
     if not f.exists():
@@ -219,6 +219,12 @@ def install_plan(name: str) -> dict:
             "Run Odysseus setup (creates admin account, prints temp password to log)",
             "Serve natively on port 7860 (Metal-accelerated Cookbook)",
         ],
+        "searxng": [
+            "Clone searxng source into vendor/searxng (not on PyPI)",
+            "Create venv data/searxng-venv + editable install (compiles some deps)",
+            "Write localhost settings.yml (port 8080, JSON API on, limiter off)",
+            "Serve privately on 127.0.0.1:8080 — Odysseus prefers it over DuckDuckGo automatically",
+        ],
     }
     if name not in plans:
         raise HTTPException(404, "unknown component")
@@ -229,9 +235,11 @@ def install_plan(name: str) -> dict:
 @app.post("/api/components/{name}/install")
 def install(name: str) -> JSONResponse:
     """Execute the install after the panel's approve step."""
-    if name not in ("hermes", "odysseus"):
+    if name not in ("hermes", "odysseus", "searxng"):
         raise HTTPException(404, "unknown component")
-    r = _script("install_component.sh", name, "--yes")
+    script = "install_searxng.sh" if name == "searxng" else "install_component.sh"
+    args = () if name == "searxng" else (name, "--yes")
+    r = _script(script, *args)
     ok = r.returncode == 0
     return JSONResponse(
         {"ok": ok, "log": (r.stdout + r.stderr)[-4000:]},

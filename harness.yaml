@@ -15,7 +15,13 @@ components:
     installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
-    depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
+    depends_on: [runner, searxng]   # model endpoint + private search (one-switch closure)
+  searxng:
+    repo: https://github.com/searxng/searxng.git
+    pin: main                 # shallow clone; source-only project (not on PyPI)
+    installed: true
+    enabled: false
+    port: 8080                # private meta-search; Odysseus SEARXNG_INSTANCE defaults here
 
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).

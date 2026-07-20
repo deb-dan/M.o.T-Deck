@@ -62,6 +62,27 @@ case "$NAME" in
       echo "ERROR: odysseus exited immediately. Last log lines:"; tail -15 data/logs/odysseus.log; exit 1
     fi
     ;;
+  searxng)
+    [[ -d data/searxng-venv ]] || { echo "ERROR: searxng venv missing — run scripts/install_searxng.sh"; exit 1; }
+    ROOT="$(pwd)"
+    lsof -ti tcp:8080 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
+    nohup env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
+      "$ROOT/data/searxng-venv/bin/python" -m searx.webapp \
+      >>"$ROOT/data/logs/searxng.log" 2>&1 &
+    echo $! > "$ROOT/data/searxng.pid"
+    up=0
+    for _ in $(seq 1 15); do
+      if curl -sf -m 2 "http://127.0.0.1:8080/" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/searxng.pid")" 2>/dev/null || { echo "ERROR: searxng exited on launch:"; tail -10 "$ROOT/data/logs/searxng.log"; exit 1; }
+      sleep 1
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] searxng up on :8080 (private search; Odysseus uses it automatically)"
+    else
+      echo "ERROR: searxng did not answer on :8080 in ~15s:"; tail -10 "$ROOT/data/logs/searxng.log"; exit 1
+    fi
+    ;;
   hermes)
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
