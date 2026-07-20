@@ -6,7 +6,9 @@ Gearbox (M2) and adapter/self-heal (M3) are stubs; see gearbox.py / adapter.py.
 from __future__ import annotations
 
 import asyncio
+import socket
 import subprocess
+import threading
 from pathlib import Path
 
 import httpx
@@ -78,6 +80,54 @@ def _closure(name: str, c: dict, acc: list) -> list:
     return acc
 
 
+# ── One-switch provisioning: background runner + observable per-component state ──
+# PROV maps component name -> {"state": pending|starting|on|failed|blocked, "detail": str}.
+# The panel reads it from /api/status and animates cards live during a start-closure.
+PROV: dict = {}
+
+
+def _port_alive_sync(port: int) -> bool:
+    try:
+        s = socket.create_connection(("127.0.0.1", int(port)), timeout=0.5)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def _running_sync(name: str, c: dict) -> bool:
+    if name == "runner":
+        rc = c.get("runner") or {}
+        p = rc.get("port")
+        return _port_alive_sync(p) if p else False
+    comp = c.get("components", {}).get(name, {})
+    p = comp.get("port") or comp.get("mcp_port")
+    return (_port_alive_sync(p) if p else False) or _pid_alive(name)
+
+
+def _provision(target: str) -> None:
+    """Run the dependency closure in order, publishing live state into PROV.
+    Runs in a background thread so /api/status can report progress meanwhile."""
+    c = cfg()
+    order = _closure(target, c, [])
+    PROV.clear()
+    for n in order:
+        PROV[n] = {"state": "pending", "detail": "queued"}
+    for i, n in enumerate(order):
+        if _running_sync(n, c):
+            PROV[n] = {"state": "on", "detail": "already running"}
+            continue
+        PROV[n] = {"state": "starting", "detail": _NOTES.get(n, "starting…")}
+        r = _script("start_component.sh", n)
+        if r.returncode == 0:
+            PROV[n] = {"state": "on", "detail": "started"}
+        else:
+            PROV[n] = {"state": "failed", "detail": (r.stdout + r.stderr)[-1500:]}
+            for m in order[i + 1:]:
+                PROV[m] = {"state": "blocked", "detail": f"blocked by {n} failure"}
+            return
+
+
 @app.get("/")
 def panel() -> FileResponse:
     return FileResponse(PANEL / "index.html")
@@ -112,6 +162,10 @@ async def status() -> dict:
             "port": rport,
             "kind": "runner",
         }
+    try:  # snapshot; a background provision thread may mutate PROV concurrently
+        out["prov"] = {k: dict(v) for k, v in list(PROV.items())}
+    except RuntimeError:
+        out["prov"] = {}
     return out
 
 
@@ -175,25 +229,11 @@ async def start_plan(name: str) -> dict:
 
 
 @app.post("/api/components/{name}/start")
-async def start(name: str) -> JSONResponse:
-    """One-switch start: bring up the whole dependency closure in order, skipping
-    anything already running, stopping (and reporting) at the first failure."""
-    c = cfg()
-    results = []
-    for n in _closure(name, c, []):
-        if await _running(n, c):
-            results.append(f"{n}: already running")
-            continue
-        r = _script("start_component.sh", n)
-        if r.returncode == 0:
-            results.append(f"{n}: started")
-        else:
-            tail = (r.stdout + r.stderr)[-2000:]
-            results.append(f"{n}: FAILED")
-            return JSONResponse(
-                {"ok": False, "log": "\n".join(results) + f"\n\n--- {n} output ---\n{tail}"},
-                status_code=500)
-    return JSONResponse({"ok": True, "log": "\n".join(results)})
+def start(name: str) -> JSONResponse:
+    """One-switch start: provision the whole dependency closure in a background thread,
+    publishing live per-component state into PROV (read by /api/status). Returns at once."""
+    threading.Thread(target=_provision, args=(name,), daemon=True).start()
+    return JSONResponse({"ok": True, "log": "provisioning started"})
 
 
 @app.post("/api/components/{name}/stop")

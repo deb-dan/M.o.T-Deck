@@ -187,6 +187,8 @@ const dlg = document.getElementById('dlg');
 const logdlg = document.getElementById('logdlg');
 const palette = document.getElementById('palette');
 let lastStatus = null;
+let lastProv = {};      // previous provisioning snapshot (for transition detection)
+let pollTimer = null;   // adaptive poll timer
 
 function feed(tag, msg) {
   const f = document.getElementById('feed');
@@ -199,8 +201,28 @@ function feed(tag, msg) {
 async function refresh(manual) {
   let s;
   try { s = await (await fetch('/api/status')).json(); }
-  catch { document.getElementById('stamp').textContent = 'BRIDGE UNREACHABLE'; return; }
+  catch {
+    document.getElementById('stamp').textContent = 'BRIDGE UNREACHABLE';
+    clearTimeout(pollTimer); pollTimer = setTimeout(refresh, 6000); return;
+  }
   lastStatus = s;
+  const prov = s.prov || {};
+
+  // Feed live transitions (starting / online / failed / blocked).
+  for (const [n, p] of Object.entries(prov)) {
+    const prev = (lastProv[n] || {}).state;
+    if (p.state !== prev) {
+      if (p.state === 'starting') feed('start', `${n} starting…`);
+      else if (p.state === 'on' && prev && prev !== 'on') feed('start', `${n} online`);
+      else if (p.state === 'failed') {
+        feed('start', `${n} FAILED — see log`);
+        document.getElementById('logbody').textContent = p.detail || '(no output)';
+        logdlg.showModal();
+      } else if (p.state === 'blocked') feed('start', `${n} blocked`);
+    }
+  }
+  lastProv = prov;
+
   const now = new Date();
   document.getElementById('stamp').textContent =
     now.toTimeString().slice(0,5) + ' · LOCAL · ALL SYSTEMS';
@@ -210,13 +232,15 @@ async function refresh(manual) {
   const side = document.getElementById('sidecomponents');
   side.innerHTML = '';
 
-  // bridge card
   cards.insertAdjacentHTML('beforeend', cardHTML('bridge', {
     running:true, installed:true, pin:'local', port:8700 }, true));
 
   for (const [name, c] of Object.entries(s.components)) {
-    cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false));
-    const cls = c.running ? 'ok' : c.installed ? 'warn' : '';
+    cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false, prov[name]));
+    const p = prov[name], st = p && p.state;
+    const cls = (st === 'starting' || st === 'pending') ? 'warn'
+              : (st === 'failed' || st === 'blocked') ? 'bad'
+              : c.running ? 'ok' : c.installed ? 'warn' : '';
     side.insertAdjacentHTML('beforeend',
       `<a><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${name}</span></a>`);
@@ -231,20 +255,43 @@ async function refresh(manual) {
     metric('Disk free', `${s.disk.free_gb}<small> GB</small>`) +
     metric('Bridge', 'Live');
   if (manual) feed('status', 'refreshed');
+
+  // Poll faster while anything is provisioning, else settle to 6s.
+  const active = Object.values(prov).some(p => ['pending','starting'].includes(p.state));
+  clearTimeout(pollTimer); pollTimer = setTimeout(refresh, active ? 1500 : 6000);
+}
+
+function showProvLog(name) {
+  const p = (lastStatus && lastStatus.prov || {})[name];
+  document.getElementById('logbody').textContent = (p && p.detail) || '(no output)';
+  logdlg.showModal();
 }
 
 function metric(k, v) {
   return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 }
 
-function cardHTML(name, c, isBridge) {
-  const dot = c.running ? 'ok' : c.installed ? 'warn' : '';
-  const state = c.running ? 'Online' : c.installed ? 'Stopped' : 'Not installed';
+function cardHTML(name, c, isBridge, prov) {
+  const ps = prov && prov.state;
   const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
-  let actions = '';
+  let dot, state, actions = '';
+  const provisioning = (ps === 'starting' || ps === 'pending' || ps === 'blocked');
+  if (provisioning) {
+    dot = ps === 'blocked' ? 'bad' : 'warn';
+    state = ps === 'starting' ? 'Starting…' : ps === 'pending' ? 'Pending…' : 'Blocked';
+  } else if (ps === 'failed') {
+    dot = 'bad'; state = 'Failed';
+  } else {
+    dot = c.running ? 'ok' : c.installed ? 'warn' : '';
+    state = c.running ? 'Online' : c.installed ? 'Stopped' : 'Not installed';
+  }
   if (!isBridge) {
-    if (name === 'runner') {
-      // The runner is the jan CLI — no git install; just Start/Stop.
+    if (provisioning) {
+      actions = `<button disabled>Working…</button>`;
+    } else if (ps === 'failed') {
+      actions = `<button class="primary" onclick="startWithPlan('${name}')">Retry</button>
+                 <button onclick="showProvLog('${name}')">View log</button>`;
+    } else if (name === 'runner') {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
         : `<button class="primary" onclick="startWithPlan('${name}')">Start</button>`;
@@ -305,12 +352,9 @@ async function startWithPlan(name) {
   btn.disabled = false;
   btn.onclick = async () => {
     btn.disabled = true;
-    log.hidden = false; log.textContent = 'Provisioning… bringing up dependencies in order (model load can take ~90s).';
-    feed('start', `${name} + deps provisioning`);
-    const r = await (await fetch(`/api/components/${name}/start`, {method:'POST'})).json();
-    log.textContent = r.log || (r.ok ? 'Done.' : 'Failed.');
-    feed('start', `${name} ${r.ok ? 'up (with deps)' : 'FAILED — see log'}`);
-    if (r.ok) setTimeout(()=>{ dlg.close(); refresh(); }, 1200);
+    await fetch(`/api/components/${name}/start`, {method:'POST'});  // returns at once
+    dlg.close();
+    refresh();   // picks up live 'starting' states and begins fast-polling
   };
   dlg.showModal();
 }
@@ -377,8 +421,7 @@ document.addEventListener('keydown', e=>{
   if (e.key==='Escape'){ palette.close(); }
 });
 
-refresh();
-setInterval(refresh, 6000);
+refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>
 </html>
