@@ -681,26 +681,73 @@ async def _ody_find_mcp(name: str):
     return next((s for s in lst if s.get("name") == name), None)
 
 
+def _hermes_set_mcp(enable: bool) -> bool:
+    """Add/remove the browsermcp stdio server in ~/.hermes/config.yaml (mcp_servers).
+    No CLI (its prompts + live-connect would hang) and no connection attempt — Hermes
+    picks it up on new chats. Returns whether browsermcp is present afterwards."""
+    import os
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    path = os.path.join(home, "config.yaml")
+    if not os.path.exists(path):
+        if not enable:
+            return False
+        os.makedirs(home, exist_ok=True)
+        data = {}
+    else:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    servers = data.get("mcp_servers") or {}
+    if enable:
+        servers["browsermcp"] = {"command": "npx", "args": ["@browsermcp/mcp"]}
+    else:
+        servers.pop("browsermcp", None)
+    data["mcp_servers"] = servers
+    with open(path, "w") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+    return "browsermcp" in servers
+
+
+def _hermes_has_mcp() -> bool:
+    import os
+    path = os.path.join(os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"), "config.yaml")
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        return "browsermcp" in (data.get("mcp_servers") or {})
+    except Exception:
+        return False
+
+
 @app.get("/api/browse/status")
 async def browse_status() -> JSONResponse:
     try:
         s = await _ody_find_mcp("browsermcp")
-        return JSONResponse({"on": bool(s), "connected": (s or {}).get("status") == "connected"})
     except Exception:
-        return JSONResponse({"on": False})
+        s = None
+    hermes = _hermes_has_mcp()
+    return JSONResponse({"on": bool(s) or hermes, "odysseus": bool(s),
+                         "hermes": hermes, "connected": (s or {}).get("status") == "connected"})
 
 
 @app.post("/api/browse/toggle")
 async def browse_toggle(req: Request) -> JSONResponse:
+    """Register/remove the stdio Browser MCP in BOTH Odysseus (live API) and Hermes
+    (config.yaml, applies to new Hermes chats). One control → both components."""
     on = bool((await req.json()).get("on"))
+    log = []
     try:
         existing = await _ody_find_mcp("browsermcp")
         if on and not existing:
             r = await _ody_req("POST", "/api/mcp/servers", data=_BROWSERMCP)
-            return JSONResponse({"ok": r.status_code == 200, "on": True, "log": r.text[:300]})
-        if not on and existing:
+            log.append(f"odysseus:{r.status_code}")
+        elif not on and existing:
             r = await _ody_req("DELETE", f"/api/mcp/servers/{existing['id']}")
-            return JSONResponse({"ok": r.status_code == 200, "on": False})
-        return JSONResponse({"ok": True, "on": on})
+            log.append(f"odysseus-del:{r.status_code}")
     except Exception as e:
-        return JSONResponse({"ok": False, "log": str(e)[:200]}, status_code=502)
+        log.append(f"odysseus-err:{str(e)[:120]}")
+    try:
+        _hermes_set_mcp(on)
+        log.append("hermes:ok")
+    except Exception as e:
+        log.append(f"hermes-err:{str(e)[:120]}")
+    return JSONResponse({"ok": True, "on": on, "log": " · ".join(log)})

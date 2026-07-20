@@ -693,7 +693,7 @@ async function toggleBrowse(){
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({on})})).json();
     chip.classList.toggle('on', !!r.on);
     const note = document.getElementById('chat-note');
-    if (r.on) note.textContent = 'browser ON · install the Browser MCP Chrome extension + connect a tab';
+    if (r.on) note.textContent = 'browser ON (Hermes + Odysseus) · install the Browser MCP extension + connect a tab';
     else note.textContent = (chatMode === 'agent' ? 'web search on · shell off' : 'plain model — no tools');
   } catch {} finally { chip.style.opacity = ''; }
 }
