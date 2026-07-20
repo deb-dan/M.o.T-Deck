@@ -19,24 +19,46 @@ case "$NAME" in
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
     source data/hermes-venv/bin/activate
-    # M0: ensure Hermes has a model config (written once; existing config is never touched)
+    # M0: point Hermes's model at the harness endpoint (Jan). Patches ONLY the three
+    # model.* keys, preserving the rest of an existing config; creates a minimal file if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
-    if [[ ! -f "$HCFG" ]]; then
-      BASE_URL=$(awk '/^  hermes_llm:/{f=1} f && /base_url:/{print $2; exit}' harness.yaml)
-      MODEL=$(awk '/^  hermes_llm:/{f=1} f && /model:/{sub(/.*model:[ ]*/,""); print $1; exit}' harness.yaml)
-      if [[ -z "$MODEL" ]]; then
-        MODEL=$(curl -sf -m 4 "${BASE_URL%/}/models" \
-          | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
-      fi
-      if [[ -z "$MODEL" ]]; then
-        echo "ERROR: could not reach ${BASE_URL} or no model available."
-        echo "Open Jan, enable Settings -> Local API Server, and make sure a model is downloaded."
-        exit 1
-      fi
-      mkdir -p "$(dirname "$HCFG")"
-      printf 'model:\n  default: "%s"\n  provider: "custom"\n  base_url: "%s"\n' "$MODEL" "$BASE_URL" > "$HCFG"
-      echo "[harness] wrote $HCFG (model=$MODEL endpoint=$BASE_URL)"
+    BASE_URL=$(awk '/^  hermes_llm:/{f=1} f && /base_url:/{print $2; exit}' harness.yaml)
+    MODEL=$(awk '/^  hermes_llm:/{f=1} f && /model:/{sub(/.*model:[ ]*/,""); print $1; exit}' harness.yaml)
+    if [[ -z "$MODEL" ]]; then
+      MODEL=$(curl -sf -m 4 "${BASE_URL%/}/models" \
+        | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
     fi
+    if [[ -z "$MODEL" ]]; then
+      echo "ERROR: could not reach ${BASE_URL} or no model available."
+      echo "Open Jan, enable Settings -> Local API Server, and make sure a model is downloaded."
+      exit 1
+    fi
+    mkdir -p "$(dirname "$HCFG")"
+    HCFG="$HCFG" BASE_URL="$BASE_URL" MODEL="$MODEL" python3 - <<'PYPATCH'
+import os, re
+path, base, model = os.environ["HCFG"], os.environ["BASE_URL"], os.environ["MODEL"]
+if not os.path.exists(path):
+    open(path, "w").write(f'model:\n  default: {model}\n  provider: custom\n  base_url: {base}\n')
+else:
+    lines = open(path).read().split("\n")
+    out, in_model, seen = [], False, set()
+    for ln in lines:
+        if re.match(r'^model:\s*$', ln):
+            in_model = True; out.append(ln); continue
+        if in_model and re.match(r'^\S', ln):  # left the model block
+            for k, v in (("default", model), ("provider", "custom"), ("base_url", base)):
+                if k not in seen: out.append(f'  {k}: {v}')
+            in_model = False
+        if in_model:
+            m = re.match(r'^  (default|provider|base_url):', ln)
+            if m:
+                k = m.group(1); seen.add(k)
+                out.append({"default": f'  default: {model}', "provider": '  provider: custom',
+                            "base_url": f'  base_url: {base}'}[k]); continue
+        out.append(ln)
+    open(path, "w").write("\n".join(out))
+print(f"[harness] Hermes model -> {model} @ {base}")
+PYPATCH
     ( cd vendor/hermes && \
       nohup python -m gateway.run \
         >>../../data/logs/hermes.log 2>&1 & echo $! > ../../data/hermes.pid )
