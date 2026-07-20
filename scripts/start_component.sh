@@ -139,23 +139,30 @@ else:
 print(f"[harness] Hermes -> {managed['default']} @ {managed['base_url']} (key set, ctx {managed['context_length']})")
 PYPATCH
     PORT=9119
-    pkill -f "hermes serve" 2>/dev/null || true   # clear any stale server
+    # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
+    # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in
+    # the Harness tab, not a browser. --skip-build: serve the prebuilt web_dist from
+    # install (no npm at start time). If web_dist is missing it degrades to headless
+    # (API only), so a missing build never blocks startup.
+    hermes dashboard --stop >/dev/null 2>&1 || true      # clean stop of any web server
+    pkill -f "hermes (dashboard|serve)" 2>/dev/null || true
+    lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     : > data/logs/hermes.log
-    nohup hermes serve --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
+    nohup hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
     echo $! > data/hermes.pid
     up=0
     for _ in $(seq 1 25); do
       if curl -sf -m 1 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1 \
          || nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then up=1; break; fi
-      kill -0 "$(cat data/hermes.pid)" 2>/dev/null || { echo "ERROR: hermes serve exited on launch. Last log lines:"; tail -15 data/logs/hermes.log; exit 1; }
+      kill -0 "$(cat data/hermes.pid)" 2>/dev/null || { echo "ERROR: hermes dashboard exited on launch. Last log lines:"; tail -15 data/logs/hermes.log; exit 1; }
       sleep 1
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] hermes serve up on :${PORT} (model=$MODEL @ $BASE_URL)"
+      echo "[harness] hermes dashboard up on http://127.0.0.1:${PORT} (UI + API; model=$MODEL @ $BASE_URL)"
       echo "[harness] tool-calling proof: run scripts/test_hermes.sh"
     else
-      echo "ERROR: hermes serve did not open :${PORT} within 25s. Last log lines:"
+      echo "ERROR: hermes dashboard did not open :${PORT} within 25s. Last log lines:"
       tail -15 data/logs/hermes.log
       exit 1
     fi

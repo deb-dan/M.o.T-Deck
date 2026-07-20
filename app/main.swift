@@ -10,12 +10,15 @@ import WebKit
 
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
+let hermesURL = URL(string: "http://127.0.0.1:9119")!
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
     var window: NSWindow!
     var panelWV: WKWebView!      // Mission Control (:8700)
     var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
     var odyLoaded = false
+    var hermesWV: WKWebView!     // Hermes dashboard (:9119), lazy-loaded on first select
+    var hermesLoaded = false
     var bridgeProcess: Process?
     var spawnedBridge = false
 
@@ -41,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         container.addSubview(tabBar)
 
         let seg = NSSegmentedControl(
-            labels: ["Mission Control", "Odysseus"],
+            labels: ["Mission Control", "Odysseus", "Hermes"],
             trackingMode: .selectOne,
             target: self, action: #selector(tabChanged(_:)))
         seg.selectedSegment = 0
@@ -60,12 +63,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         let userScript = WKUserScript(source: inject, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         odyCfg.userContentController.addUserScript(userScript)
         odyWV = WKWebView(frame: .zero, configuration: odyCfg)
-        for wv in [panelWV!, odyWV!] {
+
+        // Hermes runs its own polished dark UI — no skin injection (unlike Odysseus).
+        hermesWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+
+        for wv in [panelWV!, odyWV!, hermesWV!] {
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.uiDelegate = self          // route target=_blank links to the default browser
             container.addSubview(wv)
         }
         odyWV.isHidden = true
+        hermesWV.isHidden = true
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -82,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
             odyWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             odyWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             odyWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            hermesWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            hermesWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            hermesWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            hermesWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
         window.center()
@@ -95,9 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         let idx = sender.selectedSegment
         panelWV.isHidden = (idx != 0)
         odyWV.isHidden = (idx != 1)
+        hermesWV.isHidden = (idx != 2)
         if idx == 1 && !odyLoaded {
             odyLoaded = true
             odyWV.load(URLRequest(url: odysseusURL))
+        }
+        if idx == 2 && !hermesLoaded {
+            hermesLoaded = true
+            hermesWV.load(URLRequest(url: hermesURL))
         }
     }
 

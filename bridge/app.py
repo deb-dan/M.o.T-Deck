@@ -209,9 +209,10 @@ def install_plan(name: str) -> dict:
     plans = {
         "hermes": [
             "Create isolated venv at data/hermes-venv",
-            "pip install vendor/hermes-agent (a few hundred MB of dependencies)",
-            "Point Hermes model provider at the gearbox endpoint",
-            "Expose Hermes MCP server on port 8721 when started",
+            "pip install vendor/hermes (a few hundred MB of dependencies)",
+            "Build Hermes's own web dashboard UI (npm --workspace web → web_dist, gitignored)",
+            "Model provider points at the runner endpoint (patched on Start)",
+            "Serve on port 9119 when started (hermes dashboard: web UI + JSON-RPC/WS API)",
         ],
         "odysseus": [
             "Create isolated venv at data/odysseus-venv",

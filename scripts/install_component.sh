@@ -11,8 +11,9 @@ NAME="${1:-}"; YES="${2:-}"
 plan_hermes="PLAN (hermes):
   - create venv data/hermes-venv (isolated; vendor/ stays pristine)
   - pip install -e vendor/hermes[all]  (~ a few hundred MB of deps)
-  - write hermes config pointing its provider at the gearbox endpoint
-  - expose MCP server on port 8721 when started"
+  - build Hermes's own web dashboard UI (npm --workspace web → hermes_cli/web_dist/, gitignored)
+  - config points its model provider at the runner endpoint (patched on Start)
+  - serve on port 9119 when started (hermes dashboard: UI + JSON-RPC/WS API)"
 
 plan_odysseus="PLAN (odysseus):
   - create venv data/odysseus-venv
@@ -35,6 +36,23 @@ if [[ "$NAME" == "hermes" ]]; then
   source data/hermes-venv/bin/activate
   uv pip install -e "vendor/hermes[all]" || uv pip install -e "vendor/hermes"
   deactivate
+  # Build Hermes's own web dashboard SPA. `hermes dashboard --skip-build` serves the
+  # prebuilt output from vendor/hermes/hermes_cli/web_dist/ (both node_modules/ and
+  # web_dist/ are gitignored by upstream → this never dirties the submodule / blocks
+  # pin-bumps). The `web` workspace has a file: dep on apps/shared (@hermes/shared),
+  # so the install must run at the hermes root with --workspace web (not inside web/).
+  if command -v npm >/dev/null 2>&1; then
+    echo "[harness] building Hermes web dashboard UI (npm --workspace web)…"
+    ( cd vendor/hermes \
+      && npm install --workspace web --no-audit --no-fund \
+      && npm run build --workspace web )
+    [[ -f vendor/hermes/hermes_cli/web_dist/index.html ]] \
+      && echo "[harness] Hermes web UI built → hermes_cli/web_dist/" \
+      || echo "[harness] WARN: Hermes web build finished but web_dist/index.html not found."
+  else
+    echo "[harness] WARN: npm not found — Hermes dashboard UI not built."
+    echo "[harness]   Install Node 18+ then: (cd vendor/hermes && npm install --workspace web && npm run build --workspace web)"
+  fi
 else
   uv venv "data/odysseus-venv" --python "$PY" 2>/dev/null || true
   # shellcheck disable=SC1091
