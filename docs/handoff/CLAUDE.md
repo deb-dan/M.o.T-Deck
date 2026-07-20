@@ -13,13 +13,28 @@
 
 `agent-kit/DELEGATION-DOCTRINE.md` applies to this project in full, with **one amendment (2026-07-20): all UI design / look-and-feel work is Fable 5 only** — builder subagents may implement UI solely from a Fable-authored, decision-free spec. See `08_Interface_Strategy.md` §Governance.
 
-## ⚠️ FABLE-5 CONTINUITY / HANDOFF RULE (critical — Debi 2026-07-20)
+## 🚨 MODEL IDENTITY PROTOCOL (Debi 2026-07-21 — NEVER violate)
 
-If Fable 5's context/token runs out mid-work, the ONLY model that may pick this up is **Opus 4.8 (high reasoning)** — not Sonnet, not any other model. Whoever continues MUST follow this rule so nothing is lost or invented:
-- **Do FUNCTION only, never new look-and-feel.** Build/finish features in the EXISTING editorial design system already in `bridge/panel/index.html` (the `:root` vars, serif/mono/cream/gold, restrained, consistent). Apply the established language; do NOT author new colors, layouts, type scales, or "styles inspired by X". That is Fable's job.
-- **Leave a marker, don't guess.** Where a real aesthetic decision is needed, ship the working function in the plainest in-system form and add a `<!-- FABLE: style this -->` note (or a CLAUDE.md TODO) for Fable to refine when back. Never block a feature on styling.
-- **Aesthetic references Debi likes (for the Fable pass, NOT to copy):** OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio. Fable authors a decision-free spec from these; builders implement.
-- Everything else (backend, proxies, wiring, Bridge, scripts) is normal engineering — any model proceeds per the delegation doctrine (read code, one evidenced hypothesis, no trial-and-error).
+**Background (violation archaeology):** on 2026-07-20/21 an Opus 4.8 session ran this project as if it were the orchestrator — making subtle architectural decisions unilaterally and presenting them as settled — while the chat UI mislabeled it "Fable 5". Debi's verdict: must NEVER happen again. Hence:
+
+1. **Declare your model at the START of every session** — from your actual runtime identity, never from the UI label (the composer can mislabel). State it in the first reply.
+2. **Fable 5 is THE ORCHESTRATOR of this project** (per `agent-kit/DELEGATION-DOCTRINE.md` §1): design taste, orchestration, decomposition, root-cause debugging, and **final QA of every diff before it ships**. This covers ENGINEERING, not just UI. The UI amendment (Fable-only look-and-feel) is an addition on top, not a narrowing.
+3. **If you are NOT Fable 5** (only **Opus 4.8 high** may substitute, and only when Fable is genuinely unavailable): you are a **BUILDER in temporary Opus-first mode**. You MUST (a) say so explicitly at session start AND **repeat it at every major decision point** — e.g. "⚠️ Opus-first mode (builder): this needs Fable QA"; (b) prefer well-specified mechanical work; (c) **queue genuinely subtle decisions** (architecture, wiring strategy, state machines, security surfaces, anything silent-when-wrong) as *shipped-unverified, pending Fable QA* — never present them as settled; (d) never claim or imply you are Fable.
+4. **Every subtle decision made in Opus-first mode gets a `⚠️ PENDING FABLE QA` tag in this file** until Fable reviews it. Fable's review verdicts get recorded (verified / fixed / rejected).
+5. If the user addresses "Fable" and you are not Fable, **correct them immediately.**
+
+## FABLE-5 UI CONTINUITY (unchanged)
+
+- Non-Fable builders do FUNCTION only, in the EXISTING editorial design system (`:root` vars, serif/mono/cream/gold); no new colors/layouts/type scales. Leave `<!-- FABLE: style this -->` markers where aesthetics are needed; never block function on styling.
+- **Aesthetic references Debi likes (for the Fable pass, NOT to copy):** OpenAI chat, Odysseus, Cherry Studio (CherryIn), Jan AI, LM Studio.
+
+## FABLE QA OF THE 2026-07-20/21 OPUS SESSION (done 2026-07-21, by Fable 5)
+
+Cross-checked every subtle decision the Opus session shipped. Verdicts:
+- **Model switch (`_do_switch`)** — ❌ HAD BUGS, **fixed by Fable**: (1) exit codes were never checked → a failed model load re-wired components and reported "active: <new>" falsely; now checks each step, reports failures, and **rolls harness.yaml back to the previous model** on load failure. (2) double-switch race (busy flag set inside the thread) → busy now set before spawn.
+- **`_hermes_set_mcp` yaml write** — ⚠️ was non-atomic (Opus self-flagged), **fixed by Fable**: temp file + `os.replace`.
+- **Panel attribute injection** — ❌ found by Fable, **fixed**: `esc()` doesn't encode quotes but was used inside `href="…"` (source pills, model-card links) → crafted URLs in fetched content could break out. Added `escAttr()`; mdCard link regex now excludes quotes.
+- **Verified sound as shipped:** Hermes-config-write approach (vs the hang-prone `hermes mcp add` CLI), single Browse toggle flipping both components (side-effect noted for a later per-component UX), session-mgmt proxy endpoints, HF browser endpoints, dashboard/cron/HERMES_DESKTOP switch, 3-tab Swift shell, Models pane view/switch design (with the fixes above).
 
 ## FABLE-5 UI QUEUE (pending visual passes — accumulated, Debi-flagged)
 
@@ -29,7 +44,7 @@ These are look-and-feel only (Fable's lane). The FUNCTION is built + Mac-verifie
 3. **BROWSE chip** (`#mode-browse`) — too prominent/large; size it as a subtle chip beside Agent/Chat.
 4. General: typographic hierarchy + colour restraint + whitespace (the "premium vs ordinary" levers already noted in M2 findings).
 
-**Engineering notes recorded for continuity (Opus-4.8-high lane, NOT Fable):** Browse wiring writes Hermes `mcp_servers` directly to `~/.hermes/config.yaml` (NOT `hermes mcp add` — its interactive prompts + live-connect would hang a subprocess; yaml round-trip preserves other keys, drops only comments/order). One Browse control flips BOTH components (toggling off removes from both). Full detail in the Browse-slice-2 note below.
+**Engineering notes (builder-shipped, now FABLE-QA'D 2026-07-21 — see QA section above):** Browse wiring writes Hermes `mcp_servers` directly to `~/.hermes/config.yaml` (NOT `hermes mcp add` — its interactive prompts + live-connect would hang a subprocess; yaml round-trip preserves other keys, drops only comments/order; write now atomic). One Browse control flips BOTH components (toggling off removes from both). Full detail in the Browse-slice-2 note below. NOTE: engineering is NOT "not Fable's lane" — Fable orchestrates + QAs all of it; builders implement.
 
 ## Active roadmap (agreed with Debi 2026-07-20, in order)
 

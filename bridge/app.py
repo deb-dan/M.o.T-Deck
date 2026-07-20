@@ -536,14 +536,28 @@ def api_models() -> JSONResponse:
 _SWITCH = {"busy": False, "log": ""}
 
 
-def _do_switch(new_id: str, restart_hermes: bool, restart_ody: bool) -> None:
+def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
+    """Fable QA hardening: check exit codes (a failed load must NOT report success),
+    and roll harness.yaml back to the previous model on failure so the next Start
+    uses a known-good model instead of retrying a broken one."""
     try:
-        _SWITCH.update(busy=True, log=f"loading {new_id}…")
-        _script("start_component.sh", "runner")
+        _SWITCH["log"] = f"loading {new_id}…"
+        r = _script("start_component.sh", "runner")
+        if r.returncode != 0:
+            _set_runner_model(old_id)   # rollback pin; runner is down but recoverable
+            tail = (r.stdout + r.stderr)[-400:]
+            _SWITCH["log"] = f"FAILED to load {new_id} — reverted to {old_id}. {tail}"
+            return
         if restart_hermes:
-            _SWITCH["log"] = "re-wiring Hermes…"; _script("start_component.sh", "hermes")
+            _SWITCH["log"] = "re-wiring Hermes…"
+            if _script("start_component.sh", "hermes").returncode != 0:
+                _SWITCH["log"] = f"active: {new_id} — but Hermes restart FAILED (see logs)"
+                return
         if restart_ody:
-            _SWITCH["log"] = "re-wiring Odysseus…"; _script("start_component.sh", "odysseus")
+            _SWITCH["log"] = "re-wiring Odysseus…"
+            if _script("start_component.sh", "odysseus").returncode != 0:
+                _SWITCH["log"] = f"active: {new_id} — but Odysseus restart FAILED (see logs)"
+                return
         _SWITCH["log"] = f"active: {new_id}"
     except Exception as e:
         _SWITCH["log"] = f"switch error: {str(e)[:200]}"
@@ -563,9 +577,11 @@ async def api_switch_model(req: Request) -> JSONResponse:
     if not new_id:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
     c = cfg()
+    old_id = (c.get("runner", {}) or {}).get("model") or ""
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
+    _SWITCH.update(busy=True, log="starting…")   # set BEFORE the thread: no double-switch race
     _set_runner_model(new_id)
-    threading.Thread(target=_do_switch, args=(new_id, hermes_up, ody_up), daemon=True).start()
+    threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
 
 
@@ -702,8 +718,12 @@ def _hermes_set_mcp(enable: bool) -> bool:
     else:
         servers.pop("browsermcp", None)
     data["mcp_servers"] = servers
-    with open(path, "w") as f:
+    # Fable QA hardening: atomic write (temp + os.replace) so a concurrent save from
+    # Hermes's own dashboard can never observe a half-written config.
+    tmp = path + ".harness-tmp"
+    with open(tmp, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
+    os.replace(tmp, path)
     return "browsermcp" in servers
 
 
