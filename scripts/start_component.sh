@@ -22,8 +22,9 @@ case "$NAME" in
     # M0: point Hermes's model at the harness endpoint (Jan). Patches ONLY the three
     # model.* keys, preserving the rest of an existing config; creates a minimal file if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
-    BASE_URL=$(awk '/^  hermes_llm:/{f=1} f && /base_url:/{print $2; exit}' harness.yaml)
-    MODEL=$(awk '/^  hermes_llm:/{f=1} f && /model:/{sub(/.*model:[ ]*/,""); print $1; exit}' harness.yaml)
+    BASE_URL=$(awk '/^  hermes_llm:/{f=1; next} f && /^    base_url:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*base_url:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    MODEL=$(awk '/^  hermes_llm:/{f=1; next} f && /^    model:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     if [[ -z "$MODEL" ]]; then
       MODEL=$(curl -sf -m 4 "${BASE_URL%/}/models" \
         | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
