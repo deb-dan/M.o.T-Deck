@@ -50,9 +50,14 @@
 - Dark tab bar (`window.appearance = .darkAqua` + near-black strip in `app/main.swift`). Sidebar Components entries clickable → scroll-to-card + gold highlight (`jumpToCard`, cards get `id=card-<name>`). Repo tip `85d2ca6`.
 - **macOS gotcha (recorded):** `open dist/Harness.app` re-focuses a running instance instead of relaunching the new build — must `pkill -x Harness` first. This masked the change once.
 
+## M2 slice 2b DONE + design findings (2026-07-20)
+- Injected a "Harness skin" `WKUserScript` into the Odysseus web view (`app/main.swift`) overriding `--font-family` (unset → Fira Code mono everywhere) to a sans stack; code blocks keep explicit Fira Code. Colors left to Odysseus's Theme editor. Repo tip `bd61553`.
+- **"Premium vs ordinary" diagnosis (Debi's observation; keep for Rung D native panes).** What makes Mission Control / Jan / LM Studio / Cherry feel premium and Odysseus feel ordinary, in 4 levers: (1) **typographic hierarchy** — big serif display title + small mono small-caps labels + body; Odysseus is typographically flat (uniform size/weight). (2) **colour restraint** — one accent (gold) used sparingly on neutral; Odysseus paints coral everywhere (biggest "cheap" tell). (3) **whitespace** — generous breathing room vs Odysseus's dense, border-on-everything layout. (4) **serif+sans pairing** — the editorial signature. **Decision: do NOT chase pixel-parity via fragile injected CSS (tripwire).** True parity = Rung D native panes over Odysseus's API in our aesthetic — a deliberate future milestone.
+
 ## Next actions (in order)
 
-1. **M2 slice 2b — reskin Odysseus's own UI.** Approach decided: FIRST try Odysseus's built-in **Theme** editor (its left-nav "Theme" item) for colors/fonts — native + update-safe. Only for things it can't do (arrangement, hiding nav clutter, specific fonts) inject harness CSS into the odyWV via `WKUserScript` (Odysseus CSP `style-src 'unsafe-inline'` allows injected `<style>`; user scripts bypass script-src). Need Debi's specifics on what feels "weird" before deep CSS.
+1. **Web/search: install native SearXNG** (04 §Prototypes + shared-search). Web search ALREADY works via the `ddgs` DuckDuckGo fallback; SearXNG is the privacy upgrade (self-hosted, no queries to DDG) and the planned shared backend for Odysseus DeepResearch + MCP search. Native from-source build on macOS/arm64 is the riskiest install so far (compiled deps) — do install-first, verify, then wrap as a managed component.
+2. **Rung D native panes (future):** native Mission Control screens over Odysseus's API in the editorial aesthetic — the real "premium" path (see design findings above).
 2. **Web/search:** install the native SearXNG component (04 §Prototypes spike + shared-search) so Deep Research + Agent web_search use it instead of the DDG fallback.
 3. Optional M1 polish: cross-dependency health cascade, install-time closure.
 
