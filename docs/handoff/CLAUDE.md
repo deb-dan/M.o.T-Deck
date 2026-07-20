@@ -61,9 +61,16 @@
 - **Operating note:** Odysseus falls back to DDG if SearXNG is down at search time (one old `Connection refused` explained by pre-install search). Dependency order guarantees searxng-before-odysseus for panel starts.
 - **The harness now matches the full architecture diagram:** Bridge + Runner (headless Jan) + Hermes + Odysseus + SearXNG, one native window, all local, all private. Repo tip `e514f9d`.
 
+## Rung D slice 1 DONE (verified 2026-07-20) — native Chat pane
+
+- **Mission Control now has a native Chat pane** (sidebar + ⌘K "Open chat"): our editorial UI over Odysseus's API. Bridge-side proxy `/api/ody/*` (CORS default blocks browser-direct from :8700; Bridge logs in as admin via creds in harness.yaml, cookie + re-login on 401). Session find-or-create "Mission Control" bound to `local-jan`; SSE (`data:` lines over chunked POST, `[DONE]` terminator) re-streamed to the panel. Repo tip `951bc94`.
+- **Transparency contract (the pattern for ALL future panes):** thinking streams OPEN live in italic serif, auto-collapses when the answer starts, expandable after — and simply absent for non-thinking models; tool lines show `running… → done`; web sources render as concise pills (truncated title + host) behind an expandable chip; links open in the default browser via Bridge `/api/open` (macOS `open`; webview target=_blank is unreliable — WKUIDelegate handler also added for Odysseus-tab links); minimal safe markdown (bold/code) rendered on completion; fixed-height column layout — messages scroll internally, input pinned.
+- **Fan-out consequence:** if Odysseus admin password changes, update `components.odysseus.admin_password` in harness.yaml (the proxy logs in with it).
+
 ## Next actions (in order)
 
-1. **Session's natural next milestones (pick next time):** Rung D native panes (the premium interface + search-backend chooser), cross-dependency health cascade, or M3 Hermes deepening (feed integration, ⌘K dispatch).
+1. **Rung D next slices:** session management in the Chat pane (list/switch/new), Deep Research pane (launch/progress/report in our aesthetic), search-backend chooser (maps to Odysseus `search_provider`/fallback chain).
+2. Then M3 Hermes-as-coworker (⌘K dispatch, feed integration, shared skills), then robustness polish (health cascade, install-time closure) — Debi's chosen order.
 2. **Rung D native panes (future):** native Mission Control screens over Odysseus's API in the editorial aesthetic — the real "premium" path (see design findings above).
    - **Debi request (2026-07-20):** when the unified interface lands, expose a **search-backend chooser** (SearXNG vs others). Maps directly onto Odysseus's existing `search_provider` + `search_fallback_chain` settings (src/settings.py) — a UI setting + fan-out, not new engineering.
    - **Backlog:** investigate Jan desktop's native web-search (MCP or built-in tool?) for possible later incorporation.
