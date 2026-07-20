@@ -24,22 +24,39 @@
 
 ## State (2026-07-20)
 
-- **Code moved: the scaffold now lives at `./harness/`** (git repo + vendor submodules intact; `data/` venvs and `dist/` deliberately left behind — both were broken by the folder's earlier relocation and must be regenerated: `./scripts/bootstrap.sh`, panel installs, `./scripts/build_app.sh`). The old `Harness project` folder is a frozen archive.
-- **Mid-M0.** Full code audit done (07 §Code audit): Hermes silent-start root cause FOUND — v1 runs `python mcp_serve.py --port 8721`, but that file is a stdio server with no `--port` flag, and Hermes never got a model config (gearbox was a stub). Fix = M0 tasks 1–2 below, not a mystery anymore. Harness.app needs rebuild (stale hardcoded path in `app/Config.swift`). Odysseus not installed; no runner slot yet.
-- All licensing corrected and verified from LICENSE files: Hermes MIT, Odysseus MIT, Jan Apache-2.0; only SearXNG is AGPL.
-- Stall cause of v1 identified: silent failures + multi-step manual installs → one-switch provisioning justified as the fix; error surfacing + scripted installs are the load-bearing part, dependency-closure dialog is polish.
+- **Code moved: the scaffold now lives at `./harness/`** (git repo + vendor submodules intact; `data/` venvs and `dist/` were regenerated on the Mac via `./scripts/bootstrap.sh`). The old `Harness project` folder is a frozen archive.
+- **M0 Hermes half DONE (verified 2026-07-20).** Bridge online :8700; Hermes green via `hermes serve` :9119; `scripts/test_hermes.sh` returned `PASS` — Hermes executed a shell tool call through Jan (`Qwen3_6-35B-A3B-…-IQ4_XS` @ :1337). Latest repo commit family: `d786fb8` (+ Jan-side context fix, no code).
+- **Remaining M0:** install Odysseus natively from the panel (:7860), first chat round-trip, both cards green. Then the 04 §Prototypes spikes before M1.
+- All licensing verified from LICENSE files: Hermes MIT, Odysseus MIT, Jan Apache-2.0; only SearXNG is AGPL.
 
-## Next actions (in order — from 04 §M0, updated after the code audit)
+## Next actions (in order)
 
-0. Re-provision in the new location: `cd harness && ./scripts/bootstrap.sh --yes` (recreates bridge venv), reinstall Hermes from the panel, `./scripts/build_app.sh` (regenerates Config.swift → working Harness.app).
-1. Fix Hermes start: replace the dead `python mcp_serve.py --port 8721` invocation in `scripts/start_component.sh` with the Hermes daemon per the new topology, and surface start-stderr on the status card (v1 only shows the last line).
-2. Write `~/.hermes/config.yaml` directly (`provider: custom`, base_url of whatever runs today; LM Studio :1234/v1 is path of least resistance). Never run the Hermes wizard. Tool-calling model mandatory.
-3. Install Odysseus natively from the panel; Bridge writes `.env` (`LLM_HOST`, `SEARXNG_INSTANCE`, `APP_PORT: 7860`).
-4. First handshake: Hermes completes a tool-calling task; Odysseus answers a chat; both green.
-5. Then the 04 §Prototypes spikes (headless Jan, CLI download, WKWebView embed, native SearXNG) before M1 commitment.
+1. **Install Odysseus** from the panel (native Python, :7860). Bridge writes `.env` (`LLM_HOST` → Jan :1337, `SEARXNG_INSTANCE`, `APP_PORT: 7860`). Expect its Start/health to be simpler than Hermes — a normal web server on a real port, no daemon ambiguity.
+2. **First full handshake:** Odysseus answers a chat through Jan; Hermes already proven. Both cards green = M0 complete.
+3. Then the 04 §Prototypes spikes (headless Jan, CLI download, WKWebView embed, native SearXNG) before M1 commitment.
+
+## Operating preconditions (Hermes)
+
+- Jan desktop must be running with **Settings → Local API Server ON** (:1337) and the model **loaded at ≥64K context** (set Context Size to 65536 in Jan's model settings, reload). M1 removes this manual step when the runner slot manages the endpoint.
+- To (re)apply Hermes config + start: `./scripts/start_component.sh hermes`; to prove tool-calling: `./scripts/test_hermes.sh`.
+
+## Verified learnings — failure archaeology (M0 Hermes, 2026-07-20)
+
+Recorded so no one re-fights these. Format: symptom → root cause → evidence → status.
+
+1. **Hermes "start" died silently (empty log).** → v1 ran `python mcp_serve.py --port 8721`, but that file is a stdio MCP server with no `--port`; and `gateway.run` (tried next) is the *messaging* daemon that idles/gets reaped with no platforms. Hermes is **invoke-on-demand**, not a daemon. → Verified in vendored code + Opus investigation. → FIXED: the one legitimate persistent, port-health-checkable surface is `hermes serve` (:9119, always headless); that's what `start_component.sh` launches. The actual tool-calling proof is `hermes -z` (`scripts/test_hermes.sh`).
+2. **Config wrote `default: #`.** → awk read the `#` from the trailing comment on the `model:` line in harness.yaml. → FIXED: strip `#.*` + whitespace; empty → auto-pick first model from `/v1/models`.
+3. **"HTTP 400: model name is missing".** → consequence of #2 (model was `#`). → FIXED with #2.
+4. **"Context length exceeded (43 tokens). Cannot compress further."** → NOT a Hermes config problem. `model.context_length` is honored internally and passes Hermes's hard **64,000-token minimum gate** (`agent/model_metadata.py:185`, `agent_init.py:1842`), but it is **never sent to the server**. The real limit is the context window the **model is loaded at in Jan** (llama.cpp `n_ctx`). Jan's default was too small for Hermes's system-prompt + 70+ tool schemas → Jan rejected the request → Hermes compressed to ~43 tokens, couldn't shrink further, bailed (`agent/conversation_loop.py:3624`). → FIXED **Jan-side**: set the model's Context Size to ≥65536 and reload. Keep `model.context_length: 65536` in `~/.hermes/config.yaml` (needed to pass the gate + match the real window).
+
+**Process lesson (Debi, 2026-07-20):** stop trial-and-error patching. "Cannot compress further" against a llama.cpp backend = server-side window rejection — diagnosable from the source on first sight. Standard now: read the code, form ONE evidenced hypothesis, then act. Both Opus subagent investigations produced the correct fix in a single pass — delegate subtle debugging early.
+
+## Git sync rule (important — cost us a full cycle)
+
+Always sync the Mac clone with: `git fetch origin && git reset --hard origin/main`. Plain `git reset --hard origin/main` without a fetch resets to a **stale** local ref and silently reverts pushed fixes (this happened once and looked like "nothing changed"). Remote is truth; commits are pushed from the assistant's side per session.
 
 ## Standing cautions
 
-- Doc freeze: no fifth planning pass until the M0 handshake is green.
-- v1 gotchas (07 §3): zsh `~` in quotes; uvicorn `--log-config /dev/null` crash; `chmod +x` new scripts; drain stdin before prompts; `vendor/hermes` not `vendor/hermes-agent`.
-- When any fact is corrected, grep the whole doc set (especially the 00 primer) for the stale value — the primer propagated a wrong license once already.
+- Doc freeze: no fifth planning pass until the full M0 handshake (Hermes + Odysseus both green) is done.
+- v1 gotchas (07 §3): zsh `~` in quotes; uvicorn `--log-config /dev/null` crash; `chmod +x` new scripts (the sandbox copy loses execute bits); drain stdin before prompts; `vendor/hermes` not `vendor/hermes-agent`.
+- When any fact is corrected, grep the whole doc set (especially the 00 primer) for the stale value.
