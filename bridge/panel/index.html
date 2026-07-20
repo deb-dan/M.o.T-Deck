@@ -855,9 +855,17 @@ async function hfSearch(){
   } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; }
 }
 
-// Light, safe markdown for the in-app model card (images stripped; links open externally).
+// Light, safe markdown for the in-app model card. HF READMEs mix markdown + raw HTML,
+// so we strip HTML (keeping link text) BEFORE escaping, then render a few md constructs.
 function mdCard(md){
-  md = (md || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '');            // drop images
+  md = (md || '');
+  md = md.replace(/<!--[\s\S]*?-->/g, '');                                  // html comments
+  md = md.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '');                   // script/style
+  md = md.replace(/!\[[^\]]*\]\([^)]*\)/g, '');                             // md images
+  md = md.replace(/<a\s[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)'); // html links → md
+  md = md.replace(/<img[^>]*>/gi, '');                                      // html images
+  md = md.replace(/<\/?[a-zA-Z][^>]*>/g, '');                              // strip remaining html tags
+  md = md.replace(/\n{3,}/g, '\n\n');                                       // collapse blank runs
   let h = esc(md);
   h = h.replace(/```([\s\S]*?)```/g, (m, c) => '<pre>' + c + '</pre>');
   h = h.replace(/^#{1,6}\s?(.*)$/gm, '<b>$1</b>');
