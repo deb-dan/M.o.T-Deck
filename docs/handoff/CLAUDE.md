@@ -22,6 +22,13 @@
 | 08_Interface_Strategy.md | Interface direction: reskin webview → deep-link tabs → native panes ladder; Fable-5-only UI rule. |
 | mcp*.json, Top-40, LM-Studio guide | Config inventory (05 §5). |
 
+## State (2026-07-20, later — M1 core done)
+
+- **M1 runner slot + fan-out DONE (verified).** The Bridge manages headless **Jan on :6767** as a "Runner" component (panel card, start/stop/health). `jan serve <model> --port 6767 --api-key <key> --ctx-size <ctx> --detach`; stop-by-port. Both components repointed to the runner and verified with **desktop Jan OFF**: Hermes `test_hermes.sh` = PASS, Odysseus chat replies (~74 tok/s). Harness is now self-contained — no desktop app needed. Repo tip `1cf7f3e`.
+- **Single source of truth for the model endpoint:** the `runner:` block in harness.yaml (endpoint + api_key + model + ctx_size). Hermes start patches `~/.hermes/config.yaml` model.{default,provider,base_url,api_key,context_length}; Odysseus start runs `seed_odysseus_jan.py` (upserts the `local-jan` endpoint by stable id + sets default model). `inference.hermes_llm` removed.
+- **Remaining M1 (not yet built):** the full one-switch provisioning pipeline — dependency-closure (flip Odysseus → also brings up runner+model), single approval dialog, state machine (off→…→ON, degraded/needs-repair), Repair verb. The runner + fan-out are its building blocks; the orchestration layer on top is next.
+- **New M1 failure archaeology:** seed matched the endpoint by `base_url`, but with a fixed id — when the URL changed (:1337→:6767) it tried to INSERT a duplicate id → PK collision → silent rollback → Odysseus stuck on the dead :1337 (Error 503). FIX: match by stable id, update in place (`1cf7f3e`).
+
 ## State (2026-07-20)
 
 - **Code moved: the scaffold now lives at `./harness/`** (git repo + vendor submodules intact; `data/` venvs and `dist/` were regenerated on the Mac via `./scripts/bootstrap.sh`). The old `Harness project` folder is a frozen archive.
@@ -47,10 +54,12 @@
 - Metal shader compile warning appears in serve.log but is non-fatal (model loads + serves).
 - Remaining spikes (not yet run): native SearXNG on macOS/arm64, WKWebView embed of :7860, HF API model query, `jan serve <hf-repo>` CLI download.
 
-## Operating preconditions (both components)
+## Operating preconditions (as of M1 core — desktop Jan NO LONGER required)
 
-- **Jan desktop must be running** with Settings → Local API Server ON (:1337) and the model **loaded at ≥64K context** (Context Size 65536, reload). Both Hermes and Odysseus depend on this until M1's runner slot manages the endpoint.
-- Start: `./scripts/start.sh` (bridge), then panel Start (or `./scripts/start_component.sh hermes|odysseus`). Odysseus login: admin / admin123 — **change after first login**.
+- Start order: `./scripts/start.sh` (bridge) → panel **Start on Runner** (launches headless Jan :6767; loads model ~60–90s) → then Start Hermes and Odysseus (they repoint to :6767 on start). Or scripts: `start_component.sh runner|hermes|odysseus`.
+- **Desktop Jan should be QUIT** when using the runner (avoids double-loading the 35B on 64GB). The `jan` CLI (installed by desktop Jan's first launch, at `~/.local/bin/jan`) is all the runner needs.
+- Stop the runner by PORT (panel Stop does this): `lsof -ti tcp:6767 | xargs kill -9`. Killing the printed PID alone leaves an orphan holding :6767.
+- Odysseus login: admin / admin123 — **change after first login**. Runner ctx must stay ≥64K (Hermes floor); the desktop-authored preset currently forces 95536.
 
 ## Operating preconditions (Hermes)
 
