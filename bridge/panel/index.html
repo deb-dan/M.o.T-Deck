@@ -111,7 +111,13 @@
         color:var(--dim); margin-top:14px; }
 
   /* ---------- chat pane (Rung D, native) ---------- */
-  #chat-scroll { max-width:760px; margin-top:6px; }
+  /* The pane is a fixed-height column: header + internally-scrolling messages + pinned input.
+     The page itself never grows — only #chat-scroll scrolls. */
+  #view-chat:not([hidden]) { display:flex; flex-direction:column;
+      height:calc(100vh - 128px); overflow:hidden; }
+  #chat-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
+      max-width:760px; width:100%; margin-top:6px; padding-right:10px;
+      scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
   .cmsg { margin:0 0 30px; }
   .cmsg .who { font:10.5px var(--mono); letter-spacing:.22em; text-transform:uppercase;
                color:var(--faint); margin-bottom:8px; }
@@ -138,7 +144,8 @@
   .cmsg details.think .tbody { font:italic 13px var(--serif); color:var(--dim); line-height:1.7;
       border-left:1px dashed var(--line2); padding:8px 0 8px 14px; margin-top:8px;
       white-space:pre-wrap; max-height:280px; overflow-y:auto; }
-  #chat-bar { max-width:760px; margin-top:8px; border-top:1px solid var(--line); padding-top:14px; }
+  #chat-bar { flex:none; max-width:760px; width:100%; margin-top:8px;
+      border-top:1px solid var(--line); padding-top:14px; }
   #chat-modes { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
   .mode-chip { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
                color:var(--dim); border:1px solid var(--line2); border-radius:7px;
@@ -513,7 +520,7 @@ function addMsg(role, text) {
   return wrap;
 }
 
-function scrollChat(){ const m=document.getElementById('chat-msgs'); m.lastElementChild?.scrollIntoView({block:'end'}); }
+function scrollChat(){ const sc=document.getElementById('chat-scroll'); sc.scrollTop = sc.scrollHeight; }
 
 async function sendChat() {
   if (chatBusy || !chatSid) return;
