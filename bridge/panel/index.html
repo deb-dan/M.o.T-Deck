@@ -506,6 +506,14 @@ function setMode(m) {
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
+function openExt(e, url) {
+  // Route through the Bridge → macOS `open` → default browser. Works identically
+  // inside the app's webview and in a normal browser tab.
+  e.preventDefault();
+  fetch('/api/open', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({url})});
+}
+
 // Minimal, safe markdown: escape everything, then re-introduce **bold** and `code` only.
 function mdLite(s){
   return esc(s)
@@ -625,7 +633,7 @@ async function sendChat() {
               let host = ''; try { host = new URL(url).hostname.replace('www.',''); } catch {}
               const title = (s.title || host || 'source').slice(0, 60);
               const it = document.createElement('div'); it.className = 'sitem';
-              it.innerHTML = `<a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(title)}</a><span class="host">${esc(host)}</span>`;
+              it.innerHTML = `<a href="${esc(url)}" onclick="openExt(event, this.href)">${esc(title)}</a><span class="host">${esc(host)}</span>`;
               list.appendChild(it);
             }
             holder.appendChild(det);

@@ -401,6 +401,16 @@ async def ody_chat(req: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@app.post("/api/open")
+async def open_external(req: Request) -> JSONResponse:
+    """Open an http(s) URL in the user's default browser (panel links inside the app's webview)."""
+    url = (await req.json()).get("url", "")
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return JSONResponse({"ok": False, "log": "only http(s) urls"}, status_code=400)
+    subprocess.run(["open", url], check=False)
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/ody/stop/{sid}")
 async def ody_stop(sid: str) -> JSONResponse:
     try:
