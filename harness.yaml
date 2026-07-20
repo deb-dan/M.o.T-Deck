@@ -15,6 +15,16 @@ components:
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
 
+# M1 runner slot — the swappable model engine the Bridge manages headless.
+# Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
+runner:
+  adapter: jan               # jan | lmstudio | custom (only jan wired in M1)
+  port: 6767                 # canonical headless endpoint (jan serve --port)
+  endpoint: http://127.0.0.1:6767/v1
+  api_key: harness-local     # headless jan requires a key; fanned out to components in M1-B
+  model: Qwen3_6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS   # M2 model browser makes this dynamic
+  ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
+
 bridge:
   port: 8700                  # control panel + API
   gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)

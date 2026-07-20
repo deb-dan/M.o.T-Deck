@@ -6,6 +6,35 @@ NAME="${1:-}"
 mkdir -p data/logs
 
 case "$NAME" in
+  runner)
+    # Headless Jan as the managed runner (spike-verified 2026-07-20).
+    JAN="$(command -v jan || echo "$HOME/.local/bin/jan")"
+    [[ -x "$JAN" ]] || { echo "ERROR: jan CLI not found (expected ~/.local/bin/jan — launch Jan desktop once to install it)"; exit 1; }
+    R_PORT=$(awk '/^runner:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
+    R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    R_CTX=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
+    R_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
+    [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
+    # Stop-by-PORT: jan's child router survives a kill of the printed PID (spike learning).
+    lsof -ti tcp:"$R_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    sleep 1
+    "$JAN" serve "$R_MODEL" --port "$R_PORT" --api-key "$R_KEY" --ctx-size "$R_CTX" --detach \
+      > data/logs/runner.launch.json 2>>data/logs/runner.log || true
+    up=0
+    for _ in $(seq 1 45); do
+      if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] runner (jan) up on :${R_PORT} — model=$R_MODEL ctx=$R_CTX"
+    else
+      echo "ERROR: runner did not become ready on :${R_PORT} in ~90s."
+      echo "--- launch output ---"; cat data/logs/runner.launch.json 2>/dev/null
+      echo "--- jan serve.log tail ---"; tail -20 "$HOME/Library/Application Support/Jan/data/logs/serve.log" 2>/dev/null
+      exit 1
+    fi
+    ;;
   odysseus)
     [[ -d data/odysseus-venv ]] || { echo "ERROR: odysseus venv missing — click Install first"; exit 1; }
     ROOT="$(pwd)"

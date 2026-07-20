@@ -75,6 +75,17 @@ async def status() -> dict:
             "running": (await _port_alive(int(port)) if port else False) or _pid_alive(name),
             "port": port,
         }
+    # M1 runner slot: a managed component, but launched via the jan CLI (no git install).
+    rc = c.get("runner")
+    if rc:
+        rport = rc.get("port")
+        out["components"]["runner"] = {
+            "installed": True,  # the jan CLI is the "install"; always available once Jan ran once
+            "pin": str(rc.get("model") or rc.get("adapter") or "jan"),
+            "running": await _port_alive(int(rport)) if rport else False,
+            "port": rport,
+            "kind": "runner",
+        }
     return out
 
 
@@ -131,6 +142,13 @@ def start(name: str) -> JSONResponse:
 
 @app.post("/api/components/{name}/stop")
 def stop(name: str) -> JSONResponse:
+    # Runner (jan) must be stopped by PORT — its child router survives a PID kill (spike learning).
+    if name == "runner":
+        rc = cfg().get("runner", {})
+        port = rc.get("port")
+        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
+        (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
+        return JSONResponse({"ok": True})
     pid = ROOT / "data" / f"{name}.pid"
     if pid.exists():
         subprocess.run(["kill", pid.read_text().strip()], check=False)

@@ -243,12 +243,19 @@ function cardHTML(name, c, isBridge) {
   const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
   let actions = '';
   if (!isBridge) {
-    actions = c.running
-      ? `<button onclick="act('${name}','stop')">Stop</button>`
-      : c.installed
-        ? `<button class="primary" onclick="act('${name}','start')">Start</button>
-           <button onclick="planInstall('${name}')">Reinstall</button>`
-        : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
+    if (name === 'runner') {
+      // The runner is the jan CLI — no git install; just Start/Stop.
+      actions = c.running
+        ? `<button onclick="act('${name}','stop')">Stop</button>`
+        : `<button class="primary" onclick="act('${name}','start')">Start</button>`;
+    } else {
+      actions = c.running
+        ? `<button onclick="act('${name}','stop')">Stop</button>`
+        : c.installed
+          ? `<button class="primary" onclick="act('${name}','start')">Start</button>
+             <button onclick="planInstall('${name}')">Reinstall</button>`
+          : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
+    }
   }
   return `<div class="card">
     <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
