@@ -54,9 +54,16 @@
 - Injected a "Harness skin" `WKUserScript` into the Odysseus web view (`app/main.swift`) overriding `--font-family` (unset → Fira Code mono everywhere) to a sans stack; code blocks keep explicit Fira Code. Colors left to Odysseus's Theme editor. Repo tip `bd61553`.
 - **"Premium vs ordinary" diagnosis (Debi's observation; keep for Rung D native panes).** What makes Mission Control / Jan / LM Studio / Cherry feel premium and Odysseus feel ordinary, in 4 levers: (1) **typographic hierarchy** — big serif display title + small mono small-caps labels + body; Odysseus is typographically flat (uniform size/weight). (2) **colour restraint** — one accent (gold) used sparingly on neutral; Odysseus paints coral everywhere (biggest "cheap" tell). (3) **whitespace** — generous breathing room vs Odysseus's dense, border-on-everything layout. (4) **serif+sans pairing** — the editorial signature. **Decision: do NOT chase pixel-parity via fragile injected CSS (tripwire).** True parity = Rung D native panes over Odysseus's API in our aesthetic — a deliberate future milestone.
 
+## SearXNG DONE (verified 2026-07-20) — full architecture diagram now live
+
+- **Native SearXNG installed, managed, and verified serving Odysseus.** `scripts/install_searxng.sh` (source clone, venv, real-pip `--use-pep517` install — uv pip rejects that flag; localhost settings.yml, JSON API on, limiter off). Managed component card (:8080) with start/stop; `odysseus depends_on [runner, searxng]` so one-switch provisions the full 3-node chain. Stop endpoint now falls back to kill-by-port when no pid file (`e514f9d`).
+- **Verification method (use this, not log-noise heuristics):** `grep -i searxng data/logs/odysseus.log` → `SearXNG JSON API returned N results for: <query>` = private search confirmed. Startup noise in searxng.log (wikidata 403, ahmia/torch, X-Forwarded-For botdetection line) is non-fatal.
+- **Operating note:** Odysseus falls back to DDG if SearXNG is down at search time (one old `Connection refused` explained by pre-install search). Dependency order guarantees searxng-before-odysseus for panel starts.
+- **The harness now matches the full architecture diagram:** Bridge + Runner (headless Jan) + Hermes + Odysseus + SearXNG, one native window, all local, all private. Repo tip `e514f9d`.
+
 ## Next actions (in order)
 
-1. **Web/search: install native SearXNG** (04 §Prototypes + shared-search). Web search ALREADY works via the `ddgs` DuckDuckGo fallback; SearXNG is the privacy upgrade (self-hosted, no queries to DDG) and the planned shared backend for Odysseus DeepResearch + MCP search. Native from-source build on macOS/arm64 is the riskiest install so far (compiled deps) — do install-first, verify, then wrap as a managed component.
+1. **Session's natural next milestones (pick next time):** Rung D native panes (the premium interface + search-backend chooser), cross-dependency health cascade, or M3 Hermes deepening (feed integration, ⌘K dispatch).
 2. **Rung D native panes (future):** native Mission Control screens over Odysseus's API in the editorial aesthetic — the real "premium" path (see design findings above).
    - **Debi request (2026-07-20):** when the unified interface lands, expose a **search-backend chooser** (SearXNG vs others). Maps directly onto Odysseus's existing `search_provider` + `search_fallback_chain` settings (src/settings.py) — a UI setting + fan-out, not new engineering.
    - **Backlog:** investigate Jan desktop's native web-search (MCP or built-in tool?) for possible later incorporation.
