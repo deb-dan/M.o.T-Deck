@@ -41,11 +41,16 @@
   - Latest repo tip: `4c0ffba`. Odysseus pin bumped to `e57f60bd` (old `168f5930` had a chat NameError).
 - All licensing verified from LICENSE files: Hermes MIT, Odysseus MIT, Jan Apache-2.0; only SearXNG is AGPL.
 
+## M2 interface — slice 1 DONE (verified 2026-07-20)
+
+- **Native tabbed Harness.app is the one window.** `app/main.swift` rebuilt: standard titled window + a segmented tab strip (Mission Control :8700 / Odysseus :7860), two persistent WKWebViews, Odysseus lazy-loaded on first select. Each tab is a **top-level** load — sidesteps Odysseus's `X-Frame-Options: DENY` / `frame-ancestors none` (middleware.py:108), which make iframing impossible. Built with swiftc 6.3 via `./scripts/build_app.sh`; verified: login (admin/admin123, the app's WKWebView has its own cookie store), chat replies ~75 tok/s. Repo tip `943e8ec`.
+- **Web/internet note:** the local model has NO internet (Chat mode = training-data answers). Odysseus's web comes from `web_search`/`web_fetch` agent tools + Deep Research, active only in **Agent mode** (the Agent|Chat toggle by the input). Backend: `search_provider: searxng` (:8080, NOT installed yet) with automatic **duckduckgo fallback** (`ddgs`, installed) — so Agent mode already works via DDG; native SearXNG is the better shared backend (planned).
+
 ## Next actions (in order)
 
-1. **M2 interface (08) — the next milestone.** Bring Odysseus into Mission Control as a restyled tab (webview embed → deep-linked tabs → native panes ladder). Fable-only UI work. This is the "one window" payoff.
-2. Optional M1 polish if desired later: cross-dependency health cascade, install-time closure (see State notes).
-3. Remaining post-M0 spikes fold into the work they de-risk: native SearXNG (when adding shared search), WKWebView embed + HF API (M2).
+1. **M2 slice 2 — reskin:** style the plain white tab strip to the dark editorial theme, then inject CSS into the Odysseus webview (fonts/spacing/arrangement) per Debi's original wish. Fable-only UI.
+2. **Web/search:** install the native SearXNG component (04 §Prototypes spike + shared-search) so Deep Research + Agent web_search use it instead of the DDG fallback.
+3. Optional M1 polish: cross-dependency health cascade, install-time closure.
 
 ## Post-M0 spike results (2026-07-20)
 
