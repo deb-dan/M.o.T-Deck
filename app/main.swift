@@ -1,32 +1,74 @@
-// Harness.app — native macOS shell for the harness control panel.
-// Starts the bridge if it isn't running, then shows the panel in a WKWebView.
+// Harness.app — native macOS shell. One window, tabbed:
+//   • Mission Control (the Bridge control panel, :8700)
+//   • Odysseus (the workspace UI, :7860)
+// Each tab is its own top-level WKWebView load — sidesteps Odysseus's X-Frame-Options/
+// frame-ancestors (which block iframing) entirely. Auto-starts the bridge on launch.
 // Built by scripts/build_app.sh (which generates Config.swift with harnessRoot).
 
 import Cocoa
 import WebKit
 
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
+let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
-    var webView: WKWebView!
+    var panelWV: WKWebView!      // Mission Control (:8700)
+    var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
+    var odyLoaded = false
     var bridgeProcess: Process?
     var spawnedBridge = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let cfg = WKWebViewConfiguration()
-        webView = WKWebView(frame: .zero, configuration: cfg)
-
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 800),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable,
-                        .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
+        window.title = "Harness"
         window.minSize = NSSize(width: 900, height: 620)
-        window.contentView = webView
+
+        let container = NSView()
+        window.contentView = container
+
+        // ── tab strip ──
+        let tabBar = NSView()
+        tabBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(tabBar)
+
+        let seg = NSSegmentedControl(
+            labels: ["Mission Control", "Odysseus"],
+            trackingMode: .selectOne,
+            target: self, action: #selector(tabChanged(_:)))
+        seg.selectedSegment = 0
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        tabBar.addSubview(seg)
+
+        // ── web views ──
+        panelWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        odyWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        for wv in [panelWV!, odyWV!] {
+            wv.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(wv)
+        }
+        odyWV.isHidden = true
+
+        NSLayoutConstraint.activate([
+            tabBar.topAnchor.constraint(equalTo: container.topAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tabBar.heightAnchor.constraint(equalToConstant: 44),
+            seg.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
+            seg.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
+            panelWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            panelWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            panelWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            panelWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            odyWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            odyWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            odyWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            odyWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -34,10 +76,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureBridgeThenLoad(attempt: 0)
     }
 
+    @objc func tabChanged(_ sender: NSSegmentedControl) {
+        let idx = sender.selectedSegment
+        panelWV.isHidden = (idx != 0)
+        odyWV.isHidden = (idx != 1)
+        if idx == 1 && !odyLoaded {
+            odyLoaded = true
+            odyWV.load(URLRequest(url: odysseusURL))
+        }
+    }
+
     func ensureBridgeThenLoad(attempt: Int) {
         portOpen { open in
             if open {
-                DispatchQueue.main.async { self.webView.load(URLRequest(url: bridgeURL)) }
+                DispatchQueue.main.async { self.panelWV.load(URLRequest(url: bridgeURL)) }
             } else if attempt == 0 {
                 self.startBridge()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
@@ -49,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else {
                 DispatchQueue.main.async {
-                    self.webView.loadHTMLString(
+                    self.panelWV.loadHTMLString(
                         "<body style='background:#0b0a10;color:#c9c4d4;font-family:-apple-system;" +
                         "display:flex;align-items:center;justify-content:center;height:100vh'>" +
                         "<div><h2 style='color:#efe7d7'>Bridge failed to start</h2>" +
