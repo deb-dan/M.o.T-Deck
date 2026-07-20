@@ -48,8 +48,14 @@ def panel() -> FileResponse:
 
 @app.get("/api/status")
 async def status() -> dict:
+    import shutil
     c = cfg()
-    out = {"bridge": "ok", "components": {}}
+    du = shutil.disk_usage(ROOT)
+    out = {
+        "bridge": "ok",
+        "disk": {"free_gb": round(du.free / 1e9, 1), "total_gb": round(du.total / 1e9, 1)},
+        "components": {},
+    }
     for name, comp in c["components"].items():
         port = comp.get("port") or comp.get("mcp_port")
         out["components"][name] = {
@@ -59,6 +65,16 @@ async def status() -> dict:
             "port": port,
         }
     return out
+
+
+@app.get("/api/logs/{name}")
+def logs(name: str, lines: int = 40) -> dict:
+    if name not in ("bridge", "hermes", "odysseus"):
+        raise HTTPException(404, "unknown log")
+    f = ROOT / "data" / "logs" / f"{name}.log"
+    if not f.exists():
+        return {"lines": []}
+    return {"lines": f.read_text(errors="replace").splitlines()[-lines:]}
 
 
 @app.get("/api/components/{name}/plan")

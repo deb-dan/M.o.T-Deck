@@ -3,104 +3,340 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Harness</title>
+<title>Harness</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --fg:#e6e8ee; --dim:#8b93a7;
-          --ok:#3fb68b; --warn:#e0a458; --accent:#5b8def; --bad:#e05d5d; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  main { max-width:720px; margin:40px auto; padding:0 20px; }
-  h1 { font-size:20px; } h1 span { color:var(--dim); font-weight:400; }
-  .card { background:var(--card); border-radius:12px; padding:18px 20px; margin:14px 0;
-          display:flex; align-items:center; gap:14px; }
-  .dot { width:10px; height:10px; border-radius:50%; background:var(--dim); flex:none; }
-  .dot.on { background:var(--ok); } .dot.installed { background:var(--warn); }
-  .grow { flex:1; } .meta { color:var(--dim); font-size:13px; }
-  button { background:var(--accent); border:0; color:#fff; padding:8px 14px;
-           border-radius:8px; font-size:14px; cursor:pointer; }
-  button.ghost { background:transparent; border:1px solid #333a4a; color:var(--fg); }
-  button:disabled { opacity:.4; cursor:default; }
-  dialog { background:var(--card); color:var(--fg); border:1px solid #2a3040;
-           border-radius:12px; max-width:480px; padding:22px; }
-  dialog::backdrop { background:rgba(0,0,0,.6); }
-  dialog ul { padding-left:18px; } dialog li { margin:6px 0; }
-  pre { background:#0c0e12; padding:10px; border-radius:8px; font-size:12px;
-        max-height:200px; overflow:auto; white-space:pre-wrap; }
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#6f6a80; --faint:#4a4658;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --serif: "New York", "Iowan Old Style", Georgia, serif;
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); min-height:100vh; display:flex;
+         font:14px/1.55 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+         -webkit-font-smoothing:antialiased; }
+
+  /* ---------- sidebar ---------- */
+  aside { width:216px; flex:none; background:var(--bg2); border-right:1px solid var(--line);
+          padding:26px 18px; display:flex; flex-direction:column; gap:4px; }
+  .brand { font-family:var(--serif); font-style:italic; font-size:22px; color:var(--cream);
+           letter-spacing:.5px; margin-bottom:2px; }
+  .build { font:10px var(--mono); color:var(--faint); letter-spacing:.14em;
+           text-transform:uppercase; margin-bottom:26px; }
+  .navlbl { font:10px var(--mono); color:var(--faint); letter-spacing:.18em;
+            text-transform:uppercase; margin:18px 6px 8px; }
+  nav a { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px;
+          color:var(--dim); text-decoration:none; font-size:13.5px; cursor:pointer; }
+  nav a.on { background:var(--card2); color:var(--cream); }
+  nav a:hover { color:var(--fg); }
+  nav a .ico { width:16px; text-align:center; opacity:.75; }
+  .side-foot { margin-top:auto; font:10px var(--mono); color:var(--faint);
+               letter-spacing:.1em; line-height:1.9; }
+
+  /* ---------- main ---------- */
+  main { flex:1; padding:34px 44px 60px; max-width:1120px; }
+  .topbar { display:flex; justify-content:flex-end; gap:10px; margin-bottom:8px; }
+  .chip { font:11px var(--mono); letter-spacing:.08em; color:var(--dim);
+          border:1px solid var(--line); border-radius:8px; padding:6px 12px;
+          background:var(--bg2); cursor:pointer; }
+  .chip:hover { color:var(--cream); border-color:var(--line2); }
+
+  .kicker { display:flex; align-items:center; gap:14px; margin:10px 0 6px; }
+  .kicker .num { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--gold); }
+  .kicker .rule { width:44px; height:1px; background:var(--line2); }
+  .kicker .lbl { font:10.5px var(--mono); color:var(--dim); letter-spacing:.22em;
+                 text-transform:uppercase; }
+  h1 { font-family:var(--serif); font-weight:500; font-size:44px; color:var(--cream);
+       letter-spacing:.2px; margin:2px 0 6px; }
+  .sub { color:var(--dim); font-size:15px; margin-bottom:6px; }
+  .stamp { font:10.5px var(--mono); color:var(--faint); letter-spacing:.18em;
+           text-transform:uppercase; margin-bottom:30px; }
+
+  /* ---------- cards ---------- */
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:20px 22px; transition:border-color .15s; }
+  .card:hover { border-color:var(--line2); }
+  .card .head { display:flex; align-items:center; gap:9px; margin-bottom:10px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.ok { background:var(--ok); box-shadow:0 0 8px rgba(70,201,154,.5); }
+  .dot.warn { background:var(--warn); }
+  .dot.bad { background:var(--bad); }
+  .card .name { font:11px var(--mono); color:var(--dim); letter-spacing:.2em;
+                text-transform:uppercase; }
+  .card .state { font-family:var(--serif); font-size:24px; color:var(--cream); margin:2px 0 4px; }
+  .card .meta { font:11px var(--mono); color:var(--faint); letter-spacing:.04em;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .actions { margin-top:16px; display:flex; gap:8px; }
+
+  button { font:12.5px -apple-system, sans-serif; border-radius:9px; padding:7px 15px;
+           cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--fg); }
+  button:hover { border-color:var(--gold); color:var(--cream); }
+  button.primary { background:var(--cream); border-color:var(--cream); color:#171420; font-weight:600; }
+  button.primary:hover { background:#fff; }
+  button:disabled { opacity:.35; cursor:default; }
+
+  /* ---------- metrics strip ---------- */
+  .metrics { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+             gap:14px; margin:26px 0 34px; }
+  .metric { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; }
+  .metric .k { font:10px var(--mono); color:var(--faint); letter-spacing:.2em; text-transform:uppercase; }
+  .metric .v { font-family:var(--serif); font-size:30px; color:var(--cream); margin-top:4px; }
+  .metric .v small { font-size:15px; color:var(--dim); }
+
+  /* ---------- activity ---------- */
+  .activity { background:var(--card); border:1px solid var(--line); border-radius:14px;
+              padding:18px 22px; }
+  .activity .k { font:10px var(--mono); color:var(--faint); letter-spacing:.2em;
+                 text-transform:uppercase; margin-bottom:12px; }
+  .activity .row { display:flex; gap:12px; padding:6px 0; border-top:1px solid var(--line);
+                   font:12px var(--mono); color:var(--dim); }
+  .activity .row:first-of-type { border-top:0; }
+  .activity .tag { color:var(--gold); flex:none; width:70px; }
+
+  /* ---------- dialogs ---------- */
+  dialog { background:var(--card2); color:var(--fg); border:1px solid var(--line2);
+           border-radius:16px; max-width:520px; width:92%; padding:26px 28px; }
+  dialog::backdrop { background:rgba(5,4,10,.72); backdrop-filter:blur(3px); }
+  dialog h3 { font-family:var(--serif); font-weight:500; font-size:24px; color:var(--cream);
+              margin-bottom:4px; text-transform:capitalize; }
+  dialog .note { font:11px var(--mono); color:var(--faint); letter-spacing:.1em; margin-bottom:14px; }
+  dialog ul { padding-left:18px; margin-bottom:16px; }
+  dialog li { margin:7px 0; color:var(--fg); }
+  dialog .btns { display:flex; gap:10px; justify-content:flex-end; }
+  pre { background:#0a0910; border:1px solid var(--line); padding:12px; border-radius:10px;
+        font:11px var(--mono); max-height:220px; overflow:auto; white-space:pre-wrap;
+        color:var(--dim); margin-top:14px; }
+
+  /* ---------- command palette ---------- */
+  #palette { padding:0; overflow:hidden; }
+  #palette input { width:100%; background:transparent; border:0; outline:0; color:var(--cream);
+                   font:16px -apple-system, sans-serif; padding:18px 22px;
+                   border-bottom:1px solid var(--line); }
+  #palette .item { padding:12px 22px; cursor:pointer; display:flex; gap:12px; align-items:center; }
+  #palette .item.sel { background:var(--card); color:var(--cream); }
+  #palette .item .k { font:10px var(--mono); color:var(--faint); margin-left:auto; }
 </style>
 </head>
 <body>
+
+<aside>
+  <div class="brand">Harness</div>
+  <div class="build">local · studio</div>
+  <div class="navlbl">Workspace</div>
+  <nav>
+    <a class="on"><span class="ico">◫</span> Mission Control</a>
+    <a onclick="alert('Gearbox lands in M2')"><span class="ico">⇄</span> Models</a>
+    <a onclick="alert('Policies UI lands in M2')"><span class="ico">§</span> Policies</a>
+    <a onclick="showLogs()"><span class="ico">≣</span> Logs</a>
+  </nav>
+  <div class="navlbl">Components</div>
+  <nav id="sidecomponents"></nav>
+  <div class="side-foot">HERMES · ODYSSEUS<br>BRIDGED, NEVER FORKED</div>
+</aside>
+
 <main>
-  <h1>AI Harness <span>· control panel</span></h1>
-  <div id="components"></div>
-  <p class="meta">Gearbox routing and one-click updates arrive in M1–M2.
-     Nothing installs or runs without your approval.</p>
+  <div class="topbar">
+    <span class="chip" onclick="openPalette()">⌘K&nbsp;&nbsp;Command palette</span>
+    <span class="chip" onclick="refresh(true)">↻&nbsp;&nbsp;Refresh</span>
+  </div>
+
+  <div class="kicker"><span class="num">I.</span><span class="rule"></span>
+    <span class="lbl">Mission Control</span></div>
+  <h1>Mission Control</h1>
+  <div class="sub">Status of every component, every port, every pin.</div>
+  <div class="stamp" id="stamp">—</div>
+
+  <div class="grid" id="cards"></div>
+
+  <div class="metrics" id="metrics"></div>
+
+  <div class="activity">
+    <div class="k">Recent activity</div>
+    <div id="feed"><div class="row"><span class="tag">boot</span><span>panel loaded</span></div></div>
+  </div>
 </main>
 
 <dialog id="dlg">
   <h3 id="dlg-title"></h3>
+  <div class="note">Nothing runs until you approve.</div>
   <ul id="dlg-plan"></ul>
-  <p class="meta">Approve to run these steps now.</p>
-  <div style="display:flex; gap:10px; justify-content:flex-end">
-    <button class="ghost" onclick="dlg.close()">Cancel</button>
-    <button id="dlg-approve">Approve &amp; install</button>
+  <div class="btns">
+    <button onclick="dlg.close()">Cancel</button>
+    <button class="primary" id="dlg-approve">Approve &amp; install</button>
   </div>
   <pre id="dlg-log" hidden></pre>
 </dialog>
 
+<dialog id="logdlg">
+  <h3>Logs</h3>
+  <div class="note">bridge · last 40 lines</div>
+  <pre id="logbody" style="max-height:380px"></pre>
+  <div class="btns"><button onclick="logdlg.close()">Close</button></div>
+</dialog>
+
+<dialog id="palette">
+  <input id="pal-q" placeholder="Type a command…" autocomplete="off">
+  <div id="pal-list"></div>
+</dialog>
+
 <script>
 const dlg = document.getElementById('dlg');
+const logdlg = document.getElementById('logdlg');
+const palette = document.getElementById('palette');
+let lastStatus = null;
 
-async function refresh() {
-  const s = await (await fetch('/api/status')).json();
-  const el = document.getElementById('components');
-  el.innerHTML = '';
+function feed(tag, msg) {
+  const f = document.getElementById('feed');
+  const t = new Date().toTimeString().slice(0,5);
+  f.insertAdjacentHTML('afterbegin',
+    `<div class="row"><span class="tag">${tag}</span><span>${msg}</span><span style="margin-left:auto">${t}</span></div>`);
+  while (f.children.length > 8) f.lastChild.remove();
+}
+
+async function refresh(manual) {
+  let s;
+  try { s = await (await fetch('/api/status')).json(); }
+  catch { document.getElementById('stamp').textContent = 'BRIDGE UNREACHABLE'; return; }
+  lastStatus = s;
+  const now = new Date();
+  document.getElementById('stamp').textContent =
+    now.toTimeString().slice(0,5) + ' · LOCAL · ALL SYSTEMS';
+
+  const cards = document.getElementById('cards');
+  cards.innerHTML = '';
+  const side = document.getElementById('sidecomponents');
+  side.innerHTML = '';
+
+  // bridge card
+  cards.insertAdjacentHTML('beforeend', cardHTML('bridge', {
+    running:true, installed:true, pin:'local', port:8700 }, true));
+
   for (const [name, c] of Object.entries(s.components)) {
-    const state = c.running ? 'running' : c.installed ? 'installed (stopped)' : 'not installed';
-    const dot = c.running ? 'on' : c.installed ? 'installed' : '';
-    const btn = c.running
-      ? `<button class="ghost" onclick="act('${name}','stop')">Stop</button>`
-      : c.installed
-        ? `<button onclick="act('${name}','start')">Start</button>`
-        : `<button onclick="planInstall('${name}')">Install</button>`;
-    el.insertAdjacentHTML('beforeend', `
-      <div class="card">
-        <div class="dot ${dot}"></div>
-        <div class="grow">
-          <div style="text-transform:capitalize"><strong>${name}</strong></div>
-          <div class="meta">${state} · pin ${c.pin} · port ${c.port ?? '—'}</div>
-        </div>
-        ${btn}
-      </div>`);
+    cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false));
+    const cls = c.running ? 'ok' : c.installed ? 'warn' : '';
+    side.insertAdjacentHTML('beforeend',
+      `<a><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+        <span style="text-transform:capitalize">${name}</span></a>`);
   }
+
+  const m = document.getElementById('metrics');
+  const running = Object.values(s.components).filter(c=>c.running).length;
+  const installed = Object.values(s.components).filter(c=>c.installed).length;
+  m.innerHTML =
+    metric('Components running', `${running}<small> / ${Object.keys(s.components).length}</small>`) +
+    metric('Installed', `${installed}<small> / ${Object.keys(s.components).length}</small>`) +
+    metric('Disk free', `${s.disk.free_gb}<small> GB</small>`) +
+    metric('Bridge', 'Live');
+  if (manual) feed('status', 'refreshed');
+}
+
+function metric(k, v) {
+  return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+}
+
+function cardHTML(name, c, isBridge) {
+  const dot = c.running ? 'ok' : c.installed ? 'warn' : '';
+  const state = c.running ? 'Online' : c.installed ? 'Stopped' : 'Not installed';
+  const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
+  let actions = '';
+  if (!isBridge) {
+    actions = c.running
+      ? `<button onclick="act('${name}','stop')">Stop</button>`
+      : c.installed
+        ? `<button class="primary" onclick="act('${name}','start')">Start</button>
+           <button onclick="planInstall('${name}')">Reinstall</button>`
+        : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
+  }
+  return `<div class="card">
+    <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
+    <div class="state">${state}</div>
+    <div class="meta">pin ${pin} · port ${c.port ?? '—'}</div>
+    <div class="actions">${actions}</div></div>`;
 }
 
 async function planInstall(name) {
   const p = await (await fetch(`/api/components/${name}/plan`)).json();
   document.getElementById('dlg-title').textContent = `Install ${name}`;
-  document.getElementById('dlg-plan').innerHTML =
-    p.plan.map(x => `<li>${x}</li>`).join('');
+  document.getElementById('dlg-plan').innerHTML = p.plan.map(x=>`<li>${x}</li>`).join('');
   const log = document.getElementById('dlg-log');
   log.hidden = true; log.textContent = '';
-  const approve = document.getElementById('dlg-approve');
-  approve.disabled = false;
-  approve.onclick = async () => {
-    approve.disabled = true;
+  const btn = document.getElementById('dlg-approve');
+  btn.disabled = false;
+  btn.onclick = async () => {
+    btn.disabled = true;
     log.hidden = false; log.textContent = 'Installing… (this can take several minutes)';
+    feed('install', `${name} started`);
     const r = await (await fetch(`/api/components/${name}/install`, {method:'POST'})).json();
     log.textContent = r.log || (r.ok ? 'Done.' : 'Failed.');
-    if (r.ok) setTimeout(() => { dlg.close(); refresh(); }, 1200);
+    feed('install', `${name} ${r.ok ? 'complete' : 'FAILED — see log'}`);
+    if (r.ok) setTimeout(()=>{ dlg.close(); refresh(); }, 1000);
   };
   dlg.showModal();
 }
 
 async function act(name, verb) {
-  await fetch(`/api/components/${name}/${verb}`, {method:'POST'});
-  setTimeout(refresh, 800);
+  feed(verb, name);
+  const r = await (await fetch(`/api/components/${name}/${verb}`, {method:'POST'})).json();
+  if (r.ok === false) feed(verb, `${name} FAILED: ${(r.log||'').split('\n').pop()}`);
+  setTimeout(refresh, 900);
 }
 
+async function showLogs() {
+  const r = await (await fetch('/api/logs/bridge')).json();
+  document.getElementById('logbody').textContent = r.lines.join('\n') || '(empty)';
+  logdlg.showModal();
+}
+
+/* ---------- command palette ---------- */
+const commands = () => {
+  const cmds = [
+    {t:'Refresh status', k:'↻', f:()=>refresh(true)},
+    {t:'Show bridge logs', k:'≣', f:showLogs},
+  ];
+  if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
+    if (c.running) cmds.push({t:`Stop ${n}`, k:'■', f:()=>act(n,'stop')});
+    else if (c.installed) cmds.push({t:`Start ${n}`, k:'▶', f:()=>act(n,'start')});
+    else cmds.push({t:`Install ${n}`, k:'＋', f:()=>planInstall(n)});
+    if (n === 'odysseus' && c.running)
+      cmds.push({t:'Open Odysseus workspace', k:'↗', f:()=>window.open('http://127.0.0.1:7860')});
+  }
+  return cmds;
+};
+let sel = 0;
+function openPalette() {
+  sel = 0; palette.showModal();
+  const q = document.getElementById('pal-q');
+  q.value = ''; renderPal(''); q.focus();
+}
+function renderPal(f) {
+  const list = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase()));
+  sel = Math.min(sel, Math.max(0, list.length-1));
+  document.getElementById('pal-list').innerHTML = list.map((c,i)=>
+    `<div class="item ${i===sel?'sel':''}" onclick="runPal(${i},'${f.replace(/'/g,"")}')">
+       <span>${c.t}</span><span class="k">${c.k}</span></div>`).join('');
+}
+function runPal(i, f) {
+  const list = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase()));
+  palette.close(); if (list[i]) list[i].f();
+}
+document.getElementById('pal-q').addEventListener('input', e=>renderPal(e.target.value));
+document.getElementById('pal-q').addEventListener('keydown', e=>{
+  const f = e.target.value;
+  const n = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase())).length;
+  if (e.key==='ArrowDown'){ sel=(sel+1)%n; renderPal(f); e.preventDefault(); }
+  if (e.key==='ArrowUp'){ sel=(sel-1+n)%n; renderPal(f); e.preventDefault(); }
+  if (e.key==='Enter'){ runPal(sel, f); }
+});
+document.addEventListener('keydown', e=>{
+  if ((e.metaKey||e.ctrlKey) && e.key==='k'){ e.preventDefault(); openPalette(); }
+  if (e.key==='Escape'){ palette.close(); }
+});
+
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 6000);
 </script>
 </body>
 </html>

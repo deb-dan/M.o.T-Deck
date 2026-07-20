@@ -5,7 +5,7 @@ components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
     pin: v2026.7.7.2          # release tag — never track a branch
-    installed: false
+    installed: true
     enabled: false
     mcp_port: 8721            # hermes mcp_serve endpoint for the bridge
   odysseus:
