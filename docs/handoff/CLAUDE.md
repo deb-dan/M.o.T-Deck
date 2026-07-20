@@ -57,6 +57,20 @@ If Fable 5's context/token runs out mid-work, the ONLY model that may pick this 
 
 **Slice 1 CODE DONE (Mac-verify pending, 2026-07-20):** Bridge `GET /api/models` (`jan models list` JSON → installed; active = `runner.model`; runner_up), `POST /api/models/switch {id}` (writes runner.model via line-scan, background thread restarts runner + re-fans-out to Hermes/Odysseus IF running — their configs bind the model name), `GET /api/models/switch-status` (poll). Panel: sidebar "Models" stub replaced → `#view-models` pane lists installed models, marks the live one, Switch button (disabled on active), progress via switch-status poll. `id` may be a local id OR an HF repo id (slice 2 uses that for download). Panel-only + bridge → bridge restart, no app rebuild. `<!-- FABLE: style this -->` marker left on the pane.
 
+## jan-browser-mcp (step 3) — mechanisms confirmed, endpoint spike pending (2026-07-21)
+
+**Both components take a URL/HTTP MCP → no forking:**
+- **Hermes:** MCP servers live in `~/.hermes/config.yaml` under `mcp_servers`. Add via `hermes mcp add <name> --url <endpoint>` (http/sse url) OR `--command npx --args <pkg>` (stdio). (mcp_config.py:426-427 shows both forms.)
+- **Odysseus:** `POST /api/mcp/servers` (form) — `transport` = `stdio` | `sse` | `http`; `command` for stdio, `url` for sse/http. `GET /api/mcp/servers`, `DELETE /api/mcp/servers/{id}`, `/servers/{id}/reconnect`, `/tools`. (mcp_routes.py:120-374.)
+
+**TWO different "browser MCP"s — pick before building (transport differs):**
+1. **Browser MCP (browsermcp.io)** — Jan's own docs use this; **stdio**: Command `npx`, Args `@browsermcp/mcp`, + Chrome extension `bjfgambnhccakkhmkepdoekmckoijdlc`. → register with command/args in both.
+2. **jan-browser-mcp** (Debi's link, ext id `mkciifcjehgnpaigoiaakdgabbpfppal`) — newer; per its listing runs a local **HTTP server on :8181**; you point an MCP endpoint at it. → register with transport=http/sse + url in both.
+
+**SPIKE PENDING (Debi, Mac):** install the chosen extension and report the exact MCP endpoint it exposes (URL + whether SSE or streamable-HTTP for #2, or confirm the npx command for #1). That's the only unknown; everything else is built from the confirmed mechanisms above.
+
+**Build plan once endpoint known:** (a) Bridge helper to register the browser MCP into Hermes (`hermes mcp add` / config.yaml) + Odysseus (`POST /api/mcp/servers`), idempotent; (b) a **Browse toggle** in the Chat pane (agent mode) that signals browser use; (c) the user installs the extension once. Verify: agent-mode chat performs a real browser action with approvals visible.
+
 ## Research findings feeding the roadmap (2026-07-20, web-verified)
 
 - **Jan model management IS exposeable.** Jan is OpenAI-compatible; the **`jan` CLI (v0.7.8+)** can start the server, **list models, and manage config**; GUI-downloaded models are auto-available to the CLI. Jan's model hub shows fit pills + quant tiers. Caveat to spike before building step 2: whether headless `jan serve` on :6767 exposes download/hub endpoints, or whether **download must go via the `jan` CLI / Jan's management API** (either works, changes plumbing only).
