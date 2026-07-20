@@ -20,6 +20,9 @@ bridge:
   gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)
 
 inference:
+  hermes_llm:                 # M0: Hermes points here directly; the M1 runner slot replaces this
+    base_url: http://127.0.0.1:1337/v1   # Jan desktop API server (Settings -> Local API Server)
+    model:                    # empty = auto-pick the first model Jan reports at start
   endpoints:
     cookbook:  { url: "http://127.0.0.1:8000/v1",  kind: local }   # Odysseus Cookbook serve
     ollama:    { url: "http://127.0.0.1:11434/v1", kind: local }   # optional

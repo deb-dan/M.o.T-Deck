@@ -31,6 +31,17 @@ def _script(name: str, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _pid_alive(name: str) -> bool:
+    import os
+    f = ROOT / "data" / f"{name}.pid"
+    try:
+        pid = int(f.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
 async def _port_alive(port: int) -> bool:
     try:
         _, writer = await asyncio.wait_for(
@@ -61,7 +72,7 @@ async def status() -> dict:
         out["components"][name] = {
             "installed": bool(comp.get("installed")),
             "pin": str(comp.get("pin")),
-            "running": await _port_alive(int(port)) if port else False,
+            "running": (await _port_alive(int(port)) if port else False) or _pid_alive(name),
             "port": port,
         }
     return out

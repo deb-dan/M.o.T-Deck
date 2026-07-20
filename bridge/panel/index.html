@@ -280,7 +280,11 @@ async function planInstall(name) {
 async function act(name, verb) {
   feed(verb, name);
   const r = await (await fetch(`/api/components/${name}/${verb}`, {method:'POST'})).json();
-  if (r.ok === false) feed(verb, `${name} FAILED: ${(r.log||'').split('\n').pop()}`);
+  if (r.ok === false) {
+    feed(verb, `${name} ${verb} FAILED — output opened`);
+    document.getElementById('logbody').textContent = r.log || '(no output)';
+    logdlg.showModal();
+  }
   setTimeout(refresh, 900);
 }
 
