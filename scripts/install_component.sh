@@ -3,6 +3,7 @@
 # Shows the plan first; --yes skips the prompt (used by the panel after UI approval).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 NAME="${1:-}"; YES="${2:-}"
 [[ "$NAME" == "hermes" || "$NAME" == "odysseus" ]] || { echo "usage: $0 hermes|odysseus [--yes]"; exit 1; }
 [[ -e "vendor/$NAME/.git" ]] || { echo "vendor/$NAME missing — run bootstrap.sh first"; exit 1; }
@@ -15,9 +16,10 @@ plan_hermes="PLAN (hermes):
 
 plan_odysseus="PLAN (odysseus):
   - create venv data/odysseus-venv
-  - pip install -r vendor/odysseus/requirements.txt (+ optional ddgs for web search)
-  - run its setup.py (creates admin account, prints temp password)
-  - serve natively on port 7860 when started (Metal-accelerated Cookbook)"
+  - pip install -r vendor/odysseus/requirements.txt (+ ddgs for Docker-free web search)
+  - run setup.py, seeding admin account (user 'admin', password 'admin123' — CHANGE after first login)
+  - connect: register the local Jan endpoint (:1337) as the default chat model
+  - serve natively on port 7860 when started"
 
 var="plan_$NAME"; echo "${!var}"
 if [[ "$YES" != "--yes" ]]; then
@@ -39,7 +41,12 @@ else
   source data/odysseus-venv/bin/activate
   uv pip install -r vendor/odysseus/requirements.txt
   uv pip install ddgs || true          # Docker-free web search provider
-  ( cd vendor/odysseus && python setup.py )
+  # Deterministic admin (works both interactively and with --yes): setup.py uses these
+  # env creds and skips the prompt / random-password path. 8-char minimum enforced by Odysseus.
+  ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER=admin ODYSSEUS_ADMIN_PASSWORD=admin123 python setup.py )
+  # Connect step (one-switch): wire Odysseus to the local Jan endpoint as default model.
+  ( cd vendor/odysseus && python "$ROOT/scripts/seed_odysseus_jan.py" ) || \
+    echo "[harness] note: Jan not reachable yet — endpoint seeded; model auto-discovers on Start"
   deactivate
 fi
 

@@ -7,13 +7,22 @@ mkdir -p data/logs
 
 case "$NAME" in
   odysseus)
-    [[ -d data/odysseus-venv ]] || { echo "not installed"; exit 1; }
+    [[ -d data/odysseus-venv ]] || { echo "ERROR: odysseus venv missing — click Install first"; exit 1; }
+    ROOT="$(pwd)"
     # shellcheck disable=SC1091
     source data/odysseus-venv/bin/activate
+    # Connect (idempotent): (re)wire Odysseus to the local Jan endpoint as default model,
+    # picking up whatever model Jan is currently serving. Runs before the server boots.
+    ( cd vendor/odysseus && python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
     ( cd vendor/odysseus && \
       nohup python -m uvicorn app:app --host 127.0.0.1 --port 7860 \
         >>../../data/logs/odysseus.log 2>&1 & echo $! > ../../data/odysseus.pid )
-    echo "[harness] odysseus starting → http://127.0.0.1:7860"
+    sleep 2
+    if kill -0 "$(cat data/odysseus.pid)" 2>/dev/null; then
+      echo "[harness] odysseus starting → http://127.0.0.1:7860 (login: admin / admin123 — change it)"
+    else
+      echo "ERROR: odysseus exited immediately. Last log lines:"; tail -15 data/logs/odysseus.log; exit 1
+    fi
     ;;
   hermes)
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
