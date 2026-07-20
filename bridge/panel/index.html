@@ -130,6 +130,14 @@
                    color:var(--gold); border:1px solid var(--line2); border-radius:7px;
                    padding:3px 10px; margin:8px 0 0 20px; }
   #thinking { font:italic 12.5px var(--serif); color:var(--faint); padding:2px 0 2px 20px; }
+  .cmsg details.think { margin:0 0 10px 20px; }
+  .cmsg details.think summary { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
+      color:var(--faint); cursor:pointer; list-style:none; }
+  .cmsg details.think summary::before { content:'▸ '; color:var(--gold); }
+  .cmsg details.think[open] summary::before { content:'▾ '; }
+  .cmsg details.think .tbody { font:italic 13px var(--serif); color:var(--dim); line-height:1.7;
+      border-left:1px dashed var(--line2); padding:8px 0 8px 14px; margin-top:8px;
+      white-space:pre-wrap; max-height:280px; overflow-y:auto; }
   #chat-bar { max-width:760px; margin-top:8px; border-top:1px solid var(--line); padding-top:14px; }
   #chat-modes { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
   .mode-chip { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
@@ -543,7 +551,17 @@ async function sendChat() {
           if (payload === '[DONE]') { think.remove(); chatBusy=false; break; }
           let j; try { j = JSON.parse(payload); } catch { continue; }
           if (j.delta !== undefined) {
-            if (j.thinking) { think.hidden = false; }
+            if (j.thinking) {
+              think.hidden = false;
+              // capture reasoning into a collapsed, expandable disclosure
+              let det = holder.querySelector('details.think');
+              if (!det) {
+                det = document.createElement('details'); det.className = 'think';
+                det.innerHTML = '<summary>thinking</summary><div class="tbody"></div>';
+                holder.insertBefore(det, body);
+              }
+              det.querySelector('.tbody').textContent += j.delta;
+            }
             else { think.hidden = true; body.textContent += j.delta; }
           } else if (j.type === 'model_info' || j.type === 'model_actual') {
             chatModel = j.model || chatModel;
