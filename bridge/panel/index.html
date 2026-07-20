@@ -172,6 +172,36 @@
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
   #chat-input:focus { border-color:var(--gold); }
 
+  /* session rail + chat column live side by side under the header */
+  #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; }
+  #chat-main { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; }
+  #chat-sessions { flex:none; width:204px; display:flex; flex-direction:column; min-height:0;
+      border-right:1px solid var(--line); padding-right:16px; }
+  .cs-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .cs-title { font:10px var(--mono); letter-spacing:.22em; text-transform:uppercase; color:var(--faint); }
+  #cs-new { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--gold);
+      background:transparent; border:1px solid var(--line2); border-radius:7px; padding:4px 10px; cursor:pointer; }
+  #cs-new:hover { border-color:var(--gold); }
+  #cs-list { flex:1 1 auto; overflow-y:auto; min-height:0; margin-right:-6px; padding-right:6px;
+      scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  .cs-empty { font:11px var(--mono); color:var(--faint); padding:8px 2px; }
+  .cs-item { position:relative; padding:9px 10px; border-radius:9px; cursor:pointer; margin-bottom:2px;
+      border-left:2px solid transparent; }
+  .cs-item:hover { background:var(--card); }
+  .cs-item.on { background:var(--card); border-left-color:var(--gold); }
+  .cs-item .nm { font:12.5px -apple-system, "SF Pro Text", sans-serif; color:var(--fg);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:38px; }
+  .cs-item.on .nm { color:var(--cream); }
+  .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
+  .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
+  .cs-item:hover .cs-act { display:flex; }
+  .cs-act button { font:11px var(--mono); color:var(--faint); background:var(--bg);
+      border:1px solid var(--line2); border-radius:5px; padding:0 5px; cursor:pointer; line-height:1.5; }
+  .cs-act button:hover { color:var(--gold); border-color:var(--gold); }
+  .cs-del.armed { color:var(--bad) !important; border-color:var(--bad) !important; }
+  .cs-rename { width:100%; background:var(--bg); color:var(--cream); border:1px solid var(--gold);
+      border-radius:6px; padding:5px 7px; font:12.5px -apple-system, sans-serif; outline:none; }
+
   /* ---------- command palette ---------- */
   #palette { padding:0; overflow:hidden; }
   #palette input { width:100%; background:transparent; border:0; outline:0; color:var(--cream);
@@ -230,20 +260,32 @@
     <div class="sub">The local stack, spoken to directly — agent tools included.</div>
     <div class="stamp" id="chat-stamp">CONNECTING…</div>
 
-    <div id="chat-scroll">
-      <div id="chat-msgs"></div>
-    </div>
-
-    <div id="chat-bar">
-      <div id="chat-modes">
-        <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')">Agent</span>
-        <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
-        <span class="mode-note" id="chat-note">web search on · shell off</span>
+    <div id="chat-body">
+      <div id="chat-sessions">
+        <div class="cs-head">
+          <span class="cs-title">Sessions</span>
+          <button id="cs-new" onclick="newSession()">＋ New</button>
+        </div>
+        <div id="cs-list"></div>
       </div>
-      <div id="chat-inputrow">
-        <textarea id="chat-input" rows="2" placeholder="Message the harness…"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-        <button class="primary" id="chat-send" onclick="sendChat()">Send</button>
+
+      <div id="chat-main">
+        <div id="chat-scroll">
+          <div id="chat-msgs"></div>
+        </div>
+
+        <div id="chat-bar">
+          <div id="chat-modes">
+            <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')">Agent</span>
+            <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
+            <span class="mode-note" id="chat-note">web search on · shell off</span>
+          </div>
+          <div id="chat-inputrow">
+            <textarea id="chat-input" rows="2" placeholder="Message the harness…"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+            <button class="primary" id="chat-send" onclick="sendChat()">Send</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -521,22 +563,131 @@ function mdLite(s){
     .replace(/`([^`\n]+)`/g, '<code>$1</code>');
 }
 
+let chatSessions = [];
+
+function relTime(iso){
+  if (!iso) return '';
+  const t = Date.parse(iso); if (isNaN(t)) return '';
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'now';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h';
+  return new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'});
+}
+function stampFor(model){
+  document.getElementById('chat-stamp').textContent =
+    (model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
+}
+
 async function initChat() {
   const stamp = document.getElementById('chat-stamp');
   try {
-    const r = await (await fetch('/api/ody/ensure-session', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'Mission Control'})})).json();
-    if (r.error) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MISSION CONTROL'; return; }
-    chatSid = r.id; chatModel = (r.model || '').split('-').slice(0,2).join('-') || 'model';
-    stamp.textContent = (r.model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
-    const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
-    const msgs = (h.history || []).slice(-30);
-    for (const m of msgs) {
+    const list = await loadSessions();
+    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MISSION CONTROL'; return; }
+    const want = localStorage.getItem('harness-chat-sid');
+    const pick = (want && list.find(s => s.id === want)) || list[0];
+    if (pick) await selectSession(pick.id);
+    else await newSession();
+  } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+}
+
+async function loadSessions(){
+  try {
+    const r = await fetch('/api/ody/sessions');
+    if (!r.ok) return null;
+    const list = await r.json();
+    chatSessions = Array.isArray(list) ? list : [];
+    renderSessions();
+    return chatSessions;
+  } catch { return null; }
+}
+
+function renderSessions(){
+  const el = document.getElementById('cs-list'); el.innerHTML = '';
+  if (!chatSessions.length){ el.innerHTML = '<div class="cs-empty">No chats yet.</div>'; return; }
+  for (const s of chatSessions){
+    const it = document.createElement('div');
+    it.className = 'cs-item' + (s.id === chatSid ? ' on' : '');
+    it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectSession(s.id); };
+    it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
+      <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}</div>
+      <div class="cs-act">
+        <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
+        <button class="cs-del" title="Delete" onclick="armDelete('${s.id}', this)">✕</button>
+      </div>`;
+    el.appendChild(it);
+  }
+}
+
+async function selectSession(sid){
+  if (chatBusy) return;
+  chatSid = sid;
+  const s = chatSessions.find(x => x.id === sid);
+  chatModel = ((s && s.model) || '').split('-').slice(0,2).join('-') || 'model';
+  stampFor(s && s.model);
+  localStorage.setItem('harness-chat-sid', sid);
+  renderSessions();
+  document.getElementById('chat-msgs').innerHTML = '';
+  try {
+    const h = await (await fetch(`/api/ody/history/${sid}`)).json();
+    for (const m of (h.history || []).slice(-30)){
       if (m.role === 'user') addMsg('user', m.content || '');
       else if (m.role === 'assistant') addMsg('assistant', m.content || '');
     }
     scrollChat();
-  } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+  } catch {}
+}
+
+async function newSession(){
+  if (chatBusy) return;
+  try {
+    const r = await (await fetch('/api/ody/session/new', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'New chat'})})).json();
+    if (r.error || !r.id) return;
+    await loadSessions();
+    await selectSession(r.id);
+    document.getElementById('chat-input').focus();
+  } catch {}
+}
+
+function beginRename(sid, btn){
+  const item = btn.closest('.cs-item');
+  const nm = item.querySelector('.nm');
+  const cur = chatSessions.find(x => x.id === sid);
+  const input = document.createElement('input');
+  input.className = 'cs-rename'; input.value = (cur && cur.name) || '';
+  nm.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const commit = async (save) => {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (save && v){
+      await fetch(`/api/ody/session/${sid}/rename`, {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:v})});
+    }
+    await loadSessions();
+  };
+  input.onkeydown = (e) => { if (e.key === 'Enter'){ e.preventDefault(); commit(true); } else if (e.key === 'Escape'){ commit(false); } };
+  input.onblur = () => commit(false);
+}
+
+// Two-step inline delete (no OS dialog — WKWebView can't show confirm()): first
+// click arms the button (✓? for 3s), second click within the window deletes.
+let _delArm = null;
+function armDelete(sid, btn){
+  if (_delArm && _delArm.sid === sid){ clearTimeout(_delArm.t); doDelete(sid); return; }
+  if (_delArm){ _delArm.btn.classList.remove('armed'); _delArm.btn.textContent = '✕'; clearTimeout(_delArm.t); }
+  btn.classList.add('armed'); btn.textContent = '✓?';
+  _delArm = { sid, btn, t: setTimeout(() => { btn.classList.remove('armed'); btn.textContent = '✕'; _delArm = null; }, 3000) };
+}
+async function doDelete(sid){
+  _delArm = null;
+  await fetch(`/api/ody/session/${sid}/delete`, {method:'POST'});
+  await loadSessions();
+  if (sid === chatSid){
+    if (chatSessions.length) await selectSession(chatSessions[0].id);
+    else { chatSid = null; document.getElementById('chat-msgs').innerHTML = ''; await newSession(); }
+  }
 }
 
 function addMsg(role, text) {
@@ -650,6 +801,7 @@ async function sendChat() {
     think.remove?.();
     chatBusy = false; document.getElementById('chat-send').disabled = false;
     scrollChat();
+    loadSessions();   // refresh rail: Odysseus auto-titles a new chat + reorders by recency
   }
 }
 

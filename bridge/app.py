@@ -361,6 +361,68 @@ async def ody_ensure_session(req: Request) -> JSONResponse:
         return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
 
 
+@app.get("/api/ody/sessions")
+async def ody_sessions() -> JSONResponse:
+    """List the user's chat sessions (newest first) for the pane's session rail."""
+    try:
+        r = await _ody_req("GET", "/api/sessions")
+        if r.status_code != 200:
+            return JSONResponse([])
+        out = [{
+            "id": s.get("id"),
+            "name": (s.get("name") or "Untitled"),
+            "model": s.get("model"),
+            "updated_at": s.get("last_message_at") or s.get("updated_at") or s.get("created_at"),
+            "message_count": s.get("message_count", 0),
+        } for s in r.json() if s.get("id")]
+        out.sort(key=lambda x: x["updated_at"] or "", reverse=True)
+        return JSONResponse(out)
+    except Exception:
+        return JSONResponse([])
+
+
+@app.post("/api/ody/session/new")
+async def ody_session_new(req: Request) -> JSONResponse:
+    """Create a fresh chat session bound to the default (local-jan) endpoint."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    name = (body.get("name") or "New chat").strip() or "New chat"
+    try:
+        r = await _ody_req("POST", "/api/session", data={"name": name, "endpoint_id": "local-jan"})
+        if r.status_code == 200:
+            j = r.json()
+            return JSONResponse({"id": j["id"], "name": name, "model": j.get("model")})
+        return JSONResponse({"error": r.text[:500]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
+@app.post("/api/ody/session/{sid}/rename")
+async def ody_session_rename(sid: str, req: Request) -> JSONResponse:
+    try:
+        name = (await req.json()).get("name", "").strip()
+    except Exception:
+        name = ""
+    if not name:
+        return JSONResponse({"ok": False, "log": "empty name"}, status_code=400)
+    try:
+        r = await _ody_req("PATCH", f"/api/session/{sid}", data={"name": name})
+        return JSONResponse({"ok": r.status_code == 200, "name": name})
+    except Exception:
+        return JSONResponse({"ok": False})
+
+
+@app.post("/api/ody/session/{sid}/delete")
+async def ody_session_delete(sid: str) -> JSONResponse:
+    try:
+        r = await _ody_req("POST", f"/api/session/{sid}/delete")
+        return JSONResponse({"ok": r.status_code == 200})
+    except Exception:
+        return JSONResponse({"ok": False})
+
+
 @app.get("/api/ody/history/{sid}")
 async def ody_history(sid: str) -> JSONResponse:
     try:
