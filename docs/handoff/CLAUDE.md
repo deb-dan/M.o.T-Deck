@@ -28,7 +28,8 @@
 - **Single source of truth for the model endpoint:** the `runner:` block in harness.yaml (endpoint + api_key + model + ctx_size). Hermes start patches `~/.hermes/config.yaml` model.{default,provider,base_url,api_key,context_length}; Odysseus start runs `seed_odysseus_jan.py` (upserts the `local-jan` endpoint by stable id + sets default model). `inference.hermes_llm` removed.
 - **One-switch pipeline slice 1 DONE (verified 2026-07-20):** dependency-aware start. `depends_on: [runner]` on hermes/odysseus; Bridge resolves the closure (`start-plan` endpoint), and POST start brings up the whole chain in order (skipping running, stop+report on first failure). Panel shows a single plan→approve dialog when a dep must come up (verified: stopping all then Start Odysseus → dialog lists runner+odysseus → Approve → both green). Repo tip `8562b81`.
 - **One-switch pipeline slice 2 DONE (verified 2026-07-20):** live per-step progress. POST start runs the closure in a background thread, publishing per-component state (pending/starting/on/failed/blocked) into `PROV`; `/status` exposes it; the panel animates cards live (Starting…/Failed with colored dots), logs transitions to the feed, adaptive-polls (1.5s provisioning / 6s idle), and a failed step shows Retry + View-log. Verified: stop all → Start Odysseus → runner "starting…"→"online"→odysseus "starting…"→"online" live. Repo tip `ed2748a`.
-- **Remaining M1 slices:** the Retry-on-failed button + idempotent closure already cover most of "Repair"; still to add — a persistent `needs-repair`/`degraded` state (runtime health-loss detection after a component was green), and install-time closure (flip an *uninstalled* component → install its deps too behind one approval). Model download is a future node (M2 model browser makes the model dynamic).
+- **One-switch pipeline slice 3 DONE (verified 2026-07-20):** degraded-state detection. An "expected up" marker (`data/<name>.expected`) is written on successful start, cleared on explicit Stop; `/status` reports `degraded = expected-up AND health failing`. Panel shows red "Degraded" with Restart/Stop + a `health` feed note. Verified: kill runner by port → card flips to Degraded → Restart → starting…→online. State machine now distinguishes Stopped (intentional) from Degraded (crashed).
+- **M1 one-switch pipeline: essentially COMPLETE** (slices 1–3: dependency-aware start + single approval, live per-step progress, degraded detection + recovery). Optional future refinements, not blocking: install-time closure (flip an *uninstalled* component → install deps too), cross-dependency health cascade (mark Odysseus/Hermes degraded when the runner they depend on dies — currently only the runner's own health is tracked), and the model-download node (folds into M2's model browser).
 - **New M1 failure archaeology:** seed matched the endpoint by `base_url`, but with a fixed id — when the URL changed (:1337→:6767) it tried to INSERT a duplicate id → PK collision → silent rollback → Odysseus stuck on the dead :1337 (Error 503). FIX: match by stable id, update in place (`1cf7f3e`).
 
 ## State (2026-07-20)
@@ -42,9 +43,9 @@
 
 ## Next actions (in order)
 
-1. **Post-M0 spikes (04 §Prototypes)** before committing to M1: headless Jan (`jan serve` :6767), CLI model download, WKWebView embed of :7860, native SearXNG on macOS/arm64.
-2. **M1** — runner slot (make Jan a managed headless component behind the adapter) + the one-switch provisioning pipeline (dependency closure, config fan-out, Repair verb). Odysseus/Hermes connect steps built in M0 (`seed_odysseus_jan.py`, Hermes config patch) are the seeds of this.
-3. **M2 interface (08)** — reskin/deep-link the Odysseus webview into a Mission Control tab (Fable-only UI work).
+1. **M2 interface (08) — the next milestone.** Bring Odysseus into Mission Control as a restyled tab (webview embed → deep-linked tabs → native panes ladder). Fable-only UI work. This is the "one window" payoff.
+2. Optional M1 polish if desired later: cross-dependency health cascade, install-time closure (see State notes).
+3. Remaining post-M0 spikes fold into the work they de-risk: native SearXNG (when adding shared search), WKWebView embed + HF API (M2).
 
 ## Post-M0 spike results (2026-07-20)
 
