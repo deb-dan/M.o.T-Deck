@@ -50,7 +50,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // ── web views ──
         panelWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        odyWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+
+        // "Harness skin" for Odysseus: override its base --font-family (unset → falls back to
+        // Fira Code monospace everywhere) with a refined sans for prose/UI. Code blocks use an
+        // explicit 'Fira Code' rule, so they stay mono. Colors are left to Odysseus's Theme editor.
+        let odyCfg = WKWebViewConfiguration()
+        let skin = ":root{--font-family:-apple-system,'SF Pro Text','Segoe UI',system-ui,sans-serif;} body{line-height:1.5;} .msg,.message,p{letter-spacing:0.1px;}"
+        let inject = "(function(){var s=document.getElementById('harness-skin')||document.createElement('style');s.id='harness-skin';s.textContent=`\(skin)`;document.documentElement.appendChild(s);})();"
+        let userScript = WKUserScript(source: inject, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        odyCfg.userContentController.addUserScript(userScript)
+        odyWV = WKWebView(frame: .zero, configuration: odyCfg)
         for wv in [panelWV!, odyWV!] {
             wv.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(wv)
