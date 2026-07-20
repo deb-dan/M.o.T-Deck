@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false)
         window.title = "Harness"
         window.minSize = NSSize(width: 900, height: 620)
+        // Dark editorial chrome: makes the titlebar + segmented control render dark,
+        // matching the near-black panel instead of the default white strip.
+        window.appearance = NSAppearance(named: .darkAqua)
 
         let container = NSView()
         window.contentView = container
@@ -33,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ── tab strip ──
         let tabBar = NSView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
+        tabBar.wantsLayer = true
+        tabBar.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
         container.addSubview(tabBar)
 
         let seg = NSSegmentedControl(

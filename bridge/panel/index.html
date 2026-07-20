@@ -246,7 +246,7 @@ async function refresh(manual) {
               : c.degraded ? 'bad'
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     side.insertAdjacentHTML('beforeend',
-      `<a><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+      `<a onclick="jumpToCard('${name}')" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${name}</span></a>`);
   }
 
@@ -269,6 +269,15 @@ function showProvLog(name) {
   const p = (lastStatus && lastStatus.prov || {})[name];
   document.getElementById('logbody').textContent = (p && p.detail) || '(no output)';
   logdlg.showModal();
+}
+
+function jumpToCard(name) {
+  const el = document.getElementById('card-' + name);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.style.transition = 'box-shadow .2s';
+  el.style.boxShadow = '0 0 0 2px var(--gold)';   // brief highlight
+  setTimeout(() => { el.style.boxShadow = ''; }, 1200);
 }
 
 function metric(k, v) {
@@ -313,7 +322,7 @@ function cardHTML(name, c, isBridge, prov) {
           : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
     }
   }
-  return `<div class="card">
+  return `<div class="card" id="card-${name}">
     <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
     <div class="state">${state}</div>
     <div class="meta">pin ${pin} · port ${c.port ?? '—'}</div>
