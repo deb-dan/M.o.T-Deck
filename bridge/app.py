@@ -574,6 +574,48 @@ def api_switch_status() -> JSONResponse:
     return JSONResponse(dict(_SWITCH))
 
 
+# ── Slice 2: HuggingFace model browser (Bridge runs on the Mac → real internet) ──
+_HF = httpx.AsyncClient(base_url="https://huggingface.co", timeout=httpx.Timeout(20, read=30))
+
+
+@app.get("/api/models/hf")
+async def hf_search(q: str = "", limit: int = 20) -> JSONResponse:
+    """Search HuggingFace for GGUF models, most-downloaded first."""
+    q = (q or "").strip()
+    if not q:
+        return JSONResponse([])
+    try:
+        r = await _HF.get("/api/models", params={
+            "search": q, "filter": "gguf", "sort": "downloads", "limit": limit})
+        out = [{"repo": m.get("id") or m.get("modelId"),
+                "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
+                "pipeline": m.get("pipeline_tag"), "updated": m.get("createdAt")}
+               for m in (r.json() if r.status_code == 200 else []) if (m.get("id") or m.get("modelId"))]
+        return JSONResponse(out)
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=502)
+
+
+@app.get("/api/models/hf/files")
+async def hf_files(repo: str) -> JSONResponse:
+    """GGUF files (name + size) in a repo, for the LM-Studio-style detail + fit pill."""
+    try:
+        meta = await _HF.get(f"/api/models/{repo}")
+        tree = await _HF.get(f"/api/models/{repo}/tree/main")
+        files = []
+        if tree.status_code == 200:
+            for it in tree.json():
+                path = it.get("path", "")
+                if path.lower().endswith(".gguf"):
+                    files.append({"filename": path, "size_bytes": it.get("size")})
+        m = meta.json() if meta.status_code == 200 else {}
+        return JSONResponse({"repo": repo, "files": files,
+                             "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
+                             "tags": m.get("tags", [])})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=502)
+
+
 @app.post("/api/open")
 async def open_external(req: Request) -> JSONResponse:
     """Open an http(s) URL in the user's default browser (panel links inside the app's webview)."""
