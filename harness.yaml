@@ -10,8 +10,8 @@ components:
     port: 9119                # hermes serve REST API (persistent surface)
   odysseus:
     repo: https://github.com/pewdiepie-archdaemon/odysseus.git
-    pin: 168f593096ccc1d2f2a8a6edb08a2456f30c99c7   # main branch commit
-    installed: false
+    pin: e57f60bd343a748af9c855b73ba998ea8b3b652c   # 2026-07-20; fixes chat_routes NameError _explicit_web_intent (old pin 168f5930 was broken)
+    installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
 
