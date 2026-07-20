@@ -59,15 +59,25 @@ else:
     open(path, "w").write("\n".join(out))
 print(f"[harness] Hermes model -> {model} @ {base}")
 PYPATCH
-    ( cd vendor/hermes && \
-      nohup python -m gateway.run \
-        >>../../data/logs/hermes.log 2>&1 & echo $! > ../../data/hermes.pid )
-    sleep 2
-    if kill -0 "$(cat data/hermes.pid)" 2>/dev/null; then
-      echo "[harness] hermes gateway running (pid $(cat data/hermes.pid))"
+    PORT=9119
+    pkill -f "hermes serve" 2>/dev/null || true   # clear any stale server
+    sleep 1
+    : > data/logs/hermes.log
+    nohup hermes serve --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
+    echo $! > data/hermes.pid
+    up=0
+    for _ in $(seq 1 25); do
+      if curl -sf -m 1 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1 \
+         || nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat data/hermes.pid)" 2>/dev/null || { echo "ERROR: hermes serve exited on launch. Last log lines:"; tail -15 data/logs/hermes.log; exit 1; }
+      sleep 1
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] hermes serve up on :${PORT} (model=$MODEL @ $BASE_URL)"
+      echo "[harness] tool-calling proof: run scripts/test_hermes.sh"
     else
-      echo "ERROR: hermes gateway exited immediately. Last log lines:"
-      tail -8 data/logs/hermes.log
+      echo "ERROR: hermes serve did not open :${PORT} within 25s. Last log lines:"
+      tail -15 data/logs/hermes.log
       exit 1
     fi
     ;;
