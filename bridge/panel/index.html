@@ -132,9 +132,16 @@
   .cmsg .toolline { font:11px var(--mono); color:var(--faint); letter-spacing:.06em;
                     padding:3px 0 3px 20px; }
   .cmsg .toolline b { color:var(--dim); font-weight:400; }
-  .cmsg .srcchip { display:inline-block; font:10.5px var(--mono); letter-spacing:.1em;
+  .cmsg details.sources { margin:10px 0 0 20px; }
+  .cmsg details.sources summary { display:inline-block; font:10.5px var(--mono); letter-spacing:.1em;
                    color:var(--gold); border:1px solid var(--line2); border-radius:7px;
-                   padding:3px 10px; margin:8px 0 0 20px; }
+                   padding:3px 10px; cursor:pointer; list-style:none; }
+  .cmsg details.sources .slist { padding:10px 0 2px 4px; }
+  .cmsg details.sources .sitem { font:11.5px var(--mono); color:var(--dim); padding:3px 0;
+                   letter-spacing:.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cmsg details.sources .sitem a { color:var(--fg); text-decoration:none; }
+  .cmsg details.sources .sitem a:hover { color:var(--gold); }
+  .cmsg details.sources .sitem .host { color:var(--faint); margin-left:8px; }
   #thinking { font:italic 12.5px var(--serif); color:var(--faint); padding:2px 0 2px 20px; }
   .cmsg details.think { margin:0 0 10px 20px; }
   .cmsg details.think summary { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
@@ -555,32 +562,56 @@ async function sendChat() {
         for (const line of part.split('\n')) {
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6);
-          if (payload === '[DONE]') { think.remove(); chatBusy=false; break; }
+          if (payload === '[DONE]') {
+            think.remove(); chatBusy = false;
+            const od = holder.querySelector('details.think'); if (od) od.open = false;
+            break;
+          }
           let j; try { j = JSON.parse(payload); } catch { continue; }
           if (j.delta !== undefined) {
             if (j.thinking) {
+              // Live thought stream: disclosure appears ONLY if the model actually thinks,
+              // stays OPEN while reasoning streams, auto-collapses when the answer begins.
               think.hidden = false;
-              // capture reasoning into a collapsed, expandable disclosure
               let det = holder.querySelector('details.think');
               if (!det) {
-                det = document.createElement('details'); det.className = 'think';
+                det = document.createElement('details'); det.className = 'think'; det.open = true;
                 det.innerHTML = '<summary>thinking</summary><div class="tbody"></div>';
                 holder.insertBefore(det, body);
               }
-              det.querySelector('.tbody').textContent += j.delta;
+              const tb = det.querySelector('.tbody');
+              tb.textContent += j.delta;
+              tb.scrollTop = tb.scrollHeight;   // follow the thought stream
+            } else {
+              think.hidden = true;
+              const det = holder.querySelector('details.think');
+              if (det && det.open) det.open = false;   // answer starting → tuck thoughts away
+              body.textContent += j.delta;
             }
-            else { think.hidden = true; body.textContent += j.delta; }
           } else if (j.type === 'model_info' || j.type === 'model_actual') {
             chatModel = j.model || chatModel;
             holder.querySelector('.who').textContent = chatModel;
           } else if (j.type === 'tool_start') {
             const t = document.createElement('div'); t.className = 'toolline';
-            t.innerHTML = `· <b>${esc(j.tool || 'tool')}</b> running…`;
+            t.innerHTML = `· <b>${esc(j.tool || 'tool')}</b> <span class="tstate">running…</span>`;
             holder.insertBefore(t, body);
+            holder._lastTool = t;
+          } else if (j.type === 'tool_output' || j.type === 'agent_step') {
+            const t = holder._lastTool;
+            if (t) { const st = t.querySelector('.tstate'); if (st) st.textContent = 'done'; }
           } else if (j.type === 'web_sources') {
-            const c = document.createElement('div'); c.className = 'srcchip';
-            c.textContent = `${(j.data || []).length} web sources`;
-            holder.appendChild(c);
+            const items = j.data || [];
+            const det = document.createElement('details'); det.className = 'sources';
+            det.innerHTML = `<summary>${items.length} web sources</summary><div class="slist"></div>`;
+            const list = det.querySelector('.slist');
+            for (const s of items) {
+              const url = s.url || s.link || '';
+              let host = ''; try { host = new URL(url).hostname.replace('www.',''); } catch {}
+              const it = document.createElement('div'); it.className = 'sitem';
+              it.innerHTML = `<a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(s.title || url || 'source')}</a><span class="host">${esc(host)}</span>`;
+              list.appendChild(it);
+            }
+            holder.appendChild(det);
           } else if (j.type === 'proxy_error') {
             body.textContent += `\n[proxy error: ${j.error}]`;
           }
