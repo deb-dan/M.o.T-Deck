@@ -23,7 +23,7 @@ inference:
   hermes_llm:                 # M0: Hermes points here directly; the M1 runner slot replaces this
     base_url: http://127.0.0.1:1337/v1   # Jan desktop API server (Settings -> Local API Server)
     model:                    # empty = auto-pick the first model Jan reports at start
-    context_length: 32768     # explicit ceiling; local endpoints mis-report this (Hermes auto-detect gives ~0)
+    context_length: 65536     # Hermes requires >=64K; local endpoints mis-report this (auto-detect gave ~43)
   endpoints:
     cookbook:  { url: "http://127.0.0.1:8000/v1",  kind: local }   # Odysseus Cookbook serve
     ollama:    { url: "http://127.0.0.1:11434/v1", kind: local }   # optional

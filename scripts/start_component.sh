@@ -26,7 +26,7 @@ case "$NAME" in
     MODEL=$(awk '/^  hermes_llm:/{f=1; next} f && /^    model:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     CTXLEN=$(awk '/^  hermes_llm:/{f=1; next} f && /^    context_length:[[:space:]]*/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*context_length:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
-    [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=32768
+    [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
     if [[ -z "$MODEL" ]]; then
       MODEL=$(curl -sf -m 4 "${BASE_URL%/}/models" \
         | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
