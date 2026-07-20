@@ -46,9 +46,13 @@
 - **Native tabbed Harness.app is the one window.** `app/main.swift` rebuilt: standard titled window + a segmented tab strip (Mission Control :8700 / Odysseus :7860), two persistent WKWebViews, Odysseus lazy-loaded on first select. Each tab is a **top-level** load — sidesteps Odysseus's `X-Frame-Options: DENY` / `frame-ancestors none` (middleware.py:108), which make iframing impossible. Built with swiftc 6.3 via `./scripts/build_app.sh`; verified: login (admin/admin123, the app's WKWebView has its own cookie store), chat replies ~75 tok/s. Repo tip `943e8ec`.
 - **Web/internet note:** the local model has NO internet (Chat mode = training-data answers). Odysseus's web comes from `web_search`/`web_fetch` agent tools + Deep Research, active only in **Agent mode** (the Agent|Chat toggle by the input). Backend: `search_provider: searxng` (:8080, NOT installed yet) with automatic **duckduckgo fallback** (`ddgs`, installed) — so Agent mode already works via DDG; native SearXNG is the better shared backend (planned).
 
+## M2 slice 2a DONE (verified 2026-07-20)
+- Dark tab bar (`window.appearance = .darkAqua` + near-black strip in `app/main.swift`). Sidebar Components entries clickable → scroll-to-card + gold highlight (`jumpToCard`, cards get `id=card-<name>`). Repo tip `85d2ca6`.
+- **macOS gotcha (recorded):** `open dist/Harness.app` re-focuses a running instance instead of relaunching the new build — must `pkill -x Harness` first. This masked the change once.
+
 ## Next actions (in order)
 
-1. **M2 slice 2 — reskin:** style the plain white tab strip to the dark editorial theme, then inject CSS into the Odysseus webview (fonts/spacing/arrangement) per Debi's original wish. Fable-only UI.
+1. **M2 slice 2b — reskin Odysseus's own UI.** Approach decided: FIRST try Odysseus's built-in **Theme** editor (its left-nav "Theme" item) for colors/fonts — native + update-safe. Only for things it can't do (arrangement, hiding nav clutter, specific fonts) inject harness CSS into the odyWV via `WKUserScript` (Odysseus CSP `style-src 'unsafe-inline'` allows injected `<style>`; user scripts bypass script-src). Need Debi's specifics on what feels "weird" before deep CSS.
 2. **Web/search:** install the native SearXNG component (04 §Prototypes spike + shared-search) so Deep Research + Agent web_search use it instead of the DDG fallback.
 3. Optional M1 polish: cross-dependency health cascade, install-time closure.
 
