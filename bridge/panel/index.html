@@ -136,10 +136,10 @@
   .cmsg.user .who { text-align:right; color:var(--dim); }
   .cmsg.user .body { margin-left:20%; text-align:left; color:var(--cream);
                      background:var(--card); border:1px solid var(--line);
-                     border-radius:14px 14px 4px 14px; padding:14px 18px; }
+                     border-radius:14px 14px 4px 14px; padding:15px 19px; }
   .cmsg.assistant .who { color:var(--gold); }
   .cmsg.assistant .body { border-left:1px solid var(--gold); padding:2px 0 2px 20px;
-                          color:var(--fg); font-size:15px; line-height:1.75;
+                          color:var(--fg); font-size:15px; line-height:1.75; max-width:68ch;
                           white-space:pre-wrap; overflow-wrap:break-word; }
   .cmsg .toolline { font:11px var(--mono); color:var(--faint); letter-spacing:.06em;
                     padding:3px 0 3px 20px; }
@@ -190,12 +190,13 @@
                color:var(--dim); border:1px solid var(--line2); border-radius:7px;
                padding:5px 12px; cursor:pointer; }
   .mode-chip.on { color:#171420; background:var(--gold); border-color:var(--gold); }
-  .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; }
+  .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75; }
   #chat-inputrow { display:flex; gap:10px; align-items:flex-end; }
   #chat-input { flex:1; resize:none; background:var(--card); color:var(--cream);
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
   #chat-input:focus { border-color:var(--gold); }
+  #chat-send:hover { border-color:var(--gold); }
 
   /* session rail + chat column live side by side under the header */
   #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; }
@@ -210,13 +211,13 @@
   #cs-list { flex:1 1 auto; overflow-y:auto; min-height:0; margin-right:-6px; padding-right:6px;
       scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
   .cs-empty { font:11px var(--mono); color:var(--faint); padding:8px 2px; }
-  .cs-item { position:relative; padding:9px 10px; border-radius:9px; cursor:pointer; margin-bottom:2px;
+  .cs-item { position:relative; padding:11px 12px; border-radius:9px; cursor:pointer; margin-bottom:2px;
       border-left:2px solid transparent; }
   .cs-item:hover { background:var(--card); }
   .cs-item.on { background:var(--card); border-left-color:var(--gold); }
   .cs-item .nm { font:12.5px -apple-system, "SF Pro Text", sans-serif; color:var(--fg);
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:38px; }
-  .cs-item.on .nm { color:var(--cream); }
+  .cs-item.on .nm { color:var(--cream); font-size:13.5px; }
   .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
   .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
   .cs-item:hover .cs-act { display:flex; }
@@ -1532,6 +1533,7 @@ async function sendChat() {
               // Live thought stream: disclosure appears ONLY if the model actually thinks,
               // stays OPEN while reasoning streams, auto-collapses when the answer begins.
               think.hidden = false;
+              if (!holder._thinkStart) holder._thinkStart = Date.now();   // §D: for elapsed stamp
               let det = holder.querySelector('details.think');
               if (!det) {
                 det = document.createElement('details'); det.className = 'think'; det.open = true;
@@ -1545,6 +1547,12 @@ async function sendChat() {
               think.hidden = true;
               const det = holder.querySelector('details.think');
               if (det && det.open) det.open = false;   // answer starting → tuck thoughts away
+              // §D: stamp elapsed thinking time on the summary (once), when > 2s
+              if (det && holder._thinkStart && !holder._thinkDone) {
+                holder._thinkDone = true;
+                const secs = (Date.now() - holder._thinkStart) / 1000;
+                if (secs > 2) { const sm = det.querySelector('summary'); if (sm) sm.textContent = 'thinking · ' + secs.toFixed(1) + 's'; }
+              }
               chatSummary(holder);                      // §B: collapse steps into ✓ summary
               body.textContent += j.delta;
             }
