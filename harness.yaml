@@ -29,7 +29,8 @@ components:
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
   adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx | jan
-  binary:                    # path to llama-server; empty = auto-discover newest in Jan's backends dir
+  llamacpp_pin: b10094       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
+  binary:                    # explicit path to llama-server; empty = auto-discover (our pin → Jan backends → LM Studio)
   mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
   port: 6767                 # canonical headless endpoint (jan serve --port)
   endpoint: http://127.0.0.1:6767/v1

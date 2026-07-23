@@ -798,14 +798,20 @@ def aux_start() -> JSONResponse:
     else:
         binp = (cfg().get("runner") or {}).get("binary") or ""
         if not binp:
-            cands = (sorted(_glob.glob(_os.path.expanduser(
-                        "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
-                        key=_os.path.getmtime, reverse=True)
-                     or sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
-                        key=_os.path.getmtime, reverse=True))
-            if not cands:
-                return JSONResponse({"ok": False, "log": "no llama-server binary found"}, status_code=500)
-            binp = cands[0]
+            # SHARED binary-discovery order (keep identical in start_component.sh):
+            #   explicit runner.binary → OUR pin (data/llamacpp) → Jan backends → LM Studio.
+            pin_bin = str(ROOT / "data" / "llamacpp" / "build" / "bin" / "llama-server")
+            if _os.path.isfile(pin_bin) and _os.access(pin_bin, _os.X_OK):
+                binp = pin_bin
+            else:
+                cands = (sorted(_glob.glob(_os.path.expanduser(
+                            "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
+                            key=_os.path.getmtime, reverse=True)
+                         or sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
+                            key=_os.path.getmtime, reverse=True))
+                if not cands:
+                    return JSONResponse({"ok": False, "log": "no llama-server binary found — run scripts/install_llamacpp.sh"}, status_code=500)
+                binp = cands[0]
         helptxt = ""
         try:
             hp = subprocess.run([binp, "--help"], capture_output=True, text=True, timeout=15)

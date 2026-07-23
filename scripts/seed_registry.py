@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Build data/models.json — the harness's own model registry (llamacpp adapter).
 
-Scans Jan's model folder (imports GGUF models the user already has) and merges the
-result into data/models.json, preserving any non-jan-import entries (e.g. future
-download-manager additions). stdlib only.
+Scans (a) the harness-owned models dir data/models/ (source "local" — where the
+cleanup slice migrates Jan's models into, and where the download manager writes),
+(b) Jan's model folder (imports GGUF models the user still has there), and
+(c) LM Studio's library, then merges into data/models.json, preserving any
+non-rescanned entries (e.g. download-manager additions, source "download"). stdlib
+only.
 
 Structured as functions so the scan/merge logic can be unit-tested against a temp
-Jan dir without touching the real one. main() uses the real paths.
+dir without touching the real one. main() uses the real paths.
 """
 import os
 import json
@@ -17,6 +20,7 @@ JAN_MODELS_DIR = os.path.expanduser(
 JAN_PRESET_INI = os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/router.preset.ini")
 LMSTUDIO_MODELS_DIR = os.path.expanduser("~/.lmstudio/models")
+LOCAL_MODELS_DIR = os.path.join("data", "models")
 REGISTRY_PATH = os.path.join("data", "models.json")
 
 
@@ -73,6 +77,43 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
             "ctx": ctx_by_id.get(name),
             "vision": bool(mmproj),
             "source": "jan-import",
+        })
+    return entries
+
+
+def scan_local(local_dir):
+    """Return source "local" registry entries for every subfolder of local_dir
+    (the harness-owned data/models/) that contains a model.gguf (+ optional
+    mmproj.gguf) — the shape the migrate_jan_models.sh cleanup produces. ctx is
+    None here (no preset); the merge step carries a previously-known ctx forward.
+    Download-manager models keep their real gguf filenames (not model.gguf) so
+    they are skipped here and preserved via their source "download" entries."""
+    entries = []
+    if not os.path.isdir(local_dir):
+        return entries
+    for name in sorted(os.listdir(local_dir)):
+        folder = os.path.join(local_dir, name)
+        if not os.path.isdir(folder):
+            continue
+        model_path = os.path.join(folder, "model.gguf")
+        if not os.path.isfile(model_path):
+            continue
+        mmproj_path = os.path.join(folder, "mmproj.gguf")
+        mmproj = mmproj_path if os.path.isfile(mmproj_path) else None
+        try:
+            size_bytes = os.path.getsize(model_path)
+        except OSError:
+            size_bytes = None
+        entries.append({
+            "id": name,
+            "name": name,
+            "format": "gguf",
+            "path": os.path.abspath(model_path),
+            "mmproj": os.path.abspath(mmproj) if mmproj else None,
+            "size_bytes": size_bytes,
+            "ctx": None,
+            "vision": bool(mmproj),
+            "source": "local",
         })
     return entries
 
@@ -164,14 +205,32 @@ def load_existing(path):
         return []
 
 
-def merge(existing, jan_entries, lmstudio_entries=None):
-    """Keep every existing entry whose source is neither 'jan-import' nor
-    'lmstudio-import'; replace each of those sets with its fresh scan. On id
-    collision, suffix the lmstudio entry's id with '-lms'."""
+def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None):
+    """Keep every existing entry whose source is not one we re-scan ('jan-import',
+    'lmstudio-import', 'local'); replace each re-scanned set with its fresh scan.
+    Entries with other sources (e.g. 'download') are preserved untouched.
+
+    ctx preservation: a fresh 'local' scan has ctx=None (no router preset). When a
+    model's files are migrated out of Jan's folder into data/models/, its context
+    would otherwise be lost — so for each local entry whose ctx is null we carry
+    forward any non-null ctx already recorded for that id in the existing registry
+    (e.g. the 35B's 95536 that came from Jan's router.preset.ini).
+
+    On id collision, suffix the lmstudio entry's id with '-lms'."""
     lmstudio_entries = lmstudio_entries or []
+    local_entries = local_entries or []
+    # id -> ctx from the current registry (any source), for the preservation rule.
+    existing_ctx = {m.get("id"): m.get("ctx")
+                    for m in existing if m.get("ctx") not in (None, "")}
+    local_filled = []
+    for m in local_entries:
+        if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
+            m = dict(m)
+            m["ctx"] = existing_ctx[m["id"]]
+        local_filled.append(m)
     kept = [m for m in existing
-            if m.get("source") not in ("jan-import", "lmstudio-import")]
-    result = kept + list(jan_entries)
+            if m.get("source") not in ("jan-import", "lmstudio-import", "local")]
+    result = kept + list(jan_entries) + local_filled
     used = {m.get("id") for m in result}
     for m in lmstudio_entries:
         if m.get("id") in used:
@@ -190,13 +249,15 @@ def write(path, models):
 
 
 def main():
+    local_entries = scan_local(LOCAL_MODELS_DIR)
     jan_entries = scan_jan(JAN_MODELS_DIR)
     lmstudio_entries = scan_lmstudio(LMSTUDIO_MODELS_DIR)
     existing = load_existing(REGISTRY_PATH)
-    merged = merge(existing, jan_entries, lmstudio_entries)
+    merged = merge(existing, jan_entries, lmstudio_entries, local_entries)
     write(REGISTRY_PATH, merged)
     print(f"seeded {len(merged)} models "
-          f"({len(jan_entries)} jan-imports, {len(lmstudio_entries)} lmstudio-imports)")
+          f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "
+          f"{len(lmstudio_entries)} lmstudio-imports)")
 
 
 if __name__ == "__main__":

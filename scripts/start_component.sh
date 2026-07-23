@@ -101,10 +101,14 @@ PYRESOLVE
     # llama-server (llama.cpp) direct — deterministic, visible process, our registry.
     # Resolve the llama-server binary.
     if [[ -z "$R_BIN" ]]; then
-      BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1)
+      # SHARED binary-discovery order (keep identical in bridge/app.py aux_start):
+      #   explicit runner.binary → OUR pin (data/llamacpp) → Jan backends → LM Studio.
+      BIN=""
+      [[ -x "data/llamacpp/build/bin/llama-server" ]] && BIN="data/llamacpp/build/bin/llama-server"
+      [[ -n "$BIN" ]] || BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1)
       # Fallback: LM Studio's backends (often newer llama.cpp — needed for e.g. MTP models).
       [[ -n "$BIN" ]] || BIN=$(ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1)
-      [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — set runner.binary in harness.yaml"; exit 1; }
+      [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — run scripts/install_llamacpp.sh or set runner.binary in harness.yaml"; exit 1; }
     else
       BIN="$R_BIN"
       [[ -x "$BIN" ]] || { echo "ERROR: runner.binary is not executable: $BIN"; exit 1; }
