@@ -326,6 +326,23 @@
       border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer;
       transition: color .12s ease, border-color .12s ease; }
   #chat-eject:hover { color:var(--bad); border-color:var(--bad); }
+
+  /* per-file "Get" button on HF file rows + the Downloads section */
+  .hffile { justify-content:flex-start; }
+  .hfget { font:9.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+      color:var(--gold); background:transparent; border:1px solid var(--line2);
+      border-radius:6px; padding:2px 9px; margin-left:auto; cursor:pointer; }
+  .hfget:hover { border-color:var(--gold); }
+  .dlrow { border:1px solid var(--line); border-radius:11px; padding:12px 16px; margin-top:10px; }
+  .dlrow .dlname { font:12px var(--mono); color:var(--cream); word-break:break-all; }
+  .dlrow .dlbar { height:3px; background:var(--line); border-radius:2px; overflow:hidden; margin:8px 0 6px; }
+  .dlrow .dlfill { height:100%; background:var(--gold); border-radius:2px; transition:width .8s ease; }
+  .dlrow .dlmeta { display:flex; justify-content:space-between; align-items:center;
+      font:10px var(--mono); letter-spacing:.08em; color:var(--dim); }
+  .dlrow .dlacts button { font:9.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+      color:var(--faint); background:transparent; border:1px solid var(--line);
+      border-radius:6px; padding:2px 8px; margin-left:6px; cursor:pointer; }
+  .dlrow .dlacts button:hover { color:var(--gold); border-color:var(--gold); }
 </style>
 </head>
 <body>
@@ -425,6 +442,7 @@
     </div>
     <!-- FABLE: style this pane (LM-Studio / Jan / Cherry are the reference feel) -->
     <div id="models-list"></div>
+    <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
 
     <div id="models-browse">
       <span class="cs-title">Download a model</span>
@@ -939,6 +957,7 @@ async function initModels(){
     else stamp.textContent = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED') + ' · ' + n + ' INSTALLED · LOCAL';
     renderModels(r);
   } catch { stamp.textContent = 'BRIDGE UNAVAILABLE'; }
+  refreshDownloads();   // restore any in-flight downloads when revisiting the pane
 }
 
 function renderModels(r){
@@ -1103,12 +1122,15 @@ async function hfDetails(repo, btn){
       const head = document.createElement('div'); head.className = 'hffile';
       head.innerHTML = `${fitPill(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span>`;
       box.appendChild(head);
+      const note = document.createElement('div'); note.className = 'cs-empty';
+      note.textContent = 'MLX models download automatically when loaded (engine-managed).';
+      box.appendChild(note);
     }
     for (const f of d.files){
       const line = document.createElement('div'); line.className = 'hffile';
       line.innerHTML = d.kind === 'mlx'
         ? `<span style="color:var(--faint)">${esc(f.filename)} · ${fmtGB(f.size_bytes)}</span>`
-        : `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span>`;
+        : `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span> <button class="hfget" onclick="dlStart('${escAttr(repo)}', '${escAttr(f.filename)}')">Get</button>`;
       box.appendChild(line);
     }
   } catch { box.innerHTML = '<div class="cs-empty">Failed to load files.</div>'; }
@@ -1170,6 +1192,80 @@ async function switchModel(id, name){
     }, 2000);
   } catch { stamp.textContent = 'SWITCH ERROR'; modelsBusy = false; }
 }
+
+// ── Download manager (Bridge-owned per-file downloads) ──
+let dlPoll = null;
+const dlDismissed = new Set();
+let dlSeenDone = new Set();
+
+async function dlStart(repo, filename){
+  try {
+    const r = await fetch('/api/dl/start', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({repo, filename})});
+    if (r.ok){ refreshDownloads(); ensureDlPoll(); }
+  } catch {}
+}
+
+function ensureDlPoll(){ if (!dlPoll) dlPoll = setInterval(refreshDownloads, 2000); }
+
+async function dlAct(id, act){
+  try { await fetch('/api/dl/' + id + '/' + act, {method:'POST'}); } catch {}
+  refreshDownloads();
+}
+
+async function refreshDownloads(){
+  let list;
+  try { list = await (await fetch('/api/dl')).json(); } catch { return; }
+  if (!Array.isArray(list)) return;
+  const visible = list.filter(e => !dlDismissed.has(e.id));
+  const sec = document.getElementById('downloads-sec');
+  const box = document.getElementById('dl-list');
+  if (!visible.length){
+    sec.hidden = true; box.innerHTML = '';
+    if (dlPoll){ clearInterval(dlPoll); dlPoll = null; }
+    return;
+  }
+  sec.hidden = false;
+  let anyDownloading = false, newDone = false;
+  box.innerHTML = '';
+  for (const e of visible){
+    const total = (e.files || []).reduce((a, f) => a + (f.total || 0), 0);
+    const done  = (e.files || []).reduce((a, f) => a + (f.done  || 0), 0);
+    const pct = total > 0 ? Math.min(100, done / total * 100) : 5;
+    if (e.state === 'downloading') anyDownloading = true;
+    if (e.state === 'done' && !dlSeenDone.has(e.id)){ dlSeenDone.add(e.id); newDone = true; }
+
+    let meta;
+    if (e.state === 'downloading')
+      meta = `${fmtGB(done)} of ${fmtGB(total)} (${pct.toFixed(0)}%) · ${(e.rate/1048576).toFixed(1)} MB/s`;
+    else if (e.state === 'paused')
+      meta = `paused · ${fmtGB(done)} of ${fmtGB(total)}`;
+    else if (e.state === 'done')
+      meta = 'complete — in your library';
+    else if (e.state === 'error')
+      meta = 'error: ' + esc(e.error || '');
+    else
+      meta = 'cancelled';
+
+    let acts;
+    if (e.state === 'downloading')
+      acts = `<button onclick="dlAct('${e.id}','pause')">Pause</button><button onclick="dlAct('${e.id}','cancel')">Cancel</button>`;
+    else if (e.state === 'paused')
+      acts = `<button onclick="dlAct('${e.id}','resume')">Resume</button><button onclick="dlAct('${e.id}','cancel')">Cancel</button>`;
+    else
+      acts = `<button onclick="dlDismiss('${e.id}')">Dismiss</button>`;
+
+    const row = document.createElement('div'); row.className = 'dlrow';
+    row.innerHTML = `<div class="dlname">${esc(e.model_id)} <span style="color:var(--dim)">· ${esc(e.repo)}</span></div>
+      <div class="dlbar"><div class="dlfill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="dlmeta"><span>${meta}</span><span class="dlacts">${acts}</span></div>`;
+    box.appendChild(row);
+  }
+  if (anyDownloading) ensureDlPoll();
+  if (newDone) initModels();
+}
+
+function dlDismiss(id){ dlDismissed.add(id); refreshDownloads(); }
 
 function addMsg(role, text) {
   const wrap = document.createElement('div');

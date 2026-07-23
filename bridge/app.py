@@ -860,6 +860,263 @@ async def hf_card(repo: str) -> JSONResponse:
         return JSONResponse({"repo": repo, "markdown": "", "error": str(e)[:200]})
 
 
+# ── Download manager (Bridge-owned, no Jan) ──────────────────────────────────
+# Download the EXACT HuggingFace file the user clicks, into the harness's own
+# models dir (data/models/<model-id>/), with visible progress, pause/resume/cancel
+# and parallelism. HF `resolve` URLs 302 to a CDN off huggingface.co, so a
+# follow_redirects client is used against the absolute URL.
+import re as _dl_re
+
+DOWNLOADS: dict = {}
+_DL_SEQ = {"n": 0}
+_DL = httpx.AsyncClient(timeout=httpx.Timeout(30, read=120), follow_redirects=True)
+
+_SPLIT_RE = _dl_re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$")
+
+
+def _safe_dir(name: str) -> str:
+    """Keep [A-Za-z0-9._-]; replace anything else with '-'."""
+    return _dl_re.sub(r"[^A-Za-z0-9._-]", "-", name)
+
+
+def _model_id_from_filename(filename: str) -> str:
+    """Model id = filename stem minus '.gguf', with a trailing split suffix
+    (-NNNNN-of-MMMMM) stripped. 'foo-Q4_K_M.gguf'→'foo-Q4_K_M';
+    'bar-00001-of-00002.gguf'→'bar'."""
+    stem = filename[:-5] if filename.lower().endswith(".gguf") else filename
+    m = _dl_re.match(r"^(.*)-(\d{5})-of-(\d{5})$", stem)
+    return m.group(1) if m else stem
+
+
+def _split_files(filename: str) -> list:
+    """If filename is a split part (…-NNNNN-of-MMMMM.gguf) return all parts in
+    order (same prefix, 1..M); else just [filename]."""
+    m = _SPLIT_RE.match(filename)
+    if not m:
+        return [filename]
+    prefix, total = m.group(1), m.group(3)
+    return [f"{prefix}-{i:05d}-of-{total}.gguf" for i in range(1, int(total) + 1)]
+
+
+def _registry_add(entry: dict) -> None:
+    """Read data/models.json, drop any model with the same id, append `entry`,
+    atomic write (tmp + os.replace)."""
+    import json as _json, os as _os
+    reg = ROOT / "data" / "models.json"
+    try:
+        data = _json.loads(reg.read_text())
+        if not isinstance(data, dict) or "models" not in data:
+            data = {"models": []}
+    except Exception:
+        data = {"models": []}
+    models = [m for m in data.get("models", []) if m.get("id") != entry.get("id")]
+    models.append(entry)
+    data["models"] = models
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(reg) + ".harness-tmp"
+    with open(tmp, "w") as f:
+        _json.dump(data, f, indent=2)
+    _os.replace(tmp, reg)
+
+
+def _dl_json(e: dict) -> dict:
+    """JSON-safe view of a DOWNLOADS entry (drops the asyncio Task)."""
+    return {k: v for k, v in e.items() if k != "task"}
+
+
+def _dl_cleanup(e: dict) -> None:
+    """Delete every file's .part and the model dir if it is left empty."""
+    import os as _os
+    last_dir = None
+    for f in e["files"]:
+        part = f["dest"] + ".part"
+        try:
+            if _os.path.exists(part):
+                _os.remove(part)
+        except OSError:
+            pass
+        last_dir = _os.path.dirname(f["dest"])
+    try:
+        if last_dir and _os.path.isdir(last_dir) and not _os.listdir(last_dir):
+            _os.rmdir(last_dir)
+    except OSError:
+        pass
+
+
+async def _run_download(dl_id: str) -> None:
+    import os as _os, time as _t
+    e = DOWNLOADS.get(dl_id)
+    if not e:
+        return
+    try:
+        for f in e["files"]:
+            dest, total = f["dest"], f["total"]
+            part = dest + ".part"
+            # Already complete? (full-size dest present)
+            if _os.path.exists(dest) and (total == 0 or _os.path.getsize(dest) == total):
+                f["done"] = _os.path.getsize(dest)
+                continue
+            _os.makedirs(_os.path.dirname(dest), exist_ok=True)
+            existing = _os.path.getsize(part) if _os.path.exists(part) else 0
+            f["done"] = existing
+            headers = {}
+            if existing > 0:
+                headers["Range"] = f"bytes={existing}-"
+            url = "https://huggingface.co" + f["url"]
+            last_ts, last_done = _t.time(), existing
+            async with _DL.stream("GET", url, headers=headers) as resp:
+                if resp.status_code not in (200, 206):
+                    snip = ""
+                    try:
+                        snip = (await resp.aread())[:200].decode("utf-8", "replace")
+                    except Exception:
+                        pass
+                    e["state"] = "error"
+                    e["error"] = f"HTTP {resp.status_code}: {snip}"[:300]
+                    return
+                # A 200 to a Range request means the server ignored it → restart file.
+                mode = "ab" if (existing > 0 and resp.status_code == 206) else "wb"
+                if mode == "wb":
+                    f["done"] = last_done = 0
+                with open(part, mode) as out:
+                    async for chunk in resp.aiter_bytes(1 << 16):
+                        st = e["state"]
+                        if st == "paused":
+                            return                     # keep .part; resume re-streams
+                        if st == "cancelled":
+                            break
+                        out.write(chunk)
+                        f["done"] += len(chunk)
+                        now = _t.time()
+                        dt = now - last_ts
+                        if dt > 0:
+                            inst = (f["done"] - last_done) / dt
+                            e["rate"] = 0.7 * e["rate"] + 0.3 * inst
+                            last_ts, last_done = now, f["done"]
+            if e["state"] == "cancelled":
+                break
+            _os.replace(part, dest)
+        if e["state"] == "cancelled":
+            _dl_cleanup(e)
+            return
+        # All files complete → register the model.
+        main_dest = e["files"][0]["dest"]
+        mmproj_dest, nonmm = None, 0
+        for f in e["files"]:
+            if "mmproj" in _os.path.basename(f["dest"]).lower():
+                mmproj_dest = f["dest"]
+            else:
+                nonmm += f["total"] or (_os.path.getsize(f["dest"])
+                                        if _os.path.exists(f["dest"]) else 0)
+        _registry_add({
+            "id": e["model_id"], "name": e["model_id"], "format": "gguf",
+            "path": main_dest, "mmproj": mmproj_dest, "size_bytes": nonmm,
+            "ctx": None, "source": "download", "vision": bool(mmproj_dest)})
+        e["state"] = "done"
+    except Exception as ex:
+        e["state"] = "error"
+        e["error"] = str(ex)[:300]
+
+
+@app.post("/api/dl/start")
+async def dl_start(req: Request) -> JSONResponse:
+    import os as _os
+    body = await req.json()
+    repo = (body.get("repo") or "").strip()
+    filename = (body.get("filename") or "").strip()
+    if not repo or not filename:
+        return JSONResponse({"ok": False, "log": "repo and filename required"}, status_code=400)
+    model_id = _model_id_from_filename(filename)
+    # Duplicate-start guard (Fable QA): a second Get on the same model while one is
+    # in flight would spawn two tasks appending to the same .part → corruption.
+    for other in DOWNLOADS.values():
+        if other.get("model_id") == model_id and other.get("state") in ("downloading", "paused"):
+            return JSONResponse(_dl_json(other))
+    file_names = _split_files(filename)
+    # Look up sizes + a single mmproj sibling from the repo tree.
+    sizes, mmproj_name = {}, None
+    try:
+        r = await _HF.get(f"/api/models/{repo}/tree/main")
+        if r.status_code == 200:
+            tree = r.json()
+            for it in tree:
+                p = it.get("path", "")
+                sizes[_os.path.basename(p)] = it.get("size") or 0
+            mmprojs = [it.get("path", "") for it in tree
+                       if "mmproj" in _os.path.basename(it.get("path", "")).lower()
+                       and it.get("path", "").lower().endswith(".gguf")]
+            if len(mmprojs) == 1:
+                mmproj_name = mmprojs[0]
+    except Exception:
+        pass
+    if mmproj_name and mmproj_name not in file_names:
+        file_names.append(mmproj_name)
+    dest_dir = ROOT / "data" / "models" / _safe_dir(model_id)
+    files = []
+    for name in file_names:
+        base = _os.path.basename(name)
+        dest = str(dest_dir / base)
+        part = dest + ".part"
+        done = _os.path.getsize(part) if _os.path.exists(part) else 0
+        files.append({"name": name, "url": f"/{repo}/resolve/main/{name}",
+                      "dest": dest, "total": int(sizes.get(base, 0)), "done": done})
+    _DL_SEQ["n"] += 1
+    dl_id = str(_DL_SEQ["n"])
+    entry = {"id": dl_id, "repo": repo, "files": files, "state": "downloading",
+             "error": None, "rate": 0.0, "model_id": model_id, "task": None}
+    DOWNLOADS[dl_id] = entry
+    entry["task"] = asyncio.create_task(_run_download(dl_id))
+    return JSONResponse(_dl_json(entry))
+
+
+@app.post("/api/dl/{dl_id}/pause")
+async def dl_pause(dl_id: str) -> JSONResponse:
+    e = DOWNLOADS.get(dl_id)
+    if not e:
+        return JSONResponse({"ok": False}, status_code=404)
+    if e["state"] == "downloading":
+        e["state"] = "paused"        # the task returns on its next chunk
+    return JSONResponse(_dl_json(e))
+
+
+@app.post("/api/dl/{dl_id}/resume")
+async def dl_resume(dl_id: str) -> JSONResponse:
+    import os as _os
+    e = DOWNLOADS.get(dl_id)
+    if not e:
+        return JSONResponse({"ok": False}, status_code=404)
+    if e["state"] == "paused":
+        for f in e["files"]:
+            part = f["dest"] + ".part"
+            f["done"] = (_os.path.getsize(part) if _os.path.exists(part)
+                         else (_os.path.getsize(f["dest"]) if _os.path.exists(f["dest"]) else 0))
+        e["rate"] = 0.0
+        e["state"] = "downloading"
+        e["task"] = asyncio.create_task(_run_download(dl_id))
+    return JSONResponse(_dl_json(e))
+
+
+@app.post("/api/dl/{dl_id}/cancel")
+async def dl_cancel(dl_id: str) -> JSONResponse:
+    e = DOWNLOADS.get(dl_id)
+    if not e:
+        return JSONResponse({"ok": False}, status_code=404)
+    was = e["state"]
+    e["state"] = "cancelled"
+    task = e.get("task")
+    # If nothing is actively streaming (paused/finished), clean up the partials here.
+    if was in ("paused", "done", "error") or task is None or task.done():
+        _dl_cleanup(e)
+    return JSONResponse(_dl_json(e))
+
+
+@app.get("/api/dl")
+async def dl_list() -> JSONResponse:
+    items = [_dl_json(e) for e in DOWNLOADS.values()]
+    items.sort(key=lambda x: int(x["id"]), reverse=True)
+    return JSONResponse(items)
+
+
 # ── Direct chat lane (Fable, 2026-07-23) ─────────────────────────────────────
 # Chat mode goes straight to the runner (Jan :6767), bypassing Odysseus's per-turn
 # machinery AND its in-process model lock — root-caused: Odysseus fires auxiliary
