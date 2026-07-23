@@ -203,23 +203,33 @@
       border-radius:6px; padding:5px 7px; font:12.5px -apple-system, sans-serif; outline:none; }
 
   /* ---------- models pane (M2 slice 1) ---------- */
-  #models-list { margin-top:18px; max-width:760px; display:flex; flex-direction:column; gap:12px; }
-  .mrow { border:1px solid var(--line); border-radius:12px; padding:16px 18px;
-      display:flex; align-items:center; gap:16px; }
-  .mrow.on { border-color:var(--gold); background:var(--card); }
-  .mrow .minfo { flex:1 1 auto; min-width:0; }
+  /* Models pane — two-pane: library list (left) + detail (right). FABLE §A. */
+  .models-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+  #models-main { display:flex; gap:26px; margin-top:18px; align-items:flex-start; }
+  #models-leftwrap { flex:1 1 55%; min-width:380px; }
+  #models-listcol { display:flex; flex-direction:column; gap:6px; }
+  .mrow { padding:11px 12px; border-radius:9px; cursor:pointer; border-left:2px solid transparent; }
+  .mrow.sel { background:var(--card); border-left-color:var(--gold); }
   .mrow .mname { font:15px var(--serif); color:var(--cream); }
-  .mrow .mmeta { font:10.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:5px; }
-  .mrow .mtag { display:inline-block; font:9px var(--mono); letter-spacing:.14em; text-transform:uppercase;
-      color:var(--gold); border:1px solid var(--line2); border-radius:6px; padding:2px 7px; margin-left:8px; }
-  .mrow .mactive { font:9.5px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--ok); }
-  .mrow button.mswitch { font:11px var(--mono); letter-spacing:.1em; text-transform:uppercase;
-      color:var(--gold); background:transparent; border:1px solid var(--line2); border-radius:8px;
-      padding:8px 14px; cursor:pointer; white-space:nowrap; }
-  .mrow button.mswitch:hover { border-color:var(--gold); }
-  .mrow button.mswitch:disabled { color:var(--faint); border-color:var(--line); cursor:default; }
-  /* HF browser (slice 2) */
-  #models-browse { margin-top:30px; max-width:760px; border-top:1px solid var(--line); padding-top:22px; }
+  .mrow .mbadges { margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+      font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+  .mpill { padding:2px 7px; border-radius:6px; border:1px solid var(--line2); color:var(--dim); }
+  .mpill.vision { color:var(--ok); border-color:var(--ok); }
+  .mpill.fmt { color:var(--faint); border:none; padding:2px 0; }
+  .mpill.live { color:#171420; background:var(--gold); border-color:var(--gold); }
+  .mpill.aux { color:var(--gold); }
+  .mrow .msize { color:var(--dim); }
+  #models-detail { flex:1 1 45%; position:sticky; top:12px; align-self:flex-start;
+      max-height:calc(100vh - 160px); overflow-y:auto;
+      border:1px solid var(--line); border-radius:14px; padding:22px 24px; }
+  .md-title { font:20px var(--serif); color:var(--cream); word-break:break-word; }
+  .md-meta { font:10.5px var(--mono); letter-spacing:.06em; color:var(--dim); margin-top:7px; line-height:1.6; }
+  .md-actions { display:flex; gap:9px; flex-wrap:wrap; margin-top:16px; }
+  .md-div { border-top:1px solid var(--line); margin:18px 0; }
+  .md-path { font:10px var(--mono); color:var(--faint); word-break:break-all; line-height:1.7; }
+  .md-sec { margin-top:14px; }
+  /* HF browser (lives in the left column when browse view is toggled) */
+  #models-browse .mb-toprow { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
   .mb-searchrow { display:flex; gap:10px; margin-top:12px; }
   #mb-q { flex:1; background:var(--card); color:var(--cream); border:1px solid var(--line2);
       border-radius:10px; padding:11px 14px; font:13px -apple-system,sans-serif; outline:none; }
@@ -292,10 +302,9 @@
   #cs-new:hover { color:var(--gold); }
   .cs-act button { transition: color .12s ease, border-color .12s ease; }
 
-  /* Models + browser rows — hover acknowledges, active row keeps the only gold */
-  .mrow, .hfrow { transition: border-color .16s ease, background .16s ease; }
-  .mrow:not(.on):hover, .hfrow:hover { border-color:var(--line2); background:var(--bg2); }
-  .mrow button.mswitch, .hfrow .hfactions button { transition: color .12s ease, border-color .12s ease; }
+  /* Models rows — hover acknowledges, selected row keeps the only gold */
+  .mrow { transition: border-color .16s ease, background .16s ease; }
+  .mrow:not(.sel):hover { background:var(--card); }
   .hfrow .hfmeta { letter-spacing:.05em; }
   .hffile { line-height:1.9; }
 
@@ -434,8 +443,13 @@
   <div id="view-models" hidden>
     <div class="kicker"><span class="num">III.</span><span class="rule"></span>
       <span class="lbl">Models</span></div>
-    <h1>Models</h1>
-    <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
+    <div class="models-head">
+      <div>
+        <h1>Models</h1>
+        <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
+      </div>
+      <button id="models-toggle" class="chip" onclick="toggleBrowse()">SEARCH / DOWNLOAD ⌄</button>
+    </div>
     <div class="stamp" id="models-stamp">—</div>
     <div id="dl-panel" hidden>
       <div id="dl-bar"><div id="dl-fill"></div></div>
@@ -444,28 +458,37 @@
         <button id="dl-cancel" onclick="cancelSwitch()">Cancel</button>
       </div>
     </div>
-    <!-- FABLE: style this pane (LM-Studio / Jan / Cherry are the reference feel) -->
-    <div id="models-list"></div>
-    <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
 
-    <div id="models-browse">
-      <span class="cs-title">Download a model</span>
-      <div class="mb-searchrow">
-        <input id="mb-q" placeholder="Search HuggingFace models… (qwen3, llama, gemma …)"
-          onkeydown="if(event.key==='Enter'){hfSearch();}">
-        <select id="mb-fmt" onchange="hfSearch()" title="File format">
-          <option value="gguf">GGUF</option>
-          <option value="mlx">MLX</option>
-        </select>
-        <select id="mb-sort" onchange="hfSearch()" title="Sort">
-          <option value="downloads">Most downloaded</option>
-          <option value="recent">Most recent</option>
-          <option value="match">Best match</option>
-        </select>
-        <button id="mb-go" onclick="hfSearch()">Search</button>
+    <div id="models-main">
+      <div id="models-leftwrap">
+        <div id="models-listcol"></div>
+        <div id="models-browse" hidden>
+          <div class="mb-toprow">
+            <button class="chip" onclick="toggleBrowse()">← LIBRARY</button>
+            <span class="cs-title">Download a model</span>
+          </div>
+          <div class="mb-searchrow">
+            <input id="mb-q" placeholder="Search HuggingFace models… (qwen3, llama, gemma …)"
+              onkeydown="if(event.key==='Enter'){hfSearch();}">
+            <select id="mb-fmt" onchange="hfSearch()" title="File format">
+              <option value="gguf">GGUF</option>
+              <option value="mlx">MLX</option>
+            </select>
+            <select id="mb-sort" onchange="hfSearch()" title="Sort">
+              <option value="downloads">Most downloaded</option>
+              <option value="recent">Most recent</option>
+              <option value="match">Best match</option>
+            </select>
+            <button id="mb-go" onclick="hfSearch()">Search</button>
+          </div>
+          <div id="mb-results"></div>
+        </div>
       </div>
-      <div id="mb-results"></div>
+      <div id="models-detail"><div class="cs-empty">Select a model</div></div>
     </div>
+
+    <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
+    <div id="models-aux"></div>
   </div>
 </main>
 
@@ -971,45 +994,139 @@ async function initModels(){
   refreshDownloads();   // restore any in-flight downloads when revisiting the pane
 }
 
+// ---- Models pane: two-pane library + detail (FABLE §A) ----
+let lastModels = null;      // last /api/models payload (for renderDetail refresh)
+let mSel = null;            // selection: {kind:'installed', id} | {kind:'hf', m}
+let browseView = false;     // false = library list, true = HF search/download
+
 function renderModels(r){
-  const list = document.getElementById('models-list'); list.innerHTML = '';
+  lastModels = r;
+  renderList(r);
+  renderAux(r);
+  if (mSel && mSel.kind === 'installed' && !(r.installed || []).some(m => m.id === mSel.id)) mSel = null;
+  if (!mSel && !browseView && (r.installed || []).length){
+    const def = r.active && r.installed.find(m => m.id === r.active);
+    mSel = { kind:'installed', id: (def ? def.id : r.installed[0].id) };
+  }
+  renderDetail();
+  markSelRows();
+}
+
+function quantOf(id){
+  const m = (id || '').match(/IQ\d_\w+|Q\d_K_\w+|Q\d_0|\d+bit/i);
+  return m ? m[0] : null;
+}
+
+function modelRowHtml(m, isActive, isAux, runnerUp){
+  const badges = [];
+  if ((m.capabilities || []).includes('vision')) badges.push('<span class="mpill vision">vision</span>');
+  const q = quantOf(m.id); if (q) badges.push('<span class="mpill quant">' + esc(q) + '</span>');
+  badges.push('<span class="mpill fmt">' + esc(m.format || m.engine || '') + '</span>');
+  if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
+  if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
+  if (isAux) badges.push('<span class="mpill aux">aux</span>');
+  return `<div class="mname">${esc(m.name || m.id)}</div><div class="mbadges">${badges.join('')}</div>`;
+}
+
+function renderList(r){
+  const col = document.getElementById('models-listcol'); col.innerHTML = '';
   const aux = r.aux || {};
   if (!(r.installed || []).length){
-    list.innerHTML = '<div class="cs-empty">No installed models in the registry (data/models.json). Run scripts/seed_registry.py or download a model.</div>'; return;
+    col.innerHTML = '<div class="cs-empty">No installed models in the registry (data/models.json). Run scripts/seed_registry.py or download a model via Search / Download.</div>';
+    return;
   }
   for (const m of r.installed){
     const isActive = m.id === r.active;
     const isAux = aux.model && m.id === aux.model;
-    const caps = (m.capabilities || []).length ? (' · ' + m.capabilities.join(', ')) : '';
-    const row = document.createElement('div'); row.className = 'mrow' + (isActive ? ' on' : '');
-    row.innerHTML = `<div class="minfo">
-        <div class="mname">${esc(m.name || m.id)}${(isActive && r.runner_up) ? '<span class="mtag">live</span>' : ''}${isAux ? '<span class="mtag">aux</span>' : ''}</div>
-        <div class="mmeta">${esc(m.id)} · ${esc(m.engine || '')} · ${fmtGB(m.size_bytes)}${esc(caps)}</div>
-      </div>`;
-    const btn = document.createElement('button'); btn.className = 'mswitch';
-    if (isActive && r.runner_up){ btn.textContent = 'Eject'; btn.title = 'Unload — frees RAM'; btn.onclick = ejectModel; }
-    else if (isActive){ btn.textContent = 'Load'; btn.onclick = () => switchModel(m.id, m.name || m.id); }
-    else { btn.textContent = 'Switch'; btn.onclick = () => switchModel(m.id, m.name || m.id); }
-    const btn2 = document.createElement('button'); btn2.className = 'mswitch';
-    if (isAux){ btn2.textContent = 'Aux ✓'; btn2.disabled = true; }
-    else { btn2.textContent = 'Set aux'; btn2.title = 'Use for background tasks (titles, search queries)';
-           btn2.onclick = () => auxSet(m.id); }
-    row.appendChild(btn2); row.appendChild(btn);
-    list.appendChild(row);
+    const row = document.createElement('div'); row.className = 'mrow'; row.dataset.mid = m.id;
+    row.innerHTML = modelRowHtml(m, isActive, isAux, r.runner_up);
+    row.onclick = () => selectInstalled(m.id);
+    col.appendChild(row);
   }
-  // Aux runner control row (optional second model for Odysseus Background Tasks)
-  const foot = document.createElement('div'); foot.className = 'mrow';
-  foot.innerHTML = `<div class="minfo">
-      <div class="mname" style="font-size:13.5px">Aux runner${aux.up ? '<span class="mtag">live</span>' : ''}</div>
-      <div class="mmeta">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves background tasks (titles, search queries, memory)</div>
-    </div>`;
+}
+
+// Aux runner control — full-width strip under the split (unchanged behavior).
+function renderAux(r){
+  const foot = document.getElementById('models-aux'); foot.innerHTML = '';
+  const aux = r.aux || {};
+  const strip = document.createElement('div'); strip.className = 'card'; strip.style.marginTop = '20px';
+  strip.innerHTML = `<div class="name" style="letter-spacing:.16em">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
+      <div class="meta" style="white-space:normal;overflow:visible;margin-top:5px">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
   if (aux.model){
-    const b = document.createElement('button'); b.className = 'mswitch';
+    const b = document.createElement('button'); b.style.marginTop = '11px';
     if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
     else { b.textContent = 'Start'; b.onclick = auxStart; }
-    foot.appendChild(b);
+    strip.appendChild(b);
   }
-  list.appendChild(foot);
+  foot.appendChild(strip);
+}
+
+function selectInstalled(id){ mSel = { kind:'installed', id }; renderDetail(); markSelRows(); }
+function selectHf(m){ mSel = { kind:'hf', m }; renderDetail(); markSelRows(); }
+
+function markSelRows(){
+  document.querySelectorAll('#models-listcol .mrow, #mb-results .mrow').forEach(el => {
+    const on = mSel && ((mSel.kind === 'installed' && el.dataset.mid === mSel.id) ||
+                        (mSel.kind === 'hf' && el.dataset.repo === mSel.m.repo));
+    el.classList.toggle('sel', !!on);
+  });
+}
+
+function renderDetail(){
+  const d = document.getElementById('models-detail');
+  if (!mSel){ d.innerHTML = '<div class="cs-empty">Select a model</div>'; return; }
+  if (mSel.kind === 'installed'){
+    const r = lastModels || {};
+    const m = (r.installed || []).find(x => x.id === mSel.id);
+    if (!m){ d.innerHTML = '<div class="cs-empty">Select a model</div>'; return; }
+    const isActive = m.id === r.active;
+    const isAux = r.aux && r.aux.model && m.id === r.aux.model;
+    const meta = [esc(m.id), esc(m.engine || ''), fmtGB(m.size_bytes),
+                  (m.ctx ? (m.ctx.toLocaleString() + ' ctx') : ''), esc(m.source || '')]
+                 .filter(Boolean).join(' · ');
+    d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
+      <div class="md-meta">${meta}</div>
+      <div class="md-actions" id="md-actions"></div>
+      <div class="md-div"></div>
+      <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
+    const acts = d.querySelector('#md-actions');
+    const primary = document.createElement('button'); primary.className = 'primary';
+    if (isActive && r.runner_up){ primary.textContent = 'Eject'; primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
+    else if (isActive){ primary.textContent = 'Load'; primary.onclick = () => switchModel(m.id, m.name || m.id); }
+    else { primary.textContent = 'Switch'; primary.onclick = () => switchModel(m.id, m.name || m.id); }
+    acts.appendChild(primary);
+    const auxBtn = document.createElement('button');
+    if (isAux){ auxBtn.textContent = 'Aux ✓'; auxBtn.disabled = true; }
+    else { auxBtn.textContent = 'Set aux'; auxBtn.title = 'Use for background tasks (titles, search queries)';
+           auxBtn.onclick = () => auxSet(m.id); }
+    acts.appendChild(auxBtn);
+  } else {
+    const m = mSel.m;
+    d.innerHTML = `<div class="md-title">${esc(m.repo)}</div>
+      <div class="md-meta">▼ ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0}${m.pipeline ? (' · ' + esc(m.pipeline)) : ''}${m.updated ? (' · ' + relTimeLong(m.updated)) : ''}</div>
+      <div class="md-actions" id="md-actions"></div>
+      <div class="md-div"></div>
+      <div class="md-sec"><span class="cs-title">Files &amp; fit</span><div class="hffiles" id="md-files"></div></div>
+      <div class="md-sec hfcard" id="md-card" hidden></div>`;
+    const acts = d.querySelector('#md-actions');
+    const dl = document.createElement('button'); dl.className = 'primary'; dl.textContent = 'Download & Load';
+    dl.onclick = () => hfDownload(m.repo, dl);
+    const card = document.createElement('button'); card.textContent = 'Model card';
+    card.onclick = () => toggleHfCard(m.repo, card);
+    const ext = document.createElement('button'); ext.textContent = 'HF ↗';
+    ext.onclick = (e) => openExt(e, 'https://huggingface.co/' + m.repo);
+    acts.appendChild(dl); acts.appendChild(card); acts.appendChild(ext);
+    renderHfFiles(m.repo, d.querySelector('#md-files'));
+  }
+}
+
+function toggleBrowse(){
+  browseView = !browseView;
+  document.getElementById('models-listcol').hidden = browseView;
+  document.getElementById('models-browse').hidden = !browseView;
+  document.getElementById('models-toggle').textContent = browseView ? '← LIBRARY' : 'SEARCH / DOWNLOAD ⌄';
+  if (!browseView){ mSel = null; renderModels(lastModels || {}); }
+  else { mSel = null; renderDetail(); document.getElementById('mb-q').focus(); }
 }
 
 async function cancelSwitch(){
@@ -1062,19 +1179,17 @@ async function hfSearch(){
     if (!list.length){ res.innerHTML = '<div class="cs-empty">No ' + fmt.toUpperCase() + ' models found.</div>'; return; }
     res.innerHTML = '';
     for (const m of list){
-      const row = document.createElement('div'); row.className = 'hfrow';
-      row.innerHTML = `<div class="hfname">${esc(m.repo)}</div>
-        <div class="hfmeta">▼ ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0}${m.pipeline ? (' · ' + esc(m.pipeline)) : ''}${m.updated ? (' · ' + relTimeLong(m.updated)) : ''}</div>
-        <div class="hfactions">
-          <button onclick="hfCard('${m.repo}', this)">Model card</button>
-          <button onclick="hfDetails('${m.repo}', this)">Files &amp; fit</button>
-          <button onclick="hfDownload('${m.repo}', this)">Download &amp; Load</button>
-          <button onclick="openExt(event, 'https://huggingface.co/${m.repo}')">HF ↗</button>
-        </div>
-        <div class="hfcard" hidden></div>
-        <div class="hffiles" hidden></div>`;
+      const row = document.createElement('div'); row.className = 'mrow'; row.dataset.repo = m.repo;
+      const badges = [`<span class="msize">▼ ${(m.downloads || 0).toLocaleString()}</span>`,
+                      `<span class="msize">♥ ${m.likes || 0}</span>`];
+      if (m.pipeline) badges.push('<span class="mpill fmt">' + esc(m.pipeline) + '</span>');
+      if (m.updated) badges.push('<span class="msize">' + relTimeLong(m.updated) + '</span>');
+      row.innerHTML = `<div class="mname" style="font-size:13.5px;word-break:break-all">${esc(m.repo)}</div>
+        <div class="mbadges">${badges.join('')}</div>`;
+      row.onclick = () => selectHf(m);
       res.appendChild(row);
     }
+    markSelRows();
   } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; }
 }
 
@@ -1099,8 +1214,9 @@ function mdCard(md){
   return h;
 }
 
-async function hfCard(repo, btn){
-  const box = btn.closest('.hfrow').querySelector('.hfcard');
+async function toggleHfCard(repo, btn){
+  const box = document.getElementById('md-card');
+  if (!box) return;
   if (!box.hidden){ box.hidden = true; return; }
   box.hidden = false; box.innerHTML = '<div class="cs-empty">Loading model card…</div>';
   try {
@@ -1119,11 +1235,9 @@ function fitPill(bytes){
   return `<span class="fitpill fit-no">Won't fit · ${gb.toFixed(1)}GB</span>`;
 }
 
-async function hfDetails(repo, btn){
-  const box = btn.closest('.hfrow').querySelector('.hffiles');
-  if (!box.hidden){ box.hidden = true; btn.textContent = 'Files & fit'; return; }
-  btn.textContent = 'Hide files';
-  box.hidden = false; box.innerHTML = '<div class="cs-empty">Loading files…</div>';
+async function renderHfFiles(repo, box){
+  if (!box) return;
+  box.innerHTML = '<div class="cs-empty">Loading files…</div>';
   try {
     const d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
     if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }

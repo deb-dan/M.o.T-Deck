@@ -610,7 +610,8 @@ def api_models() -> JSONResponse:
                 "engine": ("mlx" if m.get("format") == "mlx" else "llamacpp"),
                 "embedding": False,
                 "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
-                "format": m.get("format", "gguf")})
+                "format": m.get("format", "gguf"),
+                "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path")})
     except Exception as e:
         err = str(e)[:200]
     port = rc.get("port")
