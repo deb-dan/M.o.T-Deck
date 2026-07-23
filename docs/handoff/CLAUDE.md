@@ -50,6 +50,13 @@ Slices: (1) llamacpp adapter + own registry (seeded from Jan's folder; 35B + vis
 - **Slice-1 Mac verify note:** Debi's first test FAILed only because Runner→Start wasn't run after pkill'ing jan (connection error = nothing on :6767). The `pgrep llama-server` hit was **LM Studio's own server on :52855** (unrelated; useful: newer llama.cpp backend 2.25.2 binary exists at `~/.lmstudio/extensions/backends/...` as an alternative `runner.binary`; LM Studio runs MTP models with `--spec-type draft-mtp` — exotic MTP GGUFs may need such flags, boundary noted).
 - **Known boundaries:** MTP-variant GGUFs may not load under our plain argv (use LM Studio fallback or add flags later); MLX tool-calling depends on the model's tokenizer template; Hermes 64K-ctx floor applies to MLX models per their config (no override flag).
 
+## FABLE VERDICTS on docs 09 + 10 (2026-07-23 — Opus intakes WITH these priorities)
+
+- **Model-memory LEDGER first** (doc 10's "shared consequence"): Bridge-side RAM accounting (sum loaded model sizes vs 64GB budget → warn/deny loads across main+aux+future voice). Prerequisite for Voicebox, hard gate for ComfyUI. Promote to roadmap NOW.
+- **Voicebox = ADOPT** (fit improved post-shift: FastAPI+MLX sibling, MIT, REST :17493 + MCP → our two proven wiring patterns). Sequence: after 3.1d + pin-bumps + ledger.
+- **ComfyUI = much later**, headless behind Fable-designed UI, gated on ledger. Unchanged.
+- **09 ranking:** (1) KV/slot pinning — mostly solved by the llamacpp shift, finish cheaply (slot affinity now ours via argv); (2) thought-thread telemetry → FABLE pass-2 design scope; (3) analytics tiles — cheap, early Opus task; (4) fact-check ✓ badge — M3-adjacent differentiator; (5) path-guard fence. Parked: Hands/cron (Hermes cron covers), time-travel, tiered memory, schema settings-form, file mailboxes (revisit with their triggers). Opus: honor doc 09 §0's correction note + 🔴 tags — no scope expansion without Debi.
+
 ## (superseded decision context below)
 
 - **Recommendation (Fable):** switch runner adapter to **llama-server (llama.cpp) direct** for GGUF — determinism (exact file), our own download manager (OpenHuman-blueprint: per-file choice, progress, pause/cancel/parallel), our own registry, ctx control back in harness.yaml, aux runner trivial. Reuse Jan's installed llama-server binary + existing model files (no re-download). Jan stays installed as fallback adapter (`adapter: jan`). Pin+bump the llama.cpp binary like other components.
