@@ -544,6 +544,38 @@ def api_models() -> JSONResponse:
 
 
 _SWITCH = {"busy": False, "log": ""}
+_JAN_DATA = None
+
+
+def _jan_data_dir() -> str:
+    global _JAN_DATA
+    if _JAN_DATA is None:
+        import os
+        _JAN_DATA = os.path.expanduser("~/Library/Application Support/Jan/data")
+    return _JAN_DATA
+
+
+def _download_progress(since_ts: float):
+    """Sum bytes of files Jan has written since the switch began (its models tree +
+    the HF cache) → live download progress without owning the downloader."""
+    import os
+    total, newest = 0, ""
+    newest_ts = 0.0
+    for root in (os.path.join(_jan_data_dir(), "llamacpp"),
+                 os.path.expanduser("~/.cache/huggingface")):
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirs, files in os.walk(root):
+            for fn in files:
+                try:
+                    st = os.stat(os.path.join(dirpath, fn))
+                except OSError:
+                    continue
+                if st.st_mtime >= since_ts - 5:
+                    total += st.st_size
+                    if st.st_mtime > newest_ts:
+                        newest_ts, newest = st.st_mtime, fn
+    return total, newest
 
 
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
@@ -590,7 +622,10 @@ async def api_switch_model(req: Request) -> JSONResponse:
     c = cfg()
     old_id = (c.get("runner", {}) or {}).get("model") or ""
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
-    _SWITCH.update(busy=True, log="starting…")   # set BEFORE the thread: no double-switch race
+    import time as _t
+    # set BEFORE the thread: no double-switch race; downloading flag drives live progress
+    _SWITCH.update(busy=True, log="starting…", started=_t.time(),
+                   downloading=("/" in new_id), prev_bytes=0, prev_ts=0.0)
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
@@ -598,7 +633,22 @@ async def api_switch_model(req: Request) -> JSONResponse:
 
 @app.get("/api/models/switch-status")
 def api_switch_status() -> JSONResponse:
-    return JSONResponse(dict(_SWITCH))
+    """Poll target. During an HF download, adds live bytes-on-disk + rate, computed
+    from Jan's own files — real progress, not a 'be patient' string."""
+    import time as _t
+    out = {k: _SWITCH.get(k) for k in ("busy", "log")}
+    if _SWITCH.get("busy") and _SWITCH.get("downloading"):
+        try:
+            done, fname = _download_progress(_SWITCH.get("started") or _t.time())
+            now = _t.time()
+            prev_b, prev_t = _SWITCH.get("prev_bytes") or 0, _SWITCH.get("prev_ts") or 0.0
+            rate = (done - prev_b) / (now - prev_t) if prev_t and now > prev_t and done >= prev_b else 0
+            _SWITCH.update(prev_bytes=done, prev_ts=now)
+            out.update(dl_bytes=done, dl_rate=max(0, rate), dl_file=fname,
+                       dl_phase=("downloading" if rate > 1e5 or done < 1e6 else "loading"))
+        except Exception:
+            pass
+    return JSONResponse(out)
 
 
 # ── Aux runner (optional): a small second model on its own port for Odysseus's

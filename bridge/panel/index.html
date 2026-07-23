@@ -301,6 +301,16 @@
   #chat-input { transition: border-color .16s ease; }
   .mode-chip { transition: color .14s ease, background .14s ease, border-color .14s ease; }
 
+  /* live download readout (Jan/LM-Studio-grade feedback, editorial voice) */
+  #dl-panel { max-width:760px; margin:14px 0 4px; }
+  #dl-bar { height:3px; background:var(--line); border-radius:2px; overflow:hidden; position:relative; }
+  #dl-fill { position:absolute; top:0; left:-30%; width:30%; height:100%;
+      background:var(--gold); border-radius:2px; animation:dlslide 1.4s ease-in-out infinite; }
+  @keyframes dlslide { 0%{left:-30%} 100%{left:100%} }
+  #dl-meta { margin-top:8px; font:10.5px var(--mono); letter-spacing:.1em;
+      text-transform:uppercase; color:var(--dim); }
+  #dl-meta b { color:var(--cream); font-weight:600; }
+
   /* chat-bar model controls (quiet, mono, right of the chips) */
   #chat-model { max-width:200px; background:var(--card); color:var(--dim);
       border:1px solid var(--line2); border-radius:7px; font:10px var(--mono);
@@ -400,6 +410,10 @@
     <h1>Models</h1>
     <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
     <div class="stamp" id="models-stamp">—</div>
+    <div id="dl-panel" hidden>
+      <div id="dl-bar"><div id="dl-fill"></div></div>
+      <div id="dl-meta">—</div>
+    </div>
     <!-- FABLE: style this pane (LM-Studio / Jan / Cherry are the reference feel) -->
     <div id="models-list"></div>
 
@@ -1112,9 +1126,18 @@ async function switchModel(id, name){
         stamp.textContent = (s.log || 'switching…').toUpperCase();
         const cn = document.getElementById('chat-note');
         if (cn) cn.textContent = s.log || 'switching…';
-        if (!s.busy){ clearInterval(poll); modelsBusy = false; initModels(); loadChatModels(); }
+        const dp = document.getElementById('dl-panel'), dm = document.getElementById('dl-meta');
+        if (s.busy && s.dl_bytes > 5e6){
+          dp.hidden = false;
+          const gb = (s.dl_bytes/1073741824).toFixed(2);
+          const mbs = (s.dl_rate/1048576).toFixed(1);
+          dm.innerHTML = s.dl_phase === 'loading'
+            ? `<b>${gb} GB</b> on disk · download settled — loading into memory…`
+            : `<b>${gb} GB</b> downloaded · <b>${mbs} MB/s</b>${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
+        } else { dp.hidden = true; }
+        if (!s.busy){ clearInterval(poll); dp.hidden = true; modelsBusy = false; initModels(); loadChatModels(); }
       } catch {}
-    }, 2500);
+    }, 2000);
   } catch { stamp.textContent = 'SWITCH ERROR'; modelsBusy = false; }
 }
 
