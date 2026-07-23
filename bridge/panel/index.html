@@ -266,6 +266,10 @@
      display:flex) silently defeat it otherwise. (Fable QA: Hide-files bug.) */
   [hidden] { display: none !important; }
 
+  /* Sidebar stays put; only the content column scrolls with the page. */
+  aside { position: sticky; top: 0; align-self: flex-start;
+          height: 100vh; overflow-y: auto; }
+
   /* ---------- FABLE PASS 1 (2026-07-21) — restraint & hierarchy ----------
      Principles applied: one accent used sparingly; capability toggles quieter
      than mode selectors; motion only as confirmation; hierarchy via size+case,

@@ -760,31 +760,76 @@ async def aux_set(req: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "model": new_id})
 
 
+def _aux_kill(port: int) -> None:
+    for pat in (f'jan serve.*port[= ]{port}', f'llama-server.*--port {port}',
+                f'mlx_lm.server.*--port {port}', f'mlx_vlm.server.*--port {port}'):
+        subprocess.run(f'pkill -f "{pat}"', shell=True, check=False)
+    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+
+
 @app.post("/api/aux/start")
 def aux_start() -> JSONResponse:
+    """Launch the aux model on its own port using the SAME engine dispatch as the
+    main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
+    `jan serve` path knew nothing about harness-downloaded models."""
+    import json as _json, os as _os, glob as _glob
     ax = cfg().get("aux", {}) or {}
     model, port = ax.get("model") or "", int(ax.get("port") or 6768)
     key = ax.get("api_key", "harness-aux")
     if not model:
         return JSONResponse({"ok": False, "log": "no aux model set — use 'Set aux' on an installed model"}, status_code=400)
-    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
-    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
-    r = subprocess.run([_jan_bin(), "serve", model, "--port", str(port),
-                        "--api-key", key, "--detach"],
-                       capture_output=True, text=True, timeout=90)
-    ok = r.returncode == 0
-    return JSONResponse({"ok": ok,
-                         "log": "loading in background — refresh in ~20-60s" if ok
-                                else (r.stdout + r.stderr)[-300:]},
-                        status_code=200 if ok else 500)
+    try:
+        models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+    except Exception:
+        models = []
+    m = next((x for x in models if x.get("id") == model), None)
+    if not m or not m.get("path"):
+        return JSONResponse({"ok": False, "log": f"aux model '{model}' not in registry"}, status_code=400)
+    fmt, path, mmproj = m.get("format", "gguf"), m["path"], m.get("mmproj")
+    _aux_kill(port)
+    if fmt == "mlx":
+        venv = ROOT / "data" / "mlx-venv"
+        if not (venv / "bin" / "python").exists():
+            return JSONResponse({"ok": False, "log": "mlx runtime missing — run scripts/install_mlx.sh"}, status_code=500)
+        mod = "mlx_vlm.server" if m.get("vision") else "mlx_lm.server"
+        srv = venv / "bin" / mod
+        cmd = ([str(srv)] if srv.exists() else [str(venv / "bin" / "python"), "-m", mod])
+        cmd += ["--model", path, "--host", "127.0.0.1", "--port", str(port)]
+    else:
+        binp = (cfg().get("runner") or {}).get("binary") or ""
+        if not binp:
+            cands = (sorted(_glob.glob(_os.path.expanduser(
+                        "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
+                        key=_os.path.getmtime, reverse=True)
+                     or sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
+                        key=_os.path.getmtime, reverse=True))
+            if not cands:
+                return JSONResponse({"ok": False, "log": "no llama-server binary found"}, status_code=500)
+            binp = cands[0]
+        helptxt = ""
+        try:
+            hp = subprocess.run([binp, "--help"], capture_output=True, text=True, timeout=15)
+            helptxt = (hp.stdout or "") + (hp.stderr or "")
+        except Exception:
+            pass
+        # Aux tasks are short — small ctx keeps the second model light in RAM.
+        ctx = m.get("ctx") or 8192
+        cmd = [binp, "--no-context-shift", "--host", "127.0.0.1", "--port", str(port),
+               "--alias", model, "--ctx-size", str(ctx), "--no-cont-batching",
+               "--cache-ram", "-1", "--fit", "off", "--model", path, "--parallel", "1"]
+        if mmproj:
+            cmd += ["--mmproj", mmproj]
+        if "--api-key" in helptxt:
+            cmd += ["--api-key", key]
+    logf = open(ROOT / "data" / "logs" / "aux.log", "ab")
+    subprocess.Popen(cmd, stdout=logf, stderr=logf, start_new_session=True)
+    return JSONResponse({"ok": True, "log": "loading in background — refresh in ~20-60s"})
 
 
 @app.post("/api/aux/stop")
 def aux_stop() -> JSONResponse:
     ax = cfg().get("aux", {}) or {}
-    port = int(ax.get("port") or 6768)
-    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
-    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    _aux_kill(int(ax.get("port") or 6768))
     return JSONResponse({"ok": True})
 
 
