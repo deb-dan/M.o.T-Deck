@@ -156,11 +156,9 @@ def panel() -> FileResponse:
 def _runner_engine(rc: dict) -> str:
     """Human label for the engine the active model will run on (mirrors the
     start script's dispatch: gguf→llama.cpp, mlx→mlx-lm, mlx+vision→mlx-vlm)."""
-    adapter = (rc.get("adapter") or "jan").strip()
-    if adapter == "jan":
-        return "jan"
+    adapter = (rc.get("adapter") or "auto").strip()
     if adapter == "lmstudio":
-        return "lmstudio"
+        return "lmstudio"   # reserved-but-unimplemented fallback
     try:
         import json as _json
         models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
@@ -201,7 +199,7 @@ async def status() -> dict:
         rrunning = await _port_alive(int(rport)) if rport else False
         out["components"]["runner"] = {
             "installed": True,
-            "pin": str(rc.get("model") or rc.get("adapter") or "jan"),
+            "pin": str(rc.get("model") or rc.get("adapter") or "auto"),
             "running": rrunning,
             "degraded": _expected_path("runner").exists() and not rrunning,
             "port": rport,
@@ -269,7 +267,7 @@ def install(name: str) -> JSONResponse:
         status_code=200 if ok else 500)
 
 
-_NOTES = {"runner": "launches headless Jan + loads the model (~60–90s)"}
+_NOTES = {"runner": "launches the llama.cpp/MLX runner + loads the model (~60–90s)"}
 
 
 @app.get("/api/components/{name}/start-plan")
@@ -295,11 +293,11 @@ def start(name: str) -> JSONResponse:
 def stop(name: str) -> JSONResponse:
     _clear_expected(name)   # intentional stop → not "degraded", just "stopped"
     PROV.pop(name, None)    # drop any stale provisioning overlay for this component
-    # Runner (jan) must be stopped by PORT — its child router survives a PID kill (spike learning).
+    # Runner must be stopped by PORT — a child router can survive a PID kill (spike learning).
     if name == "runner":
         rc = cfg().get("runner", {})
         port = rc.get("port")
-        # kill the jan supervisor too — it survives port-kills and accumulates
+        # legacy jan-supervisor sweep (harmless once Jan is uninstalled — no-op if none match)
         subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
         subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
         (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
@@ -507,15 +505,7 @@ async def ody_chat(req: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-# ── Models pane (M2) — list installed via `jan models list`, switch the runner ──
-def _jan_bin() -> str:
-    import os, shutil
-    for p in (shutil.which("jan"), os.path.expanduser("~/.local/bin/jan"), "/usr/local/bin/jan"):
-        if p and os.path.exists(p):
-            return p
-    return "jan"
-
-
+# ── Models pane (M2) — list installed from OUR registry, switch the runner ──
 def _set_yaml_model(block: str, new_id: str) -> None:
     """Rewrite <block>.model in harness.yaml (line-scan, preserves everything else)."""
     import re
@@ -537,61 +527,101 @@ def _set_runner_model(new_id: str) -> None:
     _set_yaml_model("runner", new_id)
 
 
+# ── Model-memory ledger (Fable verdict, promoted) ─────────────────────────────
+# Bridge-side RAM accounting so main + aux (+ future voice) loads can't blow past
+# the box's memory. APPROXIMATION: a model's RAM footprint ≈ its weight file size
+# (real usage adds KV-cache/overhead; the budget headroom below covers that).
+def _registry_models() -> list:
+    import json as _json
+    try:
+        return _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+    except Exception:
+        return []
+
+
+def _model_size(models: list, mid: str) -> int:
+    m = next((x for x in models if x.get("id") == mid), None)
+    return int((m or {}).get("size_bytes") or 0)
+
+
+def _budget_bytes() -> int:
+    mem = cfg().get("memory", {}) or {}
+    try:
+        gb = float(mem.get("budget_gb"))
+    except (TypeError, ValueError):
+        gb = 48.0
+    return int(gb * (1024 ** 3))
+
+
+def _loaded_models_bytes(exclude_slot: str | None = None) -> int:
+    """Approx RAM (by file size) used by models currently SERVED: main runner's
+    active model (if its port is up) + aux model (if its port is up). exclude_slot
+    ('main'|'aux') omits that slot — used to get 'other-slot usage' for a switch of
+    that slot (so its own current usage isn't double-counted against the candidate)."""
+    c = cfg()
+    models = _registry_models()
+    total = 0
+    rc = c.get("runner", {}) or {}
+    if exclude_slot != "main" and rc.get("port") and _port_alive_sync(int(rc["port"])):
+        total += _model_size(models, rc.get("model") or "")
+    ax = c.get("aux", {}) or {}
+    if exclude_slot != "aux" and ax.get("port") and _port_alive_sync(int(ax["port"])):
+        total += _model_size(models, ax.get("model") or "")
+    return total
+
+
+def _within_budget(candidate_bytes: int, other_slot_bytes: int, budget_bytes: int) -> bool:
+    """Pure predicate (unit-testable): does loading `candidate` alongside the other
+    slot's current usage stay within budget? True = OK to load."""
+    return (candidate_bytes + other_slot_bytes) <= budget_bytes
+
+
 @app.get("/api/models")
 def api_models() -> JSONResponse:
-    """Installed models (`jan models list` → JSON), plus the active runner model + state."""
+    """Installed models (from OUR registry data/models.json — the only source since
+    jan was retired), the active runner model + state, aux state, and the
+    model-RAM ledger (approx by file size)."""
     import json as _json
     installed, err = [], None
     c = cfg()
     rc = c.get("runner", {})
-    adapter = (rc.get("adapter") or "jan")
-    if adapter in ("llamacpp", "mlx", "auto"):
-        def _load_registry():
-            reg = ROOT / "data" / "models.json"
-            if not reg.exists():
-                subprocess.run(["python3", "scripts/seed_registry.py"],
-                               cwd=ROOT, capture_output=True, text=True,
-                               timeout=60, check=False)
-            return _json.loads(reg.read_text()).get("models", [])
+    adapter = (rc.get("adapter") or "auto")
+
+    def _load_registry():
+        reg = ROOT / "data" / "models.json"
+        if not reg.exists():
+            subprocess.run(["python3", "scripts/seed_registry.py"],
+                           cwd=ROOT, capture_output=True, text=True,
+                           timeout=60, check=False)
+        return _json.loads(reg.read_text()).get("models", [])
+    try:
         try:
-            try:
-                models = _load_registry()
-            except Exception:
-                # missing/invalid → seed once and retry
-                subprocess.run(["python3", "scripts/seed_registry.py"],
-                               cwd=ROOT, capture_output=True, text=True,
-                               timeout=60, check=False)
-                models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
-            for m in models:
-                installed.append({
-                    "id": m.get("id"), "name": m.get("name") or m.get("id"),
-                    "size_bytes": m.get("size_bytes"),
-                    "engine": ("mlx" if m.get("format") == "mlx" else "llamacpp"),
-                    "embedding": False,
-                    "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
-                    "format": m.get("format", "gguf")})
-        except Exception as e:
-            err = str(e)[:200]
-    else:
-        try:
-            r = subprocess.run([_jan_bin(), "models", "list"],
-                               capture_output=True, text=True, timeout=25)
-            for m in _json.loads(r.stdout or "[]"):
-                installed.append({
-                    "id": m.get("id"), "name": m.get("name") or m.get("id"),
-                    "size_bytes": m.get("size_bytes"), "engine": m.get("engine"),
-                    "embedding": bool(m.get("embedding")),
-                    "capabilities": m.get("capabilities") or []})
-        except Exception as e:
-            err = str(e)[:200]
+            models = _load_registry()
+        except Exception:
+            # missing/invalid → seed once and retry
+            subprocess.run(["python3", "scripts/seed_registry.py"],
+                           cwd=ROOT, capture_output=True, text=True,
+                           timeout=60, check=False)
+            models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+        for m in models:
+            installed.append({
+                "id": m.get("id"), "name": m.get("name") or m.get("id"),
+                "size_bytes": m.get("size_bytes"),
+                "engine": ("mlx" if m.get("format") == "mlx" else "llamacpp"),
+                "embedding": False,
+                "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
+                "format": m.get("format", "gguf")})
+    except Exception as e:
+        err = str(e)[:200]
     port = rc.get("port")
     ax = c.get("aux", {}) or {}
     aux = {"model": ax.get("model") or "", "port": ax.get("port"),
            "up": _port_alive_sync(int(ax["port"])) if ax.get("port") else False}
+    ledger = {"used_bytes": _loaded_models_bytes(), "budget_bytes": _budget_bytes()}
     return JSONResponse({
         "installed": installed, "active": rc.get("model"),
         "runner_up": _port_alive_sync(int(port)) if port else False,
-        "aux": aux, "adapter": adapter, "error": err})
+        "aux": aux, "adapter": adapter, "ledger": ledger, "error": err})
 
 
 _SWITCH = {"busy": False, "log": ""}
@@ -664,10 +694,10 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
 
 @app.post("/api/models/switch")
 async def api_switch_model(req: Request) -> JSONResponse:
-    """Switch the runner's model (also loads/downloads it), then re-fan-out the new
-    model NAME to any running Hermes/Odysseus (their configs bind the name). Runs in
-    the background — poll /api/models/switch-status. `id` may be a local id OR a
-    HuggingFace repo id (jan serve auto-downloads)."""
+    """Switch the runner's model (loads it via the engine dispatch), then re-fan-out
+    the new model NAME to any running Hermes/Odysseus (their configs bind the name).
+    Runs in the background — poll /api/models/switch-status. `id` must be an INSTALLED
+    registry model (HF repo ids are rejected — downloads go via the download manager)."""
     if _SWITCH["busy"]:
         return JSONResponse({"ok": False, "log": "a switch is already in progress"}, status_code=409)
     new_id = ((await req.json()).get("id") or "").strip()
@@ -679,6 +709,17 @@ async def api_switch_model(req: Request) -> JSONResponse:
             {"ok": False, "log": "downloads arrive with the download manager (next slice) — this adapter loads only installed models"},
             status_code=400)
     old_id = (c.get("runner", {}) or {}).get("model") or ""
+    # Model-RAM ledger gate: candidate + the OTHER slot (aux) must fit the budget.
+    # Switching the MAIN slot replaces its own usage → exclude "main" from "other".
+    _models = _registry_models()
+    _cand = _model_size(_models, new_id)
+    _other = _loaded_models_bytes(exclude_slot="main")
+    _budget = _budget_bytes()
+    if _cand and not _within_budget(_cand, _other, _budget):
+        _g = lambda b: round(b / (1024 ** 3), 1)
+        msg = (f"would exceed model-RAM budget: {_g(_cand)} + {_g(_other)} > "
+               f"{_g(_budget)} GB — eject something first")
+        return JSONResponse({"ok": False, "log": msg}, status_code=409)
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
     import time as _t
     # set BEFORE the thread: no double-switch race; downloading flag drives live progress
@@ -735,9 +776,9 @@ def api_switch_status() -> JSONResponse:
 
 @app.post("/api/models/switch-cancel")
 def api_switch_cancel() -> JSONResponse:
-    """Cancel an in-flight download/switch: kill the jan serve processes AND the
-    waiting start script — _do_switch then sees the failure and rolls the model
-    pin back to the previous one automatically."""
+    """Cancel an in-flight switch: kill the runner on its port AND the waiting start
+    script (legacy jan-serve sweep kept, harmless) — _do_switch then sees the failure
+    and rolls the model pin back to the previous one automatically."""
     if not _SWITCH.get("busy"):
         return JSONResponse({"ok": False, "log": "no switch in progress"}, status_code=400)
     port = int((cfg().get("runner", {}) or {}).get("port") or 6767)
@@ -786,6 +827,16 @@ def aux_start() -> JSONResponse:
     if not m or not m.get("path"):
         return JSONResponse({"ok": False, "log": f"aux model '{model}' not in registry"}, status_code=400)
     fmt, path, mmproj = m.get("format", "gguf"), m["path"], m.get("mmproj")
+    # Model-RAM ledger gate: aux candidate + the OTHER slot (main) must fit budget.
+    _cand = int(m.get("size_bytes") or 0)
+    _other = _loaded_models_bytes(exclude_slot="aux")
+    _budget = _budget_bytes()
+    if _cand and not _within_budget(_cand, _other, _budget):
+        _g = lambda b: round(b / (1024 ** 3), 1)
+        return JSONResponse(
+            {"ok": False, "log": (f"would exceed model-RAM budget: {_g(_cand)} + "
+                                  f"{_g(_other)} > {_g(_budget)} GB — eject something first")},
+            status_code=409)
     _aux_kill(port)
     if fmt == "mlx":
         venv = ROOT / "data" / "mlx-venv"

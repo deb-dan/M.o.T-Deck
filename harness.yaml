@@ -28,7 +28,7 @@ components:
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
-  adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx | jan
+  adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx  (jan retired 2026-07-23)
   llamacpp_pin: b10094       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
   binary:                    # explicit path to llama-server; empty = auto-discover (our pin → Jan backends → LM Studio)
   mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
@@ -49,6 +49,13 @@ aux:
   endpoint: http://127.0.0.1:6768/v1
   api_key: harness-aux
   model:                      # empty = not configured; set from the Models pane
+
+# Model-memory ledger — Bridge-side RAM accounting so main + aux (+ future voice)
+# model loads can't blow past physical memory. Budget is < 64GB to leave headroom
+# for the OS + apps; enforced (409) on model switch and aux start. Footprint is
+# approximated by weight-file size (KV-cache/overhead absorbed by the headroom).
+memory:
+  budget_gb: 48               # model RAM budget (of 64GB — leave headroom for apps)
 
 bridge:
   port: 8700                  # control panel + API

@@ -364,7 +364,7 @@
   </nav>
   <div class="navlbl">Components</div>
   <nav id="sidecomponents"></nav>
-  <div class="side-foot">HERMES · ODYSSEUS<br>BRIDGED, NEVER FORKED</div>
+  <!-- side-foot removed 2026-07-23 (Debi: hidden in final app). CSS rule kept for now. -->
 </aside>
 
 <main>
@@ -957,8 +957,15 @@ async function initModels(){
   try {
     const r = await (await fetch('/api/models')).json();
     const n = (r.installed || []).length;
-    if (r.error && !n) stamp.textContent = 'JAN CLI UNAVAILABLE — ' + r.error;
-    else stamp.textContent = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED') + ' · ' + n + ' INSTALLED · LOCAL';
+    if (r.error && !n) stamp.textContent = 'REGISTRY UNAVAILABLE — ' + r.error;
+    else {
+      let s = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED') + ' · ' + n + ' INSTALLED · LOCAL';
+      if (r.ledger && r.ledger.budget_bytes) {
+        const gb = b => (b / 1073741824).toFixed(1);
+        s += ' · RAM ' + gb(r.ledger.used_bytes || 0) + ' / ' + gb(r.ledger.budget_bytes) + ' GB';
+      }
+      stamp.textContent = s;
+    }
     renderModels(r);
   } catch { stamp.textContent = 'BRIDGE UNAVAILABLE'; }
   refreshDownloads();   // restore any in-flight downloads when revisiting the pane
@@ -968,7 +975,7 @@ function renderModels(r){
   const list = document.getElementById('models-list'); list.innerHTML = '';
   const aux = r.aux || {};
   if (!(r.installed || []).length){
-    list.innerHTML = '<div class="cs-empty">No installed models found via the Jan CLI.</div>'; return;
+    list.innerHTML = '<div class="cs-empty">No installed models in the registry (data/models.json). Run scripts/seed_registry.py or download a model.</div>'; return;
   }
   for (const m of r.installed){
     const isActive = m.id === r.active;
@@ -1120,7 +1127,7 @@ async function hfDetails(repo, btn){
   try {
     const d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
     if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }
-    box.innerHTML = '<div class="cs-empty">Note: “Download &amp; Load” lets Jan pick the quant automatically — per-file choice comes with the download manager.</div>';
+    box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into the harness’s own models dir.</div>';
     if (d.kind === 'mlx'){
       // MLX repo = one model split across .safetensors → single fit on the summed size.
       const head = document.createElement('div'); head.className = 'hffile';
