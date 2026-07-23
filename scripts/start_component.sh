@@ -17,6 +17,9 @@ case "$NAME" in
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
     [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
     # Stop-by-PORT: jan's child router survives a kill of the printed PID (spike learning).
+    # ALSO kill lingering `jan serve` supervisors for this port — they survive port-kills
+    # and accumulate one per restart (found 8 stale ones on 2026-07-23).
+    pkill -f "jan serve.*port[= ]${R_PORT}" 2>/dev/null || true
     lsof -ti tcp:"$R_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     "$JAN" serve "$R_MODEL" --port "$R_PORT" --api-key "$R_KEY" --ctx-size "$R_CTX" --detach \

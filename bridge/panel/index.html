@@ -262,6 +262,10 @@
   #palette .item.sel { background:var(--card); color:var(--cream); }
   #palette .item .k { font:10px var(--mono); color:var(--faint); margin-left:auto; }
 
+  /* The hidden attribute must ALWAYS win — author display rules (e.g. .hffiles
+     display:flex) silently defeat it otherwise. (Fable QA: Hide-files bug.) */
+  [hidden] { display: none !important; }
+
   /* ---------- FABLE PASS 1 (2026-07-21) — restraint & hierarchy ----------
      Principles applied: one accent used sparingly; capability toggles quieter
      than mode selectors; motion only as confirmation; hierarchy via size+case,

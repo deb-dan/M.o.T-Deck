@@ -277,6 +277,8 @@ def stop(name: str) -> JSONResponse:
     if name == "runner":
         rc = cfg().get("runner", {})
         port = rc.get("port")
+        # kill the jan supervisor too — it survives port-kills and accumulates
+        subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
         subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
         (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
         return JSONResponse({"ok": True})
@@ -619,6 +621,7 @@ def aux_start() -> JSONResponse:
     key = ax.get("api_key", "harness-aux")
     if not model:
         return JSONResponse({"ok": False, "log": "no aux model set — use 'Set aux' on an installed model"}, status_code=400)
+    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
     subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
     r = subprocess.run([_jan_bin(), "serve", model, "--port", str(port),
                         "--api-key", key, "--detach"],
@@ -634,6 +637,7 @@ def aux_start() -> JSONResponse:
 def aux_stop() -> JSONResponse:
     ax = cfg().get("aux", {}) or {}
     port = int(ax.get("port") or 6768)
+    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
     subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
     return JSONResponse({"ok": True})
 
