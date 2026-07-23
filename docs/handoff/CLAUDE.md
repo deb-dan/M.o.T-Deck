@@ -1,5 +1,7 @@
 # New Harness — working memory (canonical project home)
 
+> **⚡ OPUS-FIRST MODE ENGAGED (2026-07-23):** Fable 5 ran low on tokens and wrote a full execution handoff — **read `FABLE-HANDOFF-2026-07-23.md` after this file.** Opus 4.8 executes the queue there (cleanup slice → pin-bumps → verify sweep → modalities intake from docs 09/10), maintains an ODDITIES LOG in this file for Fable's end-of-project QA, and tags subtle calls ⚠️ PENDING FABLE QA. Debi confirmations: **Jan gets FULLY removed** (app uninstalled after migration); **the editorial design stays the default permanently** — OpenHuman-style brightness = optional later theme; sidebar footer to be hidden in the final app.
+
 > For Claude: read this first, then `00_START_HERE.md` (its primer paragraph rehydrates a fresh session). This folder is the **single source of truth** for the harness project as of 2026-07-20. The copies of 00–06 in the old `outputs` folder are frozen; the v1 codebase lives in the `Harness project` folder (working scaffold — see 07).
 
 ## Repo
