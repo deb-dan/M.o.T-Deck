@@ -1036,8 +1036,11 @@ async function sendChat() {
   const holder = addMsg('assistant', '');
   const body = holder.querySelector('.body');
   const think = document.createElement('div');
-  think.id = 'thinking'; think.textContent = 'thinking…'; think.hidden = true;
+  // Visible IMMEDIATELY: the 1-3s before first token is prompt prefill on the local
+  // model — silence there reads as slowness, an acknowledged wait doesn't. (Fable)
+  think.id = 'thinking'; think.textContent = 'thinking…'; think.hidden = false;
   holder.insertBefore(think, body);
+  scrollChat();
 
   try {
     const resp = await fetch('/api/ody/chat', {method:'POST',
