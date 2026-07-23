@@ -663,7 +663,7 @@ function setMode(m) {
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('chat-note').textContent =
-    m === 'agent' ? 'web search on · shell off' : 'plain model — no tools';
+    m === 'agent' ? 'web search on · shell off' : 'direct to runner — no tools, fastest';
 }
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -1043,7 +1043,10 @@ async function sendChat() {
   scrollChat();
 
   try {
-    const resp = await fetch('/api/ody/chat', {method:'POST',
+    // Chat mode = direct lane to the runner (no Odysseus per-turn overhead / aux-call
+    // queueing); Agent mode = via Odysseus (tools, search). Same SSE protocol both ways.
+    const url = chatMode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
+    const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({session:chatSid, message:text, mode:chatMode,
                             allow_web_search:true, allow_bash:false,

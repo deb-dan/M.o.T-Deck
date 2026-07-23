@@ -662,6 +662,113 @@ async def hf_card(repo: str) -> JSONResponse:
         return JSONResponse({"repo": repo, "markdown": "", "error": str(e)[:200]})
 
 
+# ── Direct chat lane (Fable, 2026-07-23) ─────────────────────────────────────
+# Chat mode goes straight to the runner (Jan :6767), bypassing Odysseus's per-turn
+# machinery AND its in-process model lock — root-caused: Odysseus fires auxiliary
+# LLM calls (titles/memory/search-queries, logged 5-38s each) at the same single-slot
+# runner, so chat turns queue behind them and lose the prompt cache. Agent mode
+# still routes via Odysseus (tools live there). History is read from and persisted
+# back to the Odysseus session, so the rail/history stay coherent.
+_RUNNER = httpx.AsyncClient(timeout=httpx.Timeout(20, read=None))
+
+
+@app.post("/api/chat/direct")
+async def chat_direct(req: Request) -> StreamingResponse:
+    body = await req.json()
+    sid = body.get("session", "")
+    user_msg = (body.get("message") or "").strip()
+    rc = cfg().get("runner", {})
+    base = (rc.get("endpoint") or "http://127.0.0.1:6767/v1").rstrip("/")
+    key, model = rc.get("api_key", ""), rc.get("model", "")
+
+    # Build messages: session history (if reachable) + the new user turn.
+    messages = []
+    if sid:
+        try:
+            h = await _ody_req("GET", f"/api/history/{sid}")
+            if h.status_code == 200:
+                for m in (h.json().get("history") or [])[-30:]:
+                    if m.get("role") in ("user", "assistant") and m.get("content"):
+                        messages.append({"role": m["role"], "content": m["content"]})
+        except Exception:
+            pass  # degrade: direct chat works even with Odysseus down
+    messages.append({"role": "user", "content": user_msg})
+
+    async def gen():
+        import json as _json
+        full, think_open = [], False
+        try:
+            async with _RUNNER.stream(
+                "POST", f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": model, "messages": messages,
+                      "stream": True, "cache_prompt": True},
+            ) as r:
+                if r.status_code != 200:
+                    yield f'data: {{"type":"proxy_error","error":"runner {r.status_code}"}}\n\n'
+                    yield "data: [DONE]\n\n"
+                    return
+                yield f'data: {_json.dumps({"type": "model_info", "model": model})}\n\n'
+                async for line in r.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        d = _json.loads(payload)["choices"][0]["delta"]
+                    except Exception:
+                        continue
+                    # thinking arrives either as reasoning_content or inline <think> tags
+                    rsn = d.get("reasoning_content")
+                    if rsn:
+                        yield f'data: {_json.dumps({"delta": rsn, "thinking": True})}\n\n'
+                        continue
+                    chunk = d.get("content") or ""
+                    if not chunk:
+                        continue
+                    while chunk:
+                        if think_open:
+                            end = chunk.find("</think>")
+                            if end == -1:
+                                yield f'data: {_json.dumps({"delta": chunk, "thinking": True})}\n\n'
+                                chunk = ""
+                            else:
+                                if chunk[:end]:
+                                    yield f'data: {_json.dumps({"delta": chunk[:end], "thinking": True})}\n\n'
+                                chunk = chunk[end + 8:]
+                                think_open = False
+                        else:
+                            start = chunk.find("<think>")
+                            if start == -1:
+                                full.append(chunk)
+                                yield f'data: {_json.dumps({"delta": chunk})}\n\n'
+                                chunk = ""
+                            else:
+                                if chunk[:start]:
+                                    full.append(chunk[:start])
+                                    yield f'data: {_json.dumps({"delta": chunk[:start]})}\n\n'
+                                chunk = chunk[start + 7:]
+                                think_open = True
+        except Exception as e:
+            yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
+        finally:
+            # Persist the exchange into the Odysseus session (best-effort).
+            answer = "".join(full).strip()
+            if sid and user_msg:
+                try:
+                    await _ody_req("POST", f"/api/session/{sid}/message",
+                                   json={"role": "user", "content": user_msg})
+                    if answer:
+                        await _ody_req("POST", f"/api/session/{sid}/message",
+                                       json={"role": "assistant", "content": answer})
+                except Exception:
+                    pass
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
 @app.post("/api/open")
 async def open_external(req: Request) -> JSONResponse:
     """Open an http(s) URL in the user's default browser (panel links inside the app's webview)."""
