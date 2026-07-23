@@ -549,7 +549,8 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
     and roll harness.yaml back to the previous model on failure so the next Start
     uses a known-good model instead of retrying a broken one."""
     try:
-        _SWITCH["log"] = f"loading {new_id}…"
+        _SWITCH["log"] = (f"downloading + loading {new_id} — large downloads take minutes…"
+                          if "/" in new_id else f"loading {new_id}…")
         r = _script("start_component.sh", "runner")
         if r.returncode != 0:
             _set_runner_model(old_id)   # rollback pin; runner is down but recoverable

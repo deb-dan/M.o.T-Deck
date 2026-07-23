@@ -21,8 +21,12 @@ case "$NAME" in
     sleep 1
     "$JAN" serve "$R_MODEL" --port "$R_PORT" --api-key "$R_KEY" --ctx-size "$R_CTX" --detach \
       > data/logs/runner.launch.json 2>>data/logs/runner.log || true
+    # HF repo ids (contain "/") may need a multi-GB download before serving —
+    # give those up to ~30 min instead of 90s so the switch isn't falsely failed.
+    TRIES=45
+    case "$R_MODEL" in */*) TRIES=800; echo "[harness] HF repo — download may take minutes; waiting up to ~27min…";; esac
     up=0
-    for _ in $(seq 1 45); do
+    for _ in $(seq 1 "$TRIES"); do
       if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
       sleep 2
     done

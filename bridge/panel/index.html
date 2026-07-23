@@ -1056,12 +1056,13 @@ function fitPill(bytes){
 
 async function hfDetails(repo, btn){
   const box = btn.closest('.hfrow').querySelector('.hffiles');
-  if (!box.hidden){ box.hidden = true; return; }
+  if (!box.hidden){ box.hidden = true; btn.textContent = 'Files & fit'; return; }
+  btn.textContent = 'Hide files';
   box.hidden = false; box.innerHTML = '<div class="cs-empty">Loading files…</div>';
   try {
     const d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
     if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }
-    box.innerHTML = '';
+    box.innerHTML = '<div class="cs-empty">Note: “Download &amp; Load” lets Jan pick the quant automatically — per-file choice comes with the download manager.</div>';
     if (d.kind === 'mlx'){
       // MLX repo = one model split across .safetensors → single fit on the summed size.
       const head = document.createElement('div'); head.className = 'hffile';
@@ -1082,7 +1083,11 @@ async function hfDetails(repo, btn){
 let _dlArm = null;
 function hfDownload(repo, btn){
   if (modelsBusy) return;
-  if (_dlArm && _dlArm.repo === repo){ clearTimeout(_dlArm.t); btn.textContent = 'Download & Load'; _dlArm = null; switchModel(repo, repo); window.scrollTo(0,0); return; }
+  if (_dlArm && _dlArm.repo === repo){
+    clearTimeout(_dlArm.t); _dlArm = null;
+    btn.textContent = 'Downloading — status at top ↑'; btn.disabled = true;
+    switchModel(repo, repo); window.scrollTo(0,0); return;
+  }
   if (_dlArm){ _dlArm.btn.textContent = 'Download & Load'; clearTimeout(_dlArm.t); }
   btn.textContent = 'Confirm? (downloads GBs)';
   _dlArm = { repo, btn, t: setTimeout(() => { btn.textContent = 'Download & Load'; _dlArm = null; }, 3000) };
