@@ -12,13 +12,14 @@ let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 let hermesURL = URL(string: "http://127.0.0.1:9119")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var panelWV: WKWebView!      // Mission Control (:8700)
     var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
     var odyLoaded = false
     var hermesWV: WKWebView!     // Hermes dashboard (:9119), lazy-loaded on first select
     var hermesLoaded = false
+    var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     var bridgeProcess: Process?
     var spawnedBridge = false
 
@@ -70,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         for wv in [panelWV!, odyWV!, hermesWV!] {
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.uiDelegate = self          // route target=_blank links to the default browser
+            wv.navigationDelegate = self  // detect failed loads → placeholder + retry
+            if #available(macOS 12.0, *) {
+                wv.underPageBackgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
+            }
             container.addSubview(wv)
         }
         odyWV.isHidden = true
@@ -116,6 +121,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
             hermesLoaded = true
             hermesWV.load(URLRequest(url: hermesURL))
         }
+        // A previously failed tab retries automatically on re-select (component may be up now).
+        if let wv = visibleWebView(), failedLoads.contains(ObjectIdentifier(wv)) {
+            failedLoads.remove(ObjectIdentifier(wv))
+            wv.load(URLRequest(url: urlFor(wv)))
+        }
+    }
+
+    func visibleWebView() -> WKWebView? {
+        if !panelWV.isHidden { return panelWV }
+        if !odyWV.isHidden { return odyWV }
+        if !hermesWV.isHidden { return hermesWV }
+        return nil
+    }
+
+    func urlFor(_ wv: WKWebView) -> URL {
+        if wv === odyWV { return odysseusURL }
+        if wv === hermesWV { return hermesURL }
+        return bridgeURL
+    }
+
+    @objc func reloadTab(_ sender: Any?) {
+        guard let wv = visibleWebView() else { return }
+        failedLoads.remove(ObjectIdentifier(wv))
+        // If the last load failed (or we're on the placeholder), go back to the real URL.
+        if let u = wv.url, u.scheme == "http" { wv.reload() }
+        else { wv.load(URLRequest(url: urlFor(wv))) }
+    }
+
+    // Failed navigation → dark editorial placeholder (never a white void) + retry paths.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showUnreachable(webView)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showUnreachable(webView)
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if let u = webView.url, u.scheme == "http" { failedLoads.remove(ObjectIdentifier(webView)) }
+    }
+
+    func showUnreachable(_ wv: WKWebView) {
+        failedLoads.insert(ObjectIdentifier(wv))
+        wv.loadHTMLString(
+            "<body style='background:#0b0a10;color:#6f6a80;font-family:-apple-system;" +
+            "display:flex;align-items:center;justify-content:center;height:100vh'>" +
+            "<div style='text-align:center'><h2 style='color:#efe7d7;font-weight:500'>Not reachable yet</h2>" +
+            "<p>Start the component in Mission Control,<br>then re-select this tab &mdash; or press &#8984;R.</p></div></body>",
+            baseURL: nil)
     }
 
     func ensureBridgeThenLoad(attempt: Int) {
@@ -204,6 +256,9 @@ let mainMenu = NSMenu()
 let appItem = NSMenuItem()
 mainMenu.addItem(appItem)
 let appMenu = NSMenu()
+let reloadItem = NSMenuItem(title: "Reload Tab", action: #selector(AppDelegate.reloadTab(_:)), keyEquivalent: "r")
+reloadItem.target = delegate
+appMenu.addItem(reloadItem)
 appMenu.addItem(withTitle: "Quit Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 appItem.submenu = appMenu
 let editItem = NSMenuItem()
