@@ -183,6 +183,27 @@
   .cmsg details.inspect .ibody { font:10px var(--mono); color:var(--faint); line-height:1.6;
       border-left:1px dashed var(--line2); padding:8px 0 8px 14px; margin-top:8px;
       white-space:pre-wrap; word-break:break-all; max-height:220px; overflow-y:auto; }
+  /* §E — first-launch setup checklist overlay + coach-mark walkthrough */
+  #setup-scrim { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:60;
+      display:flex; align-items:center; justify-content:center; }
+  #setup-card { background:var(--card2); border:1px solid var(--line2); border-radius:16px;
+      padding:26px 28px; width:440px; max-width:92vw; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #setup-card h3 { font-family:var(--serif); font-weight:500; font-size:24px; color:var(--cream); }
+  #setup-card .su-sub { font:11px var(--mono); color:var(--faint); letter-spacing:.1em;
+      text-transform:uppercase; margin:4px 0 16px; }
+  .su-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+  .su-row .su-name { font:15px var(--serif); color:var(--cream); flex:1 1 auto; text-transform:capitalize; }
+  .su-glyph { font:13px var(--mono); width:14px; text-align:center; flex:none; }
+  .su-glyph.ok { color:var(--ok); } .su-glyph.run { color:var(--gold); } .su-glyph.off { color:var(--faint); }
+  .su-foot { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+  #coach-scrim { position:fixed; inset:0; background:rgba(0,0,0,.38); z-index:55; }
+  .coach { position:fixed; z-index:56; width:300px; background:var(--card2); border:1px solid var(--line2);
+      border-radius:14px; padding:18px 20px; box-shadow:0 16px 48px rgba(0,0,0,.5); }
+  .coach h4 { font-family:var(--serif); font-weight:500; font-size:17px; color:var(--cream); margin-bottom:6px; }
+  .coach p { font:12.5px -apple-system, sans-serif; color:var(--dim); line-height:1.6; }
+  .coach .coach-foot { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
+  .coach .coach-step { font:10px var(--mono); color:var(--faint); letter-spacing:.16em; }
+  .coach .coach-foot button { margin-left:6px; }
   #chat-bar { flex:none; max-width:760px; width:100%; margin-top:8px;
       border-top:1px solid var(--line); padding-top:14px; }
   #chat-modes { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
@@ -626,6 +647,9 @@ async function refresh(manual) {
     metric('Bridge', 'Live');
   if (manual) feed('status', 'refreshed');
 
+  renderSetup();      // §E: keep the checklist glyphs live if it's open
+  maybeAutoSetup();   // §E: one-time auto-show if a component needs setup
+
   // Poll faster while anything is provisioning, else settle to 6s.
   const active = Object.values(prov).some(p => ['pending','starting'].includes(p.state));
   clearTimeout(pollTimer); pollTimer = setTimeout(refresh, active ? 1500 : 6000);
@@ -762,6 +786,113 @@ async function showLogs() {
 
 /* ---------- chat pane (Rung D, native) ---------- */
 let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
+
+// ── §E — first-launch setup checklist + walkthrough (non-intrusive: auto-shows
+//    only when something needs setup / never seen; also launchable from ⌘K) ──
+const SETUP_COMPONENTS = ['runner', 'hermes', 'odysseus', 'searxng'];  // bridge is always up
+let _setupAutoChecked = false;
+
+function setupNeeded() {
+  const s = lastStatus;
+  if (!s || !s.components) return false;
+  return SETUP_COMPONENTS.some(n => { const c = s.components[n] || {}; return !(c.installed && c.running); });
+}
+function maybeAutoSetup() {
+  if (_setupAutoChecked || !lastStatus) return;
+  _setupAutoChecked = true;
+  if (localStorage.getItem('harness-setup-done')) return;
+  if (setupNeeded()) openSetup(true);
+}
+function openSetup() {
+  let scrim = document.getElementById('setup-scrim');
+  if (!scrim) {
+    scrim = document.createElement('div'); scrim.id = 'setup-scrim';
+    scrim.innerHTML = `<div id="setup-card">
+        <h3>Setting things up</h3>
+        <div class="su-sub">green means ready — the harness runs fully local</div>
+        <div id="su-rows"></div>
+        <div class="su-foot"><button id="su-dismiss" onclick="closeSetup()">Run in background</button></div>
+      </div>`;
+    document.body.appendChild(scrim);
+    scrim.addEventListener('click', e => { if (e.target === scrim) closeSetup(); });
+  }
+  scrim.style.display = 'flex';
+  renderSetup();
+}
+function renderSetup() {
+  const scrim = document.getElementById('setup-scrim');
+  if (!scrim || scrim.style.display === 'none') return;
+  const rows = document.getElementById('su-rows'); if (!rows) return;
+  const s = lastStatus || { components: {} }; const prov = s.prov || {};
+  const items = [['bridge', { installed: true, running: true }]]
+    .concat(SETUP_COMPONENTS.map(n => [n, (s.components || {})[n] || {}]));
+  rows.innerHTML = '';
+  for (const [name, c] of items) {
+    const ps = (prov[name] || {}).state;
+    let glyph = '○', cls = 'off', act = '';
+    if (c.running && c.installed) { glyph = '✓'; cls = 'ok'; }
+    else if (ps === 'starting' || ps === 'pending') { glyph = '▸'; cls = 'run'; }
+    if (name !== 'bridge') {
+      if (ps === 'starting' || ps === 'pending') act = '<button disabled>Working…</button>';
+      else if (!c.installed) act = `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
+      else if (!c.running) act = `<button class="primary" onclick="startWithPlan('${name}')">Start</button>`;
+    }
+    rows.insertAdjacentHTML('beforeend',
+      `<div class="su-row"><span class="su-glyph ${cls}">${glyph}</span><span class="su-name">${name}</span>${act}</div>`);
+  }
+  const btn = document.getElementById('su-dismiss');
+  if (btn) btn.textContent = setupNeeded() ? 'Run in background' : 'Done';
+}
+function closeSetup() {
+  const scrim = document.getElementById('setup-scrim');
+  if (scrim) scrim.style.display = 'none';
+  if (!setupNeeded()) localStorage.setItem('harness-setup-done', '1');   // remember once healthy
+  if (!localStorage.getItem('harness-tour-done')) startTour();           // walkthrough follows
+}
+
+const TOUR = [
+  { sel: '#nav-chat',    view: null,  title: 'Chat',       body: 'Talk to the stack directly. Agent mode uses tools (web search, shell); Chat mode is a fast, direct line to the model.' },
+  { sel: '#nav-models',  view: null,  title: 'Models',     body: 'Your local library, downloads, and the RAM ledger — see what fits and switch the live model.' },
+  { sel: '#mode-browse', view: 'chat', title: 'Browse',    body: 'Give agents your browser — toggle it on and a chat can drive real web pages.' },
+  { sel: '#cards',       view: 'mc',  title: 'Components',  body: 'Start and stop everything here. Green means healthy; the whole stack runs on your machine.' },
+];
+let _tourIdx = 0;
+function startTour() {
+  _tourIdx = 0;
+  let sc = document.getElementById('coach-scrim');
+  if (!sc) { sc = document.createElement('div'); sc.id = 'coach-scrim'; sc.onclick = endTour; document.body.appendChild(sc); }
+  sc.style.display = 'block';
+  showCoach();
+}
+function showCoach() {
+  const step = TOUR[_tourIdx];
+  if (step.view) showView(step.view);
+  let card = document.getElementById('coach-card');
+  if (!card) { card = document.createElement('div'); card.id = 'coach-card'; card.className = 'coach'; document.body.appendChild(card); }
+  const last = _tourIdx === TOUR.length - 1;
+  card.innerHTML = `<h4>${step.title}</h4><p>${step.body}</p>
+    <div class="coach-foot"><span class="coach-step">${_tourIdx + 1} / ${TOUR.length}</span>
+      <span><button onclick="endTour()">Skip</button><button class="primary" onclick="nextCoach()">${last ? 'Done' : 'Next'}</button></span></div>`;
+  // position after layout settles (view switch may have just run)
+  requestAnimationFrame(() => positionCoach(card, step.sel));
+}
+function positionCoach(card, sel) {
+  const t = document.querySelector(sel);
+  card.style.display = 'block';
+  if (!t) { card.style.left = '50%'; card.style.top = '80px'; card.style.transform = 'translateX(-50%)'; return; }
+  const r = t.getBoundingClientRect();
+  card.style.transform = 'none';
+  let left = r.right + 14;
+  if (left + 300 > window.innerWidth - 12) left = Math.max(12, r.left - 314);
+  const top = Math.min(Math.max(12, r.top), window.innerHeight - 190);
+  card.style.left = left + 'px'; card.style.top = top + 'px';
+}
+function nextCoach() { _tourIdx++; if (_tourIdx >= TOUR.length) { endTour(); return; } showCoach(); }
+function endTour() {
+  localStorage.setItem('harness-tour-done', '1');
+  const c = document.getElementById('coach-card'); if (c) c.remove();
+  const s = document.getElementById('coach-scrim'); if (s) s.style.display = 'none';
+}
 
 // §C: cycle dark ↔ light, persist. Dark = default (no attribute).
 function toggleTheme() {
@@ -1604,6 +1735,8 @@ const commands = () => {
     {t:'Mission Control', k:'◫', f:()=>showView('mc')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:showLogs},
+    {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
+    {t:'Walkthrough (tour)', k:'◎', f:startTour},
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
     if (c.running) cmds.push({t:`Stop ${n}`, k:'■', f:()=>act(n,'stop')});
