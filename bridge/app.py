@@ -556,11 +556,13 @@ def _jan_data_dir() -> str:
 
 
 def _download_progress(since_ts: float):
-    """Sum bytes of files Jan has written since the switch began (its models tree +
-    the HF cache) → live download progress without owning the downloader."""
+    """Bytes Jan has written since the switch began (its models tree + HF cache):
+    returns (sum, newest_name, {name_lower: size}) so status can match the growing
+    file against the repo's known file sizes → real percentage + ETA."""
     import os
     total, newest = 0, ""
     newest_ts = 0.0
+    fresh = {}
     for root in (os.path.join(_jan_data_dir(), "llamacpp"),
                  os.path.expanduser("~/.cache/huggingface")):
         if not os.path.isdir(root):
@@ -573,9 +575,10 @@ def _download_progress(since_ts: float):
                     continue
                 if st.st_mtime >= since_ts - 5:
                     total += st.st_size
+                    fresh[fn.lower()] = max(fresh.get(fn.lower(), 0), st.st_size)
                     if st.st_mtime > newest_ts:
                         newest_ts, newest = st.st_mtime, fn
-    return total, newest
+    return total, newest, fresh
 
 
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
@@ -625,7 +628,19 @@ async def api_switch_model(req: Request) -> JSONResponse:
     import time as _t
     # set BEFORE the thread: no double-switch race; downloading flag drives live progress
     _SWITCH.update(busy=True, log="starting…", started=_t.time(),
-                   downloading=("/" in new_id), prev_bytes=0, prev_ts=0.0)
+                   downloading=("/" in new_id), prev_bytes=0, prev_ts=0.0, files={})
+    if "/" in new_id:
+        # Fetch the repo's file sizes so the growing file can be matched → % + ETA.
+        try:
+            import os as _os
+            r = await _HF.get(f"/api/models/{new_id}/tree/main")
+            if r.status_code == 200:
+                _SWITCH["files"] = {
+                    _os.path.basename(it.get("path", "")).lower(): it.get("size") or 0
+                    for it in r.json()
+                    if it.get("path", "").lower().endswith((".gguf", ".safetensors"))}
+        except Exception:
+            pass
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
@@ -639,16 +654,42 @@ def api_switch_status() -> JSONResponse:
     out = {k: _SWITCH.get(k) for k in ("busy", "log")}
     if _SWITCH.get("busy") and _SWITCH.get("downloading"):
         try:
-            done, fname = _download_progress(_SWITCH.get("started") or _t.time())
+            total_fresh, fname, fresh = _download_progress(_SWITCH.get("started") or _t.time())
+            repo_files = _SWITCH.get("files") or {}
+            # Match the file(s) Jan is fetching against the repo's known sizes → % + ETA.
+            done = total_fresh
+            matches = [(repo_files[n], fresh[n]) for n in fresh if n in repo_files]
+            dl_total = 0
+            if matches:
+                dl_total = sum(m[0] for m in matches)
+                done = sum(m[1] for m in matches)
             now = _t.time()
             prev_b, prev_t = _SWITCH.get("prev_bytes") or 0, _SWITCH.get("prev_ts") or 0.0
             rate = (done - prev_b) / (now - prev_t) if prev_t and now > prev_t and done >= prev_b else 0
             _SWITCH.update(prev_bytes=done, prev_ts=now)
             out.update(dl_bytes=done, dl_rate=max(0, rate), dl_file=fname,
                        dl_phase=("downloading" if rate > 1e5 or done < 1e6 else "loading"))
+            if dl_total:
+                out["dl_total"] = dl_total
+                if rate > 1e5 and dl_total > done:
+                    out["dl_eta"] = int((dl_total - done) / rate)
         except Exception:
             pass
     return JSONResponse(out)
+
+
+@app.post("/api/models/switch-cancel")
+def api_switch_cancel() -> JSONResponse:
+    """Cancel an in-flight download/switch: kill the jan serve processes AND the
+    waiting start script — _do_switch then sees the failure and rolls the model
+    pin back to the previous one automatically."""
+    if not _SWITCH.get("busy"):
+        return JSONResponse({"ok": False, "log": "no switch in progress"}, status_code=400)
+    port = int((cfg().get("runner", {}) or {}).get("port") or 6767)
+    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
+    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    subprocess.run('pkill -f "start_component.sh runner"', shell=True, check=False)
+    return JSONResponse({"ok": True, "log": "cancelling — pin will revert to the previous model"})
 
 
 # ── Aux runner (optional): a small second model on its own port for Odysseus's

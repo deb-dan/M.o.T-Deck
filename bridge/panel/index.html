@@ -307,9 +307,15 @@
   #dl-fill { position:absolute; top:0; left:-30%; width:30%; height:100%;
       background:var(--gold); border-radius:2px; animation:dlslide 1.4s ease-in-out infinite; }
   @keyframes dlslide { 0%{left:-30%} 100%{left:100%} }
-  #dl-meta { margin-top:8px; font:10.5px var(--mono); letter-spacing:.1em;
+  #dl-row { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+  #dl-meta { font:10.5px var(--mono); letter-spacing:.1em;
       text-transform:uppercase; color:var(--dim); }
   #dl-meta b { color:var(--cream); font-weight:600; }
+  #dl-cancel { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+      color:var(--faint); background:transparent; border:1px solid var(--line);
+      border-radius:6px; padding:3px 10px; cursor:pointer; }
+  #dl-cancel:hover { color:var(--bad); border-color:var(--bad); }
+  #dl-fill.det { animation:none; left:0; transition:width .8s ease; }
 
   /* chat-bar model controls (quiet, mono, right of the chips) */
   #chat-model { max-width:200px; background:var(--card); color:var(--dim);
@@ -412,7 +418,10 @@
     <div class="stamp" id="models-stamp">—</div>
     <div id="dl-panel" hidden>
       <div id="dl-bar"><div id="dl-fill"></div></div>
-      <div id="dl-meta">—</div>
+      <div id="dl-row">
+        <span id="dl-meta">—</span>
+        <button id="dl-cancel" onclick="cancelSwitch()">Cancel</button>
+      </div>
     </div>
     <!-- FABLE: style this pane (LM-Studio / Jan / Cherry are the reference feel) -->
     <div id="models-list"></div>
@@ -973,6 +982,14 @@ function renderModels(r){
   list.appendChild(foot);
 }
 
+async function cancelSwitch(){
+  const st = document.getElementById('models-stamp');
+  st.textContent = 'CANCELLING — REVERTING TO THE PREVIOUS MODEL…';
+  try { await fetch('/api/models/switch-cancel', {method:'POST'}); } catch {}
+  // _do_switch notices the killed script, rolls the pin back, and clears busy;
+  // the regular poll picks that up and refreshes the pane.
+}
+
 async function ejectModel(){
   if (modelsBusy) return; modelsBusy = true;
   const st = document.getElementById('models-stamp');
@@ -1127,13 +1144,26 @@ async function switchModel(id, name){
         const cn = document.getElementById('chat-note');
         if (cn) cn.textContent = s.log || 'switching…';
         const dp = document.getElementById('dl-panel'), dm = document.getElementById('dl-meta');
+        const fill = document.getElementById('dl-fill');
         if (s.busy && s.dl_bytes > 5e6){
           dp.hidden = false;
           const gb = (s.dl_bytes/1073741824).toFixed(2);
           const mbs = (s.dl_rate/1048576).toFixed(1);
-          dm.innerHTML = s.dl_phase === 'loading'
-            ? `<b>${gb} GB</b> on disk · download settled — loading into memory…`
-            : `<b>${gb} GB</b> downloaded · <b>${mbs} MB/s</b>${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
+          if (s.dl_total){
+            // LM-Studio-grade readout: X of Y GB · rate · time left, determinate bar.
+            const tot = (s.dl_total/1073741824).toFixed(2);
+            const pct = Math.min(100, s.dl_bytes / s.dl_total * 100);
+            fill.classList.add('det'); fill.style.width = pct.toFixed(1) + '%';
+            const eta = s.dl_eta ? (s.dl_eta > 90 ? Math.round(s.dl_eta/60) + ' min left' : s.dl_eta + 's left') : '';
+            dm.innerHTML = s.dl_phase === 'loading'
+              ? `<b>${gb} of ${tot} GB</b> · download settled — loading into memory…`
+              : `<b>${gb} of ${tot} GB</b> (${pct.toFixed(0)}%) · <b>${mbs} MB/s</b>${eta ? (' · ' + eta) : ''}${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
+          } else {
+            fill.classList.remove('det'); fill.style.width = '';
+            dm.innerHTML = s.dl_phase === 'loading'
+              ? `<b>${gb} GB</b> on disk · download settled — loading into memory…`
+              : `<b>${gb} GB</b> downloaded · <b>${mbs} MB/s</b>${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
+          }
         } else { dp.hidden = true; }
         if (!s.busy){ clearInterval(poll); dp.hidden = true; modelsBusy = false; initModels(); loadChatModels(); }
       } catch {}
