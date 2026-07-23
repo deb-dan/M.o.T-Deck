@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Build Harness.app (and optionally Harness.dmg with --dmg). Local build, no signing needed.
+# Build Harness.app. Flags:
+#   --dmg       also package dist/Harness.dmg
+#   --portable  bundle a repo seed into the .app so it can self-install on a fresh Mac
+#               (first-run: main.swift extracts the seed to ~/Harness and runs firstrun.sh)
+# Local build, no signing needed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+
+DMG=0; PORTABLE=0
+for a in "$@"; do case "$a" in --dmg) DMG=1 ;; --portable) PORTABLE=1 ;; esac; done
 
 command -v swiftc >/dev/null || {
   echo "swiftc not found. Install Command Line Tools first:  xcode-select --install"; exit 1; }
@@ -54,7 +61,21 @@ fi
 
 echo "[harness] built $APP"
 
-if [[ "${1:-}" == "--dmg" ]]; then
+if [[ $PORTABLE -eq 1 ]]; then
+  echo "[harness] bundling portable seed (repo minus .git/.gitmodules/vendor/data/dist)..."
+  SEED="$APP/Contents/Resources/harness-seed.tar.gz"
+  # vendor/ is intentionally excluded — firstrun's bootstrap re-adds the submodules
+  # from their PUBLIC upstreams (harness.yaml repo/pin), so no private-repo auth is needed.
+  tar czf "$SEED" -C "$ROOT" \
+    --exclude='./.git' --exclude='./.gitmodules' --exclude='./vendor' \
+    --exclude='./data' --exclude='./dist' \
+    --exclude='./node_modules' --exclude='*/node_modules' \
+    --exclude='*/__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
+    .
+  echo "[harness] seed: $SEED ($(du -h "$SEED" | cut -f1))"
+fi
+
+if [[ $DMG -eq 1 ]]; then
   echo "[harness] creating dmg..."
   rm -f dist/Harness.dmg
   hdiutil create -volname Harness -srcfolder "$APP" -ov -format UDZO dist/Harness.dmg >/dev/null

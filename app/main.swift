@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     var bridgeProcess: Process?
     var spawnedBridge = false
+    // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
+    var resolvedRoot = harnessRoot
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(
@@ -105,7 +107,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        ensureBridgeThenLoad(attempt: 0)
+        beginLaunch()
+    }
+
+    // ── §G-phase2 portable first-run ──
+    // Dev builds bake a valid harnessRoot → this whole path is dormant. Portable builds
+    // have no valid baked root → resolve to ~/Harness, self-installing on first launch.
+    func homeHarness() -> String { NSHomeDirectory() + "/Harness" }
+    func rootIsProvisioned(_ root: String) -> Bool {
+        FileManager.default.fileExists(atPath: root + "/bridge/app.py")
+    }
+
+    func beginLaunch() {
+        if rootIsProvisioned(harnessRoot) { resolvedRoot = harnessRoot; ensureBridgeThenLoad(attempt: 0); return }
+        let dest = homeHarness()
+        if rootIsProvisioned(dest) { resolvedRoot = dest; ensureBridgeThenLoad(attempt: 0); return }
+        runFirstRun()   // nothing provisioned anywhere → portable first-run
+    }
+
+    func setupHTML(_ title: String, _ body: String) -> String {
+        "<body style='background:#0b0a10;color:#c9c4d4;font-family:-apple-system;display:flex;" +
+        "align-items:center;justify-content:center;height:100vh;margin:0'>" +
+        "<div style='max-width:560px;padding:24px;line-height:1.65'>" +
+        "<h2 style='color:#efe7d7;font-weight:500'>\(title)</h2><p>\(body)</p></div></body>"
+    }
+    func esc(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+    }
+    func tail(_ path: String, _ n: Int) -> String {
+        guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { return "" }
+        return s.split(separator: "\n", omittingEmptySubsequences: false).suffix(n).joined(separator: "\n")
+    }
+    func setupFailed(_ msg: String) {
+        DispatchQueue.main.async { self.panelWV.loadHTMLString(self.setupHTML("Setup problem", self.esc(msg)), baseURL: nil) }
+    }
+
+    func runFirstRun() {
+        let seed = (Bundle.main.resourcePath ?? "") + "/harness-seed.tar.gz"
+        if !FileManager.default.fileExists(atPath: seed) {
+            panelWV.loadHTMLString(setupHTML("Harness folder not found",
+                "This build expects the harness at<br><code>\(esc(harnessRoot))</code><br>which isn’t present, and it carries no portable seed.<br><br>Rebuild from the repo with <code>./scripts/build_app.sh</code>, or make a portable build with <code>--portable</code>."), baseURL: nil)
+            return
+        }
+        let a = NSAlert()
+        a.messageText = "Set up Harness"
+        a.informativeText = "Harness will install its local stack into:\n\(homeHarness())\n\nRequirements: Xcode Command Line Tools, Homebrew, and an internet connection. This can take several minutes."
+        a.addButton(withTitle: "Continue")
+        a.addButton(withTitle: "Quit")
+        if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
+        panelWV.loadHTMLString(setupHTML("Setting things up…",
+            "Installing the local stack into <code>~/Harness</code>.<br>This can take several minutes — progress is logged to<br><code>~/Harness/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when the harness is ready."), baseURL: nil)
+        DispatchQueue.global().async { self.doFirstRun() }
+    }
+
+    func doFirstRun() {
+        let fm = FileManager.default
+        let dest = homeHarness()
+        let seed = (Bundle.main.resourcePath ?? "") + "/harness-seed.tar.gz"
+        try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+
+        let untar = Process()
+        untar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        untar.arguments = ["-xzf", seed, "-C", dest]
+        do { try untar.run() } catch { setupFailed("Could not extract the setup seed: \(error)"); return }
+        untar.waitUntilExit()
+        if untar.terminationStatus != 0 { setupFailed("Extracting the setup seed failed."); return }
+
+        let logDir = dest + "/data/logs"
+        try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
+        let logFile = logDir + "/firstrun.log"
+        fm.createFile(atPath: logFile, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logFile)
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // login shell so brew (/opt/homebrew/bin) and ~/.local/bin are on PATH for a GUI launch
+        p.arguments = ["-lc", "bash '\(dest)/scripts/firstrun.sh' --yes 2>&1"]
+        p.currentDirectoryURL = URL(fileURLWithPath: dest)
+        if let fh = fh { p.standardOutput = fh; p.standardError = fh }
+        do { try p.run() } catch { setupFailed("Could not start setup: \(error)"); return }
+        p.waitUntilExit()
+
+        let ok = p.terminationStatus == 0
+        DispatchQueue.main.async {
+            if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
+            else {
+                self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
+                    "See <code>~/Harness/data/logs/firstrun.log</code>. Common causes: Homebrew or Xcode Command Line Tools missing, or no internet. Fix, then reopen Harness.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
+            }
+        }
     }
 
     @objc func tabChanged(_ sender: NSSegmentedControl) {
@@ -205,13 +297,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func startBridge() {
-        let py = "\(harnessRoot)/data/bridge-venv/bin/python"
+        let py = "\(resolvedRoot)/data/bridge-venv/bin/python"
         guard FileManager.default.isExecutableFile(atPath: py) else { return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: py)
         p.arguments = ["-m", "uvicorn", "bridge.app:app",
                        "--host", "127.0.0.1", "--port", "8700"]
-        p.currentDirectoryURL = URL(fileURLWithPath: harnessRoot)
+        p.currentDirectoryURL = URL(fileURLWithPath: resolvedRoot)
         let log = FileHandle(forWritingAtPath: logPath()) ?? FileHandle.nullDevice
         log.seekToEndOfFile()
         p.standardOutput = log
@@ -220,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func logPath() -> String {
-        let dir = "\(harnessRoot)/data/logs"
+        let dir = "\(resolvedRoot)/data/logs"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let path = "\(dir)/bridge.log"
         if !FileManager.default.fileExists(atPath: path) {
