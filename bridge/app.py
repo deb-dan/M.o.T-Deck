@@ -523,7 +523,7 @@ def api_models() -> JSONResponse:
     c = cfg()
     rc = c.get("runner", {})
     adapter = (rc.get("adapter") or "jan")
-    if adapter == "llamacpp":
+    if adapter in ("llamacpp", "mlx", "auto"):
         def _load_registry():
             reg = ROOT / "data" / "models.json"
             if not reg.exists():
@@ -543,9 +543,10 @@ def api_models() -> JSONResponse:
             for m in models:
                 installed.append({
                     "id": m.get("id"), "name": m.get("name") or m.get("id"),
-                    "size_bytes": m.get("size_bytes"), "engine": "llamacpp",
+                    "size_bytes": m.get("size_bytes"),
+                    "engine": ("mlx" if m.get("format") == "mlx" else "llamacpp"),
                     "embedding": False,
-                    "capabilities": (["vision"] if m.get("mmproj") else []),
+                    "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
                     "format": m.get("format", "gguf")})
         except Exception as e:
             err = str(e)[:200]
@@ -651,7 +652,7 @@ async def api_switch_model(req: Request) -> JSONResponse:
     if not new_id:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
     c = cfg()
-    if (c.get("runner", {}) or {}).get("adapter") == "llamacpp" and "/" in new_id:
+    if (c.get("runner", {}) or {}).get("adapter") in ("llamacpp", "mlx", "auto") and "/" in new_id:
         return JSONResponse(
             {"ok": False, "log": "downloads arrive with the download manager (next slice) — this adapter loads only installed models"},
             status_code=400)
