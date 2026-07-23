@@ -35,6 +35,18 @@ runner:
   model: Qwen3_6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS   # M2 model browser makes this dynamic
   ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
 
+# OPTIONAL aux runner — a small second model (300MB–10GB class) for Odysseus's
+# Background Tasks (auto-titles, search-query generation, memory extraction) so
+# they stop contending with the main runner's single slot. Pick the model via
+# "Set aux" in the Models pane; start/stop from the same pane. To wire it in:
+# Odysseus admin settings → Background Tasks → endpoint http://127.0.0.1:6768/v1,
+# api key harness-aux, and the aux model name.
+aux:
+  port: 6768
+  endpoint: http://127.0.0.1:6768/v1
+  api_key: harness-aux
+  model:                      # empty = not configured; set from the Models pane
+
 bridge:
   port: 8700                  # control panel + API
   gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)

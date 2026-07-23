@@ -492,21 +492,25 @@ def _jan_bin() -> str:
     return "jan"
 
 
-def _set_runner_model(new_id: str) -> None:
-    """Rewrite runner.model in harness.yaml (line-scan, preserves everything else)."""
+def _set_yaml_model(block: str, new_id: str) -> None:
+    """Rewrite <block>.model in harness.yaml (line-scan, preserves everything else)."""
     import re
     p = ROOT / "harness.yaml"
     lines = p.read_text().split("\n")
-    in_runner = False
+    inside = False
     for i, ln in enumerate(lines):
-        if re.match(r'^runner:\s*$', ln):
-            in_runner = True; continue
-        if in_runner and re.match(r'^\S', ln):
-            in_runner = False
-        if in_runner and re.match(r'^  model:', ln):
+        if re.match(rf'^{block}:\s*$', ln):
+            inside = True; continue
+        if inside and re.match(r'^\S', ln):
+            inside = False
+        if inside and re.match(r'^  model:', ln):
             lines[i] = f"  model: {new_id}"
             break
     p.write_text("\n".join(lines))
+
+
+def _set_runner_model(new_id: str) -> None:
+    _set_yaml_model("runner", new_id)
 
 
 @app.get("/api/models")
@@ -525,12 +529,16 @@ def api_models() -> JSONResponse:
                 "capabilities": m.get("capabilities") or []})
     except Exception as e:
         err = str(e)[:200]
-    rc = cfg().get("runner", {})
+    c = cfg()
+    rc = c.get("runner", {})
     port = rc.get("port")
+    ax = c.get("aux", {}) or {}
+    aux = {"model": ax.get("model") or "", "port": ax.get("port"),
+           "up": _port_alive_sync(int(ax["port"])) if ax.get("port") else False}
     return JSONResponse({
         "installed": installed, "active": rc.get("model"),
         "runner_up": _port_alive_sync(int(port)) if port else False,
-        "error": err})
+        "aux": aux, "error": err})
 
 
 _SWITCH = {"busy": False, "log": ""}
@@ -588,6 +596,45 @@ async def api_switch_model(req: Request) -> JSONResponse:
 @app.get("/api/models/switch-status")
 def api_switch_status() -> JSONResponse:
     return JSONResponse(dict(_SWITCH))
+
+
+# ── Aux runner (optional): a small second model on its own port for Odysseus's
+# Background Tasks (titles, search-query gen, memory extraction) so they stop
+# hogging the main runner's single slot. Model is user-chosen from installed
+# models ("Set aux" in the Models pane) — never hardcoded.
+@app.post("/api/aux/set")
+async def aux_set(req: Request) -> JSONResponse:
+    new_id = ((await req.json()).get("id") or "").strip()
+    if not new_id:
+        return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
+    _set_yaml_model("aux", new_id)
+    return JSONResponse({"ok": True, "model": new_id})
+
+
+@app.post("/api/aux/start")
+def aux_start() -> JSONResponse:
+    ax = cfg().get("aux", {}) or {}
+    model, port = ax.get("model") or "", int(ax.get("port") or 6768)
+    key = ax.get("api_key", "harness-aux")
+    if not model:
+        return JSONResponse({"ok": False, "log": "no aux model set — use 'Set aux' on an installed model"}, status_code=400)
+    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    r = subprocess.run([_jan_bin(), "serve", model, "--port", str(port),
+                        "--api-key", key, "--detach"],
+                       capture_output=True, text=True, timeout=90)
+    ok = r.returncode == 0
+    return JSONResponse({"ok": ok,
+                         "log": "loading in background — refresh in ~20-60s" if ok
+                                else (r.stdout + r.stderr)[-300:]},
+                        status_code=200 if ok else 500)
+
+
+@app.post("/api/aux/stop")
+def aux_stop() -> JSONResponse:
+    ax = cfg().get("aux", {}) or {}
+    port = int(ax.get("port") or 6768)
+    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    return JSONResponse({"ok": True})
 
 
 # ── Slice 2: HuggingFace model browser (Bridge runs on the Mac → real internet) ──

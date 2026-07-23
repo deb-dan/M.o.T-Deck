@@ -296,6 +296,16 @@
   .cmsg .toolline { opacity:.85; }
   #chat-input { transition: border-color .16s ease; }
   .mode-chip { transition: color .14s ease, background .14s ease, border-color .14s ease; }
+
+  /* chat-bar model controls (quiet, mono, right of the chips) */
+  #chat-model { max-width:200px; background:var(--card); color:var(--dim);
+      border:1px solid var(--line2); border-radius:7px; font:10px var(--mono);
+      letter-spacing:.03em; padding:4px 6px; cursor:pointer; }
+  #chat-model:disabled { opacity:.5; }
+  #chat-eject { font:11px var(--mono); color:var(--faint); background:transparent;
+      border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer;
+      transition: color .12s ease, border-color .12s ease; }
+  #chat-eject:hover { color:var(--bad); border-color:var(--bad); }
 </style>
 </head>
 <body>
@@ -366,6 +376,8 @@
             <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
               title="Browser control via the Browser MCP extension (agent mode)">Browse</span>
+            <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)"></select>
+            <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM">⏏</button>
             <span class="mode-note" id="chat-note">web search on · shell off</span>
           </div>
           <div id="chat-inputrow">
@@ -697,6 +709,17 @@ function relTime(iso){
   if (s < 86400) return Math.floor(s/3600) + 'h';
   return new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'});
 }
+function relTimeLong(iso){
+  // LM-Studio-style recency: "27 mins ago", "3 hours ago", "5 days ago"
+  const t = Date.parse(iso); if (isNaN(t)) return '';
+  const s = (Date.now() - t) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return Math.round(s/60) + ' mins ago';
+  if (s < 129600) return Math.round(s/3600) + ' hours ago';
+  if (s < 5184000) return Math.round(s/86400) + ' days ago';
+  return Math.round(s/2592000) + ' months ago';
+}
+
 function stampFor(model){
   document.getElementById('chat-stamp').textContent =
     (model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
@@ -712,7 +735,33 @@ async function initChat() {
     if (pick) await selectSession(pick.id);
     else await newSession();
     refreshBrowse();
+    loadChatModels();
   } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+}
+
+async function loadChatModels(){
+  const sel = document.getElementById('chat-model');
+  if (!sel) return;
+  try {
+    const r = await (await fetch('/api/models')).json();
+    sel.innerHTML = '';
+    for (const m of (r.installed || [])){
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = (m.name || m.id).slice(0, 30) + (m.id === r.active && !r.runner_up ? ' (ejected)' : '');
+      if (m.id === r.active) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.disabled = modelsBusy;
+  } catch {}
+}
+
+async function chatModelChange(id){
+  // Switching reloads the runner (and re-wires components) — progress in the note.
+  if (modelsBusy){ loadChatModels(); return; }
+  const cn = document.getElementById('chat-note');
+  if (cn) cn.textContent = 'switching model — load takes ~60-90s…';
+  await switchModel(id, id);
 }
 
 async function refreshBrowse(){
@@ -867,23 +916,70 @@ async function initModels(){
 
 function renderModels(r){
   const list = document.getElementById('models-list'); list.innerHTML = '';
+  const aux = r.aux || {};
   if (!(r.installed || []).length){
     list.innerHTML = '<div class="cs-empty">No installed models found via the Jan CLI.</div>'; return;
   }
   for (const m of r.installed){
     const isActive = m.id === r.active;
+    const isAux = aux.model && m.id === aux.model;
     const caps = (m.capabilities || []).length ? (' · ' + m.capabilities.join(', ')) : '';
     const row = document.createElement('div'); row.className = 'mrow' + (isActive ? ' on' : '');
     row.innerHTML = `<div class="minfo">
-        <div class="mname">${esc(m.name || m.id)}${isActive ? '<span class="mtag">live</span>' : ''}</div>
+        <div class="mname">${esc(m.name || m.id)}${(isActive && r.runner_up) ? '<span class="mtag">live</span>' : ''}${isAux ? '<span class="mtag">aux</span>' : ''}</div>
         <div class="mmeta">${esc(m.id)} · ${esc(m.engine || '')} · ${fmtGB(m.size_bytes)}${esc(caps)}</div>
       </div>`;
     const btn = document.createElement('button'); btn.className = 'mswitch';
-    if (isActive){ btn.textContent = 'Active'; btn.disabled = true; }
+    if (isActive && r.runner_up){ btn.textContent = 'Eject'; btn.title = 'Unload — frees RAM'; btn.onclick = ejectModel; }
+    else if (isActive){ btn.textContent = 'Load'; btn.onclick = () => switchModel(m.id, m.name || m.id); }
     else { btn.textContent = 'Switch'; btn.onclick = () => switchModel(m.id, m.name || m.id); }
-    row.appendChild(btn);
+    const btn2 = document.createElement('button'); btn2.className = 'mswitch';
+    if (isAux){ btn2.textContent = 'Aux ✓'; btn2.disabled = true; }
+    else { btn2.textContent = 'Set aux'; btn2.title = 'Use for background tasks (titles, search queries)';
+           btn2.onclick = () => auxSet(m.id); }
+    row.appendChild(btn2); row.appendChild(btn);
     list.appendChild(row);
   }
+  // Aux runner control row (optional second model for Odysseus Background Tasks)
+  const foot = document.createElement('div'); foot.className = 'mrow';
+  foot.innerHTML = `<div class="minfo">
+      <div class="mname" style="font-size:13.5px">Aux runner${aux.up ? '<span class="mtag">live</span>' : ''}</div>
+      <div class="mmeta">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves background tasks (titles, search queries, memory)</div>
+    </div>`;
+  if (aux.model){
+    const b = document.createElement('button'); b.className = 'mswitch';
+    if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
+    else { b.textContent = 'Start'; b.onclick = auxStart; }
+    foot.appendChild(b);
+  }
+  list.appendChild(foot);
+}
+
+async function ejectModel(){
+  if (modelsBusy) return; modelsBusy = true;
+  const st = document.getElementById('models-stamp');
+  st.textContent = 'EJECTING — FREEING MEMORY…';
+  const cn = document.getElementById('chat-note'); if (cn) cn.textContent = 'model ejected — load one from Models';
+  try { await fetch('/api/components/runner/stop', {method:'POST'}); } catch {}
+  modelsBusy = false; initModels(); loadChatModels();
+}
+
+async function auxSet(id){
+  try { await fetch('/api/aux/set', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({id})}); } catch {}
+  initModels();
+}
+async function auxStart(){
+  const st = document.getElementById('models-stamp');
+  try {
+    const r = await (await fetch('/api/aux/start', {method:'POST'})).json();
+    st.textContent = ('AUX: ' + (r.log || '')).toUpperCase();
+    setTimeout(initModels, 15000);
+  } catch { st.textContent = 'AUX START FAILED'; }
+}
+async function auxStop(){
+  try { await fetch('/api/aux/stop', {method:'POST'}); } catch {}
+  initModels();
 }
 
 // ---- HuggingFace browser (slice 2) ----
@@ -903,7 +999,7 @@ async function hfSearch(){
     for (const m of list){
       const row = document.createElement('div'); row.className = 'hfrow';
       row.innerHTML = `<div class="hfname">${esc(m.repo)}</div>
-        <div class="hfmeta">▼ ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0}${m.pipeline ? (' · ' + esc(m.pipeline)) : ''}</div>
+        <div class="hfmeta">▼ ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0}${m.pipeline ? (' · ' + esc(m.pipeline)) : ''}${m.updated ? (' · ' + relTimeLong(m.updated)) : ''}</div>
         <div class="hfactions">
           <button onclick="hfCard('${m.repo}', this)">Model card</button>
           <button onclick="hfDetails('${m.repo}', this)">Files &amp; fit</button>
@@ -1005,7 +1101,9 @@ async function switchModel(id, name){
       try {
         const s = await (await fetch('/api/models/switch-status')).json();
         stamp.textContent = (s.log || 'switching…').toUpperCase();
-        if (!s.busy){ clearInterval(poll); modelsBusy = false; initModels(); }
+        const cn = document.getElementById('chat-note');
+        if (cn) cn.textContent = s.log || 'switching…';
+        if (!s.busy){ clearInterval(poll); modelsBusy = false; initModels(); loadChatModels(); }
       } catch {}
     }, 2500);
   } catch { stamp.textContent = 'SWITCH ERROR'; modelsBusy = false; }
