@@ -43,6 +43,7 @@ These are look-and-feel only (Fable's lane). The FUNCTION is built + Mac-verifie
 2. **Models pane** (`#view-models`, `#models-browse`, `.hfrow`, `.mrow`) — LM-Studio/Jan/Cherry feel; **model card RICH rendering** (`mdCard`) currently strips images/tables to plain text — Fable should do a proper rendered card (images, tables, headings) if desired.
 3. **BROWSE chip** (`#mode-browse`) — too prominent/large; size it as a subtle chip beside Agent/Chat.
 4. General: typographic hierarchy + colour restraint + whitespace (the "premium vs ordinary" levers already noted in M2 findings).
+5. **File/artifact cards (Debi reference 2026-07-21):** when chat produces or attaches files, render them as cards with icon + name + type and an "Open in …" action (system default app / Show in Folder) — like Antigravity/Claude artifact cards. Pairs with the future attach-file feature; Bridge `/api/open` already gives us the open mechanism.
 
 **Engineering notes (builder-shipped, now FABLE-QA'D 2026-07-21 — see QA section above):** Browse wiring writes Hermes `mcp_servers` directly to `~/.hermes/config.yaml` (NOT `hermes mcp add` — its interactive prompts + live-connect would hang a subprocess; yaml round-trip preserves other keys, drops only comments/order; write now atomic). One Browse control flips BOTH components (toggling off removes from both). Full detail in the Browse-slice-2 note below. NOTE: engineering is NOT "not Fable's lane" — Fable orchestrates + QAs all of it; builders implement.
 
@@ -186,7 +187,7 @@ Debi asked (seeing Config toggles do nothing + a theme setting): is anything str
 
 ## Hermes pin-bump v2026.7.7.2 → v2026.7.20 — VERIFIED 2026-07-21
 
-**Done on the Mac:** checkout clean, reinstall clean (0.18.2→0.19.0, web_dist rebuilt 494 modules), dashboard up on :9119, chat ready line OK, **banner shows "MCP Servers (1) connected" + `mcp-browsermcp` toolset → the Browse toggle's config-write works on 0.19.0 and Hermes auto-connected the Browser MCP (47 tools now)**. Outstanding: one `test_hermes.sh` run on 0.19.0 (queued, low-risk). Operating note: in Hermes chat, the right-rail session list is navigation-only BY DESIGN — delete/rename/export live on the **SESSIONS page** (per-row trash + "Delete empty" + prune); source: ChatSessionList.tsx:15, SessionsPage.tsx:498.
+**Done on the Mac:** checkout clean, reinstall clean (0.18.2→0.19.0, web_dist rebuilt 494 modules), dashboard up on :9119, chat ready line OK, **banner shows "MCP Servers (1) connected" + `mcp-browsermcp` toolset → the Browse toggle's config-write works on 0.19.0 and Hermes auto-connected the Browser MCP (47 tools now)**. `test_hermes.sh` = **PASS on 0.19.0** (2026-07-21) — bump fully closed, no outstanding items. Operating note: in Hermes chat, the right-rail session list is navigation-only BY DESIGN — delete/rename/export live on the **SESSIONS page** (per-row trash + "Delete empty" + prune); source: ChatSessionList.tsx:15, SessionsPage.tsx:498.
 
 
 - **Jan: already current** (v0.8.3 = latest release; recent repo activity is dev-branch only). Nothing to do.

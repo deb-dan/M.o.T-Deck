@@ -261,6 +261,41 @@
   #palette .item { padding:12px 22px; cursor:pointer; display:flex; gap:12px; align-items:center; }
   #palette .item.sel { background:var(--card); color:var(--cream); }
   #palette .item .k { font:10px var(--mono); color:var(--faint); margin-left:auto; }
+
+  /* ---------- FABLE PASS 1 (2026-07-21) — restraint & hierarchy ----------
+     Principles applied: one accent used sparingly; capability toggles quieter
+     than mode selectors; motion only as confirmation; hierarchy via size+case,
+     never extra colour. */
+
+  /* Browse is a CAPABILITY, not a mode — it must whisper next to Agent/Chat.
+     On-state = gold outline (filled gold stays reserved for the active mode). */
+  #mode-browse { font-size:9px; padding:3.5px 9px; letter-spacing:.14em;
+      color:var(--faint); border-color:var(--line); border-radius:6px; margin-left:2px; }
+  #mode-browse:hover { color:var(--dim); border-color:var(--line2); }
+  #mode-browse.on { color:var(--gold); background:transparent; border-color:var(--gold); }
+
+  /* Session rail — calmer rows, clearer active state, gentle motion */
+  .cs-item { padding:10px 12px; border-radius:10px;
+      transition: background .16s ease, border-color .16s ease; }
+  .cs-item .nm { font-size:13px; letter-spacing:.1px; }
+  .cs-item .meta { margin-top:4px; letter-spacing:.05em; }
+  .cs-item.on .meta { color:var(--dim); }
+  #cs-new { color:var(--dim); transition: color .16s ease, border-color .16s ease; }
+  #cs-new:hover { color:var(--gold); }
+  .cs-act button { transition: color .12s ease, border-color .12s ease; }
+
+  /* Models + browser rows — hover acknowledges, active row keeps the only gold */
+  .mrow, .hfrow { transition: border-color .16s ease, background .16s ease; }
+  .mrow:not(.on):hover, .hfrow:hover { border-color:var(--line2); background:var(--bg2); }
+  .mrow button.mswitch, .hfrow .hfactions button { transition: color .12s ease, border-color .12s ease; }
+  .hfrow .hfmeta { letter-spacing:.05em; }
+  .hffile { line-height:1.9; }
+
+  /* Chat — let the reply breathe; quieter tool lines; input focus as the one glow */
+  .cmsg.assistant .body { font-size:15px; }
+  .cmsg .toolline { opacity:.85; }
+  #chat-input { transition: border-color .16s ease; }
+  .mode-chip { transition: color .14s ease, background .14s ease, border-color .14s ease; }
 </style>
 </head>
 <body>
