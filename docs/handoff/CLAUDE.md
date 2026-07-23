@@ -9,6 +9,24 @@
 
 > For Claude: read this first, then `00_START_HERE.md` (its primer paragraph rehydrates a fresh session). This folder is the **single source of truth** for the harness project as of 2026-07-20. The copies of 00–06 in the old `outputs` folder are frozen; the v1 codebase lives in the `Harness project` folder (working scaffold — see 07).
 
+## ▶ SESSION-END STATE — FABLE QA HANDOFF (2026-07-24, end of the Opus-first builder run)
+
+**Fable — read this block first.** This Opus-first run (Opus 4.8, builder mode) executed the entire FABLE-UI-SPECS queue plus the doc-09 analytics item, per Debi's authorization. Then read the per-section detail below + the **OPUS ODDITIES LOG** + every **`⚠️ PENDING FABLE QA`** tag — those tags ARE your QA checklist; please verdict each (verified / fixed / rejected) as you did the 2026-07-21 pass. Everything below is committed + pushed to origin/main (latest commit is the tip).
+
+**SHIPPED + pushed + Mac-verified by Debi:** §G-phase1 (.dmg) · §A (Models two-pane) · §B (telemetry thread + inspect) · §C (light theme; dark stays permanent default) · §D (chat pass-2 polish) · §E (first-run checklist + walkthrough) · **analytics tiles** (doc-09 §3.3: SQLite usage log + `/api/analytics` + metric-strip tiles). Files this run: `bridge/app.py`, `bridge/panel/index.html`, `app/main.swift`, `scripts/build_app.sh`, new `scripts/firstrun.sh`, `docs/handoff/CLAUDE.md`.
+
+**SHIPPED but NOT fully verified — your attention:**
+- **§G-phase2 (portable first-run)** — dev-build regression VERIFIED (compiles + launches; dev path unchanged); portable build produces seed (204K) + dmg (325K) correctly. BUT the **.dmg was never opened/run** → the first-run flow (consent → extract → firstrun.sh → bootstrap → panel) is **UNEXERCISED end-to-end**; needs a 2nd Mac / VM / fresh user account. Single biggest untested surface.
+- All `main.swift` changes are **review-only** (no swiftc in the sandbox); Debi's rebuild was the compile proof (it compiled + ran).
+
+**EXPLICITLY LEFT (do NOT expect these done; Debi 2026-07-24):**
+- **§F file/artifact cards** — build LAST, security-gated on your QA of the `/api/open` path-allowlist. Untouched.
+- **Fact-check ✓ badge** + **OS-level path-guard fence** — ⛔ LEFT (trust/security surfaces); build only if YOU scope + delegate.
+- **Voicebox** (proposal recorded, needs Debi's go) · **ComfyUI** (roadmap) · **§G-phase3** self-contained offline installer (Debi wants later — bundle llama.cpp/MLX/Hermes/Odysseus, ~1–2 GB, online update-check) · **Odysseus pin-bump** (optional/risky, deferred; Hermes already current).
+- **Mac-verify sweep still PENDING from PRIOR sessions** (not this run): aux runner engine-dispatch, MLX model switch end-to-end, MTP model load, download pause/resume (FABLE-HANDOFF §3.3).
+
+**Design continuity honored:** dark editorial stays the permanent default (light = optional alternate); all new function built in existing `:root` tokens; no new colors/type scales invented; no `vendor/` edits; Hermes in-app updater never used.
+
 ## 🟢 OPUS SESSION-3 (2026-07-23, Opus-first BUILDER) — UI lane started: §G-phase1 + §A SHIPPED (committed+pushed, Mac-verify PENDING)
 
 Opus 4.8 in Opus-first builder mode. Jan exit is complete (verified — top banner). Started the FABLE-UI-SPECS queue in execution order. This session shipped **§G-phase1 (dmg — doc only)** and **§A (Models two-pane)**. Committed + pushed to origin/main (unlike session-2; Debi authorized the UI lane). No vendor/ edits. Validation green: node --check on extracted panel JS, CSS brace balance 210/210, ast.parse app.py. Files: `bridge/app.py`, `bridge/panel/index.html`, `docs/handoff/CLAUDE.md`, `docs/handoff/FABLE-UI-SPECS.md`.
