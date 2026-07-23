@@ -13,6 +13,18 @@
     --mono: "SF Mono", ui-monospace, Menlo, monospace;
     --serif: "New York", "Iowan Old Style", Georgia, serif;
   }
+  /* §C — LIGHT theme (warm paper; dark editorial stays the default). Fable palette. */
+  html[data-theme="light"] {
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#7c7565; --faint:#a89f8b;
+    --gold:#9c7327; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
+  }
+  /* light-only fixes: --cream is dark ink in light, so the cream-filled primary
+     button needs light text; user bubble uses the warm card2 tone. */
+  html[data-theme="light"] button.primary { color:var(--bg); }
+  html[data-theme="light"] button.primary:hover { background:var(--fg); }  /* keep dark fill so light text stays readable */
+  html[data-theme="light"] .cmsg.user .body { background:var(--card2); }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--fg); min-height:100vh; display:flex;
          font:14px/1.55 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
@@ -372,6 +384,10 @@
       border-radius:6px; padding:2px 8px; margin-left:6px; cursor:pointer; }
   .dlrow .dlacts button:hover { color:var(--gold); border-color:var(--gold); }
 </style>
+<script>
+  // §C: apply the saved theme before first paint so there's no flash (dark = default).
+  try { if (localStorage.getItem('harness-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
+</script>
 </head>
 <body>
 
@@ -393,6 +409,7 @@
 
 <main>
   <div class="topbar">
+    <span class="chip" onclick="toggleTheme()" title="Toggle light / dark">◐&nbsp;&nbsp;THEME</span>
     <span class="chip" onclick="openPalette()">⌘K&nbsp;&nbsp;Command palette</span>
     <span class="chip" onclick="refresh(true)">↻&nbsp;&nbsp;Refresh</span>
   </div>
@@ -744,6 +761,14 @@ async function showLogs() {
 
 /* ---------- chat pane (Rung D, native) ---------- */
 let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
+
+// §C: cycle dark ↔ light, persist. Dark = default (no attribute).
+function toggleTheme() {
+  const toLight = document.documentElement.dataset.theme !== 'light';
+  if (toLight) document.documentElement.dataset.theme = 'light';
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('harness-theme', toLight ? 'light' : 'dark'); } catch (e) {}
+}
 
 function showView(v) {
   document.getElementById('view-mc').hidden = (v !== 'mc');
