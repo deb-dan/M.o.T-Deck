@@ -613,7 +613,7 @@ function cardHTML(name, c, isBridge, prov) {
   return `<div class="card" id="card-${name}">
     <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
     <div class="state">${state}</div>
-    <div class="meta">pin ${pin} · port ${c.port ?? '—'}</div>
+    <div class="meta">pin ${pin} · port ${c.port ?? '—'}${c.engine ? (' · ' + esc(c.engine)) : ''}</div>
     <div class="actions">${actions}</div></div>`;
 }
 

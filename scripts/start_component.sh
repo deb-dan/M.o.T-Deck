@@ -102,6 +102,8 @@ PYRESOLVE
     # Resolve the llama-server binary.
     if [[ -z "$R_BIN" ]]; then
       BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1)
+      # Fallback: LM Studio's backends (often newer llama.cpp — needed for e.g. MTP models).
+      [[ -n "$BIN" ]] || BIN=$(ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1)
       [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — set runner.binary in harness.yaml"; exit 1; }
     else
       BIN="$R_BIN"
@@ -119,6 +121,19 @@ PYRESOLVE
           --model "$MODEL_PATH" --parallel 1)
     if [[ -n "$MMPROJ_PATH" ]]; then ARGS+=(--mmproj "$MMPROJ_PATH"); fi
     if grep -q -- "--api-key" data/llama-server.help.txt; then ARGS+=(--api-key "$R_KEY"); fi
+    # MTP-variant GGUFs need speculative-decoding flags (values mirror LM Studio's
+    # proven invocation on this machine). Only added when the binary supports them —
+    # Jan's older backend may not; the LM Studio backend fallback above does.
+    if [[ "$R_MODEL" =~ [Mm][Tt][Pp] ]]; then
+      if grep -q -- "--spec-type" data/llama-server.help.txt; then
+        ARGS+=(--jinja --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 0 --spec-draft-p-min 0.75)
+        echo "[harness] MTP model detected — speculative-decoding flags enabled"
+      else
+        echo "[harness] WARN: MTP model but this llama-server lacks --spec-type — it may fail to load."
+        echo "[harness]   Fix: set runner.binary to LM Studio's newer backend, e.g.:"
+        ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1 | sed 's/^/[harness]   /'
+      fi
+    fi
     # Cleanup any stale server on the port — including MLX servers (format switch).
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true

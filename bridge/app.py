@@ -153,6 +153,27 @@ def panel() -> FileResponse:
     return FileResponse(PANEL / "index.html")
 
 
+def _runner_engine(rc: dict) -> str:
+    """Human label for the engine the active model will run on (mirrors the
+    start script's dispatch: gguf→llama.cpp, mlx→mlx-lm, mlx+vision→mlx-vlm)."""
+    adapter = (rc.get("adapter") or "jan").strip()
+    if adapter == "jan":
+        return "jan"
+    if adapter == "lmstudio":
+        return "lmstudio"
+    try:
+        import json as _json
+        models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+        m = next((x for x in models if x.get("id") == rc.get("model")), None)
+    except Exception:
+        m = None
+    if adapter in ("auto", "mlx") and m and m.get("format") == "mlx":
+        return "mlx-vlm · vision" if m.get("vision") else "mlx-lm"
+    if adapter == "mlx":
+        return "mlx-lm"
+    return "llama.cpp"
+
+
 @app.get("/api/status")
 async def status() -> dict:
     import shutil
@@ -173,18 +194,19 @@ async def status() -> dict:
             "degraded": _expected_path(name).exists() and not running,
             "port": port,
         }
-    # M1 runner slot: a managed component, but launched via the jan CLI (no git install).
+    # M1 runner slot: a managed component (engine per model format since the llamacpp/mlx shift).
     rc = c.get("runner")
     if rc:
         rport = rc.get("port")
         rrunning = await _port_alive(int(rport)) if rport else False
         out["components"]["runner"] = {
-            "installed": True,  # the jan CLI is the "install"; always available once Jan ran once
+            "installed": True,
             "pin": str(rc.get("model") or rc.get("adapter") or "jan"),
             "running": rrunning,
             "degraded": _expected_path("runner").exists() and not rrunning,
             "port": rport,
             "kind": "runner",
+            "engine": _runner_engine(rc),
         }
     try:  # snapshot; a background provision thread may mutate PROV concurrently
         out["prov"] = {k: dict(v) for k, v in list(PROV.items())}
