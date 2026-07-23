@@ -473,6 +473,71 @@ async def ody_history(sid: str) -> JSONResponse:
         return JSONResponse({"history": []})
 
 
+# ── usage analytics (doc-09): best-effort per-turn log → SQLite. NEVER raises into chat. ──
+_analytics_lock = threading.Lock()
+
+def _analytics_conn():
+    import sqlite3
+    (ROOT / "data").mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(ROOT / "data" / "analytics.db"), timeout=5)
+    c.execute("CREATE TABLE IF NOT EXISTS turns("
+              "ts REAL, day TEXT, lane TEXT, model TEXT, "
+              "in_tok INTEGER, out_tok INTEGER, cached_tok INTEGER, tps REAL, ttft REAL)")
+    return c
+
+def log_turn(lane, model, in_tok, out_tok, cached_tok, tps, ttft):
+    try:
+        import time as _t
+        with _analytics_lock:
+            c = _analytics_conn()
+            c.execute("INSERT INTO turns VALUES(?,?,?,?,?,?,?,?,?)",
+                      (_t.time(), _t.strftime("%Y-%m-%d"), lane, model or "",
+                       int(in_tok or 0), int(out_tok or 0), int(cached_tok or 0),
+                       float(tps or 0), float(ttft or 0)))
+            c.commit(); c.close()
+    except Exception:
+        pass  # analytics must never break the chat path
+
+def _log_ody_metrics(tail, lane):
+    # Extract the last `{"type":"metrics","data":{...}}` SSE frame from the stream tail.
+    try:
+        import json as _json
+        for line in reversed(tail.split("\n")):
+            s = line.strip()
+            if s.startswith("data:"):
+                s = s[5:].strip()
+            if s.startswith("{") and '"metrics"' in s:
+                obj = _json.loads(s)
+                if obj.get("type") == "metrics":
+                    d = obj.get("data") or {}
+                    log_turn(lane, d.get("model"), d.get("input_tokens"),
+                             d.get("output_tokens"), d.get("cached_tokens") or 0,
+                             d.get("tokens_per_second"), d.get("time_to_first_token"))
+                    return
+    except Exception:
+        pass
+
+@app.get("/api/analytics")
+def api_analytics() -> JSONResponse:
+    import time as _t
+    day = _t.strftime("%Y-%m-%d")
+    out = {"tokens_today": 0, "turns_today": 0, "avg_tps": 0, "cache_hit_pct": None}
+    try:
+        with _analytics_lock:
+            c = _analytics_conn()
+            row = c.execute("SELECT COALESCE(SUM(out_tok),0), COUNT(*) FROM turns WHERE day=?", (day,)).fetchone()
+            out["tokens_today"], out["turns_today"] = int(row[0] or 0), int(row[1] or 0)
+            r2 = c.execute("SELECT AVG(tps) FROM (SELECT tps FROM turns WHERE tps>0 ORDER BY ts DESC LIMIT 20)").fetchone()
+            out["avg_tps"] = round(r2[0], 1) if r2 and r2[0] else 0
+            r3 = c.execute("SELECT COALESCE(SUM(cached_tok),0), COALESCE(SUM(in_tok),0) FROM turns WHERE cached_tok>0").fetchone()
+            if r3 and (r3[1] or 0) > 0:
+                out["cache_hit_pct"] = round(r3[0] / r3[1] * 100)
+            c.close()
+    except Exception as e:
+        out["error"] = str(e)[:120]
+    return JSONResponse(out)
+
+
 @app.post("/api/ody/chat")
 async def ody_chat(req: Request) -> StreamingResponse:
     """Stream a chat turn: re-emit Odysseus's SSE (delta / tool events / [DONE]) to the panel."""
@@ -486,6 +551,7 @@ async def ody_chat(req: Request) -> StreamingResponse:
     }
 
     async def gen():
+        tail = ""   # rolling tail of the stream, for best-effort metrics logging
         try:
             async with _ody.stream("POST", "/api/chat_stream", data=fields,
                                    headers={"X-Tz-Offset": str(body.get("tz_offset", 0))}) as r:
@@ -495,12 +561,16 @@ async def ody_chat(req: Request) -> StreamingResponse:
                     async with _ody.stream("POST", "/api/chat_stream", data=fields) as r2:
                         async for chunk in r2.aiter_raw():
                             yield chunk
+                            tail = (tail + chunk.decode("utf-8", "ignore"))[-16000:]
                     return
                 async for chunk in r.aiter_raw():
                     yield chunk
+                    tail = (tail + chunk.decode("utf-8", "ignore"))[-16000:]
         except Exception as e:
             yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
             yield "data: [DONE]\n\n"
+        finally:
+            _log_ody_metrics(tail, fields.get("mode", "agent"))
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -1253,14 +1323,16 @@ async def chat_direct(req: Request) -> StreamingResponse:
     messages.append({"role": "user", "content": user_msg})
 
     async def gen():
-        import json as _json
+        import json as _json, time as _t
         full, think_open = [], False
+        t0 = _t.monotonic(); stats = {}   # for best-effort usage analytics
         try:
             async with _RUNNER.stream(
                 "POST", f"{base}/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={"model": model, "messages": messages,
-                      "stream": True, "cache_prompt": True},
+                      "stream": True, "cache_prompt": True,
+                      "stream_options": {"include_usage": True}},
             ) as r:
                 if r.status_code != 200:
                     yield f'data: {{"type":"proxy_error","error":"runner {r.status_code}"}}\n\n'
@@ -1274,9 +1346,19 @@ async def chat_direct(req: Request) -> StreamingResponse:
                     if payload.strip() == "[DONE]":
                         break
                     try:
-                        d = _json.loads(payload)["choices"][0]["delta"]
+                        obj = _json.loads(payload)
                     except Exception:
                         continue
+                    # final usage frame (stream_options.include_usage) has empty choices
+                    if obj.get("usage") or obj.get("timings"):
+                        stats["usage"] = obj.get("usage") or stats.get("usage") or {}
+                        stats["timings"] = obj.get("timings") or stats.get("timings") or {}
+                    _ch = obj.get("choices") or []
+                    if not _ch:
+                        continue
+                    d = _ch[0].get("delta") or {}
+                    if "ttft" not in stats and (d.get("reasoning_content") or d.get("content")):
+                        stats["ttft"] = _t.monotonic() - t0
                     # thinking arrives either as reasoning_content or inline <think> tags
                     rsn = d.get("reasoning_content")
                     if rsn:
@@ -1322,6 +1404,16 @@ async def chat_direct(req: Request) -> StreamingResponse:
                                        json={"role": "assistant", "content": answer})
                 except Exception:
                     pass
+            try:   # best-effort usage analytics (never breaks the turn)
+                u = stats.get("usage") or {}; tm = stats.get("timings") or {}
+                cached = ((u.get("prompt_tokens_details") or {}).get("cached_tokens")
+                          or tm.get("cache_n") or 0)
+                itok, otok = u.get("prompt_tokens"), u.get("completion_tokens")
+                if itok or otok:
+                    log_turn("direct", model, itok, otok, cached,
+                             tm.get("predicted_per_second"), stats.get("ttft"))
+            except Exception:
+                pass
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

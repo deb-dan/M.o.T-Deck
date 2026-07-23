@@ -640,11 +640,18 @@ async function refresh(manual) {
   const m = document.getElementById('metrics');
   const running = Object.values(s.components).filter(c=>c.running).length;
   const installed = Object.values(s.components).filter(c=>c.installed).length;
+  let aTiles = '';
+  try {   // usage analytics (doc-09) — local SQLite, cheap; degrade silently if unavailable
+    const a = await (await fetch('/api/analytics')).json();
+    aTiles = metric('Tokens today', `${(a.tokens_today||0).toLocaleString()}<small> · ${a.turns_today||0} turns</small>`) +
+             metric('Speed', `${a.avg_tps||0}<small> tok/s</small>`);
+    if (a.cache_hit_pct != null) aTiles += metric('Cache hit', `${a.cache_hit_pct}<small> %</small>`);
+  } catch {}
   m.innerHTML =
     metric('Components running', `${running}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Installed', `${installed}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Disk free', `${s.disk.free_gb}<small> GB</small>`) +
-    metric('Bridge', 'Live');
+    metric('Bridge', 'Live') + aTiles;
   if (manual) feed('status', 'refreshed');
 
   renderSetup();      // §E: keep the checklist glyphs live if it's open
