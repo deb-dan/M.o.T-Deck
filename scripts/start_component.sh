@@ -7,6 +7,82 @@ mkdir -p data/logs
 
 case "$NAME" in
   runner)
+    R_ADAPTER=$(awk '/^runner:/{f=1} f && /^  adapter:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*adapter:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ -n "$R_ADAPTER" ]] || R_ADAPTER=jan
+    case "$R_ADAPTER" in
+      llamacpp)
+    # llama-server (llama.cpp) direct — deterministic, visible process, our registry.
+    R_PORT=$(awk '/^runner:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
+    R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    R_CTX=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
+    R_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_BIN=$(awk '/^runner:/{f=1} f && /^  binary:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*binary:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
+    [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
+    # Resolve the llama-server binary.
+    if [[ -z "$R_BIN" ]]; then
+      BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1)
+      [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — set runner.binary in harness.yaml"; exit 1; }
+    else
+      BIN="$R_BIN"
+      [[ -x "$BIN" ]] || { echo "ERROR: runner.binary is not executable: $BIN"; exit 1; }
+    fi
+    # Ensure the registry exists.
+    [[ -f data/models.json ]] || python3 scripts/seed_registry.py
+    # Resolve the model from the registry (path / mmproj / ctx).
+    RESOLVED=$(R_MODEL="$R_MODEL" python3 - <<'PYRESOLVE'
+import os, json, sys
+mid = os.environ["R_MODEL"]
+try:
+    models = json.load(open("data/models.json")).get("models", [])
+except Exception:
+    models = []
+m = next((x for x in models if x.get("id") == mid), None)
+if not m or not m.get("path") or not os.path.isfile(m["path"]):
+    sys.stderr.write(f"model '{mid}' not in registry — run scripts/seed_registry.py or pick another model\n")
+    sys.exit(1)
+print(m["path"])
+print(m.get("mmproj") or "")
+print(m.get("ctx") if m.get("ctx") not in (None, "") else "")
+PYRESOLVE
+) || { echo "ERROR: $(R_MODEL="$R_MODEL" python3 -c 'import os,json,sys;print("model \x27%s\x27 not in registry — run scripts/seed_registry.py or pick another model"%os.environ["R_MODEL"])')"; exit 1; }
+    MODEL_PATH=$(sed -n '1p' <<<"$RESOLVED")
+    MMPROJ_PATH=$(sed -n '2p' <<<"$RESOLVED")
+    REG_CTX=$(sed -n '3p' <<<"$RESOLVED")
+    # CTX preference: registry ctx, else harness.yaml ctx_size, else 65536.
+    if [[ "$REG_CTX" =~ ^[0-9]+$ ]]; then CTX="$REG_CTX"; else CTX="$R_CTX"; fi
+    [[ "$CTX" =~ ^[0-9]+$ ]] || CTX=65536
+    # Capture the binary's flags to decide whether --api-key is supported (cheap; every start ok).
+    "$BIN" --help > data/llama-server.help.txt 2>&1 || true
+    # Build argv as an ARRAY — paths contain spaces ("Application Support"); unquoted
+    # expansion would split them. (Fable QA fix on the builder's draft.)
+    ARGS=(--no-context-shift --host 127.0.0.1 --port "$R_PORT" --alias "$R_MODEL"
+          --ctx-size "$CTX" --no-cont-batching --cache-ram -1 --fit off
+          --model "$MODEL_PATH" --parallel 1)
+    if [[ -n "$MMPROJ_PATH" ]]; then ARGS+=(--mmproj "$MMPROJ_PATH"); fi
+    if grep -q -- "--api-key" data/llama-server.help.txt; then ARGS+=(--api-key "$R_KEY"); fi
+    # Cleanup any stale server on the port.
+    pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
+    lsof -ti tcp:"$R_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    sleep 1
+    # Launch (argv replicates Jan's proven-working invocation on this machine).
+    nohup "$BIN" "${ARGS[@]}" >> data/logs/runner.log 2>&1 &
+    echo $! > data/runner.pid
+    up=0
+    TRIES=90
+    for _ in $(seq 1 "$TRIES"); do
+      if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX pid=$(cat data/runner.pid)"
+    else
+      echo "ERROR: runner (llama-server) did not become ready on :${R_PORT} in ~3min."
+      echo "--- runner.log tail ---"; tail -20 data/logs/runner.log 2>/dev/null
+      exit 1
+    fi
+    ;;
+      *)
     # Headless Jan as the managed runner (spike-verified 2026-07-20).
     JAN="$(command -v jan || echo "$HOME/.local/bin/jan")"
     [[ -x "$JAN" ]] || { echo "ERROR: jan CLI not found (expected ~/.local/bin/jan — launch Jan desktop once to install it)"; exit 1; }
@@ -41,6 +117,8 @@ case "$NAME" in
       echo "--- jan serve.log tail ---"; tail -20 "$HOME/Library/Application Support/Jan/data/logs/serve.log" 2>/dev/null
       exit 1
     fi
+    ;;
+    esac
     ;;
   odysseus)
     [[ -d data/odysseus-venv ]] || { echo "ERROR: odysseus venv missing — click Install first"; exit 1; }

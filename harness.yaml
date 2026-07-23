@@ -28,7 +28,8 @@ components:
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
-  adapter: jan               # jan | lmstudio | custom (only jan wired in M1)
+  adapter: llamacpp        # llamacpp | mlx | jan | lmstudio (jan/lmstudio = fallback apps)
+  binary:                    # path to llama-server; empty = auto-discover newest in Jan's backends dir
   port: 6767                 # canonical headless endpoint (jan serve --port)
   endpoint: http://127.0.0.1:6767/v1
   api_key: harness-local     # headless jan requires a key; fanned out to components in M1-B

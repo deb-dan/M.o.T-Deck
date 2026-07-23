@@ -520,19 +520,47 @@ def api_models() -> JSONResponse:
     """Installed models (`jan models list` → JSON), plus the active runner model + state."""
     import json as _json
     installed, err = [], None
-    try:
-        r = subprocess.run([_jan_bin(), "models", "list"],
-                           capture_output=True, text=True, timeout=25)
-        for m in _json.loads(r.stdout or "[]"):
-            installed.append({
-                "id": m.get("id"), "name": m.get("name") or m.get("id"),
-                "size_bytes": m.get("size_bytes"), "engine": m.get("engine"),
-                "embedding": bool(m.get("embedding")),
-                "capabilities": m.get("capabilities") or []})
-    except Exception as e:
-        err = str(e)[:200]
     c = cfg()
     rc = c.get("runner", {})
+    adapter = (rc.get("adapter") or "jan")
+    if adapter == "llamacpp":
+        def _load_registry():
+            reg = ROOT / "data" / "models.json"
+            if not reg.exists():
+                subprocess.run(["python3", "scripts/seed_registry.py"],
+                               cwd=ROOT, capture_output=True, text=True,
+                               timeout=60, check=False)
+            return _json.loads(reg.read_text()).get("models", [])
+        try:
+            try:
+                models = _load_registry()
+            except Exception:
+                # missing/invalid → seed once and retry
+                subprocess.run(["python3", "scripts/seed_registry.py"],
+                               cwd=ROOT, capture_output=True, text=True,
+                               timeout=60, check=False)
+                models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+            for m in models:
+                installed.append({
+                    "id": m.get("id"), "name": m.get("name") or m.get("id"),
+                    "size_bytes": m.get("size_bytes"), "engine": "llamacpp",
+                    "embedding": False,
+                    "capabilities": (["vision"] if m.get("mmproj") else []),
+                    "format": m.get("format", "gguf")})
+        except Exception as e:
+            err = str(e)[:200]
+    else:
+        try:
+            r = subprocess.run([_jan_bin(), "models", "list"],
+                               capture_output=True, text=True, timeout=25)
+            for m in _json.loads(r.stdout or "[]"):
+                installed.append({
+                    "id": m.get("id"), "name": m.get("name") or m.get("id"),
+                    "size_bytes": m.get("size_bytes"), "engine": m.get("engine"),
+                    "embedding": bool(m.get("embedding")),
+                    "capabilities": m.get("capabilities") or []})
+        except Exception as e:
+            err = str(e)[:200]
     port = rc.get("port")
     ax = c.get("aux", {}) or {}
     aux = {"model": ax.get("model") or "", "port": ax.get("port"),
@@ -540,7 +568,7 @@ def api_models() -> JSONResponse:
     return JSONResponse({
         "installed": installed, "active": rc.get("model"),
         "runner_up": _port_alive_sync(int(port)) if port else False,
-        "aux": aux, "error": err})
+        "aux": aux, "adapter": adapter, "error": err})
 
 
 _SWITCH = {"busy": False, "log": ""}
@@ -623,6 +651,10 @@ async def api_switch_model(req: Request) -> JSONResponse:
     if not new_id:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
     c = cfg()
+    if (c.get("runner", {}) or {}).get("adapter") == "llamacpp" and "/" in new_id:
+        return JSONResponse(
+            {"ok": False, "log": "downloads arrive with the download manager (next slice) — this adapter loads only installed models"},
+            status_code=400)
     old_id = (c.get("runner", {}) or {}).get("model") or ""
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
     import time as _t
