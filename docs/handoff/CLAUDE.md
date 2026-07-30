@@ -9,6 +9,23 @@
 
 > For Claude: read this first, then `00_START_HERE.md` (its primer paragraph rehydrates a fresh session). This folder is the **single source of truth** for the harness project as of 2026-07-20. The copies of 00–06 in the old `outputs` folder are frozen; the v1 codebase lives in the `Harness project` folder (working scaffold — see 07).
 
+## ✅ FABLE END-OF-PROJECT QA — VERDICTS (2026-07-24, Fable 5)
+
+Reviewed every ⚠️ PENDING FABLE QA tag + the full ODDITIES LOG from the Opus-first runs. Verdicts:
+- **§A calls (browse two-pane kept; aux as .card; QUANT regex)** → **verified/approved** — results-feed-same-detail is the better reading (consistent interaction grammar); graceful pill omission correct.
+- **§B calls (inspect = structured events only; web-regex; raw tool names)** → **verified/approved** — full delta logging would drown the inspect log; matches design intent.
+- **§C light theme** → **FIXED**: light-only `--faint` 2.45:1 failed QA → now `#8d8470`, `--dim` → `#6b6455` (≥4.5:1). Dark untouched. Accepted as-is: dark code blocks on light; on-gold ink; borderline gold chips (mono/uppercase at size = fine).
+- **§E (non-intrusive checklist/tour; rect positioning; hardcoded component list)** → **verified/approved** — un-nagging healthy installs is right; portable first-run gets the full flow.
+- **§G-phase2 calls (seed minus vendor; static setup screen; login-shell; no auto-brew)** → **verified/approved** with documented fragilities. **dmg first-run remains ships-unverified until a 2nd-Mac test (Debi).**
+- **Analytics (best-effort capture, 16KB tail, tps sources)** → **verified/approved**; unbounded table → **FIXED** (prune to last 5000 turns, in-lock, once per process).
+- **Ledger (48GB budget, file-size approximation, MLX dir proxy)** → **verified/approved**.
+- **3.1d leftovers (`_jan_data_dir`/`_download_progress` inert)** → **FIXED/removed**, plus the dead dl-panel switch readout in the panel → replaced by a minimal `#sw-row` (log + Cancel) during switches. Switch-cancel endpoint kept (valid for long loads). One unreachable string branch left in `_do_switch` (noted, harmless).
+- **Submodule pointer oddity** → **CONFIRMED REAL + FIXED on origin**: committed gitlinks were hermes@9de9c25 (old pin) and odysseus@**168f593 (the broken NameError commit — fresh clones/portable first-run would have bootstrapped broken)**; now hermes=3ef6bbd2 (v2026.7.20), odysseus=e57f60bd. High-value catch by the Opus log.
+- **Backlog: direct-lane chats never auto-titled** → **FIXED** (bridge derives a ≤42-char word-boundary title from the first user message when the session is still "New chat"; best-effort, can never break the stream).
+- **§F gate CLEARED — /api/open path-allowlist spec (Fable-authored):** extend /api/open to accept `{"path", "action": "open"|"reveal"}`; resolve `os.path.realpath`; allow ONLY paths that exist AND start with `os.path.expanduser("~") + os.sep`; `reveal` = `open -R`; never accept `file://` in the url field; log rejections. §F (file cards) may now be built to the §F spec using this gate.
+
+**Remaining after this QA:** 2nd-Mac dmg first-run test (Debi); Mac-verify sweep leftovers (MLX switch e2e, MTP load, dl pause/resume — FABLE-HANDOFF §3.3); §F build (now unblocked); Voicebox on Debi's go; Odysseus pin-bump optional; rich model-card rendering (design polish, mine or spec'd later); fact-check badge + path-guard (Fable-scoped, per Debi's ⛔).
+
 ## ▶ SESSION-END STATE — FABLE QA HANDOFF (2026-07-24, end of the Opus-first builder run)
 
 **Fable — read this block first.** This Opus-first run (Opus 4.8, builder mode) executed the entire FABLE-UI-SPECS queue plus the doc-09 analytics item, per Debi's authorization. Then read the per-section detail below + the **OPUS ODDITIES LOG** + every **`⚠️ PENDING FABLE QA`** tag — those tags ARE your QA checklist; please verdict each (verified / fixed / rejected) as you did the 2026-07-21 pass. Everything below is committed + pushed to origin/main (latest commit is the tip).

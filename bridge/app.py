@@ -475,14 +475,24 @@ async def ody_history(sid: str) -> JSONResponse:
 
 # ── usage analytics (doc-09): best-effort per-turn log → SQLite. NEVER raises into chat. ──
 _analytics_lock = threading.Lock()
+_analytics_pruned = False   # retention prune runs once per process (Fable QA: cap growth)
 
 def _analytics_conn():
     import sqlite3
+    global _analytics_pruned
     (ROOT / "data").mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(str(ROOT / "data" / "analytics.db"), timeout=5)
     c.execute("CREATE TABLE IF NOT EXISTS turns("
               "ts REAL, day TEXT, lane TEXT, model TEXT, "
               "in_tok INTEGER, out_tok INTEGER, cached_tok INTEGER, tps REAL, ttft REAL)")
+    if not _analytics_pruned:   # callers already hold _analytics_lock
+        _analytics_pruned = True
+        try:   # best-effort: keep the newest 5000 turns (tiny rows; unbounded otherwise)
+            c.execute("DELETE FROM turns WHERE rowid NOT IN "
+                      "(SELECT rowid FROM turns ORDER BY ts DESC LIMIT 5000)")
+            c.commit()
+        except Exception:
+            pass
     return c
 
 def log_turn(lane, model, in_tok, out_tok, cached_tok, tps, ttft):
@@ -696,41 +706,6 @@ def api_models() -> JSONResponse:
 
 
 _SWITCH = {"busy": False, "log": ""}
-_JAN_DATA = None
-
-
-def _jan_data_dir() -> str:
-    global _JAN_DATA
-    if _JAN_DATA is None:
-        import os
-        _JAN_DATA = os.path.expanduser("~/Library/Application Support/Jan/data")
-    return _JAN_DATA
-
-
-def _download_progress(since_ts: float):
-    """Bytes Jan has written since the switch began (its models tree + HF cache):
-    returns (sum, newest_name, {name_lower: size}) so status can match the growing
-    file against the repo's known file sizes → real percentage + ETA."""
-    import os
-    total, newest = 0, ""
-    newest_ts = 0.0
-    fresh = {}
-    for root in (os.path.join(_jan_data_dir(), "llamacpp"),
-                 os.path.expanduser("~/.cache/huggingface")):
-        if not os.path.isdir(root):
-            continue
-        for dirpath, _dirs, files in os.walk(root):
-            for fn in files:
-                try:
-                    st = os.stat(os.path.join(dirpath, fn))
-                except OSError:
-                    continue
-                if st.st_mtime >= since_ts - 5:
-                    total += st.st_size
-                    fresh[fn.lower()] = max(fresh.get(fn.lower(), 0), st.st_size)
-                    if st.st_mtime > newest_ts:
-                        newest_ts, newest = st.st_mtime, fn
-    return total, newest, fresh
 
 
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
@@ -792,22 +767,9 @@ async def api_switch_model(req: Request) -> JSONResponse:
                f"{_g(_budget)} GB — eject something first")
         return JSONResponse({"ok": False, "log": msg}, status_code=409)
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
-    import time as _t
-    # set BEFORE the thread: no double-switch race; downloading flag drives live progress
-    _SWITCH.update(busy=True, log="starting…", started=_t.time(),
-                   downloading=("/" in new_id), prev_bytes=0, prev_ts=0.0, files={})
-    if "/" in new_id:
-        # Fetch the repo's file sizes so the growing file can be matched → % + ETA.
-        try:
-            import os as _os
-            r = await _HF.get(f"/api/models/{new_id}/tree/main")
-            if r.status_code == 200:
-                _SWITCH["files"] = {
-                    _os.path.basename(it.get("path", "")).lower(): it.get("size") or 0
-                    for it in r.json()
-                    if it.get("path", "").lower().endswith((".gguf", ".safetensors"))}
-        except Exception:
-            pass
+    # set BEFORE the thread: no double-switch race. (Download progress lives in the
+    # download manager now — "/" repo ids are rejected above, so no HF fetch here.)
+    _SWITCH.update(busy=True, log="starting…")
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
@@ -815,34 +777,9 @@ async def api_switch_model(req: Request) -> JSONResponse:
 
 @app.get("/api/models/switch-status")
 def api_switch_status() -> JSONResponse:
-    """Poll target. During an HF download, adds live bytes-on-disk + rate, computed
-    from Jan's own files — real progress, not a 'be patient' string."""
-    import time as _t
-    out = {k: _SWITCH.get(k) for k in ("busy", "log")}
-    if _SWITCH.get("busy") and _SWITCH.get("downloading"):
-        try:
-            total_fresh, fname, fresh = _download_progress(_SWITCH.get("started") or _t.time())
-            repo_files = _SWITCH.get("files") or {}
-            # Match the file(s) Jan is fetching against the repo's known sizes → % + ETA.
-            done = total_fresh
-            matches = [(repo_files[n], fresh[n]) for n in fresh if n in repo_files]
-            dl_total = 0
-            if matches:
-                dl_total = sum(m[0] for m in matches)
-                done = sum(m[1] for m in matches)
-            now = _t.time()
-            prev_b, prev_t = _SWITCH.get("prev_bytes") or 0, _SWITCH.get("prev_ts") or 0.0
-            rate = (done - prev_b) / (now - prev_t) if prev_t and now > prev_t and done >= prev_b else 0
-            _SWITCH.update(prev_bytes=done, prev_ts=now)
-            out.update(dl_bytes=done, dl_rate=max(0, rate), dl_file=fname,
-                       dl_phase=("downloading" if rate > 1e5 or done < 1e6 else "loading"))
-            if dl_total:
-                out["dl_total"] = dl_total
-                if rate > 1e5 and dl_total > done:
-                    out["dl_eta"] = int((dl_total - done) / rate)
-        except Exception:
-            pass
-    return JSONResponse(out)
+    """Poll target: busy flag + human-readable log line. (Download progress moved to
+    the download manager — this endpoint tracks model LOADS only.)"""
+    return JSONResponse({k: _SWITCH.get(k) for k in ("busy", "log")})
 
 
 @app.post("/api/models/switch-cancel")
@@ -1396,14 +1333,36 @@ async def chat_direct(req: Request) -> StreamingResponse:
             # Persist the exchange into the Odysseus session (best-effort).
             answer = "".join(full).strip()
             if sid and user_msg:
+                persisted = False
                 try:
                     await _ody_req("POST", f"/api/session/{sid}/message",
                                    json={"role": "user", "content": user_msg})
                     if answer:
                         await _ody_req("POST", f"/api/session/{sid}/message",
                                        json={"role": "assistant", "content": answer})
+                        persisted = True
                 except Exception:
                     pass
+                if persisted:
+                    # Best-effort auto-title: the direct lane skips Odysseus's post-turn
+                    # tasks (incl. auto-name), so sessions still called "New chat" get a
+                    # local title from the first user message. NEVER affects the stream.
+                    try:
+                        rs = await _ody_req("GET", "/api/sessions")
+                        cur = next((s for s in rs.json() if s.get("id") == sid), None) \
+                            if rs.status_code == 200 else None
+                        if cur and cur.get("name") == "New chat":
+                            t = " ".join(user_msg.split())
+                            if len(t) > 42:
+                                cut = t[:42]
+                                if " " in cut:
+                                    cut = cut[:cut.rfind(" ")]
+                                t = cut
+                            if t:
+                                await _ody_req("PATCH", f"/api/session/{sid}",
+                                               data={"name": t})
+                    except Exception:
+                        pass
             try:   # best-effort usage analytics (never breaks the turn)
                 u = stats.get("usage") or {}; tm = stats.get("timings") or {}
                 cached = ((u.get("prompt_tokens_details") or {}).get("cached_tokens")

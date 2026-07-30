@@ -17,7 +17,7 @@
   html[data-theme="light"] {
     --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
     --line:#e6dfcf; --line2:#d6ccb4;
-    --cream:#221d14; --fg:#3d372b; --dim:#7c7565; --faint:#a89f8b;
+    --cream:#221d14; --fg:#3d372b; --dim:#6b6455; --faint:#8d8470;
     --gold:#9c7327; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
   }
   /* light-only fixes: --cream is dark ink in light, so the cream-filled primary
@@ -361,21 +361,15 @@
   #chat-input { transition: border-color .16s ease; }
   .mode-chip { transition: color .14s ease, background .14s ease, border-color .14s ease; }
 
-  /* live download readout (Jan/LM-Studio-grade feedback, editorial voice) */
-  #dl-panel { max-width:760px; margin:14px 0 4px; }
-  #dl-bar { height:3px; background:var(--line); border-radius:2px; overflow:hidden; position:relative; }
-  #dl-fill { position:absolute; top:0; left:-30%; width:30%; height:100%;
-      background:var(--gold); border-radius:2px; animation:dlslide 1.4s ease-in-out infinite; }
-  @keyframes dlslide { 0%{left:-30%} 100%{left:100%} }
-  #dl-row { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
-  #dl-meta { font:10.5px var(--mono); letter-spacing:.1em;
+  /* in-flight model-switch readout (one line; downloads live in the download manager) */
+  #sw-row { max-width:760px; margin:14px 0 4px; display:flex; align-items:center;
+      justify-content:space-between; gap:12px; }
+  #sw-note { font:10.5px var(--mono); letter-spacing:.1em;
       text-transform:uppercase; color:var(--dim); }
-  #dl-meta b { color:var(--cream); font-weight:600; }
-  #dl-cancel { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  #sw-cancel { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:3px 10px; cursor:pointer; }
-  #dl-cancel:hover { color:var(--bad); border-color:var(--bad); }
-  #dl-fill.det { animation:none; left:0; transition:width .8s ease; }
+  #sw-cancel:hover { color:var(--bad); border-color:var(--bad); }
 
   /* chat-bar model controls (quiet, mono, right of the chips) */
   #chat-model { max-width:200px; background:var(--card); color:var(--dim);
@@ -505,12 +499,9 @@
       <button id="models-toggle" class="chip" onclick="toggleBrowse()">SEARCH / DOWNLOAD ⌄</button>
     </div>
     <div class="stamp" id="models-stamp">—</div>
-    <div id="dl-panel" hidden>
-      <div id="dl-bar"><div id="dl-fill"></div></div>
-      <div id="dl-row">
-        <span id="dl-meta">—</span>
-        <button id="dl-cancel" onclick="cancelSwitch()">Cancel</button>
-      </div>
+    <div id="sw-row" hidden>
+      <span id="sw-note"></span>
+      <button id="sw-cancel" onclick="cancelSwitch()">Cancel</button>
     </div>
 
     <div id="models-main">
@@ -1469,29 +1460,11 @@ async function switchModel(id, name){
         stamp.textContent = (s.log || 'switching…').toUpperCase();
         const cn = document.getElementById('chat-note');
         if (cn) cn.textContent = s.log || 'switching…';
-        const dp = document.getElementById('dl-panel'), dm = document.getElementById('dl-meta');
-        const fill = document.getElementById('dl-fill');
-        if (s.busy && s.dl_bytes > 5e6){
-          dp.hidden = false;
-          const gb = (s.dl_bytes/1073741824).toFixed(2);
-          const mbs = (s.dl_rate/1048576).toFixed(1);
-          if (s.dl_total){
-            // LM-Studio-grade readout: X of Y GB · rate · time left, determinate bar.
-            const tot = (s.dl_total/1073741824).toFixed(2);
-            const pct = Math.min(100, s.dl_bytes / s.dl_total * 100);
-            fill.classList.add('det'); fill.style.width = pct.toFixed(1) + '%';
-            const eta = s.dl_eta ? (s.dl_eta > 90 ? Math.round(s.dl_eta/60) + ' min left' : s.dl_eta + 's left') : '';
-            dm.innerHTML = s.dl_phase === 'loading'
-              ? `<b>${gb} of ${tot} GB</b> · download settled — loading into memory…`
-              : `<b>${gb} of ${tot} GB</b> (${pct.toFixed(0)}%) · <b>${mbs} MB/s</b>${eta ? (' · ' + eta) : ''}${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
-          } else {
-            fill.classList.remove('det'); fill.style.width = '';
-            dm.innerHTML = s.dl_phase === 'loading'
-              ? `<b>${gb} GB</b> on disk · download settled — loading into memory…`
-              : `<b>${gb} GB</b> downloaded · <b>${mbs} MB/s</b>${s.dl_file ? (' · ' + esc(s.dl_file)) : ''}`;
-          }
-        } else { dp.hidden = true; }
-        if (!s.busy){ clearInterval(poll); dp.hidden = true; modelsBusy = false; initModels(); loadChatModels(); }
+        // one-line in-flight readout + Cancel (downloads live in the download manager)
+        const sr = document.getElementById('sw-row'), sn = document.getElementById('sw-note');
+        sr.hidden = !s.busy;
+        if (s.busy) sn.textContent = s.log || 'switching…';
+        if (!s.busy){ clearInterval(poll); modelsBusy = false; initModels(); loadChatModels(); }
       } catch {}
     }, 2000);
   } catch { stamp.textContent = 'SWITCH ERROR'; modelsBusy = false; }
