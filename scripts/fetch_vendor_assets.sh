@@ -31,6 +31,7 @@ PURIFY_V="3.2.4"       # DOMPurify — sanitize md/HTML before it touches the ho
 # OFFLINE. ⚠️ Play CDN is "not for production" (Tailwind's own note) — fine for local
 # artifact PREVIEW only. Served same-origin; the panel rewrites cdn.tailwindcss.com → this.
 TAILWIND_V="3.4.16"    # Tailwind Play CDN (versioned build)
+MERMAID_V="11.4.1"     # mermaid (MIT) — diagram artifacts; UMD/IIFE dist build for <script src> use
 
 CDN="https://cdn.jsdelivr.net/npm"
 
@@ -69,6 +70,7 @@ ASSETS=(
   "prism.css|${CDN}/prismjs@${PRISM_V}/themes/prism-tomorrow.min.css"
   "prism.min.js|${PRISM_COMBINE}"
   "tailwind.play.js|https://cdn.tailwindcss.com/${TAILWIND_V}"
+  "mermaid.min.js|${CDN}/mermaid@${MERMAID_V}/dist/mermaid.min.js"
 )
 
 fetch() {

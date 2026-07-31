@@ -566,6 +566,28 @@
   .art-cline { padding:1px 0; }
   .art-cline.art-error { color:var(--bad); }
   .art-cline.art-warn { color:var(--warn); }
+  /* Artifact coverage v2 — CSV table + JSON tree (host-side, inert data)  FABLE: style pass */
+  .art-table-wrap { padding:14px 16px; overflow:auto; }
+  .art-table { border-collapse:collapse; font:12px var(--mono); color:var(--fg); min-width:100%; }
+  .art-table th { position:sticky; top:0; background:var(--card); color:var(--cream); text-align:left;
+                  cursor:pointer; user-select:none; font:10.5px var(--mono); letter-spacing:.08em;
+                  text-transform:uppercase; padding:7px 10px; border-bottom:1px solid var(--line2);
+                  white-space:nowrap; }
+  .art-table th:hover { color:var(--gold); }
+  .art-table th .dir { color:var(--gold); }
+  .art-table td { padding:5px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .art-table-note { font:10px var(--mono); color:var(--faint); letter-spacing:.08em; padding:8px 2px 0; }
+  .art-json { padding:14px 18px; font:12px var(--mono); line-height:1.65; color:var(--fg); }
+  .art-json summary { cursor:pointer; list-style:none; }
+  .art-json summary::before { content:'▸ '; color:var(--gold); }
+  .art-json details[open] > summary::before { content:'▾ '; }
+  .art-json .jt-leaf { padding-left:14px; }
+  .art-json .jt-children { padding-left:18px; border-left:1px dashed var(--line2); margin-left:4px; }
+  .art-json .jt-key { color:var(--cream); }
+  .art-json .jt-count { color:var(--faint); }
+  .art-json .jt-str { color:var(--gold); }
+  .art-json .jt-num { color:var(--accent); }
+  .art-json .jt-bool, .art-json .jt-null { color:var(--warn); }
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
@@ -1335,11 +1357,13 @@ const LANG_EXT = {
   typescript:'ts', ts:'ts', python:'py', py:'py', bash:'sh', sh:'sh', shell:'sh', zsh:'sh',
   json:'json', yaml:'yaml', yml:'yaml', css:'css', scss:'scss', sql:'sql',
   go:'go', rust:'rs', rs:'rs', c:'c', h:'c', cpp:'cpp', java:'java', ruby:'rb', rb:'rb',
-  php:'php', markdown:'md', md:'md', toml:'toml', dockerfile:'dockerfile'
+  php:'php', markdown:'md', md:'md', toml:'toml', dockerfile:'dockerfile',
+  mermaid:'mmd', mmd:'mmd', csv:'csv', tsv:'tsv'
 };
 function niceArtKind(kind){
   return { html:'HTML', svg:'SVG', react:'React', js:'JS',
-           markdown:'Markdown', code:'Code', image:'Image', pdf:'PDF' }[kind] || 'Artifact';
+           markdown:'Markdown', code:'Code', image:'Image', pdf:'PDF',
+           mermaid:'Diagram', csv:'Table', json:'JSON' }[kind] || 'Artifact';
 }
 function _appendProse(el, s){
   if (!s || !s.trim()){ if (s) el.appendChild(document.createTextNode(s)); return; }
@@ -1355,7 +1379,9 @@ function _appendCodeBlock(el, lang, code){
   // artifact-worthy = a renderable kind, or a substantial code block worth opening full-size
   const lines = code.split('\n').length;
   const big = lines >= 8 || code.length >= 300;
-  const worthy = kind === 'html' || kind === 'svg' || kind === 'react' || (kind === 'js' && big) || (kind === 'code' && big);
+  const worthy = kind === 'html' || kind === 'svg' || kind === 'react'
+              || kind === 'mermaid' || kind === 'csv' || kind === 'json'   // v2: always renderable
+              || (kind === 'js' && big) || (kind === 'code' && big);
 
   const box = document.createElement('div'); box.className = 'chatcode';
   const head = document.createElement('div'); head.className = 'cc-head';
@@ -1571,7 +1597,7 @@ async function selectSession(sid){
       if (m.role === 'user') addMsg('user', m.content || '');
       else if (m.role === 'assistant') addMsg('assistant', m.content || '');
     }
-    scrollChat();
+    scrollChat(true);   // opening a session snaps to its latest message
   } catch {}
 }
 
@@ -2164,7 +2190,13 @@ function addMsg(role, text) {
   return wrap;
 }
 
-function scrollChat(){ const sc=document.getElementById('chat-scroll'); sc.scrollTop = sc.scrollHeight; }
+function scrollChat(force){
+  // Sticky autoscroll (Fable, Debi report): only follow the stream if the user is
+  // already near the bottom — scrolling up mid-generation must NOT be yanked back.
+  const sc = document.getElementById('chat-scroll');
+  const nearBottom = (sc.scrollHeight - sc.scrollTop - sc.clientHeight) < 120;
+  if (force || nearBottom) sc.scrollTop = sc.scrollHeight;
+}
 
 // ── §B thought-thread telemetry: ONE live status line + a raw-event inspector ──
 function chatInspectDet(holder){
@@ -2207,7 +2239,7 @@ async function sendChat() {
   if (!text) return;
   inp.value = '';
   chatBusy = true; document.getElementById('chat-send').disabled = true;
-  addMsg('user', text); scrollChat();
+  addMsg('user', text); scrollChat(true);   // sending your own message always snaps to bottom
 
   const holder = addMsg('assistant', '');
   const body = holder.querySelector('.body');
@@ -2332,8 +2364,31 @@ async function sendChat() {
      and rendered with textContent only (never innerHTML).
    ============================================================================ */
 
+// ── Artifact coverage v2 — pure content sniffs (mermaid / json / csv), unit-tested ──
+// (bridge/tests/test_artifact_kind_v2.js mirrors these + the artifactKind additions)
+const MERMAID_RE = /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|mindmap|journey|timeline|gitGraph|quadrantChart)\b/;
+function sniffMermaid(t){ return MERMAID_RE.test(t); }
+function sniffJson(t){
+  if (!/^[\[{]/.test(t)) return false;            // sniff = objects/arrays only
+  try { const v = JSON.parse(t); return typeof v === 'object' && v !== null; }
+  catch (e) { return false; }
+}
+function sniffCsv(t){
+  // ≥2 non-empty lines sharing a consistent, nonzero comma/tab delimiter count. Naive
+  // per-line count (quoted embedded delimiters can defeat the SNIFF — the extension /
+  // fence label are authoritative for real files; the PARSER below is quote-correct).
+  const lines = t.split(/\r?\n/).filter(l => l.trim() !== '').slice(0, 10);
+  if (lines.length < 2) return false;
+  const tabs = (lines[0].match(/\t/g) || []).length;
+  const commas = (lines[0].match(/,/g) || []).length;
+  const d = (tabs > 0 && tabs >= commas) ? '\t' : ',';
+  const n = lines[0].split(d).length - 1;
+  if (n < 1) return false;
+  return lines.every(l => l.split(d).length - 1 === n);
+}
+
 // PURE type detection (extension first, then a content sniff). Unit-tested. Returns
-// one of: html | svg | react | js | markdown | code | pdf | image.
+// one of: html | svg | react | js | markdown | code | pdf | image | mermaid | csv | json.
 function artifactKind(filename, content){
   const fn = (filename || '').toLowerCase().trim();
   const ext = (fn.match(/\.([a-z0-9]+)$/) || [])[1] || '';
@@ -2343,10 +2398,12 @@ function artifactKind(filename, content){
     jsx:'react', tsx:'react',
     js:'js', mjs:'js', cjs:'js',
     md:'markdown', markdown:'markdown', mdown:'markdown',
+    mmd:'mermaid', mermaid:'mermaid',
+    csv:'csv', tsv:'csv',
     pdf:'pdf',
     png:'image', jpg:'image', jpeg:'image', gif:'image', webp:'image', bmp:'image', ico:'image', avif:'image',
     py:'code', ts:'code', go:'code', rs:'code', sh:'code', bash:'code', zsh:'code',
-    json:'code', yaml:'code', yml:'code', toml:'code', ini:'code', xml:'code', env:'code',
+    json:'json', yaml:'code', yml:'code', toml:'code', ini:'code', xml:'code', env:'code',
     c:'code', h:'code', cpp:'code', cc:'code', hpp:'code', cs:'code', java:'code',
     rb:'code', php:'code', css:'code', scss:'code', sql:'code', swift:'code',
     kt:'code', lua:'code', r:'code', pl:'code', dockerfile:'code', makefile:'code'
@@ -2362,6 +2419,9 @@ function artifactKind(filename, content){
     const t = c.replace(/^\s+/, '');
     if (/^<svg[\s>]/i.test(t)) kind = 'svg';
     else if (/^<!doctype html/i.test(t) || /^<html[\s>]/i.test(t) || /<\/(?:div|body|head|p|span|section|main|h[1-6])>/i.test(t)) kind = 'html';
+    else if (sniffMermaid(t)) kind = 'mermaid';        // before react/markdown: keyword-anchored, precise
+    else if (sniffJson(t)) kind = 'json';              // before csv: a real parse beats a delimiter count
+    else if (sniffCsv(t)) kind = 'csv';
     else if (importsReact || hasJsxTag) kind = 'react';
     else if (/^#{1,6}\s|\n#{1,6}\s|```|^\s*[-*]\s+\S/m.test(t)) kind = 'markdown';
     else kind = 'code';
@@ -2593,6 +2653,199 @@ function buildJsSrcdoc(content){
     + '</head><body><scr' + 'ipt>' + safeScript(content) + '</scr' + 'ipt></body></html>';
 }
 
+// ── Artifact coverage v2: mermaid diagram frame ──  <!-- FABLE: style pass -->
+// Same sandbox/CSP model as the other scripted frames (opaque origin, connect-src 'none',
+// self-hosted mermaid via an ABSOLUTE bridge-origin URL so the dead <base> never breaks it).
+// The diagram source travels as a JSON string literal — never interpolated as markup.
+// startOnLoad:false + explicit render(): mermaid's auto-start path swallows parse errors
+// into its own inline bomb; the explicit promise pipes them to the console strip instead.
+// ⚠️ PENDING FABLE QA: (1) reuses cspScripted() (keeps 'unsafe-eval') — mermaid is widely
+// reported to run WITHOUT eval, but that's code-reasoned only here (no browser in-sandbox);
+// the scripted CSP means a mermaid build using Function() can't silently break, and it
+// stays contained by the sandbox. (2) theme:'dark' + a hardcoded dark canvas (#0e0c15,
+// ≈ --bg2) to match the editorial dark default — light-theme users see a dark diagram tile.
+function buildMermaidSrcdoc(content){
+  const A = location.origin + '/assets/vendor';
+  const src = safeScript(JSON.stringify(String(content == null ? '' : content)));
+  return '<!doctype html><html><head>' + ART_BASE + '<meta charset="utf-8">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + cspScripted() + '">'
+    + '<style>body{margin:0;padding:14px;background:#0e0c15;font-family:system-ui,-apple-system,sans-serif}'
+    + '#m svg{max-width:100%;height:auto}'
+    + '#err{color:#e06565;font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap}</style>'
+    + ART_CONSOLE_SHIM + ART_NAV_GUARD
+    + '<scr' + 'ipt src="' + A + '/mermaid.min.js"></scr' + 'ipt>'
+    + '</head><body><div id="m"></div><div id="err"></div>'
+    + '<scr' + 'ipt>(function(){var s=' + src + ';'
+    + 'function fail(m){console.error(m);var e=document.getElementById("err");if(e)e.textContent="Diagram error: "+m;}'
+    + 'try{'
+    + 'if(typeof mermaid==="undefined")throw new Error("mermaid asset missing — run scripts/fetch_vendor_assets.sh");'
+    + 'mermaid.initialize({startOnLoad:false,theme:"dark",securityLevel:"strict"});'
+    + 'Promise.resolve(mermaid.render("art-mmd",s)).then(function(r){'
+    + 'var el=document.getElementById("m");'
+    + 'el.innerHTML=(r&&r.svg)||String(r);'          // mermaid's own sanitized SVG, inside the sandbox
+    + 'if(r&&r.bindFunctions)r.bindFunctions(el);'
+    + '}).catch(function(e){fail((e&&e.message)||String(e));});'
+    + '}catch(e){fail((e&&e.message)||String(e));}})();</scr' + 'ipt></body></html>';
+}
+
+// ── Artifact coverage v2: CSV → sortable table (host-side; inert data, textContent-only) ──
+// PURE parser (unit-tested: bridge/tests/test_csv_parse.js): RFC-4180-ish — quoted fields,
+// "" escapes, embedded delimiters + newlines inside quotes, CRLF and lone-CR endings.
+function parseCsv(text, delim){
+  delim = delim || ',';
+  const s = String(text == null ? '' : text);
+  const rows = []; let row = [], field = '', inQ = false;
+  for (let i = 0; i < s.length; i++){
+    const ch = s[i];
+    if (inQ){
+      if (ch === '"'){ if (s[i+1] === '"'){ field += '"'; i++; } else inQ = false; }
+      else field += ch;
+    } else if (ch === '"' && field === ''){ inQ = true; }
+    else if (ch === delim){ row.push(field); field = ''; }
+    else if (ch === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+    else if (ch === '\r'){ if (s[i+1] !== '\n'){ row.push(field); rows.push(row); row = []; field = ''; } }
+    else field += ch;
+  }
+  if (field !== '' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function csvDelim(text){   // PURE: tab wins when the first line is tab-dominated
+  const first = String(text == null ? '' : text).split(/\r?\n/, 1)[0] || '';
+  const tabs = (first.match(/\t/g) || []).length, commas = (first.match(/,/g) || []).length;
+  return (tabs > 0 && tabs >= commas) ? '\t' : ',';
+}
+function csvColNumeric(rows, ci){   // PURE: every non-empty cell parses as a finite number
+  let any = false;
+  for (const r of rows){
+    const v = (r[ci] == null ? '' : String(r[ci])).trim();
+    if (v === '') continue;
+    if (!isFinite(Number(v))) return false;
+    any = true;
+  }
+  return any;
+}
+function csvSortRows(rows, ci, dir, numeric){   // PURE: returns a sorted copy
+  const s = rows.slice();
+  s.sort(function(a, b){
+    const av = (a[ci] == null ? '' : String(a[ci])), bv = (b[ci] == null ? '' : String(b[ci]));
+    let c;
+    if (numeric){
+      const an = av.trim() === '' ? -Infinity : Number(av);
+      const bn = bv.trim() === '' ? -Infinity : Number(bv);
+      c = an < bn ? -1 : an > bn ? 1 : 0;
+    } else c = av.localeCompare(bv);
+    return dir === 'desc' ? -c : c;
+  });
+  return s;
+}
+const CSV_ROW_CAP = 2000;  // ⚠️ PENDING FABLE QA: render cap (sort runs over ALL rows; only display is capped)
+function renderArtCsv(container, content){
+  const rows = parseCsv(content, csvDelim(content)).filter(r => !(r.length === 1 && r[0].trim() === ''));
+  if (!rows.length){
+    const n = document.createElement('div'); n.className = 'cs-empty';
+    n.textContent = 'Empty CSV.'; container.appendChild(n); return;
+  }
+  const header = rows[0], data = rows.slice(1);
+  const wrap = document.createElement('div'); wrap.className = 'art-table-wrap';  // FABLE: style pass
+  const table = document.createElement('table'); table.className = 'art-table';
+  const thead = document.createElement('thead'), tbody = document.createElement('tbody');
+  const trh = document.createElement('tr');
+  let sort = { col: -1, dir: 'asc' };
+  function renderBody(){
+    tbody.innerHTML = '';
+    let view = data;
+    if (sort.col >= 0) view = csvSortRows(data, sort.col, sort.dir, csvColNumeric(data, sort.col));
+    for (const r of view.slice(0, CSV_ROW_CAP)){
+      const tr = document.createElement('tr');
+      for (let i = 0; i < header.length; i++){
+        const td = document.createElement('td');
+        td.textContent = r[i] == null ? '' : r[i];              // untrusted → textContent
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+  header.forEach(function(h, i){
+    const th = document.createElement('th');
+    th.textContent = h;                                          // untrusted → textContent
+    const dir = document.createElement('span'); dir.className = 'dir'; th.appendChild(dir);
+    th.title = 'Sort by ' + h;
+    th.addEventListener('click', function(){
+      if (sort.col === i) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+      else { sort.col = i; sort.dir = 'asc'; }
+      thead.querySelectorAll('.dir').forEach(d => { d.textContent = ''; });
+      dir.textContent = sort.dir === 'asc' ? ' ▲' : ' ▼';
+      renderBody();
+    });
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh); table.appendChild(thead); table.appendChild(tbody);
+  renderBody();
+  wrap.appendChild(table);
+  if (data.length > CSV_ROW_CAP){
+    const note = document.createElement('div'); note.className = 'art-table-note';
+    note.textContent = 'showing ' + CSV_ROW_CAP.toLocaleString() + ' of ' + data.length.toLocaleString() + ' rows';
+    wrap.appendChild(note);
+  }
+  container.appendChild(wrap);
+}
+
+// ── Artifact coverage v2: JSON → collapsible tree (host-side; textContent-only values) ──
+const JSON_OPEN_DEPTH = 2;   // containers deeper than this start collapsed
+function jsonCount(v){       // PURE: collapsed-node summary ("3 keys" / "5 items")
+  if (Array.isArray(v)) return v.length + (v.length === 1 ? ' item' : ' items');
+  const n = Object.keys(v).length;
+  return n + (n === 1 ? ' key' : ' keys');
+}
+function buildJsonTree(key, v, depth){
+  const isObj = v !== null && typeof v === 'object';
+  if (!isObj){
+    const leaf = document.createElement('div'); leaf.className = 'jt-leaf';
+    if (key !== null){
+      const k = document.createElement('span'); k.className = 'jt-key';
+      k.textContent = key + ': '; leaf.appendChild(k);
+    }
+    const t = v === null ? 'null' : typeof v;
+    const val = document.createElement('span');
+    val.className = 'jt-val jt-' + (t === 'string' ? 'str' : t === 'number' ? 'num' : t === 'boolean' ? 'bool' : 'null');
+    val.textContent = t === 'string' ? JSON.stringify(v) : String(v);   // untrusted → textContent
+    leaf.appendChild(val);
+    return leaf;
+  }
+  const det = document.createElement('details'); det.className = 'jt-node';
+  if (depth < JSON_OPEN_DEPTH) det.open = true;
+  const sum = document.createElement('summary');
+  const k = document.createElement('span'); k.className = 'jt-key';
+  k.textContent = (key !== null ? key + ': ' : '') + (Array.isArray(v) ? '[' : '{');
+  sum.appendChild(k);
+  const cnt = document.createElement('span'); cnt.className = 'jt-count';
+  cnt.textContent = ' ' + jsonCount(v) + ' ';
+  sum.appendChild(cnt);
+  const close = document.createElement('span'); close.className = 'jt-key';
+  close.textContent = Array.isArray(v) ? ']' : '}';
+  sum.appendChild(close);
+  det.appendChild(sum);
+  const kids = document.createElement('div'); kids.className = 'jt-children';
+  const entries = Array.isArray(v) ? v.map((x, i) => [String(i), x]) : Object.entries(v);
+  for (const [ck, cv] of entries) kids.appendChild(buildJsonTree(ck, cv, depth + 1));
+  det.appendChild(kids);
+  return det;
+}
+function renderArtJson(container, content, filename){
+  let v;
+  try { v = JSON.parse(content); }
+  catch (e){
+    const n = document.createElement('div'); n.className = 'cs-empty';
+    n.textContent = 'Invalid JSON (' + ((e && e.message) || 'parse error') + ') — showing source.';
+    container.appendChild(n);
+    renderArtCode(container, content, filename || 'artifact.json');   // fall back to the code renderer
+    return;
+  }
+  const box = document.createElement('div'); box.className = 'art-json';  // FABLE: style pass
+  box.appendChild(buildJsonTree(null, v, 0));
+  container.appendChild(box);
+}
+
 // ---- host-side vendor loader (Prism + markdown-it + DOMPurify), loaded once, lazily ----
 let _hostVendor = null;
 function _loadScript(src){ return new Promise((res, rej) => {
@@ -2679,10 +2932,13 @@ function renderArtifact(kind, content, filename){
   body.innerHTML = ''; clearArtConsole();
   _artContent = content || '';
   document.getElementById('art-copy').hidden = (kind !== 'code');
-  document.getElementById('art-console-wrap').hidden = !(kind === 'react' || kind === 'js');
+  document.getElementById('art-console-wrap').hidden = !(kind === 'react' || kind === 'js' || kind === 'mermaid');
   if (kind === 'html' || kind === 'svg') renderArtIframe(body, buildPlainSrcdoc(content), false);
   else if (kind === 'react') renderArtIframe(body, buildReactSrcdoc(content, filename), true);
   else if (kind === 'js') renderArtIframe(body, buildJsSrcdoc(content), true);
+  else if (kind === 'mermaid') renderArtIframe(body, buildMermaidSrcdoc(content), true);
+  else if (kind === 'csv') renderArtCsv(body, content);
+  else if (kind === 'json') renderArtJson(body, content, filename);
   else if (kind === 'markdown') renderArtMarkdown(body, content);
   else if (kind === 'code') renderArtCode(body, content, filename);
   else if (kind === 'image') renderArtImage(body, content);
@@ -2773,7 +3029,14 @@ const ART_SAMPLES = {
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120" width="100%">'
   + '<rect width="200" height="120" fill="#faf7f0"/>'
   + '<circle cx="60" cy="60" r="40" fill="#d9b36c"/>'
-  + '<text x="120" y="65" font-family="serif" font-size="14" fill="#333">SVG artifact</text></svg>' }
+  + '<text x="120" y="65" font-family="serif" font-size="14" fill="#333">SVG artifact</text></svg>' },
+  // coverage v2 samples — verify the new renderers without waiting on a model turn
+  mermaid: { filename:'flow.mmd', content:
+    'flowchart TD\n  A[Chat] --> B{Artifact?}\n  B -- yes --> C[Open Diagram]\n  B -- no --> D[Plain code block]\n  C --> E[Sandboxed iframe]\n' },
+  csv: { filename:'sample.csv', content:
+    'name,region,revenue\n"Acme, Inc.",EU,1200\nBolt,US,340\n"Quote ""Q"" Co",APAC,905\nDelta,EU,77\n' },
+  json: { filename:'sample.json', content:
+    '{"service":"harness","ports":{"bridge":8700,"runner":6767},"components":[{"name":"hermes","up":true},{"name":"odysseus","up":true}],"notes":null}' }
 };
 function openArtifactSample(kind){
   const s = ART_SAMPLES[kind]; if (!s) return;
@@ -2795,6 +3058,9 @@ const commands = () => {
     {t:'Preview artifact: Markdown sample', k:'◧', f:()=>openArtifactSample('markdown')},
     {t:'Preview artifact: Python code', k:'◧', f:()=>openArtifactSample('code')},
     {t:'Preview artifact: SVG sample', k:'◧', f:()=>openArtifactSample('svg')},
+    {t:'Preview artifact: Mermaid diagram', k:'◧', f:()=>openArtifactSample('mermaid')},
+    {t:'Preview artifact: CSV table', k:'◧', f:()=>openArtifactSample('csv')},
+    {t:'Preview artifact: JSON tree', k:'◧', f:()=>openArtifactSample('json')},
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
     if (c.running) cmds.push({t:`Stop ${n}`, k:'■', f:()=>act(n,'stop')});
