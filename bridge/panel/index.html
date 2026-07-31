@@ -56,6 +56,9 @@
   .chip:hover { color:var(--cream); border-color:var(--line2); }
   /* PHASE 1.5: compact icon-only chip (topbar controls) — glyph only, word on hover */
   .chip-icon { padding:6px 9px; font-size:13px; line-height:1; min-width:0; }
+  /* FABLE: style pass — Capabilities section sub-tabs (reuse .chip; .on = active) */
+  .caps-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 18px; }
+  .caps-tab.on { color:var(--cream); border-color:var(--gold); background:var(--bg); }
 
   .kicker { display:flex; align-items:center; gap:14px; margin:10px 0 6px; }
   .kicker .num { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--gold); }
@@ -908,7 +911,19 @@
       </div>
     </div>
     <div class="stamp" id="caps-stamp">—</div>
-    <div id="caps-body"></div>
+    <!-- FABLE: style pass — section sub-tabs so Capabilities isn't one endless scroll -->
+    <div class="caps-tabs" id="caps-tabs" role="tablist">
+      <button class="chip caps-tab" data-sec="general" role="tab" onclick="showCapsSection('general')">General</button>
+      <button class="chip caps-tab" data-sec="tools" role="tab" onclick="showCapsSection('tools')">Tools</button>
+      <button class="chip caps-tab" data-sec="skills" role="tab" onclick="showCapsSection('skills')">Skills</button>
+      <button class="chip caps-tab" data-sec="models" role="tab" onclick="showCapsSection('models')">Models</button>
+    </div>
+    <div id="caps-body">
+      <div id="caps-sec-general"></div>
+      <div id="caps-sec-tools"></div>
+      <div id="caps-sec-skills"></div>
+      <div id="caps-sec-models"></div>
+    </div>
   </div>
 </main>
 
@@ -1486,10 +1501,13 @@ function setMode(m) {
 let capsSnap = null;
 
 async function initCaps() {
-  const body = document.getElementById('caps-body');
   const stamp = document.getElementById('caps-stamp');
   stamp.textContent = 'loading…';
-  body.innerHTML = '';
+  // clear the per-section containers (keep the container divs themselves so the
+  // sub-tab strip stays wired); renderCaps() repopulates them from the snapshot.
+  ['general','tools','skills','models'].forEach(s => {
+    const e = document.getElementById('caps-sec-' + s); if (e) e.innerHTML = '';
+  });
   try {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
@@ -1539,7 +1557,8 @@ function renderCaps() {
   const rounds = capSet_('agent_max_rounds');
   const calls = capSet_('agent_max_tool_calls');
 
-  const html = `
+  // GENERAL section = Web + Memory + Other capabilities + Agent limits.
+  const generalHtml = `
   <div class="caps-group"><span class="cap-h">Web</span><div class="cap-card">
     ${capSwitchRow('Web search', 'Let the agent search the web for current information.', 'feature', 'web_search', capFeat('web_search'))}
     ${capSwitchRow('Web fetch', 'Let the agent open and read a specific URL.', 'feature', 'web_fetch', capFeat('web_fetch'))}
@@ -1587,12 +1606,144 @@ function renderCaps() {
       <div class="cap-ctl"><input class="cap-num" type="number" min="0" max="1000" id="cap-setting-agent_max_tool_calls"
         value="${calls == null ? '' : Number(calls)}"
         onchange="capsWrite('setting','agent_max_tool_calls', Number(this.value), this, 'cap-setting-agent_max_tool_calls')"></div></div>
-  </div></div>
+  </div></div>`;
 
-  ${renderBuiltinTools()}
-  ${renderMcpServers()}
-  ${renderSkills()}`;
-  document.getElementById('caps-body').innerHTML = html;
+  // Regrouping ONLY — each group renderer below is unchanged; we just route its
+  // output into its section container instead of one long scroll.
+  const setSec = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
+  setSec('caps-sec-general', generalHtml);
+  setSec('caps-sec-tools', renderBuiltinTools() + renderMcpServers());
+  setSec('caps-sec-skills', renderSkills());
+  setSec('caps-sec-models', renderModelsCaps());
+  applyCapsSection();
+}
+
+/* ---------- Capabilities section sub-tabs (General/Tools/Skills/Models) ----------
+   Pure show/hide over the four containers rendered by renderCaps() from ONE snapshot;
+   switching tabs never refetches. Default = General; last choice persisted. */
+const CAPS_SECTIONS = ['general','tools','skills','models'];
+function capsSection() {
+  let s = 'general';
+  try { s = localStorage.getItem('harness-caps-section') || 'general'; } catch (e) {}
+  return CAPS_SECTIONS.includes(s) ? s : 'general';
+}
+function applyCapsSection() {
+  const sec = capsSection();
+  CAPS_SECTIONS.forEach(s => {
+    const c = document.getElementById('caps-sec-' + s); if (c) c.hidden = (s !== sec);
+    const t = document.querySelector('.caps-tab[data-sec="' + s + '"]'); if (t) t.classList.toggle('on', s === sec);
+  });
+}
+function showCapsSection(sec) {
+  if (!CAPS_SECTIONS.includes(sec)) sec = 'general';
+  try { localStorage.setItem('harness-caps-section', sec); } catch (e) {}
+  applyCapsSection();
+}
+
+/* ---------- Phase 3: Models (Background-tasks + Utility model pickers) ----------
+   Two independent Odysseus settings pairs, written via the plain `setting` group:
+     task_endpoint_id / task_model       (Background Tasks — titles, memory, queries)
+     utility_endpoint_id / utility_model (Utility — small/fast background calls)
+   Blank endpoint AND blank model both mean "same as chat" (Odysseus DEFAULT_SETTINGS
+   defaults all four to ""). Endpoints + their model ids come from /api/model-endpoints
+   (each row is {id, name, models:[...], is_enabled}); we cross-check /api/models items
+   for endpoints whose inline model list is empty.
+   ⚠️ PENDING FABLE QA: (1) model-endpoints/models response shapes read from
+   vendor/odysseus/routes/model_routes.py @25c9e73; (2) endpoint and model are written
+   as two INDEPENDENT settings — changing the endpoint does NOT auto-clear the stored
+   model (Odysseus resolves/falls back); (3) hybrid control — a <select> when the chosen
+   endpoint exposes model ids, else a free-text input + <datalist> of all known ids. */
+function capsModelsForEp(epId) {
+  if (!epId) return [];
+  const eps = (capsSnap && capsSnap.model_endpoints) || [];
+  const ep = eps.find(e => e.id === epId);
+  if (ep && Array.isArray(ep.models) && ep.models.length) return ep.models.slice();
+  const items = (capsSnap && capsSnap.models) || [];
+  const it = items.find(x => x.endpoint_id === epId);
+  if (it) {
+    const m = (it.models || []).concat(it.models_extra || []);
+    if (m.length) return m;
+  }
+  return [];
+}
+
+function capsAllModelIds() {
+  const out = new Set();
+  ((capsSnap && capsSnap.model_endpoints) || []).forEach(e => (e.models || []).forEach(m => out.add(m)));
+  ((capsSnap && capsSnap.models) || []).forEach(it =>
+    (it.models || []).concat(it.models_extra || []).forEach(m => out.add(m)));
+  return Array.from(out);
+}
+
+function capsModelSub(label, desc, epKey, mdlKey) {
+  const eps = (capsSnap && capsSnap.model_endpoints) || [];
+  const epId = capSet_(epKey) || '';
+  const mdl = capSet_(mdlKey) || '';
+  const epOpts = ['<option value="">Same as chat</option>'].concat(
+    eps.map(e => `<option value="${escAttr(e.id)}"${e.id === epId ? ' selected' : ''}>${esc(e.name || e.id)}${e.is_enabled === false ? ' (disabled)' : ''}</option>`)
+  ).join('');
+  const epErrId = 'cap-setting-' + epKey;
+  const mErrId = 'cap-setting-' + mdlKey;
+  const models = capsModelsForEp(epId);
+  let mdlCtl;
+  if (!epId) {
+    mdlCtl = `<select class="cap-sel" disabled title="Choose an endpoint first"><option>Same as chat</option></select>`;
+  } else if (models.length) {
+    let found = false;
+    const opts = ['<option value="">Same as chat</option>'];
+    models.forEach(m => { if (m === mdl) found = true; opts.push(`<option value="${escAttr(m)}"${m === mdl ? ' selected' : ''}>${esc(m)}</option>`); });
+    if (mdl && !found) opts.push(`<option value="${escAttr(mdl)}" selected>${esc(mdl)} (stored)</option>`);
+    mdlCtl = `<select class="cap-sel" id="${mErrId}"
+      onchange="capsWrite('setting','${escAttr(mdlKey)}', this.value, this, '${mErrId}')">${opts.join('')}</select>`;
+  } else {
+    const dlId = 'dl-' + mdlKey;
+    const dlOpts = capsAllModelIds().map(m => `<option value="${escAttr(m)}">`).join('');
+    mdlCtl = `<input class="cap-sel" list="${dlId}" id="${mErrId}" value="${escAttr(mdl)}" placeholder="Same as chat"
+      onchange="capsWrite('setting','${escAttr(mdlKey)}', this.value, this, '${mErrId}')">
+      <datalist id="${dlId}">${dlOpts}</datalist>`;
+  }
+  return `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(label)}</div>
+      <div class="cap-desc">${esc(desc)}</div></div></div>
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name" style="font-size:13px">Endpoint</div>
+      <div class="cap-desc">"Same as chat" uses the current chat model's endpoint.</div>
+      <div class="cap-err" id="${epErrId}-err" hidden></div></div>
+      <div class="cap-ctl"><select class="cap-sel" id="${epErrId}"
+        onchange="capsEpChange('${escAttr(epKey)}','${escAttr(mdlKey)}', this)">${epOpts}</select></div></div>
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name" style="font-size:13px">Model</div>
+      <div class="cap-desc">Which model on that endpoint. Blank = same as chat.</div>
+      <div class="cap-err" id="${mErrId}-err" hidden></div></div>
+      <div class="cap-ctl">${mdlCtl}</div></div>`;
+}
+
+function renderModelsCaps() {
+  const err = capsSnap && capsSnap.errors && capsSnap.errors.model_endpoints;
+  const eps = (capsSnap && capsSnap.model_endpoints) || [];
+  let inner;
+  if (err && !eps.length) {
+    inner = `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Couldn't read model endpoints from Odysseus.</div></div></div>`;
+  } else {
+    inner = capsModelSub('Background tasks model',
+              'Runs titles, memory, and search-query generation off the main model.',
+              'task_endpoint_id', 'task_model')
+          + capsModelSub('Utility model',
+              'Small/fast model for background utility calls.',
+              'utility_endpoint_id', 'utility_model');
+  }
+  return `<div class="caps-group" id="caps-models-group"><!-- FABLE: style pass -->
+    <span class="cap-h">Models</span><div class="cap-card">${inner}</div></div>`;
+}
+
+// re-render just the Models group (used after an endpoint change refreshes its model list)
+function refreshModelsCaps() {
+  const el = document.getElementById('caps-models-group');
+  if (el) el.outerHTML = renderModelsCaps();
+}
+
+// endpoint change: write the setting, then refresh the group so the Model select
+// reflects the newly-chosen endpoint's models.
+async function capsEpChange(epKey, mdlKey, sel) {
+  await capsWrite('setting', epKey, sel.value, sel, 'cap-setting-' + epKey);
+  refreshModelsCaps();
 }
 
 /* ---------- Phase 2: built-in Agent Tools (category rows) ----------

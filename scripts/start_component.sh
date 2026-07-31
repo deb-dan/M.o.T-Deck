@@ -113,7 +113,7 @@ PYRESOLVE
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
-    lsof -ti tcp:"$R_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     # Launch (argv replicates Jan's proven-working invocation on this machine).
     nohup "$BIN" "${ARGS[@]}" >> data/logs/runner.log 2>&1 &
@@ -148,7 +148,7 @@ PYRESOLVE
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
-    lsof -ti tcp:"$R_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" >> data/logs/runner.log 2>&1 &
     echo $! > data/runner.pid
@@ -174,7 +174,7 @@ PYRESOLVE
     # shellcheck disable=SC1091
     source data/odysseus-venv/bin/activate
     # Clear any stale server on the port so a restart can bind cleanly.
-    lsof -ti tcp:7860 2>/dev/null | xargs kill 2>/dev/null || true
+    lsof -ti tcp:7860 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
     sleep 1
     # Connect (idempotent): (re)wire Odysseus to the harness RUNNER endpoint (:6767 + key)
     # as default model. Runs before the server boots.
@@ -198,7 +198,7 @@ PYRESOLVE
   searxng)
     [[ -d data/searxng-venv ]] || { echo "ERROR: searxng venv missing — run scripts/install_searxng.sh"; exit 1; }
     ROOT="$(pwd)"
-    lsof -ti tcp:8080 2>/dev/null | xargs kill 2>/dev/null || true
+    lsof -ti tcp:8080 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
     sleep 1
     nohup env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
       "$ROOT/data/searxng-venv/bin/python" -m searx.webapp \
@@ -279,7 +279,7 @@ PYPATCH
     # (API only), so a missing build never blocks startup.
     hermes dashboard --stop >/dev/null 2>&1 || true      # clean stop of any web server
     pkill -f "hermes (dashboard|serve)" 2>/dev/null || true
-    lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     : > data/logs/hermes.log
     # HERMES_DESKTOP=1: make the dashboard run its OWN cron ticker so scheduled jobs

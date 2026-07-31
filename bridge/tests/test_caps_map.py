@@ -41,8 +41,15 @@ check("setting agent_max_rounds passes value through (Odysseus clamps)",
       m("setting", "agent_max_rounds", 500) == ("POST", "/api/auth/settings", {"agent_max_rounds": 500}, "json"))
 check("setting search_result_count allowed",
       m("setting", "search_result_count", 8) == ("POST", "/api/auth/settings", {"search_result_count": 8}, "json"))
-check("all six Phase-1 setting keys route",
-      all(m("setting", k, 1)[0] == "POST" for k in CAPS_SETTING_KEYS))
+check("every allowlisted setting key routes to POST /api/auth/settings",
+      all(m("setting", k, 1) == ("POST", "/api/auth/settings", {k: 1}, "json") for k in CAPS_SETTING_KEYS))
+
+# ── Phase-3 model-picker settings (task_/utility_ endpoint+model) ─────────────
+for _k in ("task_endpoint_id", "task_model", "utility_endpoint_id", "utility_model"):
+    check(f"setting {_k} allowlisted → POST /api/auth/settings",
+          m("setting", _k, "e1") == ("POST", "/api/auth/settings", {_k: "e1"}, "json"))
+    check(f"setting {_k} blank (same-as-chat) allowed",
+          m("setting", _k, "") == ("POST", "/api/auth/settings", {_k: ""}, "json"))
 
 # ── Phase-2 groups: MCP servers, MCP per-tool, built-in tools ────────────────
 check("mcp_server enable → PATCH form is_enabled=true",
@@ -73,7 +80,10 @@ check("skill_builtin *_api_key name still blocked",
 
 # ── setting NOT on the allowlist is rejected ─────────────────────────────────
 check("arbitrary setting rejected", m("setting", "reminder_ntfy_topic", "x")[0] == "__error__")
-check("task_endpoint_id (Phase 3) rejected as setting", m("setting", "task_endpoint_id", "e")[0] == "__error__")
+check("non-allowlisted setting (default_endpoint_id) rejected",
+      m("setting", "default_endpoint_id", "e")[0] == "__error__")
+check("non-allowlisted setting (research_model) rejected",
+      m("setting", "research_model", "x")[0] == "__error__")
 
 # ── secret keys never forwarded ──────────────────────────────────────────────
 check("brave_api_key blocked (setting)", m("setting", "brave_api_key", "sk")[0] == "__error__")

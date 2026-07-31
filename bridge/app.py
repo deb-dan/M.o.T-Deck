@@ -6,9 +6,11 @@ Gearbox (M2) and adapter/self-heal (M3) are stubs; see gearbox.py / adapter.py.
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -357,6 +359,33 @@ def start(name: str) -> JSONResponse:
     return JSONResponse({"ok": True, "log": "provisioning started"})
 
 
+# ── Port kills: LISTENER-scoped only (live-incident fix, 2026-07-31) ──────────
+# `lsof -ti tcp:PORT` matches EVERY process with a socket on that port — including
+# CLIENTS with established connections. The bridge itself holds persistent httpx
+# keep-alive connections to Odysseus (:7860) and the runner (:6767), so an unscoped
+# port-kill from start_component.sh/stop SIGTERMed the BRIDGE (graceful "Shutting
+# down" right after POST start). Every port-kill must target ONLY the listener.
+
+def _port_kill_cmd(port: int, force: bool = False) -> str:
+    """Pure (unit-tested): shell command that kills ONLY the listener on tcp:port."""
+    sig = "-9 " if force else ""
+    return f"lsof -ti tcp:{int(port)} -sTCP:LISTEN | xargs kill {sig}2>/dev/null"
+
+
+def _kill_port_listener(port: int, force: bool = False) -> None:
+    subprocess.run(_port_kill_cmd(port, force), shell=True, check=False)
+
+
+def _port_listener_pids(port: int) -> list:
+    """PIDs currently LISTENING on tcp:port (empty list when the port is free)."""
+    try:
+        out = subprocess.run(["lsof", "-ti", f"tcp:{int(port)}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, check=False).stdout
+        return [p for p in out.split() if p.strip()]
+    except Exception:
+        return []
+
+
 @app.post("/api/components/{name}/stop")
 def stop(name: str) -> JSONResponse:
     _clear_expected(name)   # intentional stop → not "degraded", just "stopped"
@@ -367,21 +396,48 @@ def stop(name: str) -> JSONResponse:
         port = rc.get("port")
         # legacy jan-supervisor sweep (harmless once Jan is uninstalled — no-op if none match)
         subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
-        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
+        _kill_port_listener(int(port), force=True)
         (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
         return JSONResponse({"ok": True})
-    pid = ROOT / "data" / f"{name}.pid"
-    if pid.exists():
-        subprocess.run(["kill", pid.read_text().strip()], check=False)
-        pid.unlink(missing_ok=True)
-        return JSONResponse({"ok": True})
-    # No pid file (e.g. the process was started outside the panel) — fall back to
-    # killing whatever holds the component's port. Same lesson as the runner.
+    notes = []
+    pidf = ROOT / "data" / f"{name}.pid"
+    if pidf.exists():
+        pid = None
+        try:
+            pid = int(pidf.read_text().strip())
+        except ValueError:
+            notes.append("unreadable pid file")
+        pidf.unlink(missing_ok=True)
+        if pid is not None:
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False           # stale: that process is gone (or pid reused+gone)
+            except PermissionError:
+                alive = True            # exists but not ours — still attempt the kill
+            if alive:
+                subprocess.run(["kill", str(pid)], check=False)
+                notes.append(f"killed pid {pid}")
+            else:
+                notes.append(f"stale pid file (pid {pid} not running)")
+    # ALWAYS verify the port afterwards — a stale/absent pid file must never mask a
+    # live process (observed: hermes.pid held 36254 while the real hermes was 41584 →
+    # Stop was a silent no-op). If a LISTENER still holds the port, kill it by port.
     comp = cfg().get("components", {}).get(name, {})
     port = comp.get("port") or comp.get("mcp_port")
     if port:
-        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill 2>/dev/null", shell=True, check=False)
-        return JSONResponse({"ok": True, "log": f"no pid file — killed by port :{port}"})
+        for _ in range(6):              # up to ~1.5s for a just-SIGTERMed listener to release
+            if not _port_listener_pids(int(port)):
+                break
+            time.sleep(0.25)
+        if _port_listener_pids(int(port)):
+            _kill_port_listener(int(port))
+            notes.append(f"port :{port} still held — killed listener")
+    if notes:
+        return JSONResponse({"ok": True, "log": "; ".join(notes)})
+    if port:
+        return JSONResponse({"ok": True, "log": f"nothing running on :{port}"})
     return JSONResponse({"ok": False, "log": "no pid file and no port to kill by"})
 
 
@@ -566,6 +622,9 @@ async def ody_history(sid: str) -> JSONResponse:
 CAPS_SETTING_KEYS = (
     "search_provider", "search_fallback_chain", "search_safesearch",
     "search_result_count", "agent_max_rounds", "agent_max_tool_calls",
+    # Phase 3 — model pickers (Background-tasks + Utility). Empty string = "same
+    # as chat" (Odysseus DEFAULT_SETTINGS defaults all four to "").
+    "task_endpoint_id", "task_model", "utility_endpoint_id", "utility_model",
 )
 
 
@@ -630,7 +689,8 @@ async def ody_caps() -> JSONResponse:
     model_endpoints) are omitted for now."""
     out = {"features": {}, "settings": {}, "search_providers": [],
            "mcp_servers": [], "builtin_tools": [],
-           "skills_builtin": [], "skills_user": [], "errors": {}}
+           "skills_builtin": [], "skills_user": [],
+           "model_endpoints": [], "models": [], "errors": {}}
     try:
         r = await _ody_req("GET", "/api/auth/features")
         if r.status_code == 200 and isinstance(r.json(), dict):
@@ -701,6 +761,33 @@ async def ody_caps() -> JSONResponse:
             out["errors"]["skills_user"] = (r.text[:200] if r is not None else "no response")
     except Exception as e:
         out["errors"]["skills_user"] = str(e)
+    # Phase 3 — model endpoints + models (for the Background-tasks / Utility pickers).
+    # /api/model-endpoints (admin-only, reachable via our admin cookie) returns a
+    # list of {id, name, models:[...], is_enabled, ...} — this is the primary
+    # source for the pickers (endpoint id/name + its model ids). We also carry the
+    # /api/models {items:[{endpoint_id, models, models_extra, ...}]} view for
+    # completeness / cross-check. ⚠️ PENDING FABLE QA: shapes read from
+    # vendor/odysseus/routes/model_routes.py @25c9e73.
+    try:
+        r = await _ody_req("GET", "/api/model-endpoints")
+        if r.status_code == 200 and isinstance(r.json(), list):
+            out["model_endpoints"] = r.json()
+        else:
+            out["errors"]["model_endpoints"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["model_endpoints"] = str(e)
+    try:
+        r = await _ody_req("GET", "/api/models")
+        doc = r.json() if r.status_code == 200 else None
+        # /api/models returns {"hosts":[], "items":[...]}; be tolerant of a bare list.
+        if isinstance(doc, dict) and isinstance(doc.get("items"), list):
+            out["models"] = doc["items"]
+        elif isinstance(doc, list):
+            out["models"] = doc
+        else:
+            out["errors"]["models"] = (r.text[:200] if r is not None else "no response")
+    except Exception as e:
+        out["errors"]["models"] = str(e)
     return JSONResponse(out)
 
 
@@ -1233,7 +1320,7 @@ def _eject_runner() -> None:
     if port:
         # legacy jan-supervisor sweep (harmless no-op post-Jan) + kill whatever holds the port
         subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
-        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
+        _kill_port_listener(int(port), force=True)
     (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
     _clear_expected("runner")     # intentional → "stopped", not "degraded"
     PROV.pop("runner", None)
@@ -1353,7 +1440,7 @@ def api_switch_cancel() -> JSONResponse:
         return JSONResponse({"ok": False, "log": "no switch in progress"}, status_code=400)
     port = int((cfg().get("runner", {}) or {}).get("port") or 6767)
     subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
-    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    _kill_port_listener(port, force=True)
     subprocess.run('pkill -f "start_component.sh runner"', shell=True, check=False)
     return JSONResponse({"ok": True, "log": "cancelling — pin will revert to the previous model"})
 
@@ -1375,7 +1462,7 @@ def _aux_kill(port: int) -> None:
     for pat in (f'jan serve.*port[= ]{port}', f'llama-server.*--port {port}',
                 f'mlx_lm.server.*--port {port}', f'mlx_vlm.server.*--port {port}'):
         subprocess.run(f'pkill -f "{pat}"', shell=True, check=False)
-    subprocess.run(f"lsof -ti tcp:{port} | xargs kill -9 2>/dev/null", shell=True, check=False)
+    _kill_port_listener(port, force=True)
 
 
 @app.post("/api/aux/start")
