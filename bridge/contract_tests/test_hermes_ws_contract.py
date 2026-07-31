@@ -18,7 +18,10 @@ HERMES = ROOT / "vendor" / "hermes"
 WS_METHODS = [
     "session.create",     # methods_session.py — new gateway session
     "session.list",       # methods_session.py — stored-session list (Phase 3 rail)
-    "session.history",    # methods_session.py — transcript read (Phase 3 hook)
+    "session.history",    # methods_session.py — transcript read (live sessions)
+    "session.resume",     # methods_session.py — reopen a STORED session (Phase 3)
+    "session.delete",     # methods_session.py — delete a stored session (Phase 3)
+    "session.close",      # methods_session.py — close a live session pre-delete (Phase 3)
     "prompt.submit",      # methods_prompt.py  — start a turn (returns status: streaming)
     "approval.respond",   # methods_prompt.py  — Phase-2 approval card answer
 ]
@@ -121,6 +124,40 @@ def test_event_frame_shape_unchanged():
         "gateway event frames no longer use method=event — bridge demux broken")
     assert '"session_id": sid' in server, (
         "gateway event frames no longer carry params.session_id — bridge demux broken")
+
+
+def test_session_rail_contract():
+    """Phase-3 session-rail parity — the exact result-shape keys the bridge reads.
+
+    session.list rows: {id,title,preview,started_at,message_count,source}
+    (methods_session.py ~196-206; hermes_sessions_normalize consumes them).
+    session.resume: the bridge reads session_id / session_key / resumed /
+    messages / running from every branch (lazy, deferred, live-reuse via
+    _live_session_payload). Rename has NO WS method for stored sessions — the
+    bridge uses REST PATCH /api/sessions/{id} with the X-Hermes-Session-Token
+    header (web_routers/sessions.py:650, web_server.py:305)."""
+    if not HERMES.exists():
+        return
+    msess = (HERMES / "tui_gateway" / "methods_session.py").read_text(errors="replace")
+    # session.list row keys
+    for key in ('"title"', '"preview"', '"started_at"', '"message_count"', '"source"'):
+        assert key in msess, f"session.list row key {key} gone — rail normalizer broken"
+    # session.resume result keys (lazy/deferred branches build these dicts)
+    for key in ('"session_id"', '"resumed"', '"messages"', '"running"', '"session_key"'):
+        assert key in msess, f"session.resume payload key {key} gone — resume flow broken"
+    server = (HERMES / "tui_gateway" / "server.py").read_text(errors="replace")
+    assert "_history_to_messages" in server, (
+        "transcript projection (_history_to_messages) moved — "
+        "hermes_messages_to_panel's input shape needs re-recon")
+    assert "def _live_session_payload" in server, (
+        "live-reuse resume payload builder gone — re-recon resume fast path")
+    # stored-session rename = REST PATCH (the lane's one REST call)
+    rest = (HERMES / "hermes_cli" / "web_routers" / "sessions.py").read_text(errors="replace")
+    assert '@manage_router.patch("/api/sessions/{session_id}")' in rest, (
+        "REST rename endpoint gone — Hermes rail rename broken")
+    ws_server = (HERMES / "hermes_cli" / "web_server.py").read_text(errors="replace")
+    assert 'X-Hermes-Session-Token' in ws_server, (
+        "REST session-token header renamed — bridge rename call broken")
 
 
 def test_approvals_default_mode_contract():

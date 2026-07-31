@@ -363,6 +363,8 @@
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:38px; }
   .cs-item.on .nm { color:var(--cream); font-size:13.5px; }
   .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
+  /* Phase 3 — Hermes rail row tag. <!-- FABLE: style pass --> */
+  .cs-tag { font:10px var(--mono); color:var(--faint); letter-spacing:.08em; text-transform:lowercase; }
   .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
   .cs-item:hover .cs-act { display:flex; }
   .cs-act button { font:11px var(--mono); color:var(--faint); background:var(--bg);
@@ -1246,6 +1248,11 @@ let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
 // rail — persisted so the conversation survives panel reloads (dashboard restarts
 // invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
 let hermesSid = localStorage.getItem('harness-hermes-sid') || null;
+// Phase 3: the rail lists STORED sessions (state.db rows); the live gateway sid
+// above is what prompt.submit addresses. Selection is keyed by the stored id
+// (survives dashboard restarts, unlike hermesSid).
+let hermesStoredSid = localStorage.getItem('harness-hermes-stored') || null;
+let hermesSessions = [];
 
 // ── §E — first-launch setup checklist + walkthrough (non-intrusive: auto-shows
 //    only when something needs setup / never seen; also launchable from ⌘K) ──
@@ -1521,6 +1528,7 @@ function sesResizeUp(e){
 }
 
 function setMode(m) {
+  const prev = chatMode;
   chatMode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
@@ -1529,6 +1537,19 @@ function setMode(m) {
     m === 'agent' ? 'web search on · shell off'
     : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
     : 'direct to runner — no tools, fastest';
+  if (m === prev) return;
+  // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
+  // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
+  // restore the Odysseus rail + previously selected Odysseus session.
+  if (m === 'hermes'){
+    loadSessions();
+    if (hermesStoredSid) selectHermesSession(hermesStoredSid);
+    else document.getElementById('chat-msgs').innerHTML = '';
+  } else if (prev === 'hermes'){
+    loadSessions();
+    if (chatSid) selectSession(chatSid);
+    else document.getElementById('chat-msgs').innerHTML = '';
+  }
 }
 
 /* ---------- Capabilities view (Phase 1) ----------
@@ -2456,6 +2477,15 @@ function stampFor(model){
 
 async function initChat() {
   const stamp = document.getElementById('chat-stamp');
+  if (chatMode === 'hermes'){
+    // Phase 3: re-entering the Chat view while in Hermes mode must NOT clobber
+    // the pane with the Odysseus rail/session.
+    await loadSessions();
+    if (hermesStoredSid) await selectHermesSession(hermesStoredSid);
+    refreshBrowse();
+    loadChatModels();
+    return;
+  }
   try {
     const list = await loadSessions();
     if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MISSION CONTROL'; return; }
@@ -2515,6 +2545,9 @@ async function toggleBrowse(){
 }
 
 async function loadSessions(){
+  // Phase 3: the rail follows the active lane — Hermes mode lists the Hermes
+  // gateway's STORED sessions; Agent/Chat keep the Odysseus list (unchanged).
+  if (chatMode === 'hermes') return loadHermesSessions();
   try {
     const r = await fetch('/api/ody/sessions');
     if (!r.ok) return null;
@@ -2525,8 +2558,37 @@ async function loadSessions(){
   } catch { return null; }
 }
 
+async function loadHermesSessions(){
+  try {
+    const r = await fetch('/api/hermes/sessions');
+    if (!r.ok) return null;
+    const list = await r.json();
+    hermesSessions = Array.isArray(list) ? list : [];
+    renderSessions();
+    return hermesSessions;
+  } catch { return null; }
+}
+
 function renderSessions(){
   const el = document.getElementById('cs-list'); el.innerHTML = '';
+  if (chatMode === 'hermes'){
+    // Hermes rail (Phase 3): same .cs-item primitives; rows are STORED session
+    // ids. No Duplicate (no gateway fork RPC). <!-- FABLE: style pass — .cs-tag -->
+    if (!hermesSessions.length){ el.innerHTML = '<div class="cs-empty">No Hermes chats yet.</div>'; return; }
+    for (const s of hermesSessions){
+      const it = document.createElement('div');
+      it.className = 'cs-item' + (s.id === hermesStoredSid ? ' on' : '');
+      it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectHermesSession(s.id); };
+      it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
+        <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''} <span class="cs-tag">hermes</span></div>
+        <div class="cs-act">
+          <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
+          <button class="cs-del" title="Delete" onclick="armDelete('${s.id}', this)">✕</button>
+        </div>`;
+      el.appendChild(it);
+    }
+    return;
+  }
   if (!chatSessions.length){ el.innerHTML = '<div class="cs-empty">No chats yet.</div>'; return; }
   for (const s of chatSessions){
     const it = document.createElement('div');
@@ -2541,6 +2603,38 @@ function renderSessions(){
       </div>`;
     el.appendChild(it);
   }
+}
+
+async function selectHermesSession(storedId){
+  // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
+  // gateway sid (session.resume binds it to the stored conversation) + the
+  // transcript. The next Send continues the conversation via that live sid.
+  if (chatBusy) return;
+  hermesStoredSid = storedId;
+  localStorage.setItem('harness-hermes-stored', storedId);
+  renderSessions();
+  document.getElementById('chat-msgs').innerHTML = '';
+  try {
+    const r = await (await fetch('/api/hermes/session/resume', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: storedId})})).json();
+    if (r && r.id){
+      hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id);
+      if (r.stored_id && r.stored_id !== storedId){
+        // Compression chains: resume follows the lineage to the live tip
+        // (methods_session.py:351-369) — track the id it actually opened.
+        hermesStoredSid = r.stored_id;
+        localStorage.setItem('harness-hermes-stored', r.stored_id);
+      }
+      for (const m of (r.history || []).slice(-30)){
+        if (m.role === 'user') addMsg('user', m.content || '');
+        else if (m.role === 'assistant') addMsg('assistant', m.content || '');
+      }
+      scrollChat(true);
+    } else {
+      const note = document.getElementById('chat-note');
+      if (note) note.textContent = 'could not open that Hermes session' + (r && r.error ? ' — ' + String(r.error).slice(0,120) : '');
+    }
+  } catch {}
 }
 
 async function selectSession(sid){
@@ -2578,13 +2672,19 @@ async function duplicateSession(sid){
 async function newSession(){
   if (chatBusy) return;
   if (chatMode === 'hermes'){
-    // Hermes lane: fresh gateway session + clear the pane. The Odysseus session
-    // rail is deliberately untouched (it belongs to the other two lanes).
+    // Hermes lane: fresh gateway session + clear the pane + refresh the rail
+    // (Phase 3). NOTE: the gateway defers the DB row to the first prompt
+    // (empty drafts don't litter the picker), so the new row only appears in
+    // the rail after the first message. ⚠ PENDING FABLE QA.
     try {
       const r = await (await fetch('/api/hermes/session/new', {method:'POST'})).json();
       if (r && r.id){ hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id); }
+      hermesStoredSid = (r && r.stored_id) || null;
+      if (hermesStoredSid) localStorage.setItem('harness-hermes-stored', hermesStoredSid);
+      else localStorage.removeItem('harness-hermes-stored');
       document.getElementById('chat-msgs').innerHTML = '';
       document.getElementById('chat-input').focus();
+      loadSessions();
     } catch {}
     return;
   }
@@ -2601,7 +2701,8 @@ async function newSession(){
 function beginRename(sid, btn){
   const item = btn.closest('.cs-item');
   const nm = item.querySelector('.nm');
-  const cur = chatSessions.find(x => x.id === sid);
+  const hermes = chatMode === 'hermes';   // Phase 3: rename routes per lane
+  const cur = (hermes ? hermesSessions : chatSessions).find(x => x.id === sid);
   const input = document.createElement('input');
   input.className = 'cs-rename'; input.value = (cur && cur.name) || '';
   nm.replaceWith(input); input.focus(); input.select();
@@ -2610,7 +2711,9 @@ function beginRename(sid, btn){
     if (done) return; done = true;
     const v = input.value.trim();
     if (save && v){
-      await fetch(`/api/ody/session/${sid}/rename`, {method:'POST',
+      const url = hermes ? `/api/hermes/session/${sid}/rename`
+                         : `/api/ody/session/${sid}/rename`;
+      await fetch(url, {method:'POST',
         headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:v})});
     }
     await loadSessions();
@@ -2630,6 +2733,23 @@ function armDelete(sid, btn){
 }
 async function doDelete(sid){
   _delArm = null;
+  if (chatMode === 'hermes'){
+    // Phase 3: WS session.delete (refuses live rows) — deleting the currently
+    // open session passes the live sid so the bridge session.close's it first.
+    const isCurrent = sid === hermesStoredSid;
+    await fetch(`/api/hermes/session/${sid}/delete`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({live_id: isCurrent ? (hermesSid || '') : ''})});
+    if (isCurrent){
+      hermesStoredSid = null; hermesSid = null;
+      localStorage.removeItem('harness-hermes-stored');
+      localStorage.removeItem('harness-hermes-sid');
+      document.getElementById('chat-msgs').innerHTML = '';
+      // No auto-create: Hermes mints a session lazily on the next Send.
+    }
+    await loadSessions();
+    return;
+  }
   await fetch(`/api/ody/session/${sid}/delete`, {method:'POST'});
   await loadSessions();
   if (sid === chatSid){
@@ -3516,6 +3636,8 @@ async function sendChat() {
             // Hermes lane: the bridge minted (or re-minted after a stale sid) a
             // gateway session — persist it so follow-up turns continue it.
             if (j.id){ hermesSid = j.id; localStorage.setItem('harness-hermes-sid', j.id); }
+            // Phase 3: the stored id keys the rail's active row.
+            if (j.stored_id){ hermesStoredSid = j.stored_id; localStorage.setItem('harness-hermes-stored', j.stored_id); }
           } else if (j.type === 'hermes_status') {
             // Bridge liveness note (20s of mid-turn silence): visible reassurance
             // that a long local-model prefill is slow, not dead.
@@ -3561,9 +3683,10 @@ async function sendChat() {
     sb.disabled = false; sb.textContent = 'Send';
     sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');
     scrollChat();
-    // Refresh rail: Odysseus auto-titles a new chat + reorders by recency.
-    // Hermes turns never touch the Odysseus rail — skip the churn.
-    if (chatMode !== 'hermes') loadSessions();
+    // Refresh rail: Odysseus auto-titles a new chat + reorders by recency;
+    // the Hermes rail (Phase 3) gains the row for a first-turn session and
+    // updates titles/counts — loadSessions() branches per lane.
+    loadSessions();
   }
 }
 

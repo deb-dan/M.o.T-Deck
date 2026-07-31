@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_harness_yaml_parses():
     c = yaml.safe_load((ROOT / "harness.yaml").read_text())
-    assert set(c["components"]) == {"hermes", "odysseus"}
+    assert set(c["components"]) == {"hermes", "odysseus", "searxng"}
     for comp in c["components"].values():
         assert comp["pin"], "every component must be pinned"
 

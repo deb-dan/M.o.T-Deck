@@ -2434,7 +2434,8 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 if not sid:
                     yield 'data: {"type":"proxy_error","error":"session.create returned no id"}\n\n'
                     return
-                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid})}\n\n'
+                # stored_id (Phase 3): lets the rail mark the matching stored row.
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
             # Open the fan-out queue BEFORE submitting so no early event is missed.
             q = _HERMES.open_queue(sid)
             try:
@@ -2449,7 +2450,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 sid = str(res.get("session_id") or "")
                 if not sid:
                     raise RuntimeError("session.create returned no id")
-                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid})}\n\n'
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
                 q = _HERMES.open_queue(sid)
                 await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
             # Relay gateway events until the turn completes. Watchdogs (Phase 1.1):
@@ -2599,12 +2600,90 @@ async def hermes_approve(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
 
 
+def hermes_sessions_normalize(rows):
+    """PURE (unit-tested standalone): gateway session.list rows → the panel
+    rail shape [{id, name, updated_at, message_count, source}].
+
+    session.list rows (methods_session.py:196-206): {id, title, preview,
+    started_at, message_count, source}. NOTE the WS projection forwards
+    started_at ONLY — list_sessions_rich's last_active is dropped upstream —
+    so the rail's relative time is the session START time; the ORDERING from
+    the gateway IS by last activity. ⚠ PENDING FABLE QA (honest-but-odd stamp).
+    started_at may be epoch seconds or ms; both → ISO-8601 UTC ('' if absent).
+    Untitled rows fall back to the preview snippet (Hermes's own picker does
+    the same). Malformed rows are dropped, never raise."""
+    out = []
+    if not isinstance(rows, list):
+        return out
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("id") or "").strip()
+        if not rid:
+            continue
+        iso = ""
+        try:
+            ts = float(r.get("started_at") or 0)
+            if ts > 1e12:          # milliseconds epoch
+                ts = ts / 1000.0
+            if ts > 0:
+                from datetime import datetime, timezone
+                iso = datetime.fromtimestamp(ts, timezone.utc).isoformat()
+        except Exception:
+            iso = ""
+        try:
+            mc = int(r.get("message_count") or 0)
+        except Exception:
+            mc = 0
+        title = str(r.get("title") or "").strip()
+        preview = str(r.get("preview") or "").strip()
+        out.append({"id": rid,
+                    "name": title or preview or "Untitled",
+                    "updated_at": iso,
+                    "message_count": mc,
+                    "source": str(r.get("source") or "")})
+    return out
+
+
+def hermes_messages_to_panel(messages):
+    """PURE (unit-tested standalone): gateway _history_to_messages rows →
+    the panel history shape [{role, content}] the Odysseus loader renders.
+
+    Gateway rows (server.py:6645 _history_to_messages): user/assistant carry
+    {role, text, reasoning*…}; tool rows are {role:'tool', name, context};
+    system rows possible. Per the Phase-3 design the transcript renders
+    PLAINLY: only user/assistant rows with visible text survive — tool rows
+    and reasoning-only assistant turns are DROPPED (thinking/tool detail is
+    not reconstructed on reopen). ⚠ PENDING FABLE QA: dropping vs. rendering
+    a faint tool/thinking placeholder line."""
+    out = []
+    if not isinstance(messages, list):
+        return out
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        txt = m.get("text")
+        if not isinstance(txt, str) or not txt.strip():
+            continue
+        out.append({"role": role, "content": txt})
+    return out
+
+
 @app.get("/api/hermes/sessions")
 async def hermes_sessions() -> JSONResponse:
-    """Stored Hermes sessions (Phase-3 rail hook; WS-based, no REST token dance)."""
+    """Stored Hermes sessions for the rail (Phase 3; WS-based, no REST token dance).
+
+    session.list (methods_session.py:162) reads state.db ordered by last
+    activity; rows are normalized bridge-side (pure hermes_sessions_normalize).
+    NOTE: a freshly created EMPTY session has no DB row yet (the write is
+    deferred to the first prompt — methods_session.py:895-904 comment), so it
+    won't appear here until its first turn. ⚠ PENDING FABLE QA."""
     try:
         res = await _HERMES.rpc("session.list", {"limit": 100})
-        return JSONResponse(res.get("sessions") or [])
+        return JSONResponse(hermes_sessions_normalize(res.get("sessions") or []))
     except Exception as e:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)
 
@@ -2619,10 +2698,103 @@ async def hermes_session_new() -> JSONResponse:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)
 
 
+@app.post("/api/hermes/session/resume")
+async def hermes_session_resume(req: Request) -> JSONResponse:
+    """Reopen a STORED Hermes session: transcript + a LIVE sid to continue it.
+
+    session.resume (methods_session.py:305) is the real mechanism — it returns
+    a NEW live session_id bound to the stored conversation plus the full display
+    transcript (every branch of it includes `messages`: lazy :453, deferred
+    :533, eager/live-reuse via _live_session_payload server.py:7588-7597, which
+    also carries session_key). prompt.submit on the returned live sid continues
+    the conversation — full parity, not read-only. The deferred (default) path
+    schedules the agent build OFF the response path, so this returns quickly;
+    re-clicking an already-open row hits the live-reuse fast path (:392-396).
+    """
+    body = await req.json()
+    stored = (body.get("id") or "").strip()
+    if not stored:
+        return JSONResponse({"error": "id required"}, status_code=400)
+    try:
+        res = await _HERMES.rpc("session.resume",
+                                {"session_id": stored, "source": "harness"},
+                                timeout=30.0)
+        return JSONResponse({
+            "id": res.get("session_id") or "",
+            "stored_id": str(res.get("session_key") or res.get("resumed") or stored),
+            "history": hermes_messages_to_panel(res.get("messages") or []),
+            "running": bool(res.get("running")),
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
+@app.post("/api/hermes/session/{sid}/rename")
+async def hermes_session_rename(sid: str, req: Request) -> JSONResponse:
+    """Rename a STORED Hermes session.
+
+    The WS gateway has no stored-session rename (session.title is live-session-
+    gated via _sess_nowait, methods_session.py:838-840), but the dashboard REST
+    router does: PATCH /api/sessions/{id} {title} (web_routers/sessions.py:650),
+    auth = the same session token, header X-Hermes-Session-Token
+    (web_server.py:305/368-398). ⚠ PENDING FABLE QA: this is the lane's ONE
+    REST call amid an otherwise WS-only adapter (mixed transport, contract-
+    tested at pin-bump)."""
+    body = await req.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    tok = _hermes_token()
+    if not tok:
+        return JSONResponse({"error": "no Hermes dashboard token"}, status_code=502)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.patch(
+                f"http://127.0.0.1:{_hermes_port()}/api/sessions/{sid}",
+                json={"title": name},
+                headers={"X-Hermes-Session-Token": tok})
+        if r.status_code >= 400:
+            return JSONResponse({"error": f"rename failed ({r.status_code})"},
+                                status_code=502)
+        return JSONResponse({"ok": True, "name": name})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
+@app.post("/api/hermes/session/{sid}/delete")
+async def hermes_session_delete(sid: str, req: Request) -> JSONResponse:
+    """Delete a STORED Hermes session (WS session.delete, methods_session.py:788).
+
+    The gateway refuses to delete a session that is LIVE in-process (4023 —
+    correct: the live agent is still writing to it). If the panel is deleting
+    the row it currently has open, it passes the live sid as `live_id` and the
+    bridge closes that gateway session first (session.close,
+    methods_session.py:2561) so the stored row becomes deletable."""
+    live_id = ""
+    try:
+        body = await req.json()
+        live_id = (body.get("live_id") or "").strip()
+    except Exception:
+        pass
+    try:
+        if live_id:
+            try:
+                await _HERMES.rpc("session.close", {"session_id": live_id},
+                                  timeout=15.0)
+            except Exception:
+                pass   # close is best-effort; delete below reports the truth
+        res = await _HERMES.rpc("session.delete", {"session_id": sid})
+        return JSONResponse({"ok": True, "deleted": res.get("deleted") or sid})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
 @app.get("/api/hermes/history/{sid}")
 async def hermes_history(sid: str) -> JSONResponse:
-    """Transcript of a LIVE gateway session (Phase-3 hook; stored-session resume
-    is a later slice — this covers the current pane's own session)."""
+    """Transcript of a LIVE gateway session (session.history is live-gated via
+    _sess_nowait — methods_session.py:2258-2260; stored sessions go through
+    /api/hermes/session/resume instead, which returns the transcript too)."""
     try:
         res = await _HERMES.rpc("session.history", {"session_id": sid})
         return JSONResponse({"history": res.get("messages") or [],
