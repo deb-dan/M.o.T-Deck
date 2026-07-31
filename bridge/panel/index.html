@@ -272,6 +272,17 @@
   .md-title { font:20px var(--serif); color:var(--cream); word-break:break-word; }
   .md-meta { font:10.5px var(--mono); letter-spacing:.06em; color:var(--dim); margin-top:7px; line-height:1.6; }
   .md-actions { display:flex; gap:9px; flex-wrap:wrap; margin-top:16px; }
+  /* in-detail model-load feedback (LM-Studio-style) — indeterminate bar + live phase.
+     Reuses existing tokens only. <!-- FABLE: style pass --> */
+  .md-load { max-width:420px; margin-top:14px; }
+  .md-loadbar { height:3px; background:var(--line); border-radius:2px; overflow:hidden; }
+  .md-loadfill { height:100%; width:38%; background:var(--gold); border-radius:2px;
+      animation: mdload 1.1s ease-in-out infinite; }
+  @keyframes mdload { 0% { margin-left:-38%; } 100% { margin-left:100%; } }
+  .md-loadphase { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+      color:var(--dim); margin-top:8px; }
+  .md-loaderr { font:10.5px var(--mono); letter-spacing:.05em; color:var(--bad);
+      margin-top:12px; max-width:420px; line-height:1.6; }
   .md-div { border-top:1px solid var(--line); margin:18px 0; }
   .md-path { font:10px var(--mono); color:var(--faint); word-break:break-all; line-height:1.7; }
   .md-sec { margin-top:14px; }
@@ -566,6 +577,8 @@ const logdlg = document.getElementById('logdlg');
 const palette = document.getElementById('palette');
 let lastStatus = null;
 let lastProv = {};      // previous provisioning snapshot (for transition detection)
+let statusFails = 0;    // consecutive /api/status misses — tolerate brief unreachability
+                        // during a switch/restart (item D) before declaring the bridge down
 let lastDegraded = {};  // previous degraded flags (for transition detection)
 let pollTimer = null;   // adaptive poll timer
 
@@ -579,10 +592,13 @@ function feed(tag, msg) {
 
 async function refresh(manual) {
   let s;
-  try { s = await (await fetch('/api/status')).json(); }
+  try { s = await (await fetch('/api/status')).json(); statusFails = 0; }
   catch {
-    document.getElementById('stamp').textContent = 'BRIDGE UNREACHABLE';
-    clearTimeout(pollTimer); pollTimer = setTimeout(refresh, 6000); return;
+    // A single miss is almost always a mid-switch blip (runner/fan-out restart briefly
+    // saturates uvicorn) — don't cry "unreachable" until it persists (item D).
+    statusFails++;
+    if (statusFails >= 3) document.getElementById('stamp').textContent = 'BRIDGE UNREACHABLE';
+    clearTimeout(pollTimer); pollTimer = setTimeout(refresh, statusFails >= 3 ? 6000 : 1500); return;
   }
   lastStatus = s;
   const prov = s.prov || {};
@@ -638,11 +654,23 @@ async function refresh(manual) {
              metric('Speed', `${a.avg_tps||0}<small> tok/s</small>`);
     if (a.cache_hit_pct != null) aTiles += metric('Cache hit', `${a.cache_hit_pct}<small> %</small>`);
   } catch {}
+  let vTile = '';
+  try {   // PART 4: local harness version + best-effort (usually private-repo → none) update notice
+    const ver = await (await fetch('/api/version')).json();
+    if (ver && ver.harness) {
+      let vv = esc(ver.harness);
+      // <!-- FABLE: style pass --> update line only appears if a public release is ever found
+      if (ver.update && ver.update.available && ver.update.url) {
+        vv += `<small> · <a href="${escAttr(ver.update.url)}" onclick="openExt(event,this.href)">Update available → ${esc(ver.update.latest||'')}</a></small>`;
+      }
+      vTile = metric('Version', vv);
+    }
+  } catch {}
   m.innerHTML =
     metric('Components running', `${running}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Installed', `${installed}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Disk free', `${s.disk.free_gb}<small> GB</small>`) +
-    metric('Bridge', 'Live') + aTiles;
+    metric('Bridge', 'Live') + aTiles + vTile;
   if (manual) feed('status', 'refreshed');
 
   renderSetup();      // §E: keep the checklist glyphs live if it's open
@@ -684,6 +712,11 @@ function cardHTML(name, c, isBridge, prov) {
     dot = 'bad'; state = 'Failed';
   } else if (c.degraded) {
     dot = 'bad'; state = 'Degraded';   // was started, health now failing (crashed)
+  } else if (name === 'runner' && !c.running && c.port_up) {
+    // ISSUE C: the runner process holds the port but no model is loaded yet → it is
+    // LOADING, not Online (green) and not Stopped. Keeps MC honest + agreeing with the
+    // Models pane, and avoids a false "green + model" while nothing is really loaded.
+    dot = 'warn'; state = 'Loading…';
   } else {
     dot = c.running ? 'ok' : c.installed ? 'warn' : '';
     state = c.running ? 'Online' : c.installed ? 'Stopped' : 'Not installed';
@@ -700,7 +733,9 @@ function cardHTML(name, c, isBridge, prov) {
     } else if (name === 'runner') {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
-        : `<button class="primary" onclick="startWithPlan('${name}')">Start</button>`;
+        : c.port_up
+          ? `<button disabled>Loading…</button>`
+          : `<button class="primary" onclick="startRunner()">Start</button>`;
     } else {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
@@ -736,6 +771,21 @@ async function planInstall(name) {
     if (r.ok) setTimeout(()=>{ dlg.close(); refresh(); }, 1000);
   };
   dlg.showModal();
+}
+
+async function startRunner() {
+  // ISSUE 2 state machine: the runner must NEVER auto-load a previously-ejected
+  // model. If no model is designated active, route the user to the Models pane to
+  // pick one (Load sets it live + starts the runner). Otherwise start as normal.
+  let active = null;
+  try { active = (await (await fetch('/api/models')).json()).active; } catch {}
+  if (!active) {
+    showView('models');
+    const st = document.getElementById('models-stamp');
+    if (st) st.textContent = 'NO MODEL LOADED — SELECT ONE BELOW, THEN “LOAD”';
+    return;
+  }
+  return startWithPlan('runner');
 }
 
 async function startWithPlan(name) {
@@ -1142,6 +1192,8 @@ async function doDelete(sid){
 
 /* ---------- models pane (M2 slice 1) ---------- */
 let modelsBusy = false;
+let switchingId = null;     // id of the model currently loading (drives the Loading… button)
+let switchErr = '';         // last load failure text, surfaced inline (no silent wedge)
 function fmtGB(b){ return b ? (b/1073741824).toFixed(1) + ' GB' : ''; }
 
 async function initModels(){
@@ -1168,11 +1220,17 @@ async function initModels(){
 let lastModels = null;      // last /api/models payload (for renderDetail refresh)
 let mSel = null;            // selection: {kind:'installed', id} | {kind:'hf', m}
 let browseView = false;     // false = library list, true = HF search/download
+let pendingSelectId = null; // ISSUE 4: select this model once it appears in the library
 
 function renderModels(r){
   lastModels = r;
   renderList(r);
   renderAux(r);
+  // ISSUE 4: a just-completed download should land selected in the library so its
+  // Load action is one click away. Honored only once the model is actually present.
+  if (pendingSelectId && (r.installed || []).some(m => m.id === pendingSelectId)){
+    mSel = { kind:'installed', id: pendingSelectId }; pendingSelectId = null;
+  }
   if (mSel && mSel.kind === 'installed' && !(r.installed || []).some(m => m.id === mSel.id)) mSel = null;
   if (!mSel && !browseView && (r.installed || []).length){
     const def = r.active && r.installed.find(m => m.id === r.active);
@@ -1180,6 +1238,14 @@ function renderModels(r){
   }
   renderDetail();
   markSelRows();
+}
+
+// Pure state-machine helper (Fable ISSUE 2) — unit-tested. isLive = runner up AND
+// this is the active model → Eject. Otherwise: some other model live → Switch;
+// nothing live → Load.
+function modelAction(isActive, runnerUp, anyLive){
+  if (isActive && runnerUp) return 'Eject';
+  return anyLive ? 'Switch' : 'Load';
 }
 
 function quantOf(id){
@@ -1206,10 +1272,12 @@ function renderList(r){
     return;
   }
   for (const m of r.installed){
-    const isActive = m.id === r.active;
+    // "live" = the model the RUNNER actually reports serving (ISSUE C), not merely the
+    // harness.yaml intent — so the pill matches MC and post-eject reality.
+    const isLive = m.id === r.live_id;
     const isAux = aux.model && m.id === aux.model;
     const row = document.createElement('div'); row.className = 'mrow'; row.dataset.mid = m.id;
-    row.innerHTML = modelRowHtml(m, isActive, isAux, r.runner_up);
+    row.innerHTML = modelRowHtml(m, isLive, isAux, r.runner_up);
     row.onclick = () => selectInstalled(m.id);
     col.appendChild(row);
   }
@@ -1249,8 +1317,9 @@ function renderDetail(){
     const r = lastModels || {};
     const m = (r.installed || []).find(x => x.id === mSel.id);
     if (!m){ d.innerHTML = '<div class="cs-empty">Select a model</div>'; return; }
-    const isActive = m.id === r.active;
+    const isLive = m.id === r.live_id;
     const isAux = r.aux && r.aux.model && m.id === r.aux.model;
+    const loadingThis = switchingId === m.id;
     const meta = [esc(m.id), esc(m.engine || ''), fmtGB(m.size_bytes),
                   (m.ctx ? (m.ctx.toLocaleString() + ' ctx') : ''), esc(m.source || '')]
                  .filter(Boolean).join(' · ');
@@ -1260,16 +1329,36 @@ function renderDetail(){
       <div class="md-div"></div>
       <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
     const acts = d.querySelector('#md-actions');
+    // Fable ISSUE 2 state machine: "live" = the model the RUNNER reports (ISSUE C).
+    // No model live → every action is Load; one live → it = Eject, others = Switch.
+    const anyLive = !!r.live_id;
+    const label = modelAction(isLive, !!r.runner_up, anyLive);
     const primary = document.createElement('button'); primary.className = 'primary';
-    if (isActive && r.runner_up){ primary.textContent = 'Eject'; primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
-    else if (isActive){ primary.textContent = 'Load'; primary.onclick = () => switchModel(m.id, m.name || m.id); }
-    else { primary.textContent = 'Switch'; primary.onclick = () => switchModel(m.id, m.name || m.id); }
+    if (loadingThis){
+      // ISSUE B: a load/switch is in flight for THIS model — disable + show Loading…
+      // so repeat clicks are no-ops and the user sees progress (bar + live phase below).
+      primary.textContent = 'Loading…'; primary.disabled = true;
+    } else {
+      primary.textContent = label;
+      if (label === 'Eject'){ primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
+      else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
+    }
     acts.appendChild(primary);
     const auxBtn = document.createElement('button');
     if (isAux){ auxBtn.textContent = 'Aux ✓'; auxBtn.disabled = true; }
     else { auxBtn.textContent = 'Set aux'; auxBtn.title = 'Use for background tasks (titles, search queries)';
+           auxBtn.disabled = !!switchingId;   // no aux fiddling while a load is in flight
            auxBtn.onclick = () => auxSet(m.id); }
     acts.appendChild(auxBtn);
+    if (loadingThis){
+      const load = document.createElement('div'); load.className = 'md-load';
+      load.innerHTML = '<div class="md-loadbar"><div class="md-loadfill"></div></div>'
+                     + '<div class="md-loadphase" id="md-load-phase">loading into memory…</div>';
+      acts.insertAdjacentElement('afterend', load);
+    } else if (switchErr && mSel.id === m.id){
+      const e = document.createElement('div'); e.className = 'md-loaderr'; e.textContent = switchErr;
+      acts.insertAdjacentElement('afterend', e);
+    }
   } else {
     const m = mSel.m;
     d.innerHTML = `<div class="md-title">${esc(m.repo)}</div>
@@ -1297,6 +1386,9 @@ function toggleBrowse(){
   document.getElementById('models-toggle').textContent = browseView ? '← LIBRARY' : 'SEARCH / DOWNLOAD ⌄';
   if (!browseView){ mSel = null; renderModels(lastModels || {}); }
   else { mSel = null; renderDetail(); document.getElementById('mb-q').focus(); }
+  // #downloads-sec is a shared sibling of #models-main → visible in BOTH sub-views;
+  // re-render so an in-flight download stays visible when toggling library⇄browse.
+  refreshDownloads();
 }
 
 async function cancelSwitch(){
@@ -1309,10 +1401,13 @@ async function cancelSwitch(){
 
 async function ejectModel(){
   if (modelsBusy) return; modelsBusy = true;
+  switchingId = null; switchErr = '';
   const st = document.getElementById('models-stamp');
   st.textContent = 'EJECTING — FREEING MEMORY…';
   const cn = document.getElementById('chat-note'); if (cn) cn.textContent = 'model ejected — load one from Models';
-  try { await fetch('/api/components/runner/stop', {method:'POST'}); } catch {}
+  // /api/models/eject stops the runner AND clears the active model (ISSUE 2) so a
+  // later Start won't silently resurrect it. (Not /components/runner/stop, which kept it.)
+  try { await fetch('/api/models/eject', {method:'POST'}); } catch {}
   modelsBusy = false; initModels(); loadChatModels();
 }
 
@@ -1408,27 +1503,45 @@ function fitPill(bytes){
 async function renderHfFiles(repo, box){
   if (!box) return;
   box.innerHTML = '<div class="cs-empty">Loading files…</div>';
+  let d;
   try {
-    const d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
-    if (d.error || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }
-    box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into the harness’s own models dir.</div>';
-    if (d.kind === 'mlx'){
-      // MLX repo = one model split across .safetensors → single fit on the summed size.
-      const head = document.createElement('div'); head.className = 'hffile';
-      head.innerHTML = `${fitPill(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span>`;
-      box.appendChild(head);
-      const note = document.createElement('div'); note.className = 'cs-empty';
-      note.textContent = 'MLX models download automatically when loaded (engine-managed).';
-      box.appendChild(note);
-    }
+    d = await (await fetch('/api/models/hf/files?repo=' + encodeURIComponent(repo))).json();
+  } catch (err) {
+    // Show WHY (bridge down / network) instead of a vague "Failed to load files".
+    box.innerHTML = '<div class="cs-empty">Could not reach the bridge to list files.</div>'; return;
+  }
+  if (d && d.error){ box.innerHTML = '<div class="cs-empty">HF error: ' + esc(d.error) + '</div>'; return; }
+  if (!d || !(d.files || []).length){ box.innerHTML = '<div class="cs-empty">No weight files listed.</div>'; return; }
+  if (d.kind === 'mlx'){
+    // MLX repo = one model across .safetensors + config/tokenizer → fetched as a
+    // whole via the download manager (same UI as GGUF). One repo-level Get.
+    box.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'hffile';
+    head.innerHTML = `${fitPill(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span> `
+      + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '')">Get</button>`;
+    box.appendChild(head);
+    // Also route the detail-panel primary button through the download manager
+    // (the old switch path rejects "/" HF ids). <!-- FABLE: style/label pass -->
+    const pb = document.querySelector('#md-actions .primary');
+    if (pb){ pb.textContent = 'Get (download all)';
+             pb.title = 'Download every repo file via the download manager';
+             pb.onclick = () => { dlStart(repo, ''); pb.disabled = true;
+                                  pb.textContent = 'Downloading — status below ↓'; }; }
     for (const f of d.files){
       const line = document.createElement('div'); line.className = 'hffile';
-      line.innerHTML = d.kind === 'mlx'
-        ? `<span style="color:var(--faint)">${esc(f.filename)} · ${fmtGB(f.size_bytes)}</span>`
-        : `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span> <button class="hfget" onclick="dlStart('${escAttr(repo)}', '${escAttr(f.filename)}')">Get</button>`;
+      line.innerHTML = `<span style="color:var(--faint)">${esc(f.filename)} · ${fmtGB(f.size_bytes)}</span>`;
       box.appendChild(line);
     }
-  } catch { box.innerHTML = '<div class="cs-empty">Failed to load files.</div>'; }
+    return;
+  }
+  // GGUF: per-file Get (pick the exact quant).
+  box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into the harness’s own models dir.</div>';
+  for (const f of d.files){
+    const line = document.createElement('div'); line.className = 'hffile';
+    line.innerHTML = `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span> `
+      + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '${escAttr(f.filename)}')">Get</button>`;
+    box.appendChild(line);
+  }
 }
 
 // Two-step (WKWebView has no confirm()): first click arms, second within 3s downloads.
@@ -1445,29 +1558,47 @@ function hfDownload(repo, btn){
   _dlArm = { repo, btn, t: setTimeout(() => { btn.textContent = 'Download & Load'; _dlArm = null; }, 3000) };
 }
 
+// Load AND Switch share ONE pipeline (Fable A): both call this → /api/models/switch →
+// the background _do_switch (busy-lock + exit-code checks + harness.yaml rollback +
+// switch-status poll). Load is just "switch when nothing is live" — identical machinery.
 async function switchModel(id, name){
-  if (modelsBusy) return;
+  if (modelsBusy) return;              // repeat clicks are no-ops while one is in flight
   modelsBusy = true;
+  switchingId = id; switchErr = '';
+  renderDetail();                      // flip the clicked model's button to Loading… at once (ISSUE B)
   const stamp = document.getElementById('models-stamp');
-  stamp.textContent = 'SWITCHING → ' + (name || id) + ' (model load ~60–90s)…';
+  stamp.textContent = 'LOADING → ' + (name || id) + ' (model load ~60–90s)…';
+  const fail = (msg) => {
+    switchingId = null; switchErr = msg; modelsBusy = false;
+    stamp.textContent = 'LOAD FAILED — ' + msg;
+    const sr = document.getElementById('sw-row'); if (sr) sr.hidden = true;
+    renderDetail();                    // re-enable the button + surface the error inline (no silent wedge)
+  };
   try {
     const r = await (await fetch('/api/models/switch', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})})).json();
-    if (!r.ok){ stamp.textContent = 'SWITCH FAILED — ' + (r.log || ''); modelsBusy = false; return; }
+    if (!r.ok){ fail(r.log || 'the bridge rejected the load'); return; }
     const poll = setInterval(async () => {
       try {
         const s = await (await fetch('/api/models/switch-status')).json();
-        stamp.textContent = (s.log || 'switching…').toUpperCase();
-        const cn = document.getElementById('chat-note');
-        if (cn) cn.textContent = s.log || 'switching…';
+        const phase = s.log || 'loading…';
+        stamp.textContent = phase.toUpperCase();
+        const cn = document.getElementById('chat-note'); if (cn) cn.textContent = phase;
+        const ph = document.getElementById('md-load-phase'); if (ph) ph.textContent = phase;
         // one-line in-flight readout + Cancel (downloads live in the download manager)
         const sr = document.getElementById('sw-row'), sn = document.getElementById('sw-note');
-        sr.hidden = !s.busy;
-        if (s.busy) sn.textContent = s.log || 'switching…';
-        if (!s.busy){ clearInterval(poll); modelsBusy = false; initModels(); loadChatModels(); }
-      } catch {}
+        if (sr) sr.hidden = !s.busy;
+        if (s.busy && sn) sn.textContent = phase;
+        if (!s.busy){
+          clearInterval(poll); modelsBusy = false; switchingId = null;
+          // _do_switch's log flips to "active: …" on success, "FAILED …"/"error"/"but …
+          // FAILED" on failure — reflect a failure inline instead of a silent wedge.
+          if (/failed|error/i.test(phase)) switchErr = phase; else switchErr = '';
+          initModels(); loadChatModels();
+        }
+      } catch { /* transient bridge blip mid-switch (item D) — keep polling, don't wedge */ }
     }, 2000);
-  } catch { stamp.textContent = 'SWITCH ERROR'; modelsBusy = false; }
+  } catch { fail('could not reach the bridge'); }
 }
 
 // ── Download manager (Bridge-owned per-file downloads) ──
@@ -1479,8 +1610,16 @@ async function dlStart(repo, filename){
   try {
     const r = await fetch('/api/dl/start', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({repo, filename})});
+    const j = await r.json().catch(() => ({}));
     if (r.ok){ refreshDownloads(); ensureDlPoll(); }
-  } catch {}
+    else {
+      const st = document.getElementById('models-stamp');
+      if (st) st.textContent = 'DOWNLOAD FAILED — ' + ((j && j.log) || 'unknown error');
+    }
+  } catch {
+    const st = document.getElementById('models-stamp');
+    if (st) st.textContent = 'DOWNLOAD FAILED — could not reach the bridge';
+  }
 }
 
 function ensureDlPoll(){ if (!dlPoll) dlPoll = setInterval(refreshDownloads, 2000); }
@@ -1503,14 +1642,25 @@ async function refreshDownloads(){
     return;
   }
   sec.hidden = false;
-  let anyDownloading = false, newDone = false;
+  // ISSUE 1: while a download is in flight, hoist the Downloads section directly under
+  // the pane header (above the model list) so it's visible without scrolling; when
+  // nothing is active, return it to its resting place at the bottom. Placement only.
+  // <!-- FABLE: style pass -->
+  const main = document.getElementById('models-main');
+  const auxEl = document.getElementById('models-aux');
+  const anyActive = visible.some(e => e.state === 'downloading' || e.state === 'paused');
+  if (main && main.parentNode){
+    if (anyActive && sec.nextSibling !== main) main.parentNode.insertBefore(sec, main);
+    else if (!anyActive && auxEl && sec.nextSibling !== auxEl) main.parentNode.insertBefore(sec, auxEl);
+  }
+  let anyDownloading = false, newDone = false, doneModelId = null;
   box.innerHTML = '';
   for (const e of visible){
     const total = (e.files || []).reduce((a, f) => a + (f.total || 0), 0);
     const done  = (e.files || []).reduce((a, f) => a + (f.done  || 0), 0);
     const pct = total > 0 ? Math.min(100, done / total * 100) : 5;
     if (e.state === 'downloading') anyDownloading = true;
-    if (e.state === 'done' && !dlSeenDone.has(e.id)){ dlSeenDone.add(e.id); newDone = true; }
+    if (e.state === 'done' && !dlSeenDone.has(e.id)){ dlSeenDone.add(e.id); newDone = true; doneModelId = e.model_id; }
 
     let meta;
     if (e.state === 'downloading')
@@ -1539,7 +1689,16 @@ async function refreshDownloads(){
     box.appendChild(row);
   }
   if (anyDownloading) ensureDlPoll();
-  if (newDone) initModels();
+  if (newDone){
+    // ISSUE 4: surface the finished model in the library, selected + ready to Load.
+    // Flip out of the HF browse view (if in it) so the new library row is visible,
+    // queue its selection, then refresh the library from the registry.
+    if (doneModelId){
+      if (browseView) toggleBrowse();
+      pendingSelectId = doneModelId;
+    }
+    initModels();
+  }
 }
 
 function dlDismiss(id){ dlDismissed.add(id); refreshDownloads(); }

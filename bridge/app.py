@@ -172,6 +172,50 @@ def _runner_engine(rc: dict) -> str:
     return "llama.cpp"
 
 
+# ── Single source of truth for "live" (Fable ISSUE C) ────────────────────────
+# harness.yaml's runner.model records INTENT, not reality — which is why MC could
+# show a runner "green + model" while nothing was actually loaded. The authoritative
+# signal is the runner ITSELF: ask what it is serving (GET :port/v1/models). Both
+# MC (/api/status) and the Models pane (/api/models) key off this so they agree.
+def _runner_loaded_id(port: int) -> "str | None":
+    """Probe the runner for the model it is actually serving. Returns the loaded
+    model id, or None if the runner is down / has nothing loaded. Short timeout;
+    /v1/models needs no api-key on llama-server or the loopback MLX servers."""
+    import json as _json
+    from urllib.request import urlopen
+    try:
+        with urlopen(f"http://127.0.0.1:{int(port)}/v1/models", timeout=0.8) as resp:
+            data = _json.loads(resp.read().decode() or "{}").get("data") or []
+        return (data[0].get("id") or None) if data else None
+    except Exception:
+        return None
+
+
+def _reconcile_live(probed: "str | None", registry_ids: set, intent_model: "str | None") -> "str | None":
+    """Pure (unit-tested) reconciliation of the runner probe against our registry.
+      probed None            → nothing is loaded → nothing is live (None).
+      probed in registry_ids → exact truth (llama.cpp launches with --alias <our id>).
+      otherwise              → the runner reports a path/dir alias we can't map (MLX
+                               servers report the model path) → fall back to the
+                               model we intended to launch (harness.yaml runner.model)."""
+    if not probed:
+        return None
+    if probed in registry_ids:
+        return probed
+    return intent_model or probed
+
+
+def _live_model_id(port: int) -> "str | None":
+    """Authoritative live id: probe the runner, reconcile against the registry +
+    harness.yaml intent. None ⇒ nothing loaded (single source of truth for 'live')."""
+    probed = _runner_loaded_id(port)
+    if not probed:
+        return None
+    ids = {m.get("id") for m in _registry_models()}
+    intent = (cfg().get("runner", {}) or {}).get("model") or None
+    return _reconcile_live(probed, ids, intent)
+
+
 @app.get("/api/status")
 async def status() -> dict:
     import shutil
@@ -196,12 +240,21 @@ async def status() -> dict:
     rc = c.get("runner")
     if rc:
         rport = rc.get("port")
-        rrunning = await _port_alive(int(rport)) if rport else False
+        # Probe the runner off the event loop (item D: no blocking on the async loop).
+        # `running` (green) now means a model is ACTUALLY loaded, not merely that the
+        # port answers — so MC can never show green while nothing is loaded (ISSUE C).
+        port_up = await _port_alive(int(rport)) if rport else False
+        live_id = (await asyncio.to_thread(_live_model_id, int(rport))) if rport else None
+        loaded = bool(live_id)
         out["components"]["runner"] = {
             "installed": True,
-            "pin": str(rc.get("model") or rc.get("adapter") or "auto"),
-            "running": rrunning,
-            "degraded": _expected_path("runner").exists() and not rrunning,
+            "pin": str(live_id or rc.get("model") or rc.get("adapter") or "auto"),
+            "running": loaded,
+            "loaded": loaded,
+            "port_up": port_up,          # process holds the port but may still be loading
+            # degraded = the process actually died (not merely mid-load): expected-up
+            # AND the port is gone. A live port with no model yet = "loading", not degraded.
+            "degraded": _expected_path("runner").exists() and not port_up,
             "port": rport,
             "kind": "runner",
             "engine": _runner_engine(rc),
@@ -548,6 +601,86 @@ def api_analytics() -> JSONResponse:
     return JSONResponse(out)
 
 
+# --- Version / update notice (PART 4) -------------------------------------------
+# NOTICE ONLY: shows the local harness version + component pins, and best-effort
+# checks GitHub for a newer new-harness release. NO auto-download / auto-apply /
+# git ops — updates happen via the CLAUDE.md pin+bump discipline only.
+#
+# HONESTY NOTE: github.com/Debkbas/new-harness is a PRIVATE repo, so the
+# unauthenticated GitHub API call below will almost always 404. We deliberately do
+# NOT bundle or require any token. In practice `update.available` will be false /
+# "unavailable" — that's expected. The tile's real job is to SHOW the version.
+# It only surfaces an "Update available" line if the repo is ever made public and
+# a release tag newer than the local version exists.
+
+def _assemble_update(local_version, gh_result):
+    """Pure helper (unit-testable, no network): build the `update` dict.
+
+    gh_result is either a dict parsed from the GitHub releases/latest response,
+    or None (404 / timeout / error / no network)."""
+    if not gh_result or not gh_result.get("tag_name"):
+        return {"available": False, "latest": None, "note": "unavailable"}
+    latest = str(gh_result.get("tag_name") or "")
+    url = gh_result.get("html_url") or ""
+    local_norm = str(local_version or "").lstrip("vV")
+    latest_norm = latest.lstrip("vV")
+    # Simple, conservative comparison: "available" only when the tags differ AND
+    # the latest sorts after the local one (tuple-compare numeric dotted parts;
+    # fall back to a plain string inequality if either isn't cleanly numeric).
+    def _parts(s):
+        try:
+            return tuple(int(x) for x in s.split(".") if x != "")
+        except Exception:
+            return None
+    lp, rp = _parts(local_norm), _parts(latest_norm)
+    if lp is not None and rp is not None:
+        available = rp > lp
+    else:
+        available = latest_norm != local_norm
+    return {"available": available, "latest": latest, "url": url}
+
+
+def _fetch_latest_release():
+    """Best-effort, blocking (run via asyncio.to_thread). Returns the parsed JSON
+    dict on success, or None on any 404 / timeout / error / no network."""
+    try:
+        from urllib.request import Request, urlopen
+        import json as _json
+        req = Request(
+            "https://api.github.com/repos/Debkbas/new-harness/releases/latest",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "harness-bridge"},
+        )
+        with urlopen(req, timeout=3) as resp:   # NO auth by design (private repo → 404)
+            return _json.loads(resp.read().decode("utf-8", "ignore"))
+    except Exception:
+        return None
+
+
+@app.get("/api/version")
+async def api_version() -> JSONResponse:
+    """Local versions instantly + a best-effort update check. Never raises."""
+    out = {"harness": None, "hermes": None, "odysseus": None,
+           "searxng": None, "update": {"available": False, "latest": None, "note": "unavailable"}}
+    local_version = None
+    try:
+        c = cfg()
+        local_version = c.get("version")
+        comps = c.get("components", {}) or {}
+        out["harness"] = local_version
+        out["hermes"] = (comps.get("hermes") or {}).get("pin")
+        out["odysseus"] = (comps.get("odysseus") or {}).get("pin")
+        out["searxng"] = (comps.get("searxng") or {}).get("pin")
+    except Exception:
+        pass  # still return whatever we have; the version check must never crash
+    try:
+        gh = await asyncio.to_thread(_fetch_latest_release)   # off the event loop, 3s cap
+        out["update"] = _assemble_update(local_version, gh)
+    except Exception:
+        pass  # keep the default "unavailable" update dict
+    return JSONResponse(out)
+
+
 @app.post("/api/ody/chat")
 async def ody_chat(req: Request) -> StreamingResponse:
     """Stream a chat turn: re-emit Odysseus's SSE (delta / tool events / [DONE]) to the panel."""
@@ -695,13 +828,17 @@ def api_models() -> JSONResponse:
     except Exception as e:
         err = str(e)[:200]
     port = rc.get("port")
+    # Authoritative "live" = what the runner is ACTUALLY serving (ISSUE C), not just
+    # "runner.model is set + port answers". runner_up is now gated on a real load, so
+    # the Models pane and MC agree; live_id names the loaded model for the "live" pill.
+    live_id = _live_model_id(int(port)) if port else None
     ax = c.get("aux", {}) or {}
     aux = {"model": ax.get("model") or "", "port": ax.get("port"),
            "up": _port_alive_sync(int(ax["port"])) if ax.get("port") else False}
     ledger = {"used_bytes": _loaded_models_bytes(), "budget_bytes": _budget_bytes()}
     return JSONResponse({
         "installed": installed, "active": rc.get("model"),
-        "runner_up": _port_alive_sync(int(port)) if port else False,
+        "runner_up": bool(live_id), "live_id": live_id,
         "aux": aux, "adapter": adapter, "ledger": ledger, "error": err})
 
 
@@ -773,6 +910,25 @@ async def api_switch_model(req: Request) -> JSONResponse:
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
+
+
+@app.post("/api/models/eject")
+def api_eject_model() -> JSONResponse:
+    """Eject the live model (Fable ISSUE 2 state machine): stop the runner by PORT
+    AND clear the active-model designation (runner.model → empty) so a later Start
+    does NOT silently resurrect the just-ejected model. Going live again requires an
+    explicit Load from the Models pane. Frees the main slot's RAM in the ledger."""
+    rc = cfg().get("runner", {}) or {}
+    port = rc.get("port")
+    if port:
+        # legacy jan-supervisor sweep (harmless no-op post-Jan) + kill whatever holds the port
+        subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
+        subprocess.run(f"lsof -ti tcp:{int(port)} | xargs kill -9", shell=True, check=False)
+    (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
+    _clear_expected("runner")     # intentional → "stopped", not "degraded"
+    PROV.pop("runner", None)
+    _set_runner_model("")         # no active model — Start must route the user to pick
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/models/switch-status")
@@ -935,7 +1091,7 @@ async def hf_files(repo: str) -> JSONResponse:
     else MLX (.safetensors) → the whole repo is one model (summed size)."""
     try:
         meta = await _HF.get(f"/api/models/{repo}")
-        tree = await _HF.get(f"/api/models/{repo}/tree/main")
+        tree = await _HF.get(f"/api/models/{repo}/tree/main", params={"recursive": "true"})
         gguf, mlx = [], []
         if tree.status_code == 200:
             for it in tree.json():
@@ -1029,6 +1185,48 @@ def _registry_add(entry: dict) -> None:
     _os.replace(tmp, reg)
 
 
+def _mlx_registry_entry(e: dict) -> dict:
+    """Build the source="download" registry entry for a completed MLX download.
+    path = the model DIR; size = summed .safetensors bytes; vision read from the
+    now-present config.json (vision_config or image_token_id). Pure/testable."""
+    import os as _os, json as _json
+    model_dir = e.get("model_dir") or _os.path.dirname(e["files"][0]["dest"])
+    size = sum((f["total"] or (_os.path.getsize(f["dest"])
+                               if _os.path.exists(f["dest"]) else 0))
+               for f in e["files"] if f["dest"].lower().endswith(".safetensors"))
+    vision = False
+    try:
+        cfgp = _os.path.join(model_dir, "config.json")
+        if _os.path.isfile(cfgp):
+            cj = _json.loads(open(cfgp).read())
+            vision = ("vision_config" in cj) or ("image_token_id" in cj)
+    except Exception:
+        vision = False
+    return {"id": e["model_id"], "name": e["model_id"], "format": "mlx",
+            "path": model_dir, "mmproj": None, "size_bytes": size,
+            "ctx": None, "source": "download", "vision": vision}
+
+
+def _gguf_registry_entry(e: dict) -> dict:
+    """Build the source="download" registry entry for a completed GGUF download.
+    path = the primary .gguf (files[0] = part-1 for split models — llama-server
+    auto-loads the sibling parts); size = summed non-mmproj bytes; a lone mmproj
+    sibling → vision. Pure/testable (mirrors _mlx_registry_entry) so the
+    completion→library path can be unit-checked without the network."""
+    import os as _os
+    main_dest = e["files"][0]["dest"]
+    mmproj_dest, nonmm = None, 0
+    for f in e["files"]:
+        if "mmproj" in _os.path.basename(f["dest"]).lower():
+            mmproj_dest = f["dest"]
+        else:
+            nonmm += f["total"] or (_os.path.getsize(f["dest"])
+                                    if _os.path.exists(f["dest"]) else 0)
+    return {"id": e["model_id"], "name": e["model_id"], "format": "gguf",
+            "path": main_dest, "mmproj": mmproj_dest, "size_bytes": nonmm,
+            "ctx": None, "source": "download", "vision": bool(mmproj_dest)}
+
+
 def _dl_json(e: dict) -> dict:
     """JSON-safe view of a DOWNLOADS entry (drops the asyncio Task)."""
     return {k: v for k, v in e.items() if k != "task"}
@@ -1088,8 +1286,14 @@ async def _run_download(dl_id: str) -> None:
                 mode = "ab" if (existing > 0 and resp.status_code == 206) else "wb"
                 if mode == "wb":
                     f["done"] = last_done = 0
+                # 1 MB read buffer (was 64 KB). Bigger chunks cut per-chunk Python
+                # overhead on multi-GB weights; no per-chunk flush/fsync (the OS page
+                # cache batches writes) — ISSUE 3 local perf. The observed ~1.4 MB/s
+                # average vs a 59 MB/s peak is HF-CDN-side throttling, not this loop
+                # (a 64 KB loop already sustains >>100 MB/s locally). ⚠️ unmeasurable
+                # in-sandbox (no network) — the safe local improvements are applied.
                 with open(part, mode) as out:
-                    async for chunk in resp.aiter_bytes(1 << 16):
+                    async for chunk in resp.aiter_bytes(1 << 20):
                         st = e["state"]
                         if st == "paused":
                             return                     # keep .part; resume re-streams
@@ -1110,55 +1314,120 @@ async def _run_download(dl_id: str) -> None:
             _dl_cleanup(e)
             return
         # All files complete → register the model.
-        main_dest = e["files"][0]["dest"]
-        mmproj_dest, nonmm = None, 0
-        for f in e["files"]:
-            if "mmproj" in _os.path.basename(f["dest"]).lower():
-                mmproj_dest = f["dest"]
-            else:
-                nonmm += f["total"] or (_os.path.getsize(f["dest"])
-                                        if _os.path.exists(f["dest"]) else 0)
-        _registry_add({
-            "id": e["model_id"], "name": e["model_id"], "format": "gguf",
-            "path": main_dest, "mmproj": mmproj_dest, "size_bytes": nonmm,
-            "ctx": None, "source": "download", "vision": bool(mmproj_dest)})
+        if e.get("kind") == "mlx":
+            _registry_add(_mlx_registry_entry(e))
+            e["state"] = "done"
+            return
+        _registry_add(_gguf_registry_entry(e))
         e["state"] = "done"
     except Exception as ex:
         e["state"] = "error"
         e["error"] = str(ex)[:300]
 
 
+def _mlx_repo_files(tree: list) -> list:
+    """From an HF tree, return [(relpath, size)] for the files an MLX model needs:
+    every *.safetensors weight/split, plus config.json/tokenizer*/*.json metadata.
+    (config.json is covered by *.json; tokenizer.model — sentencepiece, no .json —
+    by the tokenizer* prefix.)"""
+    import os as _os
+    out = []
+    for it in tree:
+        p = it.get("path", "")
+        low = p.lower()
+        b = _os.path.basename(p).lower()
+        if (low.endswith(".safetensors") or b.startswith("tokenizer")
+                or low.endswith(".json")):
+            out.append((p, it.get("size") or 0))
+    return out
+
+
+def _mk_download(repo: str, files: list, model_id: str, kind: str,
+                 model_dir=None) -> dict:
+    """Register a new DOWNLOADS entry + spawn its task. `files` = the
+    _run_download file-dict list already built by the caller."""
+    _DL_SEQ["n"] += 1
+    dl_id = str(_DL_SEQ["n"])
+    entry = {"id": dl_id, "repo": repo, "files": files, "state": "downloading",
+             "error": None, "rate": 0.0, "model_id": model_id, "kind": kind,
+             "model_dir": model_dir, "task": None}
+    DOWNLOADS[dl_id] = entry
+    entry["task"] = asyncio.create_task(_run_download(dl_id))
+    return entry
+
+
+def _dl_inflight(model_id: str):
+    """Return an in-flight (downloading/paused) DOWNLOADS entry for model_id, or None
+    — the duplicate-start guard (two Gets → two tasks on one .part → corruption)."""
+    for other in DOWNLOADS.values():
+        if other.get("model_id") == model_id and other.get("state") in ("downloading", "paused"):
+            return other
+    return None
+
+
 @app.post("/api/dl/start")
 async def dl_start(req: Request) -> JSONResponse:
+    """Unified acquisition for BOTH formats (Fable PART 0):
+      • filename = "<x>.gguf"  → GGUF single-file (split-aware, + lone mmproj sibling).
+      • filename = ""          → whole-MLX-repo mode: enqueue every model file into
+                                  data/models/<repo-leaf>/ via the same machinery."""
     import os as _os
     body = await req.json()
     repo = (body.get("repo") or "").strip()
     filename = (body.get("filename") or "").strip()
-    if not repo or not filename:
-        return JSONResponse({"ok": False, "log": "repo and filename required"}, status_code=400)
+    if not repo:
+        return JSONResponse({"ok": False, "log": "repo required"}, status_code=400)
+    # One tree fetch feeds both modes. recursive=true so nested files are seen.
+    tree = []
+    try:
+        r = await _HF.get(f"/api/models/{repo}/tree/main", params={"recursive": "true"})
+        if r.status_code == 200:
+            tree = r.json()
+    except Exception:
+        tree = []
+
+    if filename == "":
+        # ── Whole-MLX-repo mode ──────────────────────────────────────────────
+        paths = [it.get("path", "") for it in tree]
+        has_gguf = any(p.lower().endswith(".gguf") for p in paths)
+        has_st = any(p.lower().endswith(".safetensors") for p in paths)
+        has_cfg = any(_os.path.basename(p) == "config.json" for p in paths)
+        if has_gguf or not (has_st and has_cfg):
+            return JSONResponse(
+                {"ok": False, "log": "empty filename = MLX-repo mode, but this repo is "
+                 "not an MLX model (needs *.safetensors + config.json, no *.gguf) — "
+                 "pick a specific .gguf file instead"}, status_code=400)
+        model_id = repo.split("/")[-1]
+        dup = _dl_inflight(model_id)
+        if dup:
+            return JSONResponse(_dl_json(dup))
+        dest_dir = ROOT / "data" / "models" / _safe_dir(model_id)
+        files = []
+        for relpath, size in _mlx_repo_files(tree):
+            dest = str(dest_dir / relpath)      # preserve relative layout (usually flat)
+            part = dest + ".part"
+            done = _os.path.getsize(part) if _os.path.exists(part) else 0
+            files.append({"name": relpath, "url": f"/{repo}/resolve/main/{relpath}",
+                          "dest": dest, "total": int(size), "done": done})
+        entry = _mk_download(repo, files, model_id, "mlx", model_dir=str(dest_dir))
+        return JSONResponse(_dl_json(entry))
+
+    # ── GGUF single-file (existing behavior) ─────────────────────────────────
     model_id = _model_id_from_filename(filename)
-    # Duplicate-start guard (Fable QA): a second Get on the same model while one is
-    # in flight would spawn two tasks appending to the same .part → corruption.
-    for other in DOWNLOADS.values():
-        if other.get("model_id") == model_id and other.get("state") in ("downloading", "paused"):
-            return JSONResponse(_dl_json(other))
+    dup = _dl_inflight(model_id)
+    if dup:
+        return JSONResponse(_dl_json(dup))
     file_names = _split_files(filename)
     # Look up sizes + a single mmproj sibling from the repo tree.
     sizes, mmproj_name = {}, None
-    try:
-        r = await _HF.get(f"/api/models/{repo}/tree/main")
-        if r.status_code == 200:
-            tree = r.json()
-            for it in tree:
-                p = it.get("path", "")
-                sizes[_os.path.basename(p)] = it.get("size") or 0
-            mmprojs = [it.get("path", "") for it in tree
-                       if "mmproj" in _os.path.basename(it.get("path", "")).lower()
-                       and it.get("path", "").lower().endswith(".gguf")]
-            if len(mmprojs) == 1:
-                mmproj_name = mmprojs[0]
-    except Exception:
-        pass
+    for it in tree:
+        p = it.get("path", "")
+        sizes[_os.path.basename(p)] = it.get("size") or 0
+    mmprojs = [it.get("path", "") for it in tree
+               if "mmproj" in _os.path.basename(it.get("path", "")).lower()
+               and it.get("path", "").lower().endswith(".gguf")]
+    if len(mmprojs) == 1:
+        mmproj_name = mmprojs[0]
     if mmproj_name and mmproj_name not in file_names:
         file_names.append(mmproj_name)
     dest_dir = ROOT / "data" / "models" / _safe_dir(model_id)
@@ -1170,12 +1439,7 @@ async def dl_start(req: Request) -> JSONResponse:
         done = _os.path.getsize(part) if _os.path.exists(part) else 0
         files.append({"name": name, "url": f"/{repo}/resolve/main/{name}",
                       "dest": dest, "total": int(sizes.get(base, 0)), "done": done})
-    _DL_SEQ["n"] += 1
-    dl_id = str(_DL_SEQ["n"])
-    entry = {"id": dl_id, "repo": repo, "files": files, "state": "downloading",
-             "error": None, "rate": 0.0, "model_id": model_id, "task": None}
-    DOWNLOADS[dl_id] = entry
-    entry["task"] = asyncio.create_task(_run_download(dl_id))
+    entry = _mk_download(repo, files, model_id, "gguf")
     return JSONResponse(_dl_json(entry))
 
 

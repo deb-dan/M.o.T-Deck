@@ -114,11 +114,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Dev builds bake a valid harnessRoot → this whole path is dormant. Portable builds
     // have no valid baked root → resolve to ~/Harness, self-installing on first launch.
     func homeHarness() -> String { NSHomeDirectory() + "/Harness" }
+    // §G-phase3 fat build: the runtime root lives in Application Support (the app installs
+    // there on first run rather than into a repo checkout).
+    func appSupportHarness() -> String {
+        NSHomeDirectory() + "/Library/Application Support/Harness"
+    }
     func rootIsProvisioned(_ root: String) -> Bool {
         FileManager.default.fileExists(atPath: root + "/bridge/app.py")
     }
+    // Fat first-run writes .provisioned only after all venvs build, so a half-extracted
+    // seed (bridge/app.py present but venvs missing) still re-provisions.
+    func fatProvisioned(_ root: String) -> Bool {
+        FileManager.default.fileExists(atPath: root + "/.provisioned")
+    }
 
     func beginLaunch() {
+        // Fat/offline build: dedicated Application Support root + offline provisioner.
+        // Dev/thin/portable builds (fatBuild == false) fall through unchanged.
+        if fatBuild {
+            let dest = appSupportHarness()
+            if fatProvisioned(dest) { resolvedRoot = dest; ensureBridgeThenLoad(attempt: 0) }
+            else { runFirstRunFat() }
+            return
+        }
         if rootIsProvisioned(harnessRoot) { resolvedRoot = harnessRoot; ensureBridgeThenLoad(attempt: 0); return }
         let dest = homeHarness()
         if rootIsProvisioned(dest) { resolvedRoot = dest; ensureBridgeThenLoad(attempt: 0); return }
@@ -196,6 +214,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             else {
                 self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
                     "See <code>~/Harness/data/logs/firstrun.log</code>. Common causes: Homebrew or Xcode Command Line Tools missing, or no internet. Fix, then reopen Harness.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
+            }
+        }
+    }
+
+    // ── §G-phase3 fat/offline first-run ──
+    // Consent → run the bundled offline provisioner (no network/npm/brew needed) → on success
+    // load the panel where §E starts each component. Dormant unless fatBuild (dev unchanged).
+    func runFirstRunFat() {
+        let res = Bundle.main.resourcePath ?? ""
+        let seed = res + "/harness-seed-fat.tar.gz"
+        let script = res + "/firstrun_fat.sh"
+        if !FileManager.default.fileExists(atPath: seed) || !FileManager.default.fileExists(atPath: script) {
+            panelWV.loadHTMLString(setupHTML("Installer payload missing",
+                "This is a fat build but the bundled setup payload isn’t present.<br>Rebuild with <code>./scripts/build_app.sh --fat</code>."), baseURL: nil)
+            return
+        }
+        let a = NSAlert()
+        a.messageText = "Set up Harness"
+        a.informativeText = "Harness will install its local AI stack into:\n\(appSupportHarness())\n\nNo internet is needed for setup — everything is bundled. This can take a few minutes."
+        a.addButton(withTitle: "Continue")
+        a.addButton(withTitle: "Quit")
+        if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
+        panelWV.loadHTMLString(setupHTML("Setting things up…",
+            "Installing the local stack (offline) into<br><code>~/Library/Application Support/Harness</code>.<br>This can take a few minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when the harness is ready."), baseURL: nil)
+        DispatchQueue.global().async { self.doFirstRunFat() }
+    }
+
+    func doFirstRunFat() {
+        let fm = FileManager.default
+        let dest = appSupportHarness()
+        let res = Bundle.main.resourcePath ?? ""
+        let script = res + "/firstrun_fat.sh"
+        try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+
+        let logDir = dest + "/data/logs"
+        try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
+        let logFile = logDir + "/firstrun.log"
+        fm.createFile(atPath: logFile, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logFile)
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // login shell so any user PATH is present; pass RESOURCES + DEST to the provisioner.
+        p.arguments = ["-lc", "bash '\(script)' '\(res)' '\(dest)' 2>&1"]
+        p.currentDirectoryURL = URL(fileURLWithPath: dest)
+        if let fh = fh { p.standardOutput = fh; p.standardError = fh }
+        do { try p.run() } catch { setupFailed("Could not start setup: \(error)"); return }
+        p.waitUntilExit()
+
+        let ok = p.terminationStatus == 0 && fm.fileExists(atPath: dest + "/.provisioned")
+        DispatchQueue.main.async {
+            if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
+            else {
+                self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
+                    "See <code>~/Library/Application Support/Harness/data/logs/firstrun.log</code> (and the per-component <code>firstrun_*.log</code> beside it). Fix the reported component, then reopen Harness.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
             }
         }
     }

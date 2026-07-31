@@ -1,6 +1,8 @@
 # Harness — single source of truth for pins, ports, endpoints.
 # Every change to a pin should be a git commit (that's your rollback history).
 
+version: "0.1.0"                # local harness version — shown in the MC Version tile; bump on release
+
 components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
@@ -35,7 +37,7 @@ runner:
   port: 6767                 # canonical headless endpoint (jan serve --port)
   endpoint: http://127.0.0.1:6767/v1
   api_key: harness-local     # headless jan requires a key; fanned out to components in M1-B
-  model: Qwen3_6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS   # M2 model browser makes this dynamic
+  model: gemma-4-31B-it-uncensored-biproj-q4_k_m
   ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
 
 # OPTIONAL aux runner — a small second model (300MB–10GB class) for Odysseus's
@@ -60,6 +62,16 @@ memory:
 bridge:
   port: 8700                  # control panel + API
   gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)
+
+# FAT/offline installer (§G-phase3) — build_app.sh --fat reads these. The build bundles
+# uv's standalone CPython + an arm64 wheelhouse so a fresh Mac provisions every component
+# OFFLINE (no PyPI, no npm) on first run. Model weights still download later.
+# ⚠️ PENDING FABLE QA: python_version pin — verify a current python-build-standalone /
+# uv-managed release actually carries this cpython (build_app.sh --fat uses `uv python
+# install <python_version>`; uv resolves the correct standalone tarball URL itself).
+build:
+  python_version: "3.12.11"   # standalone CPython bundled into the fat app (must match wheel tags)
+  python_tag: cp312           # wheel ABI tag for the wheelhouse download (--python-version)
 
 inference:
   # hermes_llm block removed 2026-07-20 (M1-B): Hermes + Odysseus now consume the `runner`
