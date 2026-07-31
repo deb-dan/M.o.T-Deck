@@ -15,11 +15,20 @@ import httpx
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 PANEL = Path(__file__).resolve().parent / "panel"
 
 app = FastAPI(title="AI Harness Bridge")
+
+# Serve the panel's self-hosted assets (Phase 2 artifact renderer: babel/react/prism/
+# markdown-it/dompurify) same-origin at /assets/vendor/*. Fully offline — no runtime CDN.
+# The vendor dir is gitignored + fetched by scripts/fetch_vendor_assets.sh (run once on
+# the Mac / at FAT build). Ensure the mount point exists so startup never errors when the
+# libs haven't been fetched yet (the renderer degrades gracefully in that case).
+(PANEL / "assets" / "vendor").mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=str(PANEL / "assets")), name="assets")
 
 
 def cfg() -> dict:
@@ -150,7 +159,13 @@ def _provision(target: str) -> None:
 
 @app.get("/")
 def panel() -> FileResponse:
-    return FileResponse(PANEL / "index.html")
+    # no-store: the panel HTML must never be cached by the WKWebView, else code
+    # edits silently don't appear after a relaunch (heuristic caching served a
+    # stale index.html — the cause of "changes didn't show" during iteration).
+    return FileResponse(
+        PANEL / "index.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
+    )
 
 
 def _runner_engine(rc: dict) -> str:
@@ -1644,8 +1659,37 @@ async def chat_direct(req: Request) -> StreamingResponse:
 
 @app.post("/api/open")
 async def open_external(req: Request) -> JSONResponse:
-    """Open an http(s) URL in the user's default browser (panel links inside the app's webview)."""
-    url = (await req.json()).get("url", "")
+    """Open an http(s) URL in the default browser, OR open/reveal a local file.
+
+    Two modes:
+      {"url": "https://…"}                       → open in default browser (http(s) only).
+      {"path": "~/…", "action": "open"|"reveal"} → open a local FILE with the default app,
+                                                    or reveal it in Finder (`open -R`).
+
+    File path-allowlist (Fable-authored §F gate): the resolved realpath must EXIST and live
+    UNDER $HOME — nothing outside the user's home is ever opened. `file://` is never accepted
+    in the url field. Rejections are logged.
+    """
+    import os
+    data = await req.json()
+    path = data.get("path", "")
+    url = data.get("url", "")
+
+    if path:
+        action = (data.get("action") or "open").lower()
+        real = os.path.realpath(os.path.expanduser(path))
+        home = os.path.expanduser("~") + os.sep
+        if not os.path.exists(real):
+            print(f"[open] reject (missing): {real}", flush=True)
+            return JSONResponse({"ok": False, "log": "path does not exist"}, status_code=400)
+        if not real.startswith(home):
+            print(f"[open] reject (outside $HOME): {real}", flush=True)
+            return JSONResponse({"ok": False, "log": "path must be under your home folder"}, status_code=403)
+        args = ["open", "-R", real] if action == "reveal" else ["open", real]
+        subprocess.run(args, check=False)
+        return JSONResponse({"ok": True})
+
+    # url mode — http(s) only; never `file://` (that would bypass the path gate above).
     if not (url.startswith("http://") or url.startswith("https://")):
         return JSONResponse({"ok": False, "log": "only http(s) urls"}, status_code=400)
     subprocess.run(["open", url], check=False)

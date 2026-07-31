@@ -76,6 +76,14 @@ fi
 
 echo "[harness] built $APP"
 
+# Phase 2: the panel's artifact renderer needs the self-hosted vendor libs on disk so a
+# packaged seed can run offline. Fetch them (idempotent) before either seed is staged.
+if [[ $PORTABLE -eq 1 || $FAT -eq 1 ]]; then
+  echo "[harness] fetching self-hosted panel assets (artifact renderer)…"
+  bash scripts/fetch_vendor_assets.sh \
+    || { echo "ERROR: fetch_vendor_assets.sh failed — the artifact renderer needs these libs bundled offline."; exit 1; }
+fi
+
 if [[ $PORTABLE -eq 1 ]]; then
   echo "[harness] bundling portable seed (repo minus .git/.gitmodules/vendor/data/dist)..."
   SEED="$APP/Contents/Resources/harness-seed.tar.gz"

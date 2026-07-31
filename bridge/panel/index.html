@@ -54,6 +54,8 @@
           border:1px solid var(--line); border-radius:8px; padding:6px 12px;
           background:var(--bg2); cursor:pointer; }
   .chip:hover { color:var(--cream); border-color:var(--line2); }
+  /* PHASE 1.5: compact icon-only chip (topbar controls) — glyph only, word on hover */
+  .chip-icon { padding:6px 9px; font-size:13px; line-height:1; min-width:0; }
 
   .kicker { display:flex; align-items:center; gap:14px; margin:10px 0 6px; }
   .kicker .num { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--gold); }
@@ -161,6 +163,29 @@
   .cmsg .body b { color:var(--cream); font-weight:600; }
   .cmsg .body code { font:12.5px var(--mono); color:var(--gold); background:var(--card);
                    border-radius:5px; padding:1px 5px; }
+  /* ---------- PHASE 3 — fenced code block + Open affordance + file cards ----------
+     Reuses editorial tokens; <!-- FABLE: style pass --> */
+  .chatcode { margin:12px 0; border:1px solid var(--line); border-radius:11px;
+              overflow:hidden; background:var(--card); }
+  .chatcode .cc-head { display:flex; align-items:center; gap:8px; padding:6px 10px;
+              border-bottom:1px solid var(--line); }
+  .chatcode .cc-lang { font:9.5px var(--mono); letter-spacing:.16em; text-transform:uppercase;
+              color:var(--faint); margin-right:auto; }
+  .cc-open { font:10px var(--mono); letter-spacing:.06em; text-transform:uppercase;
+             color:var(--dim); background:var(--bg2); border:1px solid var(--line2);
+             border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; }
+  .cc-open:hover { color:var(--gold); border-color:var(--gold); }
+  .chatcode pre { margin:0; border:0; border-radius:0; max-height:340px; background:#0a0910; }
+  /* block code must NOT wear the inline-code pill styling */
+  .chatcode code { background:none; padding:0; color:var(--dim); border-radius:0; font:12px var(--mono); }
+  .filecard { display:flex; align-items:center; gap:12px; margin:12px 0; padding:12px 14px;
+              border:1px solid var(--line); border-radius:12px; background:var(--card); }
+  .filecard .fc-icon { font-size:18px; color:var(--gold); flex:none; }
+  .filecard .fc-meta { min-width:0; margin-right:auto; }
+  .filecard .fc-name { font:12.5px var(--mono); color:var(--cream); word-break:break-all; }
+  .filecard .fc-sub { font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+              color:var(--faint); margin-top:3px; }
+  .filecard .fc-acts { display:flex; gap:6px; flex:none; }
   #thinking { font:italic 12.5px var(--serif); color:var(--faint); padding:2px 0 2px 20px; }
   .cmsg details.think { margin:0 0 10px 20px; }
   .cmsg details.think summary { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
@@ -220,10 +245,18 @@
   #chat-send:hover { border-color:var(--gold); }
 
   /* session rail + chat column live side by side under the header */
-  #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; }
-  #chat-main { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; }
-  #chat-sessions { flex:none; width:204px; display:flex; flex-direction:column; min-height:0;
-      border-right:1px solid var(--line); padding-right:16px; }
+  #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; overflow:hidden; }
+  #chat-main { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; min-width:0; }
+  /* TASK A: resizable session rail — width driven by a CSS var (collapse rule below still wins). */
+  #chat-sessions { flex:none; width:var(--sessions-width, 204px); display:flex; flex-direction:column;
+      min-height:0; border-right:1px solid var(--line); padding-right:16px; position:relative; }
+  /* right-edge drag handle (subtle; gold cue on hover). Hidden while collapsed. */
+  #cs-resize { position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:6;
+      touch-action:none; }
+  #cs-resize::after { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      width:2px; height:34px; border-radius:2px; background:transparent; transition:background .12s; }
+  #cs-resize:hover::after { background:var(--gold); }
+  body.sessions-collapsed #cs-resize { display:none; }
   .cs-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   .cs-title { font:10px var(--mono); letter-spacing:.22em; text-transform:uppercase; color:var(--faint); }
   #cs-new { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--gold);
@@ -410,6 +443,129 @@
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:2px 8px; margin-left:6px; cursor:pointer; }
   .dlrow .dlacts button:hover { color:var(--gold); border-color:var(--gold); }
+
+  /* ---------- PHASE 1 (Artifacts spec) — roomier Chat workspace ----------
+     Layout/affordance only. The collapse is SCOPED to the Chat view via
+     body.chat-mode (added/removed in showView). Other views are untouched.
+     <!-- FABLE: style pass --> */
+
+  /* rail collapse toggle (chevron) — only meaningful on Chat, shown there only */
+  #rail-toggle { display:none; position:absolute; top:14px; right:12px;
+      width:24px; height:24px; line-height:1; padding:0; z-index:2;
+      font:12px var(--mono); color:var(--faint); background:var(--bg2);
+      border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  #rail-toggle:hover { color:var(--gold); border-color:var(--gold); }
+  body.chat-mode #rail-toggle { display:block; }
+
+  /* Chat view + slim preference → collapse the left rail to a ~56px icon strip.
+     font-size:0 on the link hides the bare text-node label; .ico is restored so
+     only the glyph/dot shows. Native title=""/aria-label give hover discovery. */
+  body.chat-mode.rail-slim aside { width:56px; padding:26px 8px; }
+  body.chat-mode.rail-slim aside .brand,
+  body.chat-mode.rail-slim aside .build,
+  body.chat-mode.rail-slim aside .navlbl,
+  body.chat-mode.rail-slim aside .side-foot { display:none; }
+  body.chat-mode.rail-slim aside nav a { font-size:0; gap:0; padding:8px 0; justify-content:center; }
+  body.chat-mode.rail-slim aside nav a .ico { font-size:16px; }
+  body.chat-mode.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
+
+  /* Chat view → widen: drop the narrow centered caps, reclaim the sidebar space.
+     Reading width is still bounded per-message (assistant .body max-width:68ch). */
+  body.chat-mode main { max-width:none; padding-top:16px; }
+  body.chat-mode #chat-scroll,
+  body.chat-mode #chat-bar { max-width:none; }
+
+  /* ---------- PHASE 1.5 (Artifacts spec) — chat chrome, center-stage ----------
+     Chat-view-only (body.chat-mode). Collapse the tall hero (eyebrow + big serif
+     "Chat" + subtitle + model/private stamp) into a slim one-line strip, reclaiming
+     the top band for messages. Other views keep the full hero untouched.
+     <!-- FABLE: style pass --> */
+  #chat-head-compact { display:none; align-items:center; gap:9px; margin:0 0 12px;
+      font:11px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+  #chat-head-compact .cch-title { color:var(--gold); }
+  #chat-head-compact .cch-sep { color:var(--line2); }
+  body.chat-mode #view-chat > .kicker,
+  body.chat-mode #view-chat > h1,
+  body.chat-mode #view-chat > .sub,
+  body.chat-mode #view-chat > #chat-stamp { display:none; }
+  body.chat-mode #chat-head-compact { display:flex; }
+  /* reclaim the freed top band: shorter top offset → chat column extends upward */
+  body.chat-mode #view-chat:not([hidden]) { height:calc(100vh - 110px); }
+
+  /* session rail collapse (its own chevron + persisted preference) */
+  #cs-collapse { width:22px; height:22px; line-height:1; padding:0; cursor:pointer;
+      font:12px var(--mono); color:var(--faint); background:transparent;
+      border:1px solid var(--line2); border-radius:6px; }
+  #cs-collapse:hover { color:var(--gold); border-color:var(--gold); }
+  body.sessions-collapsed #chat-sessions { width:34px; padding-right:8px; }
+  body.sessions-collapsed #chat-sessions .cs-title,
+  body.sessions-collapsed #chat-sessions #cs-list,
+  body.sessions-collapsed #chat-sessions #cs-new { display:none; }
+  body.sessions-collapsed #chat-sessions .cs-head { justify-content:center; }
+
+  /* ---------- PHASE 2 (Artifacts spec) — sandboxed artifact viewer ----------
+     Split pane (right of the chat) + full-panel expand overlay. Renders live/
+     interactive artifacts inside a sandboxed iframe (allow-scripts, NO
+     allow-same-origin) or, for md/code, sanitized+highlighted in the host.
+     Reuses editorial tokens only. <!-- FABLE: style pass --> */
+  /* TASK A: split defaults to ~half and is resizable via #art-divider. chat-main and the
+     viewer share the leftover space (after the sessions rail) by flex-grow ratio, so the
+     layout stays adaptive; --art-*-grow are set by the divider drag (default 0.5 / 0.5). */
+  #artifact-viewer { flex:var(--art-view-grow, 1) 1 0; min-width:240px; display:none; flex-direction:column;
+      min-height:0; border-left:1px solid var(--line); padding-left:20px; }
+  body.artifact-open #artifact-viewer { display:flex; }
+  body.artifact-open #chat-main { flex:var(--art-chat-grow, 1) 1 0; min-width:240px; }
+  /* draggable vertical divider between the chat column and the viewer (only while split) */
+  /* BUG 1 fix: comfortable 10px hit area, sits above the panes (z-index), and a full-height
+     visible bar so the handle is discoverable (faint by default, gold on hover/active). */
+  #art-divider { display:none; flex:none; width:10px; align-self:stretch; cursor:col-resize;
+      position:relative; z-index:8; touch-action:none; }
+  body.artifact-open:not(.artifact-expanded) #art-divider { display:block; }
+  #art-divider::after { content:''; position:absolute; top:0; left:50%; transform:translateX(-50%);
+      width:2px; height:100%; border-radius:2px; background:var(--line2); transition:background .12s, width .12s; }
+  #art-divider:hover::after, body.art-dragging #art-divider::after { background:var(--gold); width:3px; }
+  body.art-dragging { cursor:col-resize; user-select:none; }
+  body.art-dragging iframe { pointer-events:none; }  /* so drag isn't swallowed by the frame */
+  /* expand = fill the whole panel area as an overlay (restore returns to split) */
+  body.artifact-expanded #artifact-viewer { position:fixed; inset:0; z-index:70;
+      background:var(--bg); border-left:none; padding:18px 22px; }
+  .art-head { display:flex; align-items:center; gap:8px; flex:none; margin-bottom:10px; }
+  .art-titlewrap { display:flex; flex-direction:column; min-width:0; margin-right:auto; }
+  #art-title { font:12.5px var(--mono); color:var(--cream);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #art-kind { font:9px var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--faint); }
+  .art-btn { font:11px var(--mono); color:var(--dim); border:1px solid var(--line2);
+      background:var(--bg2); border-radius:7px; padding:4px 10px; cursor:pointer; flex:none; }
+  .art-btn:hover { color:var(--cream); border-color:var(--gold); }
+  #art-body { flex:1 1 auto; min-height:0; min-width:0; overflow:auto; background:var(--card);
+      border:1px solid var(--line); border-radius:12px;
+      scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  /* white canvas behind HTML/SVG/React artifacts (they assume a light page) */
+  .art-frame { width:100%; height:100%; min-height:320px; border:0; background:#fff; border-radius:12px; display:block; }
+  .art-md { padding:18px 22px; color:var(--fg); font-size:14px; line-height:1.7; overflow-wrap:break-word; }
+  .art-md h1,.art-md h2,.art-md h3 { font-family:var(--serif); color:var(--cream); font-weight:500; margin:14px 0 8px; }
+  .art-md a { color:var(--gold); text-decoration:none; }
+  .art-md p,.art-md li { margin:6px 0; }
+  .art-md ul,.art-md ol { padding-left:22px; }
+  .art-md code { font:12.5px var(--mono); color:var(--gold); background:var(--bg); border-radius:4px; padding:1px 5px; }
+  .art-md pre { margin:12px 0; }
+  .art-md table { border-collapse:collapse; margin:12px 0; }
+  .art-md th,.art-md td { border:1px solid var(--line2); padding:5px 10px; }
+  .art-code { margin:0; padding:16px 18px; font:12px var(--mono); overflow:auto; border-radius:12px; }
+  .art-img { max-width:100%; display:block; margin:20px auto; }
+  #art-body .cs-empty { padding:18px 22px; }
+  /* console strip (React/JS) — piped from the sandboxed frame via postMessage */
+  #art-console-wrap { flex:none; margin-top:8px; }
+  .art-console-det summary { font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase;
+      color:var(--faint); cursor:pointer; list-style:none; }
+  .art-console-det summary::before { content:'▸ '; color:var(--gold); }
+  .art-console-det[open] summary::before { content:'▾ '; }
+  #art-console { font:11px var(--mono); color:var(--dim); max-height:150px; overflow:auto;
+      border-left:1px dashed var(--line2); padding:6px 0 6px 12px; margin-top:6px;
+      white-space:pre-wrap; word-break:break-word; }
+  .art-cline { padding:1px 0; }
+  .art-cline.art-error { color:var(--bad); }
+  .art-cline.art-warn { color:var(--warn); }
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
@@ -419,15 +575,17 @@
 <body>
 
 <aside>
+  <!-- FABLE: style pass — Phase 1 rail collapse toggle (Chat view only) -->
+  <button id="rail-toggle" onclick="toggleChatRail()" title="Expand sidebar" aria-label="Expand sidebar">»</button>
   <div class="brand">Harness</div>
   <div class="build">local · studio</div>
   <div class="navlbl">Workspace</div>
   <nav>
-    <a id="nav-mc" class="on" onclick="showView('mc')"><span class="ico">◫</span> Mission Control</a>
-    <a id="nav-chat" onclick="showView('chat')"><span class="ico">✳</span> Chat</a>
-    <a id="nav-models" onclick="showView('models')"><span class="ico">⇄</span> Models</a>
-    <a onclick="alert('Policies UI lands in M2')"><span class="ico">§</span> Policies</a>
-    <a onclick="showLogs()"><span class="ico">≣</span> Logs</a>
+    <a id="nav-mc" class="on" onclick="showView('mc')" title="Mission Control" aria-label="Mission Control"><span class="ico">◫</span> Mission Control</a>
+    <a id="nav-chat" onclick="showView('chat')" title="Chat" aria-label="Chat"><span class="ico">✳</span> Chat</a>
+    <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
+    <a onclick="alert('Policies UI lands in M2')" title="Policies" aria-label="Policies"><span class="ico">§</span> Policies</a>
+    <a onclick="showLogs()" title="Logs" aria-label="Logs"><span class="ico">≣</span> Logs</a>
   </nav>
   <div class="navlbl">Components</div>
   <nav id="sidecomponents"></nav>
@@ -435,10 +593,11 @@
 </aside>
 
 <main>
+  <!-- FABLE: style pass — PHASE 1.5 topbar icon-ified (glyph only; word on hover) -->
   <div class="topbar">
-    <span class="chip" onclick="toggleTheme()" title="Toggle light / dark">◐&nbsp;&nbsp;THEME</span>
-    <span class="chip" onclick="openPalette()">⌘K&nbsp;&nbsp;Command palette</span>
-    <span class="chip" onclick="refresh(true)">↻&nbsp;&nbsp;Refresh</span>
+    <span class="chip chip-icon" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">◐</span>
+    <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
+    <span class="chip chip-icon" onclick="refresh(true)" title="Refresh status" aria-label="Refresh status">↻</span>
   </div>
 
   <div id="view-mc">
@@ -464,14 +623,26 @@
     <h1>Chat</h1>
     <div class="sub">The local stack, spoken to directly — agent tools included.</div>
     <div class="stamp" id="chat-stamp">CONNECTING…</div>
+    <!-- FABLE: style pass — PHASE 1.5 compact one-line chat header (shown only on body.chat-mode) -->
+    <div id="chat-head-compact">
+      <span class="cch-title">Chat</span>
+      <span class="cch-sep">·</span>
+      <span id="chat-compact-info">connecting…</span>
+    </div>
 
     <div id="chat-body">
       <div id="chat-sessions">
         <div class="cs-head">
-          <span class="cs-title">Sessions</span>
-          <button id="cs-new" onclick="newSession()">＋ New</button>
+          <!-- FABLE: style pass — Phase 1 sessions rail collapse chevron -->
+          <span style="display:flex;align-items:center;gap:8px">
+            <button id="cs-collapse" onclick="toggleSessionsRail()" title="Hide sessions" aria-label="Hide sessions">«</button>
+            <span class="cs-title">Sessions</span>
+          </span>
+          <button id="cs-new" onclick="newSession()" title="New chat" aria-label="New chat">＋ New</button>
         </div>
         <div id="cs-list"></div>
+        <!-- TASK A: drag to resize the sessions rail (180–560px, persisted) -->
+        <div id="cs-resize" onpointerdown="sesResizeDown(event)" title="Drag to resize" aria-hidden="true"></div>
       </div>
 
       <div id="chat-main">
@@ -481,19 +652,39 @@
 
         <div id="chat-bar">
           <div id="chat-modes">
-            <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')">Agent</span>
-            <span class="mode-chip" id="mode-chat" onclick="setMode('chat')">Chat</span>
+            <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')" title="Agent mode — tools (web search, shell)" aria-label="Agent mode">Agent</span>
+            <span class="mode-chip" id="mode-chat" onclick="setMode('chat')" title="Chat mode — direct to the model, fastest" aria-label="Chat mode">Chat</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
-              title="Browser control via the Browser MCP extension (agent mode)">Browse</span>
-            <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)"></select>
-            <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM">⏏</button>
+              title="Browser control via the Browser MCP extension (agent mode)" aria-label="Toggle browser control">Browse</span>
+            <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)" aria-label="Active model"></select>
+            <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM" aria-label="Eject the loaded model">⏏</button>
             <span class="mode-note" id="chat-note">web search on · shell off</span>
           </div>
           <div id="chat-inputrow">
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-            <button class="primary" id="chat-send" onclick="sendChat()">Send</button>
+            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
           </div>
+        </div>
+      </div>
+
+      <!-- TASK A: draggable divider between the chat column and the artifact viewer -->
+      <div id="art-divider" onpointerdown="artDividerDown(event)" title="Drag to resize" aria-hidden="true"></div>
+
+      <!-- FABLE: style pass — PHASE 2 artifact viewer (split pane / expand overlay) -->
+      <div id="artifact-viewer">
+        <div class="art-head">
+          <div class="art-titlewrap">
+            <span id="art-title">Artifact</span>
+            <span id="art-kind"></span>
+          </div>
+          <button id="art-copy" class="art-btn" onclick="copyArtifact()" title="Copy source" aria-label="Copy source" hidden>Copy</button>
+          <button id="art-expand" class="art-btn" onclick="toggleArtifactExpand()" title="Expand" aria-label="Expand artifact">⇱</button>
+          <button id="art-close" class="art-btn" onclick="closeArtifact()" title="Close artifact" aria-label="Close artifact">✕</button>
+        </div>
+        <div id="art-body"></div>
+        <div id="art-console-wrap" hidden>
+          <details class="art-console-det"><summary>console</summary><div id="art-console"></div></details>
         </div>
       </div>
     </div>
@@ -507,7 +698,7 @@
         <h1>Models</h1>
         <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
       </div>
-      <button id="models-toggle" class="chip" onclick="toggleBrowse()">SEARCH / DOWNLOAD ⌄</button>
+      <button id="models-toggle" class="chip" onclick="toggleModelsBrowse()">SEARCH / DOWNLOAD ⌄</button>
     </div>
     <div class="stamp" id="models-stamp">—</div>
     <div id="sw-row" hidden>
@@ -520,7 +711,7 @@
         <div id="models-listcol"></div>
         <div id="models-browse" hidden>
           <div class="mb-toprow">
-            <button class="chip" onclick="toggleBrowse()">← LIBRARY</button>
+            <button class="chip" onclick="toggleModelsBrowse()">← LIBRARY</button>
             <span class="cs-title">Download a model</span>
           </div>
           <div class="mb-searchrow">
@@ -640,7 +831,7 @@ async function refresh(manual) {
               : c.degraded ? 'bad'
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     side.insertAdjacentHTML('beforeend',
-      `<a onclick="jumpToCard('${name}')" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+      `<a onclick="jumpToCard('${name}')" title="${esc(name)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${name}</span></a>`);
   }
 
@@ -957,9 +1148,152 @@ function showView(v) {
   document.getElementById('nav-mc').classList.toggle('on', v === 'mc');
   document.getElementById('nav-chat').classList.toggle('on', v === 'chat');
   document.getElementById('nav-models').classList.toggle('on', v === 'models');
+  // PHASE 1: scope the slim-rail collapse to the Chat view ONLY. Other views must
+  // render exactly as before, so the class is removed whenever we leave Chat.
+  document.body.classList.toggle('chat-mode', v === 'chat');
+  // PHASE 2: the artifact viewer lives inside the Chat view. Its split pane hides with
+  // the view naturally, but the EXPAND overlay is position:fixed — drop it when leaving
+  // Chat so it can never linger over another view (the split state is kept for return).
+  if (v !== 'chat') { document.body.classList.remove('artifact-expanded'); if (typeof artifactState !== 'undefined') artifactState.expanded = false; }
   if (v === 'chat' && !chatSid) initChat();
   if (v === 'chat') document.getElementById('chat-input').focus();
   if (v === 'models') initModels();
+}
+
+/* ---------- PHASE 1: roomier Chat workspace (rail + sessions collapse) ----------
+   Both classes live on <body> always; the CSS only acts inside body.chat-mode, so
+   toggling here never affects Mission Control / Models / other views. Preferences
+   persist in localStorage; default = slim rail on Chat, sessions open. */
+function applyChatRail() {
+  let pref = 'slim';
+  try { pref = localStorage.getItem('harness-chat-rail') || 'slim'; } catch (e) {}
+  const slim = pref !== 'full';
+  document.body.classList.toggle('rail-slim', slim);
+  const t = document.getElementById('rail-toggle');
+  if (t) {
+    t.textContent = slim ? '»' : '«';
+    const lbl = slim ? 'Expand sidebar' : 'Collapse sidebar';
+    t.title = lbl; t.setAttribute('aria-label', lbl);
+  }
+}
+function toggleChatRail() {
+  let pref = 'slim';
+  try { pref = localStorage.getItem('harness-chat-rail') || 'slim'; } catch (e) {}
+  const next = (pref !== 'full') ? 'full' : 'slim';
+  try { localStorage.setItem('harness-chat-rail', next); } catch (e) {}
+  applyChatRail();
+}
+function applySessionsRail() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('harness-sessions-rail') === 'collapsed'; } catch (e) {}
+  document.body.classList.toggle('sessions-collapsed', collapsed);
+  const t = document.getElementById('cs-collapse');
+  if (t) {
+    t.textContent = collapsed ? '»' : '«';
+    const lbl = collapsed ? 'Show sessions' : 'Hide sessions';
+    t.title = lbl; t.setAttribute('aria-label', lbl);
+  }
+}
+function toggleSessionsRail() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('harness-sessions-rail') === 'collapsed'; } catch (e) {}
+  try { localStorage.setItem('harness-sessions-rail', collapsed ? 'open' : 'collapsed'); } catch (e) {}
+  applySessionsRail();
+}
+
+/* ---------- TASK A: resizable panes (artifact split + sessions rail) ----------
+   Pointer-events based drag (works in WKWebView). Two pure clamp helpers keep the
+   math testable. The artifact split is expressed as flex-grow ratios so the layout
+   stays adaptive; the sessions rail is an explicit width. Both persist. */
+// PURE (unit-tested): clamp the artifact-pane fraction to a sane 25%–75%.
+function clampArtSplit(f){ f = parseFloat(f); if (!isFinite(f)) return 0.42; return Math.max(0.25, Math.min(0.75, f)); }
+// PURE (unit-tested): clamp the sessions-rail width to 180–560px (BUG 3: raised max 420→560).
+function clampSessionsWidth(w){ w = parseFloat(w); if (!isFinite(w)) return 204; return Math.max(120, Math.min(560, w)); }  // Fable: min 180→120 (Debi: allow a tinier list, Odysseus-like)
+
+let _artFrac = 0.42;   // Fable: default artifact share (Debi: 50% felt too big for HTML); drag persists user choice
+function setArtifactSplit(frac){
+  _artFrac = clampArtSplit(frac);
+  const r = document.documentElement.style;
+  r.setProperty('--art-view-grow', String(_artFrac));
+  r.setProperty('--art-chat-grow', String(1 - _artFrac));
+}
+function loadArtifactSplit(){
+  let f = 0.5;
+  try { const v = localStorage.getItem('harness-artifact-split'); if (v != null) f = v; } catch (e) {}
+  setArtifactSplit(f);   // clamps + applies (default half)
+}
+let _artDrag = null;
+function artDividerDown(e){
+  e.preventDefault();
+  const main = document.getElementById('chat-main');
+  const view = document.getElementById('artifact-viewer');
+  if (!main || !view) return;
+  const m = main.getBoundingClientRect(), v = view.getBoundingClientRect();
+  _artDrag = { left: m.left, right: v.right };        // fixed span for this drag
+  const d = document.getElementById('art-divider');
+  try { d.setPointerCapture(e.pointerId); } catch (_) {}
+  d.addEventListener('pointermove', artDividerMove);
+  d.addEventListener('pointerup', artDividerUp);
+  d.addEventListener('pointercancel', artDividerUp);
+  document.body.classList.add('art-dragging');
+}
+function artDividerMove(e){
+  if (!_artDrag) return;
+  const total = _artDrag.right - _artDrag.left;
+  if (total <= 0) return;
+  setArtifactSplit((_artDrag.right - e.clientX) / total);   // artifact = right-hand share
+}
+function artDividerUp(e){
+  const d = document.getElementById('art-divider');
+  if (d){
+    d.removeEventListener('pointermove', artDividerMove);
+    d.removeEventListener('pointerup', artDividerUp);
+    d.removeEventListener('pointercancel', artDividerUp);
+    try { d.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  document.body.classList.remove('art-dragging');
+  _artDrag = null;
+  try { localStorage.setItem('harness-artifact-split', String(_artFrac)); } catch (_) {}
+}
+
+let _sesW = 204;
+function setSessionsWidth(w){
+  _sesW = clampSessionsWidth(w);
+  document.documentElement.style.setProperty('--sessions-width', _sesW + 'px');
+}
+function loadSessionsWidth(){
+  let w = 204;
+  try { const v = localStorage.getItem('harness-sessions-width'); if (v != null) w = v; } catch (e) {}
+  setSessionsWidth(w);   // clamps + applies
+}
+let _sesDrag = null;
+function sesResizeDown(e){
+  e.preventDefault();
+  const s = document.getElementById('chat-sessions');
+  if (!s) return;
+  _sesDrag = { left: s.getBoundingClientRect().left };
+  const h = document.getElementById('cs-resize');
+  try { h.setPointerCapture(e.pointerId); } catch (_) {}
+  h.addEventListener('pointermove', sesResizeMove);
+  h.addEventListener('pointerup', sesResizeUp);
+  h.addEventListener('pointercancel', sesResizeUp);
+  document.body.classList.add('art-dragging');
+}
+function sesResizeMove(e){
+  if (!_sesDrag) return;
+  setSessionsWidth(e.clientX - _sesDrag.left);
+}
+function sesResizeUp(e){
+  const h = document.getElementById('cs-resize');
+  if (h){
+    h.removeEventListener('pointermove', sesResizeMove);
+    h.removeEventListener('pointerup', sesResizeUp);
+    h.removeEventListener('pointercancel', sesResizeUp);
+    try { h.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  document.body.classList.remove('art-dragging');
+  _sesDrag = null;
+  try { localStorage.setItem('harness-sessions-width', String(_sesW)); } catch (_) {}
 }
 
 function setMode(m) {
@@ -990,6 +1324,119 @@ function mdLite(s){
     .replace(/`([^`\n]+)`/g, '<code>$1</code>');
 }
 
+// ── PHASE 3: render an assistant message, carding out artifact-worthy fenced blocks ──
+// A fenced code block (```lang … ```) that is html/svg/react (or a large code block)
+// renders as a highlighted block WITH a compact "Open <kind>" affordance that hands the
+// raw source to the Phase-2 sandboxed viewer via openArtifact(). Prose keeps mdLite().
+// Best-effort: any failure falls back to plain mdLite so the chat stream never breaks.
+const LANG_EXT = {
+  html:'html', htm:'html', xml:'xml', svg:'svg',
+  jsx:'jsx', tsx:'tsx', react:'jsx', javascript:'js', js:'js', mjs:'js',
+  typescript:'ts', ts:'ts', python:'py', py:'py', bash:'sh', sh:'sh', shell:'sh', zsh:'sh',
+  json:'json', yaml:'yaml', yml:'yaml', css:'css', scss:'scss', sql:'sql',
+  go:'go', rust:'rs', rs:'rs', c:'c', h:'c', cpp:'cpp', java:'java', ruby:'rb', rb:'rb',
+  php:'php', markdown:'md', md:'md', toml:'toml', dockerfile:'dockerfile'
+};
+function niceArtKind(kind){
+  return { html:'HTML', svg:'SVG', react:'React', js:'JS',
+           markdown:'Markdown', code:'Code', image:'Image', pdf:'PDF' }[kind] || 'Artifact';
+}
+function _appendProse(el, s){
+  if (!s || !s.trim()){ if (s) el.appendChild(document.createTextNode(s)); return; }
+  const span = document.createElement('span');
+  span.innerHTML = mdLite(s);   // mdLite escapes first → safe
+  el.appendChild(span);
+}
+function _appendCodeBlock(el, lang, code){
+  const ext = LANG_EXT[lang] || '';
+  const synth = 'artifact.' + (ext || 'txt');
+  let kind;
+  try { kind = artifactKind(ext ? synth : '', code); } catch (e) { kind = 'code'; }
+  // artifact-worthy = a renderable kind, or a substantial code block worth opening full-size
+  const lines = code.split('\n').length;
+  const big = lines >= 8 || code.length >= 300;
+  const worthy = kind === 'html' || kind === 'svg' || kind === 'react' || (kind === 'js' && big) || (kind === 'code' && big);
+
+  const box = document.createElement('div'); box.className = 'chatcode';
+  const head = document.createElement('div'); head.className = 'cc-head';
+  const lbl = document.createElement('span'); lbl.className = 'cc-lang';
+  lbl.textContent = lang || kind;
+  head.appendChild(lbl);
+  if (worthy){
+    const btn = document.createElement('button'); btn.className = 'cc-open';
+    btn.textContent = '⧉ Open ' + niceArtKind(kind);
+    btn.title = 'Open in the artifact viewer'; btn.setAttribute('aria-label', 'Open ' + niceArtKind(kind) + ' artifact');
+    btn.addEventListener('click', () => {   // closure carries the raw source — no escaping issues
+      try { openArtifact({ filename: synth, content: code, kind: kind }); } catch (e) {}
+    });
+    head.appendChild(btn);
+  }
+  box.appendChild(head);
+  const pre = document.createElement('pre');
+  const codeEl = document.createElement('code');
+  codeEl.className = 'language-' + prismLang(synth);
+  codeEl.textContent = code;                                  // untrusted → textContent
+  pre.appendChild(codeEl); box.appendChild(pre);
+  el.appendChild(box);
+  if (window.Prism) try { window.Prism.highlightElement(codeEl); } catch (e) {}
+}
+function renderChatBody(el, text){
+  const src = String(text == null ? '' : text);
+  try {
+    el.textContent = '';
+    const re = /```([^\n`]*)\r?\n?([\s\S]*?)```/g;
+    let last = 0, m, found = false;
+    while ((m = re.exec(src))){
+      found = true;
+      if (m.index > last) _appendProse(el, src.slice(last, m.index));
+      _appendCodeBlock(el, (m[1] || '').trim().toLowerCase(), m[2] || '');
+      last = re.lastIndex;
+    }
+    if (last < src.length) _appendProse(el, src.slice(last));
+    if (!found && !el.childNodes.length) el.innerHTML = mdLite(src);
+  } catch (e) {
+    el.innerHTML = mdLite(src);   // never break the transcript
+  }
+}
+
+// ── PHASE 3: open/reveal a real file via the /api/open path-allowlist (realpath under $HOME) ──
+function openLocalFile(path, action){
+  fetch('/api/open', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({path, action: action || 'open'})});
+}
+function fmtBytes(n){
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
+  return (n/1073741824).toFixed(2) + ' GB';
+}
+// Render a produced-file card into a chat message body. READY but NOT auto-wired:
+// the chat SSE stream carries no "file written this turn" event, so nothing calls this
+// yet. TODO ⚠️ PENDING FABLE QA — wire a produced-files signal (watch the output dir, or
+// a bridge event) then call fileCard() at the point the file was produced.
+function fileCard(el, f){
+  const name = f.name || (f.path || '').split('/').pop() || 'file';
+  const kind = artifactKind(name, '');
+  const card = document.createElement('div'); card.className = 'filecard';
+  const ic = document.createElement('span'); ic.className = 'fc-icon'; ic.textContent = '▤';
+  const meta = document.createElement('div'); meta.className = 'fc-meta';
+  meta.innerHTML = '<div class="fc-name"></div><div class="fc-sub"></div>';
+  meta.querySelector('.fc-name').textContent = name;
+  meta.querySelector('.fc-sub').textContent = niceArtKind(kind) + (f.size ? ' · ' + fmtBytes(f.size) : '');
+  const acts = document.createElement('div'); acts.className = 'fc-acts';
+  const mk = (label, fn, title) => { const b = document.createElement('button'); b.className = 'cc-open';
+    b.textContent = label; b.title = title || label; b.addEventListener('click', fn); return b; };
+  if (f.content != null)
+    acts.appendChild(mk('Open', () => openArtifact({filename:name, content:f.content}), 'Open in the artifact viewer'));
+  if (f.path){
+    acts.appendChild(mk('Open in app', () => openLocalFile(f.path, 'open'), 'Open with the default app'));
+    acts.appendChild(mk('Show in Folder', () => openLocalFile(f.path, 'reveal'), 'Reveal in Finder'));
+  }
+  card.appendChild(ic); card.appendChild(meta); card.appendChild(acts);
+  el.appendChild(card);
+}
+
 let chatSessions = [];
 
 function relTime(iso){
@@ -1015,6 +1462,9 @@ function relTimeLong(iso){
 function stampFor(model){
   document.getElementById('chat-stamp').textContent =
     (model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
+  // PHASE 1.5: mirror into the compact one-line chat header (`Chat · <model> · private`).
+  const ci = document.getElementById('chat-compact-info');
+  if (ci) ci.textContent = (model || 'default model') + ' · private';
 }
 
 async function initChat() {
@@ -1379,7 +1829,7 @@ function renderDetail(){
   }
 }
 
-function toggleBrowse(){
+function toggleModelsBrowse(){   // renamed from toggleBrowse — it was SHADOWING the chat Browse chip's handler (regression: chip went unresponsive)
   browseView = !browseView;
   document.getElementById('models-listcol').hidden = browseView;
   document.getElementById('models-browse').hidden = !browseView;
@@ -1694,7 +2144,7 @@ async function refreshDownloads(){
     // Flip out of the HF browse view (if in it) so the new library row is visible,
     // queue its selection, then refresh the library from the registry.
     if (doneModelId){
-      if (browseView) toggleBrowse();
+      if (browseView) toggleModelsBrowse();
       pendingSelectId = doneModelId;
     }
     initModels();
@@ -1708,7 +2158,7 @@ function addMsg(role, text) {
   wrap.className = 'cmsg ' + role;
   const who = role === 'user' ? 'You' : (chatModel || 'Assistant');
   wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
-  if (role === 'assistant' && text) wrap.querySelector('.body').innerHTML = mdLite(text);
+  if (role === 'assistant' && text) renderChatBody(wrap.querySelector('.body'), text);  // PHASE 3: card fenced blocks
   else wrap.querySelector('.body').textContent = text;
   document.getElementById('chat-msgs').appendChild(wrap);
   return wrap;
@@ -1793,7 +2243,7 @@ async function sendChat() {
             think.remove(); chatBusy = false;
             chatSummary(holder);                          // §B: finalize step summary
             const od = holder.querySelector('details.think'); if (od) od.open = false;
-            body.innerHTML = mdLite(body.textContent);   // render **bold** / `code` once complete
+            renderChatBody(body, body.textContent);   // PHASE 3: render md + card artifact fenced blocks
             break;
           }
           let j; try { j = JSON.parse(payload); } catch { continue; }
@@ -1867,6 +2317,469 @@ async function sendChat() {
   }
 }
 
+/* ============================================================================
+   PHASE 2 — Artifact rendering engine + sandboxed viewer (offline, self-hosted)
+   ----------------------------------------------------------------------------
+   SECURITY MODEL (non-negotiable, see FABLE-ARTIFACTS-SPEC §Phase 2):
+   • Executable artifacts (html/svg/react/js) ALWAYS run in an <iframe> with
+     sandbox="allow-scripts" and NO allow-same-origin → a unique opaque origin
+     that can never read the host DOM, cookies, or localStorage.
+   • Artifact code is injected ONLY via iframe srcdoc — never into the host DOM.
+   • A strict CSP <meta> in each srcdoc blocks network egress (connect-src 'none')
+     and limits sources to inline + our own /assets origin (for react/js frames).
+   • md/HTML that IS inlined into the host is run through DOMPurify first.
+   • No eval() in the host. Console output is piped from the frame via postMessage
+     and rendered with textContent only (never innerHTML).
+   ============================================================================ */
+
+// PURE type detection (extension first, then a content sniff). Unit-tested. Returns
+// one of: html | svg | react | js | markdown | code | pdf | image.
+function artifactKind(filename, content){
+  const fn = (filename || '').toLowerCase().trim();
+  const ext = (fn.match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  const c = content || '';
+  const EXT = {
+    html:'html', htm:'html', svg:'svg',
+    jsx:'react', tsx:'react',
+    js:'js', mjs:'js', cjs:'js',
+    md:'markdown', markdown:'markdown', mdown:'markdown',
+    pdf:'pdf',
+    png:'image', jpg:'image', jpeg:'image', gif:'image', webp:'image', bmp:'image', ico:'image', avif:'image',
+    py:'code', ts:'code', go:'code', rs:'code', sh:'code', bash:'code', zsh:'code',
+    json:'code', yaml:'code', yml:'code', toml:'code', ini:'code', xml:'code', env:'code',
+    c:'code', h:'code', cpp:'code', cc:'code', hpp:'code', cs:'code', java:'code',
+    rb:'code', php:'code', css:'code', scss:'code', sql:'code', swift:'code',
+    kt:'code', lua:'code', r:'code', pl:'code', dockerfile:'code', makefile:'code'
+  };
+  let kind = EXT[ext] || '';
+  // React usage: an import from react/react-dom, ReactDOM/React.* refs, or a JSX
+  // component tag (uppercase-initial). Guards the js/html → react upgrade below.
+  const importsReact = /import\s+[\s\S]*?from\s*['"]react(?:-dom)?(?:\/[\w-]+)?['"]/.test(c)
+                     || /require\(\s*['"]react['"]\s*\)/.test(c)
+                     || /\bReactDOM\b|\bReact\.(?:createElement|Component|useState|Fragment)\b/.test(c);
+  const hasJsxTag = /<[A-Z][A-Za-z0-9]*[\s/>]/.test(c);
+  if (!kind){
+    const t = c.replace(/^\s+/, '');
+    if (/^<svg[\s>]/i.test(t)) kind = 'svg';
+    else if (/^<!doctype html/i.test(t) || /^<html[\s>]/i.test(t) || /<\/(?:div|body|head|p|span|section|main|h[1-6])>/i.test(t)) kind = 'html';
+    else if (importsReact || hasJsxTag) kind = 'react';
+    else if (/^#{1,6}\s|\n#{1,6}\s|```|^\s*[-*]\s+\S/m.test(t)) kind = 'markdown';
+    else kind = 'code';
+  }
+  // A js/html file that actually uses React runs through the Babel+React pipeline.
+  if ((kind === 'js' || kind === 'html') && (importsReact || hasJsxTag)) kind = 'react';
+  return kind;
+}
+
+function prismLang(filename){
+  const ext = ((filename || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  const M = { py:'python', js:'javascript', mjs:'javascript', cjs:'javascript',
+    ts:'typescript', tsx:'tsx', jsx:'jsx', go:'go', rs:'rust', sh:'bash', bash:'bash',
+    zsh:'bash', json:'json', yaml:'yaml', yml:'yaml', toml:'toml', c:'c', h:'c',
+    cpp:'cpp', cc:'cpp', hpp:'cpp', java:'java', rb:'ruby', css:'css', scss:'css',
+    sql:'sql', html:'markup', htm:'markup', xml:'markup', svg:'markup' };
+  return M[ext] || 'clike';
+}
+
+// Neutralize an artifact's own closing script-tag so it cannot break out of the script
+// wrapper we embed it in (js/react frames). NOT applied to full HTML docs (real scripts).
+function safeScript(s){ return String(s == null ? '' : s).replace(/<\/script/gi, '<\\/script'); }
+
+// Best-effort ES-module → UMD-global transform for React artifacts + root-component
+// detection. React/ReactDOM are loaded as UMD globals, so we strip their import lines and
+// re-bind named hooks from React; OTHER component definitions in the file are KEPT so the
+// whole tree renders (not a stub). Returns { code, root } where `root` is the component to
+// mount (App > default export > last top-level component; null if none found).
+// PURE (unit-tested: bridge/tests/test_react_prep.js).
+// ⚠️ PENDING FABLE QA: aliased hook imports ({useState as us}) and non-react module imports
+// are not resolved — real multi-module artifacts remain out of scope (degrade w/ a clear
+// console error, never crash the host).
+function prepReact(src){
+  let s = String(src || '');
+  const named = new Set();
+  const grab = (g) => g.split(',').forEach(x => { x = x.trim().replace(/\s+as\s+\w+$/, ''); if (x) named.add(x); });
+  // strip react / react-dom imports (collect named hooks to rebind from the UMD global)
+  s = s.replace(/import\s+React\s*,\s*\{([^}]*)\}\s*from\s*['"]react['"]\s*;?/g, (m, g) => { grab(g); return ''; });
+  s = s.replace(/import\s*\{([^}]*)\}\s*from\s*['"]react['"]\s*;?/g, (m, g) => { grab(g); return ''; });
+  s = s.replace(/import\s+React\s+from\s*['"]react['"]\s*;?/g, '');
+  s = s.replace(/import\s+\*\s+as\s+React\s+from\s*['"]react['"]\s*;?/g, '');
+  s = s.replace(/import\s+ReactDOM\s*,?\s*(?:\{[^}]*\})?\s*from\s*['"]react-dom(?:\/client)?['"]\s*;?/g, '');
+  s = s.replace(/import\s*\{[^}]*\}\s*from\s*['"]react-dom(?:\/client)?['"]\s*;?/g, '');
+  // NOTE: any OTHER import lines are intentionally left in place → they throw at runtime,
+  //       and the error surfaces in the console strip (multi-file artifacts out of scope).
+
+  // Normalize the default export (keep the declaration; remember its name).
+  let defaultName = null, m;
+  if ((m = s.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/))){
+    defaultName = m[1];
+    s = s.replace(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/, 'function $1');
+  } else if ((m = s.match(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/))){
+    defaultName = m[1];
+    s = s.replace(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/, 'class $1');
+  } else if (/export\s+default\s+function\s*\(/.test(s)){          // anonymous function default
+    defaultName = '__ArtifactRoot__';
+    s = s.replace(/export\s+default\s+function\s*\(/, 'function __ArtifactRoot__(');
+  } else if (/export\s+default\s+class\b/.test(s)){                 // anonymous class default
+    defaultName = '__ArtifactRoot__';
+    s = s.replace(/export\s+default\s+class\b/, 'class __ArtifactRoot__');
+  } else if ((m = s.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/))){  // `export default App`
+    defaultName = m[1];
+    s = s.replace(/export\s+default\s+[A-Za-z_$][\w$]*\s*;?/, '');
+  } else if (/export\s+default\s+/.test(s)){                        // expression (arrow/JSX/obj)
+    defaultName = '__ArtifactRoot__';
+    s = s.replace(/export\s+default\s+/, 'const __ArtifactRoot__ = ');
+  }
+  // drop any remaining `export`/`export default` keywords, keeping the declarations
+  s = s.replace(/export\s+default\s+/g, '');
+  s = s.replace(/export\s+(?=(?:function|class|const|let|var)\b)/g, '');
+
+  // Pick the root to mount: prefer App, else the default export, else the last component.
+  let root = null;
+  if (/\b(?:function|class|const|let|var)\s+App\b/.test(s)) root = 'App';
+  else if (defaultName) root = defaultName;
+  else {
+    const comps = [];
+    const re = /(?:function|class)\s+([A-Z][\w$]*)|(?:const|let|var)\s+([A-Z][\w$]*)\s*=/g;
+    let mm; while ((mm = re.exec(s))) comps.push(mm[1] || mm[2]);
+    if (comps.length) root = comps[comps.length - 1];
+  }
+
+  const inject = named.size ? ('const { ' + [...named].join(', ') + ' } = React;\n') : '';
+  return { code: inject + s, root: root };
+}
+
+// Console shim injected into every executable frame: forwards console.* + errors to the
+// host via postMessage. Fixed string (not user content) → safe to embed verbatim.
+const ART_CONSOLE_SHIM = '<scr' + 'ipt>(function(){' +
+  'function send(level,args){try{var text=Array.prototype.map.call(args,function(a){' +
+  'if(typeof a==="string")return a;try{return JSON.stringify(a);}catch(e){return String(a);}}).join(" ");' +
+  'parent.postMessage({__artifactConsole:1,level:level,text:text},"*");}catch(e){}}' +
+  '["log","info","warn","error","debug"].forEach(function(m){var o=console[m]?console[m].bind(console):function(){};' +
+  'console[m]=function(){send(m==="debug"?"log":m,arguments);o.apply(console,arguments);};});' +
+  'window.addEventListener("error",function(e){send("error",[e.message+(e.filename?(" ("+e.filename+":"+e.lineno+")"):"")]);});' +
+  'window.addEventListener("unhandledrejection",function(e){send("error",["Unhandled rejection: "+((e.reason&&e.reason.message)||e.reason)]);});' +
+  '})();</scr' + 'ipt>';
+
+// <base href="about:srcdoc"> — injected as the FIRST <head> element of every artifact
+// document. WHY: a srcdoc frame resolves RELATIVE URLs against the PARENT document's base
+// (the bridge origin), so an artifact's <a href="#"> / href="/" would navigate the frame
+// straight to the harness panel (http://127.0.0.1:8700/). Pointing the base at the dead
+// pseudo-URL about:srcdoc makes every relative link resolve to nowhere reachable.
+// HTML rule: the FIRST <base> with an href wins → ours (injected first) is authoritative
+// even if the artifact declares its own base. CSP base-uri is therefore DROPPED from the
+// srcdoc CSP (base-uri 'none' would BLOCK this <base>, defeating the fix). Our own
+// react/babel/tailwind asset loads use ABSOLUTE bridge-origin URLs (location.origin +
+// /assets/vendor/…), which ignore <base> entirely — so the dead base never breaks them.
+const ART_BASE = '<base href="about:srcdoc">';
+
+// Defense-in-depth: intercept anchor clicks (capture phase, delegated on document so it
+// covers anchors added later). In-page #fragment jumps are allowed (scroll within the
+// artifact); anything that would navigate the frame away (http(s), absolute/relative
+// paths) is preventDefault'd. Belt-and-suspenders on top of the dead <base>.
+const ART_NAV_GUARD = '<scr' + 'ipt>(function(){'
+  + 'document.addEventListener("click",function(e){'
+  + 'var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;'
+  + 'var h=a.getAttribute("href")||"";'
+  + 'if(h.charAt(0)==="#")return;'                 // in-page anchor scroll — allowed
+  + 'e.preventDefault();e.stopPropagation();'      // block any frame-navigating link
+  + '},true);'
+  + '})();</scr' + 'ipt>';
+
+// PURE (unit-tested): rewrite the Tailwind Play CDN <script src> to our self-hosted,
+// same-origin ABSOLUTE copy so model HTML using cdn.tailwindcss.com renders STYLED
+// OFFLINE. Absolute (bridge-origin) URL so it loads regardless of the dead <base>.
+// Only Tailwind Play is special-cased (the dominant CDN in model-generated pages); other
+// third-party <script>/<link> CDNs stay blocked offline by CSP. Returns the rewritten
+// html; the builder detects "changed" to know a Tailwind tag was present.
+function rewriteVendorCdns(html, assetBase){
+  return String(html == null ? '' : html).replace(
+    /(<script\b[^>]*\bsrc\s*=\s*)(["'])([^"']*tailwindcss\.com[^"']*)\2/gi,
+    function(m, pre, q){ return pre + q + assetBase + '/tailwind.play.js' + q; }
+  );
+}
+
+// ---- CSP builders (single-quoted directives → safe inside a double-quoted meta attr) ----
+// NOTE: base-uri is intentionally omitted (see ART_BASE) — the injected dead <base> must
+// not be blocked, and it can't be overridden (first-base-wins).
+function cspPlain(tailwind){
+  // html/svg frames. If a Tailwind Play tag was rewritten in, the frame needs to load
+  // our same-origin script AND run its in-browser JIT (Function/eval) → widen script-src
+  // to include the bridge origin + 'unsafe-eval' for those pages only. Contained: opaque
+  // origin, no allow-same-origin, connect-src 'none' (no network egress).
+  let scriptSrc = "'unsafe-inline'";
+  if (tailwind) scriptSrc += " 'unsafe-eval' " + location.origin;
+  return "default-src 'none'; img-src data: blob:; media-src data: blob:; "
+       + "style-src 'unsafe-inline'; font-src data:; script-src " + scriptSrc + "; "
+       + "connect-src 'none'; form-action 'none'";
+}
+function cspScripted(){
+  // react/js frames: allow our /assets origin for react/babel + inline+eval (Babel
+  // standalone transforms code at runtime). Contained: opaque origin, connect-src 'none'.
+  return "default-src 'none'; img-src data: blob:; media-src data: blob:; "
+       + "style-src 'unsafe-inline'; font-src data:; "
+       + "script-src 'unsafe-inline' 'unsafe-eval' " + location.origin + "; "
+       + "connect-src 'none'; form-action 'none'";
+}
+
+function injectIntoDoc(html, headExtra){
+  // Insert our CSP + console shim into an artifact that is already a full HTML document.
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, m => m + headExtra);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, m => m + '<head>' + headExtra + '</head>');
+  return '<!doctype html><html><head>' + headExtra + '</head><body>' + html + '</body></html>';
+}
+
+function buildPlainSrcdoc(content){
+  const assetBase = location.origin + '/assets/vendor';
+  const raw = content || '';
+  const c = rewriteVendorCdns(raw, assetBase);   // Tailwind Play CDN → self-hosted copy
+  const usesTailwind = (c !== raw);              // a Tailwind Play tag was rewritten in
+  // ART_BASE MUST be first in <head> (dead-base fix); nav guard appended (defense-in-depth).
+  const head = ART_BASE
+             + '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'
+             + cspPlain(usesTailwind) + '">' + ART_CONSOLE_SHIM + ART_NAV_GUARD;
+  const t = c.replace(/^\s+/, '');
+  if (/^<!doctype|^<html[\s>]/i.test(t)) return injectIntoDoc(c, head);
+  // fragment or SVG → wrap in a minimal document (content is the real page markup)
+  return '<!doctype html><html><head>' + head + '<style>html,body{margin:0}</style></head><body>'
+       + c + '</body></html>';
+}
+
+function buildReactSrcdoc(content, filename){
+  const A = location.origin + '/assets/vendor';
+  const presets = /\.tsx?$/i.test(filename || '') ? 'react,typescript' : 'react';
+  const prepped = prepReact(content);
+  const src = safeScript(prepped.code);
+  // Root component to mount; if none was found, reference a name that is guaranteed
+  // undefined so the mount block throws the friendly "no component" error (typeof is
+  // always safe on an undeclared identifier).
+  const rootRef = prepped.root || '__ArtifactNoRoot__';
+  // ART_BASE first (dead-base fix). react/babel/tailwind scripts below load via ABSOLUTE
+  // bridge-origin URLs (A) → unaffected by the dead base; script-src lists location.origin.
+  // Tailwind Play (self-hosted) so JSX using Tailwind classes renders STYLED — it observes
+  // the DOM, so it styles React's runtime-mounted tree. cspScripted() already allows
+  // 'unsafe-eval' + location.origin, which Tailwind Play's JIT also needs (confirmed).
+  return '<!doctype html><html><head>' + ART_BASE + '<meta charset="utf-8">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + cspScripted() + '">'
+    + '<style>body{margin:0;font-family:system-ui,-apple-system,sans-serif}</style>'
+    + ART_CONSOLE_SHIM + ART_NAV_GUARD
+    + '<scr' + 'ipt src="' + A + '/tailwind.play.js"></scr' + 'ipt>'
+    + '</head><body><div id="root"></div>'
+    + '<scr' + 'ipt src="' + A + '/react.production.min.js"></scr' + 'ipt>'
+    + '<scr' + 'ipt src="' + A + '/react-dom.production.min.js"></scr' + 'ipt>'
+    + '<scr' + 'ipt src="' + A + '/babel.min.js"></scr' + 'ipt>'
+    + '<scr' + 'ipt type="text/babel" data-presets="' + presets + '">\n'
+    + src + '\n'
+    // auto-mount the detected root (unless the artifact already rendered into #root itself).
+    // On transpile/mount failure, surface the error in the console strip AND a short inline
+    // message in the frame — never a silent stub.
+    + ';(function(){var el=document.getElementById("root");try{'
+    + 'var C=(typeof ' + rootRef + '!=="undefined")?' + rootRef + ':null;'
+    + 'if(el&&el.hasChildNodes())return;'                       // artifact rendered itself
+    + 'if(!C)throw new Error("No React component found to render (expected an App function or a default export).");'
+    + 'if(ReactDOM.createRoot){ReactDOM.createRoot(el).render(React.createElement(C));}'
+    + 'else{ReactDOM.render(React.createElement(C),el);}'
+    + '}catch(e){var msg=(e&&e.message)?e.message:String(e);console.error(msg);'
+    + 'if(el&&!el.hasChildNodes()){var b=document.createElement("div");'
+    + 'b.style.cssText="font-family:system-ui;padding:16px;color:#b00;white-space:pre-wrap";'
+    + 'b.textContent="Artifact error: "+msg;el.appendChild(b);}}})();\n'
+    + '</scr' + 'ipt></body></html>';
+}
+
+function buildJsSrcdoc(content){
+  return '<!doctype html><html><head>' + ART_BASE + '<meta charset="utf-8">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + cspScripted() + '">'
+    + '<style>body{margin:0;font-family:system-ui,-apple-system,sans-serif;padding:14px;color:#111}</style>'
+    + ART_CONSOLE_SHIM + ART_NAV_GUARD
+    + '</head><body><scr' + 'ipt>' + safeScript(content) + '</scr' + 'ipt></body></html>';
+}
+
+// ---- host-side vendor loader (Prism + markdown-it + DOMPurify), loaded once, lazily ----
+let _hostVendor = null;
+function _loadScript(src){ return new Promise((res, rej) => {
+  const s = document.createElement('script'); s.src = src;
+  s.onload = res; s.onerror = () => rej(new Error('load ' + src)); document.head.appendChild(s); }); }
+function ensureHostVendor(){
+  if (_hostVendor) return _hostVendor;
+  const A = location.origin + '/assets/vendor';
+  const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = A + '/prism.css';
+  document.head.appendChild(css);
+  _hostVendor = Promise.all([
+    _loadScript(A + '/prism.min.js'),
+    _loadScript(A + '/markdown-it.min.js'),
+    _loadScript(A + '/purify.min.js'),
+  ]).catch(e => { console.warn('artifact vendor assets unavailable — run scripts/fetch_vendor_assets.sh', e); });
+  return _hostVendor;
+}
+
+// ---- viewer state + controls ----
+let artifactState = { open:false, expanded:false };
+let _artContent = '';
+let _artConsoleHandler = null;
+
+function openArtifact(opts){
+  opts = opts || {};
+  const content = opts.content || '';
+  const filename = opts.filename || '';
+  const kind = opts.kind || artifactKind(filename, content);
+  if (document.getElementById('view-chat').hidden) showView('chat');
+  document.body.classList.add('artifact-open');
+  // BUG 2 fix: re-apply the persisted/default split on EVERY open so all artifact kinds
+  // (html/react/js/svg/md/code) get the same ~50% pane proportions — no path-dependence,
+  // no type-specific width. (both panes already use flex-basis:0 + min-width:0 on #art-body.)
+  setArtifactSplit(_artFrac);
+  artifactState.open = true;
+  document.getElementById('art-title').textContent = filename || kind;
+  document.getElementById('art-kind').textContent = kind;
+  renderArtifact(kind, content, filename);
+}
+function closeArtifact(){
+  document.body.classList.remove('artifact-open', 'artifact-expanded');
+  artifactState.open = false; artifactState.expanded = false;
+  clearArtConsole();
+  const b = document.getElementById('art-body'); if (b) b.innerHTML = '';
+  const btn = document.getElementById('art-expand'); if (btn){ btn.textContent = '⇱'; btn.title = 'Expand'; }
+}
+function toggleArtifactExpand(){
+  artifactState.expanded = !artifactState.expanded;
+  document.body.classList.toggle('artifact-expanded', artifactState.expanded);
+  const btn = document.getElementById('art-expand');
+  if (btn){ btn.textContent = artifactState.expanded ? '⇲' : '⇱';
+            btn.title = artifactState.expanded ? 'Restore split' : 'Expand'; }
+}
+function copyArtifact(){
+  try { navigator.clipboard.writeText(_artContent || ''); } catch (e) {}
+  const b = document.getElementById('art-copy'); if (!b) return;
+  const o = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = o; }, 1200);
+}
+
+// ---- console strip (only THIS frame's messages; textContent only) ----
+function clearArtConsole(){
+  if (_artConsoleHandler){ window.removeEventListener('message', _artConsoleHandler); _artConsoleHandler = null; }
+  const c = document.getElementById('art-console'); if (c) c.innerHTML = '';
+}
+function attachArtConsole(iframe){
+  clearArtConsole();
+  _artConsoleHandler = (e) => {
+    if (e.source !== iframe.contentWindow) return;            // ONLY this artifact frame
+    const d = e.data;
+    if (!d || d.__artifactConsole === undefined) return;
+    const c = document.getElementById('art-console'); if (!c) return;
+    const line = document.createElement('div');
+    line.className = 'art-cline art-' + (d.level || 'log');
+    const pfx = d.level === 'error' ? '✕ ' : d.level === 'warn' ? '! ' : '';
+    line.textContent = pfx + (d.text || '');                  // untrusted → textContent
+    c.appendChild(line); c.scrollTop = c.scrollHeight;
+  };
+  window.addEventListener('message', _artConsoleHandler);
+}
+
+// ---- dispatch: type → renderer ----
+function renderArtifact(kind, content, filename){
+  const body = document.getElementById('art-body');
+  body.innerHTML = ''; clearArtConsole();
+  _artContent = content || '';
+  document.getElementById('art-copy').hidden = (kind !== 'code');
+  document.getElementById('art-console-wrap').hidden = !(kind === 'react' || kind === 'js');
+  if (kind === 'html' || kind === 'svg') renderArtIframe(body, buildPlainSrcdoc(content), false);
+  else if (kind === 'react') renderArtIframe(body, buildReactSrcdoc(content, filename), true);
+  else if (kind === 'js') renderArtIframe(body, buildJsSrcdoc(content), true);
+  else if (kind === 'markdown') renderArtMarkdown(body, content);
+  else if (kind === 'code') renderArtCode(body, content, filename);
+  else if (kind === 'image') renderArtImage(body, content);
+  else if (kind === 'pdf') renderArtPdf(body, content, filename);
+  else renderArtCode(body, content, filename);
+}
+
+function renderArtIframe(container, srcdoc, pipeConsole){
+  const f = document.createElement('iframe');
+  f.className = 'art-frame';
+  // SECURITY: allow-scripts ONLY — no allow-same-origin → opaque origin, walled off
+  // from the host. Content arrives via srcdoc (never injected into the host DOM).
+  f.setAttribute('sandbox', 'allow-scripts');
+  f.setAttribute('referrerpolicy', 'no-referrer');
+  if (pipeConsole) attachArtConsole(f);   // bind BEFORE srcdoc so early logs are caught
+  f.srcdoc = srcdoc;
+  container.appendChild(f);
+}
+
+async function renderArtMarkdown(container, content){
+  await ensureHostVendor();
+  const div = document.createElement('div'); div.className = 'art-md';
+  if (typeof window.markdownit === 'function' && window.DOMPurify){
+    const md = window.markdownit({ html:false, linkify:true, breaks:false });
+    // html:false already drops raw HTML; DOMPurify is the belt-and-suspenders pass.
+    div.innerHTML = window.DOMPurify.sanitize(md.render(content || ''), { ADD_ATTR:['class'] });
+  } else {
+    const pre = document.createElement('pre'); pre.className = 'art-code';
+    pre.textContent = content || ''; div.appendChild(pre);
+  }
+  container.appendChild(div);
+  if (window.Prism) try { window.Prism.highlightAllUnder(div); } catch (e) {}
+  div.querySelectorAll('a[href]').forEach(a => { a.onclick = (e) => openExt(e, a.href); });
+}
+
+async function renderArtCode(container, content, filename){
+  await ensureHostVendor();
+  const pre = document.createElement('pre'); pre.className = 'art-code';
+  const code = document.createElement('code');
+  code.className = 'language-' + prismLang(filename);
+  code.textContent = content || '';                          // untrusted → textContent
+  pre.appendChild(code); container.appendChild(pre);
+  if (window.Prism) try { window.Prism.highlightElement(code); } catch (e) {}
+}
+
+function renderArtImage(container, content){
+  const t = (content || '').trim();
+  if (/^data:|^https?:\/\//i.test(t)){
+    const img = document.createElement('img'); img.className = 'art-img'; img.src = t;
+    container.appendChild(img);
+  } else {
+    const n = document.createElement('div'); n.className = 'cs-empty';
+    n.textContent = 'Image preview needs a data:/URL source (file paths arrive with Phase 3 cards).';
+    container.appendChild(n);
+  }
+}
+
+function renderArtPdf(container, content, filename){
+  const n = document.createElement('div'); n.className = 'cs-empty';
+  n.textContent = 'PDF opens in your default app (wired to the file path with Phase 3 cards).';
+  container.appendChild(n);
+}
+
+// ---- dev samples (exercise the engine without Phase 3 cards; from ⌘K) ----
+const ART_SAMPLES = {
+  html: { filename:'sample.html', content:
+    '<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:system-ui;padding:24px;color:#222}h1{color:#7a5cff}</style></head>'
+  + '<body><h1>HTML artifact</h1><p>This renders as a live page inside a sandboxed iframe.</p>'
+  + '<button onclick="document.body.style.background=\'#eef\';console.log(\'clicked\')">Tint the page</button></body></html>' },
+  react: { filename:'Counter.jsx', content:
+    'function App(){\n'
+  + '  const { useState } = React;\n'
+  + '  const [n, setN] = useState(0);\n'
+  + '  console.log("counter mounted");\n'
+  + '  return (\n'
+  + '    <div style={{fontFamily:"system-ui", padding:24}}>\n'
+  + '      <h2>Counter: {n}</h2>\n'
+  + '      <button onClick={() => { setN(n + 1); console.log("count ->", n + 1); }}>+1</button>\n'
+  + '    </div>\n'
+  + '  );\n'
+  + '}\n' },
+  markdown: { filename:'notes.md', content:
+    '# Markdown artifact\n\nRendered with **markdown-it** then sanitized with **DOMPurify**.\n\n'
+  + '- lists work\n- so do [links](https://example.com)\n\n```python\ndef hello():\n    print("highlighted via Prism")\n```\n' },
+  code: { filename:'example.py', content:
+    'import sys\n\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\nif __name__ == "__main__":\n    print(fib(int(sys.argv[1])))\n' },
+  svg: { filename:'chart.svg', content:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120" width="100%">'
+  + '<rect width="200" height="120" fill="#faf7f0"/>'
+  + '<circle cx="60" cy="60" r="40" fill="#d9b36c"/>'
+  + '<text x="120" y="65" font-family="serif" font-size="14" fill="#333">SVG artifact</text></svg>' }
+};
+function openArtifactSample(kind){
+  const s = ART_SAMPLES[kind]; if (!s) return;
+  openArtifact({ filename:s.filename, content:s.content });
+}
+
 /* ---------- command palette ---------- */
 const commands = () => {
   const cmds = [
@@ -1876,6 +2789,12 @@ const commands = () => {
     {t:'Show bridge logs', k:'≣', f:showLogs},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
+    // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.
+    {t:'Preview artifact: HTML sample', k:'◧', f:()=>openArtifactSample('html')},
+    {t:'Preview artifact: React counter', k:'◧', f:()=>openArtifactSample('react')},
+    {t:'Preview artifact: Markdown sample', k:'◧', f:()=>openArtifactSample('markdown')},
+    {t:'Preview artifact: Python code', k:'◧', f:()=>openArtifactSample('code')},
+    {t:'Preview artifact: SVG sample', k:'◧', f:()=>openArtifactSample('svg')},
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
     if (c.running) cmds.push({t:`Stop ${n}`, k:'■', f:()=>act(n,'stop')});
@@ -1916,6 +2835,10 @@ document.addEventListener('keydown', e=>{
   if (e.key==='Escape'){ palette.close(); }
 });
 
+applyChatRail();       // PHASE 1: restore persisted rail preference (acts only in chat-mode)
+applySessionsRail();   // PHASE 1: restore persisted sessions-rail preference
+loadArtifactSplit();   // TASK A: restore persisted artifact split (default half)
+loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>

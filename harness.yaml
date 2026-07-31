@@ -6,7 +6,7 @@ version: "0.1.0"                # local harness version — shown in the MC Vers
 components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
-    pin: v2026.7.20           # release tag — never track a branch (bumped from v2026.7.7.2, Fable-checked 2026-07-21)
+    pin: v2026.7.30           # release tag — never track a branch (bumped from v2026.7.20, Fable contract-checked 2026-07-31: dashboard flags kept in subcommands/dashboard.py, HERMES_DESKTOP + loopback-auth + mcp_servers intact, v0.19.1)
     installed: true
     enabled: false
     port: 9119                # hermes serve REST API (persistent surface)
