@@ -20,7 +20,7 @@ WS_METHODS = [
     "session.list",       # methods_session.py — stored-session list (Phase 3 rail)
     "session.history",    # methods_session.py — transcript read (Phase 3 hook)
     "prompt.submit",      # methods_prompt.py  — start a turn (returns status: streaming)
-    "approval.respond",   # methods_prompt.py  — Phase-1 auto-deny / Phase-2 chip
+    "approval.respond",   # methods_prompt.py  — Phase-2 approval card answer
 ]
 
 # Event types the bridge translates into panel SSE frames (emitted via
@@ -77,6 +77,41 @@ def test_ws_events_still_emitted():
     assert not missing, f"tui_gateway lost event type(s): {missing}"
 
 
+def test_approval_protocol_contract():
+    """Phase-2 approval chip contract (bridge/app.py + panel approval cards).
+
+    The card renders approval.request payload.command + payload.choices, and
+    /api/hermes/approve sends approval.respond {session_id, choice}. Gate the
+    exact key names + the two safety behaviors the UX leans on: upstream
+    command redaction (#48456) and interrupt-auto-denies-pending (#8697).
+    """
+    if not HERMES.exists():
+        return
+    server = (HERMES / "tui_gateway" / "server.py").read_text(errors="replace")
+    # payload keys the panel card consumes
+    assert "_emit_approval_request" in server, (
+        "approval.request emit seam (_emit_approval_request) moved — re-recon")
+    assert 'payload["choices"]' in server, (
+        "approval.request payload no longer carries a choices list")
+    assert "_redact_approval_command" in server, (
+        "approval command redaction seam gone — the WS egress could echo "
+        "credentials verbatim (#48456); re-verify before bumping")
+    prompt = (HERMES / "tui_gateway" / "methods_prompt.py").read_text(errors="replace")
+    # approval.respond params: {session_id (via _sess), choice, all?}
+    assert 'params.get("choice"' in prompt, (
+        "approval.respond no longer reads params.choice")
+    assert 'params.get("all"' in prompt, (
+        "approval.respond lost its resolve-all flag (bridge doesn't send it, "
+        "but the param shape changed — re-recon)")
+    assert "resolve_gateway_approval" in prompt, (
+        "approval.respond no longer resolves via resolve_gateway_approval")
+    appr = (HERMES / "tools" / "approval.py").read_text(errors="replace")
+    assert "resolve_gateway_approval" in appr
+    assert "is_interrupted()" in appr, (
+        "approval wait no longer checks is_interrupted() — panel Stop during a "
+        "pending card would wedge until the approval timeout (#8697 regressed)")
+
+
 def test_event_frame_shape_unchanged():
     """The adapter multiplexes on params.session_id of {"method": "event"} frames."""
     if not HERMES.exists():
@@ -86,3 +121,18 @@ def test_event_frame_shape_unchanged():
         "gateway event frames no longer use method=event — bridge demux broken")
     assert '"session_id": sid' in server, (
         "gateway event frames no longer carry params.session_id — bridge demux broken")
+
+
+def test_approvals_default_mode_contract():
+    """Upstream's DEFAULT approvals.mode governs whether dangerous commands are
+    silently guardian-approved (smart) or always carded (manual). A silent
+    upstream default change would alter the gate without any code change on our
+    side (live incident 2026-07-31: rm -rf auto-approved under default smart).
+    Flag it at pin-bump time."""
+    import re
+    src = (HERMES / "hermes_cli" / "config_defaults.py").read_text()
+    m = re.search(r'"approvals"\s*:\s*\{.*?"mode"\s*:\s*"(\w+)"', src, re.S)
+    assert m, "approvals.mode default missing from config_defaults.py"
+    assert m.group(1) == "smart", (
+        f"upstream default approvals.mode changed: now {m.group(1)!r} (was 'smart') — "
+        "re-check the approval-card flow + docs")

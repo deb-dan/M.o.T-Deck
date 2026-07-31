@@ -263,6 +263,33 @@
   .cmsg .statusline .r { color:var(--gold); }
   .cmsg .statusline .d { color:var(--ok); }
   .cmsg .statusline .dim { color:var(--faint); }
+  /* Hermes Phase 2 — inline approval card. ONE gold accent: the left rail
+     (mirrors details.think's glyph accent). <!-- FABLE: style pass --> */
+  .cmsg .approval { margin:10px 0 10px 20px; padding:10px 12px; max-width:68ch;
+    background:var(--card2); border:1px solid var(--line); border-left:2px solid var(--gold);
+    border-radius:8px; }
+  .cmsg .approval .ap-label { font:10.5px var(--mono); letter-spacing:.18em;
+    text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
+  .cmsg .approval .ap-cmd { margin:0 0 8px; padding:8px 10px; background:#0a0910;
+    border-radius:6px; font:12px var(--mono); color:var(--dim); white-space:pre-wrap;
+    word-break:break-all; max-height:180px; overflow:auto; }
+  .cmsg .approval .ap-expand { background:none; border:0; padding:0; margin:-2px 0 8px;
+    font:10px var(--mono); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--faint); cursor:pointer; }
+  .cmsg .approval .ap-expand:hover { color:var(--dim); }
+  .cmsg .approval .ap-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .cmsg .approval .ap-btn { font:11px var(--mono); letter-spacing:.08em; padding:5px 13px;
+    background:none; border:1px solid var(--line2); border-radius:999px;
+    color:var(--fg); cursor:pointer; }
+  .cmsg .approval .ap-btn:hover:enabled { border-color:var(--gold); color:var(--cream); }
+  .cmsg .approval .ap-btn.deny { color:var(--faint); border-color:var(--line); }
+  .cmsg .approval .ap-btn:disabled { opacity:.45; cursor:default; }
+  .cmsg .approval .ap-done { font:11px var(--mono); letter-spacing:.06em; color:var(--dim); }
+  .cmsg .approval .ap-done .ok { color:var(--ok); }
+  .cmsg .approval .ap-done .no { color:var(--faint); }
+  .cmsg .approval .ap-expired { color:var(--faint); font:10px var(--mono);
+    letter-spacing:.1em; text-transform:uppercase; }
+  .cmsg .approval .ap-err { margin-top:6px; font:10.5px var(--mono); color:var(--bad); }
   .cmsg details.inspect { margin:0 0 10px 20px; }
   .cmsg details.inspect summary { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
       color:var(--faint); cursor:pointer; list-style:none; }
@@ -795,7 +822,7 @@
             <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')" title="Agent mode — tools (web search, shell)" aria-label="Agent mode">Agent</span>
             <span class="mode-chip" id="mode-chat" onclick="setMode('chat')" title="Chat mode — direct to the model, fastest" aria-label="Chat mode">Chat</span>
             <!-- FABLE: style pass — Hermes lane chip (Phase 1) -->
-            <span class="mode-chip" id="mode-hermes" onclick="setMode('hermes')" title="Hermes mode — full agent (tools + skills); approvals auto-denied until Phase 2" aria-label="Hermes mode">Hermes</span>
+            <span class="mode-chip" id="mode-hermes" onclick="setMode('hermes')" title="Hermes mode — full agent (tools + skills); approvals inline" aria-label="Hermes mode">Hermes</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
               title="Browser control via the Browser MCP extension (agent mode)" aria-label="Toggle browser control">Browse</span>
             <!-- FABLE: style pass — compact navigation chip → Capabilities (tools/skills/MCP) -->
@@ -1500,7 +1527,7 @@ function setMode(m) {
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
   document.getElementById('chat-note').textContent =
     m === 'agent' ? 'web search on · shell off'
-    : m === 'hermes' ? 'Hermes · tools + skills · approvals auto-denied until Phase 2'
+    : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
     : 'direct to runner — no tools, fastest';
 }
 
@@ -3269,6 +3296,106 @@ function chatSummary(holder){
     + ` <span class="dim">— ${steps.length} step${steps.length > 1 ? 's' : ''}</span>`;
 }
 
+// ── Hermes Phase 2 — inline approval cards ──────────────────────────────────
+// The gateway keys approvals by SESSION (FIFO, no request id on the wire), so a
+// click posts only {session_id, choice}. Multiple requests per turn = multiple
+// cards, answered oldest-first — matching the gateway's own FIFO resolution.
+const AP_LABELS = {once:'Once', session:'This session', always:'Always', deny:'Deny'};
+const AP_TRUNC = 400;   // chars of command shown before the expand toggle
+
+function chatApproval(holder, req){
+  const card = document.createElement('div'); card.className = 'approval';
+  const cmd = String((req && req.command) || '');
+  const choices = (Array.isArray(req && req.choices) && req.choices.length)
+    ? req.choices : ['once','deny'];
+  const label = document.createElement('div'); label.className = 'ap-label';
+  label.textContent = '⚠ approval required';
+  card.appendChild(label);
+  const cmdEl = document.createElement('pre'); cmdEl.className = 'ap-cmd';
+  cmdEl.textContent = cmd.length > AP_TRUNC ? cmd.slice(0, AP_TRUNC) + '…' : cmd;
+  card.appendChild(cmdEl);
+  if (cmd.length > AP_TRUNC){
+    const ex = document.createElement('button'); ex.className = 'ap-expand';
+    ex.textContent = 'expand';
+    ex.onclick = () => {
+      card._full = !card._full;
+      cmdEl.textContent = card._full ? cmd : cmd.slice(0, AP_TRUNC) + '…';
+      ex.textContent = card._full ? 'collapse' : 'expand';
+    };
+    card.appendChild(ex);
+  }
+  const row = document.createElement('div'); row.className = 'ap-row';
+  for (const c of choices){
+    const b = document.createElement('button');
+    b.className = 'ap-btn' + (c === 'deny' ? ' deny' : '');
+    b.textContent = AP_LABELS[c] || c;
+    b.onclick = () => approveHermes(card, String(c));
+    row.appendChild(b);
+  }
+  card.appendChild(row);
+  // Stream position: an approval normally precedes the answer prose, so while
+  // the body is still empty the card sits ABOVE it (chronological); once text
+  // exists it appends after — deltas are one textContent stream, true
+  // interleaving isn't possible. ⚠ PENDING FABLE QA: this heuristic.
+  const body = holder.querySelector('.body');
+  if (body && !body.textContent) holder.insertBefore(card, body);
+  else holder.appendChild(card);
+  scrollChat();
+  return card;
+}
+
+async function approveHermes(card, choice){
+  if (card._done) return;
+  // No double-fire: every button dies the instant one is clicked.
+  for (const b of card.querySelectorAll('.ap-btn')) b.disabled = true;
+  const old = card.querySelector('.ap-err'); if (old) old.remove();
+  try {
+    const r = await fetch('/api/hermes/approve', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: hermesSid, choice})});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    if (!j.resolved){
+      // Nothing was pending gateway-side (the card raced upstream's own
+      // approval timeout or an interrupt) — stamp honestly, don't claim a choice.
+      expireApprovalCard(card);
+      return;
+    }
+    card._done = true;
+    // Collapse to one quiet line.
+    card.textContent = '';
+    const done = document.createElement('div'); done.className = 'ap-done';
+    done.innerHTML = choice === 'deny'
+      ? '<span class="no">✗</span> denied'
+      : `<span class="ok">✓</span> approved · ${esc(choice)}`;
+    card.appendChild(done);
+  } catch (e){
+    // Surface + re-arm so the user can retry (the approval is still pending
+    // gateway-side; upstream's 300s timeout is the backstop).
+    const err = document.createElement('div'); err.className = 'ap-err';
+    err.textContent = 'approve failed: ' + (e && e.message || e);
+    card.appendChild(err);
+    for (const b of card.querySelectorAll('.ap-btn')) b.disabled = false;
+  }
+}
+
+function expireApprovalCard(card){
+  card._done = true;
+  for (const b of card.querySelectorAll('.ap-btn')) b.disabled = true;
+  const lb = card.querySelector('.ap-label');
+  if (lb && !lb.querySelector('.ap-expired')){
+    const st = document.createElement('span'); st.className = 'ap-expired';
+    st.textContent = ' · expired';
+    lb.appendChild(st);
+  }
+}
+
+function expireApprovals(holder){
+  // Turn ended (done/stop/interrupt/error) with cards still open → freeze them.
+  for (const card of holder.querySelectorAll('.approval'))
+    if (!card._done) expireApprovalCard(card);
+}
+
 let hermesStopping = false;
 async function hermesStop(){
   // Phase 1.1: interrupt the running Hermes turn. The SSE turn itself is ended
@@ -3393,6 +3520,9 @@ async function sendChat() {
             // Bridge liveness note (20s of mid-turn silence): visible reassurance
             // that a long local-model prefill is slow, not dead.
             chatStatus(holder, '▸', j.text || 'hermes is working…');
+          } else if (j.type === 'approval') {
+            // Hermes Phase 2: interactive approval card at stream position.
+            chatApproval(holder, j.request || {});
           } else if (j.type === 'tool_start') {
             const raw = j.tool || 'tool';
             const isWeb = /search|web|fetch|browse|url|http/i.test(raw);
@@ -3426,6 +3556,7 @@ async function sendChat() {
   } finally {
     think.remove?.();
     chatBusy = false;
+    expireApprovals(holder);   // Phase 2: freeze any still-open approval cards
     const sb = document.getElementById('chat-send');
     sb.disabled = false; sb.textContent = 'Send';
     sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');

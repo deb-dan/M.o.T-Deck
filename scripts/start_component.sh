@@ -271,6 +271,21 @@ else:
     open(path, "w").write("\n".join(out))
 print(f"[harness] Hermes -> {managed['default']} @ {managed['base_url']} (key set, ctx {managed['context_length']})")
 PYPATCH
+    # Safety floor: warn loudly if approvals are globally disabled (warn-only —
+    # 'smart' is a legitimate user choice; we never overwrite the user's mode).
+    python3 - "$HCFG" <<'PYAPPR'
+import sys, re
+try: txt = open(sys.argv[1]).read()
+except FileNotFoundError: sys.exit(0)
+m = re.search(r'^approvals:\s*$(.*?)(?=^\S|\Z)', txt, re.S | re.M)
+mode = None
+if m:
+    mm = re.search(r'^\s+mode:\s*(\S+)', m.group(1), re.M)
+    if mm: mode = mm.group(1).strip('\'"')
+if mode == 'off':
+    print("[harness] WARNING: approvals.mode is 'off' in ~/.hermes/config.yaml — "
+          "dangerous shell commands will run with NO approval card. Set 'manual' or 'smart'.")
+PYAPPR
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
     # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in

@@ -57,13 +57,34 @@ check("tool.complete slimmed", fr == [{"type": "tool_output", "tool": "shell",
 fr, _ = F({"type": "tool.complete", "payload": {"name": "shell"}})
 check("tool.complete no summary", fr == [{"type": "tool_output", "tool": "shell"}])
 
-# approvals: visible note + structured event (deny RPC is the caller's side effect)
+# approvals (Phase 2): ONE structured frame → the panel's interactive card; the
+# turn keeps streaming (act ""), the answer comes back via POST /api/hermes/approve
 fr, act = F({"type": "approval.request",
-             "payload": {"command": "rm -rf /tmp/x", "choices": ["once", "deny"]}})
-check("approval → note + structured",
-      act == "" and len(fr) == 2
-      and fr[0] == {"type": "approval_denied", "command": "rm -rf /tmp/x"}
-      and fr[1].get("delta", "").startswith("\n⚠ approval needed"))
+             "payload": {"command": "rm -rf /tmp/x",
+                         "choices": ["once", "session", "always", "deny"]}})
+check("approval → card frame, turn keeps streaming",
+      act == "" and fr == [{"type": "approval",
+                            "request": {"command": "rm -rf /tmp/x",
+                                        "choices": ["once", "session", "always",
+                                                    "deny"]}}])
+fr, act = F({"type": "approval.request", "payload": {"command": "ls"}})
+check("approval no choices → conservative [once, deny] default",
+      act == "" and fr == [{"type": "approval",
+                            "request": {"command": "ls",
+                                        "choices": ["once", "deny"]}}])
+fr, act = F({"type": "approval.request",
+             "payload": {"command": "x", "choices": "once"}})
+check("approval non-list choices → default",
+      fr[0]["request"]["choices"] == ["once", "deny"])
+fr, act = F({"type": "approval.request", "payload": {}})
+check("approval empty payload safe",
+      act == "" and fr == [{"type": "approval",
+                            "request": {"command": "",
+                                        "choices": ["once", "deny"]}}])
+fr, act = F({"type": "approval.request",
+             "payload": {"command": "x", "choices": [1, "deny"]}})
+check("approval choices coerced to strings",
+      fr[0]["request"]["choices"] == ["1", "deny"])
 
 # turn terminators
 fr, act = F({"type": "message.complete", "payload": {"text": "final answer"}})

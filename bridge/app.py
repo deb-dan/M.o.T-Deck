@@ -2160,8 +2160,9 @@ async def chat_direct(req: Request) -> StreamingResponse:
 # ── Hermes chat lane (Phase 1) — the dashboard's /api/ws JSON-RPC gateway re-emitted
 #    as panel SSE (FABLE-HERMES-LANE-SPEC, PATH A). ONE shared WebSocket, multiplexed
 #    by session_id; token deltas / thinking / tool events map onto the SAME frame
-#    shapes the panel's existing stream renderer already handles; approvals are
-#    AUTO-DENIED until the Phase-2 approval-chip UX lands.
+#    shapes the panel's existing stream renderer already handles; approvals
+#    (Phase 2) surface as an interactive panel card answered via
+#    POST /api/hermes/approve → approval.respond.
 #    ⚠ The /api/ws protocol is upstream-INTERNAL (no stability promise) —
 #    bridge/contract_tests/test_hermes_ws_contract.py gates every Hermes pin-bump
 #    on the exact method/event names used below.
@@ -2199,9 +2200,9 @@ def hermes_event_to_frames(ev):
     """PURE mapper: one Hermes gateway event → (panel SSE frame dicts, action).
 
     action: "" = keep streaming, "done" = the turn is over (caller emits [DONE]).
-    The approval auto-deny RPC is the CALLER's side effect — this stays pure so
-    it can be unit-tested standalone (bridge/tests/test_hermes_sse_map.py extracts
-    it by ast; keep it dependency-free). Malformed events must NEVER raise.
+    Stays pure so it can be unit-tested standalone (bridge/tests/
+    test_hermes_sse_map.py extracts it by ast; keep it dependency-free).
+    Malformed events must NEVER raise.
     """
     try:
         t = (ev or {}).get("type") or ""
@@ -2223,11 +2224,23 @@ def hermes_event_to_frames(ev):
                 fr["summary"] = p.get("summary")
             return ([fr], "")
         if t == "approval.request":
-            # Phase 1: visible in-stream note + a structured event for the inspect
-            # log. The deny RPC itself is issued by the relay loop (side effect).
-            return ([{"type": "approval_denied", "command": p.get("command") or ""},
-                     {"delta": "\n⚠ approval needed — auto-denied "
-                               "(approval UX lands in Phase 2)\n"}], "")
+            # Phase 2: interactive approval card. NO auto-deny — the relay keeps
+            # draining while the panel POSTs /api/hermes/approve → approval.respond.
+            # The gateway keys approvals purely by SESSION (FIFO, no request_id on
+            # the wire — vendor/hermes/apps/desktop/src/store/prompts.ts:71,
+            # tools/approval.py resolve_gateway_approval), so none is forwarded.
+            # The command arrives already credential-redacted upstream
+            # (tui_gateway/server.py:1592 _emit_approval_request, #48456).
+            ch = p.get("choices")
+            if not (isinstance(ch, list) and ch):
+                # Upstream omits choices only when neither smart_denied nor
+                # allow_permanent is set (server.py:1600-1606). Conservative
+                # default: never OFFER a persistence scope upstream didn't
+                # declare. ⚠ PENDING FABLE QA: ["once","deny"] as the fallback.
+                ch = ["once", "deny"]
+            return ([{"type": "approval",
+                      "request": {"command": p.get("command") or "",
+                                  "choices": [str(c) for c in ch]}}], "")
         if t == "message.complete":
             # Final text is NOT re-emitted — the deltas already built the bubble.
             # ANY message.complete ends the turn: complete / error / interrupted
@@ -2455,6 +2468,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
             got_any = False
             silent = 0.0
             noted_slow = False
+            approval_pending = False  # Phase 2: an approval card awaits the user
             stop_at = None  # monotonic deadline once a panel Stop was requested
             while True:
                 if stop_at is not None:
@@ -2478,6 +2492,18 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                         yield ('data: {"type":"proxy_error","error":'
                                '"hermes turn idle >10min — giving up"}\n\n')
                         break
+                    if approval_pending:
+                        # Phase 2: the approval card IS the status — suppress the
+                        # 20s working note AND the liveness probe while the user
+                        # decides (the agent thread is blocked in
+                        # _await_gateway_decision; upstream's own 300s approval
+                        # timeout resolves it, and the 600s hard guard above
+                        # stays). Panel Stop still works: session.interrupt
+                        # auto-denies the pending approval (tools/approval.py:
+                        # 3326-3335, #8697) → message.complete(interrupted).
+                        # ⚠ PENDING FABLE QA: probe skipped too, not just the
+                        # note — a probe misread must never kill a pending card.
+                        continue
                     if got_any and not await _hermes_session_working(sid):
                         # Turn ended upstream with no terminal event reaching us
                         # (dashboard-side interrupt was the live repro) — close it.
@@ -2498,13 +2524,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     if stop_at is None:
                         stop_at = asyncio.get_running_loop().time() + 3.0
                     continue
-                if (ev or {}).get("type") == "approval.request":
-                    # Phase 1 side effect: immediate auto-deny (chip UX = Phase 2).
-                    try:
-                        await _HERMES.rpc("approval.respond",
-                                          {"session_id": sid, "choice": "deny"})
-                    except Exception:
-                        pass
+                # Phase 2: an approval.request opens a pending card; ANY other
+                # event means the wait resolved (post-decision tool/turn events
+                # only flow once resolve_gateway_approval unblocked the agent).
+                approval_pending = ((ev or {}).get("type") == "approval.request")
                 frames, action = hermes_event_to_frames(ev)
                 for fr in frames:
                     yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
@@ -2544,6 +2567,34 @@ async def hermes_stop(req: Request) -> JSONResponse:
         res = await _HERMES.rpc("session.interrupt", {"session_id": sid}, timeout=10.0)
         return JSONResponse({"ok": True,
                              "status": res.get("status") or "interrupted"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
+
+
+@app.post("/api/hermes/approve")
+async def hermes_approve(req: Request) -> JSONResponse:
+    """Answer a pending approval card (Phase 2 chip UX).
+
+    The gateway keys approvals purely by SESSION — resolve_gateway_approval
+    (vendor/hermes/tools/approval.py:2198) pops the oldest pending entry FIFO;
+    there is no request id on the wire (desktop store/prompts.ts:71) — so
+    {session_id, choice} is the complete address. approval.respond params:
+    {session_id, choice, all?} (tui_gateway/methods_prompt.py:864-883); the
+    optional resolve-all flag is deliberately NOT exposed to the panel.
+    """
+    body = await req.json()
+    sid = (body.get("session_id") or "").strip()
+    choice = (body.get("choice") or "").strip()
+    if not sid:
+        return JSONResponse({"error": "session_id required"}, status_code=400)
+    if choice not in ("once", "session", "always", "deny"):
+        return JSONResponse({"error": "invalid choice"}, status_code=400)
+    try:
+        res = await _HERMES.rpc("approval.respond",
+                                {"session_id": sid, "choice": choice}, timeout=10.0)
+        # resolved=0 → nothing was pending (card raced a timeout/interrupt);
+        # surface it so the panel can stamp the card instead of lying "approved".
+        return JSONResponse({"ok": True, "resolved": res.get("resolved")})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
 
