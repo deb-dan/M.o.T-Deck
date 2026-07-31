@@ -794,6 +794,8 @@
           <div id="chat-modes">
             <span class="mode-chip on" id="mode-agent" onclick="setMode('agent')" title="Agent mode — tools (web search, shell)" aria-label="Agent mode">Agent</span>
             <span class="mode-chip" id="mode-chat" onclick="setMode('chat')" title="Chat mode — direct to the model, fastest" aria-label="Chat mode">Chat</span>
+            <!-- FABLE: style pass — Hermes lane chip (Phase 1) -->
+            <span class="mode-chip" id="mode-hermes" onclick="setMode('hermes')" title="Hermes mode — full agent (tools + skills); approvals auto-denied until Phase 2" aria-label="Hermes mode">Hermes</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
               title="Browser control via the Browser MCP extension (agent mode)" aria-label="Toggle browser control">Browse</span>
             <!-- FABLE: style pass — compact navigation chip → Capabilities (tools/skills/MCP) -->
@@ -1213,6 +1215,10 @@ async function showLogs() {
 
 /* ---------- chat pane (Rung D, native) ---------- */
 let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
+// Hermes lane (Phase 1): its own gateway session id, independent of the Odysseus
+// rail — persisted so the conversation survives panel reloads (dashboard restarts
+// invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
+let hermesSid = localStorage.getItem('harness-hermes-sid') || null;
 
 // ── §E — first-launch setup checklist + walkthrough (non-intrusive: auto-shows
 //    only when something needs setup / never seen; also launchable from ⌘K) ──
@@ -1491,8 +1497,11 @@ function setMode(m) {
   chatMode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
+  document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
   document.getElementById('chat-note').textContent =
-    m === 'agent' ? 'web search on · shell off' : 'direct to runner — no tools, fastest';
+    m === 'agent' ? 'web search on · shell off'
+    : m === 'hermes' ? 'Hermes · tools + skills · approvals auto-denied until Phase 2'
+    : 'direct to runner — no tools, fastest';
 }
 
 /* ---------- Capabilities view (Phase 1) ----------
@@ -2541,6 +2550,17 @@ async function duplicateSession(sid){
 
 async function newSession(){
   if (chatBusy) return;
+  if (chatMode === 'hermes'){
+    // Hermes lane: fresh gateway session + clear the pane. The Odysseus session
+    // rail is deliberately untouched (it belongs to the other two lanes).
+    try {
+      const r = await (await fetch('/api/hermes/session/new', {method:'POST'})).json();
+      if (r && r.id){ hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id); }
+      document.getElementById('chat-msgs').innerHTML = '';
+      document.getElementById('chat-input').focus();
+    } catch {}
+    return;
+  }
   try {
     const r = await (await fetch('/api/ody/session/new', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'New chat'})})).json();
@@ -3249,13 +3269,44 @@ function chatSummary(holder){
     + ` <span class="dim">— ${steps.length} step${steps.length > 1 ? 's' : ''}</span>`;
 }
 
+let hermesStopping = false;
+async function hermesStop(){
+  // Phase 1.1: interrupt the running Hermes turn. The SSE turn itself is ended
+  // by the bridge (mapped message.complete(interrupted), or its 3s fallback) —
+  // this only fires the interrupt; the stream teardown restores the button.
+  if (!hermesSid || hermesStopping) return;
+  hermesStopping = true;
+  try {
+    await fetch('/api/hermes/stop', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: hermesSid})});
+  } catch {} finally { hermesStopping = false; }
+}
+
 async function sendChat() {
-  if (chatBusy || !chatSid) return;
+  // Hermes mode needs no Odysseus session (works with Odysseus down) — the bridge
+  // creates a gateway session on first send and announces it via hermes_session.
+  if (chatBusy){
+    // Phase 1.1: during a Hermes turn the Send button reads "Stop" and stays
+    // enabled — a click (or Enter) here interrupts the turn instead of sending.
+    // ⚠ PENDING FABLE QA: no inline stop affordance exists in the other lanes
+    // (their Send just disables), so Send-becomes-Stop is the chosen pattern.
+    if (chatMode === 'hermes') hermesStop();
+    return;
+  }
+  if (chatMode !== 'hermes' && !chatSid) return;
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
-  chatBusy = true; document.getElementById('chat-send').disabled = true;
+  chatBusy = true;
+  const sendBtn = document.getElementById('chat-send');
+  if (chatMode === 'hermes'){
+    sendBtn.textContent = 'Stop';
+    sendBtn.title = 'Stop this Hermes turn'; sendBtn.setAttribute('aria-label', 'Stop this Hermes turn');
+  } else {
+    sendBtn.disabled = true;
+  }
   addMsg('user', text); scrollChat(true);   // sending your own message always snaps to bottom
 
   const holder = addMsg('assistant', '');
@@ -3269,13 +3320,19 @@ async function sendChat() {
 
   try {
     // Chat mode = direct lane to the runner (no Odysseus per-turn overhead / aux-call
-    // queueing); Agent mode = via Odysseus (tools, search). Same SSE protocol both ways.
-    const url = chatMode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
+    // queueing); Agent mode = via Odysseus (tools, search); Hermes mode = the Hermes
+    // gateway via the bridge WS adapter. Same SSE protocol all three ways — the
+    // stream renderer below is shared unchanged.
+    const url = chatMode === 'hermes' ? '/api/hermes/chat'
+              : chatMode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
+    const reqBody = chatMode === 'hermes'
+      ? {session_id: hermesSid || '', message: text}
+      : {session:chatSid, message:text, mode:chatMode,
+         allow_web_search:true, allow_bash:false,
+         tz_offset:-new Date().getTimezoneOffset()};
     const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({session:chatSid, message:text, mode:chatMode,
-                            allow_web_search:true, allow_bash:false,
-                            tz_offset:-new Date().getTimezoneOffset()})});
+      body: JSON.stringify(reqBody)});
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -3328,6 +3385,14 @@ async function sendChat() {
           } else if (j.type === 'model_info' || j.type === 'model_actual') {
             chatModel = j.model || chatModel;
             holder.querySelector('.who').textContent = chatModel;
+          } else if (j.type === 'hermes_session') {
+            // Hermes lane: the bridge minted (or re-minted after a stale sid) a
+            // gateway session — persist it so follow-up turns continue it.
+            if (j.id){ hermesSid = j.id; localStorage.setItem('harness-hermes-sid', j.id); }
+          } else if (j.type === 'hermes_status') {
+            // Bridge liveness note (20s of mid-turn silence): visible reassurance
+            // that a long local-model prefill is slow, not dead.
+            chatStatus(holder, '▸', j.text || 'hermes is working…');
           } else if (j.type === 'tool_start') {
             const raw = j.tool || 'tool';
             const isWeb = /search|web|fetch|browse|url|http/i.test(raw);
@@ -3360,9 +3425,14 @@ async function sendChat() {
     body.textContent += `\n[stream error: ${e}]`;
   } finally {
     think.remove?.();
-    chatBusy = false; document.getElementById('chat-send').disabled = false;
+    chatBusy = false;
+    const sb = document.getElementById('chat-send');
+    sb.disabled = false; sb.textContent = 'Send';
+    sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');
     scrollChat();
-    loadSessions();   // refresh rail: Odysseus auto-titles a new chat + reorders by recency
+    // Refresh rail: Odysseus auto-titles a new chat + reorders by recency.
+    // Hermes turns never touch the Odysseus rail — skip the churn.
+    if (chatMode !== 'hermes') loadSessions();
   }
 }
 

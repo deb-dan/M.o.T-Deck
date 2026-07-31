@@ -2157,6 +2157,429 @@ async def chat_direct(req: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+# ── Hermes chat lane (Phase 1) — the dashboard's /api/ws JSON-RPC gateway re-emitted
+#    as panel SSE (FABLE-HERMES-LANE-SPEC, PATH A). ONE shared WebSocket, multiplexed
+#    by session_id; token deltas / thinking / tool events map onto the SAME frame
+#    shapes the panel's existing stream renderer already handles; approvals are
+#    AUTO-DENIED until the Phase-2 approval-chip UX lands.
+#    ⚠ The /api/ws protocol is upstream-INTERNAL (no stability promise) —
+#    bridge/contract_tests/test_hermes_ws_contract.py gates every Hermes pin-bump
+#    on the exact method/event names used below.
+try:
+    import websockets  # bridge/requirements.txt — used ONLY by this lane
+except Exception:      # missing dep degrades the lane with a clear error, never the bridge
+    websockets = None
+
+
+def _hermes_token() -> str:
+    """Dashboard session token, matching start_component.sh's resolution order:
+    harness.yaml components.hermes.dashboard_token override → else the
+    generate-once file (data/hermes.token) the start script writes."""
+    try:
+        tok = str((cfg().get("components", {}).get("hermes", {}) or {})
+                  .get("dashboard_token") or "").strip()
+        if tok:
+            return tok
+    except Exception:
+        pass
+    try:
+        return (ROOT / "data" / "hermes.token").read_text().strip()
+    except Exception:
+        return ""
+
+
+def _hermes_port() -> int:
+    try:
+        return int(cfg().get("components", {}).get("hermes", {}).get("port") or 9119)
+    except Exception:
+        return 9119
+
+
+def hermes_event_to_frames(ev):
+    """PURE mapper: one Hermes gateway event → (panel SSE frame dicts, action).
+
+    action: "" = keep streaming, "done" = the turn is over (caller emits [DONE]).
+    The approval auto-deny RPC is the CALLER's side effect — this stays pure so
+    it can be unit-tested standalone (bridge/tests/test_hermes_sse_map.py extracts
+    it by ast; keep it dependency-free). Malformed events must NEVER raise.
+    """
+    try:
+        t = (ev or {}).get("type") or ""
+        p = (ev or {}).get("payload")
+        if not isinstance(p, dict):
+            p = {}
+        if t == "message.delta":
+            txt = p.get("text") or ""
+            return ([{"delta": txt}] if txt else [], "")
+        if t in ("reasoning.delta", "thinking.delta"):
+            txt = p.get("text") or ""
+            return ([{"delta": txt, "thinking": True}] if txt else [], "")
+        if t == "tool.start":
+            return ([{"type": "tool_start", "tool": p.get("name") or "tool"}], "")
+        if t == "tool.complete":
+            # Slim: never forward the (potentially huge) raw result to the panel.
+            fr = {"type": "tool_output", "tool": p.get("name") or "tool"}
+            if p.get("summary"):
+                fr["summary"] = p.get("summary")
+            return ([fr], "")
+        if t == "approval.request":
+            # Phase 1: visible in-stream note + a structured event for the inspect
+            # log. The deny RPC itself is issued by the relay loop (side effect).
+            return ([{"type": "approval_denied", "command": p.get("command") or ""},
+                     {"delta": "\n⚠ approval needed — auto-denied "
+                               "(approval UX lands in Phase 2)\n"}], "")
+        if t == "message.complete":
+            # Final text is NOT re-emitted — the deltas already built the bubble.
+            # ANY message.complete ends the turn: complete / error / interrupted
+            # (Phase 1.1 — a dashboard-side interrupt emits status:"interrupted";
+            # the panel turn must end, with a short in-stream note).
+            if (p.get("status") == "error") or p.get("error"):
+                return ([{"type": "proxy_error",
+                          "error": str(p.get("error") or "turn failed")[:300]}], "done")
+            if p.get("status") == "interrupted":
+                return ([{"delta": "\n· interrupted"}], "done")
+            return ([], "done")
+        if t == "error":
+            return ([{"type": "proxy_error",
+                      "error": str(p.get("message") or p.get("error")
+                                   or "hermes error")[:300]}], "done")
+        if t == "_ws_closed":
+            # Adapter-injected close sentinel — the shared WS died mid-turn.
+            return ([{"type": "proxy_error", "error": "Hermes connection lost"}], "done")
+        if t == "status.update":
+            return ([{"type": "status", "kind": p.get("kind") or "",
+                      "text": p.get("text") or ""}], "")
+        return ([], "")  # session.info / gateway.ready / unknown — inspect-only noise, drop
+    except Exception:
+        return ([], "")
+
+
+class _HermesWS:
+    """ONE shared JSON-RPC client over the dashboard's /api/ws WebSocket.
+
+    - lazy connect on first use; reconnect attempts are spaced by a capped backoff
+      so a down Hermes can't hot-loop the bridge;
+    - RPCs are id-correlated (id → Future);
+    - gateway events (method=event) fan out to per-session asyncio.Queues keyed
+      by params.session_id;
+    - on connection loss every pending RPC fails and every open queue gets the
+      {"type": "_ws_closed"} sentinel so relaying turns terminate cleanly.
+    """
+
+    def __init__(self) -> None:
+        self._ws = None
+        self._lock = asyncio.Lock()
+        self._pending: dict = {}      # rpc id → Future
+        self._queues: dict = {}       # session_id → asyncio.Queue
+        self._next_id = 1
+        self._backoff = 0.5
+
+    async def _ensure(self) -> None:
+        async with self._lock:
+            if self._ws is not None:
+                return
+            if websockets is None:
+                raise RuntimeError("websockets not installed in the bridge venv "
+                                   "(pip install websockets)")
+            tok = _hermes_token()
+            if not tok:
+                raise RuntimeError("no Hermes dashboard token — start Hermes from "
+                                   "the panel first (it mints data/hermes.token)")
+            url = f"ws://127.0.0.1:{_hermes_port()}/api/ws?token={tok}"
+            try:
+                ws = await websockets.connect(url, max_size=32 * 1024 * 1024,
+                                              ping_interval=20, ping_timeout=20,
+                                              open_timeout=8)
+            except Exception as e:
+                delay, self._backoff = self._backoff, min(self._backoff * 2, 8.0)
+                await asyncio.sleep(delay)
+                raise RuntimeError(f"Hermes dashboard unreachable on "
+                                   f":{_hermes_port()}/api/ws — {str(e)[:160]}")
+            self._backoff = 0.5
+            self._ws = ws
+            asyncio.get_running_loop().create_task(self._read_loop(ws))
+
+    async def _read_loop(self, ws) -> None:
+        try:
+            async for raw in ws:
+                # Wire = newline-delimited JSON-RPC (identical to Hermes's stdio
+                # transport); one WS text message MAY carry a coalesced token batch.
+                for line in str(raw).splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        import json as _json
+                        obj = _json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("method") == "event":
+                        prm = obj.get("params") or {}
+                        q = self._queues.get(prm.get("session_id") or "")
+                        if q is not None:
+                            q.put_nowait({"type": prm.get("type"),
+                                          "session_id": prm.get("session_id"),
+                                          "payload": prm.get("payload")})
+                    elif obj.get("id") is not None:
+                        fut = self._pending.pop(obj.get("id"), None)
+                        if fut is not None and not fut.done():
+                            fut.set_result(obj)
+        except Exception:
+            pass
+        finally:
+            self._ws = None
+            for fut in list(self._pending.values()):
+                if not fut.done():
+                    fut.set_exception(RuntimeError("Hermes connection lost"))
+            self._pending.clear()
+            for q in list(self._queues.values()):
+                try:
+                    q.put_nowait({"type": "_ws_closed"})
+                except Exception:
+                    pass
+
+    async def rpc(self, method: str, params: dict, timeout: float = 30.0) -> dict:
+        import json as _json
+        await self._ensure()
+        rid = self._next_id
+        self._next_id += 1
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[rid] = fut
+        try:
+            await self._ws.send(_json.dumps({"jsonrpc": "2.0", "id": rid,
+                                             "method": method, "params": params}))
+            resp = await asyncio.wait_for(fut, timeout)
+        except Exception:
+            self._pending.pop(rid, None)
+            raise
+        if resp.get("error"):
+            raise RuntimeError(str((resp.get("error") or {}).get("message")
+                                   or "hermes rpc error"))
+        return resp.get("result") or {}
+
+    def open_queue(self, sid: str) -> "asyncio.Queue":
+        q: asyncio.Queue = asyncio.Queue()
+        self._queues[sid] = q
+        return q
+
+    def close_queue(self, sid: str) -> None:
+        self._queues.pop(sid, None)
+
+
+_HERMES = _HermesWS()
+
+
+def _hermes_stale_sid(err: Exception) -> bool:
+    s = str(err).lower()
+    return "session" in s and ("not found" in s or "unknown" in s or "no such" in s)
+
+
+async def _hermes_session_working(sid: str) -> bool:
+    """Best-effort probe: is this gateway session still running a turn?
+
+    Uses session.active_list (methods_session.py:726 → _session_live_item status
+    ∈ waiting/starting/working/idle). Returns True on ANY doubt — a probe failure
+    must never kill a live stream. A session that is absent or "idle" while our
+    relay still waits means the turn ended WITHOUT a terminal event reaching us
+    (e.g. interrupted from the Hermes dashboard) → the caller ends the turn.
+    ⚠ PENDING FABLE QA: text-free structured probe, but the status vocabulary is
+    upstream-internal (cover in pin-bump contract tests alongside the RPC names).
+    """
+    try:
+        res = await _HERMES.rpc("session.active_list", {}, timeout=8.0)
+        for row in (res.get("sessions") or []):
+            if str(row.get("id") or "") == sid:
+                return str(row.get("status") or "") in ("working", "starting", "waiting")
+        return False  # gone from the gateway → definitely not running
+    except Exception:
+        return True
+
+
+@app.post("/api/hermes/chat")
+async def hermes_chat(req: Request) -> StreamingResponse:
+    """Stream one Hermes turn to the panel as SSE (same protocol as the other lanes).
+
+    Body: {"session_id": <sid or empty>, "message": <text>}. No sid → session.create
+    first, and the NEW sid is announced early via {"type":"hermes_session","id":…}
+    so the panel can persist it before any tokens arrive. One stale-sid retry.
+    """
+    body = await req.json()
+    sid = (body.get("session_id") or "").strip()
+    msg = (body.get("message") or "").strip()
+
+    async def gen():
+        import json as _json
+        nonlocal sid
+        q = None
+        try:
+            if not msg:
+                yield 'data: {"type":"proxy_error","error":"empty message"}\n\n'
+                return
+            if not sid:
+                res = await _HERMES.rpc("session.create", {"source": "harness"})
+                sid = str(res.get("session_id") or "")
+                if not sid:
+                    yield 'data: {"type":"proxy_error","error":"session.create returned no id"}\n\n'
+                    return
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid})}\n\n'
+            # Open the fan-out queue BEFORE submitting so no early event is missed.
+            q = _HERMES.open_queue(sid)
+            try:
+                await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
+            except RuntimeError as e:
+                if not _hermes_stale_sid(e):
+                    raise
+                # ONE retry: the persisted sid points at a dead gateway session
+                # (dashboard restarted) — mint a fresh one and resubmit.
+                _HERMES.close_queue(sid)
+                res = await _HERMES.rpc("session.create", {"source": "harness"})
+                sid = str(res.get("session_id") or "")
+                if not sid:
+                    raise RuntimeError("session.create returned no id")
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid})}\n\n'
+                q = _HERMES.open_queue(sid)
+                await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
+            # Relay gateway events until the turn completes. Watchdogs (Phase 1.1):
+            #   • first-event: NOTHING within 60s of prompt.submit → end with a clear
+            #     error (⚠ PENDING FABLE QA: 60s is a judgment call — local prefill
+            #     normally emits status kaomoji well before that);
+            #   • liveness: 20s of mid-turn silence → panel-visible "working…" note
+            #     (large-prompt prefill on local models reads as dead otherwise) + a
+            #     best-effort session.active_list probe — if Hermes says the session
+            #     is no longer working, the turn ended without a terminal event
+            #     (e.g. interrupted from the dashboard) → end cleanly;
+            #   • stop fallback: /api/hermes/stop nudges this queue with a
+            #     _stop_requested sentinel; if no terminal event lands within ~3s
+            #     the relay ends the turn itself;
+            #   • hard guard: 600s of TOTAL silence still aborts (unchanged).
+            got_any = False
+            silent = 0.0
+            noted_slow = False
+            stop_at = None  # monotonic deadline once a panel Stop was requested
+            while True:
+                if stop_at is not None:
+                    timeout = max(0.25, stop_at - asyncio.get_running_loop().time())
+                else:
+                    timeout = 20.0
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    if stop_at is not None:
+                        # Stop was requested but no terminal event arrived — end anyway.
+                        yield f"data: {_json.dumps({'delta': chr(10) + '· interrupted'})}\n\n"
+                        break
+                    silent += timeout
+                    if not got_any and silent >= 60.0:
+                        yield ('data: {"type":"proxy_error","error":'
+                               '"no response from Hermes within 60s of submit — '
+                               'check the Hermes dashboard / model config"}\n\n')
+                        break
+                    if silent >= 600.0:
+                        yield ('data: {"type":"proxy_error","error":'
+                               '"hermes turn idle >10min — giving up"}\n\n')
+                        break
+                    if got_any and not await _hermes_session_working(sid):
+                        # Turn ended upstream with no terminal event reaching us
+                        # (dashboard-side interrupt was the live repro) — close it.
+                        yield f"data: {_json.dumps({'delta': chr(10) + '· interrupted'})}\n\n"
+                        break
+                    if not noted_slow:
+                        noted_slow = True
+                        yield ('data: {"type":"hermes_status","text":'
+                               '"hermes is working — large prompt prefill can take '
+                               'a while on local models"}\n\n')
+                    continue
+                got_any = True
+                silent = 0.0
+                noted_slow = False
+                if (ev or {}).get("type") == "_stop_requested":
+                    # Panel Stop: session.interrupt was issued — give the mapped
+                    # message.complete(status=interrupted) ~3s to land, then force-end.
+                    if stop_at is None:
+                        stop_at = asyncio.get_running_loop().time() + 3.0
+                    continue
+                if (ev or {}).get("type") == "approval.request":
+                    # Phase 1 side effect: immediate auto-deny (chip UX = Phase 2).
+                    try:
+                        await _HERMES.rpc("approval.respond",
+                                          {"session_id": sid, "choice": "deny"})
+                    except Exception:
+                        pass
+                frames, action = hermes_event_to_frames(ev)
+                for fr in frames:
+                    yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
+                if action == "done":
+                    break
+        except Exception as e:
+            yield f'data: {_json.dumps({"type": "proxy_error", "error": str(e)[:300]})}\n\n'
+        finally:
+            if q is not None:
+                _HERMES.close_queue(sid)
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/api/hermes/stop")
+async def hermes_stop(req: Request) -> JSONResponse:
+    """Interrupt a running Hermes turn (panel Stop button).
+
+    Nudges the relay FIRST via a _stop_requested queue sentinel (arms its ~3s
+    force-end fallback even if the RPC below stalls), then issues the gateway's
+    session.interrupt (vendor/hermes/tui_gateway/methods_session.py:2705) — the
+    normal path is that Hermes then emits message.complete(status="interrupted"),
+    which the mapper turns into a clean turn end.
+    """
+    body = await req.json()
+    sid = (body.get("session_id") or "").strip()
+    if not sid:
+        return JSONResponse({"error": "session_id required"}, status_code=400)
+    q = _HERMES._queues.get(sid)
+    if q is not None:
+        try:
+            q.put_nowait({"type": "_stop_requested"})
+        except Exception:
+            pass
+    try:
+        res = await _HERMES.rpc("session.interrupt", {"session_id": sid}, timeout=10.0)
+        return JSONResponse({"ok": True,
+                             "status": res.get("status") or "interrupted"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
+
+
+@app.get("/api/hermes/sessions")
+async def hermes_sessions() -> JSONResponse:
+    """Stored Hermes sessions (Phase-3 rail hook; WS-based, no REST token dance)."""
+    try:
+        res = await _HERMES.rpc("session.list", {"limit": 100})
+        return JSONResponse(res.get("sessions") or [])
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
+@app.post("/api/hermes/session/new")
+async def hermes_session_new() -> JSONResponse:
+    try:
+        res = await _HERMES.rpc("session.create", {"source": "harness"})
+        return JSONResponse({"id": res.get("session_id"),
+                             "stored_id": res.get("stored_session_id")})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
+@app.get("/api/hermes/history/{sid}")
+async def hermes_history(sid: str) -> JSONResponse:
+    """Transcript of a LIVE gateway session (Phase-3 hook; stored-session resume
+    is a later slice — this covers the current pane's own session)."""
+    try:
+        res = await _HERMES.rpc("session.history", {"session_id": sid})
+        return JSONResponse({"history": res.get("messages") or [],
+                             "count": res.get("count") or 0})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
 @app.post("/api/open")
 async def open_external(req: Request) -> JSONResponse:
     """Open an http(s) URL in the default browser, OR open/reveal a local file.

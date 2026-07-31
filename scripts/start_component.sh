@@ -282,6 +282,19 @@ PYPATCH
     lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
     : > data/logs/hermes.log
+    # Deterministic dashboard session token (Hermes chat lane): the dashboard seeds
+    # its _SESSION_TOKEN from HERMES_DASHBOARD_SESSION_TOKEN (the same trick Hermes's
+    # own desktop shell uses), so the Bridge can auth the /api/ws?token=<...> gateway.
+    # Precedence: harness.yaml components.hermes.dashboard_token override → else
+    # generate ONCE into data/hermes.token (chmod 600) and reuse on every start.
+    HTOKEN=$(awk '/^  hermes:/{f=1; next} f && /^  [a-z]/{exit} f && /^    dashboard_token:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*dashboard_token:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    if [[ -z "$HTOKEN" ]]; then
+      if [[ ! -s data/hermes.token ]]; then
+        python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > data/hermes.token
+        chmod 600 data/hermes.token
+      fi
+      HTOKEN=$(cat data/hermes.token)
+    fi
     # HERMES_DESKTOP=1: make the dashboard run its OWN cron ticker so scheduled jobs
     # fire without a running messaging gateway (Hermes has no standalone cron daemon —
     # normally the gateway fires cron). Side effects of this flag: it also exposes two
@@ -289,7 +302,7 @@ PYPATCH
     # Electron app, and adds minor desktop framing to the system prompt. NOTE: if the
     # gateway is later run as a component, BOTH would fire cron (no cross-process lock)
     # → dedupe then (single ticker). See CLAUDE.md.
-    nohup env HERMES_DESKTOP=1 hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
+    nohup env HERMES_DESKTOP=1 HERMES_DASHBOARD_SESSION_TOKEN="$HTOKEN" hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
     echo $! > data/hermes.pid
     up=0
     for _ in $(seq 1 25); do
