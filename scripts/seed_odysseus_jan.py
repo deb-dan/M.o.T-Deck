@@ -21,7 +21,7 @@ import urllib.request
 
 BASE_URL = os.environ.get("JAN_BASE_URL", "http://127.0.0.1:6767/v1")
 API_KEY = os.environ.get("JAN_API_KEY", "").strip() or None   # headless runner needs a key
-NAME = "Jan (local)"
+NAME = "Local runner"   # display name in Odysseus (Jan is gone; id stays local-jan for fan-out)
 ENDPOINT_ID = "local-jan"          # stable caller-supplied String PK (idempotent)
 
 

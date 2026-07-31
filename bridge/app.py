@@ -557,6 +557,263 @@ async def ody_history(sid: str) -> JSONResponse:
         return JSONResponse({"history": []})
 
 
+# ── Capabilities panel (Phase 1): aggregate Odysseus settings + route writes ──────
+# One snapshot for the panel to render; one router for writes. Mirrors the _ody_req
+# proxy style. Odysseus is the source of truth (shared with the Odysseus tab).
+
+# The Phase-1 subset of app-settings the panel is allowed to see/edit. Kept explicit
+# so we never leak the whole settings bag (which can hold *_api_key secrets).
+CAPS_SETTING_KEYS = (
+    "search_provider", "search_fallback_chain", "search_safesearch",
+    "search_result_count", "agent_max_rounds", "agent_max_tool_calls",
+)
+
+
+def caps_map_write(group: str, key: str, value):
+    """PURE mapping: (group, key, value) → (method, path, body, encoding) for a caps
+    write, or ("__error__", message, None, None) to reject. `encoding` is "json" or
+    "form" (Odysseus's MCP toggle is form-encoded, everything else is JSON). Routes:
+      feature       → POST /api/auth/features         (bool)          [Phase 1]
+      setting       → POST /api/auth/settings         (allowlist)     [Phase 1]
+      mcp_server    → PATCH /api/mcp/servers/{id}      form is_enabled [Phase 2]
+      mcp_tools     → PATCH /api/mcp/servers/{id}/tools {disabled:[]} [Phase 2]
+      builtin_tools → POST  /api/tools                 {disabled:[]}   [Phase 2]
+    Secrets (`*_api_key`) are never forwarded; `setting` writes are confined to the
+    Phase-1 allowlist so the panel can't reach arbitrary settings keys."""
+    if not isinstance(key, str) or not key:
+        return ("__error__", "missing key", None, None)
+    if key.endswith("_api_key") or "api_key" in key:
+        return ("__error__", "refusing to write a secret key", None, None)
+    if group == "feature":
+        return ("POST", "/api/auth/features", {key: bool(value)}, "json")
+    if group == "setting":
+        if key not in CAPS_SETTING_KEYS:
+            return ("__error__", f"setting '{key}' not writable in Phase 1", None, None)
+        return ("POST", "/api/auth/settings", {key: value}, "json")
+    if group == "mcp_server":
+        # key = server id; value = desired enabled state. Odysseus expects a form
+        # field is_enabled="true"/"false" (see mcp_routes.toggle_server).
+        return ("PATCH", f"/api/mcp/servers/{key}",
+                {"is_enabled": "true" if value else "false"}, "form")
+    if group == "mcp_tools":
+        # key = server id; value = the FULL list of disabled tool names (replace).
+        if not isinstance(value, list):
+            return ("__error__", "mcp_tools value must be a list of tool names", None, None)
+        return ("PATCH", f"/api/mcp/servers/{key}/tools", {"disabled": value}, "json")
+    if group == "builtin_tools":
+        # key is a placeholder (write is global); value = FULL list of disabled
+        # built-in tool ids (replace). Writes settings["disabled_tools"].
+        if not isinstance(value, list):
+            return ("__error__", "builtin_tools value must be a list of tool ids", None, None)
+        return ("POST", "/api/tools", {"disabled": value}, "json")
+    if group == "skill_builtin":
+        # key = built-in skill (TOOL_SECTIONS) name. IMPORTANT: Odysseus's
+        # /api/skills/builtin is a TEXT-OVERRIDE store (PUT {text}) + a reset
+        # (DELETE) — it is NOT an on/off switch. The real enable/disable of a
+        # built-in tool lives in group 'builtin_tools' (→ POST /api/tools). So the
+        # only boolean-safe write here is RESET (DELETE the override → shipped
+        # default); enabling an override would need override TEXT the panel never
+        # collects. Accept only a falsy value = "reset this override".
+        # ⚠️ PENDING FABLE QA: built-in skills have no true on/off by design here.
+        if value:
+            return ("__error__",
+                    "built-in skills have no on/off — send value:false to reset the "
+                    "override; enable/disable is the Tools section", None, None)
+        return ("DELETE", f"/api/skills/builtin/{key}", None, "none")
+    return ("__error__", f"group '{group}' not supported", None, None)
+
+
+@app.get("/api/ody/caps")
+async def ody_caps() -> JSONResponse:
+    """Aggregate the Phase-1 capabilities snapshot. Each sub-fetch is isolated so a
+    partial failure still returns the rest. Phase 2/3 keys (mcp_servers,
+    model_endpoints) are omitted for now."""
+    out = {"features": {}, "settings": {}, "search_providers": [],
+           "mcp_servers": [], "builtin_tools": [],
+           "skills_builtin": [], "skills_user": [], "errors": {}}
+    try:
+        r = await _ody_req("GET", "/api/auth/features")
+        if r.status_code == 200 and isinstance(r.json(), dict):
+            out["features"] = r.json()
+        else:
+            out["errors"]["features"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["features"] = str(e)
+    try:
+        r = await _ody_req("GET", "/api/auth/settings")
+        if r.status_code == 200 and isinstance(r.json(), dict):
+            full = r.json()
+            # only surface the Phase-1 subset — never leak the whole bag / secrets
+            out["settings"] = {k: full.get(k) for k in CAPS_SETTING_KEYS if k in full}
+        else:
+            out["errors"]["settings"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["settings"] = str(e)
+    try:
+        r = await _ody_req("GET", "/api/search/providers")
+        if r.status_code == 200 and isinstance(r.json(), list):
+            out["search_providers"] = r.json()
+        else:
+            out["errors"]["search_providers"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["search_providers"] = str(e)
+    # Phase 2 — connected tools (MCP servers) + built-in agent tools.
+    try:
+        r = await _ody_req("GET", "/api/mcp/servers")
+        if r.status_code == 200 and isinstance(r.json(), list):
+            out["mcp_servers"] = r.json()
+        else:
+            out["errors"]["mcp_servers"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["mcp_servers"] = str(e)
+    try:
+        r = await _ody_req("GET", "/api/tools")
+        doc = r.json() if r.status_code == 200 else None
+        # Odysseus returns {"tools": [{"id","enabled"}]} (flat — no server-side
+        # categories; the panel groups them for display).
+        if isinstance(doc, dict) and isinstance(doc.get("tools"), list):
+            out["builtin_tools"] = doc["tools"]
+        else:
+            out["errors"]["builtin_tools"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["builtin_tools"] = str(e)
+    # Skills — built-in tool-instruction blocks (name/description/is_overridden;
+    # text-override + reset only) and the user's learned SKILL.md skills (read-only
+    # here — full CRUD lives in the Odysseus tab).
+    try:
+        r = await _ody_req("GET", "/api/skills/builtin")
+        doc = r.json() if r.status_code == 200 else None
+        if isinstance(doc, dict) and isinstance(doc.get("builtin"), list):
+            out["skills_builtin"] = doc["builtin"]
+        else:
+            out["errors"]["skills_builtin"] = r.text[:200]
+    except Exception as e:
+        out["errors"]["skills_builtin"] = str(e)
+    try:
+        r = await _ody_req("GET", "/api/skills")
+        doc = r.json() if r.status_code == 200 else None
+        # Odysseus returns {"skills": [...], "count": N}; be tolerant of a bare list.
+        if isinstance(doc, dict) and isinstance(doc.get("skills"), list):
+            out["skills_user"] = doc["skills"]
+        elif isinstance(doc, list):
+            out["skills_user"] = doc
+        else:
+            out["errors"]["skills_user"] = (r.text[:200] if r is not None else "no response")
+    except Exception as e:
+        out["errors"]["skills_user"] = str(e)
+    return JSONResponse(out)
+
+
+@app.get("/api/ody/mcp/{server_id}/tools")
+async def ody_mcp_tools(server_id: str) -> JSONResponse:
+    """Per-server MCP tool list with is_disabled state (fetched on-demand when a
+    server row is expanded — kept out of the /caps snapshot so opening Capabilities
+    doesn't fan out to every server's tools). ⚠️ PENDING FABLE QA."""
+    try:
+        r = await _ody_req("GET", f"/api/mcp/servers/{server_id}/tools")
+        if r.status_code == 200 and isinstance(r.json(), list):
+            return JSONResponse({"ok": True, "tools": r.json()})
+        return JSONResponse({"ok": False, "error": r.text[:300]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
+@app.post("/api/ody/mcp/add")
+async def ody_mcp_add(req: Request) -> JSONResponse:
+    """Register a new MCP server in Odysseus. Forwards to Odysseus's admin-only
+    form endpoint (POST /api/mcp/servers). The panel sends JSON; we translate to the
+    form fields Odysseus expects (name, transport, command, args JSON, env JSON, url).
+    Adding a stdio server runs an arbitrary binary on the host — same trust surface as
+    the Odysseus tab's own MCP page. ⚠️ PENDING FABLE QA: form field names mirror
+    mcp_routes.add_server (@25c9e73)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    name = (body.get("name") or "").strip()
+    transport = (body.get("transport") or "stdio").strip()
+    command = (body.get("command") or "").strip()
+    url = (body.get("url") or "").strip()
+    # args/env may arrive as a JSON string OR as a list/dict — normalise to a JSON string.
+    def _as_json_str(v, default):
+        if v is None or v == "":
+            return default
+        if isinstance(v, str):
+            return v
+        try:
+            return json.dumps(v)
+        except Exception:
+            return default
+    args = _as_json_str(body.get("args"), "[]")
+    env = _as_json_str(body.get("env"), "{}")
+    if not name:
+        return JSONResponse({"ok": False, "error": "name is required"}, status_code=400)
+    if transport == "stdio" and not command:
+        return JSONResponse({"ok": False, "error": "command is required for stdio transport"}, status_code=400)
+    if transport in ("sse", "http") and not url:
+        return JSONResponse({"ok": False, "error": f"url is required for {transport} transport"}, status_code=400)
+    form = {"name": name, "transport": transport, "args": args, "env": env}
+    if command:
+        form["command"] = command
+    if url:
+        form["url"] = url
+    try:
+        r = await _ody_req("POST", "/api/mcp/servers", data=form)
+        if r.status_code == 200:
+            return JSONResponse({"ok": True, "server": r.json()})
+        return JSONResponse({"ok": False, "error": r.text[:300]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
+@app.post("/api/ody/mcp/{server_id}/remove")
+async def ody_mcp_remove(server_id: str) -> JSONResponse:
+    """Delete an MCP server from Odysseus (DELETE /api/mcp/servers/{id})."""
+    try:
+        r = await _ody_req("DELETE", f"/api/mcp/servers/{server_id}")
+        if r.status_code == 200:
+            return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False, "error": r.text[:300]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
+@app.post("/api/ody/caps/set")
+async def ody_caps_set(req: Request) -> JSONResponse:
+    """Route a single capability write to the right Odysseus endpoint. Odysseus
+    validates/clamps server-side (e.g. agent_max_rounds 1-200)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    group = body.get("group")
+    key = body.get("key")
+    value = body.get("value")
+    method, path, jbody, enc = caps_map_write(group, key, value)
+    if method == "__error__":
+        return JSONResponse({"ok": False, "error": path}, status_code=400)
+    try:
+        if enc == "form":
+            r = await _ody_req(method, path, data=jbody)
+        elif enc == "none":            # DELETE with no body (e.g. reset a skill override)
+            r = await _ody_req(method, path)
+        else:
+            r = await _ody_req(method, path, json=jbody)
+        if r.status_code == 200:
+            # echo the value Odysseus actually stored (it may clamp/coerce)
+            stored = value
+            try:
+                doc = r.json()
+                if isinstance(doc, dict) and key in doc:
+                    stored = doc[key]
+            except Exception:
+                pass
+            return JSONResponse({"ok": True, "group": group, "key": key, "value": stored})
+        return JSONResponse({"ok": False, "error": r.text[:300]}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"}, status_code=502)
+
+
 # ── usage analytics (doc-09): best-effort per-turn log → SQLite. NEVER raises into chat. ──
 _analytics_lock = threading.Lock()
 _analytics_pruned = False   # retention prune runs once per process (Fable QA: cap growth)
@@ -873,6 +1130,30 @@ def api_models() -> JSONResponse:
         "aux": aux, "adapter": adapter, "ledger": ledger, "error": err})
 
 
+@app.post("/api/models/rescan")
+def api_models_rescan() -> JSONResponse:
+    """Re-run the registry seed the same way api_models / start_component.sh do it
+    (subprocess to scripts/seed_registry.py). seed_registry.merge() prunes the
+    re-scanned sets ('local'/'jan-import'/'lmstudio-import') by replacing them with a
+    fresh scan, so models the user deleted in LM Studio (or Jan) drop out; source
+    "download" entries + known ctx are preserved. Does NOT touch the runner/live
+    model. Returns {ok, count} (models after rescan); never raises into the caller."""
+    import json as _json
+    try:
+        r = subprocess.run(["python3", "scripts/seed_registry.py"],
+                           cwd=ROOT, capture_output=True, text=True,
+                           timeout=120, check=False)
+        if r.returncode != 0:
+            return JSONResponse(
+                {"ok": False, "error": (r.stderr or r.stdout or "seed failed")[:300]},
+                status_code=500)
+        reg = ROOT / "data" / "models.json"
+        count = len(_json.loads(reg.read_text()).get("models", []))
+        return JSONResponse({"ok": True, "count": count})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
+
+
 _SWITCH = {"busy": False, "log": ""}
 
 
@@ -943,12 +1224,10 @@ async def api_switch_model(req: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "log": "switch started"})
 
 
-@app.post("/api/models/eject")
-def api_eject_model() -> JSONResponse:
-    """Eject the live model (Fable ISSUE 2 state machine): stop the runner by PORT
-    AND clear the active-model designation (runner.model → empty) so a later Start
-    does NOT silently resurrect the just-ejected model. Going live again requires an
-    explicit Load from the Models pane. Frees the main slot's RAM in the ledger."""
+def _eject_runner() -> None:
+    """Stop the main runner by PORT AND clear the active-model designation
+    (runner.model → empty) so a later Start does NOT silently resurrect the model.
+    Shared by the eject endpoint and the delete endpoint (deleting a live model)."""
     rc = cfg().get("runner", {}) or {}
     port = rc.get("port")
     if port:
@@ -959,7 +1238,103 @@ def api_eject_model() -> JSONResponse:
     _clear_expected("runner")     # intentional → "stopped", not "degraded"
     PROV.pop("runner", None)
     _set_runner_model("")         # no active model — Start must route the user to pick
+
+
+@app.post("/api/models/eject")
+def api_eject_model() -> JSONResponse:
+    """Eject the live model (Fable ISSUE 2 state machine): stop the runner by PORT
+    AND clear the active-model designation. Going live again requires an explicit
+    Load from the Models pane. Frees the main slot's RAM in the ledger."""
+    _eject_runner()
     return JSONResponse({"ok": True})
+
+
+# ── Delete an APP-OWNED model (files live under data/models/) ──────────────────
+# App-owned = source in {download, local}: the harness downloaded these or holds the
+# local files under data/models/<folder>/, so we may delete both the files and the
+# registry entry. Read-only imports (lmstudio-import, jan-import) point at files the
+# harness does NOT own (e.g. the user's LM Studio library) — deleting those would
+# nuke the user's data, so they are HARD-refused here (the panel hides Delete for
+# them too). Pure predicate factored out + unit-tested (see bridge/tests).
+_DELETABLE_SOURCES = ("download", "local")
+
+
+def _deletable_target(entry: dict, models_root: str):
+    """Return (target_dir, None) if `entry` is an app-owned model whose files live
+    strictly UNDER models_root and may be safely deleted; else (None, reason).
+
+    Pure/testable: uses only os.path (realpath normalizes even non-existent paths,
+    so tests don't need real files). The target is the model's OWN folder — the
+    first path segment beneath models_root — regardless of whether the registry
+    `path` points at a file (…/model.gguf) or the model dir itself (MLX). Any path
+    that resolves outside models_root (traversal, symlink escape, an import pointing
+    elsewhere) fails the containment check and is refused."""
+    import os as _os
+    src = (entry or {}).get("source")
+    if src not in _DELETABLE_SOURCES:
+        return None, (f"'{src or 'unknown'}' models are read-only imports the harness "
+                      f"does not own — remove them in the app that manages them")
+    path = (entry or {}).get("path")
+    if not path:
+        return None, "no file path on record for this model"
+    real_root = _os.path.realpath(_os.path.expanduser(str(models_root)))
+    real_path = _os.path.realpath(_os.path.expanduser(str(path)))
+    # Must sit strictly under the harness models dir (never the dir itself, never outside).
+    if real_path != real_root and not real_path.startswith(real_root + _os.sep):
+        return None, "model path is outside the harness models directory"
+    rel = _os.path.relpath(real_path, real_root)
+    first = rel.split(_os.sep)[0]
+    if first in ("", ".", ".."):
+        return None, "could not resolve a model folder under the models directory"
+    return _os.path.join(real_root, first), None
+
+
+@app.post("/api/models/delete")
+async def api_delete_model(req: Request) -> JSONResponse:
+    """Delete an app-owned model: remove its folder under data/models/ + its registry
+    entry. HARD-guarded — only source in {download, local} AND a realpath strictly
+    under data/models/ is ever deleted (never an LM Studio / Jan import, never a path
+    outside our dir). If the model is currently live (main runner or aux), it is
+    ejected/stopped first."""
+    import os as _os, shutil as _shutil
+    mid = ((await req.json()).get("id") or "").strip()
+    if not mid:
+        return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if not entry:
+        return JSONResponse({"ok": False, "log": f"model '{mid}' not in registry"}, status_code=404)
+    models_root = str(ROOT / "data" / "models")
+    target, reason = _deletable_target(entry, models_root)
+    if not target:
+        print(f"[delete] reject {mid!r}: {reason}", flush=True)
+        return JSONResponse({"ok": False, "log": reason}, status_code=400)
+    # Belt-and-suspenders: re-affirm containment on the resolved target itself.
+    real_root = _os.path.realpath(models_root)
+    if not (target == _os.path.join(real_root, _os.path.basename(target))
+            and target.startswith(real_root + _os.sep)):
+        print(f"[delete] reject {mid!r}: target {target} not under {real_root}", flush=True)
+        return JSONResponse({"ok": False, "log": "refused: unsafe target path"}, status_code=400)
+
+    c = cfg()
+    rc = c.get("runner", {}) or {}
+    port = rc.get("port")
+    live = _live_model_id(int(port)) if port else None
+    was_live = (live == mid) or ((rc.get("model") or "") == mid)
+    if was_live:
+        _eject_runner()   # stop the runner + clear runner.model before removing files
+    # If it's the aux model, stop aux (if up) + clear the aux designation.
+    ax = c.get("aux", {}) or {}
+    was_aux = (ax.get("model") or "") == mid
+    if was_aux:
+        if ax.get("port"):
+            _aux_kill(int(ax["port"]))
+        _set_yaml_model("aux", "")
+
+    if _os.path.isdir(target):
+        _shutil.rmtree(target, ignore_errors=True)
+    _registry_drop(mid)
+    print(f"[delete] removed {mid!r} (dir {target}, was_live={was_live}, was_aux={was_aux})", flush=True)
+    return JSONResponse({"ok": True, "id": mid, "was_live": was_live, "was_aux": was_aux})
 
 
 @app.get("/api/models/switch-status")
@@ -1210,6 +1585,25 @@ def _registry_add(entry: dict) -> None:
     models.append(entry)
     data["models"] = models
     reg.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(reg) + ".harness-tmp"
+    with open(tmp, "w") as f:
+        _json.dump(data, f, indent=2)
+    _os.replace(tmp, reg)
+
+
+def _registry_drop(mid: str) -> None:
+    """Read data/models.json, drop the model with id `mid`, atomic write. Used by the
+    delete endpoint — note re-seeding would NOT remove a source="download" entry
+    (merge preserves non-rescanned sources), so we drop it explicitly here."""
+    import json as _json, os as _os
+    reg = ROOT / "data" / "models.json"
+    try:
+        data = _json.loads(reg.read_text())
+        if not isinstance(data, dict) or "models" not in data:
+            return
+    except Exception:
+        return
+    data["models"] = [m for m in data.get("models", []) if m.get("id") != mid]
     tmp = str(reg) + ".harness-tmp"
     with open(tmp, "w") as f:
         _json.dump(data, f, indent=2)

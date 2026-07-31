@@ -68,6 +68,66 @@
   .stamp { font:10.5px var(--mono); color:var(--faint); letter-spacing:.18em;
            text-transform:uppercase; margin-bottom:30px; }
 
+  /* ---------- Capabilities view (FABLE: style pass) ---------- */
+  .caps-group { margin-bottom:22px; }
+  .caps-group > .cap-h { font:10px var(--mono); letter-spacing:.22em; text-transform:uppercase;
+                         color:var(--gold); margin:0 0 10px; display:block; }
+  .cap-card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+              padding:6px 20px; }
+  .cap-row { display:flex; align-items:flex-start; gap:16px; padding:14px 0;
+             border-bottom:1px solid var(--line); }
+  .cap-row:last-child { border-bottom:none; }
+  .cap-row .cap-txt { flex:1; min-width:0; }
+  .cap-row .cap-name { font-size:14px; color:var(--cream); }
+  .cap-row .cap-desc { font-size:12px; color:var(--dim); margin-top:2px; }
+  .cap-row .cap-ctl { flex:none; display:flex; align-items:center; }
+  .cap-row .cap-err { font:10.5px var(--mono); color:var(--bad); margin-top:4px; }
+  /* toggle switch (pure CSS over a checkbox) */
+  .cap-sw { position:relative; width:40px; height:22px; flex:none; cursor:pointer; }
+  .cap-sw input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+  .cap-sw .track { position:absolute; inset:0; background:var(--card2); border:1px solid var(--line2);
+                   border-radius:22px; transition:background .15s,border-color .15s; }
+  .cap-sw .knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%;
+                  background:var(--dim); transition:transform .15s,background .15s; }
+  .cap-sw input:checked ~ .track { background:rgba(217,179,108,.22); border-color:var(--gold); }
+  .cap-sw input:checked ~ .knob { transform:translateX(18px); background:var(--gold); }
+  .cap-sw input:disabled ~ .track { opacity:.5; }
+  .cap-sel, .cap-num { font:12px var(--mono); color:var(--cream); background:var(--card2);
+                       border:1px solid var(--line2); border-radius:8px; padding:6px 10px; }
+  .cap-num { width:88px; text-align:right; }
+  .cap-sel:disabled option { color:var(--faint); }
+  /* compact read-only caps summary chip in the chat bar */
+  .caps-strip { font:10.5px var(--mono); color:var(--dim); letter-spacing:.06em; margin-left:10px;
+                cursor:pointer; border-bottom:1px dotted var(--line2); }
+  .caps-strip:hover { color:var(--cream); }
+  /* expandable tool rows (built-in categories + MCP servers) */
+  .cap-exp { background:none; border:none; color:var(--gold); font:10px var(--mono);
+             letter-spacing:.14em; text-transform:uppercase; cursor:pointer; padding:2px 0;
+             margin-top:4px; }
+  .cap-exp:hover { color:var(--cream); }
+  .cap-count { font:10px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:8px; }
+  .cap-sub { margin:8px 0 2px; padding:6px 0 2px 4px; border-left:1px solid var(--line2); }
+  .cap-sub .cap-row { padding:9px 0 9px 14px; }
+  .cap-sub .cap-name { font-size:13px; }
+  .cap-sub .cap-desc { font-size:11px; }
+  .cap-pill { font:9.5px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+              padding:2px 7px; border-radius:20px; border:1px solid var(--line2);
+              color:var(--dim); margin-left:8px; }
+  .cap-pill.on { color:var(--gold); border-color:var(--gold); }
+  .cap-pill.off { color:var(--faint); }
+  /* MCP add form + small caps buttons (FABLE: style pass) */
+  .cap-inp { font:12px var(--mono); color:var(--cream); background:var(--card2);
+             border:1px solid var(--line2); border-radius:8px; padding:6px 10px; min-width:0; }
+  .cap-addform { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .cap-addform .cap-inp { flex:1 1 130px; }
+  .cap-addform .cap-sel { flex:none; }
+  .cap-btn { font:10px var(--mono); letter-spacing:.14em; text-transform:uppercase; cursor:pointer;
+             background:none; border:1px solid var(--line2); border-radius:8px; color:var(--dim);
+             padding:6px 12px; }
+  .cap-btn:hover { color:var(--cream); border-color:var(--gold); }
+  .cap-btn.arm { color:var(--bad); border-color:var(--bad); }
+  .cap-btn.go { color:var(--gold); border-color:var(--gold); }
+
   /* ---------- cards ---------- */
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
@@ -298,6 +358,9 @@
   .mpill.fmt { color:var(--faint); border:none; padding:2px 0; }
   .mpill.live { color:#171420; background:var(--gold); border-color:var(--gold); }
   .mpill.aux { color:var(--gold); }
+  /* app-owned vs read-only import provenance — plain-language "who owns the files" */
+  .mpill.owned { color:var(--gold); border-color:var(--gold); }
+  .mpill.imported { color:var(--faint); border-color:var(--line2); }
   .mrow .msize { color:var(--dim); }
   #models-detail { flex:1 1 45%; position:sticky; top:12px; align-self:flex-start;
       max-height:calc(100vh - 160px); overflow-y:auto;
@@ -305,6 +368,12 @@
   .md-title { font:20px var(--serif); color:var(--cream); word-break:break-word; }
   .md-meta { font:10.5px var(--mono); letter-spacing:.06em; color:var(--dim); margin-top:7px; line-height:1.6; }
   .md-actions { display:flex; gap:9px; flex-wrap:wrap; margin-top:16px; }
+  /* Delete (app-owned only) — quiet until armed, then danger. <!-- FABLE: style pass --> */
+  .md-del { color:var(--faint); border-color:var(--line2); }
+  .md-del:hover:not(:disabled) { color:var(--bad); border-color:var(--bad); }
+  .md-del.armed { color:var(--bad) !important; border-color:var(--bad) !important; }
+  .md-imnote { font:10px var(--mono); letter-spacing:.05em; color:var(--faint);
+      align-self:center; max-width:240px; line-height:1.5; }
   /* in-detail model-load feedback (LM-Studio-style) — indeterminate bar + live phase.
      Reuses existing tokens only. <!-- FABLE: style pass --> */
   .md-load { max-width:420px; margin-top:14px; }
@@ -522,6 +591,8 @@
   /* draggable vertical divider between the chat column and the viewer (only while split) */
   /* BUG 1 fix: comfortable 10px hit area, sits above the panes (z-index), and a full-height
      visible bar so the handle is discoverable (faint by default, gold on hover/active). */
+  .caps-skills-head { display:flex; align-items:center; gap:10px; width:100%; background:none;
+      border:0; padding:0; cursor:pointer; text-align:left; }   /* Fable: collapsible Skills header */
   #art-divider { display:none; flex:none; width:4px; align-self:stretch; cursor:col-resize;   /* Fable: slim handle (Debi: minimize the dead band) */
       position:relative; z-index:8; touch-action:none; }
   body.artifact-open:not(.artifact-expanded) #art-divider { display:block; }
@@ -649,6 +720,7 @@
     <a id="nav-mc" class="on" onclick="showView('mc')" title="Mission Control" aria-label="Mission Control"><span class="ico">◫</span> Mission Control</a>
     <a id="nav-chat" onclick="showView('chat')" title="Chat" aria-label="Chat"><span class="ico">✳</span> Chat</a>
     <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
+    <a id="nav-caps" onclick="showView('caps')" title="Capabilities" aria-label="Capabilities"><span class="ico">⚙</span> Capabilities</a>
     <a onclick="alert('Policies UI lands in M2')" title="Policies" aria-label="Policies"><span class="ico">§</span> Policies</a>
     <a onclick="showLogs()" title="Logs" aria-label="Logs"><span class="ico">≣</span> Logs</a>
   </nav>
@@ -721,9 +793,15 @@
             <span class="mode-chip" id="mode-chat" onclick="setMode('chat')" title="Chat mode — direct to the model, fastest" aria-label="Chat mode">Chat</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
               title="Browser control via the Browser MCP extension (agent mode)" aria-label="Toggle browser control">Browse</span>
+            <!-- FABLE: style pass — compact navigation chip → Capabilities (tools/skills/MCP) -->
+            <span class="mode-chip" id="mode-tools" onclick="showView('caps')"
+              title="Tools, skills & connected servers — configure capabilities" aria-label="Open Capabilities">⚙ Tools</span>
             <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)" aria-label="Active model"></select>
             <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM" aria-label="Eject the loaded model">⏏</button>
             <span class="mode-note" id="chat-note">web search on · shell off</span>
+            <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
+            <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
+              title="Capabilities — click to configure" aria-label="Capabilities summary"></span>
           </div>
           <div id="chat-inputrow">
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
@@ -776,7 +854,10 @@
         <h1>Models</h1>
         <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
       </div>
-      <button id="models-toggle" class="chip" onclick="toggleModelsBrowse()">SEARCH / DOWNLOAD ⌄</button>
+      <div style="display:flex;gap:8px;align-items:center"><!-- FABLE: style pass -->
+        <button id="models-rescan" class="chip" onclick="rescanModels()" title="Re-scan the model folders (data/models, LM Studio) — drops models you've deleted, picks up new ones">RESCAN</button>
+        <button id="models-toggle" class="chip" onclick="toggleModelsBrowse()">SEARCH / DOWNLOAD ⌄</button>
+      </div>
     </div>
     <div class="stamp" id="models-stamp">—</div>
     <div id="sw-row" hidden>
@@ -814,6 +895,20 @@
 
     <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
     <div id="models-aux"></div>
+  </div>
+
+  <!-- FABLE: style pass — Capabilities view (Phase 1: features + settings) -->
+  <div id="view-caps" hidden>
+    <div class="kicker"><span class="num">IV.</span><span class="rule"></span>
+      <span class="lbl">Capabilities</span></div>
+    <div class="models-head">
+      <div>
+        <h1>Capabilities</h1>
+        <div class="sub">What the agent is allowed to do. Changes are saved to Odysseus (shared with the Odysseus tab).</div>
+      </div>
+    </div>
+    <div class="stamp" id="caps-stamp">—</div>
+    <div id="caps-body"></div>
   </div>
 </main>
 
@@ -1223,9 +1318,11 @@ function showView(v) {
   document.getElementById('view-mc').hidden = (v !== 'mc');
   document.getElementById('view-chat').hidden = (v !== 'chat');
   document.getElementById('view-models').hidden = (v !== 'models');
+  document.getElementById('view-caps').hidden = (v !== 'caps');
   document.getElementById('nav-mc').classList.toggle('on', v === 'mc');
   document.getElementById('nav-chat').classList.toggle('on', v === 'chat');
   document.getElementById('nav-models').classList.toggle('on', v === 'models');
+  document.getElementById('nav-caps').classList.toggle('on', v === 'caps');
   // PHASE 1: scope the slim-rail collapse to the Chat view ONLY. Other views must
   // render exactly as before, so the class is removed whenever we leave Chat.
   document.body.classList.toggle('chat-mode', v === 'chat');
@@ -1234,8 +1331,9 @@ function showView(v) {
   // Chat so it can never linger over another view (the split state is kept for return).
   if (v !== 'chat') { document.body.classList.remove('artifact-expanded'); if (typeof artifactState !== 'undefined') artifactState.expanded = false; }
   if (v === 'chat' && !chatSid) initChat();
-  if (v === 'chat') document.getElementById('chat-input').focus();
+  if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
+  if (v === 'caps') initCaps();
 }
 
 /* ---------- PHASE 1: roomier Chat workspace (rail + sessions collapse) ----------
@@ -1380,6 +1478,626 @@ function setMode(m) {
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('chat-note').textContent =
     m === 'agent' ? 'web search on · shell off' : 'direct to runner — no tools, fastest';
+}
+
+/* ---------- Capabilities view (Phase 1) ----------
+   Dumb panel over /api/ody/caps (+ /api/ody/caps/set). Optimistic writes; revert
+   + inline error on failure. Editorial tokens only. */
+let capsSnap = null;
+
+async function initCaps() {
+  const body = document.getElementById('caps-body');
+  const stamp = document.getElementById('caps-stamp');
+  stamp.textContent = 'loading…';
+  body.innerHTML = '';
+  try {
+    const r = await fetch('/api/ody/caps');
+    capsSnap = await r.json();
+  } catch (e) {
+    stamp.textContent = 'Odysseus unreachable — start it in Mission Control';
+    return;
+  }
+  const errs = capsSnap.errors || {};
+  const bad = Object.keys(errs);
+  stamp.textContent = bad.length
+    ? ('partial — could not read: ' + bad.join(', '))
+    : 'reading Odysseus settings — writes are shared with the Odysseus tab';
+  renderCaps();
+  renderCapsStrip();
+}
+
+function capFeat(k) { return !!((capsSnap && capsSnap.features) || {})[k]; }
+function capSet_(k) { return ((capsSnap && capsSnap.settings) || {})[k]; }
+
+// build one toggle row
+function capSwitchRow(name, desc, group, key, checked) {
+  const id = 'cap-' + group + '-' + key;
+  return `<div class="cap-row">
+    <div class="cap-txt"><div class="cap-name">${esc(name)}</div>
+      <div class="cap-desc">${esc(desc)}</div>
+      <div class="cap-err" id="${id}-err" hidden></div></div>
+    <div class="cap-ctl"><label class="cap-sw">
+      <input type="checkbox" id="${id}" ${checked ? 'checked' : ''}
+        onchange="capsWrite('${group}','${escAttr(key)}', this.checked, this, '${id}')">
+      <span class="track"></span><span class="knob"></span></label></div>
+  </div>`;
+}
+
+function renderCaps() {
+  const providers = (capsSnap && capsSnap.search_providers) || [];
+  const sp = capSet_('search_provider');
+  const provOpts = providers.map(p => {
+    const dis = p.available ? '' : ' disabled';
+    const hint = p.available ? '' : ' (not configured)';
+    const selName = (sp === p.id) ? ' selected' : '';
+    return `<option value="${escAttr(p.id)}"${dis}${selName}>${esc(p.label || p.id)}${hint}</option>`;
+  }).join('');
+  const safe = capSet_('search_safesearch');
+  const safeOpts = [['strict','Strict'],['moderate','Moderate'],['off','Off']].map(
+    ([v,l]) => `<option value="${v}"${String(safe)===v?' selected':''}>${l}</option>`).join('');
+  const rc = capSet_('search_result_count');
+  const rounds = capSet_('agent_max_rounds');
+  const calls = capSet_('agent_max_tool_calls');
+
+  const html = `
+  <div class="caps-group"><span class="cap-h">Web</span><div class="cap-card">
+    ${capSwitchRow('Web search', 'Let the agent search the web for current information.', 'feature', 'web_search', capFeat('web_search'))}
+    ${capSwitchRow('Web fetch', 'Let the agent open and read a specific URL.', 'feature', 'web_fetch', capFeat('web_fetch'))}
+    ${capSwitchRow('Deep research', 'Multi-step research runs that gather and synthesise many sources.', 'feature', 'deep_research', capFeat('deep_research'))}
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name">Search backend</div>
+      <div class="cap-desc">Which engine performs web searches. Greyed options aren't configured.</div>
+      <div class="cap-err" id="cap-setting-search_provider-err" hidden></div></div>
+      <div class="cap-ctl"><select class="cap-sel" id="cap-setting-search_provider"
+        onchange="capsWrite('setting','search_provider', this.value, this, 'cap-setting-search_provider')">${provOpts}</select></div></div>
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name">Safe search</div>
+      <div class="cap-desc">Filter level for web search results.</div>
+      <div class="cap-err" id="cap-setting-search_safesearch-err" hidden></div></div>
+      <div class="cap-ctl"><select class="cap-sel" id="cap-setting-search_safesearch"
+        onchange="capsWrite('setting','search_safesearch', this.value, this, 'cap-setting-search_safesearch')">${safeOpts}</select></div></div>
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name">Results count</div>
+      <div class="cap-desc">How many results each web search returns.</div>
+      <div class="cap-err" id="cap-setting-search_result_count-err" hidden></div></div>
+      <div class="cap-ctl"><input class="cap-num" type="number" min="1" max="50" id="cap-setting-search_result_count"
+        value="${rc == null ? '' : Number(rc)}"
+        onchange="capsWrite('setting','search_result_count', Number(this.value), this, 'cap-setting-search_result_count')"></div></div>
+  </div></div>
+
+  <div class="caps-group"><span class="cap-h">Memory</span><div class="cap-card">
+    ${capSwitchRow('Memory', 'Let the assistant remember facts across conversations.', 'feature', 'memory', capFeat('memory'))}
+    <div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Extraction cadence isn't configurable — Odysseus decides when to extract.</div></div></div>
+  </div></div>
+
+  <div class="caps-group"><span class="cap-h">Other capabilities</span><div class="cap-card">
+    ${capSwitchRow('Document editor', 'In-chat document/canvas editing.', 'feature', 'document_editor', capFeat('document_editor'))}
+    ${capSwitchRow('RAG', 'Retrieval over your uploaded documents.', 'feature', 'rag', capFeat('rag'))}
+    ${capSwitchRow('Sensitive filter', 'Redact sensitive content in responses.', 'feature', 'sensitive_filter', capFeat('sensitive_filter'))}
+    ${capSwitchRow('Gallery', 'Image gallery feature.', 'feature', 'gallery', capFeat('gallery'))}
+  </div></div>
+
+  <div class="caps-group"><span class="cap-h">Agent limits</span><div class="cap-card">
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name">Max rounds</div>
+      <div class="cap-desc">Most reasoning/tool rounds an agent turn may take (1–200).</div>
+      <div class="cap-err" id="cap-setting-agent_max_rounds-err" hidden></div></div>
+      <div class="cap-ctl"><input class="cap-num" type="number" min="1" max="200" id="cap-setting-agent_max_rounds"
+        value="${rounds == null ? '' : Number(rounds)}"
+        onchange="capsWrite('setting','agent_max_rounds', Number(this.value), this, 'cap-setting-agent_max_rounds')"></div></div>
+    <div class="cap-row"><div class="cap-txt"><div class="cap-name">Max tool calls</div>
+      <div class="cap-desc">Most tool calls per agent turn (0 = unlimited, up to 1000).</div>
+      <div class="cap-err" id="cap-setting-agent_max_tool_calls-err" hidden></div></div>
+      <div class="cap-ctl"><input class="cap-num" type="number" min="0" max="1000" id="cap-setting-agent_max_tool_calls"
+        value="${calls == null ? '' : Number(calls)}"
+        onchange="capsWrite('setting','agent_max_tool_calls', Number(this.value), this, 'cap-setting-agent_max_tool_calls')"></div></div>
+  </div></div>
+
+  ${renderBuiltinTools()}
+  ${renderMcpServers()}
+  ${renderSkills()}`;
+  document.getElementById('caps-body').innerHTML = html;
+}
+
+/* ---------- Phase 2: built-in Agent Tools (category rows) ----------
+   /api/tools returns a FLAT list [{id,enabled}] (no server-side categories), so we
+   bucket ids into plain-language categories for display. Unknown ids fall to "Other"
+   so the surface never hides a tool the backend adds later.
+   ⚠️ PENDING FABLE QA: category → tool-id grouping is a builder-authored map. */
+const BUILTIN_CATEGORIES = [
+  ['Code & files', 'Run code and read/write files in the workspace.',
+    ['bash','python','read_file','write_file','edit_file','apply_patch','grep','glob','ls',
+     'get_workspace','manage_bg_jobs','todowrite','update_plan','manage_tasks','api_call','app_api']],
+  ['Search & web', 'Search the web and fetch pages.',
+    ['web_search','web_fetch','search_chats','trigger_research','manage_research']],
+  ['Documents', 'Create and edit documents.',
+    ['create_document','update_document','edit_document','suggest_document','manage_documents']],
+  ['Media', 'Generate and edit images.',
+    ['generate_image','edit_image','ui_control']],
+  ['Knowledge & memory', 'Long-term memory, notes, skills, calendar and contacts.',
+    ['manage_memory','manage_notes','manage_skills','manage_calendar','resolve_contact',
+     'manage_contact','ask_teacher','ask_user']],
+  ['Email', 'Read, search, draft and send email.',
+    ['list_email_accounts','list_emails','read_email','search_emails','scan_email_unsubscribes',
+     'unsubscribe_email','send_email','reply_to_email','draft_email','draft_email_reply',
+     'ai_draft_email_reply','archive_email','delete_email']],
+  ['Multi-agent & sessions', 'Spawn sub-agents, chat with models, manage sessions.',
+    ['chat_with_model','create_session','list_sessions','send_to_session','pipeline',
+     'manage_session','list_models']],
+  ['Model serving', 'Cookbook: download, serve and manage local models.',
+    ['download_model','serve_model','list_served_models','stop_served_model','list_downloads',
+     'cancel_download','search_hf_models','list_cached_models','list_serve_presets','serve_preset',
+     'adopt_served_model','list_cookbook_servers']],
+  ['Administration', 'Manage endpoints, MCP, webhooks, tokens and settings.',
+    ['manage_endpoints','manage_mcp','manage_webhooks','manage_tokens','manage_settings']],
+];
+
+// current disabled set derived from the snapshot's flat tool list
+function builtinDisabledSet() {
+  const tools = (capsSnap && capsSnap.builtin_tools) || [];
+  const s = new Set();
+  tools.forEach(t => { if (!t.enabled) s.add(t.id); });
+  return s;
+}
+
+function renderBuiltinTools() {
+  const tools = (capsSnap && capsSnap.builtin_tools) || [];
+  if (!tools.length) {
+    if (capsSnap && capsSnap.errors && capsSnap.errors.builtin_tools) {
+      return `<div class="caps-group"><span class="cap-h">Tools</span><div class="cap-card">
+        <div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Couldn't read built-in tools from Odysseus.</div></div></div></div></div>`;
+    }
+    return '';
+  }
+  const byId = {}; tools.forEach(t => byId[t.id] = t);
+  const disabled = builtinDisabledSet();
+  const seen = new Set();
+  let rows = '';
+  const catBlock = (title, desc, ids) => {
+    const present = ids.filter(id => byId[id]);
+    present.forEach(id => seen.add(id));
+    if (!present.length) return '';
+    const enabledCount = present.filter(id => !disabled.has(id)).length;
+    const allOn = enabledCount === present.length;
+    const cid = 'btcat-' + title.replace(/[^a-z]/gi, '');
+    const subRows = present.map(id => {
+      const on = !disabled.has(id);
+      return `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(id)}</div>
+        <div class="cap-err" id="bt-${escAttr(id)}-err" hidden></div></div>
+        <div class="cap-ctl"><label class="cap-sw">
+          <input type="checkbox" ${on?'checked':''}
+            onchange="toggleBuiltinTool('${escAttr(id)}', this.checked, this)">
+          <span class="track"></span><span class="knob"></span></label></div></div>`;
+    }).join('');
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(title)}<span class="cap-count">${enabledCount}/${present.length}</span></div>
+        <div class="cap-desc">${esc(desc)}</div>
+        <button class="cap-exp" onclick="toggleCapSub('${cid}', this)">▸ per-tool</button>
+        <div class="cap-err" id="btcat-${escAttr(title.replace(/[^a-z]/gi,''))}-err" hidden></div></div>
+      <div class="cap-ctl"><label class="cap-sw">
+        <input type="checkbox" ${allOn?'checked':''}
+          onchange="toggleBuiltinCategory('${escAttr(present.join(','))}', this.checked, this)">
+        <span class="track"></span><span class="knob"></span></label></div></div>
+      <div class="cap-sub" id="${cid}" hidden>${subRows}</div>`;
+  };
+  BUILTIN_CATEGORIES.forEach(([t, d, ids]) => { rows += catBlock(t, d, ids); });
+  // any tool id not covered by the map → "Other"
+  const other = tools.map(t => t.id).filter(id => !seen.has(id));
+  if (other.length) rows += catBlock('Other', 'Additional built-in tools.', other);
+
+  return `<div class="caps-group"><span class="cap-h">Tools</span>
+    <div class="cap-desc" style="margin:-4px 0 10px">What the app can do in Agent mode. Turning a category off disables all its tools; expand to fine-tune.</div>
+    <div class="cap-card">${rows}</div></div>`;
+}
+
+function toggleCapSub(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.hidden = !el.hidden;
+  if (btn) btn.textContent = (el.hidden ? '▸ per-tool' : '▾ per-tool');
+}
+
+// write the FULL recomputed disabled list for built-in tools (POST /api/tools replaces)
+async function writeBuiltinDisabled(disabledSet, errId, el) {
+  const arr = Array.from(disabledSet);
+  const errEl = errId ? document.getElementById(errId) : null;
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  if (el) el.disabled = true;
+  try {
+    const j = await capsRawSet('builtin_tools', 'all', arr);
+    // adopt server truth into the snapshot's flat list
+    const set = new Set(arr);
+    (capsSnap.builtin_tools || []).forEach(t => { t.enabled = !set.has(t.id); });
+    return j;
+  } finally { if (el) el.disabled = false; }
+}
+
+async function toggleBuiltinTool(id, on, el) {
+  const disabled = builtinDisabledSet();
+  const prevOn = !disabled.has(id);
+  if (on) disabled.delete(id); else disabled.add(id);
+  try {
+    await writeBuiltinDisabled(disabled, 'bt-' + id + '-err', el);
+    renderCaps(); renderCapsStrip();
+  } catch (e) {
+    if (el) el.checked = prevOn;
+    const errEl = document.getElementById('bt-' + id + '-err');
+    if (errEl) { errEl.textContent = 'Save failed: ' + (e.message || e); errEl.hidden = false; }
+  }
+}
+
+async function toggleBuiltinCategory(idsCsv, on, el) {
+  const ids = idsCsv.split(',').filter(Boolean);
+  const disabled = builtinDisabledSet();
+  const prev = new Set(disabled);
+  ids.forEach(id => { if (on) disabled.delete(id); else disabled.add(id); });
+  try {
+    await writeBuiltinDisabled(disabled, null, el);
+    renderCaps(); renderCapsStrip();
+  } catch (e) {
+    if (el) el.checked = !on;
+    // restore snapshot from prev on failure
+    (capsSnap.builtin_tools || []).forEach(t => { t.enabled = !prev.has(t.id); });
+  }
+}
+
+/* ---------- Phase 2: connected tools (MCP servers) ---------- */
+// The "Add MCP server" affordance — a collapsible form. transport switches which
+// fields are relevant (stdio → command+args; sse/http → url). Posts /api/ody/mcp/add.
+function mcpAddForm() {
+  return `<div class="cap-row"><div class="cap-txt" style="flex:1">
+    <button class="cap-exp" id="mcp-addtoggle" onclick="toggleMcpAdd(this)">＋ Add MCP server</button>
+    <div id="mcp-addbox" hidden style="margin-top:10px">
+      <div class="cap-addform">
+        <input class="cap-inp" id="mcpa-name" placeholder="name (e.g. github)" style="flex:1 1 120px">
+        <select class="cap-sel" id="mcpa-transport" onchange="mcpAddTransport(this.value)">
+          <option value="stdio">stdio (command)</option>
+          <option value="http">http (url)</option>
+          <option value="sse">sse (url)</option>
+        </select>
+      </div>
+      <div class="cap-addform" id="mcpa-stdio-row" style="margin-top:8px">
+        <input class="cap-inp" id="mcpa-command" placeholder="command (e.g. npx)" style="flex:1 1 120px">
+        <input class="cap-inp" id="mcpa-args" placeholder='args JSON (e.g. ["@scope/pkg"])' style="flex:2 1 200px">
+      </div>
+      <div class="cap-addform" id="mcpa-url-row" hidden style="margin-top:8px">
+        <input class="cap-inp" id="mcpa-url" placeholder="url (e.g. https://host/mcp)" style="flex:2 1 260px">
+      </div>
+      <div class="cap-addform" style="margin-top:8px">
+        <input class="cap-inp" id="mcpa-env" placeholder='env JSON (optional, e.g. {"TOKEN":"…"})' style="flex:2 1 240px">
+        <button class="cap-btn go" onclick="submitMcpAdd(this)">Add server</button>
+      </div>
+      <div class="cap-err" id="mcpa-err" hidden style="margin-top:6px"></div>
+    </div></div></div>`;
+}
+
+function renderMcpServers() {
+  const servers = (capsSnap && capsSnap.mcp_servers) || [];
+  const addRow = mcpAddForm();
+  if (!servers.length) {
+    const note = (capsSnap && capsSnap.errors && capsSnap.errors.mcp_servers)
+      ? 'Couldn\'t read MCP servers from Odysseus.'
+      : 'No MCP servers connected yet. Add one below, or use the Browse toggle.';
+    return `<div class="caps-group"><span class="cap-h">Connected tools (MCP)</span><div class="cap-card">
+      <div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">${note}</div></div></div>
+      ${addRow}</div></div>`;
+  }
+  const rows = servers.map(s => {
+    const on = !!s.is_enabled;
+    const st = s.status || 'disconnected';
+    const stPill = (st === 'connected') ? '<span class="cap-pill on">connected</span>'
+                 : `<span class="cap-pill off">${esc(st)}</span>`;
+    const tc = (typeof s.tool_count === 'number')
+      ? `<span class="cap-count">${s.enabled_tool_count ?? s.tool_count}/${s.tool_count} tools</span>` : '';
+    const sub = 'mcpsub-' + escAttr(s.id);
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(s.name || s.id)}${stPill}${tc}</div>
+        <div class="cap-desc">${esc(s.transport || '')}${s.error ? ' · ' + esc(String(s.error).slice(0,80)) : ''}</div>
+        <button class="cap-exp" onclick="expandMcpTools('${escAttr(s.id)}','${sub}', this)">▸ per-tool</button>
+        <button class="cap-btn" id="mcprm-${escAttr(s.id)}" style="margin-left:8px;padding:2px 10px"
+          onclick="removeMcpServer('${escAttr(s.id)}','${escAttr(s.name || s.id)}', this)">Remove</button>
+        <div class="cap-err" id="mcp-${escAttr(s.id)}-err" hidden></div></div>
+      <div class="cap-ctl"><label class="cap-sw">
+        <input type="checkbox" ${on?'checked':''}
+          onchange="toggleMcpServer('${escAttr(s.id)}', this.checked, this)">
+        <span class="track"></span><span class="knob"></span></label></div></div>
+      <div class="cap-sub" id="${sub}" hidden><div class="cap-desc" style="padding-left:14px">…</div></div>`;
+  }).join('');
+  return `<div class="caps-group"><span class="cap-h">Connected tools (MCP)</span>
+    <div class="cap-desc" style="margin:-4px 0 10px">External tool servers. Toggle a whole server, expand to fine-tune its tools, or add/remove servers.</div>
+    <div class="cap-card">${rows}${addRow}</div></div>`;
+}
+
+function toggleMcpAdd(btn) {
+  const box = document.getElementById('mcp-addbox');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  if (btn) btn.textContent = box.hidden ? '＋ Add MCP server' : '× Cancel';
+}
+
+function mcpAddTransport(v) {
+  const stdio = document.getElementById('mcpa-stdio-row');
+  const urlr = document.getElementById('mcpa-url-row');
+  if (stdio) stdio.hidden = (v !== 'stdio');
+  if (urlr) urlr.hidden = (v === 'stdio');
+}
+
+async function submitMcpAdd(btn) {
+  const errEl = document.getElementById('mcpa-err');
+  const val = id => (document.getElementById(id) || {}).value || '';
+  const transport = val('mcpa-transport') || 'stdio';
+  const payload = {
+    name: val('mcpa-name').trim(),
+    transport,
+    command: transport === 'stdio' ? val('mcpa-command').trim() : '',
+    args: val('mcpa-args').trim(),
+    url: transport !== 'stdio' ? val('mcpa-url').trim() : '',
+    env: val('mcpa-env').trim(),
+  };
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  // client-side JSON sanity (args/env) so the user sees the mistake before the round-trip
+  for (const [k, dflt] of [['args','[]'],['env','{}']]) {
+    if (payload[k]) { try { JSON.parse(payload[k]); } catch (e) {
+      if (errEl) { errEl.textContent = `${k} must be valid JSON (e.g. ${dflt})`; errEl.hidden = false; } return; } }
+  }
+  if (!payload.name) { if (errEl) { errEl.textContent = 'name is required'; errEl.hidden = false; } return; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/ody/mcp/add', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    await initCaps();   // reload snapshot → new server row appears
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'Add failed: ' + (e.message || e); errEl.hidden = false; }
+  } finally { if (btn) btn.disabled = false; }
+}
+
+// two-step Remove (arm → confirm) — WKWebView has no confirm(), so we arm inline.
+const _mcpRmArmed = {};
+async function removeMcpServer(id, name, btn) {
+  const errEl = document.getElementById('mcp-' + id + '-err');
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  if (!_mcpRmArmed[id]) {
+    _mcpRmArmed[id] = true;
+    if (btn) { btn.textContent = 'Remove?'; btn.classList.add('arm'); }
+    setTimeout(() => { _mcpRmArmed[id] = false;
+      if (btn) { btn.textContent = 'Remove'; btn.classList.remove('arm'); } }, 3000);
+    return;
+  }
+  _mcpRmArmed[id] = false;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/ody/mcp/' + encodeURIComponent(id) + '/remove', {method:'POST'});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    delete _mcpToolCache[id];
+    await initCaps();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Remove'; btn.classList.remove('arm'); }
+    if (errEl) { errEl.textContent = 'Remove failed: ' + (e.message || e); errEl.hidden = false; }
+  }
+}
+
+async function toggleMcpServer(id, on, el) {
+  const errEl = document.getElementById('mcp-' + id + '-err');
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  if (el) el.disabled = true;
+  const srv = (capsSnap.mcp_servers || []).find(s => s.id === id);
+  const prev = srv ? !!srv.is_enabled : !on;
+  try {
+    await capsRawSet('mcp_server', id, on);
+    if (srv) srv.is_enabled = on;
+  } catch (e) {
+    if (el) el.checked = prev;
+    if (errEl) { errEl.textContent = 'Save failed: ' + (e.message || e); errEl.hidden = false; }
+  } finally { if (el) el.disabled = false; }
+}
+
+// lazy-load a server's per-tool list on first expand
+const _mcpToolCache = {};
+async function expandMcpTools(id, subId, btn) {
+  const el = document.getElementById(subId);
+  if (!el) return;
+  if (!el.hidden) { el.hidden = true; if (btn) btn.textContent = '▸ per-tool'; return; }
+  el.hidden = false; if (btn) btn.textContent = '▾ per-tool';
+  if (!_mcpToolCache[id]) {
+    el.innerHTML = '<div class="cap-desc" style="padding-left:14px">loading…</div>';
+    try {
+      const r = await fetch('/api/ody/mcp/' + encodeURIComponent(id) + '/tools');
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      _mcpToolCache[id] = j.tools || [];
+    } catch (e) {
+      el.innerHTML = '<div class="cap-err" style="padding-left:14px">Could not load tools: ' + esc(e.message || String(e)) + '</div>';
+      return;
+    }
+  }
+  renderMcpToolRows(id, subId);
+}
+
+function renderMcpToolRows(id, subId) {
+  const el = document.getElementById(subId);
+  const tools = _mcpToolCache[id] || [];
+  if (!el) return;
+  if (!tools.length) { el.innerHTML = '<div class="cap-desc" style="padding-left:14px">No tools reported.</div>'; return; }
+  el.innerHTML = tools.map(t => {
+    const on = !t.is_disabled;
+    const nm = t.name || t.id || '';
+    return `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(nm)}</div>
+      ${t.description ? `<div class="cap-desc">${esc(String(t.description).slice(0,140))}</div>` : ''}
+      </div><div class="cap-ctl"><label class="cap-sw">
+        <input type="checkbox" ${on?'checked':''}
+          onchange="toggleMcpTool('${escAttr(id)}','${escAttr(nm)}', this.checked, this)">
+        <span class="track"></span><span class="knob"></span></label></div></div>`;
+  }).join('');
+}
+
+// write the FULL disabled list for a server (PATCH replaces)
+async function toggleMcpTool(id, name, on, el) {
+  const tools = _mcpToolCache[id] || [];
+  const t = tools.find(x => (x.name || x.id) === name);
+  const prev = t ? !!t.is_disabled : false;
+  if (t) t.is_disabled = !on;
+  const disabled = tools.filter(x => x.is_disabled).map(x => x.name || x.id);
+  if (el) el.disabled = true;
+  try {
+    await capsRawSet('mcp_tools', id, disabled);
+    // reflect enabled count in the server row if present
+    const srv = (capsSnap.mcp_servers || []).find(s => s.id === id);
+    if (srv && typeof srv.tool_count === 'number') {
+      srv.disabled_tool_count = disabled.length;
+      srv.enabled_tool_count = Math.max(0, srv.tool_count - disabled.length);
+    }
+  } catch (e) {
+    if (t) t.is_disabled = prev;
+    if (el) el.checked = !on;
+  } finally { if (el) el.disabled = false; }
+}
+
+/* ---------- Skills (built-in tool-instruction blocks + user SKILL.md) ----------
+   IMPORTANT (⚠️ PENDING FABLE QA): Odysseus's /api/skills/builtin is a TEXT-OVERRIDE
+   store, NOT an on/off switch — enabling/disabling a built-in tool is the "Tools"
+   section above (POST /api/tools). So built-in skills here show name + description +
+   an "overridden" badge, and offer only RESET (DELETE the override → shipped default).
+   Editing the override text is a separate surface (the Odysseus tab). User SKILL.md
+   skills are read-only here; full CRUD lives in the Odysseus tab. */
+function renderSkills() {
+  const bi = (capsSnap && capsSnap.skills_builtin) || [];
+  const user = (capsSnap && capsSnap.skills_user) || [];
+  const errBi = capsSnap && capsSnap.errors && capsSnap.errors.skills_builtin;
+  const errUser = capsSnap && capsSnap.errors && capsSnap.errors.skills_user;
+
+  let biRows;
+  if (errBi) {
+    biRows = `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Couldn't read built-in skills from Odysseus.</div></div></div>`;
+  } else if (!bi.length) {
+    biRows = `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">No built-in skills reported.</div></div></div>`;
+  } else {
+    biRows = bi.map(s => {
+      const nm = s.name || '';
+      const ov = !!s.is_overridden;
+      const badge = ov ? '<span class="cap-pill on">custom</span>' : '';
+      const reset = ov
+        ? `<button class="cap-btn" id="skrst-${escAttr(nm)}" style="margin-top:6px;padding:2px 10px"
+             onclick="resetSkillOverride('${escAttr(nm)}', this)">Reset to default</button>` : '';
+      return `<div class="cap-row"><div class="cap-txt">
+          <div class="cap-name">${esc(nm)}${badge}</div>
+          ${s.description ? `<div class="cap-desc">${esc(String(s.description).slice(0,180))}</div>` : ''}
+          ${reset}
+          <div class="cap-err" id="sk-${escAttr(nm)}-err" hidden></div></div></div>`;
+    }).join('');
+  }
+
+  let userBlock = '';
+  if (errUser) {
+    userBlock = `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Couldn't read learned skills.</div></div></div>`;
+  } else if (user.length) {
+    const rows = user.map(s => {
+      const nm = s.name || s.id || '';
+      const desc = s.description || s.when_to_use || '';
+      return `<div class="cap-row"><div class="cap-txt">
+          <div class="cap-name">${esc(nm)}</div>
+          ${desc ? `<div class="cap-desc">${esc(String(desc).slice(0,180))}</div>` : ''}</div></div>`;
+    }).join('');
+    userBlock = `<div class="cap-desc" style="margin:14px 0 6px;color:var(--faint)">Learned skills (read-only — manage in the Odysseus tab)</div>
+      <div class="cap-card">${rows}</div>`;
+  }
+
+  // Fable (Debi): the skills list is long + read-only → collapse the whole group behind
+  // one clickable "Skills" header; expands on click. Default collapsed.
+  const nBi = errBi ? '?' : bi.length, nUser = errUser ? '?' : user.length;
+  return `<div class="caps-group">
+    <button class="caps-skills-head" onclick="toggleCapsSkills(this)" aria-expanded="false" title="Show skills">
+      <span class="cap-h" style="margin:0">Skills</span>
+      <span class="cap-desc" style="margin:0">▸ ${nBi} built-in · ${nUser} learned</span></button>
+    <div id="caps-skills-body" hidden>
+      <div class="cap-desc" style="margin:8px 0 10px">Built-in skills are the instruction blocks the agent uses for its native tools. Reset a customised one to its default here; turn tools on/off in the Tools section above. (Real per-skill on/off is coming with the Hermes lane.)</div>
+      <div class="cap-card">${biRows}</div>
+      ${userBlock}</div></div>`;
+}
+function toggleCapsSkills(btn) {
+  const el = document.getElementById('caps-skills-body');
+  if (!el) return;
+  el.hidden = !el.hidden;
+  btn.setAttribute('aria-expanded', el.hidden ? 'false' : 'true');
+  const lbl = btn.querySelector('.cap-desc');
+  if (lbl) lbl.textContent = lbl.textContent.replace(/^[▸▾]/, el.hidden ? '▸' : '▾');
+}
+
+async function resetSkillOverride(name, btn) {
+  const errEl = document.getElementById('sk-' + name + '-err');
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  if (btn) btn.disabled = true;
+  try {
+    await capsRawSet('skill_builtin', name, false);   // false → DELETE the override
+    const s = (capsSnap.skills_builtin || []).find(x => x.name === name);
+    if (s) s.is_overridden = false;
+    renderCaps();
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    if (errEl) { errEl.textContent = 'Reset failed: ' + (e.message || e); errEl.hidden = false; }
+  }
+}
+
+// low-level caps write used by tool toggles (throws on failure)
+async function capsRawSet(group, key, value) {
+  const r = await fetch('/api/ody/caps/set', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({group, key, value})});
+  const j = await r.json();
+  if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// optimistic write; revert + inline error on failure
+async function capsWrite(group, key, value, el, errId) {
+  const errEl = document.getElementById(errId + '-err');
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  const store = (group === 'feature') ? (capsSnap.features || (capsSnap.features = {}))
+                                      : (capsSnap.settings || (capsSnap.settings = {}));
+  const prev = store[key];
+  if (el) el.disabled = true;
+  try {
+    const r = await fetch('/api/ody/caps/set', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group, key, value})});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    // adopt the value Odysseus actually stored (it may clamp numbers)
+    store[key] = (j.value !== undefined) ? j.value : value;
+    if (el && el.type === 'number' && j.value !== undefined && Number(el.value) !== Number(j.value)) {
+      el.value = Number(j.value);
+    }
+    renderCapsStrip();
+  } catch (e) {
+    // revert the control to the prior value
+    if (el) {
+      if (el.type === 'checkbox') el.checked = !!prev;
+      else el.value = (prev == null ? '' : prev);
+    }
+    if (errEl) { errEl.textContent = 'Save failed: ' + (e.message || e); errEl.hidden = false; }
+  } finally {
+    if (el) el.disabled = false;
+  }
+}
+
+// lazily populate the chat-bar strip from a caps snapshot (fetch once if needed)
+async function ensureCapsStrip() {
+  if (capsSnap && capsSnap.features) { renderCapsStrip(); return; }
+  try {
+    const r = await fetch('/api/ody/caps');
+    capsSnap = await r.json();
+    renderCapsStrip();
+  } catch (e) { /* leave strip empty if Odysseus is down */ }
+}
+
+// compact read-only summary chip in the chat bar
+function renderCapsStrip() {
+  const el = document.getElementById('caps-strip');
+  if (!el || !capsSnap || !capsSnap.features) { if (el) el.textContent = ''; return; }
+  const f = capsSnap.features;
+  const mark = b => b ? '✓' : '✗';
+  let s = `web ${mark(f.web_search)} · research ${mark(f.deep_research)} · memory ${mark(f.memory)}`;
+  const bt = capsSnap.builtin_tools || [];
+  if (bt.length) s += ` · ${bt.filter(t => t.enabled).length}/${bt.length} tools`;
+  el.textContent = s;
 }
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -1748,6 +2466,30 @@ async function initModels(){
   refreshDownloads();   // restore any in-flight downloads when revisiting the pane
 }
 
+// Re-scan the model folders → prune models deleted in LM Studio/Jan, pick up new
+// ones. seed_registry.merge() preserves source "download" entries + known ctx.
+async function rescanModels(){
+  const btn = document.getElementById('models-rescan');
+  const stamp = document.getElementById('models-stamp');
+  const prevBtn = btn ? btn.textContent : '';
+  if (btn){ btn.disabled = true; btn.textContent = 'RESCANNING…'; }
+  if (stamp) stamp.textContent = 'RESCANNING…';
+  try {
+    const res = await fetch('/api/models/rescan', { method:'POST' });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok){
+      if (stamp) stamp.textContent = 'RESCAN FAILED — ' + ((j && j.error) || res.status);
+    } else {
+      mSel = null;          // selection may have been pruned; let initModels re-pick
+      await initModels();   // re-fetch list + refresh stamp/count
+    }
+  } catch(e) {
+    if (stamp) stamp.textContent = 'RESCAN FAILED — ' + e;
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = prevBtn || 'RESCAN'; }
+  }
+}
+
 // ---- Models pane: two-pane library + detail (FABLE §A) ----
 let lastModels = null;      // last /api/models payload (for renderDetail refresh)
 let mSel = null;            // selection: {kind:'installed', id} | {kind:'hf', m}
@@ -1785,11 +2527,31 @@ function quantOf(id){
   return m ? m[0] : null;
 }
 
+// Provenance: source in {download, local} = APP-OWNED (files under data/models/, deletable);
+// lmstudio-import / jan-import = READ-ONLY imports the harness does not own.
+function isAppOwned(src){ return src === 'download' || src === 'local'; }
+function srcLabel(src){
+  return src === 'download' ? 'downloaded'
+       : src === 'local' ? 'local'
+       : src === 'lmstudio-import' ? 'LM Studio'
+       : src === 'jan-import' ? 'Jan'
+       : (src || '');
+}
+function srcBadge(src){
+  if (!src) return '';
+  const owned = isAppOwned(src);
+  const title = owned ? 'App-owned — the harness downloaded/stores these files (deletable)'
+                      : 'Read-only import — the files are managed by another app';
+  return '<span class="mpill ' + (owned ? 'owned' : 'imported') + '" title="' + title + '">'
+       + esc(srcLabel(src)) + '</span>';
+}
+
 function modelRowHtml(m, isActive, isAux, runnerUp){
   const badges = [];
   if ((m.capabilities || []).includes('vision')) badges.push('<span class="mpill vision">vision</span>');
   const q = quantOf(m.id); if (q) badges.push('<span class="mpill quant">' + esc(q) + '</span>');
   badges.push('<span class="mpill fmt">' + esc(m.format || m.engine || '') + '</span>');
+  const sb = srcBadge(m.source); if (sb) badges.push(sb);
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
   if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
   if (isAux) badges.push('<span class="mpill aux">aux</span>');
@@ -1882,6 +2644,22 @@ function renderDetail(){
            auxBtn.disabled = !!switchingId;   // no aux fiddling while a load is in flight
            auxBtn.onclick = () => auxSet(m.id); }
     acts.appendChild(auxBtn);
+    // Delete — ONLY for app-owned models (download/local, files under data/models/).
+    // Read-only imports show a greyed note instead (deleting would touch files the
+    // harness does not own). Two-step arm→confirm (WKWebView has no confirm()).
+    if (isAppOwned(m.source)){
+      const del = document.createElement('button'); del.className = 'md-del';
+      del.textContent = 'Delete'; del.title = "Remove this model's files from data/models/";
+      del.disabled = !!switchingId || modelsBusy;
+      del.onclick = () => armModelDelete(m.id, m.name || m.id, del);
+      acts.appendChild(del);
+    } else if (m.source){
+      const note = document.createElement('span'); note.className = 'md-imnote';
+      note.textContent = 'Managed by ' + (srcLabel(m.source) || 'another app') + ' — remove it there';
+      note.title = 'The harness only indexes this model; its files live outside data/models/, '
+                 + 'so it cannot be deleted here.';
+      acts.appendChild(note);
+    }
     if (loadingThis){
       const load = document.createElement('div'); load.className = 'md-load';
       load.innerHTML = '<div class="md-loadbar"><div class="md-loadfill"></div></div>'
@@ -1941,6 +2719,38 @@ async function ejectModel(){
   // later Start won't silently resurrect it. (Not /components/runner/stop, which kept it.)
   try { await fetch('/api/models/eject', {method:'POST'}); } catch {}
   modelsBusy = false; initModels(); loadChatModels();
+}
+
+// Delete an app-owned model — two-step (WKWebView has no confirm()): first click arms
+// ("Delete — really?" for 3s), second within the window deletes. Only rendered for
+// download/local models; the bridge HARD-refuses anything else even if called directly.
+let _mDelArm = null;
+function armModelDelete(id, name, btn){
+  if (modelsBusy) return;
+  if (_mDelArm && _mDelArm.id === id){
+    clearTimeout(_mDelArm.t); _mDelArm = null;
+    doDeleteModel(id, name); return;
+  }
+  if (_mDelArm){ _mDelArm.btn.textContent = 'Delete'; _mDelArm.btn.classList.remove('armed'); clearTimeout(_mDelArm.t); }
+  btn.textContent = 'Delete — really?'; btn.classList.add('armed');
+  _mDelArm = { id, btn, t: setTimeout(() => {
+      btn.textContent = 'Delete'; btn.classList.remove('armed'); _mDelArm = null; }, 3000) };
+}
+async function doDeleteModel(id, name){
+  if (modelsBusy) return; modelsBusy = true;
+  const st = document.getElementById('models-stamp');
+  st.textContent = 'DELETING ' + (name || id) + '…';
+  try {
+    const r = await (await fetch('/api/models/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})})).json();
+    if (!r.ok){ st.textContent = 'DELETE FAILED — ' + (r.log || 'refused'); modelsBusy = false; return; }
+    mSel = null;                 // clear detail; renderModels re-selects a remaining model
+    if (r.was_live){ const cn = document.getElementById('chat-note');
+      if (cn) cn.textContent = 'model deleted — load one from Models'; }
+  } catch { st.textContent = 'DELETE FAILED — could not reach the bridge'; modelsBusy = false; return; }
+  modelsBusy = false;
+  initModels();        // refresh list + stamp (+ RAM ledger); a deleted live model reads not-live
+  loadChatModels();    // reflect a possibly-ejected live model in the chat picker
 }
 
 async function auxSet(id){
@@ -3309,6 +4119,7 @@ const commands = () => {
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
     {t:'Mission Control', k:'◫', f:()=>showView('mc')},
+    {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:showLogs},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
