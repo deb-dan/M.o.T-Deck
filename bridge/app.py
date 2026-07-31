@@ -506,16 +506,32 @@ async def ody_session_rename(sid: str, req: Request) -> JSONResponse:
 
 @app.post("/api/ody/session/{sid}/duplicate")
 async def ody_session_duplicate(sid: str, req: Request) -> JSONResponse:
-    """Duplicate a session (Odysseus fork, copying all messages), then name it '<src> (copy)'."""
+    """Duplicate a session by copying its messages into a fresh session, then name it
+    '<src> (copy)'. New Odysseus main removed POST /api/session/{sid}/fork, so we replicate
+    it: read history → create session → inject_messages → rename."""
     try:
         name = (await req.json()).get("name", "").strip()
     except Exception:
         name = ""
     try:
-        r = await _ody_req("POST", f"/api/session/{sid}/fork", json={"keep_count": 1_000_000})
-        if r.status_code != 200:
-            return JSONResponse({"error": r.text[:500]}, status_code=502)
-        new_id = r.json().get("id")
+        # (a) fetch the source session's messages
+        hr = await _ody_req("GET", f"/api/history/{sid}")
+        if hr.status_code != 200:
+            return JSONResponse({"error": hr.text[:500]}, status_code=502)
+        hist = hr.json().get("history", []) or []
+        msgs = [{"role": m.get("role"), "content": m.get("content", "")}
+                for m in hist if m.get("role")]
+        # (b) create the new session (same params as the "new session" path)
+        cr = await _ody_req("POST", "/api/session",
+                            data={"name": name or "New chat", "endpoint_id": "local-jan"})
+        if cr.status_code != 200:
+            return JSONResponse({"error": cr.text[:500]}, status_code=502)
+        new_id = cr.json().get("id")
+        # (c) copy the messages across
+        if new_id and msgs:
+            await _ody_req("POST", f"/api/session/{new_id}/inject_messages",
+                           json={"messages": msgs})
+        # (d) final rename to '<src> (copy)' (panel passes the copy name)
         if new_id and name:
             await _ody_req("PATCH", f"/api/session/{new_id}", data={"name": name})
         return JSONResponse({"id": new_id, "name": name})
@@ -1614,11 +1630,14 @@ async def chat_direct(req: Request) -> StreamingResponse:
             if sid and user_msg:
                 persisted = False
                 try:
-                    await _ody_req("POST", f"/api/session/{sid}/message",
-                                   json={"role": "user", "content": user_msg})
+                    # New Odysseus main removed POST /api/session/{sid}/message;
+                    # append via the bulk inject_messages endpoint (user before assistant).
+                    msgs = [{"role": "user", "content": user_msg}]
                     if answer:
-                        await _ody_req("POST", f"/api/session/{sid}/message",
-                                       json={"role": "assistant", "content": answer})
+                        msgs.append({"role": "assistant", "content": answer})
+                    await _ody_req("POST", f"/api/session/{sid}/inject_messages",
+                                   json={"messages": msgs})
+                    if answer:
                         persisted = True
                 except Exception:
                     pass

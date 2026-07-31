@@ -13,7 +13,7 @@ components:
     depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
   odysseus:
     repo: https://github.com/pewdiepie-archdaemon/odysseus.git
-    pin: e57f60bd343a748af9c855b73ba998ea8b3b652c   # 2026-07-20; fixes chat_routes NameError _explicit_web_intent (old pin 168f5930 was broken)
+    pin: 25c9e735ef5ce605f47f8f666ac6689056d2c10c   # 2026-07-31 bump (Fable contract-checked): _explicit_web_intent OK, chat_stream/sessions/auth/mcp/history intact, seed deps (ModelEndpoint/get_db_session/src.settings) present, X-Frame OK. Upstream REMOVED /session/{id}/fork + /session/{id}/message → bridge rewired to inject_messages. (prev e57f60bd)
     installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
