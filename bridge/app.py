@@ -1696,6 +1696,85 @@ async def open_external(req: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+# ── Canvas: save an edited artifact to disk (Fable canvas spec, 2026-07-31) ──
+# Extensions the artifact viewer holds as TEXT (mirrors the panel's artifactKind
+# EXT map minus the binary kinds image/pdf, plus txt). Anything else → reject.
+_ARTIFACT_SAVE_EXTS = {
+    "html", "htm", "svg", "jsx", "tsx", "js", "mjs", "cjs",
+    "md", "markdown", "mdown", "mmd", "mermaid", "csv", "tsv", "json",
+    "py", "ts", "go", "rs", "sh", "bash", "zsh", "yaml", "yml", "toml", "ini",
+    "xml", "env", "c", "h", "cpp", "cc", "hpp", "cs", "java", "rb", "php",
+    "css", "scss", "sql", "swift", "kt", "lua", "r", "pl", "txt",
+}
+_ARTIFACT_SAVE_MAX = 5 * 1024 * 1024   # ~5MB content cap (spec)
+
+
+def sanitize_artifact_filename(name) -> str | None:
+    """PURE (unit-tested: bridge/tests/test_artifact_save.py).
+
+    Reduce an UNTRUSTED filename to a safe basename, or return None (reject).
+    Guarantees: no path separators / traversal, printable ASCII-safe charset,
+    no leading dot (no dotfiles), non-empty bounded stem, whitelisted extension.
+    The caller builds the path server-side as SAVE_DIR/<returned basename> —
+    NEVER from raw client input.
+    """
+    import re
+    s = str(name or "")
+    if len(s) > 512:                                    # absurd input → reject outright
+        return None
+    s = s.replace("\\", "/").rsplit("/", 1)[-1]         # basename only (both separators)
+    s = "".join(ch for ch in s if ch.isprintable())     # drop control/format chars (NUL, \n, RLO…)
+    s = re.sub(r"[^A-Za-z0-9._ -]+", "_", s)            # ASCII-safe charset; unicode → _
+    s = re.sub(r"\.{2,}", ".", s)                       # collapse dot runs ('..' remnants)
+    s = re.sub(r"\s+", " ", s).strip(" .")              # tidy spaces; no edge dots (no dotfiles)
+    m = re.fullmatch(r"(.+)\.([A-Za-z0-9]+)", s)
+    if not m:
+        return None                                     # empty / no extension
+    stem, ext = m.group(1)[:80].strip(" ."), m.group(2).lower()   # overlong → cap stem
+    if not stem or ext not in _ARTIFACT_SAVE_EXTS:
+        return None
+    return f"{stem}.{ext}"
+
+
+@app.post("/api/artifact/save")
+async def artifact_save(req: Request) -> JSONResponse:
+    """Save an edited artifact buffer to ~/Downloads/harness-artifacts/ (canvas Save).
+
+    SECURITY (Fable spec, non-negotiable): the client sends {filename, content}
+    ONLY — never a path. The filename is reduced to a sanitized, extension-
+    whitelisted basename; the path is constructed server-side under the fixed
+    save dir; content is size-capped (~5MB). Existing files are never clobbered
+    (' (n)' suffix). Writes and rejections are logged.
+    """
+    import os
+    data = await req.json()
+    content = data.get("content")
+    if not isinstance(content, str):
+        return JSONResponse({"ok": False, "log": "content must be a string"},
+                            status_code=400)
+    if len(content.encode("utf-8", errors="ignore")) > _ARTIFACT_SAVE_MAX:
+        print("[artifact] reject save: content over the 5MB cap", flush=True)
+        return JSONResponse({"ok": False, "log": "content exceeds the 5MB cap"},
+                            status_code=413)
+    name = sanitize_artifact_filename(data.get("filename", ""))
+    if not name:
+        print(f"[artifact] reject save: bad filename {data.get('filename')!r}", flush=True)
+        return JSONResponse({"ok": False, "log": "invalid or non-whitelisted filename"},
+                            status_code=400)
+    save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "harness-artifacts")
+    os.makedirs(save_dir, exist_ok=True)
+    stem, ext = name.rsplit(".", 1)
+    path = os.path.join(save_dir, name)
+    n = 1
+    while os.path.exists(path) and n < 100:     # never clobber (⚠ PENDING FABLE QA: suffix policy)
+        path = os.path.join(save_dir, f"{stem} ({n}).{ext}")
+        n += 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[artifact] saved {len(content)} chars → {path}", flush=True)
+    return JSONResponse({"ok": True, "path": path})
+
+
 @app.post("/api/ody/stop/{sid}")
 async def ody_stop(sid: str) -> JSONResponse:
     try:

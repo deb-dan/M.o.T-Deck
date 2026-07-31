@@ -130,7 +130,7 @@
   #view-chat:not([hidden]) { display:flex; flex-direction:column;
       height:calc(100vh - 128px); overflow:hidden; }
   #chat-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
-      max-width:760px; width:100%; margin-top:6px; padding-right:10px;
+      max-width:none; width:100%; margin-top:6px; padding-right:2px;   /* Fable: fill width + reflow (was 760px cap); minimal gap to divider (Debi) */
       scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
   .cmsg { margin:0 0 30px; }
   .cmsg .who { font:10.5px var(--mono); letter-spacing:.22em; text-transform:uppercase;
@@ -140,8 +140,8 @@
                      background:var(--card); border:1px solid var(--line);
                      border-radius:14px 14px 4px 14px; padding:15px 19px; }
   .cmsg.assistant .who { color:var(--gold); }
-  .cmsg.assistant .body { border-left:1px solid var(--gold); padding:2px 0 2px 20px;
-                          color:var(--fg); font-size:15px; line-height:1.75; max-width:68ch;
+  .cmsg.assistant .body { border-left:1px solid var(--gold); padding:2px 0 2px 14px;
+                          color:var(--fg); font-size:15px; line-height:1.75; max-width:none;   /* Fable: full width + reflow (was 68ch cap); tighter gap from the accent bar (20->14) */
                           white-space:pre-wrap; overflow-wrap:break-word; }
   .cmsg .toolline { font:11px var(--mono); color:var(--faint); letter-spacing:.06em;
                     padding:3px 0 3px 20px; }
@@ -471,7 +471,11 @@
 
   /* Chat view → widen: drop the narrow centered caps, reclaim the sidebar space.
      Reading width is still bounded per-message (assistant .body max-width:68ch). */
-  body.chat-mode main { max-width:none; padding-top:16px; }
+  /* Fable (Debi: reclaim side/top/bottom, LM-Studio-tight): the Chat view fills the whole
+     webview. Override main's default padding:34/44/60 — that side+bottom padding was the dead
+     space. main becomes a full-height flex column; #view-chat flex-fills it (no magic px math). */
+  body.chat-mode main { max-width:none; padding:8px 18px 10px; height:100vh;
+      box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; }
   body.chat-mode #chat-scroll,
   body.chat-mode #chat-bar { max-width:none; }
 
@@ -480,7 +484,7 @@
      "Chat" + subtitle + model/private stamp) into a slim one-line strip, reclaiming
      the top band for messages. Other views keep the full hero untouched.
      <!-- FABLE: style pass --> */
-  #chat-head-compact { display:none; align-items:center; gap:9px; margin:0 0 12px;
+  #chat-head-compact { display:none; align-items:center; gap:9px; margin:0 0 6px;
       font:11px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
   #chat-head-compact .cch-title { color:var(--gold); }
   #chat-head-compact .cch-sep { color:var(--line2); }
@@ -490,14 +494,14 @@
   body.chat-mode #view-chat > #chat-stamp { display:none; }
   body.chat-mode #chat-head-compact { display:flex; }
   /* reclaim the freed top band: shorter top offset → chat column extends upward */
-  body.chat-mode #view-chat:not([hidden]) { height:calc(100vh - 110px); }
+  body.chat-mode #view-chat:not([hidden]) { height:auto; flex:1 1 auto; min-height:0; }   /* Fable: flex-fill the tight main (no magic px) */
 
   /* session rail collapse (its own chevron + persisted preference) */
   #cs-collapse { width:22px; height:22px; line-height:1; padding:0; cursor:pointer;
       font:12px var(--mono); color:var(--faint); background:transparent;
       border:1px solid var(--line2); border-radius:6px; }
   #cs-collapse:hover { color:var(--gold); border-color:var(--gold); }
-  body.sessions-collapsed #chat-sessions { width:34px; padding-right:8px; }
+  body.sessions-collapsed #chat-sessions { width:24px; padding-right:0; }   /* Fable: collapse to ~arrow width (Debi: no dead space) */
   body.sessions-collapsed #chat-sessions .cs-title,
   body.sessions-collapsed #chat-sessions #cs-list,
   body.sessions-collapsed #chat-sessions #cs-new { display:none; }
@@ -512,13 +516,13 @@
      viewer share the leftover space (after the sessions rail) by flex-grow ratio, so the
      layout stays adaptive; --art-*-grow are set by the divider drag (default 0.5 / 0.5). */
   #artifact-viewer { flex:var(--art-view-grow, 1) 1 0; min-width:240px; display:none; flex-direction:column;
-      min-height:0; border-left:1px solid var(--line); padding-left:20px; }
+      min-height:0; overflow:hidden; padding-left:1px; }   /* Fable: no border-left (divider is the separator) + minimal gap (Debi) */
   body.artifact-open #artifact-viewer { display:flex; }
   body.artifact-open #chat-main { flex:var(--art-chat-grow, 1) 1 0; min-width:240px; }
   /* draggable vertical divider between the chat column and the viewer (only while split) */
   /* BUG 1 fix: comfortable 10px hit area, sits above the panes (z-index), and a full-height
      visible bar so the handle is discoverable (faint by default, gold on hover/active). */
-  #art-divider { display:none; flex:none; width:10px; align-self:stretch; cursor:col-resize;
+  #art-divider { display:none; flex:none; width:4px; align-self:stretch; cursor:col-resize;   /* Fable: slim handle (Debi: minimize the dead band) */
       position:relative; z-index:8; touch-action:none; }
   body.artifact-open:not(.artifact-expanded) #art-divider { display:block; }
   #art-divider::after { content:''; position:absolute; top:0; left:50%; transform:translateX(-50%);
@@ -588,6 +592,45 @@
   .art-json .jt-str { color:var(--gold); }
   .art-json .jt-num { color:var(--accent); }
   .art-json .jt-bool, .art-json .jt-null { color:var(--warn); }
+  /* ---------- CANVAS (editable artifacts) — Fable spec 2026-07-31 ----------
+     Edit mode splits the artifact pane VERTICALLY: editor (top) + live preview
+     (bottom), draggable via #art-canvas-divider (persisted, clamp 0.2–0.8,
+     default 0.5). The preview stays the untouched Phase-2 pipeline in #art-body
+     — same sandbox/CSP. <!-- FABLE: style pass --> */
+  #art-canvas { display:none; flex-direction:column; min-height:80px; min-width:0; }
+  body.artifact-edit #art-canvas { display:flex; flex:var(--canvas-ed-grow, 1) 1 0; }
+  body.artifact-edit #art-body { flex:var(--canvas-prev-grow, 1) 1 0; min-height:80px; }
+  #art-canvas-acts { display:flex; align-items:center; gap:8px; flex:none; margin-bottom:8px; }
+  #canvas-note { font:10px var(--mono); letter-spacing:.08em; color:var(--faint);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  #art-editor { flex:1 1 auto; min-height:0; min-width:0; overflow:hidden;
+      background:var(--bg2); border:1px solid var(--line); border-radius:12px; }
+  #art-editor textarea { width:100%; height:100%; resize:none; border:0; outline:none;
+      background:transparent; color:var(--fg); font:12px/1.6 var(--mono); padding:14px 16px; }
+  #art-canvas-divider { display:none; flex:none; height:10px; cursor:row-resize;
+      position:relative; z-index:8; touch-action:none; }
+  body.artifact-edit #art-canvas-divider { display:block; }
+  #art-canvas-divider::after { content:''; position:absolute; left:0; top:50%; transform:translateY(-50%);
+      width:100%; height:2px; border-radius:2px; background:var(--line2); transition:background .12s, height .12s; }
+  #art-canvas-divider:hover::after, body.canvas-dragging #art-canvas-divider::after { background:var(--gold); height:3px; }
+  body.canvas-dragging { cursor:row-resize; user-select:none; }
+  body.canvas-dragging iframe { pointer-events:none; }
+  .art-btn.on { color:var(--gold); border-color:var(--gold); }
+  /* CodeMirror 5 — dark editorial skin via token overrides (no new colors) */
+  .CodeMirror { height:100%; background:transparent; color:var(--fg);
+      font:12px/1.6 var(--mono); border-radius:12px; }
+  .CodeMirror-gutters { background:transparent; border-right:1px solid var(--line); }
+  .CodeMirror-linenumber { color:var(--faint); font:10.5px var(--mono); }
+  .CodeMirror-cursor { border-left:1px solid var(--gold); }
+  .CodeMirror-selected, .CodeMirror-focused .CodeMirror-selected { background:var(--line2); }
+  .cm-s-default .cm-keyword { color:var(--gold); }
+  .cm-s-default .cm-string, .cm-s-default .cm-string-2 { color:var(--accent); }
+  .cm-s-default .cm-comment { color:var(--faint); font-style:italic; }
+  .cm-s-default .cm-number, .cm-s-default .cm-atom { color:var(--warn); }
+  .cm-s-default .cm-tag { color:var(--gold); }
+  .cm-s-default .cm-attribute { color:var(--accent); }
+  .cm-s-default .cm-def, .cm-s-default .cm-variable-2 { color:var(--cream); }
+  .cm-s-default .cm-property { color:var(--fg); }
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
@@ -701,9 +744,22 @@
             <span id="art-kind"></span>
           </div>
           <button id="art-copy" class="art-btn" onclick="copyArtifact()" title="Copy source" aria-label="Copy source" hidden>Copy</button>
+          <button id="art-edit" class="art-btn" onclick="toggleArtifactEdit()" title="Edit" aria-label="Edit artifact">✎</button>
           <button id="art-expand" class="art-btn" onclick="toggleArtifactExpand()" title="Expand" aria-label="Expand artifact">⇱</button>
           <button id="art-close" class="art-btn" onclick="closeArtifact()" title="Close artifact" aria-label="Close artifact">✕</button>
         </div>
+        <!-- FABLE: style pass — CANVAS edit mode: editor above, live preview below -->
+        <div id="art-canvas">
+          <div id="art-canvas-acts">
+            <button class="art-btn" onclick="canvasCopy()" title="Copy the edited source">Copy</button>
+            <button class="art-btn" onclick="canvasRevert()" title="Revert to the original artifact">Revert</button>
+            <button class="art-btn" onclick="canvasSave()" title="Save to ~/Downloads/harness-artifacts">Save to file</button>
+            <button class="art-btn" id="canvas-reveal" onclick="canvasReveal()" title="Show in Folder" hidden>Show in Folder</button>
+            <span id="canvas-note"></span>
+          </div>
+          <div id="art-editor"></div>
+        </div>
+        <div id="art-canvas-divider" onpointerdown="canvasDividerDown(event)" title="Drag to resize" aria-hidden="true"></div>
         <div id="art-body"></div>
         <div id="art-console-wrap" hidden>
           <details class="art-console-det"><summary>console</summary><div id="art-console"></div></details>
@@ -2867,6 +2923,8 @@ function ensureHostVendor(){
 // ---- viewer state + controls ----
 let artifactState = { open:false, expanded:false };
 let _artContent = '';
+let _artKind = '';        // CANVAS: current kind/filename so edit re-renders reuse the pipeline
+let _artFilename = '';
 let _artConsoleHandler = null;
 
 function openArtifact(opts){
@@ -2881,11 +2939,13 @@ function openArtifact(opts){
   // no type-specific width. (both panes already use flex-basis:0 + min-width:0 on #art-body.)
   setArtifactSplit(_artFrac);
   artifactState.open = true;
+  if (_canvas.on) exitCanvas(false);   // CANVAS: a new artifact replaces any live edit session
   document.getElementById('art-title').textContent = filename || kind;
   document.getElementById('art-kind').textContent = kind;
   renderArtifact(kind, content, filename);
 }
 function closeArtifact(){
+  if (_canvas.on) exitCanvas(false);   // CANVAS: drop the edit session with the artifact
   document.body.classList.remove('artifact-open', 'artifact-expanded');
   artifactState.open = false; artifactState.expanded = false;
   clearArtConsole();
@@ -2903,6 +2963,204 @@ function copyArtifact(){
   try { navigator.clipboard.writeText(_artContent || ''); } catch (e) {}
   const b = document.getElementById('art-copy'); if (!b) return;
   const o = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = o; }, 1200);
+}
+
+/* ---------- CANVAS (editable artifacts) — Fable spec 2026-07-31 ----------
+   Edit toggle splits the artifact pane into a CodeMirror-5 editor (top) + live
+   preview (bottom). Re-render = the EXISTING renderArtifact() pipeline, 600ms
+   debounced — sandbox/CSP untouched. CM5 self-hosted via fetch_vendor_assets.sh;
+   plain <textarea> fallback when the lib is absent. Edits are session-local
+   (⚠ not persisted to the chat message — per spec). */
+let _canvas = { on:false, cm:null, ta:null, orig:'', timer:null, savedPath:'' };
+let _canvasFrac = 0.5;
+
+// PURE (unit-tested: bridge/tests/test_canvas_logic.js) — clamp editor share 0.2–0.8.
+function clampCanvasSplit(f){ f = parseFloat(f); if (!isFinite(f)) return 0.5; return Math.max(0.2, Math.min(0.8, f)); }
+// PURE (unit-tested) — CodeMirror mode from the artifact kind (+ext for code files).
+// null = plain text (no mode file needed — mermaid/csv/unknown).
+function cmModeFor(kind, filename){
+  if (kind === 'html') return 'htmlmixed';
+  if (kind === 'svg') return 'xml';
+  if (kind === 'react') return 'jsx';
+  if (kind === 'js') return 'javascript';
+  if (kind === 'json') return 'application/json';
+  if (kind === 'markdown') return 'markdown';
+  if (kind === 'code'){
+    const ext = ((filename || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+    const M = { py:'python', ts:'javascript', js:'javascript', css:'css', scss:'css',
+                yaml:'yaml', yml:'yaml', xml:'xml', json:'application/json', md:'markdown' };
+    return (ext in M) ? M[ext] : null;
+  }
+  return null;
+}
+// PURE (unit-tested) — default save filename when the artifact has none.
+function canvasSaveName(filename, kind){
+  if (filename && /\.[a-z0-9]+$/i.test(filename)) return filename;
+  const E = { html:'html', svg:'svg', react:'jsx', js:'js', markdown:'md',
+              mermaid:'mmd', csv:'csv', json:'json' };
+  return 'artifact.' + (E[kind] || 'txt');
+}
+
+function setCanvasSplit(frac){
+  _canvasFrac = clampCanvasSplit(frac);
+  const r = document.documentElement.style;
+  r.setProperty('--canvas-ed-grow', String(_canvasFrac));
+  r.setProperty('--canvas-prev-grow', String(1 - _canvasFrac));
+}
+function loadCanvasSplit(){
+  let f = 0.5;
+  try { const v = localStorage.getItem('harness-canvas-split'); if (v != null) f = v; } catch (e) {}
+  setCanvasSplit(f);   // clamps + applies (default half)
+}
+let _cvDrag = null;
+function canvasDividerDown(e){
+  e.preventDefault();
+  const ed = document.getElementById('art-canvas'), pv = document.getElementById('art-body');
+  if (!ed || !pv) return;
+  const a = ed.getBoundingClientRect(), b = pv.getBoundingClientRect();
+  _cvDrag = { top: a.top, bottom: b.bottom };          // fixed span for this drag
+  const d = document.getElementById('art-canvas-divider');
+  try { d.setPointerCapture(e.pointerId); } catch (_) {}
+  d.addEventListener('pointermove', canvasDividerMove);
+  d.addEventListener('pointerup', canvasDividerUp);
+  d.addEventListener('pointercancel', canvasDividerUp);
+  document.body.classList.add('canvas-dragging');
+}
+function canvasDividerMove(e){
+  if (!_cvDrag) return;
+  const total = _cvDrag.bottom - _cvDrag.top;
+  if (total <= 0) return;
+  setCanvasSplit((e.clientY - _cvDrag.top) / total);   // editor = top share
+}
+function canvasDividerUp(e){
+  const d = document.getElementById('art-canvas-divider');
+  if (d){
+    d.removeEventListener('pointermove', canvasDividerMove);
+    d.removeEventListener('pointerup', canvasDividerUp);
+    d.removeEventListener('pointercancel', canvasDividerUp);
+    try { d.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  document.body.classList.remove('canvas-dragging');
+  _cvDrag = null;
+  try { localStorage.setItem('harness-canvas-split', String(_canvasFrac)); } catch (_) {}
+  if (_canvas.cm) try { _canvas.cm.refresh(); } catch (_) {}
+}
+
+// CodeMirror loader — self-hosted, lazy, once; resolves false → textarea fallback.
+let _cmVendor = null;
+function ensureCodeMirror(){
+  if (_cmVendor) return _cmVendor;
+  const A = location.origin + '/assets/vendor';
+  const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = A + '/codemirror.min.css';
+  document.head.appendChild(css);
+  _cmVendor = _loadScript(A + '/codemirror.min.js')
+    .then(() => _loadScript(A + '/codemirror-modes.min.js').catch(() => {}))  // modes optional
+    .then(() => !!window.CodeMirror)
+    .catch(() => { console.warn('CodeMirror missing — run scripts/fetch_vendor_assets.sh (textarea fallback)'); return false; });
+  return _cmVendor;
+}
+
+function canvasBuffer(){
+  if (_canvas.cm) return _canvas.cm.getValue();
+  if (_canvas.ta) return _canvas.ta.value;
+  return _artContent;
+}
+function canvasChanged(){
+  if (_canvas.timer) clearTimeout(_canvas.timer);
+  _canvas.timer = setTimeout(canvasRerender, 600);     // Fable: 600ms debounce
+}
+function canvasRerender(){
+  _canvas.timer = null;
+  if (!_canvas.on) return;
+  try { renderArtifact(_artKind, canvasBuffer(), _artFilename); }
+  catch (e) { console.warn('canvas re-render failed', e); }
+}
+function canvasNote(msg){
+  const n = document.getElementById('canvas-note'); if (n) n.textContent = msg || '';
+}
+
+async function toggleArtifactEdit(){
+  if (_canvas.on){ exitCanvas(true); return; }
+  if (!artifactState.open || _artKind === 'image' || _artKind === 'pdf') return;
+  _canvas.on = true;
+  _canvas.orig = _artContent;
+  _canvas.savedPath = '';
+  canvasNote('');
+  const rv = document.getElementById('canvas-reveal'); if (rv) rv.hidden = true;
+  document.body.classList.add('artifact-edit');
+  const eb = document.getElementById('art-edit'); if (eb) eb.classList.add('on');
+  loadCanvasSplit();
+  const host = document.getElementById('art-editor'); host.innerHTML = '';
+  const hasCM = await ensureCodeMirror();
+  if (!_canvas.on) return;             // toggled off while the lib was loading
+  if (hasCM && window.CodeMirror){
+    _canvas.cm = window.CodeMirror(host, {
+      value: _artContent, mode: cmModeFor(_artKind, _artFilename),
+      lineNumbers: true, lineWrapping: true, tabSize: 2, viewportMargin: 30,
+    });
+    _canvas.cm.on('change', canvasChanged);
+    setTimeout(() => { try { _canvas.cm.refresh(); } catch (e) {} }, 30);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = _artContent; ta.spellcheck = false;
+    ta.addEventListener('input', canvasChanged);
+    host.appendChild(ta); _canvas.ta = ta;
+  }
+}
+function exitCanvas(rerender){
+  // Leaving Edit keeps the CURRENT buffer in the viewer for this artifact
+  // (session-local; dropped when the artifact closes).
+  if (_canvas.timer){ clearTimeout(_canvas.timer); _canvas.timer = null; }
+  const buf = _canvas.on ? canvasBuffer() : null;
+  _canvas.on = false; _canvas.cm = null; _canvas.ta = null;
+  document.body.classList.remove('artifact-edit');
+  const eb = document.getElementById('art-edit'); if (eb) eb.classList.remove('on');
+  const host = document.getElementById('art-editor'); if (host) host.innerHTML = '';
+  canvasNote('');
+  if (rerender && buf != null && buf !== _artContent){
+    try { renderArtifact(_artKind, buf, _artFilename); } catch (e) {}
+  }
+}
+function canvasCopy(){
+  try { navigator.clipboard.writeText(canvasBuffer()); } catch (e) {}
+  canvasNote('copied');
+  setTimeout(() => canvasNote(''), 1200);
+}
+function canvasRevert(){
+  if (!_canvas.on) return;
+  if (_canvas.cm) _canvas.cm.setValue(_canvas.orig);           // fires change → debounced re-render
+  else if (_canvas.ta){ _canvas.ta.value = _canvas.orig; canvasChanged(); }
+  canvasNote('reverted to original');
+}
+async function canvasSave(){
+  if (!_canvas.on) return;
+  canvasNote('saving…');
+  try {
+    const r = await fetch('/api/artifact/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: canvasSaveName(_artFilename, _artKind), content: canvasBuffer() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.path){
+      _canvas.savedPath = j.path;
+      canvasNote('saved → ' + j.path.split('/').slice(-2).join('/'));
+      const rv = document.getElementById('canvas-reveal'); if (rv) rv.hidden = false;
+    } else canvasNote('save failed: ' + (j.log || ('HTTP ' + r.status)));
+  } catch (e){ canvasNote('save failed: bridge unreachable'); }
+}
+function canvasReveal(){
+  if (!_canvas.savedPath) return;
+  fetch('/api/open', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: _canvas.savedPath, action: 'reveal' }) }).catch(() => {});
+}
+// ⌘K entry — edit the open artifact, or hint where artifacts come from.
+function paletteEditArtifact(){
+  if (artifactState.open){ if (!_canvas.on) toggleArtifactEdit(); return; }
+  showView('chat');
+  const el = document.getElementById('chat-note');
+  if (el){ const o = el.textContent;
+    el.textContent = 'no artifact open — open one from a chat code block first';
+    setTimeout(() => { el.textContent = o; }, 3000); }
 }
 
 // ---- console strip (only THIS frame's messages; textContent only) ----
@@ -2931,6 +3189,9 @@ function renderArtifact(kind, content, filename){
   const body = document.getElementById('art-body');
   body.innerHTML = ''; clearArtConsole();
   _artContent = content || '';
+  _artKind = kind; _artFilename = filename || '';   // CANVAS: remembered for edit re-renders
+  const _eb = document.getElementById('art-edit');
+  if (_eb) _eb.hidden = (kind === 'image' || kind === 'pdf');   // binary kinds: not editable
   document.getElementById('art-copy').hidden = (kind !== 'code');
   document.getElementById('art-console-wrap').hidden = !(kind === 'react' || kind === 'js' || kind === 'mermaid');
   if (kind === 'html' || kind === 'svg') renderArtIframe(body, buildPlainSrcdoc(content), false);
@@ -3061,6 +3322,7 @@ const commands = () => {
     {t:'Preview artifact: Mermaid diagram', k:'◧', f:()=>openArtifactSample('mermaid')},
     {t:'Preview artifact: CSV table', k:'◧', f:()=>openArtifactSample('csv')},
     {t:'Preview artifact: JSON tree', k:'◧', f:()=>openArtifactSample('json')},
+    {t:'Edit current artifact', k:'✎', f:paletteEditArtifact},   // CANVAS (Fable spec)
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
     if (c.running) cmds.push({t:`Stop ${n}`, k:'■', f:()=>act(n,'stop')});
@@ -3105,6 +3367,7 @@ applyChatRail();       // PHASE 1: restore persisted rail preference (acts only 
 applySessionsRail();   // PHASE 1: restore persisted sessions-rail preference
 loadArtifactSplit();   // TASK A: restore persisted artifact split (default half)
 loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
+loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>

@@ -32,6 +32,7 @@ PURIFY_V="3.2.4"       # DOMPurify — sanitize md/HTML before it touches the ho
 # artifact PREVIEW only. Served same-origin; the panel rewrites cdn.tailwindcss.com → this.
 TAILWIND_V="3.4.16"    # Tailwind Play CDN (versioned build)
 MERMAID_V="11.4.1"     # mermaid (MIT) — diagram artifacts; UMD/IIFE dist build for <script src> use
+CM_V="5.65.18"         # CodeMirror 5 (MIT) — canvas editor (Fable decision: v5 UMD, not v6 ESM)
 
 CDN="https://cdn.jsdelivr.net/npm"
 
@@ -60,6 +61,19 @@ npm/prismjs@${PRISM_V}/components/prism-ruby.min.js,\
 npm/prismjs@${PRISM_V}/components/prism-java.min.js,\
 npm/prismjs@${PRISM_V}/components/prism-toml.min.js"
 
+# CodeMirror 5 language modes, combined into ONE offline file in dependency order
+# (jsx needs javascript+xml; htmlmixed needs xml+javascript+css). Same /combine
+# pattern as Prism above.
+CM_MODES_COMBINE="https://cdn.jsdelivr.net/combine/\
+npm/codemirror@${CM_V}/mode/xml/xml.min.js,\
+npm/codemirror@${CM_V}/mode/css/css.min.js,\
+npm/codemirror@${CM_V}/mode/javascript/javascript.min.js,\
+npm/codemirror@${CM_V}/mode/jsx/jsx.min.js,\
+npm/codemirror@${CM_V}/mode/htmlmixed/htmlmixed.min.js,\
+npm/codemirror@${CM_V}/mode/markdown/markdown.min.js,\
+npm/codemirror@${CM_V}/mode/python/python.min.js,\
+npm/codemirror@${CM_V}/mode/yaml/yaml.min.js"
+
 # name|url   (name = filename written into $DEST)
 ASSETS=(
   "babel.min.js|${CDN}/@babel/standalone@${BABEL_V}/babel.min.js"
@@ -71,6 +85,9 @@ ASSETS=(
   "prism.min.js|${PRISM_COMBINE}"
   "tailwind.play.js|https://cdn.tailwindcss.com/${TAILWIND_V}"
   "mermaid.min.js|${CDN}/mermaid@${MERMAID_V}/dist/mermaid.min.js"
+  "codemirror.min.css|${CDN}/codemirror@${CM_V}/lib/codemirror.min.css"
+  "codemirror.min.js|${CDN}/codemirror@${CM_V}/lib/codemirror.min.js"
+  "codemirror-modes.min.js|${CM_MODES_COMBINE}"
 )
 
 fetch() {
