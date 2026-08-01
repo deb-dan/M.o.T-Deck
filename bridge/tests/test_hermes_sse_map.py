@@ -130,6 +130,55 @@ check("gateway.ready ignored", fr == [] and act == "")
 fr, act = F({"type": "message.start"})
 check("message.start ignored (no payload key)", fr == [] and act == "")
 
+# §F file cards: successful write_file/patch tool.complete → file_card frames
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file", "args": {"path": "cards-test.txt"},
+                       "result": {"bytes_written": 5,
+                                  "resolved_path": "/Users/debik/Desktop/cards-test.txt",
+                                  "files_modified": ["/Users/debik/Desktop/cards-test.txt"]}}})
+check("write_file success → tool_output + file_card",
+      fr == [{"type": "tool_output", "tool": "write_file"},
+             {"type": "file_card", "path": "/Users/debik/Desktop/cards-test.txt",
+              "tool": "write_file"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "patch", "args": {"path": "a.py"},
+                       "result": {"files_modified": ["/Users/d/a.py", "/Users/d/b.py",
+                                                     "/Users/d/a.py"]}}})
+check("patch multi-file V4A → one card per file, deduped",
+      [f["path"] for f in fr if f.get("type") == "file_card"]
+      == ["/Users/d/a.py", "/Users/d/b.py"])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file",
+                       "result": {"error": "Refusing to write"},
+                       "args": {"path": "/Users/d/x.txt"}}})
+check("write_file error → NO file_card",
+      fr == [{"type": "tool_output", "tool": "write_file"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file", "args": {"path": "~/Desktop/rel.txt"},
+                       "result": {"bytes_written": 3}}})
+check("legacy resolution (no resolved_path) → args.path fallback",
+      fr[-1] == {"type": "file_card", "path": "~/Desktop/rel.txt",
+                 "tool": "write_file"})
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file", "args": {"path": "x"},
+                       "result": "unparsed string result"}})
+check("string result (unparseable) → conservative, NO file_card",
+      fr == [{"type": "tool_output", "tool": "write_file"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "read_file", "args": {"path": "/Users/d/a.py"},
+                       "result": {"content": "hi"}}})
+check("non-file-producing tool → NO file_card",
+      fr == [{"type": "tool_output", "tool": "read_file"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file", "args": None, "result": {}}})
+check("file-card branch malformed args safe",
+      fr == [{"type": "tool_output", "tool": "write_file"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "patch", "args": {},
+                       "result": {"files_modified": [None, "", "  "]}}})
+check("blank/None paths dropped → no cards",
+      fr == [{"type": "tool_output", "tool": "patch"}])
+
 # defensive: malformed payloads never raise
 fr, act = F({"type": "message.delta", "payload": None})
 check("null payload safe", fr == [] and act == "")

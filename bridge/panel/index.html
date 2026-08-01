@@ -1253,6 +1253,12 @@ let hermesSid = localStorage.getItem('harness-hermes-sid') || null;
 // (survives dashboard restarts, unlike hermesSid).
 let hermesStoredSid = localStorage.getItem('harness-hermes-stored') || null;
 let hermesSessions = [];
+// Phase-3 fix: monotonic token shared by BOTH rail loaders (Odysseus + Hermes).
+// Every loadSessions/loadHermesSessions call bumps it and records the lane it
+// started in; a response that resolves after a newer load OR after the lane has
+// changed is DROPPED (no state write, no render) — kills the cross-lane late-
+// response race during rapid Agent↔Hermes switching. ⚠️ PENDING FABLE QA.
+let sessionsReqSeq = 0;
 
 // ── §E — first-launch setup checklist + walkthrough (non-intrusive: auto-shows
 //    only when something needs setup / never seen; also launchable from ⌘K) ──
@@ -1541,6 +1547,13 @@ function setMode(m) {
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
   // restore the Odysseus rail + previously selected Odysseus session.
+  // Phase-3 fix: SYNCHRONOUSLY re-render the rail to the new lane BEFORE the
+  // async load fires. renderSessions() branches on chatMode (already flipped
+  // above), so this instantly drops the other lane's rows AND their click
+  // handlers — no stale Odysseus row can linger under the Hermes chip (even if
+  // the /api/hermes/sessions fetch is slow or fails), and none can be clicked
+  // into a wedge. The async loadSessions() below then refreshes with live data.
+  renderSessions();
   if (m === 'hermes'){
     loadSessions();
     if (hermesStoredSid) selectHermesSession(hermesStoredSid);
@@ -2419,10 +2432,10 @@ function fmtBytes(n){
   if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
   return (n/1073741824).toFixed(2) + ' GB';
 }
-// Render a produced-file card into a chat message body. READY but NOT auto-wired:
-// the chat SSE stream carries no "file written this turn" event, so nothing calls this
-// yet. TODO ⚠️ PENDING FABLE QA — wire a produced-files signal (watch the output dir, or
-// a bridge event) then call fileCard() at the point the file was produced.
+// Render a produced-file card into a chat message body. AUTO-WIRED for the HERMES
+// lane only: the bridge emits {"type":"file_card","path","tool"} on a successful
+// write_file/patch tool.complete (see hermes_event_to_frames). Odysseus/Chat lanes
+// stay unwired — their streams carry no produced-file signal (honest limit).
 function fileCard(el, f){
   const name = f.name || (f.path || '').split('/').pop() || 'file';
   const kind = artifactKind(name, '');
@@ -2548,10 +2561,16 @@ async function loadSessions(){
   // Phase 3: the rail follows the active lane — Hermes mode lists the Hermes
   // gateway's STORED sessions; Agent/Chat keep the Odysseus list (unchanged).
   if (chatMode === 'hermes') return loadHermesSessions();
+  const seq = ++sessionsReqSeq, lane = chatMode;   // Phase-3 fix: race token
   try {
     const r = await fetch('/api/ody/sessions');
+    // Drop a stale/late Odysseus response: superseded by a newer load, or the
+    // lane changed while in flight (e.g. switched to Hermes). Never write
+    // Odysseus rows into a Hermes rail.
+    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
     if (!r.ok) return null;
     const list = await r.json();
+    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
     chatSessions = Array.isArray(list) ? list : [];
     renderSessions();
     return chatSessions;
@@ -2559,10 +2578,13 @@ async function loadSessions(){
 }
 
 async function loadHermesSessions(){
+  const seq = ++sessionsReqSeq, lane = chatMode;   // Phase-3 fix: race token
   try {
     const r = await fetch('/api/hermes/sessions');
+    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
     if (!r.ok) return null;
     const list = await r.json();
+    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
     hermesSessions = Array.isArray(list) ? list : [];
     renderSessions();
     return hermesSessions;
@@ -2610,6 +2632,8 @@ async function selectHermesSession(storedId){
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
   if (chatBusy) return;
+  if (chatMode !== 'hermes') return;   // Phase-3 fix: lane guard — never open a
+                                       // Hermes session while the rail is Odysseus.
   hermesStoredSid = storedId;
   localStorage.setItem('harness-hermes-stored', storedId);
   renderSessions();
@@ -2639,6 +2663,9 @@ async function selectHermesSession(storedId){
 
 async function selectSession(sid){
   if (chatBusy) return;
+  if (chatMode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
+                                       // Odysseus row clicked under the Hermes
+                                       // chip must NOT bind chatSid / wedge Send.
   chatSid = sid;
   const s = chatSessions.find(x => x.id === sid);
   chatModel = ((s && s.model) || '').split('-').slice(0,2).join('-') || 'model';
@@ -3645,6 +3672,22 @@ async function sendChat() {
           } else if (j.type === 'approval') {
             // Hermes Phase 2: interactive approval card at stream position.
             chatApproval(holder, j.request || {});
+          } else if (j.type === 'file_card') {
+            // §F auto-trigger (Hermes lane): the bridge saw a successful
+            // write_file/patch → render the existing produced-file card.
+            // Appended to the holder (after .body) like post-prose approval
+            // cards; deduped per turn; only absolute-under-/Users or ~ paths
+            // render (anything else is skipped ⚠ PENDING FABLE QA). Cards do
+            // NOT survive a session reload — Phase-3 transcripts can't
+            // reconstruct them (known limit).
+            const fp = String(j.path || '');
+            if (fp.startsWith('/Users/') || fp.startsWith('~')) {
+              holder._fileCards = holder._fileCards || new Set();
+              if (!holder._fileCards.has(fp)) {
+                holder._fileCards.add(fp);
+                try { fileCard(holder, {path: fp}); } catch {}
+              }
+            }
           } else if (j.type === 'tool_start') {
             const raw = j.tool || 'tool';
             const isWeb = /search|web|fetch|browse|url|http/i.test(raw);

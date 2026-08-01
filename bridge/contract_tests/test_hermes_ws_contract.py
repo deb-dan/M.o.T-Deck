@@ -160,6 +160,35 @@ def test_session_rail_contract():
         "REST session-token header renamed — bridge rename call broken")
 
 
+def test_file_card_signal_contract():
+    """§F file-card auto-trigger — the exact upstream keys the bridge mapper
+    reads from tool.complete to emit {"type":"file_card"} frames.
+
+    tool.complete payload carries name/args/result (server.py _on_tool_complete
+    ~5044-5088: payload["result"] = json.loads(result) when parseable). On a
+    SUCCESSFUL write_file/patch, file_tools.py stamps the ABSOLUTE path(s) into
+    result: resolved_path (:1630 write / :1789 single-file patch) and
+    files_modified (:1632 / :1787, list — multi-file V4A). Errors carry an
+    "error" key (tool_error). If any of these move, the panel silently stops
+    showing produced-file cards — fail loudly at pin-bump instead."""
+    if not HERMES.exists():
+        return
+    server = (HERMES / "tui_gateway" / "server.py").read_text(errors="replace")
+    assert "def _on_tool_complete" in server, (
+        "tool.complete emit seam (_on_tool_complete) moved — re-recon file cards")
+    assert '"name": name, "args": args' in server, (
+        "tool.complete payload no longer carries name/args — file-card mapper broken")
+    assert 'payload["result"] = json.loads(result)' in server, (
+        "tool.complete result is no longer json-parsed — success detection broken")
+    ftools = (HERMES / "tools" / "file_tools.py").read_text(errors="replace")
+    assert 'result_dict["resolved_path"]' in ftools, (
+        "write_file/patch no longer report resolved_path — file-card path source gone")
+    assert 'result_dict["files_modified"]' in ftools, (
+        "write_file/patch no longer report files_modified — file-card path source gone")
+    assert 'registry.register(name="write_file"' in ftools, (
+        "write_file tool registration moved/renamed — re-recon")
+
+
 def test_approvals_default_mode_contract():
     """Upstream's DEFAULT approvals.mode governs whether dangerous commands are
     silently guardian-approved (smart) or always carded (manual). A silent

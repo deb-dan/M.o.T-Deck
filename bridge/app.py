@@ -2222,7 +2222,37 @@ def hermes_event_to_frames(ev):
             fr = {"type": "tool_output", "tool": p.get("name") or "tool"}
             if p.get("summary"):
                 fr["summary"] = p.get("summary")
-            return ([fr], "")
+            frames = [fr]
+            # §F file cards: a SUCCESSFUL write_file/patch also emits one
+            # file_card frame per file touched, so the panel can render a
+            # produced-file card (Open / Show in Folder via /api/open).
+            # tool.complete payload (tui_gateway/server.py:5044-5088):
+            # {tool_id, name, args, result(json-parsed when possible), summary?}.
+            # Success = result is a dict WITHOUT "error" (file_tools.py returns
+            # json dicts; tool_error always carries "error"). Paths: prefer
+            # result.files_modified (ABSOLUTE, file_tools.py:1632/1787 — handles
+            # multi-file V4A patches), then result.resolved_path (:1630/1789),
+            # then args.path (legacy-resolution fallback :1601-1608 — may be
+            # relative/~; forwarded as-is, the relay expands ~ and the panel
+            # skips non-absolute ⚠ PENDING FABLE QA). Kept inline (not a helper)
+            # so the ast-extracted mapper stays self-contained for the tests.
+            if p.get("name") in ("write_file", "patch"):
+                res = p.get("result")
+                args = p.get("args") if isinstance(p.get("args"), dict) else {}
+                if isinstance(res, dict) and not res.get("error"):
+                    paths = res.get("files_modified")
+                    if not (isinstance(paths, list) and paths):
+                        one = res.get("resolved_path") or args.get("path")
+                        paths = [one] if one else []
+                    seen = set()
+                    for fp in paths:
+                        fp = str(fp or "").strip()
+                        if not fp or fp in seen:
+                            continue
+                        seen.add(fp)
+                        frames.append({"type": "file_card", "path": fp,
+                                       "tool": p.get("name")})
+            return (frames, "")
         if t == "approval.request":
             # Phase 2: interactive approval card. NO auto-deny — the relay keeps
             # draining while the panel POSTs /api/hermes/approve → approval.respond.
@@ -2531,6 +2561,17 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 approval_pending = ((ev or {}).get("type") == "approval.request")
                 frames, action = hermes_event_to_frames(ev)
                 for fr in frames:
+                    if fr.get("type") == "file_card":
+                        # §F: mapper stays pure — expand ~ here (Hermes runs as
+                        # this same user). Relative paths pass through as-is
+                        # (session cwd not on the wire ⚠ PENDING FABLE QA); the
+                        # panel only renders absolute/home paths.
+                        try:
+                            fp = str(fr.get("path") or "")
+                            if fp.startswith("~"):
+                                fr["path"] = os.path.expanduser(fp)
+                        except Exception:
+                            pass
                     yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
                 if action == "done":
                     break
