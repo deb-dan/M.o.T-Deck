@@ -16,6 +16,7 @@
 
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -23,11 +24,51 @@ BASE_URL = os.environ.get("JAN_BASE_URL", "http://127.0.0.1:6767/v1")
 API_KEY = os.environ.get("JAN_API_KEY", "").strip() or None   # headless runner needs a key
 NAME = "Local runner"   # display name in Odysseus (Jan is gone; id stays local-jan for fan-out)
 ENDPOINT_ID = "local-jan"          # stable caller-supplied String PK (idempotent)
+# The harness root — this script is invoked by absolute path with cwd=vendor/odysseus.
+HARNESS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _wire_model() -> str:
+    """The identifier Odysseus must SEND to the runner for the active model — the
+    same rule as bridge/app.py wire_model_id(): the registry id for llama.cpp
+    (launched with --alias <id>), the model's local PATH for MLX (mlx_lm/mlx_vlm
+    treat the request's `model` field as a model to LOAD and would resolve our id
+    on HuggingFace → 404 → runner 400).
+
+    Read straight from harness.yaml + data/models.json (no yaml/pyyaml dependency —
+    this runs inside the ODYSSEUS venv), so every call site (start_component.sh,
+    install_component.sh, firstrun_fat.sh, diagnose_odysseus.sh) gets it for free.
+    Env override: HARNESS_WIRE_MODEL. Empty string ⇒ caller falls back to probing
+    the live endpoint."""
+    env = os.environ.get("HARNESS_WIRE_MODEL", "").strip()
+    if env:
+        return env
+    try:
+        txt = open(os.path.join(HARNESS_ROOT, "harness.yaml")).read()
+    except OSError:
+        return ""
+    m = re.search(r"^runner:\s*$(.*?)(?=^\S|\Z)", txt, re.S | re.M)
+    if not m:
+        return ""
+    mm = re.search(r"^\s+model:\s*(.*)$", m.group(1), re.M)
+    mid = re.sub(r"#.*$", "", mm.group(1)).strip().strip("'\"") if mm else ""
+    if not mid:
+        return ""
+    try:
+        models = json.load(open(os.path.join(HARNESS_ROOT, "data", "models.json"))).get("models", [])
+    except Exception:
+        return mid
+    entry = next((x for x in models if x.get("id") == mid), None)
+    if entry and str(entry.get("format") or "gguf").strip().lower() == "mlx":
+        return str(entry.get("path") or "").strip() or mid
+    return mid
 
 
 def _discover_model(base_url: str) -> str:
     """Ask the live endpoint for its first model id. Empty string if unreachable —
-    Odysseus then auto-discovers at runtime (model_refresh_mode='auto')."""
+    Odysseus then auto-discovers at runtime (model_refresh_mode='auto').
+    ⚠️ LAST RESORT ONLY: an MLX runner's /v1/models enumerates the whole HuggingFace
+    CACHE (unrelated repos), so data[0] can be junk — prefer _wire_model()."""
     try:
         req = urllib.request.Request(base_url.rstrip("/") + "/models")
         if API_KEY:
@@ -50,7 +91,9 @@ def main() -> int:
         print(f"[seed] ERROR: cannot import Odysseus modules (run with venv active, cwd=vendor/odysseus): {e}")
         return 1
 
-    model = _discover_model(BASE_URL)
+    # Prefer OUR wire identifier for the active model (correct for both engines);
+    # only probe the live endpoint when the harness has no active model recorded.
+    model = _wire_model() or _discover_model(BASE_URL)
     model_json = json.dumps([model]) if model else None
 
     with get_db_session() as db:

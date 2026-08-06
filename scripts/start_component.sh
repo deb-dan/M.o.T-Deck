@@ -244,11 +244,39 @@ PYRESOLVE
       echo "Start the Runner first (panel → Runner → Start)."
       exit 1
     fi
+    # WIRE identifier (mirrors bridge/app.py wire_model_id + seed_odysseus_jan._wire_model):
+    # llama.cpp is launched with `--alias <registry id>` so the id is the served name;
+    # the MLX servers treat the request's `model` field as a model to LOAD and would
+    # resolve our id on HuggingFace (404 → runner 400), so they need the model PATH,
+    # byte-identical to the --model argument used at launch.
+    MODEL=$(MODEL="$MODEL" python3 - <<'PYWIRE'
+import json, os
+mid = os.environ["MODEL"]
+try:
+    models = json.load(open("data/models.json")).get("models", [])
+except Exception:
+    models = []
+m = next((x for x in models if x.get("id") == mid), None)
+if m and str(m.get("format") or "gguf").strip().lower() == "mlx":
+    print((m.get("path") or "").strip() or mid)
+else:
+    print(mid)
+PYWIRE
+)
     mkdir -p "$(dirname "$HCFG")"
     HCFG="$HCFG" BASE_URL="$BASE_URL" MODEL="$MODEL" CTXLEN="$CTXLEN" KEY="$KEY" python3 - <<'PYPATCH'
 import os, re
 path = os.environ["HCFG"]
-managed = {"default": os.environ["MODEL"], "provider": "custom",
+def y(v):
+    """Minimal YAML-scalar safety for the model default ONLY — it can now be a
+    filesystem PATH (the MLX wire identifier), which may contain a space or '#';
+    unquoted, YAML would keep the space but treat ' #' as a comment. Plain ids are
+    emitted unchanged, so an existing config's formatting is untouched."""
+    s = str(v)
+    if s and (s != s.strip() or "#" in s or ": " in s or s[0] in "-?:,[]{}&*!|>'\"%@`"):
+        return "'" + s.replace("'", "''") + "'"
+    return s
+managed = {"default": y(os.environ["MODEL"]), "provider": "custom",
            "base_url": os.environ["BASE_URL"], "api_key": os.environ["KEY"],
            "context_length": os.environ["CTXLEN"]}
 order = ["default", "provider", "base_url", "api_key", "context_length"]

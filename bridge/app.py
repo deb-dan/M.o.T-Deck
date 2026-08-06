@@ -189,6 +189,81 @@ def _runner_engine(rc: dict) -> str:
     return "llama.cpp"
 
 
+# ── Wire identifier vs registry id (Fable, 2026-08-06 — MLX "runner 400" fix) ─
+# Our REGISTRY ID is the internal key everywhere (harness.yaml runner.model, the
+# RAM ledger, panel labels/selects). But the identifier that goes ON THE WIRE to
+# the runner is engine-dependent:
+#   • llama.cpp — start_component.sh launches with `--alias <registry id>`, so the
+#     registry id IS the served model name. Unchanged.
+#   • MLX (mlx_lm.server / mlx_vlm.server) — the request's `model` field is treated
+#     as A MODEL TO LOAD (server.py ModelProvider.load → mlx_lm.utils.load), so an
+#     unresolvable name is looked up on HuggingFace → 404 → the server answers 400
+#     ("Failed to load model: … Repository Not Found"). Neither server has an
+#     alias/served-model-name flag (recon: mlx-lm 0.31.3 + mlx-vlm 0.6.10 argv).
+#     Therefore the wire identifier is the model's LOCAL PATH, byte-identical to the
+#     `--model` argument used at launch (both read the same registry `path`), so the
+#     provider's model_key matches and it does NOT reload the weights.
+def wire_model_id(model_id: "str | None", models: list) -> str:
+    """PURE. Registry id → the identifier to put on the wire for the runner.
+    gguf/unknown format → the id unchanged; mlx → the registry path (falls back to
+    the id when the entry has no path). Empty id → "". Unknown id → unchanged
+    (safe fallback = previous behavior)."""
+    mid = (model_id or "").strip()
+    if not mid:
+        return ""
+    m = next((x for x in (models or []) if x.get("id") == mid), None)
+    if not m:
+        return mid
+    if str(m.get("format") or "gguf").strip().lower() == "mlx":
+        return str(m.get("path") or "").strip() or mid
+    return mid
+
+
+def display_model_id(wire: "str | None", models: list) -> str:
+    """PURE inverse of wire_model_id, for LABELS ONLY: a wire identifier (for MLX a
+    long filesystem path — which is also what Odysseus stores as a session's model)
+    → our registry id when we can recognise it, else the input unchanged. Matches on
+    exact id, then exact path, then trailing-slash-insensitive path, then path
+    basename (covers a resolved/symlinked path reported by the runner probe)."""
+    w = (wire or "").strip()
+    if not w:
+        return ""
+    ms = [x for x in (models or []) if x.get("id")]
+    if any(x.get("id") == w for x in ms):
+        return w
+    paths = [(x, str(x.get("path") or "").strip()) for x in ms]
+    for x, p in paths:
+        if p and p == w:
+            return x["id"]
+    wn = w.rstrip("/")
+    for x, p in paths:
+        if p and p.rstrip("/") == wn:
+            return x["id"]
+    base = os.path.basename(wn)
+    if base:
+        for x, p in paths:
+            if p and os.path.basename(p.rstrip("/")) == base:
+                return x["id"]
+    return w
+
+
+def runner_wire_model() -> str:
+    """The wire identifier for the ACTIVE runner model (harness.yaml runner.model)."""
+    return wire_model_id((cfg().get("runner", {}) or {}).get("model") or "",
+                         _registry_models())
+
+
+def _display_model(name):
+    """Label-safe wrapper for values we hand back to the panel: keeps falsy values
+    as-is (Odysseus may report null) and never raises."""
+    if not name:
+        return name
+    try:
+        return display_model_id(name, _registry_models())
+    except Exception:
+        return name
+
+
 # ── Single source of truth for "live" (Fable ISSUE C) ────────────────────────
 # harness.yaml's runner.model records INTENT, not reality — which is why MC could
 # show a runner "green + model" while nothing was actually loaded. The authoritative
@@ -208,17 +283,25 @@ def _runner_loaded_id(port: int) -> "str | None":
         return None
 
 
-def _reconcile_live(probed: "str | None", registry_ids: set, intent_model: "str | None") -> "str | None":
+def _reconcile_live(probed: "str | None", registry_ids: set, intent_model: "str | None",
+                    models: "list | None" = None) -> "str | None":
     """Pure (unit-tested) reconciliation of the runner probe against our registry.
       probed None            → nothing is loaded → nothing is live (None).
       probed in registry_ids → exact truth (llama.cpp launches with --alias <our id>).
-      otherwise              → the runner reports a path/dir alias we can't map (MLX
-                               servers report the model path) → fall back to the
-                               model we intended to launch (harness.yaml runner.model)."""
+      probed maps to a registry PATH → that model (MLX servers report a path).
+      otherwise              → the runner reports something we can't map (MLX's
+                               /v1/models enumerates the whole HuggingFace CACHE, so
+                               data[0] is often an unrelated repo id) → fall back to
+                               the model we intended to launch (harness.yaml
+                               runner.model). NEVER trust an unmappable probe."""
     if not probed:
         return None
     if probed in registry_ids:
         return probed
+    if models:
+        mapped = display_model_id(probed, models)
+        if mapped and mapped != probed:
+            return mapped
     return intent_model or probed
 
 
@@ -228,9 +311,10 @@ def _live_model_id(port: int) -> "str | None":
     probed = _runner_loaded_id(port)
     if not probed:
         return None
-    ids = {m.get("id") for m in _registry_models()}
+    models = _registry_models()
+    ids = {m.get("id") for m in models}
     intent = (cfg().get("runner", {}) or {}).get("model") or None
-    return _reconcile_live(probed, ids, intent)
+    return _reconcile_live(probed, ids, intent, models)
 
 
 @app.get("/api/status")
@@ -496,12 +580,17 @@ async def ody_ensure_session(req: Request) -> JSONResponse:
         if r.status_code == 200:
             for s in r.json():
                 if s.get("name") == name and not s.get("archived"):
-                    return JSONResponse({"id": s["id"], "model": s.get("model"), "reused": True})
+                    # `model` is Odysseus's stored session model = the WIRE id, which
+                    # for MLX is a filesystem path — map it back to our registry id
+                    # so the chat header/composer show a model NAME, not a path.
+                    return JSONResponse({"id": s["id"], "model": _display_model(s.get("model")),
+                                         "reused": True})
         r = await _ody_req("POST", "/api/session",
                            data={"name": name, "endpoint_id": "local-jan"})
         if r.status_code == 200:
             j = r.json()
-            return JSONResponse({"id": j["id"], "model": j.get("model"), "reused": False})
+            return JSONResponse({"id": j["id"], "model": _display_model(j.get("model")),
+                                 "reused": False})
         return JSONResponse({"error": r.text[:500]}, status_code=502)
     except Exception as e:
         return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
@@ -517,7 +606,7 @@ async def ody_sessions() -> JSONResponse:
         out = [{
             "id": s.get("id"),
             "name": (s.get("name") or "Untitled"),
-            "model": s.get("model"),
+            "model": _display_model(s.get("model")),   # wire id (MLX = path) → our id
             "updated_at": s.get("last_message_at") or s.get("updated_at") or s.get("created_at"),
             "message_count": s.get("message_count", 0),
         } for s in r.json() if s.get("id")]
@@ -539,7 +628,8 @@ async def ody_session_new(req: Request) -> JSONResponse:
         r = await _ody_req("POST", "/api/session", data={"name": name, "endpoint_id": "local-jan"})
         if r.status_code == 200:
             j = r.json()
-            return JSONResponse({"id": j["id"], "name": name, "model": j.get("model")})
+            return JSONResponse({"id": j["id"], "name": name,
+                                 "model": _display_model(j.get("model"))})
         return JSONResponse({"error": r.text[:500]}, status_code=502)
     except Exception as e:
         return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
@@ -2021,6 +2111,10 @@ async def chat_direct(req: Request) -> StreamingResponse:
     rc = cfg().get("runner", {})
     base = (rc.get("endpoint") or "http://127.0.0.1:6767/v1").rstrip("/")
     key, model = rc.get("api_key", ""), rc.get("model", "")
+    # `model` stays our REGISTRY ID (labels/analytics); `wire` is what the runner
+    # accepts — identical for llama.cpp (--alias), the model PATH for MLX servers
+    # (which would otherwise try to resolve our id on HF → 404 → runner 400).
+    wire = wire_model_id(model, _registry_models())
 
     # Build messages: session history (if reachable) + the new user turn.
     messages = []
@@ -2043,7 +2137,7 @@ async def chat_direct(req: Request) -> StreamingResponse:
             async with _RUNNER.stream(
                 "POST", f"{base}/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
-                json={"model": model, "messages": messages,
+                json={"model": wire, "messages": messages,
                       "stream": True, "cache_prompt": True,
                       "stream_options": {"include_usage": True}},
             ) as r:
