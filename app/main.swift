@@ -12,18 +12,79 @@ let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 let hermesURL = URL(string: "http://127.0.0.1:9119")!
 
+// PROVEN by /tmp/harness-drag.log: macOS never delivers drag events to the WKWebView
+// at all (registrations correct, draggingEntered never called). So a transparent
+// sibling ABOVE the panel is the drag destination: invisible to clicks (hitTest nil),
+// registered only for file drags, forwarding every phase to DropWebView's logic.
+final class DropOverlay: NSView {
+    weak var webView: DropWebView?
+    init(webView: DropWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+        registerForDraggedTypes([.fileURL])
+    }
+    required init?(coder: NSCoder) { return nil }
+    override func hitTest(_ point: NSPoint) -> NSView? { return nil }   // clicks fall through
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return webView?.draggingEntered(sender) ?? []
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return webView?.draggingUpdated(sender) ?? []
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        webView?.draggingExited(sender)
+    }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        return webView?.prepareForDragOperation(sender) ?? false
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        return webView?.performDragOperation(sender) ?? false
+    }
+}
+
 // Mission Control's webview: WKWebView does not forward Finder file-drags to the DOM
 // (page handlers never fire — verified: same page accepts drops in a real browser).
 // So the SHELL is the drop target: catch the drag natively, read the image, and hand
 // it to the page's `harnessNativeDrop(name, dataURL)` hook. The page does the real
 // gating (vision model, Chat mode, size) and shows its own notes.
 final class DropWebView: WKWebView {
+    // diagnostic trail for the drag chain → /tmp/harness-drag.log
+    private func dragLog(_ s: String) {
+        let line = "\(Date()) \(s)\n"
+        guard let d = line.data(using: .utf8) else { return }
+        if let h = FileHandle(forWritingAtPath: "/tmp/harness-drag.log") {
+            h.seekToEndOfFile(); h.write(d); h.closeFile()
+        } else {
+            try? line.write(toFile: "/tmp/harness-drag.log", atomically: true, encoding: .utf8)
+        }
+    }
+
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
         registerForDraggedTypes([.fileURL])
+        dragLog("init: registered=\(registeredDraggedTypes.map { $0.rawValue })")
     }
     required init?(coder: NSCoder) { return nil }
 
+    // WKWebView re-registers its OWN drag types on page load, which REPLACES any
+    // registration done at init — silently dropping .fileURL and starving our
+    // overrides. Guarantee .fileURL survives every re-registration.
+    override func registerForDraggedTypes(_ newTypes: [NSPasteboard.PasteboardType]) {
+        var types = newTypes
+        if !types.contains(.fileURL) { types.append(.fileURL) }
+        super.registerForDraggedTypes(types)
+        dragLog("register: \(types.map { $0.rawValue })")
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        registerForDraggedTypes(Array(registeredDraggedTypes))
+    }
+
+    // hover: cheap type check (file contents may not be readable mid-drag);
+    // drop: actually resolve the URL.
+    private func hasFile(_ sender: NSDraggingInfo) -> Bool {
+        return sender.draggingPasteboard.availableType(from: [.fileURL]) != nil
+    }
     private func draggedFile(_ sender: NSDraggingInfo) -> URL? {
         let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
         let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: opts) as? [URL]
@@ -35,12 +96,20 @@ final class DropWebView: WKWebView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard draggedFile(sender) != nil else { return super.draggingEntered(sender) }
+        let types = (sender.draggingPasteboard.types ?? []).map { $0.rawValue }
+        dragLog("entered: hasFile=\(hasFile(sender)) pbTypes=\(types)")
+        guard hasFile(sender) else { return super.draggingEntered(sender) }
         cue(true)
         return .copy
     }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return draggedFile(sender) != nil ? .copy : super.draggingUpdated(sender)
+        return hasFile(sender) ? .copy : super.draggingUpdated(sender)
+    }
+    // the final gate before the drop is delivered — WebKit's default says NO for
+    // drags it didn't accept itself, which silently refuses our file drop.
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        dragLog("prepare: hasFile=\(hasFile(sender))")
+        return hasFile(sender) ? true : super.prepareForDragOperation(sender)
     }
     override func draggingExited(_ sender: NSDraggingInfo?) {
         cue(false)
@@ -48,31 +117,40 @@ final class DropWebView: WKWebView {
     }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         cue(false)
-        guard let url = draggedFile(sender) else { return super.performDragOperation(sender) }
+        let url = draggedFile(sender)
+        dragLog("perform: url=\(url?.path ?? "nil")")
+        guard let url = url else { return super.performDragOperation(sender) }
         let mimes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"]
         let note = { (msg: String) in
             self.evaluateJavaScript("typeof attachNote==='function'&&attachNote('\(msg)');", completionHandler: nil)
         }
         guard let mime = mimes[url.pathExtension.lowercased()] else {
+            dragLog("perform: rejected ext=\(url.pathExtension)")
             note("only png / jpeg / webp images"); return true
         }
         guard let data = try? Data(contentsOf: url) else {
+            dragLog("perform: unreadable file")
             note("could not read that image"); return true
         }
         guard data.count <= 8 * 1024 * 1024 else {
+            dragLog("perform: too large (\(data.count) bytes)")
             note("image too large (max 8 MB)"); return true
         }
         let name = url.lastPathComponent
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         let js = "window.harnessNativeDrop && harnessNativeDrop(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
-        evaluateJavaScript(js, completionHandler: nil)
+        dragLog("perform: injecting \(data.count) bytes as \(mime)")
+        evaluateJavaScript(js) { _, err in
+            self.dragLog(err == nil ? "perform: js ok" : "perform: js ERROR \(err!)")
+        }
         return true
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
+    var dropOverlay: NSView?
     var panelWV: WKWebView!      // Mission Control (:8700)
     var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
     var odyLoaded = false
@@ -152,6 +230,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         odyWV.isHidden = true
         hermesWV.isHidden = true
 
+        // drop-catcher above everything; only active on the Mission Control tab
+        let ov = DropOverlay(webView: panelWV as! DropWebView)
+        ov.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ov)
+        dropOverlay = ov
+
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
             tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -171,6 +255,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             hermesWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             hermesWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             hermesWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ov.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            ov.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            ov.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            ov.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
         window.center()
@@ -352,6 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         panelWV.isHidden = (idx != 0)
         odyWV.isHidden = (idx != 1)
         hermesWV.isHidden = (idx != 2)
+        dropOverlay?.isHidden = (idx != 0)   // file drops belong to Mission Control only
         if idx == 1 && !odyLoaded {
             odyLoaded = true
             odyWV.load(URLRequest(url: odysseusURL))
