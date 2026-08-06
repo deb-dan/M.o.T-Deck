@@ -371,6 +371,19 @@
   .cs-item.on .nm { color:var(--cream); font-size:13.5px; }
   .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
   /* Phase 3 — Hermes rail row tag. <!-- FABLE: style pass --> */
+  /* path-guard audit list (Logs dialog) — editorial rows, not raw JSON */
+  .glog-row { display:flex; align-items:center; gap:14px; padding:9px 4px;
+              border-bottom:1px solid var(--line); }
+  .glog-row:last-child { border-bottom:none; }
+  .glog-meta { flex:none; width:120px; display:flex; flex-direction:column; gap:3px; }
+  .glog-when { font:10px var(--mono); color:var(--dim); letter-spacing:.06em; }
+  .glog-file { flex:1; min-width:0; }
+  .glog-base { display:block; font:13px var(--serif); color:var(--cream);
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .glog-dir  { display:block; font:10px var(--mono); color:var(--faint);
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .glog-acts { flex:none; display:flex; gap:6px; }
+  .glog-empty { font:12px var(--mono); color:var(--faint); padding:14px 4px; }
   .cs-tag { font:9px var(--mono); color:var(--faint); letter-spacing:.08em;
             text-transform:uppercase; margin-left:6px; }
   .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
@@ -983,7 +996,13 @@
   <div id="log-srcs" class="caps-tabs" style="margin:6px 0 10px"></div>
   <div class="note" id="log-note">bridge · last 40 lines</div>
   <pre id="logbody" style="max-height:380px"></pre>
-  <div class="btns"><button onclick="logdlg.close()">Close</button></div>
+  <div id="loglist" style="display:none; max-height:380px; overflow-y:auto"></div>
+  <div class="btns">
+    <button id="log-copy" onclick="copyLog(this)" title="Copy the log text to the clipboard">Copy</button>
+    <button id="log-export" onclick="exportLog()" title="Save a copy to ~/Downloads/harness-logs">Export</button>
+    <button id="log-clear" onclick="clearLog(this)" title="Empty this log file">Clear</button>
+    <button onclick="logdlg.close()">Close</button>
+  </div>
 </dialog>
 
 <dialog id="palette">
@@ -1261,27 +1280,110 @@ function showOutputLog(text) {
   if (chips) chips.innerHTML = '';
   const note = document.getElementById('log-note');
   if (note) note.textContent = 'command output';
-  document.getElementById('logbody').textContent = text || '(no output)';
+  const list = document.getElementById('loglist'); if (list) list.style.display = 'none';
+  const body = document.getElementById('logbody'); body.style.display = '';
+  // One-shot output: Copy applies; Export/Clear act on log FILES and would be a lie here.
+  const ex = document.getElementById('log-export'), cl = document.getElementById('log-clear');
+  if (ex) ex.style.display = 'none'; if (cl) cl.style.display = 'none';
+  _logRaw = text || '';
+  body.textContent = text || '(no output)';
   logdlg.showModal();
 }
 
+let _logSrc = 'bridge';   // active source, for Export/Clear
 async function showLogs(name) {
   const src = LOG_SOURCES.find(s => s.n === name) || LOG_SOURCES[0];
+  _logSrc = src.n;
   const chips = document.getElementById('log-srcs');
   if (chips) chips.innerHTML = LOG_SOURCES.map(s =>
     `<span class="chip${s.n === src.n ? ' on' : ''}" onclick="showLogs('${s.n}')">${esc(s.label)}</span>`).join('');
   const note = document.getElementById('log-note');
-  if (note) note.textContent = src.label + ' · last 40 lines';
   const body = document.getElementById('logbody');
-  body.textContent = '…';
-  try {
-    const r = await (await fetch('/api/logs/' + src.n)).json();
-    const lines = (r && r.lines) || [];
-    // Guard-specific empty state: an empty file is the GOOD outcome here, not a gap.
-    body.textContent = lines.join('\n') ||
-      (src.n === 'guard' ? 'no out-of-workspace writes recorded.' : '(empty)');
-  } catch { body.textContent = '(unavailable)'; }
+  const list = document.getElementById('loglist');
+  const ex = document.getElementById('log-export'), cl = document.getElementById('log-clear');
+  if (ex) ex.style.display = ''; if (cl) { cl.style.display = ''; cl.textContent = 'Clear'; cl._armed = false; }
+  if (src.n === 'guard') {
+    // Design (Fable): the audit trail reads as a LIST, not raw JSON — each entry a
+    // row with time · tool · file, plus Reveal and (when recorded) a jump back to
+    // the exact Hermes conversation the write happened in.
+    if (note) note.textContent = 'path-guard · out-of-workspace writes · newest first';
+    body.style.display = 'none'; list.style.display = '';
+    list.innerHTML = '<div class="glog-empty">…</div>';
+    try {
+      const r = await (await fetch('/api/logs/guard?lines=200')).json();
+      _logRaw = ((r && r.lines) || []).join('\n');
+      const rows = ((r && r.lines) || []).map(l => { try { return JSON.parse(l); } catch { return null; } })
+                                         .filter(Boolean).reverse();
+      if (!rows.length) { list.innerHTML = '<div class="glog-empty">no out-of-workspace writes recorded.</div>'; }
+      else {
+        list.innerHTML = '';
+        for (const e of rows) {
+          const p = String(e.path || ''); const i = p.lastIndexOf('/');
+          const base = i >= 0 ? p.slice(i + 1) : p, dir = i > 0 ? p.slice(0, i) : '';
+          let when = String(e.ts || '');
+          try { const d = new Date(e.ts); if (!isNaN(d)) when =
+            d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'}) + ' · ' +
+            d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'}); } catch {}
+          const row = document.createElement('div'); row.className = 'glog-row';
+          row.innerHTML = `<div class="glog-meta"><span class="glog-when">${esc(when)}</span>` +
+            `<span class="cs-tag">${esc(e.tool || 'write')}</span></div>` +
+            `<div class="glog-file"><span class="glog-base">${esc(base)}</span>` +
+            `<span class="glog-dir">${esc(dir)}</span></div><div class="glog-acts"></div>`;
+          const acts = row.querySelector('.glog-acts');
+          const mk = (label, fn, tip) => { const b = document.createElement('button');
+            b.textContent = label; b.title = tip || ''; b.onclick = fn; acts.appendChild(b); };
+          mk('Reveal', () => openLocalFile(p, 'reveal'), 'Show in Finder');
+          if (e.stored_sid) mk('Chat', () => {
+            logdlg.close(); showView('chat'); setMode('hermes');
+            selectHermesSession(String(e.stored_sid));
+          }, 'Open the conversation this write happened in');
+          list.appendChild(row);
+        }
+      }
+    } catch { list.innerHTML = '<div class="glog-empty">(unavailable)</div>'; }
+  } else {
+    if (note) note.textContent = src.label + ' · last 40 lines';
+    list.style.display = 'none'; body.style.display = '';
+    body.textContent = '…';
+    try {
+      const r = await (await fetch('/api/logs/' + src.n)).json();
+      const lines = (r && r.lines) || [];
+      _logRaw = lines.join('\n');
+      body.textContent = _logRaw || '(empty)';
+    } catch { body.textContent = '(unavailable)'; _logRaw = ''; }
+  }
   if (!logdlg.open) logdlg.showModal();
+}
+
+let _logRaw = '';   // raw text of the shown log (for guard, the raw JSON lines)
+async function copyLog(btn) {
+  try {
+    await navigator.clipboard.writeText(_logRaw || '');
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => btn.textContent = t, 1200); }
+  } catch {
+    // Clipboard API can be denied in a webview — fall back to a hidden textarea.
+    try {
+      const ta = document.createElement('textarea'); ta.value = _logRaw || '';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => btn.textContent = t, 1200); }
+    } catch {}
+  }
+}
+
+async function exportLog() {
+  try {
+    const r = await (await fetch('/api/logs/' + _logSrc + '/export', {method: 'POST'})).json();
+    if (r && r.ok && r.path) openLocalFile(r.path, 'reveal');
+  } catch {}
+}
+
+async function clearLog(btn) {
+  // Two-step arm (same pattern as session delete — WKWebView has no confirm()).
+  if (!btn._armed) { btn._armed = true; btn.textContent = 'Clear?'; setTimeout(() => {
+    btn._armed = false; btn.textContent = 'Clear'; }, 3000); return; }
+  btn._armed = false; btn.textContent = 'Clear';
+  try { await fetch('/api/logs/' + _logSrc + '/clear', {method: 'POST'}); } catch {}
+  showLogs(_logSrc);
 }
 
 /* ---------- chat pane (Rung D, native) ---------- */
@@ -3705,7 +3807,8 @@ async function sendChat() {
     const url = chatMode === 'hermes' ? '/api/hermes/chat'
               : chatMode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
     const reqBody = chatMode === 'hermes'
-      ? {session_id: hermesSid || '', message: text}
+      ? {session_id: hermesSid || '', message: text,
+         stored_sid: hermesStoredSid || ''}   // durable id → guard audit's "Chat" jump
       : {session:chatSid, message:text, mode:chatMode,
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset()};

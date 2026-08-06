@@ -378,6 +378,48 @@ def logs(name: str, lines: int = 40) -> dict:
     return {"lines": f.read_text(errors="replace").splitlines()[-lines:]}
 
 
+_LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard")
+
+
+@app.post("/api/logs/{name}/clear")
+def logs_clear(name: str) -> JSONResponse:
+    """Truncate a log file (Debi request 2026-08-06: clear/export on every source).
+    Truncate-not-delete: a component holding the fd keeps appending to the same
+    inode, so deletion would silently orphan its future output."""
+    if name not in _LOG_NAMES:
+        raise HTTPException(404, "unknown log")
+    f = ROOT / "data" / "logs" / f"{name}.log"
+    try:
+        if f.exists():
+            with open(f, "w"):
+                pass
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=500)
+
+
+@app.post("/api/logs/{name}/export")
+def logs_export(name: str) -> JSONResponse:
+    """Copy a log to ~/Downloads/harness-logs/<name>-<UTC ts>.log and return the
+    path (the panel then offers Show-in-Folder via the existing /api/open gate)."""
+    if name not in _LOG_NAMES:
+        raise HTTPException(404, "unknown log")
+    src = ROOT / "data" / "logs" / f"{name}.log"
+    try:
+        import shutil, datetime as _dt
+        outdir = Path.home() / "Downloads" / "harness-logs"
+        outdir.mkdir(parents=True, exist_ok=True)
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+        dest = outdir / f"{name}-{stamp}.log"
+        if src.exists():
+            shutil.copyfile(src, dest)
+        else:
+            dest.write_text("")
+        return JSONResponse({"ok": True, "path": str(dest)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=500)
+
+
 @app.get("/api/components/{name}/plan")
 def install_plan(name: str) -> dict:
     """Dry-run: return the install plan text without executing anything."""
@@ -2537,7 +2579,7 @@ def _guard_flag(path: str, tool: str) -> bool:
     return True
 
 
-def _guard_audit(path, tool, sid="") -> None:
+def _guard_audit(path, tool, sid="", stored_sid="") -> None:
     """Durable audit trail: one JSON line per flagged write in data/logs/guard.log.
 
     The python-log warning above is transient (rotates with bridge.log noise) and
@@ -2549,10 +2591,16 @@ def _guard_audit(path, tool, sid="") -> None:
         import json as _json, datetime as _dt
         d = ROOT / "data" / "logs"
         d.mkdir(parents=True, exist_ok=True)
-        line = _json.dumps({
+        rec = {
             "ts": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "path": str(path or ""), "tool": str(tool or ""), "sid": str(sid or ""),
-        }, ensure_ascii=False)
+        }
+        # The live gateway sid dies with the session; the STORED id is what the
+        # panel's rail can reopen — recorded when the panel supplies it, so an
+        # audit entry can jump back to the exact conversation.
+        if stored_sid:
+            rec["stored_sid"] = str(stored_sid)
+        line = _json.dumps(rec, ensure_ascii=False)
         with open(d / "guard.log", "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except Exception:
@@ -2833,10 +2881,11 @@ async def hermes_chat(req: Request) -> StreamingResponse:
     body = await req.json()
     sid = (body.get("session_id") or "").strip()
     msg = (body.get("message") or "").strip()
+    stored_sid = (body.get("stored_sid") or "").strip()   # durable id, for the guard audit
 
     async def gen():
         import json as _json
-        nonlocal sid
+        nonlocal sid, stored_sid
         q = None
         try:
             if not msg:
@@ -2849,6 +2898,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     yield 'data: {"type":"proxy_error","error":"session.create returned no id"}\n\n'
                     return
                 # stored_id (Phase 3): lets the rail mark the matching stored row.
+                stored_sid = stored_sid or str(res.get("stored_session_id") or "")
                 yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
             # Open the fan-out queue BEFORE submitting so no early event is missed.
             q = _HERMES.open_queue(sid)
@@ -2864,6 +2914,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 sid = str(res.get("session_id") or "")
                 if not sid:
                     raise RuntimeError("session.create returned no id")
+                stored_sid = stored_sid or str(res.get("stored_session_id") or "")
                 yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
                 q = _HERMES.open_queue(sid)
                 await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
@@ -2957,7 +3008,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                         except Exception:
                             pass
                     elif fr.get("type") == "guard_flag":
-                        _guard_audit(fr.get("path"), fr.get("tool"), sid)
+                        _guard_audit(fr.get("path"), fr.get("tool"), sid, stored_sid)
                     yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
                 if action == "done":
                     break
