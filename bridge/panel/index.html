@@ -324,10 +324,12 @@
   .coach .coach-foot button { margin-left:6px; }
   #chat-bar { flex:none; max-width:760px; width:100%; margin-top:8px;
       border-top:1px solid var(--line); padding-top:14px; }
-  #chat-modes { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-  .mode-chip { font:10.5px var(--mono); letter-spacing:.18em; text-transform:uppercase;
-               color:var(--dim); border:1px solid var(--line2); border-radius:7px;
-               padding:5px 12px; cursor:pointer; }
+  /* FABLE compact pass (Debi 2026-08-06): the composer row got clunky as chips
+     accumulated (4 lanes + Tools + select + pill) — ~40% smaller footprint. */
+  #chat-modes { display:flex; align-items:center; gap:5px; margin-bottom:8px; }
+  .mode-chip { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase;
+               color:var(--dim); border:1px solid var(--line2); border-radius:6px;
+               padding:3px 7px; cursor:pointer; }
   .mode-chip.on { color:#171420; background:var(--gold); border-color:var(--gold); }
   /* FABLE style pass: the composer's mode note is a single line — let it SHRINK to
      an ellipsis in a tight row instead of wrapping mid-word ("Herme/s"). Full text
@@ -538,10 +540,38 @@
   #sw-cancel:hover { color:var(--bad); border-color:var(--bad); }
 
   /* chat-bar model controls (quiet, mono, right of the chips) */
-  #chat-model { max-width:200px; background:var(--card); color:var(--dim);
-      border:1px solid var(--line2); border-radius:7px; font:10px var(--mono);
-      letter-spacing:.03em; padding:4px 6px; cursor:pointer; }
-  #chat-model:disabled { opacity:.5; }
+  /* Closed control = a chip; the native <select> could not show full ids, pills or
+     per-row actions, so it was replaced by #chat-model-btn + the #model-pop popover.
+     Same footprint as the old select (compact pass): 180px / 9px mono / 3px 5px. */
+  #chat-model-btn { max-width:180px; background:var(--card); color:var(--dim);
+      border:1px solid var(--line2); border-radius:6px; font:9px var(--mono);
+      letter-spacing:.03em; padding:3px 5px; cursor:pointer;
+      text-transform:none;            /* .mode-chip uppercases — ids keep their case */
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chat-model-btn:disabled { opacity:.5; cursor:default; }
+  #chat-model-btn.empty { color:var(--faint); }
+  /* popover: opens ABOVE the composer (chat bar sits at the bottom of the view) */
+  #model-pop { position:fixed; width:380px; max-height:46vh; overflow-y:auto;
+      background:var(--card); border:1px solid var(--line); border-radius:8px;
+      box-shadow:0 8px 30px rgba(0,0,0,.5); z-index:9000; padding:6px; }
+  #model-pop[hidden] { display:none; }
+  .mp-row { padding:8px 9px; border-radius:7px; cursor:pointer;
+      border-left:2px solid transparent; }
+  .mp-row:hover { background:var(--card2); }
+  .mp-row.live { border-left-color:var(--gold); }
+  .mp-row .mp-id { font:10px var(--mono); color:var(--fg); word-break:break-all;
+      line-height:1.55; }
+  .mp-row .mp-meta { margin-top:5px; display:flex; gap:6px; align-items:center;
+      flex-wrap:wrap; font:9px var(--mono); letter-spacing:.12em;
+      text-transform:uppercase; }
+  .mp-row .mp-acts { margin-left:auto; display:flex; gap:5px; visibility:hidden; }
+  .mp-row:hover .mp-acts, .mp-row.live .mp-acts { visibility:visible; }
+  .mp-act { font:9px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+      color:var(--faint); background:transparent; border:1px solid var(--line);
+      border-radius:6px; padding:2px 8px; cursor:pointer; white-space:nowrap; }
+  .mp-act:hover { color:var(--gold); border-color:var(--gold); }
+  .mp-empty { font:10px var(--mono); letter-spacing:.06em; color:var(--faint);
+      padding:12px 10px; }
   /* live-model capability pill — same .mpill.vision colors as the Models pane rows;
      the chat bar has no .mbadges font context, so only the type is restated here */
   #cap-vision { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
@@ -558,12 +588,11 @@
   #chat-attachstrip .aclear:hover { color:var(--bad); }
   #chat-attachstrip .anote { color:var(--faint); }
   #chat-attach { align-self:flex-end; }
+  /* drop-target cue while an image is dragged over the Chat view */
+  #chat-bar.dropping { outline:1px dashed var(--gold); outline-offset:5px; border-radius:8px; }
   .cmsg .attachline { margin-top:5px; font:10.5px var(--mono); letter-spacing:.06em;
       color:var(--faint); }
-  #chat-eject { font:11px var(--mono); color:var(--faint); background:transparent;
-      border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer;
-      transition: color .12s ease, border-color .12s ease; }
-  #chat-eject:hover { color:var(--bad); border-color:var(--bad); }
+  /* (the standalone #chat-eject button was folded into the model popover's live row) */
 
   /* per-file "Get" button on HF file rows + the Downloads section */
   .hffile { justify-content:flex-start; }
@@ -869,10 +898,13 @@
             <!-- FABLE: style pass — compact navigation chip → Capabilities (tools/skills/MCP) -->
             <span class="mode-chip" id="mode-tools" onclick="showView('caps')"
               title="Tools, skills & connected servers — configure capabilities" aria-label="Open Capabilities">⚙ Tools</span>
-            <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)" aria-label="Active model"></select>
+            <!-- model picker: closed chip + popover (replaces the native <select>;
+                 eject moved onto the popover's live row) -->
+            <button id="chat-model-btn" class="mode-chip" onclick="toggleModelPop(event)"
+              title="Active model (switch reloads the runner)" aria-label="Active model"
+              aria-haspopup="true" aria-expanded="false">no model ⌄</button>
             <!-- capability of the LIVE model; hidden entirely when it can't see images -->
             <span class="mpill vision" id="cap-vision" title="This model accepts images" hidden>vision</span>
-            <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM" aria-label="Eject the loaded model">⏏</button>
             <span class="mode-note" id="chat-note" title="web search on · shell off">web search on · shell off</span>
             <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
             <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
@@ -890,6 +922,8 @@
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
           </div>
         </div>
+        <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
+        <div id="model-pop" role="listbox" aria-label="Choose a model" hidden></div>
       </div>
 
       <!-- TASK A: draggable divider between the chat column and the artifact viewer -->
@@ -1563,6 +1597,8 @@ function showView(v) {
   // the view naturally, but the EXPAND overlay is position:fixed — drop it when leaving
   // Chat so it can never linger over another view (the split state is kept for return).
   if (v !== 'chat') { document.body.classList.remove('artifact-expanded'); if (typeof artifactState !== 'undefined') artifactState.expanded = false; }
+  // the model popover is position:fixed too — never let it linger over another view
+  if (v !== 'chat' && typeof closeModelPop === 'function') closeModelPop();
   if (v === 'chat' && !chatSid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
@@ -1719,6 +1755,7 @@ function setMode(m) {
   noteEl.textContent = noteText;
   noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
   applyVisionUi();           // attach is direct-lane only; leaving Chat clears it
+  if (typeof closeModelPop === 'function') closeModelPop();
   if (m === prev) return;
   maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
@@ -2709,7 +2746,18 @@ let liveVision = false, attachedImage = null;   // {data: dataURL, name}
 
 function applyVisionUi(){
   const pill = document.getElementById('cap-vision');
-  if (pill) pill.hidden = !liveVision;
+  if (pill){
+    pill.hidden = !liveVision;
+    // The model can see, but only the direct lane carries images — say so instead of
+    // leaving a bare "vision" pill next to a hidden ⊕ in Agent/Hermes mode.
+    if (liveVision && chatMode !== 'chat'){
+      pill.textContent = 'vision · chat mode';
+      pill.title = 'Images attach in Chat mode — click CHAT';
+    } else {
+      pill.textContent = 'vision';
+      pill.title = 'This model accepts images';
+    }
+  }
   const btn = document.getElementById('chat-attach');
   // Attach is direct-lane only: the Odysseus and Hermes lanes have no image path.
   if (btn) btn.hidden = !(liveVision && chatMode === 'chat');
@@ -2736,8 +2784,15 @@ function attachNote(msg){
 
 function onImagePicked(ev){
   const file = (ev.target.files || [])[0];
-  if (!file) return;
-  if (file.size > 8 * 1024 * 1024){ attachedImage = null; ev.target.value = '';
+  if (file) acceptImageFile(file);
+}
+
+/* shared by the ⊕ picker and drag-and-drop */
+function acceptImageFile(file){
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')){
+    attachNote('only png / jpeg / webp images'); return; }
+  if (file.size > 8 * 1024 * 1024){ attachedImage = null;
+    const f = document.getElementById('chat-file'); if (f) f.value = '';
     attachNote('image too large (max 8 MB)'); return; }
   const fr = new FileReader();
   fr.onerror = () => { attachedImage = null; attachNote('could not read that image'); };
@@ -2759,25 +2814,199 @@ function onImagePicked(ev){
   fr.readAsDataURL(file);
 }
 
+/* ---------- drag-and-drop an image onto the Chat view ----------
+   WKWebView footgun: an unhandled file drop NAVIGATES the panel to the file —
+   so the document-level guard swallows drops everywhere, and the chat column
+   accepts them (same gate as the ⊕: direct lane + vision model). */
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop',     (e) => e.preventDefault());
+(function(){
+  const zone = document.getElementById('view-chat');
+  const bar  = document.getElementById('chat-bar');
+  if (!zone || !bar) return;
+  const hasFile = (e) => Array.from((e.dataTransfer && e.dataTransfer.items) || [])
+                              .some(i => i.kind === 'file');
+  zone.addEventListener('dragover', (e) => {
+    if (!hasFile(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = (liveVision && chatMode === 'chat') ? 'copy' : 'none';
+    bar.classList.add('dropping');
+  });
+  zone.addEventListener('dragleave', (e) => {
+    if (!zone.contains(e.relatedTarget)) bar.classList.remove('dropping');
+  });
+  zone.addEventListener('drop', (e) => {
+    bar.classList.remove('dropping');
+    e.preventDefault();
+    const file = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
+                      .find(f => (f.type || '').startsWith('image/'));
+    if (!file) return;
+    if (!liveVision){ attachNote("this model can't see images"); return; }
+    if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    acceptImageFile(file);
+  });
+})();
+
+/* ---------- chat-bar model picker (chip + popover) ----------
+   The composer used a native <select>, which could not show a full (long) model id,
+   capability pills, or per-row actions. It is now a chip that opens #model-pop.
+   The SAME /api/models fetch still drives liveVision; its entries are cached in
+   modelEntries so the popover renders fresh from them on every open. */
+let modelEntries = [];        // installed entries from the last /api/models refresh
+let modelLiveId = null;       // what the runner actually serves (probe-backed)
+let modelActiveId = null;     // the pinned/intent model (may be ejected)
+let modelRunnerUp = false;
+let modelAuxId = null;
+
 async function loadChatModels(){
-  const sel = document.getElementById('chat-model');
-  if (!sel) return;
+  const btn = document.getElementById('chat-model-btn');
+  if (!btn) return;
   try {
     const r = await (await fetch('/api/models')).json();
     // capability of what the runner is ACTUALLY serving (live_id), not the pin
     const liveEntry = (r.installed || []).find(m => m.id === r.live_id);
     liveVision = !!(liveEntry && (liveEntry.capabilities || []).includes('vision'));
     applyVisionUi();
-    sel.innerHTML = '';
-    for (const m of (r.installed || [])){
-      const o = document.createElement('option');
-      o.value = m.id;
-      o.textContent = (m.name || m.id).slice(0, 30) + (m.id === r.active && !r.runner_up ? ' (ejected)' : '');
-      if (m.id === r.active) o.selected = true;
-      sel.appendChild(o);
-    }
-    sel.disabled = modelsBusy;
+    modelEntries  = r.installed || [];
+    modelLiveId   = r.live_id || null;
+    modelActiveId = r.active || null;
+    modelRunnerUp = !!r.runner_up;
+    modelAuxId    = (r.aux && r.aux.model) || null;
+    renderModelBtn();
+    if (!document.getElementById('model-pop').hidden) renderModelPop();
   } catch {}
+}
+
+/* closed control: current model id, ellipsised; title carries the full id */
+function renderModelBtn(){
+  const btn = document.getElementById('chat-model-btn');
+  if (!btn) return;
+  const id = modelLiveId || modelActiveId || '';
+  const ejected = !!(id && !modelLiveId && !modelRunnerUp);
+  btn.classList.toggle('empty', !id);
+  btn.textContent = (id || 'no model') + (ejected ? ' (ejected)' : '') + ' ⌄';
+  btn.title = id ? (id + (ejected ? ' — ejected (click to load)' : '')
+                       + '\nSwitching reloads the runner')
+                 : 'No model loaded — click to pick one';
+  btn.disabled = modelsBusy;
+}
+
+function toggleModelPop(ev){
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('model-pop');
+  if (!pop) return;
+  if (pop.hidden) openModelPop(); else closeModelPop();
+}
+
+function openModelPop(){
+  const pop = document.getElementById('model-pop'), btn = document.getElementById('chat-model-btn');
+  if (!pop || !btn) return;
+  renderModelPop();
+  pop.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  // anchor ABOVE the chip (the composer sits at the bottom of the Chat view)
+  const rect = btn.getBoundingClientRect();
+  const w = pop.offsetWidth || 380, h = pop.offsetHeight || 0;
+  let left = rect.left;
+  if (left + w > window.innerWidth - 10) left = Math.max(10, window.innerWidth - w - 10);
+  let top = rect.top - h - 8;
+  if (top < 10) top = Math.min(rect.bottom + 8, window.innerHeight - h - 10);   // flip below
+  pop.style.left = left + 'px';
+  pop.style.top  = Math.max(10, top) + 'px';
+  // close on outside click / Esc / scroll / resize (no live repositioning by design)
+  document.addEventListener('mousedown', modelPopOutside, true);
+  document.addEventListener('keydown', modelPopKey, true);
+  window.addEventListener('scroll', closeModelPop, true);
+  window.addEventListener('resize', closeModelPop, true);
+}
+
+function closeModelPop(){
+  const pop = document.getElementById('model-pop'), btn = document.getElementById('chat-model-btn');
+  if (pop) pop.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('mousedown', modelPopOutside, true);
+  document.removeEventListener('keydown', modelPopKey, true);
+  window.removeEventListener('scroll', closeModelPop, true);
+  window.removeEventListener('resize', closeModelPop, true);
+}
+
+function modelPopOutside(e){
+  const pop = document.getElementById('model-pop'), btn = document.getElementById('chat-model-btn');
+  if (pop && pop.contains(e.target)) return;
+  if (btn && btn.contains(e.target)) return;    // the chip's own onclick toggles
+  closeModelPop();
+}
+function modelPopKey(e){ if (e.key === 'Escape'){ e.stopPropagation(); closeModelPop(); } }
+
+function renderModelPop(){
+  const pop = document.getElementById('model-pop');
+  if (!pop) return;
+  pop.innerHTML = '';
+  if (!modelEntries.length){
+    const e = document.createElement('div');
+    e.className = 'mp-empty';
+    e.textContent = 'No models installed — open Models to download one.';
+    pop.appendChild(e); return;
+  }
+  for (const m of modelEntries){
+    const isLive = !!(modelLiveId && m.id === modelLiveId);
+    const row = document.createElement('div');
+    row.className = 'mp-row' + (isLive ? ' live' : '');
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', isLive ? 'true' : 'false');
+
+    const idEl = document.createElement('div');
+    idEl.className = 'mp-id';
+    idEl.textContent = m.id;              // textContent: full id, never markup
+    row.appendChild(idEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'mp-meta';
+    const pill = (cls, text) => { const s = document.createElement('span');
+      s.className = 'mpill ' + cls; s.textContent = text; meta.appendChild(s); };
+    if (isLive) pill('live', 'live');
+    if ((m.capabilities || []).includes('vision')) pill('vision', 'vision');
+    const fmt = m.format || m.engine || ''; if (fmt) pill('fmt', fmt);
+    if (m.size_bytes) pill('fmt', fmtGB(m.size_bytes));
+    if (modelAuxId && m.id === modelAuxId) pill('aux', 'aux');
+
+    const acts = document.createElement('div');
+    acts.className = 'mp-acts';
+    if (isLive){
+      const ej = document.createElement('button');
+      ej.className = 'mp-act'; ej.textContent = 'Eject';
+      ej.title = 'Unload this model — frees RAM';
+      ej.onclick = (e) => { e.stopPropagation(); closeModelPop(); ejectModel(); };
+      acts.appendChild(ej);
+    }
+    const ax = document.createElement('button');
+    ax.className = 'mp-act';
+    ax.textContent = (modelAuxId && m.id === modelAuxId) ? 'Aux ✓' : 'Aux';
+    ax.title = 'Use for background tasks (titles, search queries)';
+    ax.onclick = (e) => { e.stopPropagation(); popAuxSet(m.id, ax); };
+    acts.appendChild(ax);
+    meta.appendChild(acts);
+    row.appendChild(meta);
+
+    row.onclick = () => {
+      closeModelPop();
+      if (isLive) return;                 // already serving — nothing to switch to
+      chatModelChange(m.id);
+    };
+    pop.appendChild(row);
+  }
+}
+
+/* Aux from the popover: same endpoint the Models pane uses; brief inline ✓ and
+   the popover deliberately stays open (aux is a side setting, not a selection). */
+async function popAuxSet(id, chip){
+  const prev = chip.textContent;
+  chip.disabled = true;
+  try { await auxSet(id); } catch (_) {}
+  modelAuxId = id;
+  chip.textContent = 'aux ✓';
+  setTimeout(() => { chip.disabled = false;
+    if (document.body.contains(chip)) chip.textContent = (modelAuxId === id) ? 'Aux ✓' : prev; }, 1500);
 }
 
 async function chatModelChange(id){
