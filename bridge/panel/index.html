@@ -2978,6 +2978,12 @@ function renderModelPop(){
       ej.title = 'Unload this model — frees RAM';
       ej.onclick = (e) => { e.stopPropagation(); closeModelPop(); ejectModel(); };
       acts.appendChild(ej);
+    } else {
+      const sw = document.createElement('button');
+      sw.className = 'mp-act'; sw.textContent = 'Switch';
+      sw.title = 'Load this model — reloads the runner (~60-90s)';
+      sw.onclick = (e) => { e.stopPropagation(); closeModelPop(); chatModelChange(m.id); };
+      acts.appendChild(sw);
     }
     const ax = document.createElement('button');
     ax.className = 'mp-act';
