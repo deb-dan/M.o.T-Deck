@@ -69,22 +69,46 @@ check("non-list → []", NORM(None) == [] and NORM("x") == [])
 # message_count garbage → 0
 check("bad count → 0", NORM([{"id": "a", "message_count": "many"}])[0]["message_count"] == 0)
 
-# ── hermes_messages_to_panel ────────────────────────────────────────────────
+# ── hermes_messages_to_panel (upstream-aligned: reasoning rehydration) ──────
 msgs = [
     {"role": "user", "text": "make a file"},
     {"role": "assistant", "text": "done — created it"},
     {"role": "tool", "name": "shell", "context": "touch x"},        # dropped
-    {"role": "assistant", "text": "", "reasoning_content": "hmm"},  # reasoning-only → dropped
+    {"role": "assistant", "text": "", "reasoning_content": "hmm"},  # reasoning-only → KEPT (#44022 parity)
     {"role": "system", "text": "scaffolding"},                      # dropped
-    {"role": "user", "text": "   "},                                # blank → dropped
+    {"role": "user", "text": "   "},                                # blank, no reasoning → dropped
     "junk", None,
 ]
 out = MSGS(msgs)
-check("only visible user/assistant kept", len(out) == 2)
+check("visible + reasoning-only kept", len(out) == 3)
 check("panel shape role/content",
       out[0] == {"role": "user", "content": "make a file"}
       and out[1] == {"role": "assistant", "content": "done — created it"})
+check("reasoning-only turn kept with empty content",
+      out[2] == {"role": "assistant", "content": "", "reasoning": "hmm"})
 check("non-list → []", MSGS(None) == [] and MSGS({"role": "user"}) == [])
-check("non-string text dropped", MSGS([{"role": "user", "text": 42}]) == [])
+check("non-string text, no reasoning → dropped", MSGS([{"role": "user", "text": 42}]) == [])
+
+# reasoning carried on a normal answering turn
+out = MSGS([{"role": "assistant", "text": "answer", "reasoning": "step 1\nstep 2"}])
+check("reasoning attached to answer",
+      out == [{"role": "assistant", "content": "answer", "reasoning": "step 1\nstep 2"}])
+
+# upstream's STRUCTURED keys flatten defensively (reasoning_details: list of dicts)
+out = MSGS([{"role": "assistant", "text": "ok",
+             "reasoning_details": [{"type": "x", "text": "part a"}, "part b", {"nope": 1}]}])
+check("reasoning_details flattened", out[0].get("reasoning") == "part a\npart b")
+
+# key precedence: first non-empty of upstream's exact key set wins
+out = MSGS([{"role": "assistant", "text": "ok",
+             "reasoning": "primary", "reasoning_content": "secondary"}])
+check("reasoning key precedence", out[0]["reasoning"] == "primary")
+
+# surprise types can never break a transcript
+out = MSGS([{"role": "assistant", "text": "ok", "reasoning": {"weird": "dict"}},
+            {"role": "assistant", "text": "ok2", "reasoning_details": 42}])
+check("surprise reasoning types → plain rows",
+      out == [{"role": "assistant", "content": "ok"},
+              {"role": "assistant", "content": "ok2"}])
 
 print(f"PASS ({PASS} checks)")

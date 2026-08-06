@@ -2907,13 +2907,36 @@ def hermes_messages_to_panel(messages):
     system rows possible. Only user/assistant rows survive — tool rows are
     dropped (tool detail isn't reconstructible on reopen).
 
-    THINKING REHYDRATION (2026-08-06): unlike the direct lane — which persists
-    {role, content} to Odysseus and therefore has NOTHING stored to restore —
-    Hermes's own store DOES keep the reasoning text, so a reopened session can
-    show its thinking again. Any `reasoning`-ish key is carried through as
-    `reasoning`; the panel renders it as the same collapsed disclosure the live
-    stream produces. A reasoning-ONLY turn (no visible answer) is still dropped:
-    with no answer text there is nothing to attach the disclosure to."""
+    THINKING REHYDRATION (2026-08-06, Fable QA pass): unlike the direct lane —
+    which persists {role, content} to Odysseus and therefore has NOTHING stored
+    to restore — Hermes's own store DOES keep the reasoning, so a reopened
+    session shows its thinking again as the same collapsed disclosure.
+
+    Aligned with the UPSTREAM projection (server.py _history_to_messages):
+    (1) its reasoning keys are exactly reasoning / reasoning_content /
+        reasoning_details / codex_reasoning_items — the structured ones are
+        flattened defensively (list items: strings, or dicts with a text-ish
+        field); a surprise type must never break a transcript.
+    (2) reasoning-ONLY assistant turns (thinking with no visible answer) are
+        KEPT, mirroring upstream's own #44022 fix — dropping them made
+        extended-thinking turns vanish from reopened sessions."""
+    def _flatten_reasoning(v):
+        if isinstance(v, str):
+            return v.strip()
+        if isinstance(v, list):
+            parts = []
+            for it in v:
+                if isinstance(it, str) and it.strip():
+                    parts.append(it.strip())
+                elif isinstance(it, dict):
+                    for tk in ("text", "reasoning", "content", "summary"):
+                        tv = it.get(tk)
+                        if isinstance(tv, str) and tv.strip():
+                            parts.append(tv.strip())
+                            break
+            return "\n".join(parts)
+        return ""
+
     out = []
     if not isinstance(messages, list):
         return out
@@ -2924,17 +2947,19 @@ def hermes_messages_to_panel(messages):
         if role not in ("user", "assistant"):
             continue
         txt = m.get("text")
-        if not isinstance(txt, str) or not txt.strip():
-            continue
-        row = {"role": role, "content": txt}
+        txt = txt if isinstance(txt, str) else ""
+        reasoning = ""
         if role == "assistant":
-            # Upstream has used a few names for this field across tags; accept any,
-            # first non-empty wins. Never let a surprise type break the transcript.
-            for k in ("reasoning", "reasoning_content", "thinking", "reasoning_text"):
-                rv = m.get(k)
-                if isinstance(rv, str) and rv.strip():
-                    row["reasoning"] = rv
+            for k in ("reasoning", "reasoning_content",
+                      "reasoning_details", "codex_reasoning_items"):
+                reasoning = _flatten_reasoning(m.get(k))
+                if reasoning:
                     break
+        if not txt.strip() and not reasoning:
+            continue    # truly empty row — nothing to show
+        row = {"role": role, "content": txt}
+        if reasoning:
+            row["reasoning"] = reasoning
         out.append(row)
     return out
 

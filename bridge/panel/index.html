@@ -2491,9 +2491,11 @@ function stampFor(model){
   // turn once the runner has been switched. Showing it made a working model switch look
   // broken (2026-08-06: header said Qwen while the runner argv proved gemma was loaded).
   // The live runner is the truth; fall back to the stored value only when it's unknown.
-  const live = (lastStatus && lastStatus.components && lastStatus.components.runner
-                && lastStatus.components.runner.pin) || '';
-  const shown = live || model || 'default model';
+  // Fable QA: trust pin ONLY while a model is actually loaded (`running` = loaded) —
+  // a stopped/ejected runner's pin falls back to the INTENT model and would lie here.
+  const r = lastStatus && lastStatus.components && lastStatus.components.runner;
+  const live = (r && r.running && r.pin) || '';
+  const shown = live || model || (r && !r.running ? 'no model loaded' : 'default model');
   // If a session was created under a different model, say so quietly rather than hide it.
   const drift = (live && model && live !== model) ? (' · session: ' + model) : '';
   document.getElementById('chat-stamp').textContent =
@@ -2690,7 +2692,7 @@ async function selectSession(sid){
   chatSid = sid;
   const s = chatSessions.find(x => x.id === sid);
   chatModel = ((s && s.model) || '').split('-').slice(0,2).join('-') || 'model';
-  stampFor(s && s.model);
+  stampFor((s && s.model) || '');   // never pass undefined — that means "re-stamp, keep session model"
   localStorage.setItem('harness-chat-sid', sid);
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
