@@ -96,6 +96,12 @@ PYRESOLVE
           --model "$MODEL_PATH" --parallel 1)
     if [[ -n "$MMPROJ_PATH" ]]; then ARGS+=(--mmproj "$MMPROJ_PATH"); fi
     if grep -q -- "--api-key" data/llama-server.help.txt; then ARGS+=(--api-key "$R_KEY"); fi
+    # Repetition guard (Fable, 2026-08-06): heavily-quantized local models (gemma-31B
+    # IQ4/Q4) degenerate into token loops ("C-C-C-…"). A mild repeat penalty is the
+    # standard mitigation; gated on binary support like --api-key above.
+    if grep -q -- "--repeat-penalty" data/llama-server.help.txt; then
+      ARGS+=(--repeat-penalty 1.1 --repeat-last-n 256)
+    fi
     # MTP-variant GGUFs need speculative-decoding flags (values mirror LM Studio's
     # proven invocation on this machine). Only added when the binary supports them —
     # Jan's older backend may not; the LM Studio backend fallback above does.
@@ -286,6 +292,95 @@ if mode == 'off':
     print("[harness] WARNING: approvals.mode is 'off' in ~/.hermes/config.yaml — "
           "dangerous shell commands will run with NO approval card. Set 'manual' or 'smart'.")
 PYAPPR
+    # ── PATH-GUARD FENCE (B1): seed our pre_tool_call plugin + enable it ──────────
+    # guards/harness-path-guard/ is the source of truth; it is copied (if changed)
+    # into ~/.hermes/plugins/harness-path-guard/ and added to plugins.enabled, which
+    # Hermes requires for user plugins (opt-in allow-list, hermes_cli/plugins.py
+    # _get_enabled_plugins). policy.yaml gets {HARNESS_ROOT} substituted with this
+    # repo root; {HERMES_CWD}/{TMPDIR} stay placeholders (resolved at call time).
+    HGUARD_SRC="$PWD/guards/harness-path-guard"
+    HGUARD_DST="${HERMES_HOME:-$HOME/.hermes}/plugins/harness-path-guard"
+    if [[ -d "$HGUARD_SRC" ]]; then
+      HGUARD_SRC="$HGUARD_SRC" HGUARD_DST="$HGUARD_DST" HARNESS_ROOT="$PWD" \
+        HCFG="$HCFG" python3 - <<'PYGUARD'
+import os, re, shutil, tempfile
+src, dst = os.environ["HGUARD_SRC"], os.environ["HGUARD_DST"]
+root, cfg = os.environ["HARNESS_ROOT"], os.environ["HCFG"]
+os.makedirs(dst, exist_ok=True)
+changed = []
+
+def write_if_changed(path, text):
+    try:
+        if open(path, encoding="utf-8").read() == text:
+            return False
+    except Exception:
+        pass
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+    return True
+
+for name in ("plugin.yaml", "__init__.py", "README.md"):
+    s = os.path.join(src, name)
+    if os.path.exists(s):
+        if write_if_changed(os.path.join(dst, name),
+                            open(s, encoding="utf-8").read()):
+            changed.append(name)
+pol = os.path.join(src, "policy.yaml")
+if os.path.exists(pol):
+    text = open(pol, encoding="utf-8").read().replace("{HARNESS_ROOT}", root)
+    if write_if_changed(os.path.join(dst, "policy.yaml"), text):
+        changed.append("policy.yaml")
+# Drop stale bytecode so a refreshed __init__.py is definitely the code that runs.
+shutil.rmtree(os.path.join(dst, "__pycache__"), ignore_errors=True)
+
+# plugins.enabled must list the plugin (user plugins are opt-in). yaml round-trip,
+# atomic write, other keys preserved — same discipline as the mcp_servers write.
+def enable_in_config(path):
+    try:
+        import yaml
+    except Exception:
+        print("[harness] WARNING: PyYAML unavailable — cannot verify plugins.enabled")
+        return None
+    try:
+        data = yaml.safe_load(open(path, encoding="utf-8").read()) if os.path.exists(path) else {}
+    except Exception as exc:
+        print("[harness] WARNING: could not parse %s (%s) — plugins.enabled untouched" % (path, exc))
+        return None
+    if not isinstance(data, dict):
+        data = {}
+    plugins = data.get("plugins")
+    if not isinstance(plugins, dict):
+        plugins = {}
+        data["plugins"] = plugins
+    enabled = plugins.get("enabled")
+    if not isinstance(enabled, list):
+        enabled = []
+    if "harness-path-guard" in [str(x) for x in enabled]:
+        return False
+    enabled.append("harness-path-guard")
+    plugins["enabled"] = enabled
+    disabled = plugins.get("disabled")
+    if isinstance(disabled, list) and "harness-path-guard" in [str(x) for x in disabled]:
+        plugins["disabled"] = [x for x in disabled if str(x) != "harness-path-guard"]
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
+    os.replace(tmp, path)
+    return True
+
+added = enable_in_config(cfg)
+bits = []
+if changed: bits.append("seeded " + ", ".join(changed))
+if added: bits.append("enabled in plugins.enabled")
+print("[harness] path-guard plugin: " + ("; ".join(bits) if bits else "up to date"))
+PYGUARD
+    else
+      echo "[harness] WARNING: guards/harness-path-guard missing — file writes are UNFENCED"
+    fi
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
     # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in

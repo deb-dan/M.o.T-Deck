@@ -3458,6 +3458,15 @@ function chatApproval(holder, req){
   const label = document.createElement('div'); label.className = 'ap-label';
   label.textContent = '⚠ approval required';
   card.appendChild(label);
+  // Plugin-escalated approvals (the path-guard fence) carry the real reason —
+  // including the target path — in `description`; `command` is only a synthetic
+  // label there. One faint line, existing tokens, skipped when empty/duplicate.
+  const why = String((req && req.description) || '').trim();
+  if (why && why !== cmd){
+    const d = document.createElement('div'); d.className = 'dim';
+    d.style.margin = '0 0 6px'; d.textContent = why;
+    card.appendChild(d);
+  }
   const cmdEl = document.createElement('pre'); cmdEl.className = 'ap-cmd';
   cmdEl.textContent = cmd.length > AP_TRUNC ? cmd.slice(0, AP_TRUNC) + '…' : cmd;
   card.appendChild(cmdEl);
@@ -3687,6 +3696,20 @@ async function sendChat() {
                 holder._fileCards.add(fp);
                 try { fileCard(holder, {path: fp}); } catch {}
               }
+            }
+          } else if (j.type === 'guard_flag') {
+            // Path-guard audit tier (C): a completed write landed OUTSIDE the
+            // allowlist. Detect-only notice (the plugin is the enforcement) —
+            // rendered with the existing statusline tokens, no new surface,
+            // deduped per turn, appended next to the file card.
+            const gp = String(j.path || '');
+            holder._guardFlags = holder._guardFlags || new Set();
+            if (gp && !holder._guardFlags.has(gp)) {
+              holder._guardFlags.add(gp);
+              const g = document.createElement('div'); g.className = 'statusline';
+              g.innerHTML = '<span class="r">⚠</span> wrote outside workspace: '
+                          + '<span class="dim">' + esc(gp) + '</span>';
+              holder.appendChild(g);
             }
           } else if (j.type === 'tool_start') {
             const raw = j.tool || 'tool';

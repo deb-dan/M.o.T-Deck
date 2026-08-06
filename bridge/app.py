@@ -2196,6 +2196,96 @@ def _hermes_port() -> int:
         return 9119
 
 
+# ── PATH-GUARD audit tier (C) ────────────────────────────────────────────────
+# Detect-only twin of the guards/harness-path-guard plugin (B1 = the enforcement).
+# The plugin can be disabled or misconfigured in ~/.hermes; this tier reads the
+# SAME policy roots straight from the repo and flags any COMPLETED write that
+# landed outside the allowlist, so the panel shows a faint warning line even when
+# the fence is off. Deny roots are irrelevant here (a deny is never written).
+_GUARD_ROOTS: list | None = None
+
+
+def _guard_allow_roots() -> list:
+    """Resolved allow roots from guards/harness-path-guard/policy.yaml (cached).
+
+    Placeholders resolve the same way the plugin resolves them: {HARNESS_ROOT} =
+    this repo, {TMPDIR} = env, {HERMES_CWD} = the bridge's cwd — which IS the
+    Hermes launch cwd (start_component.sh runs both from the repo root).
+    ⚠ PENDING FABLE QA: if Hermes is ever launched from a different cwd than the
+    bridge, this tier's workspace root drifts (it would over-flag, never under-flag).
+    """
+    global _GUARD_ROOTS
+    if _GUARD_ROOTS is not None:
+        return _GUARD_ROOTS
+    roots: list = []
+    try:
+        pol = yaml.safe_load(
+            (ROOT / "guards" / "harness-path-guard" / "policy.yaml").read_text()) or {}
+        raw = pol.get("allow") if isinstance(pol.get("allow"), list) else []
+        home = os.path.expanduser("~")
+        subs = {"{HARNESS_ROOT}": str(ROOT), "{TMPDIR}": os.environ.get("TMPDIR", ""),
+                "{HERMES_CWD}": os.getcwd()}
+        for entry in raw:
+            r = str(entry or "").strip()
+            if not r:
+                continue
+            bad = False
+            for token, value in subs.items():
+                if token in r:
+                    if not value:
+                        bad = True
+                        break
+                    r = r.replace(token, value)
+            if bad or "{" in r:
+                continue
+            if r.startswith("~"):
+                r = home + r[1:] if r == "~" or r.startswith("~/") else os.path.expanduser(r)
+            if not os.path.isabs(r):
+                continue
+            roots.append(os.path.realpath(r).rstrip(os.sep) or os.sep)
+    except Exception as exc:
+        print(f"[guard] policy unreadable ({exc}) — audit tier disabled", flush=True)
+        roots = []
+    _GUARD_ROOTS = roots
+    return roots
+
+
+def guard_path_outside(path: str, roots=None) -> bool:
+    """True iff *path* resolves OUTSIDE every allow root (containment via
+    commonpath — never string prefixes). Unknown/empty roots → False (the tier
+    stays silent rather than crying wolf on every write)."""
+    try:
+        roots = _guard_allow_roots() if roots is None else roots
+        if not roots:
+            return False
+        p = str(path or "").strip()
+        if not p:
+            return False
+        if p.startswith("~"):
+            p = os.path.expanduser(p)
+        if not os.path.isabs(p):
+            return False       # relative legacy path — cwd unknown here, stay quiet
+        t = os.path.realpath(p).rstrip(os.sep) or os.sep
+        for r in roots:
+            try:
+                if os.path.commonpath([t, r]) == r:
+                    return False
+            except Exception:
+                continue
+        return True
+    except Exception:
+        return False
+
+
+def _guard_flag(path: str, tool: str) -> bool:
+    """Audit hook used by the mapper: log ONE warning line and report whether the
+    panel should render the faint out-of-workspace notice."""
+    if not guard_path_outside(path):
+        return False
+    print(f"[guard] {tool} wrote OUTSIDE the path-guard allowlist: {path}", flush=True)
+    return True
+
+
 def hermes_event_to_frames(ev):
     """PURE mapper: one Hermes gateway event → (panel SSE frame dicts, action).
 
@@ -2252,6 +2342,18 @@ def hermes_event_to_frames(ev):
                         seen.add(fp)
                         frames.append({"type": "file_card", "path": fp,
                                        "tool": p.get("name")})
+                        # Audit tier C: flag a write that landed outside the
+                        # path-guard allowlist (detect-only; the plugin enforces).
+                        # The inner try keeps the mapper self-contained for the
+                        # ast-extracted unit test, where _guard_flag is absent →
+                        # NameError → no guard_flag frame (tested separately in
+                        # bridge/tests/test_path_guard.py).
+                        try:
+                            if _guard_flag(fp, p.get("name") or "write"):
+                                frames.append({"type": "guard_flag", "path": fp,
+                                               "tool": p.get("name")})
+                        except Exception:
+                            pass
             return (frames, "")
         if t == "approval.request":
             # Phase 2: interactive approval card. NO auto-deny — the relay keeps
@@ -2268,8 +2370,17 @@ def hermes_event_to_frames(ev):
                 # default: never OFFER a persistence scope upstream didn't
                 # declare. ⚠ PENDING FABLE QA: ["once","deny"] as the fallback.
                 ch = ["once", "deny"]
+            # description is forwarded too: for a PLUGIN-escalated approval (the
+            # path-guard fence) upstream sets command to the synthetic label
+            # "<write_file> (plugin approval rule)" (tools/approval.py
+            # request_tool_approval → _run_approval_gate display_target) and puts
+            # the real reason — including the target PATH — in description. Without
+            # it the card could not show what is being written.
+            # ⚠ PENDING FABLE QA: adding description to the existing card (one faint
+            # line above the command block), not a new surface.
             return ([{"type": "approval",
                       "request": {"command": p.get("command") or "",
+                                  "description": str(p.get("description") or ""),
                                   "choices": [str(c) for c in ch]}}], "")
         if t == "message.complete":
             # Final text is NOT re-emitted — the deltas already built the bubble.

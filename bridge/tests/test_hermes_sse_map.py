@@ -65,12 +65,23 @@ fr, act = F({"type": "approval.request",
 check("approval → card frame, turn keeps streaming",
       act == "" and fr == [{"type": "approval",
                             "request": {"command": "rm -rf /tmp/x",
+                                        "description": "",
                                         "choices": ["once", "session", "always",
                                                     "deny"]}}])
+# Path-guard fence: a PLUGIN-escalated approval labels command synthetically and
+# carries the real reason (with the target path) in description — forwarded so the
+# card can show WHAT is being written.
+fr, act = F({"type": "approval.request",
+             "payload": {"command": "<write_file> (plugin approval rule)",
+                         "description": "path-guard: write outside workspace: "
+                                        "/Users/debik/Desktop/a.txt",
+                         "choices": ["once", "session", "always", "deny"]}})
+check("plugin approval → description forwarded (the path)",
+      fr[0]["request"]["description"].endswith("/Users/debik/Desktop/a.txt"))
 fr, act = F({"type": "approval.request", "payload": {"command": "ls"}})
 check("approval no choices → conservative [once, deny] default",
       act == "" and fr == [{"type": "approval",
-                            "request": {"command": "ls",
+                            "request": {"command": "ls", "description": "",
                                         "choices": ["once", "deny"]}}])
 fr, act = F({"type": "approval.request",
              "payload": {"command": "x", "choices": "once"}})
@@ -79,7 +90,7 @@ check("approval non-list choices → default",
 fr, act = F({"type": "approval.request", "payload": {}})
 check("approval empty payload safe",
       act == "" and fr == [{"type": "approval",
-                            "request": {"command": "",
+                            "request": {"command": "", "description": "",
                                         "choices": ["once", "deny"]}}])
 fr, act = F({"type": "approval.request",
              "payload": {"command": "x", "choices": [1, "deny"]}})
@@ -178,6 +189,16 @@ fr, _ = F({"type": "tool.complete",
                        "result": {"files_modified": [None, "", "  "]}}})
 check("blank/None paths dropped → no cards",
       fr == [{"type": "tool_output", "tool": "patch"}])
+# Path-guard audit tier (C): the guard_flag frame is emitted by the LIVE mapper via
+# the module-level _guard_flag helper. Here the mapper is ast-extracted into a bare
+# namespace, so that lookup NameErrors inside its own try → no guard_flag frame and
+# the exact-equality checks above stay stable. The helper's containment logic is
+# unit-tested in bridge/tests/test_path_guard.py.
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "write_file", "args": {"path": "/Users/d/out.txt"},
+                       "result": {"resolved_path": "/Users/d/out.txt"}}})
+check("guard_flag absent in the extracted mapper (helper unavailable, never raises)",
+      [f.get("type") for f in fr] == ["tool_output", "file_card"])
 
 # defensive: malformed payloads never raise
 fr, act = F({"type": "message.delta", "payload": None})

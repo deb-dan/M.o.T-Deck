@@ -1,0 +1,24 @@
+# harness path-guard policy — writes outside allow → approval card; deny → hard block.
+#
+# Placeholders:
+#   {HERMES_CWD}    resolved at call time from os.getcwd() (the session workspace)
+#   {HARNESS_ROOT}  substituted with the harness repo root when scripts/start_component.sh
+#                   seeds this file to ~/.hermes/plugins/harness-path-guard/policy.yaml
+#   {TMPDIR}        resolved at call time from $TMPDIR (macOS per-user temp)
+#
+# The plugin re-reads this file on every gated call, so edits apply without a restart.
+# Matching is containment-based (os.path.commonpath on realpath'd paths) — never string
+# prefixes. deny is checked FIRST and always wins; then allow; anything else escalates
+# to the human approval gate.
+allow:
+  - "{HERMES_CWD}"            # the session workspace
+  - "~/.hermes"               # agent home (skills/memory/plugins need it)
+  - "{HARNESS_ROOT}/data"     # harness-owned data dir
+  - "/tmp"
+  - "{TMPDIR}"                # macOS per-user temp
+deny:                          # hard block, NEVER approvable
+  - "~/.ssh"
+  - "~/.aws"
+  - "~/.gnupg"
+  - "~/Library/Keychains"
+  - "~/.hermes/config.yaml"   # the agent must not edit its own config (belt over upstream)

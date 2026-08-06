@@ -189,6 +189,66 @@ def test_file_card_signal_contract():
         "write_file tool registration moved/renamed — re-recon")
 
 
+def test_path_guard_hook_contract():
+    """PATH-GUARD FENCE (guards/harness-path-guard + bridge audit tier).
+
+    Our plugin enforces write-path policy through upstream's ``pre_tool_call``
+    hook: an ``{"action": "approve"}`` directive escalates the call into the SAME
+    human gate dangerous shell commands use, so the panel's Phase-2 card renders
+    it. That seam is upstream-internal — if a pin-bump renames the hook, drops the
+    directive vocabulary, or stops resolving it on the dashboard tool path, the
+    fence silently stops fencing. Fail loudly here instead.
+    """
+    if not HERMES.exists():
+        return
+    plugins = (HERMES / "hermes_cli" / "plugins.py").read_text(errors="replace")
+    assert '"pre_tool_call",' in plugins, (
+        "pre_tool_call is no longer a VALID_HOOKS entry — path-guard has no seam")
+    # directive vocabulary the plugin returns
+    assert 'action not in ("block", "approve")' in plugins, (
+        "pre_tool_call directive vocabulary changed (block/approve) — re-recon")
+    assert 'result.get("action")' in plugins, (
+        "directive is no longer read from the hook's returned dict['action']")
+    assert 'result.get("message")' in plugins, (
+        "directive 'message' key gone — block/approve reasons would vanish")
+    assert 'result.get("rule_key")' in plugins, (
+        "directive 'rule_key' key gone — 'Always' approvals lose their grain")
+    # the resolver that turns an approve directive into the human gate
+    assert "def resolve_pre_tool_block" in plugins, (
+        "resolve_pre_tool_block gone — approve directives would no longer reach "
+        "the approval gate")
+    assert "from tools.approval import request_tool_approval" in plugins, (
+        "resolve_pre_tool_block no longer calls request_tool_approval — plugin "
+        "escalations would not open an approval card")
+    appr = (HERMES / "tools" / "approval.py").read_text(errors="replace")
+    assert "def request_tool_approval" in appr, (
+        "request_tool_approval gone from tools/approval.py — fence has no gate")
+    assert "plugin_rule:" in appr, (
+        "plugin-rule allowlist namespace changed — 'Always' persistence grain moved")
+    # user-plugin discovery + the opt-in allow-list key start_component.sh writes
+    assert 'get_hermes_home() / "plugins"' in plugins, (
+        "user plugins are no longer discovered under ~/.hermes/plugins — the "
+        "seeding step in start_component.sh needs rewiring")
+    assert "def _get_enabled_plugins" in plugins and '"enabled" not in plugins_cfg' in plugins, (
+        "plugins.enabled allow-list handling changed — the seeded plugin may not load")
+    assert 'ctx.register_hook("pre_tool_call"' in (
+        HERMES / "plugins" / "security-guidance" / "__init__.py").read_text(errors="replace"), (
+        "the bundled reference plugin no longer registers pre_tool_call via "
+        "ctx.register_hook — our register(ctx) shape may be stale")
+    # the tool-dispatch path the dashboard uses must still resolve the hook
+    mtools = (HERMES / "model_tools.py").read_text(errors="replace")
+    assert "discover_plugins" in mtools, (
+        "model_tools no longer discovers plugins on import — the dashboard path "
+        "would never load the path-guard plugin")
+    assert "resolve_pre_tool_block" in mtools, (
+        "model_tools no longer resolves pre_tool_call directives — writes unfenced")
+    # the two tools the fence gates must still exist under these names
+    ftools = (HERMES / "tools" / "file_tools.py").read_text(errors="replace")
+    assert 'registry.register(name="write_file"' in ftools
+    assert 'registry.register(name="patch"' in ftools, (
+        "the patch tool was renamed — path-guard's GATED_TOOLS needs updating")
+
+
 def test_approvals_default_mode_contract():
     """Upstream's DEFAULT approvals.mode governs whether dangerous commands are
     silently guardian-approved (smart) or always carded (manual). A silent
