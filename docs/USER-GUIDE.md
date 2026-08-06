@@ -1,367 +1,285 @@
-# Harness — User Guide
+# The Harness Guide
 
-A plain-language guide to using the app. No setup knowledge required.
-
----
-
-## 1. What Harness is
-
-Harness is a private AI workstation that runs entirely on your Mac.
-
-The models live on your disk. Your conversations live on your disk. Even web search
-runs through your own private search engine. Nothing is sent to a cloud service, and
-the app works with the Wi-Fi off (apart from searching the web or downloading a new
-model, which obviously need a connection).
-
-Inside one window you get:
-
-- **Your own models** — download them, load them, swap between them.
-- **Chat** — fast, direct conversations with the model that's loaded.
-- **Agents** — assistants that can search the web, research topics, use tools, read
-  and write files, and run tasks for you.
-- **Files and artifacts** — things the assistant produces (web pages, charts, tables,
-  diagrams, code) render live next to the chat, and you can edit and save them.
-
-Harness is one window with **three tabs** along the top. That's the whole app.
+Everything here runs on your Mac. The models, the conversations, the search engine,
+the files — all of it lives on your disk and answers to you. This guide is organized
+around what you'll want to do, not around how the software is built. Read the first
+two sections and you can use the app; the rest is there when you need it.
 
 ---
 
-## 2. The three tabs
+## The one-minute tour
 
-**Mission Control** — Harness's own control panel. This is home. It has the chat, the
-model library, the settings, the health cards for everything that's running, and the
-logs. Most of the time this is the only tab you need.
+Harness is one window with three tabs at the top:
 
-**Odysseus** — the full web workspace that Harness wraps: chat, documents, sessions,
-web search, deep research. Use it when you want its own richer document and research
-surface rather than the streamlined chat in Mission Control.
+**Mission Control** is home. Chat, models, settings, health, logs — you can live here.
 
-**Hermes** — the full agent dashboard that Harness wraps: tools, skills, memory,
-scheduled jobs, configuration. Use it when you want to configure the agent in depth or
-watch a long agent run in its native interface.
+**Odysseus** and **Hermes** are the two engines Harness is built around, each with its
+own full interface. Odysseus is a web workspace (documents, research, memory);
+Hermes is an agent platform (tools, skills, scheduled jobs). Mission Control drives
+both of them for you, so think of these tabs as the engine rooms: you visit when you
+want the deep controls, not for everyday use.
 
-Mission Control can talk to both of the others, so you rarely *have* to leave it — the
-tabs are there for the times you want the full original surface.
+Inside Mission Control, the left sidebar switches views: the chat, the switch/status
+dashboard, the model library, capabilities, and logs. **⌘K** opens a command palette
+that jumps anywhere and runs most actions by name — when in doubt, ⌘K and type.
+**⌘R** reloads the current tab.
 
 ---
 
-## 3. Chatting — the four modes
+## Getting to green
 
-The chat sits in Mission Control. Above the message box are small chips that choose
-**how** your message is handled: **Agent**, **Chat**, **Hermes**, plus a **Browse**
-toggle. Your conversation list is in the rail on the left; the rail always shows the
-chats belonging to the mode you're in.
+Everything in Harness is a component with a card on the dashboard: the **Runner**
+(the process that actually serves your model), **Hermes**, **Odysseus**, and
+**SearXNG** (your private search engine). Green dot = running.
 
-Chats name themselves after your first message. In the rail you can **rename** (click
-the name, type, Enter), **delete** (✕, then confirm), and **duplicate** a conversation.
-The rail can be collapsed to give the chat more room.
+You almost never have to sequence anything yourself. Components know what they need —
+start Odysseus and Harness will show you a short plan ("this will also start: runner,
+searxng"), wait for your approval, and bring the chain up in order while the cards
+animate through *starting… → online*.
 
-### What works where
+Two states are worth telling apart. **Stopped** means you turned it off. **Degraded**
+(red) means it *should* be running but stopped answering — the card offers Restart
+and a View-log link so you can see why.
+
+On a brand-new machine, a setup checklist walks each component from Install to Start
+without you touching a terminal. Once everything is green it gets out of your way
+(you can always reopen it, and a short interface tour, from ⌘K).
+
+---
+
+## Talking to it
+
+The chat is one conversation box with a choice of **who handles your message**. The
+chips above the composer pick the route:
+
+**Chat** goes straight to the loaded model. No tools, no web, no middlemen — just the
+model, which makes it the fastest mode and the right default for writing, questions,
+and thinking out loud. It's also the only mode that can look at images (next section).
+
+**Agent** hands your message to Odysseus, which can search the web, fetch pages, run
+deep research, and use its memory and documents. You'll see a live status line while
+it works (`▸ searching the web…` → `✓ web_search — 2 steps`), sources arrive as
+clickable pills, and an `INSPECT` disclosure holds the raw play-by-play if you're
+curious what actually happened.
+
+**Hermes** hands your message to the full agent — the one that can *do* things:
+run commands, read and write files, use skills. Because it acts on your machine, it
+has real guardrails, described in "Letting it act" below.
+
+**Browse** is a toggle, not a mode: switched on, Agent and Hermes can drive your
+Chrome browser through an extension — navigate, click, read pages. It takes effect on
+new conversations.
+
+A quick map of what works where:
 
 | | Chat | Agent | Hermes |
 |---|---|---|---|
-| Images in / attach | **Yes** | No | No |
-| Web search & research | No | **Yes** | Yes (its own tools) |
-| Tools & file access | No | Yes (Odysseus tools) | **Yes, full** |
-| Approval cards | — | — | **Yes** |
-| Path guard on file writes | — | — | **Yes** |
-| Thinking restored on reopen | **Yes** | **Yes** | **Yes** |
-| Artifacts (⧉ Open) | **Yes** | **Yes** | **Yes** |
-| File cards | — | — | **Yes** |
-| Speed | Fastest | Slower (more machinery) | Slower (more machinery) |
+| Speed | fastest | slower | slower |
+| Web search / research | — | ✓ | ✓ |
+| Images in | ✓ | — | — |
+| Acts on your machine (files, commands) | — | — | ✓ |
+| Approval cards + path guard | — | — | ✓ |
+| Artifacts | ✓ | ✓ | ✓ |
+| Thinking shown & restored on reopen | ✓ | ✓ | ✓ |
 
-### Chat
+**Thinking models.** If your model reasons before answering, the reasoning streams
+into a *thinking* section that folds away when the answer starts (with its elapsed
+time stamped on it). It isn't thrown away: reopen the conversation next week and a
+collapsed `thinking · restored` section is still there to unfold.
 
-The most direct mode: your message goes straight to the loaded model and back. Nothing
-sits in between, so it's the fastest option and the one to use for ordinary
-conversation, writing, and thinking out loud. It has no tools and no web access —
-answers come from the model itself.
-
-**Chat is the only mode that takes images.** Attach one with the **⊕** button beside
-the message box, or simply **drag an image onto the chat** — the message bar shows a
-gold dashed outline when you're over the drop zone. PNG, JPEG and WebP up to 8 MB.
-
-Images need a **vision-capable model**. When one is loaded you'll see a `VISION` pill
-by the composer and the ⊕ button appears. If a vision model is loaded but you're in
-Agent or Hermes mode, the pill reads `vision · chat mode` — that's the app telling you
-to switch to Chat to use it. (Drop an image while in Agent mode and you'll get a short
-note explaining the same thing.)
-
-If the model thinks before answering, its reasoning streams into a **thinking** section
-that collapses once the real answer begins — click it open any time. Harness keeps that
-reasoning, so reopening the conversation later shows a `thinking · restored` section
-rather than losing it.
-
-### Agent
-
-Agent mode routes your message through Odysseus, which brings the research tooling:
-**web search, page fetching, deep research, memory, and documents**.
-
-While it works, a single status line shows what it's doing (`▸ searching the web…` →
-`✓ web_search — 3 steps`), and there's an `INSPECT` disclosure underneath if you want
-the raw play-by-play. Sources come back as small pills you can click. Tool-heavy turns
-sometimes put the real output into a document rather than the chat bubble — that's
-Odysseus's normal behaviour; look in its Library.
-
-No images in this mode.
-
-### Hermes
-
-Hermes is the full agent: tools, skills, terminal access, file reading and writing. Use
-it when you want work *done* rather than discussed.
-
-Because it can act on your machine, two safety surfaces appear here:
-
-**Approval cards.** When Hermes wants to run something dangerous, the turn pauses and
-an `⚠ APPROVAL REQUIRED` card appears inline showing exactly what it wants to do. You
-choose **Once**, **This session**, **Always**, or **Deny**. The card stamps itself
-`✓ approved · once` or `✗ denied` and the turn continues. Stopping a turn with a card
-open denies it automatically.
-
-> One-time setup worth knowing: Hermes ships with an automatic approval mode where
-> another model can wave things through. In the Hermes tab, under Config → Security,
-> set approvals mode to **manual** so every dangerous action actually shows you a card.
-
-**The path guard.** File writes are fenced by folder:
-
-- Sensitive folders — your SSH keys, cloud credentials, GPG keys, the macOS Keychain —
-  are **blocked outright**. No card, no override; the agent is simply told no.
-- Your workspace, the app's own data folder, and temporary folders are **allowed**
-  silently.
-- **Anything else** — your Desktop, Documents, anywhere else in your home folder —
-  **asks first** with an approval card showing the exact path.
-
-When Hermes writes a file you get a **file card** with **Open** and **Show in Folder**
-buttons. If the file landed outside your workspace, a faint
-`⚠ wrote outside workspace: …` note appears too, and the write is recorded in the guard
-log (see §7).
-
-You can press **Stop** at any point during a Hermes turn — the Send button becomes Stop
-while it's working.
-
-No images in this mode.
-
-### Browse
-
-Browse isn't a mode, it's a switch. Flip it on and both Agent and Hermes gain the
-ability to **drive your Chrome browser** — clicking, typing, navigating, reading pages.
-
-It needs the Browser MCP Chrome extension installed and a tab connected. One flip wires
-it into both agents; flipping it off removes it from both. Hermes picks up the change
-on new conversations.
+**Conversations** live in the rail on the left — each mode keeps its own list. Chats
+title themselves after your first message; you can rename inline (click the name),
+delete (✕, then confirm), or duplicate one. While any turn is running, the Send
+button becomes **Stop**, and Stop genuinely stops it.
 
 ---
 
-## 4. Models
+## Giving it eyes
 
-Open the **Models** pane from the sidebar.
+Load a model that can see — you'll know because a green `VISION` pill appears by the
+composer — then, **in Chat mode**, either click the **⊕** button or just drag an
+image onto the chat. A gold dashed outline confirms you're over the drop zone, and
+the attached image shows as a thumbnail you can remove before sending. PNG, JPEG, or
+WebP, up to 8 MB.
 
-**Your library** is the list on the left. Each row shows the model's name plus small
-pills: `VISION` if it can see images, the format (`gguf` or `mlx`), the quantisation,
-the size in GB, and a gold `live` pill on whichever model is currently loaded. Click a
-row and the right-hand panel fills with the details — size, context length, where it
-came from, its file path — and the action buttons.
+Two rules cover every "why isn't this working":
 
-**Actions** depend on state, and the button always tells you what will happen:
-
-- **Load** — nothing is loaded yet; bring this one up.
-- **Switch** — something else is loaded; swap to this one.
-- **Eject** — this is the live model; unload it and free the memory.
-
-**Switching takes about 60–90 seconds** while the weights load. The button goes to
-`Loading…` with a progress line, and Mission Control shows the runner as amber. That's
-normal — don't click twice.
-
-**Getting new models.** Hit the `SEARCH / DOWNLOAD ⌄` chip to browse HuggingFace.
-Search, click a result, and you get its model card plus a list of files with a **fit**
-indicator (Fits / May be slow / Won't fit for your machine). Press **Get** on the file
-you want. Downloads show a live progress bar with **pause / resume / cancel**, and they
-keep running while you navigate elsewhere in the app. `← LIBRARY` takes you back.
-
-**RAM budget.** The pane stamps `· RAM 18 / 48 GB`. Harness reserves headroom for the
-rest of your Mac, so if loading a model would blow the budget it refuses and tells you
-to eject something first.
-
-**The aux model** is an optional second, small model that handles background chores —
-generating chat titles, search queries, memory extraction — so they stop competing with
-your main model and slowing your replies down. Set one with the **Aux** action on any
-model row, then start the aux runner.
-
-**Housekeeping.** Models the app downloaded can be **deleted** from here (two-step
-confirm). Models imported read-only from LM Studio show as such and are managed there.
-**Rescan** refreshes the library if you've added or removed things outside the app.
-
-### The in-chat model picker
-
-You don't have to leave the chat to change models. Next to the mode chips there's a
-**model chip** showing what's live. Click it and a popover opens listing every installed
-model with its **full name** (never truncated) and its pills — live, vision, format,
-size, aux.
-
-Each row carries its own actions: **Switch** on the others, **Eject** on the live one,
-and **Aux** on all of them (it flashes `aux ✓` to confirm). Clicking a row switches to
-that model. Press Esc, click outside, or scroll to close.
+1. **The model must be vision-capable.** No `VISION` pill, no image — the model
+   simply can't see. Vision-capable models are marked in the library too, so you know
+   before you load.
+2. **Only Chat mode takes images.** Agent and Hermes route through machinery that has
+   no image path. Harness reminds you: with a vision model loaded in another mode the
+   pill reads `vision · chat mode`, and dropping an image there explains instead of
+   silently ignoring you.
 
 ---
 
-## 5. Artifacts
+## Letting it act
 
-When a reply contains something that isn't just prose — an HTML page, an SVG, a React
-component, Markdown, a CSV table, JSON, a Mermaid diagram, or a decent-sized block of
-code — a small **⧉ Open** button appears under it.
+Hermes mode is where conversation turns into work — and where Harness is deliberately
+strict, because an agent that can write files and run commands should have to look
+you in the eye first.
 
-Click it and the thing renders live in a **viewer panel** beside the chat:
+**Approvals.** When Hermes wants to do something dangerous, the turn pauses on an
+`⚠ APPROVAL REQUIRED` card showing the exact command. You answer **Once**, **This
+session** (the rest of that conversation), **Always** (that exact command,
+permanently), or **Deny**. The card stamps the outcome and the turn moves on. If you
+hit Stop while a card is open, it counts as a deny — nothing runs by default.
 
-- Web pages, SVGs and React components render as real, interactive pages.
-- Markdown renders formatted with syntax-highlighted code.
-- CSV becomes a **sortable table** (click a column header).
-- JSON becomes a collapsible tree.
-- Mermaid becomes a proper diagram.
-- Code gets highlighting and a Copy button.
+*Do this once:* out of the box Hermes uses a "smart" mode where a second model can
+approve things on your behalf. If you'd rather see every card yourself — recommended —
+open the Hermes tab → Config → Security and set approvals to **manual**.
 
-Artifacts render in a sealed frame with no network access, so nothing they contain can
-reach out or interfere with the app.
+**The path guard** fences where files can be written, by geography:
 
-**What you can do with it:**
+- **Never:** credential territory — SSH keys, cloud credentials, GPG, the macOS
+  Keychain. Blocked outright, no card, no override.
+- **Freely:** your workspace, the app's own data, temp folders.
+- **Everywhere else** — Desktop, Documents, the rest of your home folder — **asks
+  first**, with the exact path on the approval card.
 
-- **Drag the divider** to resize the viewer; the width is remembered.
-- **Expand** to fill the window.
-- **✎ Edit** turns it into a live canvas — an editor on top, the preview below, updating
-  as you type. Copy, Revert, or **Save** to a file (saved files land in
-  `Downloads/harness-artifacts`, and you get a Show-in-Folder button).
-- **⌖ Pin** keeps the artifact open across chats. Unpinned artifacts close when you
-  switch conversations or leave the chat view.
+The guard fails closed: anything it can't make sense of is refused, not waved
+through. Honest limit: it fences the agent's file-writing *tools*; a file written via
+a raw shell command rides the command approvals above instead, and reading files
+isn't restricted.
 
-The Open buttons appear when the reply finishes streaming, not mid-sentence — that's
-deliberate, so the page renders once and cleanly.
-
----
-
-## 6. Capabilities
-
-The **⚙ Tools** chip beside the mode chips (or **Capabilities** in the sidebar) opens
-the settings for what your agents can actually do. It's split into four sub-tabs:
-
-**General** — the big switches. Web search, web fetch, deep research, memory, the
-document editor, retrieval over your documents, the sensitive-content filter, the image
-gallery. Plus the search backend (your private SearXNG or a fallback), safe-search
-level, how many results to fetch, and the agent's limits on rounds and tool calls.
-
-**Tools** — every built-in agent tool, grouped by category, with a switch per group and
-per tool. Below that, your **MCP servers** (connected external tool providers): enable
-or disable a whole server, or individual tools within it, and **add or remove** servers.
-
-**Skills** — the agent's built-in and learned skills, with their descriptions. Built-in
-skills can have their text customised and reset.
-
-**Models** — pick which endpoint and model handle **background** and **utility** jobs
-(this is where you point those chores at your aux model).
-
-Everything you change here applies immediately. API keys are deliberately not editable
-from this panel.
+**After the write**, you get a file card with **Open** and **Show in Folder**. If the
+file landed outside your workspace, a `⚠ wrote outside workspace` note appears in the
+turn, and the write goes into the guard log — a plain list under Logs of every
+outside write with when, what, and where, plus buttons to reveal the file or jump
+back to the conversation that did it.
 
 ---
 
-## 7. Safety & privacy
+## Getting and running models
 
-**It's all local.** The models run on your Mac. Chat history is stored on your Mac. Web
-search goes through SearXNG, your own private search engine, running on your Mac.
-Everything binds to your machine only — nothing is exposed to your network.
+The **Models** view is a library on the left, details on the right. Every installed
+model shows pills at a glance: `live` (gold — what's loaded now), `VISION`, the
+format (`gguf`/`mlx`), quantisation, and size. Click a row for details and actions —
+**Load** when nothing's running, **Switch** to swap, **Eject** to unload and free
+the RAM.
 
-**Approvals are manual by design.** Set Hermes to manual approvals (§3) and no dangerous
-action happens without you clicking a chip. The scope you pick is honoured: "Once" means
-once, "This session" covers the rest of that conversation, "Always" is remembered
-permanently for that exact command.
+**Finding new ones.** The `SEARCH / DOWNLOAD` chip browses HuggingFace from inside
+the app. Results open with the model card, the file list, and a fit verdict per file
+— *Fits / May be slow / Won't fit* — judged against your machine before you commit
+to a 30 GB download. **Get** starts the download: a live progress bar with pause,
+resume, and cancel, and it keeps running wherever you go in the app. Finished models
+appear in the library selected and ready to load.
 
-**The path guard** fences the agent's file writes, as described in §3: sensitive folders
-blocked outright, workspace allowed, everything else asks. It fails *closed* — if
-anything about a write can't be resolved, it's refused rather than waved through.
+**Switching takes ~60–90 seconds** — that's the weights loading, not a hang. The
+button shows *Loading…* with progress, and the dashboard shows the runner amber
+until it's up.
 
-**The guard log** keeps a permanent record. Open **Logs** in the sidebar and choose
-`guard`: every file the agent wrote outside your workspace is listed as a readable row
-— time, tool, file — with a **Reveal** button to show it in Finder and a button to jump
-straight back to the conversation where it happened.
+**The RAM budget.** The library stamps something like `RAM 18 / 48 GB`. Harness
+counts what's loaded and refuses a load that would blow the budget, telling you to
+eject something first — better than watching your Mac grind into swap.
 
-**All logs are viewable** the same way — the bridge, each component, the runner — with
-**Copy**, **Export** (to `Downloads/harness-logs`), and **Clear**.
+**The aux model.** Background chores — naming chats, writing search queries, memory
+upkeep — normally queue against your main model and slow your answers. Point them at
+a small second model instead: pick **Aux** on any model, start the aux runner, done.
 
-**Honest limits.** The path guard covers the agent's file-writing tools. An agent that
-writes a file by running a shell command instead rides Hermes's own dangerous-command
-approvals rather than the guard. Reading files is not restricted.
-
----
-
-## 8. Starting, stopping, and health
-
-**Mission Control** is the dashboard. Each moving part gets a card:
-
-- **Runner** — the process serving your model.
-- **Hermes** — the agent.
-- **Odysseus** — the web workspace.
-- **SearXNG** — private web search.
-
-Each card shows a status dot and Start / Stop buttons, plus a link to that component's
-log. Everything binds to your Mac only.
-
-**Dependencies are handled for you.** Starting Odysseus needs the runner and SearXNG, so
-clicking Start shows you a short plan ("this will also start: runner, searxng") and, once
-you approve, brings the whole chain up in order with live per-step progress on the cards.
-
-**Degraded** means something that should be running has stopped answering — the card goes
-red and offers **Restart** and **View log**. That's different from **Stopped**, which
-means you stopped it on purpose.
-
-**The metric strip** at the top shows tokens used today, turns, speed in tokens/second,
-and (when your model reports it) cache-hit rate.
-
-**First run.** A **setup checklist** appears listing each component with an Install or
-Start button, so you can get to green without touching a terminal. Once everything's up
-it stops appearing.
-
-**⌘K** opens the command palette from anywhere — jump to any view, run a task, reopen the
-**setup checklist**, or start the **walkthrough tour** that points out the main parts of
-the interface. **⌘R** reloads the current tab.
-
-There's also a **light theme** — the `◐ THEME` chip in the top bar toggles it, and your
-choice is remembered.
+**Without leaving the chat:** the model chip next to the mode buttons opens a picker
+listing every installed model with full, untruncated names and their pills. **Switch**
+sits on every row, **Eject** on the live one, **Aux** on all. The list scrolls; Esc
+or a click elsewhere closes it.
 
 ---
 
-## 9. Tips & troubleshooting
+## Keeping what it makes
 
-**The panel looks stale or a change didn't appear** → press **⌘R** to reload the tab.
+When a reply contains something worth more than a code fence — a web page, an SVG, a
+React component, Markdown, CSV, JSON, a Mermaid diagram, a substantial block of code
+— an **⧉ Open** button appears under it. That's an **artifact**: it renders live in
+a panel beside the chat.
 
-**The Hermes tab says "events feed disconnected" or "session ended (code 1005)"** →
-harmless. It happens when the Hermes tab has been sitting in the background and macOS
-tidied up its connection. **⌘R** the tab (or press its reconnect button).
+HTML, SVG, and React render as real interactive pages (in a sealed sandbox with no
+network access — an artifact can't phone home or touch the app). Markdown renders
+formatted, CSV becomes a sortable table, JSON a collapsible tree, Mermaid a diagram,
+and code gets highlighting and a Copy button.
 
-**A model switch seems stuck on "Loading…"** → give it 60–90 seconds. Large models take
-time to load. The runner card shows amber while it happens.
+From the viewer you can drag the divider to resize (remembered), expand to full
+window, or hit **✎ Edit** for a live canvas — editor above, preview below, re-rendering
+as you type — with Copy, Revert, and **Save to file** (files land in
+`Downloads/harness-artifacts`, never overwriting an existing one).
 
-**Don't drive the same Hermes conversation from Mission Control and the Hermes tab at
-the same time** — whichever one you typed in last owns the stream, and the other goes
-quiet. Pick a surface per conversation.
-
-**The chat won't take an image** → check two things: you're in **Chat** mode (Agent and
-Hermes don't accept images), and the `VISION` pill is showing (the loaded model must be
-vision-capable). If the pill reads `vision · chat mode`, just switch to Chat.
-
-**A download seems to have vanished** → it hasn't. Downloads live in the Models pane and
-keep running while you use the rest of the app. Go back to Models to see the progress bar.
-
-**Hermes offers an in-app "Update now"** → dismiss it. Harness manages Hermes's version
-itself; updating from inside would break the pairing.
-
-**A dangerous command ran without asking** → Hermes's approvals mode is probably still on
-its automatic setting. Hermes tab → Config → Security → set approvals to **manual**.
-
-**Chat replies feel slow in Agent mode** → that's the extra machinery (search, memory,
-titling) doing its work. Use **Chat** mode for speed, and set an **aux model** (§4) so
-background chores stop competing with your main model.
+Artifacts follow the conversation: open a different chat and the panel closes — unless
+you **⌖ pin** it, in which case it stays put while you move around. Open buttons
+appear when the reply finishes streaming; that's deliberate, one clean render.
 
 ---
 
-## 10. For developers
+## Tuning what it can do
 
-The technical reference — architecture, ports, APIs, the model registry, the path guard's
-internals, and the test suite — is in **`docs/HARNESS-INTERNALS.md`**.
+The **⚙ Tools** chip (or Capabilities in the sidebar) is mission settings for your
+agents, in four pages:
+
+**General** holds the big switches — web search, fetching, deep research, memory,
+document tools — plus the search backend (your SearXNG, with fallbacks), safe-search,
+result count, and caps on how many rounds and tool calls a turn may use.
+
+**Tools** lists every built-in agent tool with per-category and per-tool switches,
+and below them your **MCP servers** — external tool providers you can add, remove,
+or partially enable.
+
+**Skills** shows what the agent knows how to do, with editable descriptions.
+
+**Models** picks which model handles background and utility jobs — this is where the
+aux model gets its assignments.
+
+Changes apply immediately. Secrets are deliberately not editable from here.
+
+---
+
+## What you're trusting
+
+Short version: your own hardware, and nothing else.
+
+Models execute on your Mac. Conversations are stored on your Mac. Web searches go
+through SearXNG running on your Mac, so not even your queries leak to a search
+company. Every service binds to the machine itself — nothing listens for the outside
+world. With Wi-Fi off, everything except web search and downloads keeps working.
+
+When you want receipts, the **Logs** view has them: the bridge, every component, the
+runner, and the guard log, each with Copy, Export (to `Downloads/harness-logs`), and
+Clear. The guard log in particular is the audit trail for "what did the agent touch
+outside its lane" — readable rows, not stack traces.
+
+---
+
+## When something looks off
+
+**A change or update isn't showing** → ⌘R the tab. Webviews cache; a reload settles it.
+
+**Chat won't take an image** → two checks, in order: is the `VISION` pill on (the
+loaded model must see), and are you in **Chat** mode (the pill saying
+`vision · chat mode` means "right model, wrong mode").
+
+**A switch sits on "Loading…"** → normal for 60–90 seconds on big models. Amber
+runner card = still loading. Don't click again.
+
+**Hermes tab shows "events feed disconnected" / "code 1005"** → harmless; macOS put
+the backgrounded tab's connection to sleep. ⌘R brings it back.
+
+**A "dangerous" command ran without a card** → approvals are still on the automatic
+setting. Hermes tab → Config → Security → **manual**.
+
+**Same Hermes chat open in Mission Control *and* the Hermes tab** → whichever
+surface you typed in last owns the live stream; the other goes quiet. One surface
+per conversation.
+
+**Agent replies feel sluggish** → that's real work (search, memory, titling), not a
+fault. Use Chat mode when you don't need tools, and set an **aux model** so the
+chores stop queueing against your conversation.
+
+**A download "disappeared"** → it didn't; it's still running in the Models view.
+
+**Hermes offers "Update now"** → decline. Harness pins the version it ships and
+manages updates itself; updating from inside would desynchronize the pair.
+
+---
+
+## Going deeper
+
+The engineering reference — architecture, ports, APIs, registries, the guard's
+internals, the test suite — is `docs/HARNESS-INTERNALS.md`. This guide tells you how
+to drive; that one tells you how the engine is built.

@@ -2913,10 +2913,11 @@ function openModelPop(){
   if (top < 10) top = Math.min(rect.bottom + 8, window.innerHeight - h - 10);   // flip below
   pop.style.left = left + 'px';
   pop.style.top  = Math.max(10, top) + 'px';
-  // close on outside click / Esc / scroll / resize (no live repositioning by design)
+  // close on outside click / Esc / OUTSIDE scroll / resize (no live repositioning by
+  // design; scrolling the popover's own list must NOT close it)
   document.addEventListener('mousedown', modelPopOutside, true);
   document.addEventListener('keydown', modelPopKey, true);
-  window.addEventListener('scroll', closeModelPop, true);
+  window.addEventListener('scroll', modelPopScroll, true);
   window.addEventListener('resize', closeModelPop, true);
 }
 
@@ -2926,8 +2927,15 @@ function closeModelPop(){
   if (btn) btn.setAttribute('aria-expanded', 'false');
   document.removeEventListener('mousedown', modelPopOutside, true);
   document.removeEventListener('keydown', modelPopKey, true);
-  window.removeEventListener('scroll', closeModelPop, true);
+  window.removeEventListener('scroll', modelPopScroll, true);
   window.removeEventListener('resize', closeModelPop, true);
+}
+
+/* scrolling INSIDE the popover list is fine; only an outside scroll closes it */
+function modelPopScroll(e){
+  const pop = document.getElementById('model-pop');
+  if (pop && !pop.hidden && pop.contains(e.target)) return;
+  closeModelPop();
 }
 
 function modelPopOutside(e){
