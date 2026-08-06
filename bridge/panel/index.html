@@ -591,7 +591,18 @@
   /* drop-target cue while an image is dragged over the Chat view */
   #chat-bar.dropping { outline:1px dashed var(--gold); outline-offset:5px; border-radius:8px; }
   .cmsg .attachline { margin-top:5px; font:10.5px var(--mono); letter-spacing:.06em;
-      color:var(--faint); }
+      color:var(--faint); display:flex; align-items:center; gap:9px; }
+  .cmsg .attachline .attachthumb { width:88px; max-height:88px; object-fit:cover;
+      border-radius:6px; border:1px solid var(--line); cursor:zoom-in; flex:none; }
+  .cmsg .attachline .aclear { color:var(--faint); background:transparent; border:0;
+      cursor:pointer; font:11px var(--mono); padding:2px 4px; }
+  .cmsg .attachline .aclear:hover { color:var(--bad); }
+  /* click-to-view lightbox for attached images */
+  #imglightbox { position:fixed; inset:0; background:rgba(6,5,10,.8); z-index:9500;
+      display:flex; align-items:center; justify-content:center; cursor:zoom-out; }
+  #imglightbox[hidden] { display:none; }
+  #imglightbox img { max-width:88vw; max-height:88vh; border-radius:8px;
+      box-shadow:0 14px 60px rgba(0,0,0,.65); }
   /* (the standalone #chat-eject button was folded into the model popover's live row) */
 
   /* per-file "Get" button on HF file rows + the Downloads section */
@@ -2800,6 +2811,24 @@ function acceptImageFile(file){
   fr.readAsDataURL(file);
 }
 
+/* full-size view of an attached image; click anywhere (or Esc) to close */
+function showImageLightbox(src, name){
+  let sc = document.getElementById('imglightbox');
+  if (!sc){
+    sc = document.createElement('div');
+    sc.id = 'imglightbox';
+    sc.appendChild(document.createElement('img'));
+    sc.onclick = () => { sc.hidden = true; };
+    document.body.appendChild(sc);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !sc.hidden){ e.stopPropagation(); sc.hidden = true; }
+    }, true);
+  }
+  const im = sc.querySelector('img');
+  im.src = src; im.alt = name || '';
+  sc.hidden = false;
+}
+
 /* set + render the one attached image (shared by picker, drop, paste, native drop) */
 function showAttachedImage(dataUrl, name){
   attachedImage = {data: dataUrl, name: name};
@@ -4164,9 +4193,21 @@ async function sendChat() {
   const img = (chatMode === 'chat' && attachedImage) ? attachedImage : null;
   const userWrap = addMsg('user', text);
   if (img){
+    // clickable thumbnail while the session is open (bytes live in memory only;
+    // reopening the chat shows the filename line — image persistence = future sidecar)
     const line = document.createElement('div');
     line.className = 'attachline';
-    line.textContent = '🖼 ' + img.name;   // textContent: a filename is never markup
+    const th = document.createElement('img');
+    th.className = 'attachthumb'; th.src = img.data; th.alt = img.name;
+    th.title = 'Click to view'; th.onclick = () => showImageLightbox(img.data, img.name);
+    const nm = document.createElement('span');
+    nm.textContent = '🖼 ' + img.name;   // textContent: a filename is never markup
+    const x = document.createElement('button');
+    x.className = 'aclear'; x.textContent = '✕';
+    x.title = 'Remove this image from the app';
+    x.setAttribute('aria-label', 'Remove this image from the app');
+    x.onclick = () => line.remove();     // in-memory only — nothing else holds the bytes
+    line.appendChild(th); line.appendChild(nm); line.appendChild(x);
     userWrap.querySelector('.body').appendChild(line);
   }
   clearImage();
