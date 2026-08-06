@@ -369,7 +369,8 @@ async def status() -> dict:
 
 @app.get("/api/logs/{name}")
 def logs(name: str, lines: int = 40) -> dict:
-    if name not in ("bridge", "hermes", "odysseus", "searxng", "runner"):
+    # "guard" = the path-guard audit trail (one JSON line per out-of-allowlist write).
+    if name not in ("bridge", "hermes", "odysseus", "searxng", "runner", "guard"):
         raise HTTPException(404, "unknown log")
     f = ROOT / "data" / "logs" / f"{name}.log"
     if not f.exists():
@@ -689,6 +690,7 @@ async def ody_session_duplicate(sid: str, req: Request) -> JSONResponse:
 async def ody_session_delete(sid: str) -> JSONResponse:
     try:
         r = await _ody_req("POST", f"/api/session/{sid}/delete")
+        _thinking_forget(sid)   # drop the direct-lane thinking sidecar rows too
         return JSONResponse({"ok": r.status_code == 200})
     except Exception:
         return JSONResponse({"ok": False})
@@ -698,7 +700,17 @@ async def ody_session_delete(sid: str) -> JSONResponse:
 async def ody_history(sid: str) -> JSONResponse:
     try:
         r = await _ody_req("GET", f"/api/history/{sid}")
-        return JSONResponse(r.json() if r.status_code == 200 else {"history": []})
+        out = r.json() if r.status_code == 200 else {"history": []}
+        try:
+            # Direct-lane thinking sidecar: Odysseus stores {role,content} only, so
+            # re-attach any locally stored reasoning for this session's assistant
+            # turns (matched by answer hash, consumed in order). Best-effort — a
+            # sidecar miss just means no thinking disclosure, never a broken history.
+            if isinstance(out, dict) and isinstance(out.get("history"), list):
+                attach_thinking(out["history"], _thinking_rows(sid))
+        except Exception:
+            pass
+        return JSONResponse(out)
     except Exception:
         return JSONResponse({"history": []})
 
@@ -1064,6 +1076,135 @@ def api_analytics() -> JSONResponse:
     except Exception as e:
         out["error"] = str(e)[:120]
     return JSONResponse(out)
+
+
+# ── Direct-lane thinking sidecar (Fable, 2026-08-06) ─────────────────────────
+# The direct chat lane persists only {role, content} to Odysseus (inject_messages),
+# so a reopened session loses the turn's thinking. The Hermes lane rehydrates from
+# Hermes's own store and the Odysseus agent lane keeps its own — this local sidecar
+# gives the DIRECT lane parity.
+#
+# Keyed by (session id, hash of the assistant answer) rather than a message id:
+# inject_messages returns no ids, and the answer text is what the panel renders
+# back, so the hash is the only join we own. Same discipline as analytics above:
+# one lock, every read/write wrapped — this must NEVER raise into the chat path.
+_thinking_lock = threading.Lock()
+_thinking_pruned = False   # global retention prune runs once per process
+
+
+def answer_hash(text: str) -> str:
+    """Stable join key: sha1 of the answer's first 2048 characters (utf-8).
+
+    Truncated so a long answer that Odysseus stores/returns with trailing
+    differences still matches, and so hashing stays cheap. Pure — unit-tested.
+    """
+    import hashlib
+    return hashlib.sha1((text or "")[:2048].encode("utf-8", "replace")).hexdigest()
+
+
+def _thinking_conn():
+    import sqlite3
+    global _thinking_pruned
+    (ROOT / "data").mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(ROOT / "data" / "thinking.db"), timeout=5)
+    c.execute("CREATE TABLE IF NOT EXISTS thoughts("
+              "sid TEXT, chash TEXT, reasoning TEXT, ts REAL)")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_thoughts_sid_chash ON thoughts(sid, chash)")
+    if not _thinking_pruned:   # callers already hold _thinking_lock
+        _thinking_pruned = True
+        try:   # best-effort global cap (mirrors the analytics prune-once pattern)
+            c.execute("DELETE FROM thoughts WHERE rowid NOT IN "
+                      "(SELECT rowid FROM thoughts ORDER BY ts DESC LIMIT 5000)")
+            c.commit()
+        except Exception:
+            pass
+    return c
+
+
+def log_thinking(sid: str, answer: str, reasoning: str) -> None:
+    """Store one direct-lane turn's thinking. Best-effort; never raises."""
+    try:
+        if not (sid and answer and reasoning):
+            return
+        import time as _t
+        with _thinking_lock:
+            c = _thinking_conn()
+            c.execute("INSERT INTO thoughts VALUES(?,?,?,?)",
+                      (sid, answer_hash(answer), reasoning, _t.time()))
+            # Per-session cap: keep the newest 200 rows for this sid.
+            c.execute("DELETE FROM thoughts WHERE sid=? AND rowid NOT IN "
+                      "(SELECT rowid FROM thoughts WHERE sid=? ORDER BY ts DESC LIMIT 200)",
+                      (sid, sid))
+            c.commit(); c.close()
+    except Exception:
+        pass
+
+
+def _thinking_rows(sid: str) -> list:
+    """All (chash, reasoning) rows for a session, oldest first. Never raises."""
+    try:
+        if not sid:
+            return []
+        with _thinking_lock:
+            c = _thinking_conn()
+            rows = c.execute("SELECT chash, reasoning FROM thoughts WHERE sid=? "
+                             "ORDER BY ts ASC, rowid ASC", (sid,)).fetchall()
+            c.close()
+        return [(r[0], r[1]) for r in rows]
+    except Exception:
+        return []
+
+
+def _thinking_forget(sid: str) -> None:
+    """Drop a deleted session's sidecar rows. Best-effort; never raises."""
+    try:
+        if not sid:
+            return
+        with _thinking_lock:
+            c = _thinking_conn()
+            c.execute("DELETE FROM thoughts WHERE sid=?", (sid,))
+            c.commit(); c.close()
+    except Exception:
+        pass
+
+
+def attach_thinking(history_rows, thought_rows):
+    """PURE: attach stored reasoning to assistant messages, consuming IN ORDER.
+
+    Each stored row is used at most once per response: rows are bucketed by hash
+    and popped from the front, so a session that answered the same text twice
+    gets its two distinct thinkings back in the order they were produced.
+    Malformed rows/messages are skipped — this must never raise.
+    """
+    try:
+        buckets: dict = {}
+        for row in (thought_rows or []):
+            try:
+                h, rsn = row[0], row[1]
+            except Exception:
+                continue
+            if not (h and rsn):
+                continue
+            buckets.setdefault(str(h), []).append(rsn)
+        if not buckets:
+            return history_rows
+        for m in (history_rows or []):
+            try:
+                if not isinstance(m, dict) or m.get("role") != "assistant":
+                    continue
+                if m.get("reasoning"):
+                    continue          # never overwrite a lane that already has it
+                content = m.get("content")
+                if not isinstance(content, str) or not content:
+                    continue
+                b = buckets.get(answer_hash(content))
+                if b:
+                    m["reasoning"] = b.pop(0)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return history_rows
 
 
 # --- Version / update notice (PART 4) -------------------------------------------
@@ -2139,6 +2280,7 @@ async def chat_direct(req: Request) -> StreamingResponse:
     async def gen():
         import json as _json, time as _t
         full, think_open = [], False
+        think = []        # thinking sidecar (both reasoning_content + inline <think>)
         t0 = _t.monotonic(); stats = {}   # for best-effort usage analytics
         try:
             async with _RUNNER.stream(
@@ -2176,6 +2318,7 @@ async def chat_direct(req: Request) -> StreamingResponse:
                     # thinking arrives either as reasoning_content or inline <think> tags
                     rsn = d.get("reasoning_content")
                     if rsn:
+                        think.append(rsn)
                         yield f'data: {_json.dumps({"delta": rsn, "thinking": True})}\n\n'
                         continue
                     chunk = d.get("content") or ""
@@ -2185,10 +2328,12 @@ async def chat_direct(req: Request) -> StreamingResponse:
                         if think_open:
                             end = chunk.find("</think>")
                             if end == -1:
+                                think.append(chunk)
                                 yield f'data: {_json.dumps({"delta": chunk, "thinking": True})}\n\n'
                                 chunk = ""
                             else:
                                 if chunk[:end]:
+                                    think.append(chunk[:end])
                                     yield f'data: {_json.dumps({"delta": chunk[:end], "thinking": True})}\n\n'
                                 chunk = chunk[end + 8:]
                                 think_open = False
@@ -2223,6 +2368,11 @@ async def chat_direct(req: Request) -> StreamingResponse:
                         persisted = True
                 except Exception:
                     pass
+                if persisted:
+                    # Thinking sidecar: Odysseus stores {role,content} only, so keep
+                    # this turn's reasoning locally keyed by (sid, answer hash) →
+                    # /api/ody/history rehydrates it on reopen. Never raises.
+                    log_thinking(sid, answer, "".join(think).strip())
                 if persisted:
                     # Best-effort auto-title: the direct lane skips Odysseus's post-turn
                     # tasks (incl. auto-name), so sessions still called "New chat" get a
@@ -2385,6 +2535,28 @@ def _guard_flag(path: str, tool: str) -> bool:
         return False
     print(f"[guard] {tool} wrote OUTSIDE the path-guard allowlist: {path}", flush=True)
     return True
+
+
+def _guard_audit(path, tool, sid="") -> None:
+    """Durable audit trail: one JSON line per flagged write in data/logs/guard.log.
+
+    The python-log warning above is transient (rotates with bridge.log noise) and
+    the SSE guard_flag frame is gone on reload; this file is what the Logs pane's
+    `path-guard` source reads. Best-effort — an audit write must NEVER affect the
+    stream.
+    """
+    try:
+        import json as _json, datetime as _dt
+        d = ROOT / "data" / "logs"
+        d.mkdir(parents=True, exist_ok=True)
+        line = _json.dumps({
+            "ts": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "path": str(path or ""), "tool": str(tool or ""), "sid": str(sid or ""),
+        }, ensure_ascii=False)
+        with open(d / "guard.log", "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
 
 
 def hermes_event_to_frames(ev):
@@ -2784,6 +2956,8 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                                 fr["path"] = os.path.expanduser(fp)
                         except Exception:
                             pass
+                    elif fr.get("type") == "guard_flag":
+                        _guard_audit(fr.get("path"), fr.get("tool"), sid)
                     yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
                 if action == "done":
                     break

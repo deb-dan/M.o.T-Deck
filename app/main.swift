@@ -20,6 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var hermesWV: WKWebView!     // Hermes dashboard (:9119), lazy-loaded on first select
     var hermesLoaded = false
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
+    // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
+    // webview's sockets, and Hermes's dashboard misclassifies the resulting
+    // close-without-status (WS 1005) as a terminal "session ended" and refuses to
+    // auto-reconnect (upstream client bug — see CLAUDE.md, WS-1005 entry). The
+    // remedy is a plain reload, so do it for the user when the tab has been
+    // backgrounded long enough for the teardown to have happened. Odysseus is
+    // deliberately NOT reloaded (it can hold unsent in-page draft state).
+    var currentTab = 0
+    var hermesLastActive: Date?
+    let staleAfter: TimeInterval = 600   // 10 minutes backgrounded → reload on re-select
     var bridgeProcess: Process?
     var spawnedBridge = false
     // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
@@ -275,6 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     @objc func tabChanged(_ sender: NSSegmentedControl) {
         let idx = sender.selectedSegment
+        let prevTab = currentTab
+        currentTab = idx
+        // The Hermes tab was selected right up to this switch — stamp when it stopped.
+        if prevTab == 2 { hermesLastActive = Date() }
         panelWV.isHidden = (idx != 0)
         odyWV.isHidden = (idx != 1)
         hermesWV.isHidden = (idx != 2)
@@ -285,6 +299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if idx == 2 && !hermesLoaded {
             hermesLoaded = true
             hermesWV.load(URLRequest(url: hermesURL))
+        } else if idx == 2, let since = hermesLastActive,
+                  Date().timeIntervalSince(since) > staleAfter,
+                  !failedLoads.contains(ObjectIdentifier(hermesWV)),
+                  hermesWV.url?.scheme == "http" {
+            // Backgrounded long enough that WebKit will have dropped its sockets →
+            // reload so the dashboard reconnects instead of showing "session ended".
+            hermesLastActive = nil
+            hermesWV.reload()
         }
         // A previously failed tab retries automatically on re-select (component may be up now).
         if let wv = visibleWebView(), failedLoads.contains(ObjectIdentifier(wv)) {

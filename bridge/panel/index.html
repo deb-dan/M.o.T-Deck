@@ -281,8 +281,11 @@
   .cmsg .approval .ap-btn { font:11px var(--mono); letter-spacing:.08em; padding:5px 13px;
     background:none; border:1px solid var(--line2); border-radius:999px;
     color:var(--fg); cursor:pointer; }
-  .cmsg .approval .ap-btn:hover:enabled { border-color:var(--gold); color:var(--cream); }
+  /* FABLE style pass: the affirmative choices get the composer chips' gold hover;
+     Deny stays faint — no gold, so the destructive-but-safe option never invites. */
+  .cmsg .approval .ap-btn:not(.deny):hover:enabled { border-color:var(--gold); color:var(--cream); }
   .cmsg .approval .ap-btn.deny { color:var(--faint); border-color:var(--line); }
+  .cmsg .approval .ap-btn.deny:hover:enabled { color:var(--faint); border-color:var(--line); }
   .cmsg .approval .ap-btn:disabled { opacity:.45; cursor:default; }
   .cmsg .approval .ap-done { font:11px var(--mono); letter-spacing:.06em; color:var(--dim); }
   .cmsg .approval .ap-done .ok { color:var(--ok); }
@@ -326,7 +329,11 @@
                color:var(--dim); border:1px solid var(--line2); border-radius:7px;
                padding:5px 12px; cursor:pointer; }
   .mode-chip.on { color:#171420; background:var(--gold); border-color:var(--gold); }
-  .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75; }
+  /* FABLE style pass: the composer's mode note is a single line — let it SHRINK to
+     an ellipsis in a tight row instead of wrapping mid-word ("Herme/s"). Full text
+     stays available via its title attribute (set in setMode). */
+  .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75;
+               min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #chat-inputrow { display:flex; gap:10px; align-items:flex-end; }
   #chat-input { flex:1; resize:none; background:var(--card); color:var(--cream);
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
@@ -364,7 +371,8 @@
   .cs-item.on .nm { color:var(--cream); font-size:13.5px; }
   .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
   /* Phase 3 — Hermes rail row tag. <!-- FABLE: style pass --> */
-  .cs-tag { font:10px var(--mono); color:var(--faint); letter-spacing:.08em; text-transform:lowercase; }
+  .cs-tag { font:9px var(--mono); color:var(--faint); letter-spacing:.08em;
+            text-transform:uppercase; margin-left:6px; }
   .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
   .cs-item:hover .cs-act { display:flex; }
   .cs-act button { font:11px var(--mono); color:var(--faint); background:var(--bg);
@@ -832,7 +840,7 @@
               title="Tools, skills & connected servers — configure capabilities" aria-label="Open Capabilities">⚙ Tools</span>
             <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)" aria-label="Active model"></select>
             <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM" aria-label="Eject the loaded model">⏏</button>
-            <span class="mode-note" id="chat-note">web search on · shell off</span>
+            <span class="mode-note" id="chat-note" title="web search on · shell off">web search on · shell off</span>
             <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
             <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
               title="Capabilities — click to configure" aria-label="Capabilities summary"></span>
@@ -971,7 +979,9 @@
 
 <dialog id="logdlg">
   <h3>Logs</h3>
-  <div class="note">bridge · last 40 lines</div>
+  <!-- FABLE: style pass — log source chips (bridge … path-guard) -->
+  <div id="log-srcs" class="caps-tabs" style="margin:6px 0 10px"></div>
+  <div class="note" id="log-note">bridge · last 40 lines</div>
   <pre id="logbody" style="max-height:380px"></pre>
   <div class="btns"><button onclick="logdlg.close()">Close</button></div>
 </dialog>
@@ -1024,8 +1034,7 @@ async function refresh(manual) {
       else if (p.state === 'on' && prev && prev !== 'on') feed('start', `${n} online`);
       else if (p.state === 'failed') {
         feed('start', `${n} FAILED — see log`);
-        document.getElementById('logbody').textContent = p.detail || '(no output)';
-        logdlg.showModal();
+        showOutputLog(p.detail);
       } else if (p.state === 'blocked') feed('start', `${n} blocked`);
     }
   }
@@ -1096,8 +1105,7 @@ async function refresh(manual) {
 
 function showProvLog(name) {
   const p = (lastStatus && lastStatus.prov || {})[name];
-  document.getElementById('logbody').textContent = (p && p.detail) || '(no output)';
-  logdlg.showModal();
+  showOutputLog(p && p.detail);
 }
 
 function jumpToCard(name) {
@@ -1233,16 +1241,47 @@ async function act(name, verb) {
   const r = await (await fetch(`/api/components/${name}/${verb}`, {method:'POST'})).json();
   if (r.ok === false) {
     feed(verb, `${name} ${verb} FAILED — output opened`);
-    document.getElementById('logbody').textContent = r.log || '(no output)';
-    logdlg.showModal();
+    showOutputLog(r.log);
   }
   setTimeout(refresh, 900);
 }
 
-async function showLogs() {
-  const r = await (await fetch('/api/logs/bridge')).json();
-  document.getElementById('logbody').textContent = r.lines.join('\n') || '(empty)';
+// Log sources the dialog can tail. `guard` = the path-guard audit trail (one JSON
+// line per write that landed outside the allowlist) — see /api/logs/{name}.
+const LOG_SOURCES = [
+  {n:'bridge', label:'bridge'}, {n:'hermes', label:'hermes'},
+  {n:'odysseus', label:'odysseus'}, {n:'searxng', label:'searxng'},
+  {n:'runner', label:'runner'}, {n:'guard', label:'path-guard'},
+];
+
+// The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
+// no source is being tailed there, so drop the chips and say so in the note.
+function showOutputLog(text) {
+  const chips = document.getElementById('log-srcs');
+  if (chips) chips.innerHTML = '';
+  const note = document.getElementById('log-note');
+  if (note) note.textContent = 'command output';
+  document.getElementById('logbody').textContent = text || '(no output)';
   logdlg.showModal();
+}
+
+async function showLogs(name) {
+  const src = LOG_SOURCES.find(s => s.n === name) || LOG_SOURCES[0];
+  const chips = document.getElementById('log-srcs');
+  if (chips) chips.innerHTML = LOG_SOURCES.map(s =>
+    `<span class="chip${s.n === src.n ? ' on' : ''}" onclick="showLogs('${s.n}')">${esc(s.label)}</span>`).join('');
+  const note = document.getElementById('log-note');
+  if (note) note.textContent = src.label + ' · last 40 lines';
+  const body = document.getElementById('logbody');
+  body.textContent = '…';
+  try {
+    const r = await (await fetch('/api/logs/' + src.n)).json();
+    const lines = (r && r.lines) || [];
+    // Guard-specific empty state: an empty file is the GOOD outcome here, not a gap.
+    body.textContent = lines.join('\n') ||
+      (src.n === 'guard' ? 'no out-of-workspace writes recorded.' : '(empty)');
+  } catch { body.textContent = '(unavailable)'; }
+  if (!logdlg.open) logdlg.showModal();
 }
 
 /* ---------- chat pane (Rung D, native) ---------- */
@@ -1542,10 +1581,13 @@ function setMode(m) {
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
-  document.getElementById('chat-note').textContent =
+  const noteText =
     m === 'agent' ? 'web search on · shell off'
     : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
     : 'direct to runner — no tools, fastest';
+  const noteEl = document.getElementById('chat-note');
+  noteEl.textContent = noteText;
+  noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
   if (m === prev) return;
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
@@ -2700,7 +2742,12 @@ async function selectSession(sid){
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
     for (const m of (h.history || []).slice(-30)){
       if (m.role === 'user') addMsg('user', m.content || '');
-      else if (m.role === 'assistant') addMsg('assistant', m.content || '');
+      else if (m.role === 'assistant'){
+        const w = addMsg('assistant', m.content || '');
+        // Direct-lane turns carry .reasoning from the bridge's thinking sidecar
+        // (data/thinking.db) — same collapsed disclosure as the Hermes lane.
+        if (m.reasoning) addRehydratedThinking(w, m.reasoning);
+      }
     }
     scrollChat(true);   // opening a session snaps to its latest message
   } catch {}
@@ -3433,7 +3480,12 @@ function addRehydratedThinking(wrap, text){
     const det = document.createElement('details');
     det.className = 'think';
     const sum = document.createElement('summary');
-    sum.textContent = 'thinking · restored';
+    // FABLE style pass: restored thinking reads slightly quieter than live thinking.
+    // Inline on a wrapper span — a `.think summary` rule would dim LIVE summaries too.
+    const lbl = document.createElement('span');
+    lbl.style.opacity = '.8';
+    lbl.textContent = 'thinking · restored';
+    sum.appendChild(lbl);
     det.appendChild(sum);
     const p = document.createElement('div');
     p.textContent = text;            // textContent: never render stored text as markup
@@ -4704,7 +4756,8 @@ const commands = () => {
     {t:'Mission Control', k:'◫', f:()=>showView('mc')},
     {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
-    {t:'Show bridge logs', k:'≣', f:showLogs},
+    {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
+    {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.

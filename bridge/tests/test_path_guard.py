@@ -191,4 +191,40 @@ check("audit: relative path → silent (cwd unknown bridge-side)",
       not OUT("notes.txt", roots=["/Users/debik/ws"]))
 check("audit: empty path safe", not OUT("", roots=["/Users/debik/ws"]))
 
+
+# ── audit TRAIL (_guard_audit → data/logs/guard.log, one JSON line per flag) ──
+def _load_guard_audit(data_root):
+    import ast as _ast
+    tree = _ast.parse((ROOT / "bridge" / "app.py").read_text())
+    fn = next(n for n in tree.body
+              if isinstance(n, _ast.FunctionDef) and n.name == "_guard_audit")
+    ns = {"ROOT": Path(data_root)}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "audit", "exec"), ns)
+    return ns["_guard_audit"]
+
+
+import json as _json
+_droot = tempfile.mkdtemp()
+_audit = _load_guard_audit(_droot)
+_audit("/Users/debik/Desktop/a.txt", "write_file", "sess-1")
+_glog = Path(_droot) / "data" / "logs" / "guard.log"
+check("audit trail: log file created (parents too)", _glog.exists())
+_rec = _json.loads(_glog.read_text().splitlines()[0])
+check("audit trail: keys are ts/path/tool/sid",
+      set(_rec) == {"ts", "path", "tool", "sid"})
+check("audit trail: path recorded", _rec["path"] == "/Users/debik/Desktop/a.txt")
+check("audit trail: tool recorded", _rec["tool"] == "write_file")
+check("audit trail: sid recorded", _rec["sid"] == "sess-1")
+check("audit trail: ts is iso8601 UTC", _rec["ts"].endswith("Z") and "T" in _rec["ts"])
+_audit("/Users/debik/Desktop/b.txt", "patch", "")
+check("audit trail: appends (one line per flag)",
+      len(_glog.read_text().strip().splitlines()) == 2)
+check("audit trail: every line is valid JSON",
+      all(_json.loads(l) for l in _glog.read_text().strip().splitlines()))
+_audit(None, None, None)
+check("audit trail: None args never raise (stringified)",
+      _json.loads(_glog.read_text().strip().splitlines()[-1])["path"] == "")
+_load_guard_audit("/proc/nonexistent-harness-root")("/x", "write_file", "s")
+check("audit trail: unwritable root degrades silently", True)
+
 print(f"\n{PASS}/{PASS} path-guard checks passed")
