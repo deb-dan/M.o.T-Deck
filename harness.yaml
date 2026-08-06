@@ -31,7 +31,10 @@ components:
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
   adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx  (jan retired 2026-07-23)
-  llamacpp_pin: b10094       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
+  llamacpp_pin: b10295       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
+                             # 2026-08-06: b10094 → b10295. NOTE release CI lags a fresh tag: b10297 existed but had
+                             # NO macos-arm64 asset; b10295 does (verified against the release page). Always pin a tag
+                             # whose llama-<tag>-bin-macos-arm64.tar.gz actually exists.
   binary:                    # explicit path to llama-server; empty = auto-discover (our pin → Jan backends → LM Studio)
   mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
   port: 6767                 # canonical headless endpoint (jan serve --port)
@@ -39,6 +42,10 @@ runner:
   api_key: harness-local     # headless jan requires a key; fanned out to components in M1-B
   model: gemma-4-31B-it-uncensored-biproj-q4_k_m
   ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
+  spec_mtp: auto             # MTP speculative decoding: auto = detect from the model id OR its
+                             # source repo (e.g. unsloth/…-MTP-GGUF, persisted on download) |
+                             # on = force (use for an MTP model acquired before repo tracking) |
+                             # off = never. A failed spec launch auto-retries without the flags.
 
 # OPTIONAL aux runner — a small second model (300MB–10GB class) for Odysseus's
 # Background Tasks (auto-titles, search-query generation, memory extraction) so

@@ -12,7 +12,15 @@ fi
 
 # shellcheck disable=SC1091
 source "$MLXV/bin/activate"
-uv pip install mlx-lm mlx-vlm
+# PINNED (project doctrine: pin everything, bump deliberately). These were the
+# latest on PyPI at 2026-08-06 and are exactly what was verified working — leaving
+# them unpinned meant any re-install could silently change runtime behaviour.
+# Bump = edit here, reinstall, re-verify a chat turn + the MLX wire-id path
+# (a future mlx-lm that adds a served-model-name flag would let bridge/app.py's
+# wire_model_id() switch from path-based to alias-based identification).
+MLX_LM_PIN="${MLX_LM_PIN:-0.31.3}"
+MLX_VLM_PIN="${MLX_VLM_PIN:-0.6.10}"
+uv pip install "mlx-lm==${MLX_LM_PIN}" "mlx-vlm==${MLX_VLM_PIN}"
 deactivate
 
 echo "[harness] mlx runtime installed:"

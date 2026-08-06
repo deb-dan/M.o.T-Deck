@@ -1806,7 +1806,8 @@ def _mlx_registry_entry(e: dict) -> dict:
         vision = False
     return {"id": e["model_id"], "name": e["model_id"], "format": "mlx",
             "path": model_dir, "mmproj": None, "size_bytes": size,
-            "ctx": None, "source": "download", "vision": vision}
+            "ctx": None, "source": "download", "vision": vision,
+            "repo": e.get("repo") or None}   # provenance (mirrors the gguf entry)
 
 
 def _gguf_registry_entry(e: dict) -> dict:
@@ -1826,7 +1827,13 @@ def _gguf_registry_entry(e: dict) -> dict:
                                     if _os.path.exists(f["dest"]) else 0)
     return {"id": e["model_id"], "name": e["model_id"], "format": "gguf",
             "path": main_dest, "mmproj": mmproj_dest, "size_bytes": nonmm,
-            "ctx": None, "source": "download", "vision": bool(mmproj_dest)}
+            "ctx": None, "source": "download", "vision": bool(mmproj_dest),
+            # Persist the SOURCE REPO: MTP models are commonly named
+            # "<repo>/…-MTP-GGUF" while the per-file registry id carries no MTP
+            # marker (e.g. Qwen3.5-9B-Q4_0). start_component.sh's speculative-
+            # decoding gate matches id OR repo, so without this the MTP flags
+            # never engage and you get MTP-without-acceleration.
+            "repo": e.get("repo") or None}
 
 
 def _dl_json(e: dict) -> dict:

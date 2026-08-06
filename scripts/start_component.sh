@@ -49,6 +49,7 @@ print(m.get("mmproj") or "")
 print(m.get("ctx") if m.get("ctx") not in (None, "") else "")
 print(fmt)
 print("true" if m.get("vision") else "false")
+print(m.get("repo") or "")   # source HF repo (download entries) — MTP marker often lives here
 PYRESOLVE
 ) || { echo "ERROR: $(R_MODEL="$R_MODEL" python3 -c 'import os,json,sys;print("model \x27%s\x27 not in registry — run scripts/seed_registry.py or pick another model"%os.environ["R_MODEL"])')"; exit 1; }
     MODEL_PATH=$(sed -n '1p' <<<"$RESOLVED")
@@ -56,6 +57,7 @@ PYRESOLVE
     REG_CTX=$(sed -n '3p' <<<"$RESOLVED")
     MODEL_FORMAT=$(sed -n '4p' <<<"$RESOLVED")
     MODEL_VISION=$(sed -n '5p' <<<"$RESOLVED")
+    MODEL_REPO=$(sed -n '6p' <<<"$RESOLVED")
     # Pick the effective engine.
     case "$R_ADAPTER" in
       auto)
@@ -102,16 +104,31 @@ PYRESOLVE
     if grep -q -- "--repeat-penalty" data/llama-server.help.txt; then
       ARGS+=(--repeat-penalty 1.1 --repeat-last-n 256)
     fi
-    # MTP-variant GGUFs need speculative-decoding flags (values mirror LM Studio's
-    # proven invocation on this machine). Only added when the binary supports them —
-    # Jan's older backend may not; the LM Studio backend fallback above does.
-    if [[ "$R_MODEL" =~ [Mm][Tt][Pp] ]]; then
+    # MTP-variant GGUFs need speculative-decoding flags to actually GET the MTP
+    # speedup (values mirror LM Studio's proven invocation on this machine).
+    # Detection matches the registry id OR the source repo — an MTP model is
+    # commonly published as "<org>/…-MTP-GGUF" while the per-file id carries no
+    # marker (e.g. Qwen3.5-9B-Q4_0), which is why id-only detection silently gave
+    # us MTP-without-acceleration. `runner.spec_mtp` (auto|on|off) overrides.
+    # Kept in a SEPARATE array so a misdetection can be retried without them.
+    SPEC_ARGS=()
+    R_SPEC=$(awk '/^runner:/{f=1} f && /^  spec_mtp:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*spec_mtp:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ -n "$R_SPEC" ]] || R_SPEC=auto
+    MTP_HIT=0
+    case "$R_SPEC" in
+      on|true|yes|1) MTP_HIT=1; MTP_WHY="runner.spec_mtp=$R_SPEC" ;;
+      off|false|no|0) MTP_HIT=0 ;;
+      *) if [[ "$R_MODEL" =~ [Mm][Tt][Pp] ]]; then MTP_HIT=1; MTP_WHY="model id"
+         elif [[ -n "$MODEL_REPO" && "$MODEL_REPO" =~ [Mm][Tt][Pp] ]]; then MTP_HIT=1; MTP_WHY="source repo $MODEL_REPO"
+         fi ;;
+    esac
+    if [[ "$MTP_HIT" == "1" ]]; then
       if grep -q -- "--spec-type" data/llama-server.help.txt; then
-        ARGS+=(--jinja --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 0 --spec-draft-p-min 0.75)
-        echo "[harness] MTP model detected — speculative-decoding flags enabled"
+        SPEC_ARGS=(--jinja --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 0 --spec-draft-p-min 0.75)
+        echo "[harness] MTP detected ($MTP_WHY) — speculative decoding enabled (--spec-type draft-mtp)"
       else
-        echo "[harness] WARN: MTP model but this llama-server lacks --spec-type — it may fail to load."
-        echo "[harness]   Fix: set runner.binary to LM Studio's newer backend, e.g.:"
+        echo "[harness] WARN: MTP model but this llama-server lacks --spec-type — running WITHOUT acceleration."
+        echo "[harness]   Fix: set runner.binary to a newer backend, e.g.:"
         ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1 | sed 's/^/[harness]   /'
       fi
     fi
@@ -121,17 +138,35 @@ PYRESOLVE
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
     lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
-    # Launch (argv replicates Jan's proven-working invocation on this machine).
-    nohup "$BIN" "${ARGS[@]}" >> data/logs/runner.log 2>&1 &
-    echo $! > data/runner.pid
+    # Launch + wait for readiness. Factored so a bad speculative-decoding guess can
+    # be retried WITHOUT those flags instead of leaving the runner dead (spec flags
+    # on a model that has no MTP heads fail the load — self-healing beats a hard stop).
+    _launch_llama() {   # args: the full argv after $BIN
+      nohup "$BIN" "$@" >> data/logs/runner.log 2>&1 &
+      echo $! > data/runner.pid
+      local i
+      for i in $(seq 1 90); do
+        if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then return 0; fi
+        sleep 2
+      done
+      return 1
+    }
     up=0
-    TRIES=90
-    for _ in $(seq 1 "$TRIES"); do
-      if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
-      sleep 2
-    done
+    if _launch_llama "${ARGS[@]}" ${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}; then
+      up=1
+    elif [[ ${#SPEC_ARGS[@]} -gt 0 ]]; then
+      echo "[harness] WARN: runner did not start WITH speculative-decoding flags —"
+      echo "[harness]   this model likely has no usable MTP heads. Retrying without them."
+      echo "--- runner.log tail (failed spec attempt) ---"; tail -12 data/logs/runner.log 2>/dev/null
+      pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
+      lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+      sleep 1
+      SPEC_ARGS=()
+      if _launch_llama "${ARGS[@]}"; then up=1; fi
+    fi
     if [[ "$up" == "1" ]]; then
-      echo "[harness] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX pid=$(cat data/runner.pid)"
+      SPEC_NOTE=""; [[ ${#SPEC_ARGS[@]} -gt 0 ]] && SPEC_NOTE=" spec=draft-mtp"
+      echo "[harness] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX${SPEC_NOTE} pid=$(cat data/runner.pid)"
     else
       echo "ERROR: runner (llama-server) did not become ready on :${R_PORT} in ~3min."
       echo "--- runner.log tail ---"; tail -20 data/logs/runner.log 2>/dev/null
