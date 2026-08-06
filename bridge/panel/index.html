@@ -542,6 +542,24 @@
       border:1px solid var(--line2); border-radius:7px; font:10px var(--mono);
       letter-spacing:.03em; padding:4px 6px; cursor:pointer; }
   #chat-model:disabled { opacity:.5; }
+  /* live-model capability pill — same .mpill.vision colors as the Models pane rows;
+     the chat bar has no .mbadges font context, so only the type is restated here */
+  #cap-vision { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+  /* image attachment (direct lane, vision models): button left of the composer,
+     one thumbnail chip in a slim strip above it */
+  #chat-attachstrip { display:flex; align-items:center; gap:8px; margin:0 0 7px;
+      font:10px var(--mono); letter-spacing:.06em; color:var(--dim); }
+  #chat-attachstrip img { width:24px; height:24px; object-fit:cover; border-radius:4px;
+      border:1px solid var(--line2); }
+  #chat-attachstrip .afile { max-width:260px; overflow:hidden; text-overflow:ellipsis;
+      white-space:nowrap; }
+  #chat-attachstrip .aclear { color:var(--faint); background:transparent; border:0;
+      cursor:pointer; font:11px var(--mono); padding:0 2px; }
+  #chat-attachstrip .aclear:hover { color:var(--bad); }
+  #chat-attachstrip .anote { color:var(--faint); }
+  #chat-attach { align-self:flex-end; }
+  .cmsg .attachline { margin-top:5px; font:10.5px var(--mono); letter-spacing:.06em;
+      color:var(--faint); }
   #chat-eject { font:11px var(--mono); color:var(--faint); background:transparent;
       border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer;
       transition: color .12s ease, border-color .12s ease; }
@@ -852,13 +870,21 @@
             <span class="mode-chip" id="mode-tools" onclick="showView('caps')"
               title="Tools, skills & connected servers — configure capabilities" aria-label="Open Capabilities">⚙ Tools</span>
             <select id="chat-model" onchange="chatModelChange(this.value)" title="Active model (switch reloads the runner)" aria-label="Active model"></select>
+            <!-- capability of the LIVE model; hidden entirely when it can't see images -->
+            <span class="mpill vision" id="cap-vision" title="This model accepts images" hidden>vision</span>
             <button id="chat-eject" onclick="ejectModel()" title="Eject the loaded model — frees RAM" aria-label="Eject the loaded model">⏏</button>
             <span class="mode-note" id="chat-note" title="web search on · shell off">web search on · shell off</span>
             <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
             <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
               title="Capabilities — click to configure" aria-label="Capabilities summary"></span>
           </div>
+          <!-- one attached image per message (direct lane + vision model only) -->
+          <div id="chat-attachstrip" hidden></div>
           <div id="chat-inputrow">
+            <button class="chip chip-icon" id="chat-attach" onclick="pickImage()"
+              title="Attach an image (vision models)" aria-label="Attach an image" hidden>⊕</button>
+            <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp"
+              onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
@@ -877,6 +903,8 @@
             <span id="art-kind"></span>
           </div>
           <button id="art-copy" class="art-btn" onclick="copyArtifact()" title="Copy source" aria-label="Copy source" hidden>Copy</button>
+          <button id="art-pin" class="art-btn" onclick="toggleArtifactPin()"
+            title="Pin — keep this artifact open across chats" aria-label="Pin artifact">⌖</button>
           <button id="art-edit" class="art-btn" onclick="toggleArtifactEdit()" title="Edit" aria-label="Edit artifact">✎</button>
           <button id="art-expand" class="art-btn" onclick="toggleArtifactExpand()" title="Expand" aria-label="Expand artifact">⇱</button>
           <button id="art-close" class="art-btn" onclick="closeArtifact()" title="Close artifact" aria-label="Close artifact">✕</button>
@@ -1690,7 +1718,9 @@ function setMode(m) {
   const noteEl = document.getElementById('chat-note');
   noteEl.textContent = noteText;
   noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
+  applyVisionUi();           // attach is direct-lane only; leaving Chat clears it
   if (m === prev) return;
+  maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
   // restore the Odysseus rail + previously selected Odysseus session.
@@ -2672,11 +2702,72 @@ async function initChat() {
   } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
 }
 
+/* ---------- vision capability + image attach (direct lane) ----------
+   liveVision is refreshed from the SAME /api/models fetch that fills the model
+   picker (live_id + the entry's capabilities) — no extra poll. */
+let liveVision = false, attachedImage = null;   // {data: dataURL, name}
+
+function applyVisionUi(){
+  const pill = document.getElementById('cap-vision');
+  if (pill) pill.hidden = !liveVision;
+  const btn = document.getElementById('chat-attach');
+  // Attach is direct-lane only: the Odysseus and Hermes lanes have no image path.
+  if (btn) btn.hidden = !(liveVision && chatMode === 'chat');
+  if (!(liveVision && chatMode === 'chat')) clearImage();
+}
+
+function pickImage(){ const f = document.getElementById('chat-file'); if (f) f.click(); }
+
+function clearImage(){
+  attachedImage = null;
+  const f = document.getElementById('chat-file'); if (f) f.value = '';
+  const strip = document.getElementById('chat-attachstrip');
+  if (strip){ strip.innerHTML = ''; strip.hidden = true; }
+}
+
+function attachNote(msg){
+  const strip = document.getElementById('chat-attachstrip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  const n = document.createElement('span');
+  n.className = 'anote'; n.textContent = msg;
+  strip.appendChild(n); strip.hidden = false;
+}
+
+function onImagePicked(ev){
+  const file = (ev.target.files || [])[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024){ attachedImage = null; ev.target.value = '';
+    attachNote('image too large (max 8 MB)'); return; }
+  const fr = new FileReader();
+  fr.onerror = () => { attachedImage = null; attachNote('could not read that image'); };
+  fr.onload = () => {
+    attachedImage = {data: String(fr.result || ''), name: file.name};
+    const strip = document.getElementById('chat-attachstrip');
+    strip.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = attachedImage.data; img.alt = '';
+    const nm = document.createElement('span');
+    nm.className = 'afile'; nm.textContent = attachedImage.name;   // textContent: never markup
+    const x = document.createElement('button');
+    x.className = 'aclear'; x.textContent = '✕';
+    x.title = 'Remove this image'; x.setAttribute('aria-label', 'Remove this image');
+    x.onclick = clearImage;
+    strip.appendChild(img); strip.appendChild(nm); strip.appendChild(x);
+    strip.hidden = false;
+  };
+  fr.readAsDataURL(file);
+}
+
 async function loadChatModels(){
   const sel = document.getElementById('chat-model');
   if (!sel) return;
   try {
     const r = await (await fetch('/api/models')).json();
+    // capability of what the runner is ACTUALLY serving (live_id), not the pin
+    const liveEntry = (r.installed || []).find(m => m.id === r.live_id);
+    liveVision = !!(liveEntry && (liveEntry.capabilities || []).includes('vision'));
+    applyVisionUi();
     sel.innerHTML = '';
     for (const m of (r.installed || [])){
       const o = document.createElement('option');
@@ -2789,6 +2880,7 @@ function renderSessions(){
 }
 
 async function selectHermesSession(storedId){
+  maybeCloseArtifact();   // artifact follows its conversation unless pinned
   // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
@@ -2829,6 +2921,7 @@ async function selectHermesSession(storedId){
 }
 
 async function selectSession(sid){
+  maybeCloseArtifact();   // artifact follows its conversation unless pinned
   if (chatBusy) return;
   if (chatMode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
                                        // Odysseus row clicked under the Hermes
@@ -2869,6 +2962,7 @@ async function duplicateSession(sid){
 }
 
 async function newSession(){
+  maybeCloseArtifact();   // new chat = new context; unpinned artifacts close
   if (chatBusy) return;
   if (chatMode === 'hermes'){
     // Hermes lane: fresh gateway session + clear the pane + refresh the rail
@@ -3788,7 +3882,17 @@ async function sendChat() {
   } else {
     sendBtn.disabled = true;
   }
-  addMsg('user', text); scrollChat(true);   // sending your own message always snaps to bottom
+  // one image per message, direct lane only; taken (and cleared) at send time
+  const img = (chatMode === 'chat' && attachedImage) ? attachedImage : null;
+  const userWrap = addMsg('user', text);
+  if (img){
+    const line = document.createElement('div');
+    line.className = 'attachline';
+    line.textContent = '🖼 ' + img.name;   // textContent: a filename is never markup
+    userWrap.querySelector('.body').appendChild(line);
+  }
+  clearImage();
+  scrollChat(true);   // sending your own message always snaps to bottom
 
   const holder = addMsg('assistant', '');
   const body = holder.querySelector('.body');
@@ -3811,7 +3915,8 @@ async function sendChat() {
          stored_sid: hermesStoredSid || ''}   // durable id → guard audit's "Chat" jump
       : {session:chatSid, message:text, mode:chatMode,
          allow_web_search:true, allow_bash:false,
-         tz_offset:-new Date().getTimezoneOffset()};
+         tz_offset:-new Date().getTimezoneOffset(),
+         ...(img ? {image: img.data} : {})};   // direct lane reads `image` (dataURL)
     const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(reqBody)});
@@ -4494,7 +4599,23 @@ function openArtifact(opts){
   document.getElementById('art-kind').textContent = kind;
   renderArtifact(kind, content, filename);
 }
+// Pin (Debi design, 2026-08-06): an artifact follows its conversation — switching
+// session/lane or starting a new chat CLOSES it, unless pinned. Pin state dies
+// with the artifact (closing always unpins).
+let artPinned = false;
+function toggleArtifactPin(){
+  artPinned = !artPinned;
+  const b = document.getElementById('art-pin');
+  if (b){ b.classList.toggle('on', artPinned);
+          b.title = artPinned ? 'Pinned — stays open across chats (click to unpin)'
+                              : 'Pin — keep this artifact open across chats'; }
+}
+function maybeCloseArtifact(){
+  if (artifactState.open && !artPinned) closeArtifact();
+}
 function closeArtifact(){
+  artPinned = false;
+  const pb = document.getElementById('art-pin'); if (pb) pb.classList.remove('on');
   if (_canvas.on) exitCanvas(false);   // CANVAS: drop the edit session with the artifact
   document.body.classList.remove('artifact-open', 'artifact-expanded');
   artifactState.open = false; artifactState.expanded = false;
@@ -4854,8 +4975,26 @@ function openArtifactSample(kind){
   openArtifact({ filename:s.filename, content:s.content });
 }
 
-/* ---------- command palette ---------- */
+/* ---------- command palette ----------
+   The artifact previews are dev affordances, not everyday commands — eight flat
+   rows drowned the real list, so they live behind one submode row. `palSub` is the
+   whole state: null = normal list, 'art' = the previews list (+ a ← back row). */
+let palSub = null;
+
+const ARTIFACT_SAMPLES = [
+  ['HTML sample', 'html'], ['React counter', 'react'], ['Markdown sample', 'markdown'],
+  ['Python code', 'code'], ['SVG sample', 'svg'], ['Mermaid diagram', 'mermaid'],
+  ['CSV table', 'csv'], ['JSON tree', 'json'],
+];
+
 const commands = () => {
+  if (palSub === 'art'){
+    // Submode: re-render the same palette with only the previews (+ back).
+    // `f` returning false-y is fine — runPal closes the dialog only for leaf rows.
+    return [{t:'← back', k:'↩', sub:null}].concat(
+      ARTIFACT_SAMPLES.map(([label, kind]) =>
+        ({t:`Preview artifact: ${label}`, k:'◧', f:()=>openArtifactSample(kind)})));
+  }
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
     {t:'Mission Control', k:'◫', f:()=>showView('mc')},
@@ -4866,14 +5005,7 @@ const commands = () => {
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.
-    {t:'Preview artifact: HTML sample', k:'◧', f:()=>openArtifactSample('html')},
-    {t:'Preview artifact: React counter', k:'◧', f:()=>openArtifactSample('react')},
-    {t:'Preview artifact: Markdown sample', k:'◧', f:()=>openArtifactSample('markdown')},
-    {t:'Preview artifact: Python code', k:'◧', f:()=>openArtifactSample('code')},
-    {t:'Preview artifact: SVG sample', k:'◧', f:()=>openArtifactSample('svg')},
-    {t:'Preview artifact: Mermaid diagram', k:'◧', f:()=>openArtifactSample('mermaid')},
-    {t:'Preview artifact: CSV table', k:'◧', f:()=>openArtifactSample('csv')},
-    {t:'Preview artifact: JSON tree', k:'◧', f:()=>openArtifactSample('json')},
+    {t:'Preview artifacts ▸', k:'◧', sub:'art'},
     {t:'Edit current artifact', k:'✎', f:paletteEditArtifact},   // CANVAS (Fable spec)
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {
@@ -4887,7 +5019,8 @@ const commands = () => {
 };
 let sel = 0;
 function openPalette() {
-  sel = 0; palette.showModal();
+  sel = 0; palSub = null;   // always opens on the normal list
+  palette.showModal();
   const q = document.getElementById('pal-q');
   q.value = ''; renderPal(''); q.focus();
 }
@@ -4900,7 +5033,16 @@ function renderPal(f) {
 }
 function runPal(i, f) {
   const list = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase()));
-  palette.close(); if (list[i]) list[i].f();
+  const item = list[i];
+  if (!item) { palette.close(); return; }
+  if ('sub' in item) {   // submode row (enter or ← back): stay open, re-render
+    palSub = item.sub; sel = 0;
+    const q = document.getElementById('pal-q');
+    if (q){ q.value = ''; q.focus(); }
+    renderPal('');
+    return;
+  }
+  palette.close(); item.f();
 }
 document.getElementById('pal-q').addEventListener('input', e=>renderPal(e.target.value));
 document.getElementById('pal-q').addEventListener('keydown', e=>{
