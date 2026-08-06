@@ -1011,6 +1011,9 @@ async function refresh(manual) {
     clearTimeout(pollTimer); pollTimer = setTimeout(refresh, statusFails >= 3 ? 6000 : 1500); return;
   }
   lastStatus = s;
+  // Keep the chat header honest about WHICH MODEL WILL ANSWER: the runner can be switched
+  // or ejected while a session stays open, so re-stamp from the live status each poll.
+  try { if (document.getElementById('chat-stamp')) stampFor(undefined); } catch {}
   const prov = s.prov || {};
 
   // Feed live transitions (starting / online / failed / blocked).
@@ -2480,12 +2483,24 @@ function relTimeLong(iso){
   return Math.round(s/2592000) + ' months ago';
 }
 
+let _stampSessionModel = '';   // last session model handed to stampFor (see refresh())
 function stampFor(model){
+  if (model !== undefined) _stampSessionModel = model || '';
+  else model = _stampSessionModel;
+  // The argument is the SESSION's stored model — which is NOT what will answer the next
+  // turn once the runner has been switched. Showing it made a working model switch look
+  // broken (2026-08-06: header said Qwen while the runner argv proved gemma was loaded).
+  // The live runner is the truth; fall back to the stored value only when it's unknown.
+  const live = (lastStatus && lastStatus.components && lastStatus.components.runner
+                && lastStatus.components.runner.pin) || '';
+  const shown = live || model || 'default model';
+  // If a session was created under a different model, say so quietly rather than hide it.
+  const drift = (live && model && live !== model) ? (' · session: ' + model) : '';
   document.getElementById('chat-stamp').textContent =
-    (model || 'default model') + ' · VIA ODYSSEUS · PRIVATE';
+    shown + drift + ' · VIA ODYSSEUS · PRIVATE';
   // PHASE 1.5: mirror into the compact one-line chat header (`Chat · <model> · private`).
   const ci = document.getElementById('chat-compact-info');
-  if (ci) ci.textContent = (model || 'default model') + ' · private';
+  if (ci) ci.textContent = shown + ' · private';
 }
 
 async function initChat() {
@@ -2651,7 +2666,13 @@ async function selectHermesSession(storedId){
       }
       for (const m of (r.history || []).slice(-30)){
         if (m.role === 'user') addMsg('user', m.content || '');
-        else if (m.role === 'assistant') addMsg('assistant', m.content || '');
+        else if (m.role === 'assistant'){
+          const w = addMsg('assistant', m.content || '');
+          // Hermes's store keeps the reasoning, so a reopened turn can show its
+          // thinking again — collapsed, same disclosure the live stream builds.
+          // (The direct lane can't do this: it persists {role,content} only.)
+          if (m.reasoning) addRehydratedThinking(w, m.reasoning);
+        }
       }
       scrollChat(true);
     } else {
@@ -3399,6 +3420,25 @@ function addMsg(role, text) {
   else wrap.querySelector('.body').textContent = text;
   document.getElementById('chat-msgs').appendChild(wrap);
   return wrap;
+}
+
+function addRehydratedThinking(wrap, text){
+  // Reopened Hermes turns: insert the SAME collapsed `details.think` disclosure the
+  // live stream produces, above the answer body. Marked "restored" so it's honest that
+  // this came from the store rather than being streamed (elapsed time isn't recoverable).
+  try {
+    if (!wrap || !text) return;
+    const det = document.createElement('details');
+    det.className = 'think';
+    const sum = document.createElement('summary');
+    sum.textContent = 'thinking · restored';
+    det.appendChild(sum);
+    const p = document.createElement('div');
+    p.textContent = text;            // textContent: never render stored text as markup
+    det.appendChild(p);
+    const body = wrap.querySelector('.body');
+    wrap.insertBefore(det, body || null);
+  } catch {}                          // a transcript must never fail to render
 }
 
 function scrollChat(force){

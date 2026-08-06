@@ -79,6 +79,13 @@ bridge:
 build:
   python_version: "3.12.11"   # standalone CPython bundled into the fat app (must match wheel tags)
   python_tag: cp312           # wheel ABI tag for the wheelhouse download (--python-version)
+  # MLX runtime pins — SINGLE SOURCE OF TRUTH, read by scripts/install_mlx.sh (dev install),
+  # scripts/build_app.sh (fat wheelhouse download) and scripts/firstrun_fat.sh (offline provision).
+  # They MUST agree: if the wheelhouse bundles a version the installer doesn't ask for, an
+  # OFFLINE first-run fails ("no matching distribution"). Bump = edit here only, rebuild fat,
+  # then re-verify one MLX chat turn (and re-check the mlx wire-id path in bridge/app.py).
+  mlx_lm_pin: "0.31.3"
+  mlx_vlm_pin: "0.6.10"
 
 inference:
   # hermes_llm block removed 2026-07-20 (M1-B): Hermes + Odysseus now consume the `runner`

@@ -18,8 +18,12 @@ source "$MLXV/bin/activate"
 # Bump = edit here, reinstall, re-verify a chat turn + the MLX wire-id path
 # (a future mlx-lm that adds a served-model-name flag would let bridge/app.py's
 # wire_model_id() switch from path-based to alias-based identification).
-MLX_LM_PIN="${MLX_LM_PIN:-0.31.3}"
-MLX_VLM_PIN="${MLX_VLM_PIN:-0.6.10}"
+# Pins come from harness.yaml build.mlx_lm_pin / build.mlx_vlm_pin (single source of
+# truth shared with build_app.sh's wheelhouse + firstrun_fat.sh's offline install).
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+MLX_LM_PIN="${MLX_LM_PIN:-$(_yb mlx_lm_pin)}"
+MLX_VLM_PIN="${MLX_VLM_PIN:-$(_yb mlx_vlm_pin)}"
+[[ -n "$MLX_LM_PIN" && -n "$MLX_VLM_PIN" ]] || { echo "ERROR: build.mlx_lm_pin / build.mlx_vlm_pin missing from harness.yaml"; exit 1; }
 uv pip install "mlx-lm==${MLX_LM_PIN}" "mlx-vlm==${MLX_VLM_PIN}"
 deactivate
 

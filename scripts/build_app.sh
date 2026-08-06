@@ -191,8 +191,14 @@ if [[ $FAT -eq 1 ]]; then
     echo "[harness] WARN (fat): 'vendor/hermes[all]' download failed — retrying without the [all] extra.";
     "${DL[@]}" "vendor/hermes" || { echo "ERROR (fat): hermes deps download failed."; exit 1; }; }
 
-  # 4f. MLX runtime (Apple-silicon only; large — torch-free but mlx core is sizeable)
-  "${DL[@]}" mlx-lm mlx-vlm || { echo "ERROR (fat): mlx deps download failed."; exit 1; }
+  # 4f. MLX runtime (Apple-silicon only; large — torch-free but mlx core is sizeable).
+  # PINNED from harness.yaml build.mlx_*_pin — the SAME values install_mlx.sh and
+  # firstrun_fat.sh install. Unpinned here would bundle whatever is newest while the
+  # installers ask for the pinned version → OFFLINE first-run fails on a fresh Mac.
+  MLXLM="$(yaml_build mlx_lm_pin)"; MLXVLM="$(yaml_build mlx_vlm_pin)"
+  [[ -n "$MLXLM" && -n "$MLXVLM" ]] || { echo "ERROR (fat): build.mlx_lm_pin / build.mlx_vlm_pin missing in harness.yaml"; exit 1; }
+  echo "[harness] mlx pins: mlx-lm==$MLXLM  mlx-vlm==$MLXVLM"
+  "${DL[@]}" "mlx-lm==$MLXLM" "mlx-vlm==$MLXVLM" || { echo "ERROR (fat): mlx deps download failed."; exit 1; }
 
   echo "[harness] wheelhouse: $(ls "$WHEELS" | wc -l | tr -d ' ') files, $(du -sh "$WHEELS" | cut -f1)"
 

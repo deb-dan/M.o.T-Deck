@@ -130,9 +130,20 @@ EOF
 fi
 
 # ---------- 7. mlx runtime venv ----------
+# PINNED from harness.yaml build.mlx_*_pin — the same values build_app.sh bundled into
+# the wheelhouse. Asking for anything else here fails OFFLINE ("no matching distribution").
+# Empty pin ⇒ fall back to unpinned so a hand-edited yaml can't hard-block provisioning.
+_yb_mlx() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' "$DEST/harness.yaml" 2>/dev/null; }
+MLX_LM_PIN="$(_yb_mlx mlx_lm_pin)"; MLX_VLM_PIN="$(_yb_mlx mlx_vlm_pin)"
+if [[ -n "$MLX_LM_PIN" && -n "$MLX_VLM_PIN" ]]; then
+  MLX_PKGS=("mlx-lm==$MLX_LM_PIN" "mlx-vlm==$MLX_VLM_PIN")
+else
+  echo "[firstrun] WARN: build.mlx_*_pin missing from harness.yaml — installing mlx unpinned"
+  MLX_PKGS=(mlx-lm mlx-vlm)
+fi
 MLOG="$LOGDIR/firstrun_mlx.log"; : >"$MLOG"
 mkvenv data/mlx-venv mlx "$MLOG"
-pipi data/mlx-venv mlx "$MLOG" mlx-lm mlx-vlm
+pipi data/mlx-venv mlx "$MLOG" "${MLX_PKGS[@]}"
 
 # ---------- 8. llama-server (already bundled in the seed) ----------
 LS="$DEST/data/llamacpp/build/bin/llama-server"

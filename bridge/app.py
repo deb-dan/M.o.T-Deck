@@ -2904,11 +2904,16 @@ def hermes_messages_to_panel(messages):
 
     Gateway rows (server.py:6645 _history_to_messages): user/assistant carry
     {role, text, reasoning*…}; tool rows are {role:'tool', name, context};
-    system rows possible. Per the Phase-3 design the transcript renders
-    PLAINLY: only user/assistant rows with visible text survive — tool rows
-    and reasoning-only assistant turns are DROPPED (thinking/tool detail is
-    not reconstructed on reopen). ⚠ PENDING FABLE QA: dropping vs. rendering
-    a faint tool/thinking placeholder line."""
+    system rows possible. Only user/assistant rows survive — tool rows are
+    dropped (tool detail isn't reconstructible on reopen).
+
+    THINKING REHYDRATION (2026-08-06): unlike the direct lane — which persists
+    {role, content} to Odysseus and therefore has NOTHING stored to restore —
+    Hermes's own store DOES keep the reasoning text, so a reopened session can
+    show its thinking again. Any `reasoning`-ish key is carried through as
+    `reasoning`; the panel renders it as the same collapsed disclosure the live
+    stream produces. A reasoning-ONLY turn (no visible answer) is still dropped:
+    with no answer text there is nothing to attach the disclosure to."""
     out = []
     if not isinstance(messages, list):
         return out
@@ -2921,7 +2926,16 @@ def hermes_messages_to_panel(messages):
         txt = m.get("text")
         if not isinstance(txt, str) or not txt.strip():
             continue
-        out.append({"role": role, "content": txt})
+        row = {"role": role, "content": txt}
+        if role == "assistant":
+            # Upstream has used a few names for this field across tags; accept any,
+            # first non-empty wins. Never let a surprise type break the transcript.
+            for k in ("reasoning", "reasoning_content", "thinking", "reasoning_text"):
+                rv = m.get(k)
+                if isinstance(rv, str) and rv.strip():
+                    row["reasoning"] = rv
+                    break
+        out.append(row)
     return out
 
 
