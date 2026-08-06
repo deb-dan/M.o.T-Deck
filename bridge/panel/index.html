@@ -2796,23 +2796,36 @@ function acceptImageFile(file){
     attachNote('image too large (max 8 MB)'); return; }
   const fr = new FileReader();
   fr.onerror = () => { attachedImage = null; attachNote('could not read that image'); };
-  fr.onload = () => {
-    attachedImage = {data: String(fr.result || ''), name: file.name};
-    const strip = document.getElementById('chat-attachstrip');
-    strip.innerHTML = '';
-    const img = document.createElement('img');
-    img.src = attachedImage.data; img.alt = '';
-    const nm = document.createElement('span');
-    nm.className = 'afile'; nm.textContent = attachedImage.name;   // textContent: never markup
-    const x = document.createElement('button');
-    x.className = 'aclear'; x.textContent = '✕';
-    x.title = 'Remove this image'; x.setAttribute('aria-label', 'Remove this image');
-    x.onclick = clearImage;
-    strip.appendChild(img); strip.appendChild(nm); strip.appendChild(x);
-    strip.hidden = false;
-  };
+  fr.onload = () => showAttachedImage(String(fr.result || ''), file.name);
   fr.readAsDataURL(file);
 }
+
+/* set + render the one attached image (shared by picker, drop, paste, native drop) */
+function showAttachedImage(dataUrl, name){
+  attachedImage = {data: dataUrl, name: name};
+  const strip = document.getElementById('chat-attachstrip');
+  strip.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = attachedImage.data; img.alt = '';
+  const nm = document.createElement('span');
+  nm.className = 'afile'; nm.textContent = attachedImage.name;   // textContent: never markup
+  const x = document.createElement('button');
+  x.className = 'aclear'; x.textContent = '✕';
+  x.title = 'Remove this image'; x.setAttribute('aria-label', 'Remove this image');
+  x.onclick = clearImage;
+  strip.appendChild(img); strip.appendChild(nm); strip.appendChild(x);
+  strip.hidden = false;
+}
+
+/* native-app drop path: the Swift shell (DropWebView) catches Finder drags that
+   WKWebView never forwards to the DOM, reads the file, and calls this directly. */
+window.harnessNativeDrop = function(name, dataUrl){
+  if (!liveVision){ attachNote("this model can't see images"); return; }
+  if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+  const b64 = String(dataUrl || '').split(',')[1] || '';
+  if (b64.length * 0.75 > 8 * 1024 * 1024){ attachNote('image too large (max 8 MB)'); return; }
+  showAttachedImage(dataUrl, name || 'image');
+};
 
 /* ---------- drag-and-drop an image onto the Chat view ----------
    WKWebView footgun: an unhandled file drop NAVIGATES the panel to the file —
@@ -2824,14 +2837,24 @@ document.addEventListener('drop',     (e) => e.preventDefault());
   const zone = document.getElementById('view-chat');
   const bar  = document.getElementById('chat-bar');
   if (!zone || !bar) return;
-  const hasFile = (e) => Array.from((e.dataTransfer && e.dataTransfer.items) || [])
-                              .some(i => i.kind === 'file');
-  zone.addEventListener('dragover', (e) => {
+  // During a drag-HOVER WebKit may expose only dataTransfer.types ("Files"), not the
+  // items/files themselves — checking items alone made the whole app a dead drop target.
+  const hasFile = (e) => {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    if (Array.from(dt.types || []).includes('Files')) return true;
+    return Array.from(dt.items || []).some(i => i.kind === 'file');
+  };
+  const over = (e) => {
     if (!hasFile(e)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = (liveVision && chatMode === 'chat') ? 'copy' : 'none';
+    // always accept the hover ('copy') so the drop event actually fires; the drop
+    // handler does the real gating and explains instead of silently refusing.
+    e.dataTransfer.dropEffect = 'copy';
     bar.classList.add('dropping');
-  });
+  };
+  zone.addEventListener('dragenter', over);
+  zone.addEventListener('dragover', over);
   zone.addEventListener('dragleave', (e) => {
     if (!zone.contains(e.relatedTarget)) bar.classList.remove('dropping');
   });
@@ -2844,6 +2867,18 @@ document.addEventListener('drop',     (e) => e.preventDefault());
     if (!liveVision){ attachNote("this model can't see images"); return; }
     if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
     acceptImageFile(file);
+  });
+  // ⌘V an image (e.g. a screenshot) straight into the composer — same gate as drop.
+  const inp = document.getElementById('chat-input');
+  if (inp) inp.addEventListener('paste', (e) => {
+    const item = Array.from((e.clipboardData && e.clipboardData.items) || [])
+                      .find(i => i.kind === 'file' && (i.type || '').startsWith('image/'));
+    if (!item) return;                       // plain text pastes stay untouched
+    e.preventDefault();
+    if (!liveVision){ attachNote("this model can't see images"); return; }
+    if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    const f = item.getAsFile();
+    if (f) acceptImageFile(f);
   });
 })();
 

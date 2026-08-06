@@ -12,6 +12,65 @@ let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 let hermesURL = URL(string: "http://127.0.0.1:9119")!
 
+// Mission Control's webview: WKWebView does not forward Finder file-drags to the DOM
+// (page handlers never fire — verified: same page accepts drops in a real browser).
+// So the SHELL is the drop target: catch the drag natively, read the image, and hand
+// it to the page's `harnessNativeDrop(name, dataURL)` hook. The page does the real
+// gating (vision model, Chat mode, size) and shows its own notes.
+final class DropWebView: WKWebView {
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        registerForDraggedTypes([.fileURL])
+    }
+    required init?(coder: NSCoder) { return nil }
+
+    private func draggedFile(_ sender: NSDraggingInfo) -> URL? {
+        let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: opts) as? [URL]
+        return urls?.first
+    }
+    private func cue(_ on: Bool) {
+        let js = "var b=document.getElementById('chat-bar'); if(b) b.classList." + (on ? "add" : "remove") + "('dropping');"
+        evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard draggedFile(sender) != nil else { return super.draggingEntered(sender) }
+        cue(true)
+        return .copy
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return draggedFile(sender) != nil ? .copy : super.draggingUpdated(sender)
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        cue(false)
+        super.draggingExited(sender)
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        cue(false)
+        guard let url = draggedFile(sender) else { return super.performDragOperation(sender) }
+        let mimes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"]
+        let note = { (msg: String) in
+            self.evaluateJavaScript("typeof attachNote==='function'&&attachNote('\(msg)');", completionHandler: nil)
+        }
+        guard let mime = mimes[url.pathExtension.lowercased()] else {
+            note("only png / jpeg / webp images"); return true
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            note("could not read that image"); return true
+        }
+        guard data.count <= 8 * 1024 * 1024 else {
+            note("image too large (max 8 MB)"); return true
+        }
+        let name = url.lastPathComponent
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let js = "window.harnessNativeDrop && harnessNativeDrop(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
+        evaluateJavaScript(js, completionHandler: nil)
+        return true
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var panelWV: WKWebView!      // Mission Control (:8700)
@@ -65,7 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         tabBar.addSubview(seg)
 
         // ── web views ──
-        panelWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        // DropWebView: native drag-destination so Finder image drops reach the chat.
+        panelWV = DropWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
         // "Harness skin" for Odysseus: override its base --font-family (unset → falls back to
         // Fira Code monospace everywhere) with a refined sans for prose/UI. Code blocks use an
@@ -422,6 +482,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url { NSWorkspace.shared.open(url) }
         return nil
+    }
+
+    // <input type="file"> — WKWebView shows NO file dialog unless the app provides one.
+    // Without this, the panel's ⊕ image-attach button silently does nothing.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.begin { resp in
+            completionHandler(resp == .OK ? panel.urls : nil)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
