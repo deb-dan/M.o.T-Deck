@@ -1,5 +1,13 @@
 # 07 — Salvage report: harness v1 ("Harness project" folder)
 
+## ⟳ STATE UPDATE — 2026-08-07
+
+Frozen archaeology — still accurate as history, and its post-mortem lesson ("the project-killer was
+provisioning UX, not architecture") was borne out: one-switch provisioning and the fat offline
+installer are both shipped. Current state → `CLAUDE.md`; system reference → `docs/HARNESS-INTERNALS.md`.
+---
+
+
 *Part of the Harness doc set. Index: [00_START_HERE.md](00_START_HERE.md). Reviewed 2026-07-20 under quarantine rules: read-only, evaluated against the locked decisions, nothing merged silently.*
 
 ---

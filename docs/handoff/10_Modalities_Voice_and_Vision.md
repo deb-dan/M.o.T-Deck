@@ -1,5 +1,29 @@
 # 10 — Modalities: Voice (Voicebox) and Vision/Image-Video (ComfyUI)
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+Both verdicts held; the sequencing gate is now clear. Live plan: `CLAUDE.md`; system reference:
+`docs/HARNESS-INTERNALS.md`.
+
+- **The model-memory ledger this doc gated everything on is BUILT** — `memory.budget_gb: 48` of 64,
+  footprint approximated by weight-file size across the main + aux slots, enforced with HTTP 409 on
+  model switch and aux start, surfaced as `· RAM x / y GB` in the Models pane.
+- **Vision is DONE for the harness's own chat** (ahead of this doc's schedule, and via a different
+  route than ComfyUI): vision-capable GGUF/MLX models are flagged in the registry, the composer
+  offers ⊕ attach / ⌘V paste / native drag-and-drop in the direct Chat lane, images ride as OpenAI
+  `image_url` parts, and attachments persist in a `data/attachments.db` sidecar so thumbnails
+  rehydrate on session reopen. That is **image *input***; ComfyUI-style image/video *generation*
+  remains unbuilt.
+- **Voice is NEXT and now specced:** `docs/handoff/FABLE-VOICE-TABS-SPEC.md` — **VoiceStudio** and
+  **Voicebox** each as a pinned submodule + Bridge-managed component + native tab, with MCP
+  registration reusing the existing browsermcp helper pattern. The "adopt Voicebox" call below
+  stands; the delivery shape is now tabs, not just an MCP.
+- **ComfyUI: unchanged — much later / maybe**, headless behind a Fable-designed surface. Its hard
+  gate has moved from "no ledger" to "no *scheduler*": we can now account for RAM, but not yet
+  park/restore resident models on demand.
+
+---
+
 **Written:** 2026-07-21 (Claude Opus 4.8, from Debi's direction). **Status:** decision + direction, captured from discussion. **Not on any milestone yet** — these are future optional components, sequenced *after* the core handshake is green. No code changed. Personal-first framing applies (00/01).
 
 **One-line summary:** **Voicebox → adopt** (light, near-perfect fit, completes the voice loop). **ComfyUI → much later / maybe** (right engine for image+video, but heaviest component in the plan; run it **headless under the hood behind a new UI**; gated on model-memory scheduling). Both are **optional, off-by-default managed components** in the compose model — adding them costs the core nothing.

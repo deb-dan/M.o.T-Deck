@@ -1,5 +1,25 @@
 # 03 — Licensing
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+Licensing posture is unchanged and still correct; only the component list moved. Living
+references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`.
+
+- **Jan (Apache-2.0) is no longer part of the harness at all** — removed July 2026. Its licensing
+  analysis below is now moot. In its place we run **llama.cpp** (MIT, pinned binary release) and
+  **Apple MLX / mlx-lm / mlx-vlm** (MIT, pip-pinned in our own venv) — both permissive, both used
+  as separate processes, neither forked.
+- **Still AGPL: SearXNG only**, still run as an unmodified separate process, still zero obligation
+  for personal use.
+- Hermes (MIT) and Odysseus (MIT) remain pinned submodules; the never-edit-`vendor/` rule is
+  enforced in practice — our Hermes path-guard ships as an **external plugin** seeded into
+  `~/.hermes/plugins/`, not as a vendor patch.
+- Distribution note: a fat, offline `.dmg` installer now exists and bundles wheels plus the pinned
+  `llama-server` binary. It is **ad-hoc codesigned, not notarized**, and is used personally. If
+  distribution is ever contemplated, redo this analysis for the bundled binaries first.
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture these rules protect: [02_Architecture.md](02_Architecture.md).*
 
 **Framing note:** this is engineering-grade license reasoning, not legal advice. For personal use it's more than sufficient; if you ever actually ship commercially, spend an hour with a lawyer then.

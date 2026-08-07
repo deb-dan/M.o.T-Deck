@@ -257,6 +257,173 @@ PYRESOLVE
       echo "ERROR: searxng did not answer on :8080 in ~15s:"; tail -10 "$ROOT/data/logs/searxng.log"; exit 1
     fi
     ;;
+  voicestudio)
+    # OPTIONAL voice component (AGPL-3.0-only). One FastAPI process serves the API and
+    # the built SPA on the SAME port; it binds 127.0.0.1 by default and ships NO auth.
+    [[ -d data/voicestudio-venv ]] || { echo "ERROR: voicestudio venv missing — click Install first"; exit 1; }
+    [[ -f vendor/voicestudio/backend/main.py ]] || { echo "ERROR: vendor/voicestudio missing — click Install first"; exit 1; }
+    ROOT="$(pwd)"
+    VSPY="$ROOT/data/voicestudio-venv/bin/python"
+    [[ -x "$VSPY" ]] || { echo "ERROR: $VSPY not executable — reinstall voicestudio"; exit 1; }
+    VS_PORT=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    [[ "$VS_PORT" =~ ^[0-9]+$ ]] || VS_PORT=3900
+    # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
+    # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
+    lsof -ti tcp:"$VS_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
+    # uvicorn is the documented entrypoint; fall back to the module's own __main__
+    # if this build's deps somehow lack the uvicorn CLI module.
+    if "$VSPY" -c 'import uvicorn' >/dev/null 2>&1; then
+      VS_CMD=(-m uvicorn backend.main:app --host 127.0.0.1 --port "$VS_PORT")
+    else
+      VS_CMD=(backend/main.py)
+    fi
+    # ── environment ─────────────────────────────────────────────────────────
+    # OMNIVOICE_API_URL: the in-process MCP tools call BACK into this same backend
+    # over HTTP and default to http://localhost:3900 — pin it to the port we actually
+    # bound, or a non-default port silently breaks every MCP tool call.
+    VS_ENV=(OMNIVOICE_BIND_HOST=127.0.0.1 OMNIVOICE_PORT="$VS_PORT"
+            OMNIVOICE_API_URL="http://127.0.0.1:${VS_PORT}")
+    # ffmpeg: whisperx/demucs shell out to it by NAME. If the install provisioned one
+    # into our own tree (scripts/ensure_ffmpeg.sh — no Homebrew), put that dir on the
+    # child's PATH. Only when the system has none, so a user's own ffmpeg still wins.
+    if [[ -x "$ROOT/data/ffmpeg/bin/ffmpeg" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
+      VS_ENV+=(PATH="$ROOT/data/ffmpeg/bin:$PATH")
+      echo "[harness] voicestudio ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (harness-provisioned)"
+    fi
+    # Optional LLM (Cinematic translate / glossary extraction / dictation refinement)
+    # is OpenAI-compatible. Point it at OUR runner, the same way seed_odysseus_jan.py
+    # seeds Odysseus. VoiceStudio's provider registry resolves env FIRST, and the
+    # TRANSLATE_* trio is the "custom (OpenAI-compatible)" provider's env triplet
+    # (services/llm_providers.py @v0.4.2). We deliberately do NOT set
+    # LLM_DEFAULT_PROVIDER: a lone TRANSLATE_BASE_URL only makes our runner the
+    # DEFAULT, while an explicit provider chosen in VoiceStudio's own Settings still
+    # wins.  ⚠️ PENDING FABLE QA.
+    VS_BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
+    VS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    VS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$VS_MODEL" == \#* ]] && VS_MODEL=""
+    # Same WIRE identifier rule as the hermes branch (MLX servers need the PATH).
+    if [[ -n "$VS_MODEL" ]]; then
+      VS_MODEL=$(MODEL="$VS_MODEL" python3 - <<'PYWIRE'
+import json, os
+mid = os.environ["MODEL"]
+try:
+    models = json.load(open("data/models.json")).get("models", [])
+except Exception:
+    models = []
+m = next((x for x in models if x.get("id") == mid), None)
+if m and str(m.get("format") or "gguf").strip().lower() == "mlx":
+    print((m.get("path") or "").strip() or mid)
+else:
+    print(mid)
+PYWIRE
+)
+    fi
+    # Best-effort ONLY — an unresolvable model must never block the voice component
+    # (core TTS/ASR needs no LLM at all, and voicestudio has no depends_on).
+    if [[ -n "$VS_BASE_URL" && -n "$VS_MODEL" ]]; then
+      VS_ENV+=(TRANSLATE_BASE_URL="$VS_BASE_URL" TRANSLATE_MODEL="$VS_MODEL")
+      [[ -n "$VS_KEY" ]] && VS_ENV+=(TRANSLATE_API_KEY="$VS_KEY")
+      echo "[harness] voicestudio LLM → ${VS_BASE_URL} (${VS_MODEL})"
+    else
+      echo "[harness] voicestudio: no runner model in harness.yaml — leaving its LLM"
+      echo "[harness]  unset (TTS/ASR are unaffected; set a provider in its Settings"
+      echo "[harness]  or start the Runner and restart voicestudio)"
+    fi
+    # cd applies to the whole subshell (backend.main:app resolves from the repo root);
+    # pid + log use ABSOLUTE paths so they can never land outside the project.
+    (
+      cd vendor/voicestudio
+      nohup env "${VS_ENV[@]}" \
+        "$VSPY" "${VS_CMD[@]}" >>"$ROOT/data/logs/voicestudio.log" 2>&1 &
+      echo $! > "$ROOT/data/voicestudio.pid"
+    )
+    up=0
+    # GENEROUS wait: the first boot can pull/load speech models before /health answers.
+    TRIES=150
+    for i in $(seq 1 "$TRIES"); do
+      if curl -sf -m 2 "http://127.0.0.1:${VS_PORT}/health" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/voicestudio.pid")" 2>/dev/null || {
+        echo "ERROR: voicestudio exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/voicestudio.log"
+        echo "[harness] (this backend exits with code 78 when :$VS_PORT is already in use)"
+        exit 1; }
+      if (( i % 15 == 0 )); then echo "[harness] voicestudio still starting… (~$((i * 2))s; first boot loads models)"; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] voicestudio up on http://127.0.0.1:${VS_PORT} (API + UI, loopback only, NO auth)"
+    else
+      echo "ERROR: voicestudio did not answer /health on :${VS_PORT} in ~5min:"
+      tail -20 "$ROOT/data/logs/voicestudio.log"
+      exit 1
+    fi
+    ;;
+  voicebox)
+    # OPTIONAL voice component #2 (MIT). One FastAPI process serves the JSON API, the
+    # in-process MCP server at /mcp and (when built) the SPA — all on the SAME port.
+    # It ships NO AUTHENTICATION, so the bind host is pinned to 127.0.0.1.
+    [[ -d data/voicebox-venv ]] || { echo "ERROR: voicebox venv missing — click Install first"; exit 1; }
+    [[ -f vendor/voicebox/backend/main.py ]] || { echo "ERROR: vendor/voicebox missing — click Install first"; exit 1; }
+    ROOT="$(pwd)"
+    VBPY="$ROOT/data/voicebox-venv/bin/python"
+    [[ -x "$VBPY" ]] || { echo "ERROR: $VBPY not executable — reinstall voicebox"; exit 1; }
+    VB_PORT=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    [[ "$VB_PORT" =~ ^[0-9]+$ ]] || VB_PORT=17493
+    # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
+    # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
+    lsof -ti tcp:"$VB_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
+    # `python -m backend.main` (NOT plain uvicorn): that entry point calls
+    # config.set_data_dir() + database.init_db() before serving.
+    # ⚠️ ITS ARGPARSE DEFAULTS TO PORT 8000 — --port must ALWAYS be passed explicitly.
+    # --data-dir is likewise mandatory for us: the default is Path("data") resolved
+    # against the CWD, which would write the DB + generated audio INTO vendor/voicebox.
+    # (There is no VOICEBOX_DATA_DIR env var at this pin; the flag is the only lever.)
+    # The HuggingFace cache is left at its default so voice models are shared with the
+    # rest of the machine (VOICEBOX_MODELS_DIR would fork it into a second copy).
+    mkdir -p "$ROOT/data/voicebox"
+    # ffmpeg: the backend shells out to it by NAME (transcription / conversion). If the
+    # install provisioned one into our own tree (scripts/ensure_ffmpeg.sh — no Homebrew,
+    # a static binary out of the imageio-ffmpeg wheel), put that dir on the child's
+    # PATH. Only when the system has none, so a user's own ffmpeg still wins.
+    # (There is no ffmpeg-path env var in voicebox at this pin — PATH is the only lever.)
+    if [[ -x "$ROOT/data/ffmpeg/bin/ffmpeg" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
+      export PATH="$ROOT/data/ffmpeg/bin:$PATH"
+      echo "[harness] voicebox ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (harness-provisioned)"
+    fi
+    VB_CMD=(-m backend.main --host 127.0.0.1 --port "$VB_PORT" --data-dir "$ROOT/data/voicebox")
+    # cd applies to the whole subshell (the backend package resolves from the repo
+    # root); pid + log use ABSOLUTE paths so they can never land outside the project.
+    (
+      cd vendor/voicebox
+      nohup "$VBPY" "${VB_CMD[@]}" >>"$ROOT/data/logs/voicebox.log" 2>&1 &
+      echo $! > "$ROOT/data/voicebox.pid"
+    )
+    up=0
+    # GENEROUS wait: importing torch/transformers alone takes tens of seconds, and the
+    # first boot may pull speech models before /health answers.
+    TRIES=150
+    for i in $(seq 1 "$TRIES"); do
+      if curl -sf -m 2 "http://127.0.0.1:${VB_PORT}/health" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/voicebox.pid")" 2>/dev/null || {
+        echo "ERROR: voicebox exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/voicebox.log"
+        echo "[harness] (a missing/broken ML dependency shows up here — voicebox's"
+        echo "[harness]  dependency graph is known-fragile; reinstall is online-only)"
+        exit 1; }
+      if (( i % 15 == 0 )); then echo "[harness] voicebox still starting… (~$((i * 2))s; first boot loads models)"; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] voicebox up on http://127.0.0.1:${VB_PORT} (API + /mcp, loopback only, NO auth)"
+    else
+      echo "ERROR: voicebox did not answer /health on :${VB_PORT} in ~5min:"
+      tail -20 "$ROOT/data/logs/voicebox.log"
+      exit 1
+    fi
+    ;;
   hermes)
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
@@ -493,5 +660,5 @@ PYGUARD
       exit 1
     fi
     ;;
-  *) echo "usage: $0 hermes|odysseus"; exit 1 ;;
+  *) echo "usage: $0 runner|hermes|odysseus|searxng|voicestudio|voicebox"; exit 1 ;;
 esac

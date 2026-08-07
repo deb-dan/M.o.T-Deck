@@ -1368,6 +1368,7 @@ const LOG_SOURCES = [
   {n:'bridge', label:'bridge'}, {n:'hermes', label:'hermes'},
   {n:'odysseus', label:'odysseus'}, {n:'searxng', label:'searxng'},
   {n:'runner', label:'runner'}, {n:'guard', label:'path-guard'},
+  {n:'voicestudio', label:'voice'}, {n:'voicebox', label:'voicebox'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -1818,6 +1819,10 @@ function setMode(m) {
    Dumb panel over /api/ody/caps (+ /api/ody/caps/set). Optimistic writes; revert
    + inline error on failure. Editorial tokens only. */
 let capsSnap = null;
+// Voice components' MCP registration state (/api/voice/status). Independent of
+// Odysseus: the toggle also writes Hermes's config, so these rows stay useful (and
+// rendered) even when Odysseus is down.
+let voiceSnap = null;
 
 async function initCaps() {
   const stamp = document.getElementById('caps-stamp');
@@ -1828,10 +1833,18 @@ async function initCaps() {
     const e = document.getElementById('caps-sec-' + s); if (e) e.innerHTML = '';
   });
   try {
+    const rv = await fetch('/api/voice/status');
+    voiceSnap = await rv.json();
+  } catch (e) { voiceSnap = null; }
+  try {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
   } catch (e) {
     stamp.textContent = 'Odysseus unreachable — start it in Mission Control';
+    // The voice rows also write Hermes's config, so keep them usable on this path.
+    const t = document.getElementById('caps-sec-tools');
+    if (t) t.innerHTML = renderVoiceMcp();
+    applyCapsSection();
     return;
   }
   const errs = capsSnap.errors || {};
@@ -1931,7 +1944,7 @@ function renderCaps() {
   // output into its section container instead of one long scroll.
   const setSec = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
   setSec('caps-sec-general', generalHtml);
-  setSec('caps-sec-tools', renderBuiltinTools() + renderMcpServers());
+  setSec('caps-sec-tools', renderBuiltinTools() + renderMcpServers() + renderVoiceMcp());
   setSec('caps-sec-skills', renderSkills());
   setSec('caps-sec-models', renderModelsCaps());
   applyCapsSection();
@@ -2272,6 +2285,75 @@ function renderMcpServers() {
   return `<div class="caps-group"><span class="cap-h">Connected tools (MCP)</span>
     <div class="cap-desc" style="margin:-4px 0 10px">External tool servers. Toggle a whole server, expand to fine-tune its tools, or add/remove servers.</div>
     <div class="cap-card">${rows}${addRow}</div></div>`;
+}
+
+/* ---------- Phase 3: voice components' own MCP servers ----------
+   One switch per optional voice component. Enabling registers its in-process MCP
+   endpoint with BOTH Hermes and Odysseus (bridge /api/voice/toggle) — the same
+   grammar as the Browse chip, rendered as a row in this section. Once registered the
+   server ALSO appears in "Connected tools (MCP)" above (it is a real Odysseus MCP
+   server); this group is the harness-managed one-click for it. No new CSS. */
+function renderVoiceMcp() {
+  const comps = (voiceSnap && voiceSnap.components) || null;
+  if (!comps) return '';
+  const rows = Object.keys(comps).map(k => {
+    const c = comps[k] || {};
+    const on = !!c.on;
+    const ready = !!c.installed && !!c.running;
+    // Per-host pills: registration is two independent writes, so never collapse
+    // them into one lying state (Odysseus can be down while Hermes is written).
+    const hp = `<span class="cap-pill ${c.hermes ? 'on' : 'off'}">hermes ${c.hermes ? '✓' : '—'}</span>`;
+    const op = c.odysseus_known
+      ? `<span class="cap-pill ${c.odysseus ? 'on' : 'off'}">odysseus ${c.odysseus ? '✓' : '—'}</span>`
+      : '<span class="cap-pill off">odysseus ?</span>';
+    const cp = c.connected ? '<span class="cap-pill on">connected</span>' : '';
+    const tc = `<span class="cap-count">${(c.tools || []).length} tools</span>`;
+    const state = !c.installed ? 'not installed'
+                : !c.running ? `installed · stopped (:${esc(String(c.port || ''))})`
+                : `running on :${esc(String(c.port || ''))}`;
+    const desc = `${state} · ${esc(c.url || '')}<br>${esc((c.tools || []).join(', '))}`
+               + (c.note ? `<br>${esc(c.note)}` : '');
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(c.label || k)}${hp}${op}${cp}${tc}</div>
+        <div class="cap-desc">${desc}</div>
+        <div class="cap-err" id="voice-${escAttr(k)}-err" hidden></div></div>
+      <div class="cap-ctl"><label class="cap-sw">
+        <input type="checkbox" ${on ? 'checked' : ''} ${(!ready && !on) ? 'disabled' : ''}
+          onchange="toggleVoiceMcp('${escAttr(k)}', this.checked, this)">
+        <span class="track"></span><span class="knob"></span></label></div></div>`;
+  }).join('');
+  return `<div class="caps-group" id="caps-voice"><span class="cap-h">Voice tools (MCP)</span>
+    <div class="cap-desc" style="margin:-4px 0 10px">Optional voice components. Enabling registers the component's own MCP server with BOTH Hermes and Odysseus, so agents can speak, clone a voice and transcribe. Hermes picks it up on new chats. A component must be installed and running before it can be enabled.</div>
+    <div class="cap-card">${rows}</div></div>`;
+}
+
+async function refreshVoiceMcp() {
+  try {
+    const r = await fetch('/api/voice/status');
+    voiceSnap = await r.json();
+  } catch (e) { return; }
+  const host = document.getElementById('caps-voice');
+  if (host) host.outerHTML = renderVoiceMcp();
+}
+
+async function toggleVoiceMcp(name, on, el) {
+  const errEl = document.getElementById('voice-' + name + '-err');
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  if (el) el.disabled = true;
+  try {
+    const r = await fetch('/api/voice/toggle', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, on})});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    await refreshVoiceMcp();
+    if (j.partial) {
+      const e2 = document.getElementById('voice-' + name + '-err');
+      if (e2) { e2.textContent = 'only one host was updated — ' + (j.log || ''); e2.hidden = false; }
+    }
+  } catch (e) {
+    if (el) el.checked = !on;
+    if (errEl) { errEl.textContent = (on ? 'Enable' : 'Disable') + ' failed: ' + (e.message || e); errEl.hidden = false; }
+  } finally { if (el) el.disabled = false; }
 }
 
 function toggleMcpAdd(btn) {

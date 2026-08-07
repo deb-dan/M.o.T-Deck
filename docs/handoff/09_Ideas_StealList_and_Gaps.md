@@ -1,5 +1,24 @@
 # 09 — Ideas, Steal-List, and Genuine Gaps (research digest)
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+Fable ranked this list on 2026-07-23; most of the top of it is now built. Live plan: `CLAUDE.md`.
+
+- **Built:** thought-thread telemetry UX (statusline + INSPECT log) · cost/token/speed analytics
+  tiles · KV/slot pinning (solved by owning the runner argv) · the **OS-level path-guard fence**
+  (shipped as a Hermes `pre_tool_call` plugin that escalates into our approval card, plus a
+  `data/logs/guard.log` audit tier and a Logs-pane reader) · artifacts/canvas · per-message actions.
+- **Still open from this list:** the **fact-check ✓ badge** (trust surface — Fable-gated) ·
+  tiered-memory auto-promotion · session-graph/time-travel · schema-generated settings form ·
+  file-based agent mailboxes. All remain parked with their original triggers.
+- **Still true and still enforced:** doc 09 §0's correction — the **gearbox is SHELVED** and the
+  harness is local-only — plus every 🔴 CONFLICTS tag (no Docker, no WASM, no LanceDB, no React
+  rewrite of the panel).
+- **Next from the modality side:** voice (`docs/handoff/FABLE-VOICE-TABS-SPEC.md`), not more
+  breadth in this list.
+
+---
+
 **Written:** 2026-07-21 (by Claude Opus 4.8, at Debi's request). **Status:** reference only — no code changed, no docs resynced, nothing on any milestone. This captures a research pass over other "agent OS / harness" projects + a Gemini analysis, **cross-checked against this project's own plans (00–08 + `harness/CLAUDE.md` + `policies/routing.yaml`)** so a fresh chat can tell *new* ideas from things already decided/planned/shelved.
 
 **How to read this:** every idea is tagged:

@@ -1,5 +1,34 @@
 # 05 — Reference & Learnings
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+Still a useful fact-file for the upstream projects, but the operational learnings have moved.
+Canonical ops reference: `docs/HARNESS-INTERNALS.md` §12 (gotchas) and §13 (install footprint);
+dated history in `CLAUDE.md`.
+
+Facts that changed:
+- **Jan is gone** (July 2026) — every Jan CLI/endpoint learning below is historical. LM Studio is
+  now only a **read-only model-import source** (`~/.lmstudio/models` scanned into our registry).
+- **Our runner:** `llama-server` (llama.cpp pin `b10295`, always launched with
+  `--alias <registry id>`) or `mlx_lm.server`/`mlx_vlm.server`, on :6767.
+
+Ops gotchas learned the hard way since (the expensive ones):
+1. **The fat app serves a provisioned snapshot**, not the repo — a `--fat` rebuild never refreshes
+   an existing snapshot. Ship only via `./scripts/ship.sh`.
+2. **The bridge outlives the app.** Quitting the app does not restart the bridge; a pre-existing
+   :8700 listener is adopted and serves stale code forever. Kill the listener by port.
+3. **Every `lsof -ti tcp:` kill MUST carry `-sTCP:LISTEN`** — without it the pattern matches client
+   sockets and once SIGTERMed the bridge itself.
+4. **WKWebView never delivers DOM drag events** — file drag-and-drop needs a native `DropOverlay`
+   forwarding into the page; and without a `runOpenPanelWith` WKUIDelegate method a file `<input>`
+   silently no-ops.
+5. **Hermes's default `approvals.mode` is `smart`, not manual** — a guardian LLM can auto-approve
+   before the approval card path. Set `manual` in Hermes Config → Security.
+6. Kill the bridge by port (`lsof -ti tcp:8700`), not by name (it shows as `python3.1`);
+   `pkill -x Harness` before relaunching, and remember macOS relaunches the `/Applications` copy.
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). This is the fact-file: everything established across the research threads, consolidated so nothing has to be re-discovered.*
 
 ---

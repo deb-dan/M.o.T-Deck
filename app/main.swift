@@ -1,6 +1,9 @@
 // Harness.app — native macOS shell. One window, tabbed:
 //   • Mission Control (the Bridge control panel, :8700)
 //   • Odysseus (the workspace UI, :7860)
+//   • Hermes (the agent dashboard, :9119)
+//   • VoiceStudio (voice component SPA, :3900)   — optional, often not running
+//   • Voicebox (voice component SPA, :17493)     — optional, often not running
 // Each tab is its own top-level WKWebView load — sidesteps Odysseus's X-Frame-Options/
 // frame-ancestors (which block iframing) entirely. Auto-starts the bridge on launch.
 // Built by scripts/build_app.sh (which generates Config.swift with harnessRoot).
@@ -11,6 +14,8 @@ import WebKit
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 let odysseusURL = URL(string: "http://127.0.0.1:7860")!
 let hermesURL = URL(string: "http://127.0.0.1:9119")!
+let voiceStudioURL = URL(string: "http://127.0.0.1:3900")!
+let voiceboxURL = URL(string: "http://127.0.0.1:17493")!
 
 // PROVEN by /tmp/harness-drag.log: macOS never delivers drag events to the WKWebView
 // at all (registrations correct, draggingEntered never called). So a transparent
@@ -156,6 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var odyLoaded = false
     var hermesWV: WKWebView!     // Hermes dashboard (:9119), lazy-loaded on first select
     var hermesLoaded = false
+    var vsWV: WKWebView!         // VoiceStudio (:3900), lazy-loaded on first select
+    var vsLoaded = false
+    var vbWV: WKWebView!         // Voicebox (:17493), lazy-loaded on first select
+    var vbLoaded = false
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
@@ -194,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         container.addSubview(tabBar)
 
         let seg = NSSegmentedControl(
-            labels: ["Mission Control", "Odysseus", "Hermes"],
+            labels: ["Mission Control", "Odysseus", "Hermes", "VoiceStudio", "Voicebox"],
             trackingMode: .selectOne,
             target: self, action: #selector(tabChanged(_:)))
         seg.selectedSegment = 0
@@ -218,7 +227,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Hermes runs its own polished dark UI — no skin injection (unlike Odysseus).
         hermesWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
-        for wv in [panelWV!, odyWV!, hermesWV!] {
+        // Voice components ship their own SPAs — plain webviews, no skin, no drag handling.
+        vsWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        vbWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+
+        for wv in [panelWV!, odyWV!, hermesWV!, vsWV!, vbWV!] {
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.uiDelegate = self          // route target=_blank links to the default browser
             wv.navigationDelegate = self  // detect failed loads → placeholder + retry
@@ -229,6 +242,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
         odyWV.isHidden = true
         hermesWV.isHidden = true
+        vsWV.isHidden = true
+        vbWV.isHidden = true
 
         // drop-catcher above everything; only active on the Mission Control tab
         let ov = DropOverlay(webView: panelWV as! DropWebView)
@@ -255,6 +270,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             hermesWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             hermesWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             hermesWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            vsWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            vsWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            vsWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            vsWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            vbWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            vbWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            vbWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            vbWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             ov.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             ov.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ov.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -440,10 +463,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         panelWV.isHidden = (idx != 0)
         odyWV.isHidden = (idx != 1)
         hermesWV.isHidden = (idx != 2)
+        vsWV.isHidden = (idx != 3)
+        vbWV.isHidden = (idx != 4)
         dropOverlay?.isHidden = (idx != 0)   // file drops belong to Mission Control only
         if idx == 1 && !odyLoaded {
             odyLoaded = true
             odyWV.load(URLRequest(url: odysseusURL))
+        }
+        // Voice tabs: components are OPTIONAL and usually stopped → the first load
+        // normally fails into the "Not reachable yet" placeholder, and re-select /
+        // ⌘R retries via the shared failedLoads path below. No staleness reload
+        // (that exists for Hermes's WS dashboard only).
+        if idx == 3 && !vsLoaded {
+            vsLoaded = true
+            vsWV.load(URLRequest(url: voiceStudioURL))
+        }
+        if idx == 4 && !vbLoaded {
+            vbLoaded = true
+            vbWV.load(URLRequest(url: voiceboxURL))
         }
         if idx == 2 && !hermesLoaded {
             hermesLoaded = true
@@ -468,12 +505,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if !panelWV.isHidden { return panelWV }
         if !odyWV.isHidden { return odyWV }
         if !hermesWV.isHidden { return hermesWV }
+        if !vsWV.isHidden { return vsWV }
+        if !vbWV.isHidden { return vbWV }
         return nil
     }
 
     func urlFor(_ wv: WKWebView) -> URL {
         if wv === odyWV { return odysseusURL }
         if wv === hermesWV { return hermesURL }
+        if wv === vsWV { return voiceStudioURL }
+        if wv === vbWV { return voiceboxURL }
         return bridgeURL
     }
 

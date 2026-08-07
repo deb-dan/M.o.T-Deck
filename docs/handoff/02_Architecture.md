@@ -1,5 +1,37 @@
 # 02 — Architecture
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+The architecture below is the 2026-07 design. The built system differs in the runner and in what
+the Bridge grew into. Authoritative today: `docs/HARNESS-INTERNALS.md` (code-derived); decisions
+and history in `CLAUDE.md`.
+
+**Current component / port map** (all loopback, ports from `harness.yaml`):
+
+| Piece | Port | Notes |
+|---|---|---|
+| **Bridge** (FastAPI, our only code) | **8700** | panel UI, lifecycle, models, chat lanes, logs |
+| **Runner** (main model) | **6767** | `llama-server` (llama.cpp pin `b10295`) for GGUF · `mlx_lm.server` / `mlx_vlm.server` for MLX; engine chosen per model format (`runner.adapter: auto`) |
+| **Aux runner** (small model) | **6768** | optional, for Odysseus background tasks |
+| **Hermes Agent** | **9119** | pinned tag `v2026.7.30`; `hermes dashboard`, token-gated `/api` + `/api/ws` |
+| **Odysseus** | **7860** | pinned commit `25c9e73` |
+| **SearXNG** | **8080** | private search backend for Odysseus |
+| gearbox | 8710 | **reserved, shelved** — no cloud routing |
+
+- **Jan is gone** (July 2026). Wherever this doc says "Jan runner", read "our own runner on :6767".
+  The Odysseus endpoint id `local-jan` is a historical identifier only.
+- **One-switch provisioning shipped** (dependency closure, single approval, live per-step progress,
+  degraded detection) and the runner endpoint in `harness.yaml` is the single source of truth that
+  fans out to Hermes's `~/.hermes/config.yaml` and Odysseus's seeded endpoint on every start.
+- **Two builds now exist:** a lean dev app that serves the repo live, and a **fat/offline app**
+  that serves a provisioned snapshot at `~/Library/Application Support/Harness`. Read
+  HARNESS-INTERNALS §3 (the snapshot rule) before changing any code — and ship with `./scripts/ship.sh`.
+- **New subsystems not in this doc:** model registry + download manager, RAM ledger, the four chat
+  lanes with a shared SSE frame protocol, the Hermes path-guard plugin fence + audit log, the
+  artifacts/canvas renderer, and the Capabilities panel over Odysseus's settings stores.
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Why this shape: [01_Vision_and_Decision.md](01_Vision_and_Decision.md). Licenses per layer: [03_Licensing.md](03_Licensing.md).*
 
 ---

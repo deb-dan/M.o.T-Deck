@@ -1,5 +1,34 @@
 # 04 — Roadmap (M0 → M4)
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+M0–M3 are **complete**. The roadmap below is history. Live plan lives in `CLAUDE.md`.
+
+**Done since this doc was written:**
+- **M0** handshake (Hermes + Odysseus green against a real endpoint) · **M1** runner slot,
+  dependency-ordered one-switch provisioning, config fan-out, degraded detection ·
+  **M2** Models pane (two-pane library + detail), HF browse, per-file download manager with
+  pause/resume, aux runner, RAM ledger · **M3** Hermes as a first-class chat lane (streaming,
+  approvals, sessions, file cards) plus its dashboard as a native tab.
+- **Runner replaced:** Jan → our own llama.cpp (`b10295`) + MLX runner on :6767. MTP speculative
+  decoding detected and measured at **~+15%** average.
+- **Fat offline installer DONE** — `build_app.sh --fat` bundles CPython + a ~213-wheel arm64
+  wheelhouse + the pinned `llama-server`; provisions to green with no terminal and no network.
+- **Path-guard fence DONE** (Hermes `write_file`/`patch` gated via the upstream `pre_tool_call`
+  plugin hook, escalating into our existing approval card, plus a `data/logs/guard.log` audit tier).
+- **Also shipped:** artifacts renderer + editable canvas, Capabilities panel, light theme,
+  first-run checklist + walkthrough, analytics tiles, vision/images end-to-end with an attachment
+  sidecar, thinking persistence sidecar, per-message actions (copy/edit/fork/delete + tok/s stamps),
+  model-picker popover, Logs pane.
+- **Dropped / shelved:** the **gearbox** (local↔cloud policy routing) — local-only by choice;
+  the Jan-coupled `jan-browser-mcp` (kept browsermcp.io instead); the Odysseus UI reskin-by-CSS.
+
+**Next (in order):** voice components as first-class tabs — `docs/handoff/FABLE-VOICE-TABS-SPEC.md`
+(VoiceStudio + Voicebox) · a **2nd-Mac `.dmg` first-run test** (the single biggest unverified
+surface) · then **M5 remote access** (Tailscale + Hermes's messaging gateway).
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture referenced throughout: [02_Architecture.md](02_Architecture.md).*
 
 Ordering principle (personal-first): **every milestone ends with something you personally use that week.** No milestone exists to serve a hypothetical future user. Shipping-related work is deferred indefinitely; the only future-proofing is the four hygiene rules in [03_Licensing.md](03_Licensing.md).

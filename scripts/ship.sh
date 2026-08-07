@@ -45,6 +45,53 @@ EOF
   codesign --force --sign - "$APP"
 fi
 
+# harness.yaml is NEVER copied wholesale (the snapshot's copy holds LIVE state:
+# installed flags, runner.model, aux.model). But a NEW component or build pin added
+# in the repo would then never reach the app — its card simply never appears. So:
+# ADDITIVE merge only. Existing keys/values in the snapshot are never touched; new
+# components arrive as installed:false (install state is per-machine).
+# Pick a python that HAS pyyaml. The bridge venv always does; a bare system python3
+# often does NOT — and skipping silently there would hide a missing component card
+# (exactly the failure this merge exists to prevent), so a miss is loud.
+MERGE_PY=""
+for _c in "$DST/data/bridge-venv/bin/python" "$ROOT/data/bridge-venv/bin/python" python3; do
+  if "$_c" -c "import yaml" >/dev/null 2>&1; then MERGE_PY="$_c"; break; fi
+done
+if [[ -z "$MERGE_PY" ]]; then
+  echo "[ship] WARN: no python with pyyaml found — MANIFEST MERGE SKIPPED."
+  echo "[ship]       New components will NOT get a Mission Control card until this is fixed."
+else
+"$MERGE_PY" - "$ROOT/harness.yaml" "$DST/harness.yaml" <<'PY'
+import sys, shutil, datetime, yaml
+src_p, dst_p = sys.argv[1], sys.argv[2]
+try:
+    src = yaml.safe_load(open(src_p)) or {}
+    dst = yaml.safe_load(open(dst_p)) or {}
+except Exception as e:
+    print(f"[ship] WARN: could not read a harness.yaml ({e}) — manifest merge skipped")
+    sys.exit(0)
+added = []
+for k, v in src.items():
+    if k not in dst:
+        dst[k] = v; added.append(k)
+for section, force in (("components", True), ("build", False)):
+    s, d = src.get(section), dst.get(section)
+    if isinstance(s, dict) and isinstance(d, dict):
+        for name, cfg in s.items():
+            if name not in d:
+                if force and isinstance(cfg, dict):
+                    cfg = dict(cfg); cfg["installed"] = False; cfg["enabled"] = False
+                d[name] = cfg; added.append(f"{section}.{name}")
+if added:
+    shutil.copy2(dst_p, dst_p + ".bak-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+    with open(dst_p, "w") as f:
+        yaml.safe_dump(dst, f, sort_keys=False, default_flow_style=False)
+    print("[ship] manifest: added " + ", ".join(added) + " (snapshot backed up)")
+else:
+    print("[ship] manifest: up to date (" + str(len(dst.get("components") or {})) + " components)")
+PY
+fi
+
 echo "[ship] restarting app + bridge (components stay up)"
 pkill -x Harness 2>/dev/null || true
 sleep 2

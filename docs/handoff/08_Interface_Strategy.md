@@ -1,5 +1,31 @@
 # 08 — Interface strategy (look and feel)
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+The interface ladder in this doc has been climbed. The governance rule below is **still binding**
+(all look-and-feel is Fable 5's; builders implement decision-free specs). Living references:
+`CLAUDE.md`, `docs/HARNESS-INTERNALS.md`, `docs/USER-GUIDE.md`; per-feature specs in
+`docs/handoff/FABLE-*.md`.
+
+Shipped since (all in the dark editorial system; a light theme exists as an option, dark stays the
+permanent default):
+- **Native tabbed shell** (Mission Control / Odysseus / Hermes) in Swift + WKWebView; the Odysseus
+  CSS-injection reskin was abandoned as fragile in favour of native panes over its API.
+- **Panel chat with four lanes** — Agent (Odysseus), Chat (direct to the runner), Hermes (JSON-RPC
+  gateway, with interactive approval cards and file cards), plus a Browse capability toggle —
+  one renderer over a shared SSE frame protocol, with live thinking, a telemetry statusline and an
+  INSPECT log.
+- **Models**: two-pane library + detail, HF browse/download manager, and an in-composer
+  **model-picker popover** (full ids, live/vision/format/size/aux pills, eject + set-aux inline).
+- **Artifacts**: sandboxed renderer (HTML/SVG/React/JS/markdown/mermaid/CSV/JSON) with a split
+  viewer and an **editable canvas**; **Capabilities** pane over Odysseus's settings; **Logs** pane
+  with an editorial guard-audit view; first-run checklist + walkthrough; analytics tiles.
+- **Images end-to-end**: ⊕ attach, ⌘V paste, native drag-and-drop, lightbox, and a persistence
+  sidecar; plus **per-message actions** (copy / edit / fork / delete, tok/s + timing stamps).
+- **Next interface work:** voice components as first-class tabs — `docs/handoff/FABLE-VOICE-TABS-SPEC.md`.
+---
+
+
 *Part of the Harness doc set. Index: [00_START_HERE.md](00_START_HERE.md). Written 2026-07-20 from Debi's direction. **This changes no locked decisions or milestones** — it sharpens the interface layer's direction and adds one governance rule.*
 
 ---

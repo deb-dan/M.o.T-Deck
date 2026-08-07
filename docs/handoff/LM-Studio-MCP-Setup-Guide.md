@@ -1,5 +1,12 @@
 # LM Studio — Adding Tools with MCP Servers
 
+> **⟳ 2026-08-07 note:** kept as an LM Studio reference. LM Studio is **not** part of the harness —
+> it survives only as a read-only source of already-downloaded models (`~/.lmstudio/models` is
+> scanned into `data/models.json`); its llama.cpp backends dir is a last-resort binary-discovery
+> fallback. The harness registers MCP servers into Odysseus and Hermes, not into LM Studio's
+> `mcp.json`. Current state → `CLAUDE.md`; mechanics → `docs/HARNESS-INTERNALS.md` §7.
+
+
 ## The key concept
 
 LM Studio has **no built-in list of tools**. Tools ("web search", "read files", "browse", etc.) come entirely from **MCP servers** that you register in a single file: `mcp.json`.

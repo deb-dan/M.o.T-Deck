@@ -1,5 +1,29 @@
 # 01 — Vision and Decision
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+The vision held; the cast changed. Living references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`,
+`docs/USER-GUIDE.md`.
+
+- **"Jan is the kitchen" is obsolete.** Jan was removed entirely in July 2026 (app uninstalled,
+  models migrated into `data/models/`). The kitchen is now **ours**: a Bridge-managed runner on
+  :6767 that launches `llama-server` (pinned llama.cpp build) for GGUF models and Apple's
+  `mlx_lm.server` / `mlx_vlm.server` for MLX models, chosen per model format. LM Studio survives
+  only as a read-only source of already-downloaded models. Reasons: speed, full visibility into
+  downloads, and owning our own processes.
+- **The compose-don't-fork decision was correct and still holds**, and it now has real evidence:
+  Hermes and Odysseus have each been pin-bumped in place (`v2026.7.30`, `25c9e73`) with contract
+  tests as the gate, and every integration goes through config files, HTTP APIs, or upstream
+  plugin hooks — never a vendor edit.
+- **What "one tool" turned into:** a native tabbed app (Mission Control / Odysseus / Hermes) plus
+  a Bridge panel that has its own chat with four lanes (Agent via Odysseus, Chat direct to the
+  runner, Hermes via its JSON-RPC gateway, plus a Browse capability toggle), a Models pane, a
+  Capabilities pane, artifacts/canvas, and a Logs pane.
+- **Dropped:** the gearbox (policy-based local↔cloud routing) is **shelved** — the harness is
+  local-only by choice. Cloud keys remain an unused `.env` concept.
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md).*
 
 ---

@@ -1,5 +1,13 @@
 # Top 40 MCP Servers — A Practical Reference (2026)
 
+> **⟳ 2026-08-07 note:** reference material, still valid as an MCP catalogue. In the harness, MCP
+> servers are registered **into the components**, not into a desktop app: Odysseus via
+> `POST /api/mcp/servers` (surfaced in the panel's Capabilities → Tools, with Add/Remove) and
+> Hermes via a YAML round-trip into `~/.hermes/config.yaml` `mcp_servers`. The only one wired by
+> default is browsermcp.io behind the chat **Browse** toggle. Current state → `CLAUDE.md`;
+> mechanics → `docs/HARNESS-INTERNALS.md` §5.4 and §9.
+
+
 Legend: 🟢 no key needed · 🔑 needs API key/account · 🌐 remote/hosted (no local runtime) · ⚙️ local (needs Node `npx` or Python `uvx`)
 
 > Note for LM Studio: MCP servers built for cloud models (Notion, Salesforce, Google Workspace, etc.) can return large payloads that overflow a small local model's context. Prefer lightweight servers and models with bigger context windows for the heavy ones.

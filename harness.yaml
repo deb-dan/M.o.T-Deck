@@ -26,6 +26,35 @@ components:
     installed: true
     enabled: false
     port: 8080                # private meta-search; Odysseus SEARXNG_INSTANCE defaults here
+  # OPTIONAL voice component (TTS / voice cloning / transcription / dubbing).
+  # LICENSE: AGPL-3.0-only — same posture as SearXNG: we compose over HTTP and never
+  # modify it, so nothing propagates. Not installed by default and never a dependency
+  # of another component; heavy (~5-8GB venv + ~2.4GB models on first use).
+  # Formerly "OmniVoice Studio" — every internal id/env var still uses the `omnivoice`
+  # prefix (OMNIVOICE_BIND_HOST / OMNIVOICE_PORT / OMNIVOICE_DATA_DIR).
+  voicestudio:
+    repo: https://github.com/debpalash/VoiceStudio.git
+    pin: v0.4.2               # release tag — never track a branch
+    installed: false
+    enabled: false
+    port: 3900                # FastAPI backend + the built SPA on ONE port (binds 127.0.0.1)
+    depends_on: []            # standalone — core TTS/ASR needs no model runner
+  # OPTIONAL second voice component (TTS / voice cloning / transcription / captures).
+  # LICENSE: MIT — clean, nothing propagates.
+  # ⚠️ NO AUTHENTICATION ANYWHERE: /speak, /transcribe and /mcp are open to whatever
+  # can reach the port, so it MUST stay on 127.0.0.1 (never an M5 Tailscale hop).
+  # ⚠️ UPSTREAM IS STALE: last push 2026-04-26, 449 open issues at the time of wiring.
+  # ⚠️ KNOWN-FRAGILE DEPENDENCY GRAPH (five packages need --no-deps / git URLs / a custom
+  # --find-links index) — install is ONLINE-ONLY and is not part of the fat wheelhouse.
+  # Not installed by default and never a dependency of another component.
+  voicebox:
+    repo: https://github.com/jamiepine/voicebox.git
+    pin: v0.5.0               # release tag — never track a branch
+    installed: false
+    enabled: false
+    port: 17493               # NOTE: the backend's own argparse default is 8000 — the
+                              # start script ALWAYS passes --port explicitly
+    depends_on: []            # standalone — core TTS/ASR needs no model runner
 
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
@@ -86,6 +115,20 @@ build:
   # then re-verify one MLX chat turn (and re-check the mlx wire-id path in bridge/app.py).
   mlx_lm_pin: "0.31.3"
   mlx_vlm_pin: "0.6.10"
+  # ── build-time toolchain the harness provisions for ITSELF (never brew, never sudo) ──
+  # bun: compiles the Vite SPAs of the two OPTIONAL voice components. Read by
+  # scripts/ensure_bun.sh, which lands it at data/bun/bin/bun (~35MB download) ONLY if
+  # the user has no bun of their own. Build-time only — nothing at runtime needs it, and
+  # the FAT/offline installer never touches it (voice components are online-only).
+  # Pin = the latest oven-sh/bun release as of 2026-08-07 (published 2026-05-13); the
+  # bun-darwin-aarch64.zip asset was verified present at this tag before pinning.
+  bun_pin: "bun-v1.3.14"
+  # imageio-ffmpeg: a pip wheel that BUNDLES a static ffmpeg binary (macos arm64 wheel
+  # 21.1MB, BSD-2-Clause). scripts/ensure_ffmpeg.sh installs it into the calling
+  # component's venv and copies the binary to data/ffmpeg/bin/ffmpeg — this is how we
+  # satisfy voicebox/voicestudio's ffmpeg need with no `brew install ffmpeg`.
+  # ⚠️ bundles ffmpeg only, NOT ffprobe.
+  imageio_ffmpeg_pin: "0.6.0"
 
 inference:
   # hermes_llm block removed 2026-07-20 (M1-B): Hermes + Odysseus now consume the `runner`

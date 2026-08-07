@@ -37,10 +37,10 @@ def cfg() -> dict:
     return yaml.safe_load((ROOT / "harness.yaml").read_text())
 
 
-def _script(name: str, *args: str) -> subprocess.CompletedProcess:
+def _script(name: str, *args: str, timeout: int = 1800) -> subprocess.CompletedProcess:
     return subprocess.run(
         [str(ROOT / "scripts" / name), *args],
-        capture_output=True, text=True, cwd=ROOT, timeout=1800,
+        capture_output=True, text=True, cwd=ROOT, timeout=timeout,
     )
 
 
@@ -370,7 +370,7 @@ async def status() -> dict:
 @app.get("/api/logs/{name}")
 def logs(name: str, lines: int = 40) -> dict:
     # "guard" = the path-guard audit trail (one JSON line per out-of-allowlist write).
-    if name not in ("bridge", "hermes", "odysseus", "searxng", "runner", "guard"):
+    if name not in _LOG_NAMES:
         raise HTTPException(404, "unknown log")
     f = ROOT / "data" / "logs" / f"{name}.log"
     if not f.exists():
@@ -378,7 +378,8 @@ def logs(name: str, lines: int = 40) -> dict:
     return {"lines": f.read_text(errors="replace").splitlines()[-lines:]}
 
 
-_LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard")
+_LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
+              "voicestudio", "voicebox")
 
 
 @app.post("/api/logs/{name}/clear")
@@ -443,6 +444,40 @@ def install_plan(name: str) -> dict:
             "Write localhost settings.yml (port 8080, JSON API on, limiter off)",
             "Serve privately on 127.0.0.1:8080 — Odysseus prefers it over DuckDuckGo automatically",
         ],
+        "voicestudio": [
+            "OPTIONAL voice component — license AGPL-3.0-only (composed over HTTP, never modified)",
+            "Shallow-clone vendor/voicestudio at the pinned tag (not a submodule)",
+            "Create venv data/voicestudio-venv + install its deps: torch, transformers, "
+            "whisperx, pyannote, demucs, sherpa-onnx, mlx — roughly 5-8GB, needs ~10GB free",
+            "Provide ffmpeg with NO Homebrew: reuse yours if you have one, else install "
+            "the imageio-ffmpeg wheel (~21MB, bundles a static ffmpeg) into the venv and "
+            "copy the binary to data/ffmpeg/",
+            "Build its web UI with bun: reuse a bun already on your PATH, else download "
+            "the pinned bun release (~35MB) into data/bun/ — never Homebrew, never sudo, "
+            "nothing written outside this project folder (if that download fails the "
+            "backend still boots and serves a stub page)",
+            "Serve on 127.0.0.1:3900 when started (API + UI on one port, loopback only, no auth)",
+            "Speech models (~2.4GB) download later, on first use",
+        ],
+        "voicebox": [
+            "OPTIONAL voice component — license MIT (composed over HTTP, never modified)",
+            "Shallow-clone vendor/voicebox at the pinned tag (not a submodule)",
+            "Create venv data/voicebox-venv and mirror upstream's own pip recipe: "
+            "requirements.txt, then chatterbox-tts + hume-tada --no-deps, then (Apple "
+            "Silicon) the MLX extras + mlx-audio --no-deps, then Qwen3-TTS from git",
+            "KNOWN-FRAGILE: five dependencies need --no-deps / git URLs / a custom "
+            "package index — this install is ONLINE-ONLY and can fail on upstream pin "
+            "conflicts (upstream last shipped 2026-04-26); failures print the log path",
+            "Provide ffmpeg with NO Homebrew: reuse yours if you have one, else install "
+            "the imageio-ffmpeg wheel (~21MB, bundles a static ffmpeg) into the venv and "
+            "copy the binary to data/ffmpeg/ (the start script puts it on its PATH)",
+            "Build its web UI with bun and copy web/dist → frontend/: reuse a bun already "
+            "on your PATH, else download the pinned bun release (~35MB) into data/bun/ — "
+            "never Homebrew, never sudo, nothing written outside this project folder "
+            "(if that download fails the JSON API and /mcp still work)",
+            "Serve on 127.0.0.1:17493 when started — NO AUTHENTICATION: /speak, "
+            "/transcribe and /mcp are open to anything reaching the port, loopback only",
+        ],
     }
     if name not in plans:
         raise HTTPException(404, "unknown component")
@@ -453,18 +488,37 @@ def install_plan(name: str) -> dict:
 @app.post("/api/components/{name}/install")
 def install(name: str) -> JSONResponse:
     """Execute the install after the panel's approve step."""
-    if name not in ("hermes", "odysseus", "searxng"):
+    if name not in ("hermes", "odysseus", "searxng", "voicestudio", "voicebox"):
         raise HTTPException(404, "unknown component")
     script = "install_searxng.sh" if name == "searxng" else "install_component.sh"
     args = () if name == "searxng" else (name, "--yes")
-    r = _script(script, *args)
+    # voicestudio pulls ~5-8GB of wheels (torch/whisperx/mlx) + a bun SPA build, which
+    # can outrun the default 30-minute budget on a slow link — give it 2h and surface a
+    # timeout as a readable message instead of an unhandled 500. voicebox is the same
+    # class (torch + kokoro + git-sourced engines, several GB) plus a bun build.
+    timeout = 7200 if name in ("voicestudio", "voicebox") else 1800
+    try:
+        r = _script(script, *args, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            {"ok": False, "log": f"install timed out after {timeout // 60} min — "
+                                 f"run it in a terminal: ./scripts/{script} "
+                                 + " ".join(args)},
+            status_code=500)
     ok = r.returncode == 0
     return JSONResponse(
         {"ok": ok, "log": (r.stdout + r.stderr)[-4000:]},
         status_code=200 if ok else 500)
 
 
-_NOTES = {"runner": "launches the llama.cpp/MLX runner + loads the model (~60–90s)"}
+_NOTES = {
+    "runner": "launches the llama.cpp/MLX runner + loads the model (~60–90s)",
+    # OPTIONAL, AGPL-3.0-only. Backend + built SPA on one loopback port, no auth.
+    "voicestudio": "voice studio on :3900 — first boot loads speech models (can take minutes)",
+    # OPTIONAL, MIT. JSON API + /mcp (+ the SPA when built) on one loopback port.
+    # NO AUTH of any kind, and upstream has been stale since 2026-04-26.
+    "voicebox": "voicebox on :17493 — no auth, loopback only; first boot loads models (minutes)",
+}
 
 
 @app.get("/api/components/{name}/start-plan")
@@ -3900,23 +3954,38 @@ _BROWSERMCP = {"name": "browsermcp", "transport": "stdio",
                "command": "npx", "args": '["@browsermcp/mcp"]'}
 
 
-async def _ody_find_mcp(name: str):
+async def _ody_mcp_list() -> list:
+    """Odysseus's registered MCP servers. Raises when Odysseus is unreachable (the
+    callers distinguish 'not registered' from 'we couldn't ask')."""
     r = await _ody_req("GET", "/api/mcp/servers")
     lst = r.json() if r.status_code == 200 else []
-    if not isinstance(lst, list):
-        lst = []
-    return next((s for s in lst if s.get("name") == name), None)
+    return lst if isinstance(lst, list) else []
 
 
-def _hermes_set_mcp(enable: bool) -> bool:
-    """Add/remove the browsermcp stdio server in ~/.hermes/config.yaml (mcp_servers).
-    No CLI (its prompts + live-connect would hang) and no connection attempt — Hermes
-    picks it up on new chats. Returns whether browsermcp is present afterwards."""
+async def _ody_find_mcp(name: str):
+    return next((s for s in await _ody_mcp_list() if s.get("name") == name), None)
+
+
+def _hermes_config_path() -> str:
     import os
-    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-    path = os.path.join(home, "config.yaml")
+    return os.path.join(os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"),
+                        "config.yaml")
+
+
+def _hermes_write_mcp(name: str, entry: "dict | None") -> bool:
+    """Add (entry) or remove (entry=None) ONE server in ~/.hermes/config.yaml's
+    `mcp_servers`. No CLI (its prompts + live-connect would hang) and no connection
+    attempt — Hermes reads the config at use-time, so it applies to NEW chats.
+    Returns whether `name` is present afterwards.
+
+    IDEMPOTENT: a no-op toggle doesn't rewrite the file at all, so the one write that
+    does happen is the only one that loses comments/ordering (the accepted property of
+    the yaml round-trip)."""
+    import os
+    home = os.path.dirname(_hermes_config_path())
+    path = _hermes_config_path()
     if not os.path.exists(path):
-        if not enable:
+        if entry is None:
             return False
         os.makedirs(home, exist_ok=True)
         data = {}
@@ -3924,10 +3993,14 @@ def _hermes_set_mcp(enable: bool) -> bool:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
     servers = data.get("mcp_servers") or {}
-    if enable:
-        servers["browsermcp"] = {"command": "npx", "args": ["@browsermcp/mcp"]}
+    if entry is None:
+        if name not in servers:
+            return False                      # already absent — don't touch the file
+        servers.pop(name, None)
     else:
-        servers.pop("browsermcp", None)
+        if servers.get(name) == entry:
+            return True                       # already exact — don't touch the file
+        servers[name] = dict(entry)
     data["mcp_servers"] = servers
     # Fable QA hardening: atomic write (temp + os.replace) so a concurrent save from
     # Hermes's own dashboard can never observe a half-written config.
@@ -3935,18 +4008,29 @@ def _hermes_set_mcp(enable: bool) -> bool:
     with open(tmp, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
     os.replace(tmp, path)
-    return "browsermcp" in servers
+    return name in servers
 
 
-def _hermes_has_mcp() -> bool:
-    import os
-    path = os.path.join(os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"), "config.yaml")
+def _hermes_set_mcp(enable: bool) -> bool:
+    """Browse toggle: add/remove the browsermcp stdio server (unchanged behaviour —
+    now expressed through the shared single-server writer)."""
+    return _hermes_write_mcp(
+        "browsermcp",
+        {"command": "npx", "args": ["@browsermcp/mcp"]} if enable else None)
+
+
+def _hermes_get_mcp(name: str) -> "dict | None":
     try:
-        with open(path) as f:
+        with open(_hermes_config_path()) as f:
             data = yaml.safe_load(f) or {}
-        return "browsermcp" in (data.get("mcp_servers") or {})
+        srv = (data.get("mcp_servers") or {}).get(name)
+        return srv if isinstance(srv, dict) else ({} if srv is not None else None)
     except Exception:
-        return False
+        return None
+
+
+def _hermes_has_mcp(name: str = "browsermcp") -> bool:
+    return _hermes_get_mcp(name) is not None
 
 
 @app.get("/api/browse/status")
@@ -3982,3 +4066,191 @@ async def browse_toggle(req: Request) -> JSONResponse:
     except Exception as e:
         log.append(f"hermes-err:{str(e)[:120]}")
     return JSONResponse({"ok": True, "on": on, "log": " · ".join(log)})
+
+
+# ── Voice components: register their in-process MCP servers ──────────────────
+# Both optional voice components mount an MCP server IN-PROCESS on their own port
+# (streamable HTTP at <base>/mcp), so wiring them into the agents is EXACTLY the
+# browse-toggle mechanism — Odysseus via its live admin API, Hermes via the yaml
+# round-trip of ~/.hermes/config.yaml. The helpers above were generalised for this
+# rather than copy-pasted twice.
+#
+# The `tools` lists are DISPLAY ONLY (each host discovers the real list itself over
+# MCP). VoiceStudio's are read from vendor backend/mcp_server.py @v0.4.2; Voicebox's
+# come from the Phase-0 recon notes. ⚠️ PENDING FABLE QA.
+VOICE_MCP = {
+    "voicestudio": {
+        "label": "VoiceStudio",
+        "path": "/mcp",
+        "tools": ["generate_speech", "clone_voice", "transcribe", "list_voices",
+                  "list_personalities", "list_languages", "check_health"],
+        # mount_mcp() sets streamable_http_path="/" and mounts the sub-app at "/mcp",
+        # so the endpoint is exactly <base>/mcp (upstream's own comment says so).
+        # Upstream resolves a per-agent voice binding from an X-OmniVoice-Client-Id
+        # REQUEST HEADER; neither host lets us attach custom headers to an http MCP
+        # entry, so our calls fall back to the GLOBAL default voice. Graceful, but
+        # VoiceStudio's Settings → MCP per-agent binding will not apply to us.
+        "note": "per-agent voice binding (X-OmniVoice-Client-Id) can't be sent — "
+                "generate_speech uses VoiceStudio's global default voice",
+    },
+    "voicebox": {
+        "label": "Voicebox",
+        "path": "/mcp",
+        "tools": ["voicebox.speak", "voicebox.transcribe",
+                  "voicebox.list_captures", "voicebox.list_profiles"],
+        "note": "no auth of any kind — keep it on 127.0.0.1 (never expose via M5)",
+    },
+}
+
+
+def voice_mcp_spec(name: str, port) -> "dict | None":
+    """PURE: (component name, port) → the registration payloads for BOTH hosts, or
+    None for an unknown component / unusable port. Kept pure so the wire shapes are
+    unit-testable without a live Odysseus or a ~/.hermes on disk.
+
+      odysseus_form — mcp_routes.add_server is FORM-encoded and takes
+                      name/transport/command/args/env/url; http transport needs `url`.
+      hermes_entry  — Hermes's url-only shape (mcp_config.cmd_mcp_add:
+                      `server_config["url"] = url`) = streamable HTTP.
+    """
+    meta = VOICE_MCP.get(name)
+    if not meta:
+        return None
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        return None
+    if p <= 0 or p > 65535:
+        return None
+    url = f"http://127.0.0.1:{p}{meta['path']}"
+    return {
+        "name": name,
+        "label": meta["label"],
+        "url": url,
+        "tools": list(meta["tools"]),
+        "note": meta["note"],
+        "odysseus_form": {"name": name, "transport": "http", "url": url,
+                          "args": "[]", "env": "{}"},
+        "hermes_entry": {"url": url},
+    }
+
+
+def _voice_comp(name: str) -> dict:
+    return (cfg().get("components", {}) or {}).get(name) or {}
+
+
+@app.get("/api/voice/status")
+async def voice_status() -> JSONResponse:
+    """Per-host registration state for every voice component. Mirrors browse_status's
+    honesty contract: `odysseus` and `hermes` are reported SEPARATELY so the panel can
+    show a partial registration instead of a single lying switch. `odysseus_known` is
+    False when Odysseus couldn't be asked at all (down ≠ not registered)."""
+    try:
+        ody = await _ody_mcp_list()
+    except Exception:
+        ody = None
+    out = {"ok": True, "components": {}}
+    for name in VOICE_MCP:
+        comp = _voice_comp(name)
+        port = comp.get("port")
+        spec = voice_mcp_spec(name, port)
+        srv = None
+        if ody is not None:
+            srv = next((s for s in ody if s.get("name") == name), None)
+        try:
+            running = bool(await _port_alive(int(port))) if port else False
+        except (TypeError, ValueError):
+            running = False
+        hermes = _hermes_has_mcp(name)
+        out["components"][name] = {
+            "label": VOICE_MCP[name]["label"],
+            "url": (spec or {}).get("url"),
+            "tools": VOICE_MCP[name]["tools"],
+            "note": VOICE_MCP[name]["note"],
+            "port": port,
+            "installed": bool(comp.get("installed")),
+            "running": running,
+            "odysseus": bool(srv),
+            "odysseus_known": ody is not None,
+            "hermes": hermes,
+            "connected": (srv or {}).get("status") == "connected",
+            "on": bool(srv) or hermes,
+        }
+    return JSONResponse(out)
+
+
+@app.post("/api/voice/toggle")
+async def voice_toggle(req: Request) -> JSONResponse:
+    """Register/remove a voice component's MCP server in BOTH Odysseus (live API) and
+    Hermes (config.yaml → new Hermes chats). One control → both components, exactly
+    like the Browse toggle.
+
+    Idempotent: enabling an already-registered server is a no-op on both hosts (a
+    stale URL — e.g. the port changed in harness.yaml — is re-registered); disabling
+    an absent one likewise. Turning ON is REFUSED when the component isn't installed
+    or isn't listening, because registering a dead URL only buys connection errors in
+    every subsequent turn. Turning OFF is always allowed (it is the cleanup path)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    name = str(body.get("name") or "").strip()
+    on = bool(body.get("on"))
+    if name not in VOICE_MCP:
+        return JSONResponse({"ok": False, "error": f"unknown voice component '{name}'"},
+                            status_code=400)
+    comp = _voice_comp(name)
+    spec = voice_mcp_spec(name, comp.get("port"))
+    if spec is None:
+        return JSONResponse({"ok": False,
+                             "error": f"components.{name}.port is missing or invalid in harness.yaml"},
+                            status_code=400)
+    if on:
+        if not comp.get("installed"):
+            return JSONResponse({"ok": False, "error":
+                                 f"{spec['label']} isn't installed yet — install it in Mission Control first"},
+                                status_code=409)
+        if not await _port_alive(int(comp["port"])):
+            return JSONResponse({"ok": False, "error":
+                                 f"{spec['label']} isn't running — start it in Mission Control first "
+                                 f"(nothing is listening on :{comp['port']})"},
+                                status_code=409)
+    log, ody_on, hermes_on = [], None, None   # None = the host couldn't be reached
+    try:
+        existing = await _ody_find_mcp(name)
+        if on:
+            if existing and (existing.get("url") or "") != spec["url"]:
+                r = await _ody_req("DELETE", f"/api/mcp/servers/{existing['id']}")
+                log.append(f"odysseus-stale-del:{r.status_code}")
+                existing = None
+            if existing:
+                log.append("odysseus:already")
+                ody_on = True
+            else:
+                r = await _ody_req("POST", "/api/mcp/servers", data=spec["odysseus_form"])
+                log.append(f"odysseus:{r.status_code}")
+                ody_on = r.status_code == 200
+        else:
+            if existing:
+                r = await _ody_req("DELETE", f"/api/mcp/servers/{existing['id']}")
+                log.append(f"odysseus-del:{r.status_code}")
+                ody_on = r.status_code != 200      # still registered iff the delete failed
+            else:
+                log.append("odysseus:absent")
+                ody_on = False
+    except Exception as e:
+        log.append(f"odysseus-err:{str(e)[:120]}")
+    try:
+        hermes_on = _hermes_write_mcp(name, spec["hermes_entry"] if on else None)
+        log.append("hermes:ok")
+    except Exception as e:
+        log.append(f"hermes-err:{str(e)[:120]}")
+        hermes_on = _hermes_has_mcp(name)
+    line = " · ".join(log)
+    print(f"[voice] {name} mcp {'on' if on else 'off'} → {line}", flush=True)
+    # ok = at least one host reached the requested state; `partial` says the other
+    # didn't, and the panel renders both per-host pills so nothing is hidden.
+    reached = [(ody_on is on), (hermes_on is on)]
+    return JSONResponse({"ok": any(reached), "on": on, "partial": not all(reached),
+                         "odysseus": bool(ody_on), "hermes": bool(hermes_on),
+                         "log": line})

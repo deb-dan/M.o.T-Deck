@@ -1,5 +1,23 @@
 # 06 — Landscape & Prior Art (research pass, 2026-07-19)
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+The build-vs-adopt verdict below ("keep building the hybrid") was correct and is now settled by
+evidence — the harness does things no surveyed app does. Living references: `CLAUDE.md`,
+`docs/HARNESS-INTERNALS.md`.
+
+- **Keep Odysseus / keep Hermes** both held. Both have since been pin-bumped in place under
+  contract tests (Odysseus `25c9e73`, Hermes `v2026.7.30`) with no fork and no vendor edit.
+- **Jan is no longer in the comparison** — it was removed from the harness in July 2026 and
+  replaced by our own llama.cpp + MLX runner. Any "Jan as runner" reasoning below is historical.
+- **Cherry Studio / LM-Studio-style chat surface:** the deferred layer got built ourselves — the
+  panel now has a four-lane chat, a model-picker popover, artifacts + editable canvas, per-message
+  actions, and image attachments. The reference apps remain taste input only.
+- Prior-art scanning is **paused** — the project is past the survey phase and into maintenance +
+  new modalities (voice next). Revisit only if a concrete capability is blocked.
+---
+
+
 *Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md). Roadmap: [04_Roadmap.md](04_Roadmap.md).*
 
 This pass answers four questions you asked: (1) can the runner tap desktop Jan as well as headless Jan (answered in [02_Architecture.md](02_Architecture.md) §Dual-mode runner — designed and written in); (2) is anything better than Odysseus; (3) is anything better than Hermes; (4) what is "CherryIN"/Cherry Studio, what does the prior-art field look like, and does it change the build-vs-adopt decision. Everything below was researched fresh in July 2026, with sources inline.

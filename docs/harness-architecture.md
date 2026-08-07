@@ -1,5 +1,36 @@
 # AI Harness — Architecture Document
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+This is the original v0.1 design (2026-07-10). It remains the best statement of *intent*; the built
+system has moved past it. **Authoritative today: `docs/HARNESS-INTERNALS.md`** (code-derived —
+ports, the two builds + snapshot rule, `harness.yaml` keys, the four chat lanes, session stores,
+models/registry, path-guard, endpoint index, ops gotchas, install footprint, test index), with
+decisions and dated history in `CLAUDE.md` and the user-facing view in `docs/USER-GUIDE.md`.
+
+Corrections and deltas:
+
+- **Odysseus is MIT**, not AGPL-3.0 (verified against its LICENSE). The only AGPL component in the
+  harness is SearXNG. Pins today: Hermes `v2026.7.30`, Odysseus commit `25c9e73`.
+- **We own the model runner.** There is no "Cookbook"/Jan serving layer: the Bridge launches
+  `llama-server` (llama.cpp pin `b10295`) for GGUF and `mlx_lm.server` / `mlx_vlm.server` for MLX,
+  always on **:6767**, plus an optional aux runner on **:6768**. Jan was removed in July 2026.
+- **Port map:** Bridge :8700 · runner :6767 · aux :6768 · Hermes dashboard :9119 (not :8721 MCP) ·
+  Odysseus :7860 · SearXNG :8080 · gearbox :8710 **reserved but shelved**.
+- **The gearbox (policy-based local↔cloud routing) is SHELVED** — the harness is local-only by
+  choice. `policies/routing.yaml` and `inference.cloud` are historical.
+- **The updater** (§blue-green + auto-rollback) was not built as designed; pin bumps are manual and
+  gated by `bridge/contract_tests/`. `POST /api/components/{name}/update` is still a 501 stub.
+- **Grown well beyond this doc:** two app builds (lean dev vs fat offline installer with a
+  provisioned snapshot — ship only via `./scripts/ship.sh`), the four chat lanes, model registry +
+  download manager + RAM ledger, the Hermes path-guard plugin fence with an audit log, the
+  artifacts/canvas renderer, and the Capabilities panel.
+- **Next:** voice components as first-class tabs (`docs/handoff/FABLE-VOICE-TABS-SPEC.md`), a
+  2nd-Mac `.dmg` first-run test, then M5 remote access.
+
+---
+
+
 **Version:** 0.1 (draft) · **Date:** 2026-07-10 · **Author:** Debi Daniel (with Claude)
 **Scope:** Personal use · macOS-first (Apple Silicon) · webapp access later
 

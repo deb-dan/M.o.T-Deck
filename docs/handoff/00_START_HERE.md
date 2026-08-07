@@ -1,5 +1,27 @@
 # 00 — START HERE: The Harness Project Handoff
 
+## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
+
+The primer below has been rewritten in place (staleness in a rehydration primer actively
+misleads). Everything else in this file — "Current status", "Immediate next steps", "Open
+decisions" — is **2026-07-19/20 history**. Where it disagrees with the living references, they win.
+
+- **Living references, in order:** `CLAUDE.md` (canonical working memory), `docs/HARNESS-INTERNALS.md`
+  (code-derived system reference), `docs/USER-GUIDE.md`. Docs 00–10 are planning archaeology.
+- **Done since:** M0 (handshake) · M1 (runner slot, one-switch dependency provisioning, fan-out) ·
+  M2 (Models pane, HF browse, download manager, aux runner) · M3 (Hermes as a first-class lane).
+  Plus: native 3-tab app, four chat lanes, artifacts/canvas, Capabilities panel, path-guard fence,
+  fat offline installer + .dmg, vision/images end-to-end, per-message actions.
+- **Biggest deltas from the 2026-07 plan:** **Jan is gone** (removed July 2026 — we run our own
+  llama.cpp + MLX runner on :6767); the **gearbox / cloud routing is shelved** (local-only);
+  Odysseus is MIT and pinned at `25c9e73`; Hermes pinned at `v2026.7.30`.
+- **Ship rule:** all code ships via `./scripts/ship.sh` (the fat app serves a provisioned snapshot,
+  not the repo — see HARNESS-INTERNALS §3).
+- **Next:** voice components as tabs (`docs/handoff/FABLE-VOICE-TABS-SPEC.md` — VoiceStudio +
+  Voicebox), a 2nd-Mac .dmg first-run test, then M5 remote access.
+
+---
+
 **Owner:** Debi. **Written:** 2026-07-19. **Purpose:** This document set is a complete, zero-context-loss handoff for your personal local-AI project. Point any fresh chat at this file (or paste the primer below) and the assistant will be fully rehydrated.
 
 ---
@@ -8,7 +30,13 @@
 
 Paste this paragraph verbatim into a new chat to bootstrap an assistant:
 
+> I'm working on **New Harness**, a personal local-first AI workspace on my Mac (Apple Silicon, 64GB RAM). My own code is the **Bridge** (FastAPI on :8700 — component lifecycle, model registry/downloads/switching, the chat lanes, and the panel UI in a dark editorial style: serif headlines, mono small-caps labels, cream-and-gold on near-black) plus a native Swift/WKWebView shell with tabs (Mission Control / Odysseus / Hermes). It composes upstream projects over their APIs and never forks them: **Hermes Agent** (pinned tag `v2026.7.30`, its own dashboard on :9119) as the agent brain, **Odysseus** (pinned commit `25c9e73`, :7860) as the web workspace, **SearXNG** (:8080) as private search, and **our own model runner** on :6767 — llama.cpp (pinned `llama-server`) for GGUF and Apple MLX (mlx-lm / mlx-vlm) for MLX models — plus an optional aux runner on :6768. **Jan AI was removed entirely in July 2026** (LM Studio survives only as a read-only model-import source). No Docker anywhere; everything binds loopback. The living references, in order: **`CLAUDE.md`** (canonical working memory — decisions, dated session log, pending Fable QA), **`docs/HARNESS-INTERNALS.md`** (code-derived system reference: ports, the fat-app snapshot rule, `harness.yaml` keys, the four chat lanes, models/registry, path-guard, endpoint index, ops gotchas), and **`docs/USER-GUIDE.md`**. Docs 00–10 under `docs/handoff/` are historical planning material — accurate as history, superseded wherever they conflict with the two references above. Standing ops rule: **all code ships via `./scripts/ship.sh`**. Fable 5 orchestrates; builders implement decision-free specs and tag judgment calls ⚠️ PENDING FABLE QA.
+
+<details><summary>Original 2026-07-19 primer (historical — Jan-era, superseded)</summary>
+
 > I'm building a personal local-AI harness on my Mac (Apple Silicon, 64GB RAM). The product is my own code: a "Bridge" (local orchestration API — component lifecycle, git pin/rollback of upstream repos, health, config) plus a native Swift "Mission Control" app (dark editorial UI: serif headlines, mono small-caps labels, cream-and-gold on near-black; status cards, metric tiles, activity feed, working ⌘K palette, plan-and-approve install dialogs). It orchestrates third-party components over their APIs, never by forking them: **Jan AI** as the swappable model runner (headless via `jan serve` on :6767 or desktop API on :1337; LM Studio on :1234 as fallback), **Odysseus** (MIT Python workspace with SearXNG-backed DeepResearch, FastAPI on :7860, run as native Python — no Docker) embedded as a webview tab, **Hermes** (NousResearch's MIT async coding-agent daemon, configured via ~/.hermes/config.yaml to point at the runner endpoint), and one shared **SearXNG** instance on :8080 (native from-source install — the whole harness is Docker-free by decision). Locked decisions (2026-07-19): NO Docker anywhere; headless `jan serve --detach` on :6767 is the canonical runner endpoint (desktop Jan :1337 stays a manual convenience); one shared SearXNG serves both Odysseus and MCP search; tool calling is MANDATORY for the primary model (a ~30B tool-capable daily driver at 64K+ context plus a small fast model — non-tool-calling models are disqualified as primary). The decided strategy: unified PRODUCT, composed ARCHITECTURE — do NOT fork Jan (its gaps I cared about — HF browser, MLX, MCP, non-Electron — already exist upstream; and composing over APIs keeps my code independent and the runner swappable; note 2026-07-20: Jan relicensed to Apache-2.0, so the old AGPL-trap argument is retired — merge debt and gaps-closed carry the no-fork decision on their own). This is a PERSONAL tool for now — no shipping pressure, so AGPL imposes zero obligations today; I only keep cheap hygiene (my code in separate repos, arm's-length API boundaries, no AGPL code copied into my repos) so a future ship isn't a rewrite. Roadmap: M0 finish the current Hermes+Odysseus handshake in the harness; M1 define the runner-slot interface in the Bridge and add headless Jan as a managed component; M2 build a native editorial-styled model browser (HF API for discovery, runner CLI/API for downloads) plus the Odysseus webview tab and cross-component ⌘K verbs; M3 deepen Hermes (activity feed, task dispatch, shared SKILL.md skills convention); M4 optional upstream PRs, and revisit forking only if a concrete need is blocked upstream. My #1 CRITICAL requirement (declared 2026-07-20): flipping a component's switch in Mission Control must AUTOMATICALLY install AND connect it — toggle → dependency-ordered provisioning pipeline (one approval dialog covers the whole dependency subtree) → config fan-out → health-verified green card; spec with manifests, state machine (off → planned → installing → configuring → starting → verifying → ON, plus degraded/needs-repair), and verified caveats (Hermes config.yaml written directly, no wizard; Jan needs one scripted desktop-app first-launch to install its CLI) lives in 02_Architecture.md §One-switch provisioning. The full handoff docs (00_START_HERE.md through 06_Landscape_and_PriorArt.md) contain the architecture contract, licensing analysis, roadmap tasks, and reference facts — read them if available.
+
+</details>
 
 ---
 
