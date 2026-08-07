@@ -84,6 +84,12 @@ for section, force in (("components", True), ("build", False)):
                 d[name] = cfg; added.append(f"{section}.{name}")
 if added:
     shutil.copy2(dst_p, dst_p + ".bak-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+    # keep only the 5 newest backups (Fable QA: unbounded .bak accumulation)
+    import glob, os
+    baks = sorted(glob.glob(dst_p + ".bak-*"))
+    for old in baks[:-5]:
+        try: os.remove(old)
+        except OSError: pass
     with open(dst_p, "w") as f:
         yaml.safe_dump(dst, f, sort_keys=False, default_flow_style=False)
     print("[ship] manifest: added " + ", ".join(added) + " (snapshot backed up)")

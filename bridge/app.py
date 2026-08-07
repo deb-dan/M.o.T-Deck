@@ -379,7 +379,10 @@ def logs(name: str, lines: int = 40) -> dict:
 
 
 _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
-              "voicestudio", "voicebox")
+              "voicestudio", "voicebox",
+              # install-time log (voicebox's fragile dep graph writes here — must be
+              # viewable in-panel, not just from a terminal; Fable QA fix 2026-08-07)
+              "voicebox-install")
 
 
 @app.post("/api/logs/{name}/clear")
