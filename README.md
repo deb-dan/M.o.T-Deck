@@ -1,5 +1,27 @@
 # AI Harness
 
+## ⟳ STATE UPDATE — 2026-08-07
+
+This README describes the early scaffold. Current reality, in order of authority:
+**`CLAUDE.md`** (working memory), **`docs/HARNESS-INTERNALS.md`** (code-derived system reference),
+**`docs/USER-GUIDE.md`** (how to use it).
+
+- Components today: **Bridge** :8700 · **runner** :6767 (llama.cpp `b10295` for GGUF, Apple MLX for
+  mlx models) · optional **aux runner** :6768 · **Hermes** `v2026.7.30` :9119 · **Odysseus**
+  `25c9e73` :7860 · **SearXNG** :8080. Jan was removed in July 2026; the **gearbox is shelved**
+  (local-only) and `bridge/gearbox.py` / `policies/routing.yaml` are historical.
+- Two app builds: `./scripts/build_app.sh` (lean dev app — serves this repo live) and
+  `./scripts/build_app.sh --fat` (offline installer + `.dmg` — serves a provisioned snapshot at
+  `~/Library/Application Support/Harness`). **Standing ops rule: all code ships via
+  `./scripts/ship.sh`** — the fat app will otherwise serve stale code (HARNESS-INTERNALS §3).
+- `guards/harness-path-guard/` is a Hermes plugin (seeded into `~/.hermes/plugins/` on start) that
+  fences the agent's `write_file`/`patch` calls; `bridge/tests/` + `bridge/contract_tests/` are the
+  test and pin-bump suites.
+- The never-edit-`vendor/` rule below is unchanged and enforced.
+
+---
+
+
 Personal AI workspace merging [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 (agent brain) and [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)
 (web workspace) as pluggable, one-click-updatable components. macOS-native, no Docker.
