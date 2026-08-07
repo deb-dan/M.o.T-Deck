@@ -762,6 +762,112 @@ async def ody_history(sid: str) -> JSONResponse:
         return JSONResponse({"history": []})
 
 
+# ── Per-message actions (LM-Studio parity) ───────────────────────────────────
+# Thin proxies over Odysseus's per-message ops. Both Mission-Control chat lanes
+# (direct Chat + Agent) share the Odysseus session store, so delete/edit/fork all
+# work for either. The Hermes lane keeps its own store and gets Copy only.
+#   • delete → POST /api/session/{sid}/delete-messages {msg_ids}
+#   • edit   → POST /api/session/{sid}/edit-message   {msg_id, content}
+#              (content-only: upstream stamps metadata.edited and does NOT
+#               truncate the tail — matches LM Studio's edit semantics)
+#   • fork   → POST /api/session/{sid}/fork {keep_count}
+# GOTCHA (recon): fork's keep_count indexes the UNFILTERED in-memory history —
+# which is exactly what GET /api/history returns (the unpaged handler), so an
+# index computed from that same payload is correct.
+
+def fork_keep_count(history, msg_id):
+    """Pure: keep_count that forks a session UP TO AND INCLUDING `msg_id`.
+
+    Returns index+1 of the message whose metadata._db_id matches, or None when
+    the id isn't in this history (stale panel state → the caller 404s rather
+    than forking the wrong slice). Ids are compared as strings: the db id is an
+    int in some rows and a str in others, and it round-trips through JSON/DOM
+    datasets as text.
+    """
+    if msg_id is None or msg_id == "":
+        return None
+    target = str(msg_id)
+    for i, m in enumerate(history or []):
+        meta = m.get("metadata") if isinstance(m, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        did = meta.get("_db_id")
+        if did is not None and str(did) == target:
+            return i + 1
+    return None
+
+
+@app.post("/api/ody/session/{sid}/msg-delete")
+async def ody_msg_delete(sid: str, req: Request) -> JSONResponse:
+    """Delete ONE message (by its Odysseus db id) from a session."""
+    try:
+        msg_id = (await req.json()).get("msg_id")
+    except Exception:
+        msg_id = None
+    if msg_id in (None, ""):
+        return JSONResponse({"ok": False, "error": "msg_id required"}, status_code=400)
+    try:
+        r = await _ody_req("POST", f"/api/session/{sid}/delete-messages",
+                           json={"msg_ids": [msg_id]})
+        if r.status_code != 200:
+            return JSONResponse({"ok": False, "error": r.text[:500]}, status_code=502)
+        j = r.json() if r.content else {}
+        return JSONResponse({"ok": True, "deleted": j.get("deleted", 0)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"},
+                            status_code=502)
+
+
+@app.post("/api/ody/session/{sid}/msg-edit")
+async def ody_msg_edit(sid: str, req: Request) -> JSONResponse:
+    """Edit ONE message's text. Content-only — the model is NOT re-run."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    msg_id, content = body.get("msg_id"), body.get("content")
+    if msg_id in (None, "") or content is None:
+        return JSONResponse({"ok": False, "error": "msg_id and content required"},
+                            status_code=400)
+    try:
+        r = await _ody_req("POST", f"/api/session/{sid}/edit-message",
+                           json={"msg_id": msg_id, "content": content})
+        if r.status_code != 200:
+            return JSONResponse({"ok": False, "error": r.text[:500]}, status_code=502)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"},
+                            status_code=502)
+
+
+@app.post("/api/ody/session/{sid}/fork-from")
+async def ody_fork_from(sid: str, req: Request) -> JSONResponse:
+    """Fork a new session containing everything up to (and incl.) `msg_id`."""
+    try:
+        msg_id = (await req.json()).get("msg_id")
+    except Exception:
+        msg_id = None
+    if msg_id in (None, ""):
+        return JSONResponse({"ok": False, "error": "msg_id required"}, status_code=400)
+    try:
+        hr = await _ody_req("GET", f"/api/history/{sid}")
+        if hr.status_code != 200:
+            return JSONResponse({"ok": False, "error": hr.text[:500]}, status_code=502)
+        keep = fork_keep_count(hr.json().get("history") or [], msg_id)
+        if keep is None:
+            return JSONResponse({"ok": False, "error": "message not found in session"},
+                                status_code=404)
+        r = await _ody_req("POST", f"/api/session/{sid}/fork", json={"keep_count": keep})
+        if r.status_code != 200:
+            return JSONResponse({"ok": False, "error": r.text[:500]}, status_code=502)
+        j = r.json() if r.content else {}
+        return JSONResponse({"ok": True, "id": j.get("id"), "name": j.get("name"),
+                             "kept": j.get("kept", keep)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Odysseus unreachable: {e}"},
+                            status_code=502)
+
+
 # ── Capabilities panel (Phase 1): aggregate Odysseus settings + route writes ──────
 # One snapshot for the panel to render; one router for writes. Mirrors the _ody_req
 # proxy style. Odysseus is the source of truth (shared with the Odysseus tab).
@@ -2543,6 +2649,46 @@ def _vision_capable(mid: str) -> bool:
     return bool(m and (m.get("vision") or m.get("mmproj")))
 
 
+def turn_metadata(model, usage, timings, elapsed=None):
+    """Pure: the per-message metadata the DIRECT lane stamps on its assistant turn.
+
+    The Agent lane gets server-written metrics for free (Odysseus writes
+    response_time / input_tokens / output_tokens / tokens_per_second into the
+    message row), so a reopened agent transcript can show per-reply stats. The
+    direct lane persists via inject_messages, which accepts an optional
+    per-message `metadata` — so the SAME keys, from the same usage/timings frame
+    the analytics capture already parses, give the direct lane parity.
+
+    Only keys we actually know are included (a runner build that reports no
+    timings simply yields fewer stats, never zeros or nulls). Never raises.
+    """
+    def _num(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f > 0 else None
+
+    u = usage if isinstance(usage, dict) else {}
+    tm = timings if isinstance(timings, dict) else {}
+    out = {}
+    if model:
+        out["model"] = model
+    tps = _num(tm.get("predicted_per_second"))
+    if tps is not None:
+        out["tokens_per_second"] = round(tps, 2)
+    el = _num(elapsed)
+    if el is not None:
+        out["response_time"] = round(el, 2)
+    itok = _num(u.get("prompt_tokens"))
+    if itok is not None:
+        out["input_tokens"] = int(itok)
+    otok = _num(u.get("completion_tokens"))
+    if otok is not None:
+        out["output_tokens"] = int(otok)
+    return out
+
+
 @app.post("/api/chat/direct")
 async def chat_direct(req: Request) -> StreamingResponse:
     body = await req.json()
@@ -2666,6 +2812,7 @@ async def chat_direct(req: Request) -> StreamingResponse:
             yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
         finally:
             # Persist the exchange into the Odysseus session (best-effort).
+            stats["elapsed"] = _t.monotonic() - t0     # per-reply stats stamp
             answer = "".join(full).strip()
             if sid and user_msg:
                 persisted = injected = False
@@ -2678,7 +2825,20 @@ async def chat_direct(req: Request) -> StreamingResponse:
                     msgs = [{"role": "user",
                              "content": user_msg + ("\n[image attached]" if image else "")}]
                     if answer:
-                        msgs.append({"role": "assistant", "content": answer})
+                        am = {"role": "assistant", "content": answer}
+                        # per-reply stats (tok/s · tokens · time) so a reopened
+                        # direct-lane transcript stamps the same line the Agent
+                        # lane gets from Odysseus's own metrics. Best-effort:
+                        # an empty dict is simply not sent.
+                        try:
+                            meta = turn_metadata(model, stats.get("usage"),
+                                                 stats.get("timings"),
+                                                 stats.get("elapsed"))
+                            if meta:
+                                am["metadata"] = meta
+                        except Exception:
+                            pass
+                        msgs.append(am)
                     await _ody_req("POST", f"/api/session/{sid}/inject_messages",
                                    json={"messages": msgs})
                     injected = True

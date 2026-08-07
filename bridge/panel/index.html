@@ -301,6 +301,30 @@
   .cmsg details.inspect .ibody { font:10px var(--mono); color:var(--faint); line-height:1.6;
       border-left:1px dashed var(--line2); padding:8px 0 8px 14px; margin-top:8px;
       white-space:pre-wrap; word-break:break-all; max-height:220px; overflow-y:auto; }
+  /* Per-message actions (LM-Studio parity): hover-revealed chip row under each
+     bubble + a faint per-reply stats stamp. Existing grammar only — mono
+     small-caps, --faint idle → --fg hover, --bad for the destructive one. */
+  .cmsg .msg-acts { display:flex; gap:12px; padding:5px 0 0 20px; opacity:0;
+      transition:opacity .12s ease; }
+  .cmsg.user .msg-acts { padding:5px 0 0 0; justify-content:flex-end; }
+  .cmsg:hover .msg-acts, .cmsg .msg-acts:focus-within { opacity:1; }
+  .cmsg .msg-act { background:none; border:0; padding:0; cursor:pointer;
+      font:9px var(--mono); letter-spacing:.16em; text-transform:uppercase;
+      color:var(--faint); }
+  .cmsg .msg-act:hover:enabled { color:var(--fg); }
+  .cmsg .msg-act.del:hover:enabled { color:var(--bad); }
+  .cmsg .msg-act:disabled { opacity:.45; cursor:default; }
+  .cmsg .msg-stats { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
+      padding:6px 0 0 20px; }
+  .cmsg.user .msg-stats { padding:6px 0 0 0; text-align:right; }
+  .cmsg .msg-edited { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
+      margin-top:5px; }
+  .cmsg.user .msg-edited { text-align:right; }
+  .cmsg .msg-edit { width:100%; box-sizing:border-box; min-height:84px;
+      background:var(--card); color:var(--cream); border:1px solid var(--line2);
+      border-radius:3px; padding:10px 12px; font:14.5px var(--serif); line-height:1.65;
+      resize:vertical; }
+  .cmsg .msg-edit:focus { outline:none; border-color:var(--gold); }
   /* §E — first-launch setup checklist overlay + coach-mark walkthrough */
   #setup-scrim { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:60;
       display:flex; align-items:center; justify-content:center; }
@@ -3247,12 +3271,14 @@ async function selectSession(sid){
         const uw = addMsg('user', m.content || '');
         // …and .attachment {id,name} from the image sidecar (data/attachments.db)
         if (m.attachment) addRestoredAttachment(uw, m.attachment);
+        stampMsg(uw, m.metadata);   // db id → edit/fork/delete; `edited` mark
       }
       else if (m.role === 'assistant'){
         const w = addMsg('assistant', m.content || '');
         // Direct-lane turns carry .reasoning from the bridge's thinking sidecar
         // (data/thinking.db) — same collapsed disclosure as the Hermes lane.
         if (m.reasoning) addRehydratedThinking(w, m.reasoning);
+        stampMsg(w, m.metadata);    // …plus the per-reply tok/s · tokens · time stamp
       }
     }
     scrollChat(true);   // opening a session snaps to its latest message
@@ -3974,8 +4000,230 @@ function addMsg(role, text) {
   wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
   if (role === 'assistant' && text) renderChatBody(wrap.querySelector('.body'), text);  // PHASE 3: card fenced blocks
   else wrap.querySelector('.body').textContent = text;
+  // The raw text is kept off-DOM: `.body` gets markdown/code cards (assistant) and
+  // attachment lines (user), so textContent is NOT the message. Copy/Edit read this.
+  wrap._raw = text || '';
+  // Lane stamp: the Hermes lane has its own store (no delete/edit/fork there),
+  // so its rows only ever get Copy.
+  if (chatMode === 'hermes') wrap.dataset.lane = 'hermes';
   document.getElementById('chat-msgs').appendChild(wrap);
+  msgActs(wrap);
   return wrap;
+}
+
+/* ── Per-message actions (LM-Studio parity) ──────────────────────────────────
+   Copy · Edit (user) · Fork · Delete on hover, plus a per-reply stats stamp.
+   Delete/Edit/Fork need the message's Odysseus db id (metadata._db_id), which
+   only exists once the turn is persisted — a live message therefore shows Copy
+   until stampMsg() lands its id (on hydration, or via stampLiveTurn at [DONE]).
+   The Hermes lane keeps Copy only: its transcript lives in Hermes's own store,
+   which exposes no per-message ops. */
+function msgRaw(wrap){
+  if (!wrap) return '';
+  if (wrap._raw !== undefined && wrap._raw !== null) return String(wrap._raw);
+  const b = wrap.querySelector('.body');
+  return (b && b.textContent) || '';
+}
+
+function msgActs(wrap){
+  try {
+    if (!wrap) return null;
+    let row = wrap.querySelector(':scope > .msg-acts');
+    if (!row){ row = document.createElement('div'); row.className = 'msg-acts'; }
+    wrap.appendChild(row);   // re-append: keeps the row LAST under sources / cards
+    row.innerHTML = '';
+    const user = wrap.classList.contains('user');
+    const hermes = wrap.dataset.lane === 'hermes';
+    const id = wrap.dataset.dbId || '';
+    const chip = (label, title, fn) => {
+      const b = document.createElement('button');
+      b.className = 'msg-act'; b.textContent = label;
+      b.title = title; b.setAttribute('aria-label', title);
+      b.onclick = () => fn(b);
+      row.appendChild(b); return b;
+    };
+    chip('copy', 'Copy this message', b => msgCopy(wrap, b));
+    if (hermes || !id) return row;   // no server-side id → no server-side ops
+    if (user) chip('edit', 'Edit this message (text only — does not re-run the model)',
+                   () => msgEdit(wrap));
+    chip('fork', 'Start a new chat forked up to this message', b => msgFork(wrap, b));
+    chip('delete', 'Delete this message', b => msgDelete(wrap, b)).classList.add('del');
+    return row;
+  } catch { return null; }
+}
+
+function statsLine(meta){
+  // PURE formatter for the per-reply stamp — mirrored by bridge/tests/test_msg_actions.py
+  // (which extracts THIS function from the panel and runs it under node).
+  if (!meta || typeof meta !== 'object') return '';
+  const num = v => { const n = Number(v); return (isFinite(n) && n > 0) ? n : null; };
+  const out = [];
+  const tps = num(meta.tokens_per_second); if (tps !== null) out.push(tps.toFixed(1) + ' tok/s');
+  const tok = num(meta.output_tokens);     if (tok !== null) out.push(Math.round(tok) + ' tok');
+  const rt  = num(meta.response_time);     if (rt  !== null) out.push(rt.toFixed(1) + 's');
+  return out.join(' · ');
+}
+
+function markEdited(wrap){
+  if (!wrap || wrap.querySelector(':scope > .msg-edited')) return;
+  const e = document.createElement('div');
+  e.className = 'msg-edited'; e.textContent = 'edited';
+  wrap.insertBefore(e, wrap.querySelector(':scope > .msg-acts'));
+}
+
+function stampMsg(wrap, meta){
+  // Thread one history row's metadata onto its rendered node: the db id (unlocks
+  // edit/fork/delete) + the assistant stats line + an `edited` mark.
+  try {
+    if (!wrap) return;
+    const m = (meta && typeof meta === 'object') ? meta : {};
+    const id = m._db_id;
+    if (id !== undefined && id !== null && id !== '') wrap.dataset.dbId = String(id);
+    msgActs(wrap);   // rebuild (and re-append) the row now that an id may exist
+    if (m.edited) markEdited(wrap);
+    if (!wrap.classList.contains('user') && !wrap.querySelector(':scope > .msg-stats')){
+      const t = statsLine(m);
+      if (t){
+        const el = document.createElement('div');
+        el.className = 'msg-stats'; el.textContent = t;
+        wrap.insertBefore(el, wrap.querySelector(':scope > .msg-acts'));
+      }
+    }
+  } catch {}
+}
+
+async function msgCopy(wrap, btn){
+  try {
+    await navigator.clipboard.writeText(msgRaw(wrap));
+    const was = btn.textContent; btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = was; }, 1200);
+  } catch {
+    const was = btn.textContent; btn.textContent = 'failed';
+    setTimeout(() => { btn.textContent = was; }, 1600);
+  }
+}
+
+let _msgDelArm = null;   // two-step delete, same grammar as the session rail's ✕
+function msgDelete(wrap, btn){
+  if (_msgDelArm && _msgDelArm.btn === btn){
+    clearTimeout(_msgDelArm.t); _msgDelArm = null; doMsgDelete(wrap, btn); return;
+  }
+  if (_msgDelArm){ clearTimeout(_msgDelArm.t); _msgDelArm.btn.textContent = 'delete'; }
+  btn.textContent = 'sure?';
+  _msgDelArm = { btn, t: setTimeout(() => { btn.textContent = 'delete'; _msgDelArm = null; }, 3000) };
+}
+
+async function doMsgDelete(wrap, btn){
+  const id = wrap.dataset.dbId;
+  if (!id || !chatSid) return;
+  btn.disabled = true; btn.textContent = 'deleting…';
+  try {
+    const r = await (await fetch(`/api/ody/session/${chatSid}/msg-delete`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg_id: id})})).json();
+    if (r && r.ok){ wrap.remove(); loadSessions(); return; }   // rail message counts
+    btn.disabled = false; btn.textContent = 'failed';
+  } catch { btn.disabled = false; btn.textContent = 'failed'; }
+}
+
+function msgEdit(wrap){
+  if (!wrap || wrap._editing) return;
+  const body = wrap.querySelector('.body');
+  if (!body || !chatSid || !wrap.dataset.dbId) return;
+  wrap._editing = true;
+  const orig = msgRaw(wrap);
+  const ta = document.createElement('textarea');
+  ta.className = 'msg-edit'; ta.value = orig;
+  ta.title = 'Editing changes the stored text only — it does not re-run the model';
+  const acts = wrap.querySelector(':scope > .msg-acts');
+  const bar = document.createElement('div');
+  bar.className = 'msg-acts'; bar.style.opacity = '1';
+  const mk = (label, title, fn) => {
+    const b = document.createElement('button');
+    b.className = 'msg-act'; b.textContent = label; b.title = title;
+    b.setAttribute('aria-label', title); b.onclick = () => fn(b); bar.appendChild(b); return b;
+  };
+  const finish = (text) => {
+    wrap._editing = false;
+    ta.remove(); bar.remove();
+    body.hidden = false;
+    if (acts) acts.style.display = '';
+    if (text !== null && text !== undefined){
+      wrap._raw = text;
+      // rebuild the bubble text, preserving any attachment line already in it
+      const keep = Array.from(body.children).filter(c => c.classList.contains('attachline'));
+      body.textContent = text;
+      keep.forEach(k => body.appendChild(k));
+      markEdited(wrap);
+    }
+  };
+  const save = async (b) => {
+    const text = ta.value;
+    b.disabled = true; b.textContent = 'saving…';
+    try {
+      const r = await (await fetch(`/api/ody/session/${chatSid}/msg-edit`, {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({msg_id: wrap.dataset.dbId, content: text})})).json();
+      if (r && r.ok){ finish(text); loadSessions(); return; }
+      b.disabled = false; b.textContent = 'failed';
+    } catch { b.disabled = false; b.textContent = 'failed'; }
+  };
+  mk('save', 'Save this edit (⌘/Ctrl+Enter)', save);
+  mk('cancel', 'Discard this edit (Esc)', () => finish(null));
+  ta.onkeydown = (e) => {
+    if (e.key === 'Escape'){ e.preventDefault(); finish(null); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)){
+      e.preventDefault(); save(bar.firstChild);
+    }
+  };
+  body.hidden = true;
+  if (acts) acts.style.display = 'none';
+  wrap.insertBefore(ta, acts || null);
+  wrap.insertBefore(bar, acts || null);
+  ta.focus();
+}
+
+async function msgFork(wrap, btn){
+  const id = wrap.dataset.dbId;
+  if (!id || !chatSid || chatBusy) return;
+  btn.disabled = true; btn.textContent = 'forking…';
+  try {
+    const r = await (await fetch(`/api/ody/session/${chatSid}/fork-from`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg_id: id})})).json();
+    if (r && r.ok && r.id){
+      await loadSessions();
+      await selectSession(r.id);
+      return;
+    }
+    btn.disabled = false; btn.textContent = 'failed';
+  } catch { btn.disabled = false; btn.textContent = 'failed'; }
+}
+
+async function stampLiveTurn(userWrap, holder, userText){
+  // A just-streamed turn has no db ids yet (inject_messages / Odysseus write them
+  // server-side). One silent refetch at turn end maps the two DOM nodes onto the
+  // LAST matching history rows so their actions + stats light up without a reload.
+  // Wrapped end-to-end: this must NEVER throw into the send path.
+  try {
+    if (chatMode === 'hermes' || !chatSid) return;
+    const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
+    const hist = (h && h.history) || [];
+    // The direct lane appends an "[image attached]" marker to the stored user
+    // text — normalise it away so the DOM text still matches. ⚠ the marker
+    // string is duplicated here from bridge/app.py's ATTACH_MARKER.
+    const norm = s => String(s || '').replace(/\n\[image attached\]$/, '').trim();
+    const lastMatch = (role, text) => {
+      const want = norm(text);
+      for (let i = hist.length - 1; i >= 0; i--){
+        const m = hist[i];
+        if (m && m.role === role && norm(m.content) === want) return m;
+      }
+      return null;
+    };
+    const um = lastMatch('user', userText);
+    if (um) stampMsg(userWrap, um.metadata);
+    const am = lastMatch('assistant', msgRaw(holder));
+    if (am) stampMsg(holder, am.metadata);
+  } catch {}
 }
 
 function attachLineEl(src, name, onRemove){
@@ -4285,6 +4533,7 @@ async function sendChat() {
             think.remove(); chatBusy = false;
             chatSummary(holder);                          // §B: finalize step summary
             const od = holder.querySelector('details.think'); if (od) od.open = false;
+            holder._raw = body.textContent;   // keep the raw answer BEFORE it becomes cards (Copy reads this)
             renderChatBody(body, body.textContent);   // PHASE 3: render md + card artifact fenced blocks
             break;
           }
@@ -4406,6 +4655,10 @@ async function sendChat() {
     // the Hermes rail (Phase 3) gains the row for a first-turn session and
     // updates titles/counts — loadSessions() branches per lane.
     loadSessions();
+    // …and light up this turn's per-message actions + stats stamp (one silent
+    // history refetch; never awaited, never allowed to throw into the send path).
+    if (holder._raw === undefined) holder._raw = body.textContent;
+    stampLiveTurn(userWrap, holder, text);
   }
 }
 
