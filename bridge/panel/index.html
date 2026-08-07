@@ -3243,7 +3243,11 @@ async function selectSession(sid){
   try {
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
     for (const m of (h.history || []).slice(-30)){
-      if (m.role === 'user') addMsg('user', m.content || '');
+      if (m.role === 'user'){
+        const uw = addMsg('user', m.content || '');
+        // …and .attachment {id,name} from the image sidecar (data/attachments.db)
+        if (m.attachment) addRestoredAttachment(uw, m.attachment);
+      }
       else if (m.role === 'assistant'){
         const w = addMsg('assistant', m.content || '');
         // Direct-lane turns carry .reasoning from the bridge's thinking sidecar
@@ -3974,6 +3978,41 @@ function addMsg(role, text) {
   return wrap;
 }
 
+function attachLineEl(src, name, onRemove){
+  // The one builder for a sent-message attachment line — used live at send time
+  // (bytes in memory) AND on rehydration (bytes served from the sidecar). Same
+  // DOM/classes both ways so a reopened turn is indistinguishable from a live one.
+  const line = document.createElement('div');
+  line.className = 'attachline';
+  const th = document.createElement('img');
+  th.className = 'attachthumb'; th.src = src; th.alt = name;
+  th.title = 'Click to view'; th.onclick = () => showImageLightbox(src, name);
+  const nm = document.createElement('span');
+  nm.textContent = '🖼 ' + name;   // textContent: a filename is never markup
+  const x = document.createElement('button');
+  x.className = 'aclear'; x.textContent = '✕';
+  x.title = 'Remove this image from the app';
+  x.setAttribute('aria-label', 'Remove this image from the app');
+  x.onclick = () => { try { onRemove && onRemove(); } catch {} line.remove(); };
+  line.appendChild(th); line.appendChild(nm); line.appendChild(x);
+  return line;
+}
+
+function addRestoredAttachment(wrap, att){
+  // Reopened direct-lane turn: the bridge's image sidecar (data/attachments.db)
+  // hands back {id, name}; the bytes come from /api/attachment/<id>. ✕ deletes
+  // that sidecar row only — the user's original file is NEVER touched.
+  try {
+    if (!wrap || !att || att.id === undefined || att.id === null) return;
+    const body = wrap.querySelector('.body');
+    if (!body) return;
+    const src = '/api/attachment/' + encodeURIComponent(att.id);
+    body.appendChild(attachLineEl(src, att.name || 'image', () => {
+      fetch(src + '/delete', {method:'POST'}).catch(() => {});
+    }));
+  } catch {}
+}
+
 function addRehydratedThinking(wrap, text){
   // Reopened Hermes turns: insert the SAME collapsed `details.think` disclosure the
   // live stream produces, above the answer body. Marked "restored" so it's honest that
@@ -4193,22 +4232,12 @@ async function sendChat() {
   const img = (chatMode === 'chat' && attachedImage) ? attachedImage : null;
   const userWrap = addMsg('user', text);
   if (img){
-    // clickable thumbnail while the session is open (bytes live in memory only;
-    // reopening the chat shows the filename line — image persistence = future sidecar)
-    const line = document.createElement('div');
-    line.className = 'attachline';
-    const th = document.createElement('img');
-    th.className = 'attachthumb'; th.src = img.data; th.alt = img.name;
-    th.title = 'Click to view'; th.onclick = () => showImageLightbox(img.data, img.name);
-    const nm = document.createElement('span');
-    nm.textContent = '🖼 ' + img.name;   // textContent: a filename is never markup
-    const x = document.createElement('button');
-    x.className = 'aclear'; x.textContent = '✕';
-    x.title = 'Remove this image from the app';
-    x.setAttribute('aria-label', 'Remove this image from the app');
-    x.onclick = () => line.remove();     // in-memory only — nothing else holds the bytes
-    line.appendChild(th); line.appendChild(nm); line.appendChild(x);
-    userWrap.querySelector('.body').appendChild(line);
+    // clickable thumbnail for the live turn; the bytes are ALSO persisted by the
+    // bridge's image sidecar, so reopening this session rehydrates the same line.
+    // ✕ here only removes it from this view (the sidecar row is written after the
+    // turn completes) — it never touches the source file.
+    userWrap.querySelector('.body').appendChild(
+      attachLineEl(img.data, img.name, null));
   }
   clearImage();
   scrollChat(true);   // sending your own message always snaps to bottom
@@ -4235,7 +4264,8 @@ async function sendChat() {
       : {session:chatSid, message:text, mode:chatMode,
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset(),
-         ...(img ? {image: img.data} : {})};   // direct lane reads `image` (dataURL)
+         // direct lane reads `image` (dataURL); `image_name` labels the sidecar row
+         ...(img ? {image: img.data, image_name: img.name} : {})};
     const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(reqBody)});

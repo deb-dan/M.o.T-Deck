@@ -733,6 +733,7 @@ async def ody_session_delete(sid: str) -> JSONResponse:
     try:
         r = await _ody_req("POST", f"/api/session/{sid}/delete")
         _thinking_forget(sid)   # drop the direct-lane thinking sidecar rows too
+        _attachment_forget(sid)  # …and any stored image bytes for that session
         return JSONResponse({"ok": r.status_code == 200})
     except Exception:
         return JSONResponse({"ok": False})
@@ -750,6 +751,10 @@ async def ody_history(sid: str) -> JSONResponse:
             # sidecar miss just means no thinking disclosure, never a broken history.
             if isinstance(out, dict) and isinstance(out.get("history"), list):
                 attach_thinking(out["history"], _thinking_rows(sid))
+                # Image sidecar: same story for the USER turns — Odysseus keeps
+                # only the "[image attached]" marker, so hand the panel back an
+                # {id, name} handle it can render as the original thumbnail.
+                attach_images(out["history"], _attachment_rows(sid))
         except Exception:
             pass
         return JSONResponse(out)
@@ -1247,6 +1252,213 @@ def attach_thinking(history_rows, thought_rows):
     except Exception:
         pass
     return history_rows
+
+
+# ── Direct-lane image sidecar (2026-08-07) ───────────────────────────────────
+# Same problem/shape as the thinking sidecar above: the direct lane persists
+# {role, content} strings to Odysseus, so an attached image survives a reopen
+# only as the "\n[image attached]" marker line. This sidecar keeps the BYTES
+# locally (data/attachments.db) keyed by (session id, hash of the user text) and
+# re-attaches an {id, name} handle on history read, so the panel can rehydrate
+# the same thumbnail it showed at send time.
+#
+# Discipline is identical: one lock, every read/write wrapped — this must NEVER
+# raise into the chat path. Storing bytes rather than the dataURL keeps the file
+# ~33% smaller and lets GET /api/attachment/{id} serve it with its real mime.
+_attach_lock = threading.Lock()
+ATTACH_MAX_ROWS = 300      # global cap (blobs are heavy — far tighter than thinking's 5000)
+ATTACH_MARKER = "\n[image attached]"   # appended by chat_direct when persisting the user turn
+
+
+def user_key(text: str) -> str:
+    """Stable join key for a USER turn: sha1 of its first 2048 characters.
+
+    Parallel to answer_hash, with one extra normalization: chat_direct persists
+    the user message with ATTACH_MARKER appended, so the string we store at send
+    time and the string history hands back differ by exactly that suffix. Strip
+    it on both sides and the two always agree. Pure — unit-tested.
+    """
+    import hashlib
+    t = text or ""
+    if t.endswith(ATTACH_MARKER):
+        t = t[:-len(ATTACH_MARKER)]
+    return hashlib.sha1(t[:2048].encode("utf-8", "replace")).hexdigest()
+
+
+def parse_data_url(s, max_chars: int):
+    """PURE: 'data:<mime>;base64,<payload>' → (mime, bytes), else (None, None).
+
+    Total: any malformed / oversize / non-image input yields (None, None) so the
+    caller simply skips storing. Never raises.
+    """
+    try:
+        if not isinstance(s, str) or not s.startswith("data:"):
+            return (None, None)
+        if max_chars and len(s) > max_chars:
+            return (None, None)
+        head, _, payload = s.partition(",")
+        if not payload:
+            return (None, None)
+        meta = head[5:]                      # drop 'data:'
+        if not meta.endswith(";base64"):
+            return (None, None)
+        mime = meta[:-len(";base64")].strip().lower()
+        if not mime.startswith("image/"):
+            return (None, None)
+        import base64
+        raw = base64.b64decode(payload, validate=True)
+        if not raw:
+            return (None, None)
+        return (mime, raw)
+    except Exception:
+        return (None, None)
+
+
+def _attach_conn():
+    import sqlite3
+    (ROOT / "data").mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(ROOT / "data" / "attachments.db"), timeout=5)
+    c.execute("CREATE TABLE IF NOT EXISTS attachments("
+              "id INTEGER PRIMARY KEY, ts REAL, sid TEXT, key TEXT, "
+              "name TEXT, mime TEXT, bytes BLOB)")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_attachments_sid_key ON attachments(sid, key)")
+    return c
+
+
+def log_attachment(sid: str, key: str, name: str, mime: str, blob) -> None:
+    """Store one turn's image. Best-effort; never raises."""
+    try:
+        if not (sid and key and mime and blob):
+            return
+        import time as _t
+        with _attach_lock:
+            c = _attach_conn()
+            c.execute("INSERT INTO attachments(ts, sid, key, name, mime, bytes) "
+                      "VALUES(?,?,?,?,?,?)",
+                      (_t.time(), sid, key, (name or "image"), mime, blob))
+            # Global retention cap: drop the oldest rows beyond ATTACH_MAX_ROWS.
+            c.execute("DELETE FROM attachments WHERE id NOT IN "
+                      "(SELECT id FROM attachments ORDER BY ts DESC, id DESC LIMIT ?)",
+                      (ATTACH_MAX_ROWS,))
+            c.commit(); c.close()
+    except Exception:
+        pass
+
+
+def _attachment_rows(sid: str) -> list:
+    """All (key, id, name) rows for a session, oldest first. Never raises."""
+    try:
+        if not sid:
+            return []
+        with _attach_lock:
+            c = _attach_conn()
+            rows = c.execute("SELECT key, id, name FROM attachments WHERE sid=? "
+                             "ORDER BY ts ASC, id ASC", (sid,)).fetchall()
+            c.close()
+        return [(r[0], r[1], r[2]) for r in rows]
+    except Exception:
+        return []
+
+
+def _attachment_get(aid: int):
+    """(name, mime, bytes) for one row, or None. Never raises."""
+    try:
+        with _attach_lock:
+            c = _attach_conn()
+            row = c.execute("SELECT name, mime, bytes FROM attachments WHERE id=?",
+                            (int(aid),)).fetchone()
+            c.close()
+        return (row[0], row[1], row[2]) if row else None
+    except Exception:
+        return None
+
+
+def _attachment_delete(aid: int) -> bool:
+    """Remove one stored image ('remove from the app'). NEVER touches any source
+    file on disk — this store is the only copy the harness owns. Never raises."""
+    try:
+        with _attach_lock:
+            c = _attach_conn()
+            cur = c.execute("DELETE FROM attachments WHERE id=?", (int(aid),))
+            n = cur.rowcount
+            c.commit(); c.close()
+        return bool(n)
+    except Exception:
+        return False
+
+
+def _attachment_forget(sid: str) -> None:
+    """Drop a deleted session's stored images. Best-effort; never raises."""
+    try:
+        if not sid:
+            return
+        with _attach_lock:
+            c = _attach_conn()
+            c.execute("DELETE FROM attachments WHERE sid=?", (sid,))
+            c.commit(); c.close()
+    except Exception:
+        pass
+
+
+def attach_images(history_rows, att_rows):
+    """PURE: attach stored image handles to user messages, consuming IN ORDER.
+
+    Mirrors attach_thinking exactly: rows are bucketed by key and popped from the
+    front, so a session that sent "test" twice with two different images gets
+    them back 1:1 in the order they were sent. Malformed rows/messages are
+    skipped — this must never raise.
+    """
+    try:
+        buckets: dict = {}
+        for row in (att_rows or []):
+            try:
+                k, aid, nm = row[0], row[1], row[2]
+            except Exception:
+                continue
+            if not k or aid is None:
+                continue
+            buckets.setdefault(str(k), []).append((aid, nm))
+        if not buckets:
+            return history_rows
+        for m in (history_rows or []):
+            try:
+                if not isinstance(m, dict) or m.get("role") != "user":
+                    continue
+                if m.get("attachment"):
+                    continue          # never overwrite an already-populated handle
+                content = m.get("content")
+                if not isinstance(content, str) or not content:
+                    continue
+                b = buckets.get(user_key(content))
+                if b:
+                    aid, nm = b.pop(0)
+                    m["attachment"] = {"id": aid, "name": nm or "image"}
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return history_rows
+
+
+@app.get("/api/attachment/{aid}")
+async def api_attachment(aid: int):
+    """Serve one stored image's bytes with its own mime. 404 when it's gone
+    (pruned / deleted) so a stale thumbnail simply fails to load."""
+    from fastapi.responses import Response
+    row = await asyncio.to_thread(_attachment_get, aid)
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    name, mime, blob = row
+    return Response(content=blob, media_type=mime or "application/octet-stream",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/attachment/{aid}/delete")
+async def api_attachment_delete(aid: int) -> JSONResponse:
+    """'Remove this image from the app' — drops the sidecar row only. The user's
+    original file on disk is never read again and never touched."""
+    ok = await asyncio.to_thread(_attachment_delete, aid)
+    return JSONResponse({"ok": ok})
 
 
 # --- Version / update notice (PART 4) -------------------------------------------
@@ -2292,12 +2504,52 @@ async def dl_list() -> JSONResponse:
 # back to the Odysseus session, so the rail/history stay coherent.
 _RUNNER = httpx.AsyncClient(timeout=httpx.Timeout(20, read=None))
 
+# ── Vision attachments (direct lane only) ────────────────────────────────────
+# Both serving engines accept OpenAI-style image parts on /v1/chat/completions:
+# llama-server with an mmproj projector, and mlx-vlm. The registry already knows
+# which models are vision-capable (mmproj sibling for gguf, vision_config /
+# image_token_id for mlx — see _gguf_registry_entry / _mlx_registry_entry), so the
+# gate below is a registry lookup, never a probe of the model itself.
+IMAGE_MAX_CHARS = 12 * 1024 * 1024   # dataURL length cap (~9MB of image bytes)
+
+
+def build_user_content(text: str, image, vision: bool):
+    """PURE: the user turn's `content` for the runner. Returns (content, error).
+
+    no image                 → the plain string (legacy shape, byte-identical)
+    image + vision model     → OpenAI parts [{text}, {image_url}]
+    image + non-vision model → (None, reason)  → caller streams one proxy_error
+    malformed / oversize     → (None, reason)
+
+    Order matters: a malformed or oversize payload is reported as such even on a
+    vision model, so the user learns what is actually wrong.
+    """
+    if not image:
+        return text, None
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        return None, "attachment is not an image data URL — attach removed"
+    if len(image) > IMAGE_MAX_CHARS:
+        return None, "image too large — attach removed"
+    if not vision:
+        return None, "active model has no vision — attach removed"
+    return ([{"type": "text", "text": text},
+             {"type": "image_url", "image_url": {"url": image}}], None)
+
+
+def _vision_capable(mid: str) -> bool:
+    """Registry truth for one model id — the same flag the Models pane's VISION
+    pill and the mlx-vlm engine dispatch read."""
+    m = next((x for x in _registry_models() if x.get("id") == mid), None)
+    return bool(m and (m.get("vision") or m.get("mmproj")))
+
 
 @app.post("/api/chat/direct")
 async def chat_direct(req: Request) -> StreamingResponse:
     body = await req.json()
     sid = body.get("session", "")
     user_msg = (body.get("message") or "").strip()
+    image = body.get("image") or ""
+    image_name = (body.get("image_name") or "")[:200]
     rc = cfg().get("runner", {})
     base = (rc.get("endpoint") or "http://127.0.0.1:6767/v1").rstrip("/")
     key, model = rc.get("api_key", ""), rc.get("model", "")
@@ -2317,10 +2569,29 @@ async def chat_direct(req: Request) -> StreamingResponse:
                         messages.append({"role": m["role"], "content": m["content"]})
         except Exception:
             pass  # degrade: direct chat works even with Odysseus down
-    messages.append({"role": "user", "content": user_msg})
+
+    # An attached image only rides along when the LIVE model can see it. The live id
+    # (not just runner.model) is the same source the composer's VISION chip uses, so
+    # the UI's promise and the gate here can't disagree. Probed only when an image is
+    # actually attached — no extra work on ordinary turns.
+    vision = False
+    if image:
+        live = None
+        try:
+            if rc.get("port"):
+                live = await asyncio.to_thread(_live_model_id, int(rc["port"]))
+        except Exception:
+            live = None
+        vision = _vision_capable(live or model)
+    content, cerr = build_user_content(user_msg, image, vision)
+    messages.append({"role": "user", "content": content if not cerr else user_msg})
 
     async def gen():
         import json as _json, time as _t
+        if cerr:   # never call the runner with an attachment it can't use
+            yield f'data: {_json.dumps({"type": "proxy_error", "error": cerr})}\n\n'
+            yield "data: [DONE]\n\n"
+            return
         full, think_open = [], False
         think = []        # thinking sidecar (both reasoning_content + inline <think>)
         t0 = _t.monotonic(); stats = {}   # for best-effort usage analytics
@@ -2397,19 +2668,33 @@ async def chat_direct(req: Request) -> StreamingResponse:
             # Persist the exchange into the Odysseus session (best-effort).
             answer = "".join(full).strip()
             if sid and user_msg:
-                persisted = False
+                persisted = injected = False
                 try:
                     # New Odysseus main removed POST /api/session/{sid}/message;
                     # append via the bulk inject_messages endpoint (user before assistant).
-                    msgs = [{"role": "user", "content": user_msg}]
+                    # TEXT only: the store (and the thinking sidecar's answer-hash
+                    # join) stay string-shaped; the attachment is recorded as a marker
+                    # so a reopened transcript still shows an image was sent.
+                    msgs = [{"role": "user",
+                             "content": user_msg + ("\n[image attached]" if image else "")}]
                     if answer:
                         msgs.append({"role": "assistant", "content": answer})
                     await _ody_req("POST", f"/api/session/{sid}/inject_messages",
                                    json={"messages": msgs})
+                    injected = True
                     if answer:
                         persisted = True
                 except Exception:
                     pass
+                if injected and image:
+                    # Image sidecar: keep the BYTES locally, keyed by (sid, user
+                    # text hash), so reopening the session rehydrates the same
+                    # thumbnail instead of just the marker line. A malformed or
+                    # oversize dataURL is simply not stored — never fails a turn.
+                    _mime, _raw = parse_data_url(image, IMAGE_MAX_CHARS)
+                    if _raw:
+                        log_attachment(sid, user_key(user_msg), image_name,
+                                       _mime, _raw)
                 if persisted:
                     # Thinking sidecar: Odysseus stores {role,content} only, so keep
                     # this turn's reasoning locally keyed by (sid, answer hash) →
