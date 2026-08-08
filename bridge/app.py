@@ -16,11 +16,26 @@ from pathlib import Path
 import httpx
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 PANEL = Path(__file__).resolve().parent / "panel"
+
+# Harness-native voice capability (Phase B). Imported DEFENSIVELY: ship.sh has
+# historically copied only bridge/app.py into the fat snapshot, so a snapshot that
+# predates voice.py must still boot a working bridge — it just loses /api/voice/tts
+# (which reports the import error) and treats every registry entry as a chat model,
+# i.e. exactly today's behaviour. ship.sh now copies every bridge/*.py.
+_VOICE_ERR = ""
+try:
+    from . import voice as _voice           # normal: loaded as the package bridge.app
+except Exception:                            # noqa: BLE001
+    try:
+        from bridge import voice as _voice   # loaded as a top-level module
+    except Exception as _e:                  # noqa: BLE001
+        _voice, _VOICE_ERR = None, str(_e)[:200]
+        print(f"[voice] module unavailable — TTS disabled ({_VOICE_ERR})", flush=True)
 
 app = FastAPI(title="AI Harness Bridge")
 
@@ -1763,6 +1778,70 @@ def _set_runner_model(new_id: str) -> None:
     _set_yaml_model("runner", new_id)
 
 
+def _set_yaml_scalar(block: str, key: str, value: str) -> None:
+    """Rewrite <block>.<key> in harness.yaml IN PLACE (same line-scan idiom as
+    _set_yaml_model, so every comment / ordering in the file survives — a full yaml
+    round-trip would strip them, which we only ever accept for ~/.hermes/config.yaml).
+    An empty value writes a bare `key:` (= null = off). If the block or the key is
+    missing (e.g. an older snapshot manifest that ship.sh's merge hasn't touched yet)
+    they are appended rather than silently dropped."""
+    import re
+    p = ROOT / "harness.yaml"
+    text = p.read_text()
+    lines = text.split("\n")
+    inside, block_at, last_in_block = False, -1, -1
+    for i, ln in enumerate(lines):
+        if re.match(rf'^{re.escape(block)}:\s*$', ln):
+            inside, block_at = True, i
+            continue
+        if inside and re.match(r'^\S', ln):
+            inside = False
+        if inside:
+            if ln.strip():
+                last_in_block = i
+            if re.match(rf'^  {re.escape(key)}:', ln):
+                suffix = ""
+                m = re.search(r'\s(#.*)$', ln)      # keep any trailing comment
+                if m:
+                    suffix = "  " + m.group(1)
+                lines[i] = (f"  {key}: {value}" if value else f"  {key}:") + suffix
+                p.write_text("\n".join(lines))
+                return
+    new_line = f"  {key}: {value}" if value else f"  {key}:"
+    if block_at < 0:
+        lines.append(f"{block}:")
+        lines.append(new_line)
+    else:
+        lines.insert((last_in_block if last_in_block >= 0 else block_at) + 1, new_line)
+    p.write_text("\n".join(lines))
+
+
+def _split_audio(models: list) -> tuple:
+    """(chat, audio) partition of a registry list. Degrades to 'everything is a chat
+    model' when bridge/voice.py is unavailable — never crashes the Models pane."""
+    if _voice is not None:
+        return _voice.split_audio(models)
+    return list(models or []), []
+
+
+def _voice_cfg() -> dict:
+    """The harness.yaml `voice:` block, normalised. Empty string = capability off."""
+    v = (cfg().get("voice") or {}) if isinstance(cfg().get("voice"), dict) else {}
+    return {"tts_model": str(v.get("tts_model") or "").strip(),
+            "stt_model": str(v.get("stt_model") or "").strip()}
+
+
+def _reject_if_audio(mid: str) -> "JSONResponse | None":
+    """Guard for the CHAT slots (runner switch / aux). Loading a TTS backbone into
+    llama-server or mlx_lm.server fails in a confusing way — refuse it by name."""
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if entry is not None and _voice is not None and _voice.is_audio_entry(entry):
+        return JSONResponse(
+            {"ok": False, "log": f"'{mid}' is a voice model — set it in Models → Audio, "
+                                 f"not as a chat/aux model"}, status_code=400)
+    return None
+
+
 # ── Model-memory ledger (Fable verdict, promoted) ─────────────────────────────
 # Bridge-side RAM accounting so main + aux (+ future voice) loads can't blow past
 # the box's memory. APPROXIMATION: a model's RAM footprint ≈ its weight file size
@@ -1795,7 +1874,11 @@ def _loaded_models_bytes(exclude_slot: str | None = None) -> int:
     ('main'|'aux') omits that slot — used to get 'other-slot usage' for a switch of
     that slot (so its own current usage isn't double-counted against the candidate)."""
     c = cfg()
-    models = _registry_models()
+    # Chat models ONLY: an audio entry must never be able to claim ledger budget
+    # (voice weights are transient by design — spec §Architecture 1), and if an
+    # audio id ever ended up in runner.model/aux.model the lookup must miss, not
+    # silently account for it.
+    models, _ = _split_audio(_registry_models())
     total = 0
     rc = c.get("runner", {}) or {}
     if exclude_slot != "main" and rc.get("port") and _port_alive_sync(int(rc["port"])):
@@ -1816,9 +1899,14 @@ def _within_budget(candidate_bytes: int, other_slot_bytes: int, budget_bytes: in
 def api_models() -> JSONResponse:
     """Installed models (from OUR registry data/models.json — the only source since
     jan was retired), the active runner model + state, aux state, and the
-    model-RAM ledger (approx by file size)."""
+    model-RAM ledger (approx by file size).
+
+    AUDIO models (kind:"audio") are partitioned OUT of `installed` and returned under
+    `audio` instead. This is load-bearing: `installed` feeds the runner switch, the
+    aux picker and the chat model popover, and a TTS backbone in any of those would
+    wedge the runner. The partition lives in ONE place (bridge/voice.split_audio)."""
     import json as _json
-    installed, err = [], None
+    installed, audio, err = [], [], None
     c = cfg()
     rc = c.get("runner", {})
     adapter = (rc.get("adapter") or "auto")
@@ -1839,6 +1927,9 @@ def api_models() -> JSONResponse:
                            cwd=ROOT, capture_output=True, text=True,
                            timeout=60, check=False)
             models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
+        models, _audio_models = _split_audio(models)
+        if _voice is not None:
+            audio = [_voice.audio_entry_view(m) for m in _audio_models]
         for m in models:
             installed.append({
                 "id": m.get("id"), "name": m.get("name") or m.get("id"),
@@ -1859,10 +1950,13 @@ def api_models() -> JSONResponse:
     aux = {"model": ax.get("model") or "", "port": ax.get("port"),
            "up": _port_alive_sync(int(ax["port"])) if ax.get("port") else False}
     ledger = {"used_bytes": _loaded_models_bytes(), "budget_bytes": _budget_bytes()}
+    vcfg = _voice_cfg()
     return JSONResponse({
         "installed": installed, "active": rc.get("model"),
         "runner_up": bool(live_id), "live_id": live_id,
-        "aux": aux, "adapter": adapter, "ledger": ledger, "error": err})
+        "aux": aux, "adapter": adapter, "ledger": ledger, "error": err,
+        # Phase A (Models → Audio tab) reads these; the chat lists above never see them.
+        "audio": audio, "voice": vcfg})
 
 
 @app.post("/api/models/rescan")
@@ -1938,6 +2032,9 @@ async def api_switch_model(req: Request) -> JSONResponse:
         return JSONResponse(
             {"ok": False, "log": "downloads arrive with the download manager (next slice) — this adapter loads only installed models"},
             status_code=400)
+    _bad = _reject_if_audio(new_id)
+    if _bad is not None:
+        return _bad
     old_id = (c.get("runner", {}) or {}).get("model") or ""
     # Model-RAM ledger gate: candidate + the OTHER slot (aux) must fit the budget.
     # Switching the MAIN slot replaces its own usage → exclude "main" from "other".
@@ -2064,12 +2161,20 @@ async def api_delete_model(req: Request) -> JSONResponse:
         if ax.get("port"):
             _aux_kill(int(ax["port"]))
         _set_yaml_model("aux", "")
+    # If it was a VOICE default, clear that slot too — leaving harness.yaml pointing at
+    # deleted weights would only fail later, at speak time, far from this click.
+    vc = _voice_cfg()
+    was_voice = [k for k in ("tts_model", "stt_model") if vc.get(k) == mid]
+    for k in was_voice:
+        _set_yaml_scalar("voice", k, "")
 
     if _os.path.isdir(target):
         _shutil.rmtree(target, ignore_errors=True)
     _registry_drop(mid)
-    print(f"[delete] removed {mid!r} (dir {target}, was_live={was_live}, was_aux={was_aux})", flush=True)
-    return JSONResponse({"ok": True, "id": mid, "was_live": was_live, "was_aux": was_aux})
+    print(f"[delete] removed {mid!r} (dir {target}, was_live={was_live}, "
+          f"was_aux={was_aux}, was_voice={was_voice or 'no'})", flush=True)
+    return JSONResponse({"ok": True, "id": mid, "was_live": was_live,
+                         "was_aux": was_aux, "was_voice": was_voice})
 
 
 @app.get("/api/models/switch-status")
@@ -2102,6 +2207,9 @@ async def aux_set(req: Request) -> JSONResponse:
     new_id = ((await req.json()).get("id") or "").strip()
     if not new_id:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
+    _bad = _reject_if_audio(new_id)
+    if _bad is not None:
+        return _bad
     _set_yaml_model("aux", new_id)
     return JSONResponse({"ok": True, "model": new_id})
 
@@ -2481,43 +2589,70 @@ async def _run_download(dl_id: str) -> None:
             _dl_cleanup(e)
             return
         # All files complete → register the model.
-        if e.get("kind") == "mlx":
-            _registry_add(_mlx_registry_entry(e))
-            e["state"] = "done"
-            return
-        _registry_add(_gguf_registry_entry(e))
+        base = (_mlx_registry_entry(e) if e.get("kind") == "mlx"
+                else _gguf_registry_entry(e))
+        # Phase A: an AUDIO download carries an explicit format hint from the Get
+        # button (never sniffed from the filename — see voice.audio_download_entry).
+        vf = e.get("voice_format")
+        if vf and _voice is not None:
+            try:
+                base = _voice.audio_download_entry(base, vf)
+            except Exception as ex:                              # noqa: BLE001
+                # A bad hint must not lose the download: register the chat-shaped
+                # entry and say so, rather than dropping the model on the floor.
+                print(f"[dl] audio hint {vf!r} rejected ({ex}) — "
+                      f"registering {base.get('id')!r} as a chat model", flush=True)
+        _registry_add(base)
         e["state"] = "done"
     except Exception as ex:
         e["state"] = "error"
         e["error"] = str(ex)[:300]
 
 
+# Files a model NEVER needs at runtime. Everything else in the repo is fetched.
+# DENYLIST, not an allowlist: the old allowlist (*.safetensors / tokenizer* / *.json)
+# silently skipped `merges.txt`, so Qwen3-TTS downloaded a vocab with no merges and
+# died at generate time with "vocab and merges must be both be from memory or both
+# filenames". Every new model family would have re-broken an allowlist the same way;
+# a denylist fails toward downloading a few KB too much instead of a dead model.
+_MLX_SKIP_EXACT = {".gitattributes", ".gitignore", ".ds_store", "license", "notice"}
+_MLX_SKIP_EXT = (".md", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".mp3",
+                 ".wav", ".pdf", ".gguf")
+
+
 def _mlx_repo_files(tree: list) -> list:
-    """From an HF tree, return [(relpath, size)] for the files an MLX model needs:
-    every *.safetensors weight/split, plus config.json/tokenizer*/*.json metadata.
-    (config.json is covered by *.json; tokenizer.model — sentencepiece, no .json —
-    by the tokenizer* prefix.)"""
+    """From an HF tree, return [(relpath, size)] for everything an MLX model needs —
+    i.e. the whole repo minus docs/images/licences (see _MLX_SKIP_*). Weights,
+    config, tokenizer assets (tokenizer.json OR vocab.json + merges.txt), sentencepiece
+    models and nested dirs (e.g. speech_tokenizer/) all come down."""
     import os as _os
     out = []
     for it in tree:
+        if (it.get("type") or "file") != "file":
+            continue                                   # skip tree/dir entries
         p = it.get("path", "")
-        low = p.lower()
+        if not p:
+            continue
         b = _os.path.basename(p).lower()
-        if (low.endswith(".safetensors") or b.startswith("tokenizer")
-                or low.endswith(".json")):
-            out.append((p, it.get("size") or 0))
+        stem = b.rsplit(".", 1)[0]
+        if b in _MLX_SKIP_EXACT or stem in _MLX_SKIP_EXACT:
+            continue
+        if b.endswith(_MLX_SKIP_EXT):
+            continue
+        out.append((p, it.get("size") or 0))
     return out
 
 
 def _mk_download(repo: str, files: list, model_id: str, kind: str,
-                 model_dir=None) -> dict:
+                 model_dir=None, voice_format: "str | None" = None) -> dict:
     """Register a new DOWNLOADS entry + spawn its task. `files` = the
-    _run_download file-dict list already built by the caller."""
+    _run_download file-dict list already built by the caller. `voice_format` (Phase A)
+    is the audio hint carried through to the registry entry on completion."""
     _DL_SEQ["n"] += 1
     dl_id = str(_DL_SEQ["n"])
     entry = {"id": dl_id, "repo": repo, "files": files, "state": "downloading",
              "error": None, "rate": 0.0, "model_id": model_id, "kind": kind,
-             "model_dir": model_dir, "task": None}
+             "model_dir": model_dir, "voice_format": voice_format, "task": None}
     DOWNLOADS[dl_id] = entry
     entry["task"] = asyncio.create_task(_run_download(dl_id))
     return entry
@@ -2537,13 +2672,29 @@ async def dl_start(req: Request) -> JSONResponse:
     """Unified acquisition for BOTH formats (Fable PART 0):
       • filename = "<x>.gguf"  → GGUF single-file (split-aware, + lone mmproj sibling).
       • filename = ""          → whole-MLX-repo mode: enqueue every model file into
-                                  data/models/<repo-leaf>/ via the same machinery."""
+                                  data/models/<repo-leaf>/ via the same machinery.
+
+    Phase A (voice) adds two OPTIONAL body keys, both only ever set by the Audio tab's
+    Get buttons — the chat paths are byte-identical without them:
+      • voice_format ∈ tts-gguf | tts-mlx | stt-mlx → the completed download is
+        registered as an AUDIO entry (kind:"audio") instead of a chat model.
+      • mmproj = "<file>.gguf" → fetched ALONGSIDE the backbone into the SAME model
+        dir, so the pair lands as ONE tts-gguf entry. Needed because the existing
+        lone-sibling heuristic only fires when the repo has exactly one mmproj, and
+        the Qwen3-TTS GGUF repo ships several quants of it."""
     import os as _os
     body = await req.json()
     repo = (body.get("repo") or "").strip()
     filename = (body.get("filename") or "").strip()
+    voice_format = (body.get("voice_format") or "").strip().lower() or None
+    mmproj_req = _os.path.basename((body.get("mmproj") or "").strip())
     if not repo:
         return JSONResponse({"ok": False, "log": "repo required"}, status_code=400)
+    if voice_format and (_voice is None
+                         or voice_format not in _voice.AUDIO_FORMATS):
+        return JSONResponse(
+            {"ok": False, "log": f"unknown voice format {voice_format!r}"},
+            status_code=400)
     # One tree fetch feeds both modes. recursive=true so nested files are seen.
     tree = []
     try:
@@ -2576,7 +2727,8 @@ async def dl_start(req: Request) -> JSONResponse:
             done = _os.path.getsize(part) if _os.path.exists(part) else 0
             files.append({"name": relpath, "url": f"/{repo}/resolve/main/{relpath}",
                           "dest": dest, "total": int(size), "done": done})
-        entry = _mk_download(repo, files, model_id, "mlx", model_dir=str(dest_dir))
+        entry = _mk_download(repo, files, model_id, "mlx", model_dir=str(dest_dir),
+                             voice_format=voice_format)
         return JSONResponse(_dl_json(entry))
 
     # ── GGUF single-file (existing behavior) ─────────────────────────────────
@@ -2595,6 +2747,12 @@ async def dl_start(req: Request) -> JSONResponse:
                and it.get("path", "").lower().endswith(".gguf")]
     if len(mmprojs) == 1:
         mmproj_name = mmprojs[0]
+    # An EXPLICIT mmproj (Audio tab) always wins over the lone-sibling heuristic —
+    # a TTS repo carries several mmproj quants, so the heuristic silently fetches
+    # nothing and llama-tts would then have no projector to load.
+    if mmproj_req:
+        mmproj_name = next((p for p in mmprojs
+                            if _os.path.basename(p) == mmproj_req), mmproj_req)
     if mmproj_name and mmproj_name not in file_names:
         file_names.append(mmproj_name)
     dest_dir = ROOT / "data" / "models" / _safe_dir(model_id)
@@ -2606,7 +2764,7 @@ async def dl_start(req: Request) -> JSONResponse:
         done = _os.path.getsize(part) if _os.path.exists(part) else 0
         files.append({"name": name, "url": f"/{repo}/resolve/main/{name}",
                       "dest": dest, "total": int(sizes.get(base, 0)), "done": done})
-    entry = _mk_download(repo, files, model_id, "gguf")
+    entry = _mk_download(repo, files, model_id, "gguf", voice_format=voice_format)
     return JSONResponse(_dl_json(entry))
 
 
@@ -4257,3 +4415,177 @@ async def voice_toggle(req: Request) -> JSONResponse:
     return JSONResponse({"ok": any(reached), "on": on, "partial": not all(reached),
                          "odysseus": bool(ody_on), "hermes": bool(hermes_on),
                          "log": line})
+
+
+# ── Harness-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B) ───────
+# Distinct from /api/voice/status|toggle above (those register the two OPTIONAL
+# voice COMPONENTS' MCP servers). These three own the all-MIT agents-can-speak path:
+# one-shot llama-tts / mlx-audio subprocesses, no port, no card.
+def _voice_unavailable() -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": f"the voice module failed to load: {_VOICE_ERR}"},
+        status_code=503)
+
+
+@app.get("/api/voice/config")
+def voice_config_get() -> JSONResponse:
+    """Current defaults + every audio model in the registry (Phase A/C read this)."""
+    v = _voice_cfg()
+    available = []
+    if _voice is not None:
+        _, audio = _split_audio(_registry_models())
+        available = [_voice.audio_entry_view(m) for m in audio]
+    return JSONResponse({
+        "ok": _voice is not None,
+        "tts_model": v["tts_model"], "stt_model": v["stt_model"],
+        "available": available,
+        "max_chars": (_voice.VOICE_MAX_CHARS if _voice else 0),
+        "error": _VOICE_ERR or None,
+    })
+
+
+@app.post("/api/voice/config")
+async def voice_config_set(req: Request) -> JSONResponse:
+    """Set the default TTS and/or STT model. Only keys PRESENT in the body are
+    touched, so the panel can set one without clobbering the other. An empty string
+    clears the slot (= capability off). The id must exist in the registry AND be of
+    the right role — writing an unusable default would only fail later, at speak
+    time, far from the click that caused it."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    _, audio = _split_audio(_registry_models())
+    changed = []
+    for field, key, pred, label in (
+            ("tts_model", "tts_model", _voice.is_tts_entry, "TTS"),
+            ("stt_model", "stt_model", _voice.is_stt_entry, "STT")):
+        if field not in body:
+            continue
+        mid = str(body.get(field) or "").strip()
+        if mid:
+            entry = _voice.find_entry(audio, mid)
+            if entry is None:
+                return JSONResponse(
+                    {"ok": False, "error": f"'{mid}' is not an audio model in the registry "
+                                           f"— rescan or download it in Models → Audio"},
+                    status_code=400)
+            if not pred(entry):
+                return JSONResponse(
+                    {"ok": False, "error": f"'{mid}' is a {_voice.audio_entry_view(entry)['role']} "
+                                           f"model — it cannot be the default {label} model"},
+                    status_code=400)
+        _set_yaml_scalar("voice", key, mid)
+        changed.append(f"{key}={mid or '(off)'}")
+    if changed:
+        print(f"[voice] config {' · '.join(changed)}", flush=True)
+    v = _voice_cfg()
+    return JSONResponse({"ok": True, "tts_model": v["tts_model"],
+                         "stt_model": v["stt_model"], "changed": changed})
+
+
+@app.post("/api/voice/tts")
+async def voice_tts(req: Request) -> Response:
+    """{text, model_id?} → audio/wav bytes. model_id defaults to voice.tts_model.
+
+    Never hangs: the subprocess carries a hard 120s timeout and a second render is
+    refused (409) rather than queued. Failures are JSON carrying the engine's log
+    tail — the engines exit 0 on failure, so 'no wav' IS the failure signal."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    text = body.get("text")
+    if isinstance(text, str) and len(text) > _voice.VOICE_MAX_CHARS:
+        return JSONResponse(
+            {"ok": False, "error": f"text is too long ({len(text)} characters) — the cap "
+                                   f"is {_voice.VOICE_MAX_CHARS} per render"},
+            status_code=413)
+    _, audio = _split_audio(_registry_models())
+    mid = str(body.get("model_id") or "").strip() or _voice_cfg()["tts_model"]
+    entry = _voice.find_entry(audio, mid) if mid else None
+    if mid and entry is None:
+        return JSONResponse(
+            {"ok": False, "error": f"voice model '{mid}' is not in the registry"},
+            status_code=400)
+    err = _voice.validate_tts_request(text, entry)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    try:
+        wav = await asyncio.to_thread(_voice.tts_render, entry, text, ROOT)
+    except _voice.VoiceBusy as e:
+        return JSONResponse({"ok": False, "error": e.message}, status_code=409)
+    except _voice.VoiceError as e:
+        print(f"[voice] tts FAILED ({mid}): {e.message}", flush=True)
+        return JSONResponse({"ok": False, "error": e.message, "log": e.log_tail},
+                            status_code=500)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[voice] tts crashed ({mid}): {str(e)[:200]}", flush=True)
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
+    return Response(content=wav, media_type="audio/wav", headers={
+        "Cache-Control": "no-store",
+        "Content-Disposition": 'inline; filename="speech.wav"',
+        "X-Harness-Voice-Model": mid,
+    })
+
+
+@app.post("/api/voice/stt")
+async def voice_stt(req: Request) -> JSONResponse:
+    """RAW audio body → {"text": …}. Phase D (dictation).
+
+    Body shape is deliberately the SIMPLEST thing that works: the recording is the
+    whole request body, and the container comes from `?fmt=` (falling back to the
+    Content-Type). Multipart would buy nothing here — there is exactly one part, and
+    the panel already has the blob in hand from MediaRecorder.
+
+    Status codes mirror /api/voice/tts so the panel's error handling is one path:
+    400 unusable request (no STT default, bad format), 413 over the size cap,
+    409 a render already holds the global lock, 500 with the engine's log tail.
+    """
+    if _voice is None:
+        return _voice_unavailable()
+    raw = await req.body()
+    if len(raw) > _voice.VOICE_MAX_AUDIO_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"that recording is too large "
+                                   f"({len(raw) // (1024 * 1024)} MB) — the cap is "
+                                   f"{_voice.VOICE_MAX_AUDIO_BYTES // (1024 * 1024)} MB"},
+            status_code=413)
+    # ?fmt= wins: MediaRecorder's mimeType is authoritative on the panel side, while a
+    # Content-Type can arrive as a generic application/octet-stream from curl.
+    fmt = (req.query_params.get("fmt") or "").strip() or req.headers.get("content-type", "")
+    mid = (req.query_params.get("model_id") or "").strip() or _voice_cfg()["stt_model"]
+    if not mid:
+        return JSONResponse(
+            {"ok": False, "error": "set a default STT model in Models → Audio"},
+            status_code=400)
+    _, audio = _split_audio(_registry_models())
+    entry = _voice.find_entry(audio, mid)
+    if entry is None:
+        return JSONResponse(
+            {"ok": False, "error": f"voice model '{mid}' is not in the registry"},
+            status_code=400)
+    err = _voice.validate_stt_request(raw, fmt, entry)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    try:
+        text = await asyncio.to_thread(_voice.stt_transcribe, entry, raw, fmt, ROOT)
+    except _voice.VoiceBusy as e:
+        return JSONResponse({"ok": False, "error": e.message}, status_code=409)
+    except _voice.VoiceError as e:
+        print(f"[voice] stt FAILED ({mid}): {e.message}", flush=True)
+        return JSONResponse({"ok": False, "error": e.message, "log": e.log_tail},
+                            status_code=500)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[voice] stt crashed ({mid}): {str(e)[:200]}", flush=True)
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
+    print(f"[voice] stt {mid}: {len(raw)} bytes → {len(text)} chars", flush=True)
+    return JSONResponse({"ok": True, "text": text, "model_id": mid})

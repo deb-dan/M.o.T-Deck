@@ -88,6 +88,19 @@ aux:
   api_key: harness-aux
   model:                      # empty = not configured; set from the Models pane
 
+# Harness-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B).
+# NOT the optional voicestudio/voicebox components above — this is the all-MIT
+# agents-can-speak path built on binaries we already ship: llama-tts (rides
+# runner.llamacpp_pin) and mlx-audio (in data/mlx-venv). One-shot subprocesses:
+# no port, no component card, no resident RAM — voice models cost DISK plus
+# transient RAM while a clip renders.
+# Both values are REGISTRY IDS (data/models.json entries with kind: "audio").
+# EMPTY = the capability is off. Set from Models → Audio (the bridge rewrites
+# these two lines in place, so the comments here survive).
+voice:
+  tts_model:                  # id of the default text-to-speech model ("" = off)
+  stt_model:                  # id of the default speech-to-text model ("" = off; Phase D)
+
 # Model-memory ledger — Bridge-side RAM accounting so main + aux (+ future voice)
 # model loads can't blow past physical memory. Budget is < 64GB to leave headroom
 # for the OS + apps; enforced (409) on model switch and aux start. Footprint is
@@ -115,6 +128,16 @@ build:
   # then re-verify one MLX chat turn (and re-check the mlx wire-id path in bridge/app.py).
   mlx_lm_pin: "0.31.3"
   mlx_vlm_pin: "0.6.10"
+  # mlx-audio powers the MLX half of the harness-native voice capability (the
+  # `voice:` block above). It is ALREADY pulled in transitively as an mlx-vlm dep,
+  # so pinning it here just makes the version deliberate: the provisioned venv had
+  # 0.4.4 while the Phase-0 recon read 0.4.7 sources — install_mlx.sh now asks for
+  # the recon'd version so installed reality matches the argv surface we build.
+  mlx_audio_pin: "0.4.7"
+  # mlx-whisper: the STT half (Phase D dictation). One-shot `mlx_whisper` console
+  # script out of the SAME data/mlx-venv — no second venv, no torch. Pin per the
+  # Fable spec amendment §6.
+  mlx_whisper_pin: "0.4.3"
   # ── build-time toolchain the harness provisions for ITSELF (never brew, never sudo) ──
   # bun: compiles the Vite SPAs of the two OPTIONAL voice components. Read by
   # scripts/ensure_bun.sh, which lands it at data/bun/bin/bun (~35MB download) ONLY if
@@ -129,6 +152,15 @@ build:
   # satisfy voicebox/voicestudio's ffmpeg need with no `brew install ffmpeg`.
   # ⚠️ bundles ffmpeg only, NOT ffprobe.
   imageio_ffmpeg_pin: "0.6.0"
+  # uv: the venv/installer the PORTABLE first-run bootstraps with (scripts/firstrun.sh).
+  # It used to curl|sh the UNPINNED astral.sh installer — i.e. a fresh Mac provisioned
+  # against whatever uv shipped that day. Pinned = the same idiom as bun_pin: the URL
+  # form https://astral.sh/uv/<version>/install.sh is documented by upstream, and the
+  # install lands in data/uv/bin via UV_UNMANAGED_INSTALL (no ~/.local/bin, no shell
+  # profile edits, no self-update — the same no-writes-outside rule as ensure_bun.sh).
+  # A uv the user already has ALWAYS wins; this is only the download path.
+  # Pin = the current uv release as of 2026-08-08 (crates/uv-version/Cargo.toml).
+  uv_pin: "0.12.3"
 
 inference:
   # hermes_llm block removed 2026-07-20 (M1-B): Hermes + Odysseus now consume the `runner`

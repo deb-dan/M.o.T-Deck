@@ -8,6 +8,12 @@ cleanup slice migrates Jan's models into, and where the download manager writes)
 non-rescanned entries (e.g. download-manager additions, source "download"). stdlib
 only.
 
+It also scans for AUDIO (voice) models — kind:"audio" entries the Models → Audio tab
+owns and api_models keeps OUT of every chat list: (d) data/models/ folders whose name
++ file shape match a known TTS/STT family (source "local", app-owned) and (e) the
+machine-wide HuggingFace cache (source "audio-hf-cache", read-only). See
+audio_format_for() for why that classifier is deliberately narrow.
+
 Structured as functions so the scan/merge logic can be unit-tested against a temp
 dir without touching the real one. main() uses the real paths.
 """
@@ -118,6 +124,155 @@ def scan_local(local_dir):
     return entries
 
 
+# ── Audio (voice) models — FABLE-VOICE-CAPABILITY-SPEC Phase A ────────────────
+# Debi's ask: "rescan audio models already on the computer". The classifier below is
+# deliberately CONSERVATIVE. A miss just means the user clicks Get; a FALSE POSITIVE
+# turns a chat model into an audio model, which makes it VANISH from every chat list
+# (api_models partitions audio out) — a silent, confusing failure. So a folder is only
+# ever classified as audio when its name carries an explicit family token AND its file
+# shape matches the engine that would run it.
+#
+# ⚠️ PENDING FABLE QA: the token lists are the whole safety margin. Adding a generic
+# word here (e.g. "audio", "voice", "speech") would start catching chat models.
+AUDIO_TTS_TOKENS = ("tts", "kokoro", "outetts")
+AUDIO_STT_TOKENS = ("whisper",)
+AUDIO_HF_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/hub")
+
+
+def _has_token(text, tokens):
+    low = (text or "").lower()
+    return any(t in low for t in tokens)
+
+
+def audio_format_for(dir_name, filenames):
+    """PURE classifier: 'tts-gguf' | 'tts-mlx' | 'stt-mlx' | None for ONE model folder.
+
+    `dir_name` is the folder's basename, `filenames` its direct entries (no recursion —
+    both the download manager and mlx conversions write flat model dirs).
+
+      MLX shape  : config.json + >=1 *.safetensors, folder named whisper*  → stt-mlx
+                                                    folder named *tts*/kokoro/outetts → tts-mlx
+      GGUF pair  : >=1 non-mmproj *.gguf AND >=1 mmproj*.gguf, and a TTS token in the
+                   folder name OR in the backbone filename                → tts-gguf
+                   (llama-tts at b10295 needs BOTH halves; a lone gguf is never audio.)
+
+    Anything else → None (i.e. a chat model, or not a model at all).
+    """
+    names = list(filenames or [])
+    low = [n.lower() for n in names]
+    has_cfg = "config.json" in low
+    safet = [n for n in low if n.endswith(".safetensors")]
+    if has_cfg and safet:
+        # STT first: a whisper folder can never also be a TTS folder, and checking it
+        # first keeps the (hypothetical) "whisper-tts" name out of the TTS bucket.
+        if _has_token(dir_name, AUDIO_STT_TOKENS):
+            return "stt-mlx"
+        if _has_token(dir_name, AUDIO_TTS_TOKENS):
+            return "tts-mlx"
+        return None
+    ggufs = [n for n in names if n.lower().endswith(".gguf")
+             and "mmproj" not in n.lower()]
+    mmprojs = [n for n in names if n.lower().endswith(".gguf")
+               and "mmproj" in n.lower()]
+    if ggufs and mmprojs:
+        if _has_token(dir_name, AUDIO_TTS_TOKENS) or any(
+                _has_token(g, AUDIO_TTS_TOKENS) for g in ggufs):
+            return "tts-gguf"
+    return None
+
+
+def _audio_entry(model_id, fmt, folder, filenames, source):
+    """Build one audio registry entry from an already-classified folder."""
+    names = sorted(filenames or [])
+    if fmt == "tts-gguf":
+        backbone = next(n for n in names
+                        if n.lower().endswith(".gguf") and "mmproj" not in n.lower())
+        mmproj = next(n for n in names
+                      if n.lower().endswith(".gguf") and "mmproj" in n.lower())
+        path = os.path.abspath(os.path.join(folder, backbone))
+        mmproj_path = os.path.abspath(os.path.join(folder, mmproj))
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = None
+    else:
+        path, mmproj_path = os.path.abspath(folder), None
+        size = 0
+        for n in names:
+            if n.lower().endswith(".safetensors"):
+                try:
+                    size += os.path.getsize(os.path.join(folder, n))
+                except OSError:
+                    pass
+    return {"id": model_id, "name": model_id, "kind": "audio", "format": fmt,
+            "path": path, "mmproj": mmproj_path, "size_bytes": size,
+            "source": source}
+
+
+def scan_audio_local(local_dir):
+    """Audio models sitting in the harness's OWN models dir (data/models/). source
+    "local" so they are app-owned: deletable from the Audio tab, and re-scanned (a
+    folder the user removes drops out of the registry on the next Rescan)."""
+    entries = []
+    if not os.path.isdir(local_dir):
+        return entries
+    for name in sorted(os.listdir(local_dir)):
+        folder = os.path.join(local_dir, name)
+        if not os.path.isdir(folder):
+            continue
+        try:
+            files = os.listdir(folder)
+        except OSError:
+            continue
+        fmt = audio_format_for(name, files)
+        if fmt:
+            entries.append(_audio_entry(name, fmt, folder, files, "local"))
+    return entries
+
+
+def scan_audio_hf_cache(hub_dir):
+    """Audio models already in the machine-wide HuggingFace cache (what
+    mlx-audio / mlx-whisper download when invoked with a bare repo id, and where
+    another app may have left one). Read-only: source "audio-hf-cache" is NOT in the
+    delete allowlist, so the Audio tab shows them as managed elsewhere.
+
+    Layout: <hub>/models--<org>--<name>/snapshots/<sha>/… — only the MLX shape is
+    recognised (config.json + safetensors); a cached GGUF is not a usable llama-tts
+    pair without its mmproj, so the cache is never mined for tts-gguf."""
+    entries = []
+    if not os.path.isdir(hub_dir):
+        return entries
+    for repo_dir_name in sorted(os.listdir(hub_dir)):
+        if not repo_dir_name.startswith("models--"):
+            continue
+        leaf = repo_dir_name.split("--")[-1]
+        if not (_has_token(leaf, AUDIO_STT_TOKENS) or _has_token(leaf, AUDIO_TTS_TOKENS)):
+            continue
+        snaps_root = os.path.join(hub_dir, repo_dir_name, "snapshots")
+        if not os.path.isdir(snaps_root):
+            continue
+        # Newest snapshot wins — a cache can hold several revisions of one repo.
+        snaps = []
+        for sha in os.listdir(snaps_root):
+            d = os.path.join(snaps_root, sha)
+            if os.path.isdir(d):
+                try:
+                    snaps.append((os.path.getmtime(d), d))
+                except OSError:
+                    pass
+        if not snaps:
+            continue
+        folder = max(snaps)[1]
+        try:
+            files = os.listdir(folder)
+        except OSError:
+            continue
+        fmt = audio_format_for(leaf, files)
+        if fmt in ("tts-mlx", "stt-mlx"):
+            entries.append(_audio_entry(leaf, fmt, folder, files, "audio-hf-cache"))
+    return entries
+
+
 def scan_lmstudio(lms_dir):
     """Return lmstudio-import registry entries by walking exactly two levels:
     <lms_dir>/<publisher>/<model_dir>/. GGUF files → one entry each; an MLX model
@@ -205,10 +360,15 @@ def load_existing(path):
         return []
 
 
-def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None):
+RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
+
+
+def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
+          audio_cache_entries=None):
     """Keep every existing entry whose source is not one we re-scan ('jan-import',
-    'lmstudio-import', 'local'); replace each re-scanned set with its fresh scan.
-    Entries with other sources (e.g. 'download') are preserved untouched.
+    'lmstudio-import', 'local', 'audio-hf-cache'); replace each re-scanned set with
+    its fresh scan. Entries with other sources (e.g. 'download') are preserved
+    untouched.
 
     ctx preservation: a fresh 'local' scan has ctx=None (no router preset). When a
     model's files are migrated out of Jan's folder into data/models/, its context
@@ -216,9 +376,13 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None):
     forward any non-null ctx already recorded for that id in the existing registry
     (e.g. the 35B's 95536 that came from Jan's router.preset.ini).
 
-    On id collision, suffix the lmstudio entry's id with '-lms'."""
+    On id collision, suffix the lmstudio entry's id with '-lms'. HF-cache audio
+    entries instead DROP on collision: the same weights already reached the registry
+    by a path we trust more (a download entry, or a copy under data/models/), and a
+    suffixed duplicate would offer the user two rows for one model."""
     lmstudio_entries = lmstudio_entries or []
     local_entries = local_entries or []
+    audio_cache_entries = audio_cache_entries or []
     # id -> ctx from the current registry (any source), for the preservation rule.
     existing_ctx = {m.get("id"): m.get("ctx")
                     for m in existing if m.get("ctx") not in (None, "")}
@@ -228,14 +392,18 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None):
             m = dict(m)
             m["ctx"] = existing_ctx[m["id"]]
         local_filled.append(m)
-    kept = [m for m in existing
-            if m.get("source") not in ("jan-import", "lmstudio-import", "local")]
+    kept = [m for m in existing if m.get("source") not in RESCANNED_SOURCES]
     result = kept + list(jan_entries) + local_filled
     used = {m.get("id") for m in result}
     for m in lmstudio_entries:
         if m.get("id") in used:
             m = dict(m)
             m["id"] = f"{m['id']}-lms"
+        used.add(m.get("id"))
+        result.append(m)
+    for m in audio_cache_entries:
+        if m.get("id") in used:
+            continue
         used.add(m.get("id"))
         result.append(m)
     return result
@@ -248,16 +416,32 @@ def write(path, models):
         fh.write("\n")
 
 
+def local_entries_for(local_dir):
+    """Every source "local" entry for data/models/ — audio folders FIRST, then the
+    plain chat folders scan_local finds, minus any id the audio scan already claimed.
+
+    The subtraction is the point: a data/models/<x>/ holding model.gguf + mmproj.gguf
+    and named …TTS… matches BOTH scanners, and two entries for one id would put the
+    same model in the chat list and the audio list at once."""
+    audio = scan_audio_local(local_dir)
+    audio_ids = {m["id"] for m in audio}
+    return audio + [m for m in scan_local(local_dir) if m.get("id") not in audio_ids]
+
+
 def main():
-    local_entries = scan_local(LOCAL_MODELS_DIR)
+    local_entries = local_entries_for(LOCAL_MODELS_DIR)
+    audio_local = [m for m in local_entries if m.get("kind") == "audio"]
+    audio_cache = scan_audio_hf_cache(AUDIO_HF_CACHE_DIR)
     jan_entries = scan_jan(JAN_MODELS_DIR)
     lmstudio_entries = scan_lmstudio(LMSTUDIO_MODELS_DIR)
     existing = load_existing(REGISTRY_PATH)
-    merged = merge(existing, jan_entries, lmstudio_entries, local_entries)
+    merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
+                   audio_cache)
     write(REGISTRY_PATH, merged)
     print(f"seeded {len(merged)} models "
           f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "
-          f"{len(lmstudio_entries)} lmstudio-imports)")
+          f"{len(lmstudio_entries)} lmstudio-imports, "
+          f"{len(audio_local) + len(audio_cache)} audio)")
 
 
 if __name__ == "__main__":

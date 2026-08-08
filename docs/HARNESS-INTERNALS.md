@@ -679,6 +679,8 @@ they need neither fastapi nor websockets. JS tests run with `node`.
 | `bridge/tests/test_port_kill.py` | listener-scoped port-kill command construction |
 | `bridge/tests/test_model_delete.py` | `_deletable_target` containment guard |
 | `bridge/tests/test_caps_map.py` | `caps_map_write` routing + secret/unknown-group refusals |
+| `bridge/tests/test_audio_registry.py` | voice download→registry builder, the conservative `audio_format_for` Rescan classifier, `merge` audio semantics, and **the invariant against the real `api_models()`: audio never reaches `installed`** |
+| `bridge/tests/test_audio_rows.js` | Audio-tab row/label helpers extracted from the panel (role-scoped default, engine label, escaping) |
 | `bridge/tests/test_artifact_save.py` | artifact-save filename sanitizer (basename, ext whitelist, never-clobber) |
 | `bridge/tests/test_artifact_kind_v2.js` · `test_fence_classify.js` | `artifactKind()` + fenced-block/"worthy" rules |
 | `bridge/tests/test_csv_parse.js` | CSV parse/delimiter sniff/numeric sort |

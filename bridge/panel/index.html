@@ -317,6 +317,10 @@
   .cmsg .msg-stats { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
       padding:6px 0 0 20px; }
   .cmsg.user .msg-stats { padding:6px 0 0 0; text-align:right; }
+  /* always-visible ▶ speak line (Fable design — NOT hover-gated like .msg-acts) */
+  .cmsg .msg-voice { padding:6px 0 0 20px; }
+  .cmsg .msg-voice .msg-act { color:var(--faint); }
+  .cmsg .msg-voice .msg-act:hover { color:var(--gold); }
   .cmsg .msg-edited { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
       margin-top:5px; }
   .cmsg.user .msg-edited { text-align:right; }
@@ -365,7 +369,17 @@
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
   #chat-input:focus { border-color:var(--gold); }
-  #chat-send:hover { border-color:var(--gold); }
+  #chat-send:hover, #chat-talk:hover { border-color:var(--gold); }
+  /* PHASE D: Send + ● talk share ONE reduced size (Fable: ~30% off the base button's
+     12.5px/7px-15px). Scoped to these two ids — button.primary elsewhere (Models,
+     dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
+     size that WebKit rounds unpredictably across zoom levels. */
+  #chat-send, #chat-talk { font-size:9px; padding:5px 10px; letter-spacing:.06em; }
+  #chat-talk { flex:none; white-space:nowrap; }
+  /* recording: the ■ glyph carries the only colour (existing --bad token, no new
+     palette entry); the button itself stays a primary so the row doesn't jump. */
+  #chat-talk.rec .talk-dot { color:var(--bad); }
+  #chat-talk .talk-t { font-family:var(--mono); }
 
   /* session rail + chat column live side by side under the header */
   #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; overflow:hidden; }
@@ -424,9 +438,11 @@
   /* ---------- models pane (M2 slice 1) ---------- */
   /* Models pane — two-pane: library list (left) + detail (right). FABLE §A. */
   .models-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
-  #models-main { display:flex; gap:26px; margin-top:18px; align-items:flex-start; }
-  #models-leftwrap { flex:1 1 55%; min-width:380px; }
-  #models-listcol { display:flex; flex-direction:column; gap:6px; }
+  /* The Audio sub-tab reuses the SAME two-pane grammar — selectors extended, no new
+     primitives (FABLE-VOICE-CAPABILITY-SPEC Phase A). */
+  #models-main, #models-audio-main { display:flex; gap:26px; margin-top:18px; align-items:flex-start; }
+  #models-leftwrap, #models-audio-left { flex:1 1 55%; min-width:380px; }
+  #models-listcol, #audio-listcol { display:flex; flex-direction:column; gap:6px; }
   .mrow { padding:11px 12px; border-radius:9px; cursor:pointer; border-left:2px solid transparent; }
   .mrow.sel { background:var(--card); border-left-color:var(--gold); }
   .mrow .mname { font:15px var(--serif); color:var(--cream); }
@@ -441,7 +457,7 @@
   .mpill.owned { color:var(--gold); border-color:var(--gold); }
   .mpill.imported { color:var(--faint); border-color:var(--line2); }
   .mrow .msize { color:var(--dim); }
-  #models-detail { flex:1 1 45%; position:sticky; top:12px; align-self:flex-start;
+  #models-detail, #models-audio-detail { flex:1 1 45%; position:sticky; top:12px; align-self:flex-start;
       max-height:calc(100vh - 160px); overflow-y:auto;
       border:1px solid var(--line); border-radius:14px; padding:22px 24px; }
   .md-title { font:20px var(--serif); color:var(--cream); word-break:break-word; }
@@ -574,11 +590,18 @@
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #chat-model-btn:disabled { opacity:.5; cursor:default; }
   #chat-model-btn.empty { color:var(--faint); }
+  /* PHASE C: voice chip — same closed-control grammar as the model chip (a model id
+     is mixed-case, so .mode-chip's uppercase is switched off here too). */
+  #chat-audio-btn { max-width:150px; background:var(--card); color:var(--dim);
+      border:1px solid var(--line2); border-radius:6px; font:9px var(--mono);
+      letter-spacing:.03em; padding:3px 5px; cursor:pointer; text-transform:none;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chat-audio-btn.empty { color:var(--faint); }
   /* popover: opens ABOVE the composer (chat bar sits at the bottom of the view) */
-  #model-pop { position:fixed; width:380px; max-height:46vh; overflow-y:auto;
+  #model-pop, #audio-pop { position:fixed; width:380px; max-height:46vh; overflow-y:auto;
       background:var(--card); border:1px solid var(--line); border-radius:8px;
       box-shadow:0 8px 30px rgba(0,0,0,.5); z-index:9000; padding:6px; }
-  #model-pop[hidden] { display:none; }
+  #model-pop[hidden], #audio-pop[hidden] { display:none; }
   .mp-row { padding:8px 9px; border-radius:7px; cursor:pointer;
       border-left:2px solid transparent; }
   .mp-row:hover { background:var(--card2); }
@@ -596,6 +619,7 @@
   .mp-act:hover { color:var(--gold); border-color:var(--gold); }
   .mp-empty { font:10px var(--mono); letter-spacing:.06em; color:var(--faint);
       padding:12px 10px; }
+  .mp-err { font:10px var(--mono); letter-spacing:.06em; color:var(--bad); padding:8px 10px; }
   /* live-model capability pill — same .mpill.vision colors as the Models pane rows;
      the chat bar has no .mbadges font context, so only the type is restated here */
   #cap-vision { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
@@ -940,6 +964,11 @@
               aria-haspopup="true" aria-expanded="false">no model ⌄</button>
             <!-- capability of the LIVE model; hidden entirely when it can't see images -->
             <span class="mpill vision" id="cap-vision" title="This model accepts images" hidden>vision</span>
+            <!-- PHASE C: voice picker — closed chip + #audio-pop popover (same grammar
+                 as the model chip); "off" = replies carry no ▶ Speak action -->
+            <button id="chat-audio-btn" class="mode-chip empty" onclick="toggleAudioPop(event)"
+              title="Voice off — click to pick a TTS model" aria-label="Voice output"
+              aria-haspopup="true" aria-expanded="false">AUDIO off ⌄</button>
             <span class="mode-note" id="chat-note" title="web search on · shell off">web search on · shell off</span>
             <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
             <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
@@ -954,11 +983,17 @@
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+            <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg). -->
+            <button class="primary" id="chat-talk" onclick="toggleTalk()"
+              title="Dictate — record and transcribe into the message box"
+              aria-label="Dictate into the message box" hidden>● talk</button>
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
         <div id="model-pop" role="listbox" aria-label="Choose a model" hidden></div>
+        <!-- PHASE C: voice picker popover — same anchoring/CSS as #model-pop -->
+        <div id="audio-pop" role="listbox" aria-label="Choose a voice model" hidden></div>
       </div>
 
       <!-- TASK A: draggable divider between the chat column and the artifact viewer -->
@@ -1007,9 +1042,15 @@
         <div class="sub">The local model powering the stack — installed models, and which one is live.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center"><!-- FABLE: style pass -->
-        <button id="models-rescan" class="chip" onclick="rescanModels()" title="Re-scan the model folders (data/models, LM Studio) — drops models you've deleted, picks up new ones">RESCAN</button>
+        <button id="models-rescan" class="chip" onclick="rescanModels()" title="Re-scan the model folders (data/models, LM Studio, voice models) — drops models you've deleted, picks up new ones">RESCAN</button>
         <button id="models-toggle" class="chip" onclick="toggleModelsBrowse()">SEARCH / DOWNLOAD ⌄</button>
       </div>
+    </div>
+    <!-- Sub-tabs: CHAT MODELS | AUDIO. Show/hide only — the chat panes below are
+         never rebuilt, so today's Models UI is byte-identical on the chat tab. -->
+    <div class="caps-tabs" id="models-tabs" role="tablist">
+      <button class="chip caps-tab" data-msec="chat" role="tab" onclick="showModelsSection('chat')">Chat models</button>
+      <button class="chip caps-tab" data-msec="audio" role="tab" onclick="showModelsSection('audio')">Audio</button>
     </div>
     <div class="stamp" id="models-stamp">—</div>
     <div id="sw-row" hidden>
@@ -1043,6 +1084,16 @@
         </div>
       </div>
       <div id="models-detail"><div class="cs-empty">Select a model</div></div>
+    </div>
+
+    <!-- AUDIO sub-tab (voice models) — same two-pane grammar, own list + detail.
+         Downloads share #downloads-sec below, so progress/pause/resume come free. -->
+    <div id="models-audio" hidden>
+      <div id="models-audio-main">
+        <div id="models-audio-left"><div id="audio-listcol"></div></div>
+        <div id="models-audio-detail"><div class="cs-empty">Select a voice model</div></div>
+      </div>
+      <div id="audio-get" class="md-sec" style="margin-top:26px"></div>
     </div>
 
     <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
@@ -1262,10 +1313,10 @@ function cardHTML(name, c, isBridge, prov) {
     if (provisioning) {
       actions = `<button disabled>Working…</button>`;
     } else if (ps === 'failed') {
-      actions = `<button class="primary" onclick="startWithPlan('${name}')">Retry</button>
+      actions = `<button class="primary" onclick="startAny('${name}')">Retry</button>
                  <button onclick="showProvLog('${name}')">View log</button>`;
     } else if (c.degraded) {
-      actions = `<button class="primary" onclick="startWithPlan('${name}')">Restart</button>
+      actions = `<button class="primary" onclick="startAny('${name}')">Restart</button>
                  <button onclick="act('${name}','stop')">Stop</button>`;
     } else if (name === 'runner') {
       actions = c.running
@@ -1277,7 +1328,7 @@ function cardHTML(name, c, isBridge, prov) {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
         : c.installed
-          ? `<button class="primary" onclick="startWithPlan('${name}')">Start</button>
+          ? `<button class="primary" onclick="startAny('${name}')">Start</button>
              <button onclick="planInstall('${name}')">Reinstall</button>`
           : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
     }
@@ -1317,12 +1368,24 @@ async function startRunner() {
   let active = null;
   try { active = (await (await fetch('/api/models')).json()).active; } catch {}
   if (!active) {
+    // the setup checklist is a modal scrim — leaving it open would hide the very
+    // page we are sending the user to (Debi hit exactly this).
+    try { if (typeof closeSetup === 'function') closeSetup(); } catch (e) {}
     showView('models');
     const st = document.getElementById('models-stamp');
     if (st) st.textContent = 'NO MODEL LOADED — SELECT ONE BELOW, THEN “LOAD”';
     return;
   }
   return startWithPlan('runner');
+}
+
+// Every Start/Retry/Restart surface routes through here. The runner is special: it
+// cannot start without a designated model, so it goes via startRunner() which sends
+// you to Models to pick one. Calling startWithPlan('runner') directly (as the cards
+// and the setup checklist used to) surfaced a raw
+// "ERROR: runner.model not set in harness.yaml" instead.
+function startAny(name){
+  return name === 'runner' ? startRunner() : startWithPlan(name);
 }
 
 async function startWithPlan(name) {
@@ -1551,7 +1614,7 @@ function renderSetup() {
     if (name !== 'bridge') {
       if (ps === 'starting' || ps === 'pending') act = '<button disabled>Working…</button>';
       else if (!c.installed) act = `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
-      else if (!c.running) act = `<button class="primary" onclick="startWithPlan('${name}')">Start</button>`;
+      else if (!c.running) act = `<button class="primary" onclick="startAny('${name}')">Start</button>`;
     }
     rows.insertAdjacentHTML('beforeend',
       `<div class="su-row"><span class="su-glyph ${cls}">${glyph}</span><span class="su-name">${name}</span>${act}</div>`);
@@ -1636,6 +1699,7 @@ function showView(v) {
   if (v !== 'chat') { document.body.classList.remove('artifact-expanded'); if (typeof artifactState !== 'undefined') artifactState.expanded = false; }
   // the model popover is position:fixed too — never let it linger over another view
   if (v !== 'chat' && typeof closeModelPop === 'function') closeModelPop();
+  if (v !== 'chat' && typeof closeAudioPop === 'function') closeAudioPop();
   if (v === 'chat' && !chatSid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
@@ -1793,6 +1857,7 @@ function setMode(m) {
   noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
   applyVisionUi();           // attach is direct-lane only; leaving Chat clears it
   if (typeof closeModelPop === 'function') closeModelPop();
+  if (typeof closeAudioPop === 'function') closeAudioPop();
   if (m === prev) return;
   maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
@@ -3046,6 +3111,7 @@ async function loadChatModels(){
     renderModelBtn();
     if (!document.getElementById('model-pop').hidden) renderModelPop();
   } catch {}
+  loadVoiceCfg();   // PHASE C: same trigger points — the AUDIO chip rides this refresh
 }
 
 /* closed control: current model id, ellipsised; title carries the full id */
@@ -3202,6 +3268,476 @@ async function chatModelChange(id){
   await switchModel(id, id);
 }
 
+/* ---------- PHASE C: composer AUDIO control (voice output) ------------------
+   Chip + popover in the EXACT #model-pop grammar. The whole feature keys off one
+   piece of state — the configured default TTS model (harness.yaml voice.tts_model,
+   read through /api/voice/config). Empty = voice off: the chip says so and NO
+   ▶ Speak action is rendered anywhere, so the chip is the single discovery path. */
+let voiceCfg = { tts_model: '', stt_model: '', available: [] };
+let voicePopErr = '';        // last /api/voice/config failure, shown inside the popover
+
+async function loadVoiceCfg(){
+  try {
+    const r = await (await fetch('/api/voice/config')).json();
+    voiceCfg = { tts_model: r.tts_model || '', stt_model: r.stt_model || '',
+                 available: r.available || [] };
+  } catch { /* bridge down — keep the last known state, chip just doesn't move */ }
+  renderAudioBtn();
+  const pop = document.getElementById('audio-pop');
+  if (pop && !pop.hidden) renderAudioPop();
+  refreshSpeakChips();
+  renderTalkBtn();     // PHASE D: the ● talk button rides the SAME config read
+}
+
+/* PURE: the popover's TTS row list — llama.cpp (tts-gguf) rows FIRST, then MLX,
+   deterministic by id inside each group. Mirrored by bridge/tests/test_speak_text.js.
+   STT models exist in the same registry list and must never appear here. */
+function voiceTtsRows(available){
+  const rows = (available || []).filter(a => a && (a.format === 'tts-gguf' || a.format === 'tts-mlx'));
+  const rank = a => (a.format === 'tts-gguf' ? 0 : 1);
+  return rows.slice().sort((x, y) => (rank(x) - rank(y))
+    || String(x.id || '').localeCompare(String(y.id || '')));
+}
+
+function voiceOn(){ return !!voiceCfg.tts_model; }
+
+function renderAudioBtn(){
+  const btn = document.getElementById('chat-audio-btn');
+  if (!btn) return;
+  const id = voiceCfg.tts_model || '';
+  btn.classList.toggle('empty', !id);
+  btn.textContent = 'AUDIO ' + (id || 'off') + ' ⌄';
+  btn.title = id ? (id + '\nAssistant replies get a ▶ Speak action')
+                 : 'Voice off — click to pick a TTS model';
+}
+
+function toggleAudioPop(ev){
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('audio-pop');
+  if (!pop) return;
+  if (pop.hidden) openAudioPop(); else closeAudioPop();
+}
+
+function openAudioPop(){
+  const pop = document.getElementById('audio-pop'), btn = document.getElementById('chat-audio-btn');
+  if (!pop || !btn) return;
+  voicePopErr = '';
+  renderAudioPop();
+  pop.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  const rect = btn.getBoundingClientRect();
+  const w = pop.offsetWidth || 380, h = pop.offsetHeight || 0;
+  let left = rect.left;
+  if (left + w > window.innerWidth - 10) left = Math.max(10, window.innerWidth - w - 10);
+  let top = rect.top - h - 8;
+  if (top < 10) top = Math.min(rect.bottom + 8, window.innerHeight - h - 10);   // flip below
+  pop.style.left = left + 'px';
+  pop.style.top  = Math.max(10, top) + 'px';
+  document.addEventListener('mousedown', audioPopOutside, true);
+  document.addEventListener('keydown', audioPopKey, true);
+  window.addEventListener('scroll', audioPopScroll, true);
+  window.addEventListener('resize', closeAudioPop, true);
+  loadVoiceCfg();      // opened → re-read; a model may have landed since the last look
+}
+
+function closeAudioPop(){
+  const pop = document.getElementById('audio-pop'), btn = document.getElementById('chat-audio-btn');
+  if (pop) pop.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('mousedown', audioPopOutside, true);
+  document.removeEventListener('keydown', audioPopKey, true);
+  window.removeEventListener('scroll', audioPopScroll, true);
+  window.removeEventListener('resize', closeAudioPop, true);
+}
+
+/* scrolling INSIDE the popover list is fine; only an outside scroll closes it */
+function audioPopScroll(e){
+  const pop = document.getElementById('audio-pop');
+  if (pop && !pop.hidden && pop.contains(e.target)) return;
+  closeAudioPop();
+}
+function audioPopOutside(e){
+  const pop = document.getElementById('audio-pop'), btn = document.getElementById('chat-audio-btn');
+  if (pop && pop.contains(e.target)) return;
+  if (btn && btn.contains(e.target)) return;    // the chip's own onclick toggles
+  closeAudioPop();
+}
+function audioPopKey(e){ if (e.key === 'Escape'){ e.stopPropagation(); closeAudioPop(); } }
+
+function renderAudioPop(){
+  const pop = document.getElementById('audio-pop');
+  if (!pop) return;
+  pop.innerHTML = '';
+  const cur = voiceCfg.tts_model || '';
+  const rows = voiceTtsRows(voiceCfg.available);
+
+  const mkRow = (label, pills, onclick, selected) => {
+    const row = document.createElement('div');
+    row.className = 'mp-row' + (selected ? ' live' : '');
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', selected ? 'true' : 'false');
+    const idEl = document.createElement('div');
+    idEl.className = 'mp-id';
+    idEl.textContent = label;             // textContent: full id, never markup
+    row.appendChild(idEl);
+    if (pills.length){
+      const meta = document.createElement('div');
+      meta.className = 'mp-meta';
+      for (const [cls, text] of pills){
+        const s = document.createElement('span');
+        s.className = 'mpill ' + cls; s.textContent = text; meta.appendChild(s);
+      }
+      row.appendChild(meta);
+    }
+    row.onclick = onclick;
+    pop.appendChild(row);
+    return row;
+  };
+
+  // row 0 — Off (clearing the default turns the capability off everywhere)
+  mkRow('Off', cur ? [] : [['live', 'default']], () => setVoiceTts(''), !cur);
+
+  if (!rows.length){
+    const e = document.createElement('div');
+    e.className = 'mp-empty';
+    e.textContent = 'No voice models yet — get one';
+    e.style.cursor = 'pointer';
+    e.onclick = audioJumpToModels;
+    pop.appendChild(e);
+  } else {
+    for (const a of rows){
+      const pills = [['fmt', a.engine === 'mlx' ? 'mlx' : 'llama.cpp']];
+      if (a.size_bytes) pills.push(['fmt', fmtGB(a.size_bytes)]);
+      if (a.id === cur) pills.unshift(['live', 'default']);
+      mkRow(String(a.id || ''), pills, () => setVoiceTts(a.id), a.id === cur);
+    }
+  }
+
+  if (voicePopErr){
+    const e = document.createElement('div');
+    e.className = 'mp-err'; e.textContent = voicePopErr;
+    pop.appendChild(e);
+  }
+
+  // bottom row — jump to Models → Audio (download / rescan / delete live there)
+  const jump = document.createElement('div');
+  jump.className = 'mp-row';
+  const j = document.createElement('div');
+  j.className = 'mp-id'; j.textContent = 'Audio models…';
+  jump.appendChild(j);
+  jump.title = 'Open Models → Audio to download, rescan or remove voice models';
+  jump.onclick = audioJumpToModels;
+  pop.appendChild(jump);
+}
+
+function audioJumpToModels(){
+  closeAudioPop();
+  try { localStorage.setItem('harness-models-section', 'audio'); } catch (e) {}
+  showView('models');
+  if (typeof showModelsSection === 'function') showModelsSection('audio');
+}
+
+async function setVoiceTts(id){
+  voicePopErr = '';
+  try {
+    const res = await fetch('/api/voice/config', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({tts_model: id || ''})});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok){
+      voicePopErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+      renderAudioPop();      // stay open: the error belongs next to the row that caused it
+      return;
+    }
+    voiceCfg.tts_model = j.tts_model || '';
+  } catch {
+    voicePopErr = 'could not reach the bridge';
+    renderAudioPop();
+    return;
+  }
+  stopSpeaking();            // the old voice's clip must not outlive the switch
+  closeAudioPop();
+  renderAudioBtn();
+  refreshSpeakChips();
+  // the Models → Audio pane shows the same default as a gold pill — keep it honest
+  const mv = document.getElementById('view-models');
+  if (mv && !mv.hidden && typeof initModels === 'function') initModels();
+}
+
+/* ---------- ▶ Speak (per-message playback) ----------
+   PURE: what actually gets sent to the TTS engine. Thinking never reaches here (it
+   lives in its own disclosure, not in `_raw`); fenced code blocks are dropped whole
+   — a model reading out a shell script is noise, and the 2000-char cap is real.
+   Mirrored by bridge/tests/test_speak_text.js. */
+function speakText(raw){
+  let s = String(raw == null ? '' : raw);
+  s = s.replace(/```[\s\S]*?```/g, ' ');   // complete fenced blocks, content included
+  s = s.replace(/```[\s\S]*/, ' ');        // an unterminated fence (truncated turn)
+  s = s.replace(/`/g, '');                 // inline-code delimiters (keep the words)
+  s = s.replace(/\s+/g, ' ');
+  return s.trim();
+}
+
+// exactly one clip plays app-wide; starting another stops (and resets) the previous
+let currentAudio = null;     // {audio, url, btn, wrap}
+const SPEAK_LABEL = '▶ speak', SPEAK_TITLE = 'Speak this reply';
+
+function stopSpeaking(){
+  const c = currentAudio;
+  if (!c) return;
+  currentAudio = null;
+  try { c.audio.pause(); } catch (e) {}
+  try { URL.revokeObjectURL(c.url); } catch (e) {}
+  if (c.btn && document.body.contains(c.btn)){
+    c.btn.disabled = false; c.btn.textContent = SPEAK_LABEL; c.btn.title = SPEAK_TITLE;
+  }
+}
+
+function speakFlash(btn, text, title){
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = text;
+  btn.title = title || SPEAK_TITLE;
+  setTimeout(() => {
+    if (document.body.contains(btn) && !(currentAudio && currentAudio.btn === btn)){
+      btn.textContent = SPEAK_LABEL; btn.title = SPEAK_TITLE;
+    }
+  }, 2000);
+}
+
+async function msgSpeak(wrap, btn){
+  if (currentAudio && currentAudio.btn === btn){ stopSpeaking(); return; }   // ■ stop
+  stopSpeaking();
+  const text = speakText(msgRaw(wrap));
+  if (!text){ speakFlash(btn, 'nothing to speak', 'this message is code only'); return; }
+  btn.disabled = true; btn.textContent = '…'; btn.title = 'Rendering…';
+  let res;
+  try {
+    res = await fetch('/api/voice/tts', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
+  } catch (e) {
+    speakFlash(btn, 'err', 'could not reach the bridge'); return;
+  }
+  if (!res.ok){
+    let msg = '';
+    try { const j = await res.json(); msg = (j && j.error) || ''; } catch (e) {}
+    if (!msg) msg = (res.status === 409) ? 'a render is already in progress'
+                                         : ('the bridge refused (' + res.status + ')');
+    speakFlash(btn, 'err', msg); return;
+  }
+  let url;
+  try {
+    const blob = await res.blob();
+    url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = { audio, url, btn, wrap };
+    audio.onended = () => { if (currentAudio && currentAudio.audio === audio) stopSpeaking(); };
+    audio.onerror = () => {
+      const b = currentAudio && currentAudio.btn;
+      stopSpeaking();
+      speakFlash(b, 'err', 'the browser could not play that clip');
+    };
+    btn.disabled = false; btn.textContent = '■ stop'; btn.title = 'Stop playback';
+    await audio.play();
+  } catch (e) {
+    if (url) { try { URL.revokeObjectURL(url); } catch (e2) {} }
+    currentAudio = null;
+    speakFlash(btn, 'err', String((e && e.message) || e));
+  }
+}
+
+/* ALWAYS-VISIBLE ▶ speak under each assistant reply (Fable design: Speak is a
+   primary action — it must not hide behind hover next to Delete). One quiet line,
+   same register as the stats stamp; removed when audio is switched off. */
+function ensureSpeakBtn(wrap, user){
+  const old = wrap.querySelector(':scope > .msg-voice');
+  const on = !user && typeof voiceOn === 'function' && voiceOn();
+  if (!on){ if (old) old.remove(); return; }
+  if (old){
+    // re-adopt a clip playing from this bubble (row rebuilds must not strand audio)
+    const b = old.querySelector('.msg-act');
+    if (b && currentAudio && currentAudio.wrap === wrap) currentAudio.btn = b;
+    return;
+  }
+  const line = document.createElement('div');
+  line.className = 'msg-voice';
+  const b = document.createElement('button');
+  b.className = 'msg-act'; b.textContent = SPEAK_LABEL; b.title = SPEAK_TITLE;
+  b.setAttribute('aria-label', SPEAK_TITLE);
+  b.onclick = () => msgSpeak(wrap, b);
+  if (currentAudio && currentAudio.wrap === wrap){
+    currentAudio.btn = b; b.textContent = '■ stop'; b.title = 'Stop playback';
+  }
+  line.appendChild(b);
+  wrap.insertBefore(line, wrap.querySelector(':scope > .msg-acts'));
+}
+
+/* the Speak line only exists while a TTS model is configured → rebuild every
+   rendered assistant row when that changes (both directions) */
+function refreshSpeakChips(){
+  try {
+    // assistant bubbles only: they are the only rows the chip appears on, and it keeps
+    // this away from a user bubble that may be mid-edit (msgEdit owns that row).
+    document.querySelectorAll('#chat-msgs > .cmsg:not(.user)').forEach(w => msgActs(w));
+  } catch (e) {}
+}
+
+/* ---------- PHASE D: dictation (● talk) -------------------------------------
+   Mic → MediaRecorder → POST /api/voice/stt → text APPENDED to the composer. It
+   never sends: dictation that auto-sent would make a misheard word unrecoverable,
+   so the transcript always lands in the box for the user to read first.
+
+   Three states on one button: idle `● talk` → recording `■ M:SS` → `…` while the
+   bridge transcribes. Errors reuse the ▶ speak flash idiom (speakFlash) so both
+   voice surfaces fail the same visible way. */
+let talkRec = null;              // { rec, chunks, timer, stream, fmt, stop } while live
+const TALK_LABEL = '● talk';
+const TALK_TITLE = 'Dictate — record and transcribe into the message box';
+const TALK_MAX_S = 60;           // hard stop; also the cap the 25MB body limit assumes
+
+/* PURE: elapsed seconds → the button's mono timer. Unit-tested. */
+function talkTime(sec){
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+/* PURE: pick a container MediaRecorder can actually produce here. mp4 first —
+   WKWebView/Safari records AAC-in-mp4 and reports webm as unsupported, while
+   Chromium does the opposite. Returns {mime, fmt}; mime '' = let the browser
+   choose its default (then we still have to name a fmt for the bridge). */
+function talkMime(supported){
+  const can = supported || (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported
+    ? (t => MediaRecorder.isTypeSupported(t)) : (() => false));
+  for (const [mime, fmt] of [['audio/mp4', 'mp4'], ['audio/webm', 'webm']]){
+    if (can(mime)) return { mime, fmt };
+  }
+  return { mime: '', fmt: 'webm' };
+}
+
+function sttOn(){ return !!(voiceCfg && voiceCfg.stt_model); }
+
+function renderTalkBtn(){
+  const btn = document.getElementById('chat-talk');
+  if (!btn) return;
+  const on = sttOn();
+  btn.hidden = !on;
+  if (!on && talkRec) stopTalk(true);          // model cleared mid-recording → drop it
+  if (!talkRec && on){
+    btn.classList.remove('rec');
+    btn.textContent = TALK_LABEL;
+    btn.title = voiceCfg.stt_model + '\n' + TALK_TITLE;
+  }
+}
+
+function talkPaint(sec){
+  const btn = document.getElementById('chat-talk');
+  if (!btn) return;
+  btn.classList.add('rec');
+  btn.innerHTML = '';
+  const dot = document.createElement('span');
+  dot.className = 'talk-dot'; dot.textContent = '■ ';
+  const t = document.createElement('span');
+  t.className = 'talk-t'; t.textContent = talkTime(sec);
+  btn.appendChild(dot); btn.appendChild(t);
+  btn.title = 'Stop recording and transcribe';
+}
+
+function toggleTalk(){
+  if (talkRec) stopTalk(false); else startTalk();
+}
+
+async function startTalk(){
+  const btn = document.getElementById('chat-talk');
+  if (!btn || talkRec) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
+    speakFlash(btn, 'no mic', 'this webview cannot record audio');
+    renderTalkBtn(); return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    // The app must carry NSMicrophoneUsageDescription AND grant the webview's
+    // capture request; without either, this is where it surfaces.
+    console.warn('[talk] getUserMedia failed', e);
+    speakFlash(btn, 'err', 'microphone permission — see Logs/README');
+    renderTalkBtn(); return;
+  }
+  const { mime, fmt } = talkMime();
+  let rec;
+  try {
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  } catch (e) {
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e2) {}
+    console.warn('[talk] MediaRecorder failed', e);
+    speakFlash(btn, 'err', 'this webview cannot record ' + (mime || 'audio'));
+    renderTalkBtn(); return;
+  }
+  const chunks = [];
+  rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  rec.onstop = () => finishTalk(chunks, fmt);
+  const t0 = Date.now();
+  talkRec = { rec, chunks, stream, fmt, t0, timer: null, cancelled: false };
+  talkRec.timer = setInterval(() => {
+    if (!talkRec) return;
+    const sec = (Date.now() - talkRec.t0) / 1000;
+    if (sec >= TALK_MAX_S){ stopTalk(false); return; }
+    talkPaint(sec);
+  }, 1000);
+  try { rec.start(); } catch (e) {
+    stopTalk(true);
+    speakFlash(btn, 'err', String((e && e.message) || e)); return;
+  }
+  talkPaint(0);
+}
+
+/* cancel=true → tear everything down and transcribe NOTHING */
+function stopTalk(cancel){
+  const r = talkRec;
+  if (!r) return;
+  r.cancelled = !!cancel;
+  if (r.timer) clearInterval(r.timer);
+  r.timer = null;
+  try { if (r.rec && r.rec.state !== 'inactive') r.rec.stop(); } catch (e) {}
+  try { r.stream.getTracks().forEach(t => t.stop()); } catch (e) {}   // drops the mic light
+  if (cancel){ talkRec = null; renderTalkBtn(); return; }
+  const btn = document.getElementById('chat-talk');
+  if (btn){ btn.classList.remove('rec'); btn.textContent = '…'; btn.title = 'Transcribing…'; }
+}
+
+async function finishTalk(chunks, fmt){
+  const r = talkRec;
+  talkRec = null;
+  const btn = document.getElementById('chat-talk');
+  if (!r || r.cancelled){ renderTalkBtn(); return; }
+  const blob = new Blob(chunks, { type: (chunks[0] && chunks[0].type) || '' });
+  if (!blob.size){ speakFlash(btn, 'err', 'nothing was recorded'); renderTalkBtn(); return; }
+  let res;
+  try {
+    res = await fetch('/api/voice/stt?fmt=' + encodeURIComponent(fmt), {
+      method: 'POST', headers: { 'Content-Type': 'audio/' + fmt }, body: blob });
+  } catch (e) {
+    speakFlash(btn, 'err', 'could not reach the bridge'); renderTalkBtn(); return;
+  }
+  let j = null;
+  try { j = await res.json(); } catch (e) {}
+  if (!res.ok || !j || !j.ok){
+    let msg = (j && j.error) || '';
+    if (!msg) msg = (res.status === 409) ? 'a voice render is already in progress'
+                                         : ('the bridge refused (' + res.status + ')');
+    speakFlash(btn, 'err', msg); renderTalkBtn(); return;
+  }
+  const text = String(j.text || '').trim();
+  const box = document.getElementById('chat-input');
+  if (!text){ speakFlash(btn, 'err', 'nothing was heard'); renderTalkBtn(); return; }
+  if (box){
+    const cur = box.value || '';
+    box.value = cur ? (cur.replace(/\s+$/, '') + ' ' + text) : text;
+    box.focus();
+    try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) {}
+  }
+  renderTalkBtn();
+}
+
 async function refreshBrowse(){
   try {
     const s = await (await fetch('/api/browse/status')).json();
@@ -3351,9 +3887,12 @@ async function selectSession(sid){
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
     for (const m of (h.history || []).slice(-30)){
       if (m.role === 'user'){
-        const uw = addMsg('user', m.content || '');
-        // …and .attachment {id,name} from the image sidecar (data/attachments.db)
-        if (m.attachment) addRestoredAttachment(uw, m.attachment);
+        // …and .attachment {id,name} from the image sidecar (data/attachments.db).
+        // With a thumbnail to render, the stored "[image attached]" marker line is
+        // redundant — hide it from the BUBBLE while `_raw` keeps the stored text.
+        const raw = m.content || '';
+        const uw = addMsg('user', m.attachment ? stripAttachMarker(raw) : raw);
+        if (m.attachment){ uw._raw = raw; addRestoredAttachment(uw, m.attachment); }
         stampMsg(uw, m.metadata);   // db id → edit/fork/delete; `edited` mark
       }
       else if (m.role === 'assistant'){
@@ -3479,6 +4018,7 @@ function fmtGB(b){ return b ? (b/1073741824).toFixed(1) + ' GB' : ''; }
 
 async function initModels(){
   const stamp = document.getElementById('models-stamp');
+  applyModelsSection();     // restore the CHAT|AUDIO chip even if the fetch below fails
   stamp.textContent = 'LOADING…';
   try {
     const r = await (await fetch('/api/models')).json();
@@ -3536,6 +4076,11 @@ function renderModels(r){
   if (pendingSelectId && (r.installed || []).some(m => m.id === pendingSelectId)){
     mSel = { kind:'installed', id: pendingSelectId }; pendingSelectId = null;
   }
+  // A finished AUDIO download lands in `audio`, not `installed` — select it there and
+  // clear the pending id (otherwise it would linger and later hijack a chat selection).
+  if (pendingSelectId && (r.audio || []).some(a => a.id === pendingSelectId)){
+    aSel = pendingSelectId; pendingSelectId = null;
+  }
   if (mSel && mSel.kind === 'installed' && !(r.installed || []).some(m => m.id === mSel.id)) mSel = null;
   if (!mSel && !browseView && (r.installed || []).length){
     const def = r.active && r.installed.find(m => m.id === r.active);
@@ -3543,6 +4088,10 @@ function renderModels(r){
   }
   renderDetail();
   markSelRows();
+  // AUDIO sub-tab, from the SAME payload (r.audio + r.voice). Rendered after the
+  // pending-selection block above so a just-finished voice download lands selected.
+  renderAudio(r);
+  applyModelsSection();
 }
 
 // Pure state-machine helper (Fable ISSUE 2) — unit-tested. isLive = runner up AND
@@ -3566,6 +4115,7 @@ function srcLabel(src){
        : src === 'local' ? 'local'
        : src === 'lmstudio-import' ? 'LM Studio'
        : src === 'jan-import' ? 'Jan'
+       : src === 'audio-hf-cache' ? 'HF cache'
        : (src || '');
 }
 function srcBadge(src){
@@ -3622,6 +4172,203 @@ function renderAux(r){
     strip.appendChild(b);
   }
   foot.appendChild(strip);
+}
+
+/* ---------- Models sub-tabs: CHAT MODELS | AUDIO (Phase A) ----------
+   Pure show/hide over containers that are rendered from the SAME /api/models payload
+   (`installed` vs `audio`) — switching tabs never refetches and never rebuilds the
+   chat panes. Mirrors the Capabilities caps-section chips, including persistence. */
+const MODELS_SECTIONS = ['chat','audio'];
+function modelsSection(){
+  let s = 'chat';
+  try { s = localStorage.getItem('harness-models-section') || 'chat'; } catch (e) {}
+  return MODELS_SECTIONS.includes(s) ? s : 'chat';
+}
+function applyModelsSection(){
+  const sec = modelsSection(), chat = (sec === 'chat');
+  const set = (id, hidden) => { const el = document.getElementById(id); if (el) el.hidden = hidden; };
+  set('models-main', !chat);
+  set('models-aux', !chat);
+  set('models-audio', chat);
+  // The HF search chip drives the CHAT library only (HF browse = chat quants); the
+  // Audio tab has its own curated Get section, so the chip is hidden there.
+  const t = document.getElementById('models-toggle'); if (t) t.hidden = !chat;
+  MODELS_SECTIONS.forEach(s => {
+    const b = document.querySelector('.caps-tab[data-msec="' + s + '"]');
+    if (b) b.classList.toggle('on', s === sec);
+  });
+}
+function showModelsSection(sec){
+  if (!MODELS_SECTIONS.includes(sec)) sec = 'chat';
+  try { localStorage.setItem('harness-models-section', sec); } catch (e) {}
+  applyModelsSection();
+}
+
+/* ---------- AUDIO tab: installed voice models ---------- */
+let aSel = null;            // selected audio model id
+let voiceErr = '';          // last /api/voice/config failure, surfaced in the detail pane
+function audioEngineLabel(a){ return a.engine === 'mlx' ? 'mlx' : 'llama.cpp'; }
+function audioDefaultId(r, role){
+  const v = (r && r.voice) || {};
+  return (role === 'stt' ? v.stt_model : v.tts_model) || '';
+}
+function audioRowHtml(a, isDefault){
+  const b = ['<span class="mpill">' + esc(a.role || 'tts') + '</span>'];
+  if (isDefault) b.push('<span class="mpill live">default</span>');
+  b.push('<span class="mpill fmt">' + esc(audioEngineLabel(a)) + '</span>');
+  const sb = srcBadge(a.source); if (sb) b.push(sb);
+  if (a.size_bytes) b.push('<span class="msize">' + fmtGB(a.size_bytes) + '</span>');
+  return `<div class="mname" style="font-size:13.5px;word-break:break-all">${esc(a.id)}</div>`
+       + `<div class="mbadges">${b.join('')}</div>`;
+}
+function renderAudio(r){
+  const col = document.getElementById('audio-listcol');
+  if (!col) return;
+  const list = r.audio || [];
+  if (aSel && !list.some(a => a.id === aSel)) aSel = null;
+  if (!aSel && list.length) aSel = list[0].id;
+  col.innerHTML = '';
+  if (!list.length){
+    col.innerHTML = '<div class="cs-empty">No voice models yet. Pick one from '
+      + '“Get voice models” below — they download through the same manager as chat models. '
+      + 'Already have some on this Mac? Hit RESCAN.</div>';
+  } else {
+    for (const a of list){
+      const row = document.createElement('div'); row.className = 'mrow'; row.dataset.aid = a.id;
+      row.innerHTML = audioRowHtml(a, a.id === audioDefaultId(r, a.role));
+      row.onclick = () => selectAudio(a.id);
+      col.appendChild(row);
+    }
+  }
+  renderAudioDetail();
+  renderAudioGet();
+  markAudioSelRows();
+}
+function selectAudio(id){ aSel = id; voiceErr = ''; renderAudioDetail(); markAudioSelRows(); }
+function markAudioSelRows(){
+  document.querySelectorAll('#audio-listcol .mrow').forEach(el =>
+    el.classList.toggle('sel', el.dataset.aid === aSel));
+}
+function renderAudioDetail(){
+  const d = document.getElementById('models-audio-detail');
+  if (!d) return;
+  const r = lastModels || {};
+  const a = (r.audio || []).find(x => x.id === aSel);
+  if (!a){ d.innerHTML = '<div class="cs-empty">Select a voice model</div>'; return; }
+  const role = a.role || 'tts';
+  const isDefault = a.id === audioDefaultId(r, role);
+  const meta = [esc(a.id), esc(audioEngineLabel(a)), esc(a.format || ''),
+                fmtGB(a.size_bytes), esc(a.source || '')].filter(Boolean).join(' · ');
+  d.innerHTML = `<div class="md-title">${esc(a.name || a.id)}</div>
+    <div class="md-meta">${meta}${isDefault ? ' · default ' + esc(role.toUpperCase()) : ''}</div>
+    <div class="md-actions" id="ad-actions"></div>
+    <div class="md-div"></div>
+    <div class="md-path">${a.path ? esc(a.path) : 'path unknown'}${
+      a.mmproj ? ('<br>mmproj: ' + esc(a.mmproj)) : ''}</div>`;
+  const acts = d.querySelector('#ad-actions');
+  const set = document.createElement('button'); set.className = 'primary';
+  if (isDefault){
+    set.textContent = 'Clear default';
+    set.title = 'Turn ' + role.toUpperCase() + ' off (an empty default = capability off)';
+    set.onclick = () => setVoiceDefault('', role);
+  } else {
+    set.textContent = role === 'stt' ? 'Set default STT' : 'Set default TTS';
+    set.title = 'Use this model whenever the harness ' + (role === 'stt' ? 'listens' : 'speaks');
+    set.onclick = () => setVoiceDefault(a.id, role);
+  }
+  acts.appendChild(set);
+  // Delete — same guarded two-step as chat models; the bridge refuses anything that
+  // is not app-owned AND under data/models/ even if called directly.
+  if (isAppOwned(a.source)){
+    const del = document.createElement('button'); del.className = 'md-del';
+    del.textContent = 'Delete'; del.title = "Remove this model's files from data/models/";
+    del.disabled = modelsBusy;
+    del.onclick = () => armModelDelete(a.id, a.name || a.id, del);
+    acts.appendChild(del);
+  } else if (a.source){
+    const note = document.createElement('span'); note.className = 'md-imnote';
+    note.textContent = 'Managed by ' + (srcLabel(a.source) || 'another app') + ' — remove it there';
+    acts.appendChild(note);
+  }
+  if (voiceErr){
+    const e = document.createElement('div'); e.className = 'md-loaderr'; e.textContent = voiceErr;
+    acts.insertAdjacentElement('afterend', e);
+  }
+}
+async function setVoiceDefault(id, role){
+  voiceErr = '';
+  const body = {}; body[role === 'stt' ? 'stt_model' : 'tts_model'] = id;
+  try {
+    const res = await fetch('/api/voice/config', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch { voiceErr = 'could not reach the bridge'; }
+  initModels();      // re-read /api/models → voice block + default pills
+}
+
+/* Curated starter downloads (recon-verified 2026-08-07). Every one goes through the
+   EXISTING download manager, so progress / pause / resume / cancel come free; the
+   `fmt` hint is what makes the finished download register as an AUDIO model.
+   ⚠️ Sizes/filenames are from Phase-0 recon — a real download is what confirms them. */
+const VOICE_STARTERS = [
+  { title: 'Qwen3-TTS · llama.cpp', repo: 'ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF',
+    file: 'Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf',
+    mmproj: 'mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf',
+    fmt: 'tts-gguf', size: '1.38 GB (0.96 + 0.42)',
+    desc: 'The default engine — runs on the llama.cpp binary the harness already ships. '
+        + 'Downloads BOTH halves: llama-tts needs the backbone and its mmproj projector.',
+    lic: 'Apache-2.0 (upstream Qwen)' },
+  { title: 'Qwen3-TTS · MLX', repo: 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit',
+    file: '', fmt: 'tts-mlx', size: '~1.8 GB',
+    desc: 'Apple-silicon build of the same model, with named voices (Chelsie, Ethan). '
+        + 'No extra packages beyond the existing MLX venv.',
+    lic: 'Apache-2.0 (upstream Qwen)' },
+  { title: 'Kokoro · MLX', repo: 'mlx-community/Kokoro-82M-bf16',
+    file: '', fmt: 'tts-mlx', size: '~389 MB',
+    desc: 'The best quality-per-megabyte TTS model.',
+    warn: 'Needs the misaki package; its “en” extra pulls PyTorch, so it is installed '
+        + 'WITHOUT extras to keep the MLX venv torch-free — Kokoro support is best-effort.',
+    lic: 'Apache-2.0' },
+  { title: 'Whisper base · MLX (speech-to-text)', repo: 'mlx-community/whisper-base-mlx',
+    file: '', fmt: 'stt-mlx', size: '~137 MB',
+    desc: 'Small, fast transcription. Listening is not wired into the UI yet (Phase D) — '
+        + 'downloading now just puts it in the library.',
+    lic: 'MIT (upstream Whisper)' },
+  { title: 'Whisper large-v3-turbo · MLX (speech-to-text)',
+    repo: 'mlx-community/whisper-large-v3-turbo',
+    file: '', fmt: 'stt-mlx', size: '~1.50 GB',
+    desc: 'Much more accurate transcription, still fast on Apple silicon.',
+    lic: 'MIT (upstream Whisper)' },
+];
+function renderAudioGet(){
+  const box = document.getElementById('audio-get');
+  if (!box) return;
+  const have = new Set(((lastModels || {}).audio || []).map(a => a.id));
+  box.innerHTML = '<span class="cs-title" style="display:block">Get voice models</span>'
+    + '<div class="cs-empty" style="margin-top:6px">Downloads land in the harness’s own '
+    + 'models folder and appear above when they finish. Progress is in Downloads below.</div>';
+  const list = document.createElement('div'); list.className = 'hffiles';
+  list.style.marginTop = '14px';
+  for (const s of VOICE_STARTERS){
+    const leaf = s.file ? s.file.replace(/\.gguf$/i, '') : s.repo.split('/').pop();
+    const owned = have.has(leaf);
+    const row = document.createElement('div'); row.className = 'hffile';
+    row.style.display = 'block'; row.style.lineHeight = '1.7';
+    row.innerHTML = `<div style="color:var(--cream)">${esc(s.title)} <span style="color:var(--faint)">· ${esc(s.size)}</span></div>`
+      + `<div style="color:var(--dim);white-space:normal">${esc(s.desc)}</div>`
+      + (s.warn ? `<div style="color:var(--gold);white-space:normal">⚠ ${esc(s.warn)}</div>` : '')
+      + `<div style="color:var(--faint);white-space:normal">${esc(s.repo)} · ${esc(s.lic)}</div>`;
+    const b = document.createElement('button'); b.className = 'hfget';
+    b.style.marginTop = '6px';
+    if (owned){ b.textContent = 'In library'; b.disabled = true; }
+    else { b.textContent = 'Get'; b.onclick = () => {
+             b.disabled = true; b.textContent = 'Starting…';
+             dlStart(s.repo, s.file, { voice_format: s.fmt, mmproj: s.mmproj || '' }); }; }
+    row.appendChild(b);
+    list.appendChild(row);
+  }
+  box.appendChild(list);
 }
 
 function selectInstalled(id){ mSel = { kind:'installed', id }; renderDetail(); markSelRows(); }
@@ -3775,7 +4522,7 @@ async function doDeleteModel(id, name){
     const r = await (await fetch('/api/models/delete', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})})).json();
     if (!r.ok){ st.textContent = 'DELETE FAILED — ' + (r.log || 'refused'); modelsBusy = false; return; }
-    mSel = null;                 // clear detail; renderModels re-selects a remaining model
+    mSel = null; aSel = null;    // clear detail; renderModels/renderAudio re-select
     if (r.was_live){ const cn = document.getElementById('chat-note');
       if (cn) cn.textContent = 'model deleted — load one from Models'; }
   } catch { st.textContent = 'DELETE FAILED — could not reach the bridge'; modelsBusy = false; return; }
@@ -3979,10 +4726,16 @@ let dlPoll = null;
 const dlDismissed = new Set();
 let dlSeenDone = new Set();
 
-async function dlStart(repo, filename){
+// opts (Phase A, optional): {voice_format, mmproj} — set ONLY by the Audio tab's Get
+// buttons. Without them the body is byte-identical to before, so every chat-model
+// caller (hffiles Get, MLX repo Get) is unchanged.
+async function dlStart(repo, filename, opts){
+  const body = { repo, filename };
+  if (opts && opts.voice_format) body.voice_format = opts.voice_format;
+  if (opts && opts.mmproj) body.mmproj = opts.mmproj;
   try {
     const r = await fetch('/api/dl/start', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({repo, filename})});
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json().catch(() => ({}));
     if (r.ok){ refreshDownloads(); ensureDlPoll(); }
     else {
@@ -4125,6 +4878,10 @@ function msgActs(wrap){
       b.onclick = () => fn(b);
       row.appendChild(b); return b;
     };
+    // ▶ Speak is NOT in this hover row — Fable redesign 2026-08-07: it is a primary
+    // action and lives ALWAYS-VISIBLE under the reply (ensureSpeakBtn), in the same
+    // quiet register as the stats line. Hover stays for secondary/destructive ops.
+    ensureSpeakBtn(wrap, user);
     chip('copy', 'Copy this message', b => msgCopy(wrap, b));
     if (hermes || !id) return row;   // no server-side id → no server-side ops
     if (user) chip('edit', 'Edit this message (text only — does not re-run the model)',
@@ -4234,7 +4991,9 @@ function msgEdit(wrap){
       wrap._raw = text;
       // rebuild the bubble text, preserving any attachment line already in it
       const keep = Array.from(body.children).filter(c => c.classList.contains('attachline'));
-      body.textContent = text;
+      // …and keep the marker hidden while a thumbnail is present (same rule as
+      // the reopen path — the editor showed the stored text, the bubble doesn't)
+      body.textContent = keep.length ? stripAttachMarker(text) : text;
       keep.forEach(k => body.appendChild(k));
       markEdited(wrap);
     }
@@ -4291,9 +5050,9 @@ async function stampLiveTurn(userWrap, holder, userText){
     const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
     const hist = (h && h.history) || [];
     // The direct lane appends an "[image attached]" marker to the stored user
-    // text — normalise it away so the DOM text still matches. ⚠ the marker
-    // string is duplicated here from bridge/app.py's ATTACH_MARKER.
-    const norm = s => String(s || '').replace(/\n\[image attached\]$/, '').trim();
+    // text — normalise it away so the DOM text still matches. Single-sourced
+    // panel-side through stripAttachMarker (which mirrors ATTACH_MARKER).
+    const norm = s => stripAttachMarker(s).trim();
     const lastMatch = (role, text) => {
       const want = norm(text);
       for (let i = hist.length - 1; i >= 0; i--){
@@ -4307,6 +5066,44 @@ async function stampLiveTurn(userWrap, holder, userText){
     const am = lastMatch('assistant', msgRaw(holder));
     if (am) stampMsg(holder, am.metadata);
   } catch {}
+}
+
+/* ── The persisted attachment marker (display-side) ───────────────────────────
+   The direct lane stores an image turn as `<text>` + ATTACH_MARKER
+   ("\n[image attached]", single-sourced in bridge/app.py) so a reopened
+   transcript still says an image was sent even when the sidecar bytes are gone.
+   When the THUMBNAIL does rehydrate, that literal line is duplicate noise — so
+   it is stripped for DISPLAY only. The stored text (and `_raw`, and therefore
+   Copy/Edit) keeps the marker: the bridge's own user_key() strips it before
+   hashing, so an edit that drops it still matches its sidecar row.
+   ⚠ the marker string is duplicated here from bridge/app.py's ATTACH_MARKER.
+   PURE — unit-tested by bridge/tests/test_attach_marker.js. */
+function stripAttachMarker(s){
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/(?:\r?\n|[ \t])?\[image attached\]$/, '');
+}
+
+function lastAttachmentId(hist, userText){
+  // PURE: the sidecar image id of the LAST user row whose text matches `userText`
+  // (marker-normalised, the same way stampLiveTurn matches). Falls back to the
+  // newest user row that carries an attachment at all, so a turn whose text was
+  // rewritten server-side still resolves. null when nothing has one yet — the
+  // caller reads that as "the row is not written yet, retry".
+  // NOTE: no apostrophes in this body — the test extracts it with a naive
+  // string-aware brace matcher that would treat one as an open quote.
+  // Unit-tested by bridge/tests/test_attach_marker.js.
+  const norm = s => stripAttachMarker(s).trim();
+  const want = norm(userText);
+  let newest = null;
+  for (let i = (hist || []).length - 1; i >= 0; i--){
+    const m = (hist || [])[i];
+    if (!m || m.role !== 'user') continue;
+    const a = m.attachment;
+    if (!a || a.id === undefined || a.id === null) continue;
+    if (newest === null) newest = a.id;
+    if (norm(m.content) === want) return a.id;
+  }
+  return newest;
 }
 
 function attachLineEl(src, name, onRemove){
@@ -4327,6 +5124,37 @@ function attachLineEl(src, name, onRemove){
   x.onclick = () => { try { onRemove && onRemove(); } catch {} line.remove(); };
   line.appendChild(th); line.appendChild(nm); line.appendChild(x);
   return line;
+}
+
+/* ── Live ✕ on a just-sent image → forget the sidecar row too ─────────────────
+   The bridge writes data/attachments.db only AFTER the turn injects, so a ✕
+   clicked mid-turn has nothing to delete yet — which is why removing the line
+   used to be cosmetic and the image came back on reopen (the recorded quirk).
+   No new route: we remember the intent and, once the row exists, resolve its id
+   from the SAME history refetch stampLiveTurn uses and call the EXISTING
+   POST /api/attachment/{id}/delete — which touches the sidecar row only, never
+   the user's file on disk. The restored-line ✕ is unchanged. */
+let pendingAttachDrop = null;   // {wrap, text} — a live ✕ fired during its turn
+
+function liveAttachDrop(wrap, text){
+  if (chatBusy){ pendingAttachDrop = {wrap: wrap, text: text}; return; }
+  dropSidecarAttachment(text);
+}
+
+async function dropSidecarAttachment(userText){
+  // Two attempts: at [DONE] the inject + sidecar write have normally landed, but
+  // the refetch can still beat them. Never throws into the send path.
+  try {
+    if (!chatSid) return;
+    for (let attempt = 0; attempt < 2; attempt++){
+      if (attempt) await new Promise(r => setTimeout(r, 900));
+      const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
+      const id = lastAttachmentId((h && h.history) || [], userText);
+      if (id === null || id === undefined) continue;
+      await fetch('/api/attachment/' + encodeURIComponent(id) + '/delete', {method:'POST'});
+      return;
+    }
+  } catch {}
 }
 
 function addRestoredAttachment(wrap, att){
@@ -4565,10 +5393,10 @@ async function sendChat() {
   if (img){
     // clickable thumbnail for the live turn; the bytes are ALSO persisted by the
     // bridge's image sidecar, so reopening this session rehydrates the same line.
-    // ✕ here only removes it from this view (the sidecar row is written after the
-    // turn completes) — it never touches the source file.
+    // ✕ here removes it from this view AND (once the sidecar row exists, which is
+    // after the turn completes) deletes that row — it never touches the source file.
     userWrap.querySelector('.body').appendChild(
-      attachLineEl(img.data, img.name, null));
+      attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text)));
   }
   clearImage();
   scrollChat(true);   // sending your own message always snaps to bottom
@@ -4742,6 +5570,12 @@ async function sendChat() {
     // history refetch; never awaited, never allowed to throw into the send path).
     if (holder._raw === undefined) holder._raw = body.textContent;
     stampLiveTurn(userWrap, holder, text);
+    // …and honour a ✕ that was clicked on this turn's image while it streamed:
+    // the sidecar row only exists now, so the delete is issued here (once).
+    if (pendingAttachDrop && pendingAttachDrop.wrap === userWrap){
+      const p = pendingAttachDrop; pendingAttachDrop = null;
+      dropSidecarAttachment(p.text);
+    }
   }
 }
 
@@ -5747,6 +6581,7 @@ applySessionsRail();   // PHASE 1: restore persisted sessions-rail preference
 loadArtifactSplit();   // TASK A: restore persisted artifact split (default half)
 loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
+loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configured voice
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>

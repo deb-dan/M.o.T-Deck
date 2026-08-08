@@ -26,11 +26,46 @@ done
 command -v node >/dev/null || say "Node.js not found — Hermes's dashboard build needs it later ('brew install node')."
 
 # ---------- uv (bootstrap uses it for venvs) ----------
-if ! command -v uv >/dev/null; then
-  say "Installing uv (astral.sh)…"
-  curl -LsSf https://astral.sh/uv/install.sh | sh || fail "uv install failed — see https://astral.sh/uv"
-  export PATH="$HOME/.local/bin:$PATH"
+# Resolution order — the user's own uv always wins, and nothing is downloaded until
+# every known location has been checked. The explicit path list is the same one
+# install_component.sh uses for VB_UV: a Finder-launched app gets a MINIMAL PATH, so
+# `command -v uv` alone misses a perfectly good uv in ~/.local/bin (its own default
+# install location). That single miss already cost us one failed voicebox install.
+UV_DIR="$ROOT/data/uv/bin"
+UV_BIN=""
+for _u in "$(command -v uv || true)" "$UV_DIR/uv" "$HOME/.local/bin/uv" \
+          /opt/homebrew/bin/uv /usr/local/bin/uv "$HOME/.cargo/bin/uv"; do
+  [[ -n "$_u" && -x "$_u" ]] && { UV_BIN="$_u"; break; }
+done
+
+if [[ -n "$UV_BIN" ]]; then
+  say "uv: $UV_BIN ($("$UV_BIN" --version 2>/dev/null || echo 'version?'))"
+else
+  # PINNED install. The version-in-the-URL form is documented by upstream
+  # (docs.astral.sh/uv/getting-started/installation → "Request a specific version"),
+  # and UV_UNMANAGED_INSTALL=<dir> is the documented way to (a) choose the install
+  # directory, (b) stop the installer editing shell profiles and (c) disable
+  # self-update — exactly the no-writes-outside-our-tree rule ensure_bun.sh follows.
+  # Pin lives in harness.yaml build.uv_pin; same awk reader as ensure_bun.sh.
+  _yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+  UV_PIN="${UV_PIN:-$(_yb uv_pin)}"
+  if [[ -n "$UV_PIN" ]]; then
+    UV_URL="https://astral.sh/uv/${UV_PIN}/install.sh"
+    say "Installing uv ${UV_PIN} → ${UV_DIR} (nothing is written outside this folder)…"
+  else
+    # A missing pin must not brick a fresh Mac: warn loudly, install latest.
+    UV_URL="https://astral.sh/uv/install.sh"
+    say "WARN: build.uv_pin missing from harness.yaml — installing the LATEST uv (unpinned)."
+  fi
+  mkdir -p "$UV_DIR"
+  curl -LsSf "$UV_URL" | env UV_UNMANAGED_INSTALL="$UV_DIR" sh \
+    || fail "uv install failed — tried: $UV_URL  (see https://astral.sh/uv)"
+  UV_BIN="$UV_DIR/uv"
+  [[ -x "$UV_BIN" ]] || fail "uv installed but $UV_BIN is not executable — tried: $UV_URL"
+  say "$("$UV_BIN" --version 2>/dev/null || echo 'uv ?') installed → $UV_BIN"
 fi
+# bootstrap.sh calls `uv` by name.
+export PATH="$(dirname "$UV_BIN"):$PATH"
 
 # ---------- git identity fallback (fresh Macs often have none; bootstrap commits) ----------
 if ! git config --get user.email >/dev/null 2>&1; then

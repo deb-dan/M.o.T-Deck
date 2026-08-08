@@ -628,6 +628,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    // PHASE D (dictation): getUserMedia inside a WKWebView is DENIED by default —
+    // WebKit asks the host app, and with no delegate method the promise rejects and
+    // the panel's ● talk button just says "microphone permission". Same class of
+    // silent no-op as runOpenPanelWith above (that one broke ⊕ attach).
+    //
+    // .grant is safe here because the only page allowed to ask is our own panel on
+    // 127.0.0.1:8700, and macOS still shows its own TCC prompt the first time (which
+    // needs NSMicrophoneUsageDescription in Info.plist — added in build_app.sh).
+    // Camera is refused: nothing in the harness uses it, so a request would only ever
+    // be something we did not ship.
+    @available(macOS 12.0, *)
+    func webView(_ webView: WKWebView,
+                 requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(type == .camera ? .deny : .grant)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if spawnedBridge { bridgeProcess?.terminate() }   // only stop what we started
     }

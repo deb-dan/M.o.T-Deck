@@ -9,7 +9,7 @@
 #   ./scripts/ship.sh          ship + restart
 #
 # What it does, in order:
-#   1. repo bridge/panel + bridge/app.py + scripts/ + guards/ + policies/ → snapshot
+#   1. repo bridge/panel + bridge/*.py + scripts/ + guards/ + policies/ → snapshot
 #      (NEVER harness.yaml or data/ — those hold live state)
 #   2. if app/main.swift is newer than the installed app binary → recompile the
 #      Swift shell in place + ad-hoc re-sign (no full fat rebuild)
@@ -26,7 +26,17 @@ APP="/Applications/Harness.app"
 
 echo "[ship] repo → snapshot (panel, bridge, scripts, guards, policies)"
 cp -R "$ROOT/bridge/panel/." "$DST/bridge/panel/"
-cp "$ROOT/bridge/app.py" "$DST/bridge/app.py"
+# EVERY top-level bridge module, not just app.py: app.py now imports sibling modules
+# (bridge/voice.py, Phase B) and copying only app.py would ship an app.py whose import
+# target does not exist in the snapshot. app.py degrades gracefully if voice.py is
+# missing, but the snapshot must simply carry the whole package.
+# ⚠️ PENDING FABLE QA — ship.sh is the critical ops path and the manifest-merge note
+# in CLAUDE.md makes changes here Fable-lane. This one is minimal and additive (same
+# destination dir, no new semantics, subdirectories untouched), and the alternative
+# was a bridge that cannot import on the first ship. Flagged, not assumed.
+for _m in "$ROOT"/bridge/*.py; do
+  cp "$_m" "$DST/bridge/$(basename "$_m")"
+done
 for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
@@ -63,6 +73,14 @@ if [[ -z "$MERGE_PY" ]]; then
 else
 "$MERGE_PY" - "$ROOT/harness.yaml" "$DST/harness.yaml" <<'PY'
 import sys, shutil, datetime, yaml
+# CRITICAL: safe_dump writes an EMPTY value as the literal `null`, and the shell
+# readers (awk/sed in start_component.sh) then take the 4-char string "null" as a
+# real value — e.g. `runner.binary:` (empty = auto-discover) became
+# `runner.binary: null` and every model load died with "not executable: null".
+# Emit None as a truly empty scalar so an empty key round-trips as an empty key.
+yaml.add_representer(type(None),
+                     lambda d, _v: d.represent_scalar('tag:yaml.org,2002:null', ''),
+                     Dumper=yaml.SafeDumper)
 src_p, dst_p = sys.argv[1], sys.argv[2]
 try:
     src = yaml.safe_load(open(src_p)) or {}
