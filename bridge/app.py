@@ -2434,6 +2434,40 @@ def _registry_add(entry: dict) -> None:
     _os.replace(tmp, reg)
 
 
+def _registry_update(mid: str, patch: dict) -> "dict | None":
+    """Read data/models.json, merge `patch` into the entry with id `mid`, atomic
+    write (tmp + os.replace — the SAME shape as _registry_add/_registry_drop).
+    Returns the updated entry, or None when the id is not in the registry.
+
+    A key whose patch value is None is REMOVED rather than stored as null: the
+    voice picker's "model default" is the absence of a `voice` key, not a null."""
+    import json as _json, os as _os
+    reg = ROOT / "data" / "models.json"
+    try:
+        data = _json.loads(reg.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+            return None
+    except Exception:
+        return None
+    out = None
+    for m in data["models"]:
+        if isinstance(m, dict) and m.get("id") == mid:
+            for k, v in (patch or {}).items():
+                if v is None:
+                    m.pop(k, None)
+                else:
+                    m[k] = v
+            out = m
+            break
+    if out is None:
+        return None
+    tmp = str(reg) + ".harness-tmp"
+    with open(tmp, "w") as f:
+        _json.dump(data, f, indent=2)
+    _os.replace(tmp, reg)
+    return out
+
+
 def _registry_drop(mid: str) -> None:
     """Read data/models.json, drop the model with id `mid`, atomic write. Used by the
     delete endpoint — note re-seeding would NOT remove a source="download" entry
@@ -2708,7 +2742,10 @@ async def dl_start(req: Request) -> JSONResponse:
         # ── Whole-MLX-repo mode ──────────────────────────────────────────────
         paths = [it.get("path", "") for it in tree]
         has_gguf = any(p.lower().endswith(".gguf") for p in paths)
-        has_st = any(p.lower().endswith(".safetensors") for p in paths)
+        # weights.npz is the older MLX weight format — mlx-community's whisper-base/
+        # small conversions ship it INSTEAD of safetensors (recon-flagged; Debi hit it:
+        # the Get button 400'd invisibly). Both are MLX weights; accept either.
+        has_st = any(p.lower().endswith((".safetensors", ".npz")) for p in paths)
         has_cfg = any(_os.path.basename(p) == "config.json" for p in paths)
         if has_gguf or not (has_st and has_cfg):
             return JSONResponse(
@@ -4486,6 +4523,44 @@ async def voice_config_set(req: Request) -> JSONResponse:
     v = _voice_cfg()
     return JSONResponse({"ok": True, "tts_model": v["tts_model"],
                          "stt_model": v["stt_model"], "changed": changed})
+
+
+@app.post("/api/voice/entry-voice")
+async def voice_entry_voice(req: Request) -> JSONResponse:
+    """{id, voice} → pin a NAMED VOICE onto one audio registry entry.
+
+    The voice lives ON the registry entry, not in harness.yaml: a voice is a
+    property of a model choice (Chelsie only means anything for Qwen3-TTS), so
+    two installed TTS models can each remember their own. tts_argv already reads
+    `entry["voice"]` and emits `--voice` only when it is set — this endpoint is
+    the only writer. An empty string CLEARS it (back to the engine's own default,
+    which for mlx-audio means a random name per render — that is the bug this
+    whole slice exists to let the user opt out of)."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    mid = str(body.get("id") or "").strip()
+    voice = body.get("voice", "")
+    if not mid:
+        return JSONResponse({"ok": False, "error": "no model id given"}, status_code=400)
+    _, audio = _split_audio(_registry_models())
+    entry = _voice.find_entry(audio, mid)
+    err = _voice.validate_voice_choice(entry, voice)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    v = _voice.normalize_voice(voice)
+    updated = _registry_update(mid, {"voice": v or None})
+    if updated is None:
+        return JSONResponse(
+            {"ok": False, "error": f"'{mid}' is no longer in the registry"},
+            status_code=400)
+    print(f"[voice] entry-voice {mid} → {v or '(model default)'}", flush=True)
+    return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated)})
 
 
 @app.post("/api/voice/tts")

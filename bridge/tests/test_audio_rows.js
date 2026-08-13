@@ -41,7 +41,8 @@ function grab(name) {
 }
 
 const NAMES = ['esc', 'fmtGB', 'isAppOwned', 'srcLabel', 'srcBadge',
-               'audioEngineLabel', 'audioDefaultId', 'audioRowHtml'];
+               'audioEngineLabel', 'audioDefaultId', 'audioRowHtml',
+               'voiceChoiceMode'];
 const src = NAMES.map(grab).join('\n');
 // The panel's esc() escapes via a detached element's textContent→innerHTML; node has
 // no DOM, so stub exactly that one behaviour (& < > escaped, quotes are NOT — which
@@ -93,6 +94,43 @@ check('a size-less entry simply omits the size', !row2.includes('GB'));
 const row3 = P.audioRowHtml({ id: '<img src=x onerror=1>', role: 'tts', engine: 'mlx' }, false);
 check('the model id is HTML-escaped in the row',
       !row3.includes('<img') && row3.includes('&lt;img'));
+
+/* ---- voiceChoiceMode: which voice picker a model gets, if any -------------
+   mlx-audio picks a RANDOM named voice per render when --voice is absent, so the
+   picker exists to let the user pin one. The refusals are the load-bearing part:
+   llama-tts has NO --voice flag, so offering one on a tts-gguf would be a lie. */
+const QMLX = { id: 'Qwen3-TTS-8bit', role: 'tts', format: 'tts-mlx',
+               engine: 'mlx', voices: ['Chelsie', 'Ethan'] };
+check('a known mlx family gets chips', P.voiceChoiceMode(QMLX) === 'chips');
+check('an mlx model with no known voices gets free text',
+      P.voiceChoiceMode({ ...QMLX, voices: [] }) === 'text');
+check('a missing voices array still gets free text (never a crash)',
+      P.voiceChoiceMode({ id: 'x', role: 'tts', format: 'tts-mlx' }) === 'text');
+check('a tts-gguf gets NO picker (llama.cpp has no voice parameter)',
+      P.voiceChoiceMode({ id: 'q', role: 'tts', format: 'tts-gguf',
+                          voices: ['Chelsie'] }) === 'none');
+check('an stt model gets no picker',
+      P.voiceChoiceMode({ id: 'w', role: 'stt', format: 'stt-mlx' }) === 'none');
+check('junk gets no picker',
+      P.voiceChoiceMode(null) === 'none' && P.voiceChoiceMode({}) === 'none');
+check('an entry with no role defaults to tts (the view always sets one)',
+      P.voiceChoiceMode({ id: 'x', format: 'tts-mlx', voices: ['a'] }) === 'chips');
+
+/* Panel wiring facts, asserted against the panel SOURCE — the picker is only
+   useful if it actually writes, and only one surface may write. */
+check('the detail pane writes through POST /api/voice/entry-voice',
+      /fetch\('\/api\/voice\/entry-voice'/.test(html));
+check('the detail pane has a voice container',
+      html.includes("id=\"ad-voice\"") && html.includes("getElementById('ad-voice')"));
+check('a selected voice chip uses the gold .mp-act.on state',
+      /\.mp-act\.on\s*\{/.test(html));
+check('clearing posts an EMPTY string (the model-default sentinel)',
+      html.includes("setEntryVoice(a.id, '')"));
+check('the composer popover only DISPLAYS the voice (no picker there)',
+      html.includes("'voice: ' + a.voice")
+      && !/renderAudioPop[\s\S]{0,4000}entry-voice/.test(html));
+check('switching voice stops any clip rendered with the old one',
+      /async function setEntryVoice[\s\S]{0,900}stopSpeaking\(\)/.test(html));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

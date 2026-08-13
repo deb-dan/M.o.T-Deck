@@ -70,6 +70,86 @@ TTS_FORMATS = ("tts-gguf", "tts-mlx")
 STT_FORMATS = ("stt-mlx",)
 AUDIO_FORMATS = TTS_FORMATS + STT_FORMATS
 
+# ── named voices ────────────────────────────────────────────────────────────────
+# WHY this exists: mlx-audio picks a RANDOM named voice per render when --voice is
+# absent (Debi-observed on Qwen3-TTS-mlx), so "the same model" sounds like a
+# different person every reply. tts_argv already emits `--voice <v>` when the
+# registry entry carries one — this table is just the list of names worth offering.
+#
+# It is deliberately SMALL and honest: a family token → its documented voice ids.
+# An unknown family gets an empty list and the UI falls back to a free-text box
+# (a voice we have never heard of is still perfectly valid to type), and EVERY
+# tts-gguf gets an empty list because llama-tts at b10295 has no --voice flag at
+# all — its voice is baked into the model.
+#
+# ⚠️ RECON-LEVEL, not machine-verified: the Kokoro ids come from hexgrad's
+# published VOICES.md (af_/am_ = American female/male, bf_/bm_ = British), the
+# Qwen3-TTS pair from the model card. A name the engine does not know is not
+# catastrophic — mlx-audio falls back — but it is worth re-checking at a pin bump.
+KNOWN_VOICES = {
+    # The REAL Qwen3-TTS voices, from the CustomVoice checkpoint's own config.json
+    # talker_config.spk_id (research-verified 2026-08-08). "Chelsie"/"Ethan" were
+    # README fiction — they exist in no checkpoint. NOTE: these apply to the
+    # *CustomVoice* variant; the *Base* variant declares spk_id:{} (cloning-only)
+    # and silently ignores every name. Config-derived chips (queued) fix this
+    # properly; until then the offer is at least real.
+    "qwen3-tts": ["serena", "vivian", "ryan", "aiden", "dylan",
+                  "eric", "uncle_fu", "sohee", "ono_anna"],
+    "kokoro": ["af_heart", "af_bella", "af_nicole", "af_sarah",
+               "am_adam", "am_michael", "bf_emma", "bm_george"],
+}
+
+# A voice id is a short token (`af_heart`, `Chelsie`), never prose. The cap exists
+# so a stray paste cannot end up on an argv.
+VOICE_NAME_MAX = 64
+
+
+def voices_for(entry: "dict | None") -> list:
+    """The named voices worth OFFERING for this registry entry. PURE.
+
+    Empty list ⇒ the UI must not show chips: either the engine has no voice
+    parameter (every tts-gguf) or we simply do not know this family's names (then
+    the UI offers free text instead — never a closed list we cannot honour).
+    """
+    if not is_tts_entry(entry):
+        return []
+    if entry_format(entry) != "tts-mlx":
+        return []                      # llama-tts: no --voice, no choice to make
+    hay = " ".join(str((entry or {}).get(k) or "")
+                   for k in ("id", "repo", "path", "name")).lower()
+    for token, names in KNOWN_VOICES.items():
+        if token in hay:
+            return list(names)
+    return []
+
+
+def normalize_voice(voice: object) -> str:
+    """'' means CLEAR (fall back to the engine's own default). PURE."""
+    return str(voice or "").strip()
+
+
+def validate_voice_choice(entry: "dict | None", voice: object) -> "str | None":
+    """None when `voice` may be written onto `entry`, else a user-facing reason.
+
+    The tts-gguf refusal is the interesting one: it is not a validation nicety,
+    it is the truth about llama.cpp — there is no flag to carry the answer.
+    """
+    if not entry:
+        return "no such model in the registry"
+    if not is_tts_entry(entry):
+        return (f"'{entry.get('id')}' is not a TTS model "
+                f"(format {entry_format(entry) or 'unknown'})")
+    if entry_format(entry) == "tts-gguf":
+        return ("llama.cpp models have no voice parameter — "
+                "voice is chosen by the model")
+    if not isinstance(voice, str):
+        return "voice must be a string"
+    v = normalize_voice(voice)
+    if len(v) > VOICE_NAME_MAX:
+        return (f"that voice name is too long ({len(v)} characters) — "
+                f"the cap is {VOICE_NAME_MAX}")
+    return None
+
 
 class VoiceError(RuntimeError):
     """A render failed. `.message` is user-facing; `.log_tail` is the engine's output."""
@@ -249,6 +329,9 @@ def audio_entry_view(m: dict) -> dict:
         "path": m.get("path"),
         "mmproj": m.get("mmproj"),
         "voice": m.get("voice") or None,
+        # The names the Audio-tab detail pane offers as chips. [] ⇒ free text
+        # (unknown family) or no picker at all (tts-gguf / stt) — see voices_for.
+        "voices": voices_for(m),
         "lang": m.get("lang") or None,
         "source": m.get("source"),
         "repo": m.get("repo"),

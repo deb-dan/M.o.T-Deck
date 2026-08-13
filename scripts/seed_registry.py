@@ -363,6 +363,17 @@ def load_existing(path):
 RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
 
 
+def _keep_voice(entry, existing_voice):
+    """Carry a user-pinned `voice` across a rescan. PURE (returns a copy when it
+    changes anything). A freshly scanned entry never carries one — the voice is a
+    choice, not a file — so an existing pin for the same id wins."""
+    v = existing_voice.get(entry.get("id"))
+    if v and not str(entry.get("voice") or "").strip():
+        entry = dict(entry)
+        entry["voice"] = v
+    return entry
+
+
 def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
           audio_cache_entries=None):
     """Keep every existing entry whose source is not one we re-scan ('jan-import',
@@ -386,11 +397,19 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     # id -> ctx from the current registry (any source), for the preservation rule.
     existing_ctx = {m.get("id"): m.get("ctx")
                     for m in existing if m.get("ctx") not in (None, "")}
+    # id -> pinned TTS voice, same preservation rule as ctx and for the same reason:
+    # a fresh scan reads FILES, and the chosen voice is a USER decision that lives
+    # nowhere on disk. Without this, hitting RESCAN would silently un-pin the voice
+    # of every local / hf-cache voice model (download-sourced entries are kept whole,
+    # so they were never at risk).
+    existing_voice = {m.get("id"): m.get("voice")
+                      for m in existing if str(m.get("voice") or "").strip()}
     local_filled = []
     for m in local_entries:
         if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
             m = dict(m)
             m["ctx"] = existing_ctx[m["id"]]
+        m = _keep_voice(m, existing_voice)
         local_filled.append(m)
     kept = [m for m in existing if m.get("source") not in RESCANNED_SOURCES]
     result = kept + list(jan_entries) + local_filled
@@ -405,7 +424,7 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         if m.get("id") in used:
             continue
         used.add(m.get("id"))
-        result.append(m)
+        result.append(_keep_voice(m, existing_voice))
     return result
 
 

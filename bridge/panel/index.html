@@ -617,6 +617,10 @@
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:2px 8px; cursor:pointer; white-space:nowrap; }
   .mp-act:hover { color:var(--gold); border-color:var(--gold); }
+  /* selected voice chip (Audio tab) — the same gold-fill "this one is active"
+     idiom as .mpill.live, on the existing .mp-act chip. One new rule, no new
+     primitive. <!-- FABLE: style pass --> */
+  .mp-act.on { color:#171420; background:var(--gold); border-color:var(--gold); }
   .mp-empty { font:10px var(--mono); letter-spacing:.06em; color:var(--faint);
       padding:12px 10px; }
   .mp-err { font:10px var(--mono); letter-spacing:.06em; color:var(--bad); padding:8px 10px; }
@@ -3407,6 +3411,8 @@ function renderAudioPop(){
   } else {
     for (const a of rows){
       const pills = [['fmt', a.engine === 'mlx' ? 'mlx' : 'llama.cpp']];
+      // DISPLAY ONLY — the voice is pinned in Models → Audio (one picker surface).
+      if (a.voice) pills.push(['fmt', 'voice: ' + a.voice]);
       if (a.size_bytes) pills.push(['fmt', fmtGB(a.size_bytes)]);
       if (a.id === cur) pills.unshift(['live', 'default']);
       mkRow(String(a.id || ''), pills, () => setVoiceTts(a.id), a.id === cur);
@@ -4262,6 +4268,7 @@ function renderAudioDetail(){
   d.innerHTML = `<div class="md-title">${esc(a.name || a.id)}</div>
     <div class="md-meta">${meta}${isDefault ? ' · default ' + esc(role.toUpperCase()) : ''}</div>
     <div class="md-actions" id="ad-actions"></div>
+    <div id="ad-voice"></div>
     <div class="md-div"></div>
     <div class="md-path">${a.path ? esc(a.path) : 'path unknown'}${
       a.mmproj ? ('<br>mmproj: ' + esc(a.mmproj)) : ''}</div>`;
@@ -4290,11 +4297,99 @@ function renderAudioDetail(){
     note.textContent = 'Managed by ' + (srcLabel(a.source) || 'another app') + ' — remove it there';
     acts.appendChild(note);
   }
+  renderAudioVoice(a);
   if (voiceErr){
     const e = document.createElement('div'); e.className = 'md-loaderr'; e.textContent = voiceErr;
     acts.insertAdjacentElement('afterend', e);
   }
 }
+
+/* ---------- named voice, pinned PER MODEL ----------
+   mlx-audio picks a RANDOM named voice per render when --voice is absent, so the
+   same model sounds like a different person every reply. The chosen voice is
+   stored ON the registry entry (a voice is a property of a model choice, not a
+   global) and bridge/voice.tts_argv emits --voice only when it is set.
+
+   PURE: which picker, if any, this model gets.
+     'chips' — we know this family's documented voice names (entry.voices)
+     'text'  — a tts-mlx model whose family we don't recognise: free text, because
+               a real voice we have never heard of must still be typable
+     'none'  — tts-gguf (llama-tts has NO --voice flag at all) or an STT model
+   Mirrored by bridge/tests/test_audio_rows.js. */
+function voiceChoiceMode(a){
+  if (!a || (a.role || 'tts') !== 'tts') return 'none';
+  if (a.format !== 'tts-mlx') return 'none';
+  return (a.voices && a.voices.length) ? 'chips' : 'text';
+}
+function renderAudioVoice(a){
+  const box = document.getElementById('ad-voice');
+  if (!box) return;
+  box.innerHTML = '';
+  const mode = voiceChoiceMode(a);
+  if (mode === 'none'){
+    if ((a.role || 'tts') === 'tts'){
+      const n = document.createElement('div');
+      n.className = 'md-imnote'; n.style.marginTop = '14px'; n.style.maxWidth = '100%';
+      n.textContent = 'voice is fixed by the model (llama.cpp has no voice parameter)';
+      box.appendChild(n);
+    }
+    return;
+  }
+  const cur = a.voice || '';
+  const lab = document.createElement('div');
+  lab.className = 'md-loadphase'; lab.style.marginTop = '16px';
+  lab.textContent = 'Voice' + (cur ? '' : ' · model default');
+  box.appendChild(lab);
+  const row = document.createElement('div');
+  row.className = 'md-actions'; row.style.marginTop = '8px';
+  box.appendChild(row);
+
+  const chip = (text, on, title, onclick) => {
+    const b = document.createElement('button');
+    b.className = 'mp-act' + (on ? ' on' : '');
+    b.textContent = text; b.title = title; b.onclick = onclick;
+    row.appendChild(b);
+    return b;
+  };
+  // Clearing is a first-class choice, not an absence: it hands the pick back to
+  // the engine (which is exactly the random-per-render behaviour), so it is
+  // labelled honestly rather than as "off".
+  chip('model default', !cur, 'Let the engine choose (mlx-audio picks a random '
+       + 'named voice per render)', () => setEntryVoice(a.id, ''));
+  if (mode === 'chips'){
+    for (const v of a.voices) chip(v, v === cur, 'Always speak as ' + v,
+                                   () => setEntryVoice(a.id, v));
+  } else {
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.value = cur; inp.placeholder = 'voice name';
+    inp.maxLength = 64;
+    inp.style.cssText = 'background:var(--card);color:var(--cream);border:1px solid '
+      + 'var(--line2);border-radius:8px;padding:4px 10px;font:11px var(--mono);'
+      + 'letter-spacing:.06em;outline:none;width:150px';
+    inp.onkeydown = e => { if (e.key === 'Enter') setEntryVoice(a.id, inp.value); };
+    row.appendChild(inp);
+    chip('set', false, 'Pin this voice name for ' + a.id,
+         () => setEntryVoice(a.id, inp.value));
+    const n = document.createElement('div');
+    n.className = 'md-imnote'; n.style.marginTop = '10px'; n.style.maxWidth = '100%';
+    n.textContent = 'No known voice list for this model — type the name its engine expects.';
+    box.appendChild(n);
+  }
+}
+async function setEntryVoice(id, voice){
+  voiceErr = '';
+  try {
+    const res = await fetch('/api/voice/entry-voice', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, voice: voice || ''})});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch { voiceErr = 'could not reach the bridge'; }
+  stopSpeaking();          // a clip rendered with the old voice must not outlive it
+  await initModels();      // re-read /api/models → the entry's new voice
+  loadVoiceCfg();          // the composer popover shows the same voice pill
+}
+
 async function setVoiceDefault(id, role){
   voiceErr = '';
   const body = {}; body[role === 'stt' ? 'stt_model' : 'tts_model'] = id;
@@ -4305,6 +4400,9 @@ async function setVoiceDefault(id, role){
     if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
   } catch { voiceErr = 'could not reach the bridge'; }
   initModels();      // re-read /api/models → voice block + default pills
+  // the COMPOSER caches this too (AUDIO chip, ▶ speak chips, ● talk visibility) —
+  // without this refresh the talk button only appeared after a full ⌘R (Debi hit it)
+  loadVoiceCfg();
 }
 
 /* Curated starter downloads (recon-verified 2026-08-07). Every one goes through the
@@ -4362,9 +4460,21 @@ function renderAudioGet(){
     const b = document.createElement('button'); b.className = 'hfget';
     b.style.marginTop = '6px';
     if (owned){ b.textContent = 'In library'; b.disabled = true; }
-    else { b.textContent = 'Get'; b.onclick = () => {
+    else { b.textContent = 'Get'; b.onclick = async () => {
+             // the button must TELL THE TRUTH: a refused download resets it and puts
+             // the reason ON THE CARD (the stamp-line message was invisible — Debi
+             // watched "Starting…" for 30 minutes on a 400).
              b.disabled = true; b.textContent = 'Starting…';
-             dlStart(s.repo, s.file, { voice_format: s.fmt, mmproj: s.mmproj || '' }); }; }
+             const res = await dlStart(s.repo, s.file,
+                                       { voice_format: s.fmt, mmproj: s.mmproj || '' });
+             if (res && res.ok){ b.textContent = 'Downloading — progress in Downloads below'; }
+             else {
+               b.disabled = false; b.textContent = 'Get';
+               let e = row.querySelector('.mp-err');
+               if (!e){ e = document.createElement('div'); e.className = 'mp-err';
+                        row.insertBefore(e, b); }
+               e.textContent = (res && res.log) || 'download failed';
+             } }; }
     row.appendChild(b);
     list.appendChild(row);
   }
@@ -4737,11 +4847,10 @@ async function dlStart(repo, filename, opts){
     const r = await fetch('/api/dl/start', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json().catch(() => ({}));
-    if (r.ok){ refreshDownloads(); ensureDlPoll(); }
-    else {
-      const st = document.getElementById('models-stamp');
-      if (st) st.textContent = 'DOWNLOAD FAILED — ' + ((j && j.log) || 'unknown error');
-    }
+    if (r.ok){ refreshDownloads(); ensureDlPoll(); return { ok: true }; }
+    const st = document.getElementById('models-stamp');
+    if (st) st.textContent = 'DOWNLOAD FAILED — ' + ((j && j.log) || 'unknown error');
+    return { ok: false, log: (j && j.log) || 'unknown error' };
   } catch {
     const st = document.getElementById('models-stamp');
     if (st) st.textContent = 'DOWNLOAD FAILED — could not reach the bridge';

@@ -349,6 +349,102 @@ txt, doc = write_and_load(("memory", "budget_gb", "40"), base=ORIG)
 check("a missing KEY is inserted into an existing block, not appended at EOF",
       write_and_load(("memory", "nonesuch", "1"))[1]["memory"]["nonesuch"] == 1)
 
+# ── named voices (the per-model voice picker) ────────────────────────────────
+# WHY: mlx-audio picks a RANDOM named voice per render when --voice is absent, so
+# the same model sounds like a different person every reply. The pin lives on the
+# registry entry; these tests hold the offer list honest and, above all, hold the
+# line that a tts-gguf NEVER gets a --voice (llama-tts has no such flag).
+QWEN_MLX = {"id": "Qwen3-TTS-12Hz-1.7B-Base-8bit", "kind": "audio",
+            "format": "tts-mlx", "path": "/M/Qwen3-TTS-12Hz-1.7B-Base-8bit"}
+KOKORO = {"id": "Kokoro-82M-bf16", "kind": "audio", "format": "tts-mlx",
+          "path": "/M/Kokoro-82M-bf16"}
+UNKNOWN_MLX = {"id": "some-new-tts-mlx", "kind": "audio", "format": "tts-mlx",
+               "path": "/M/some-new-tts"}
+
+check("voices_for finds the Qwen3-TTS pair by id",
+      voice.voices_for(QWEN_MLX) == ["serena", "vivian", "ryan", "aiden", "dylan", "eric", "uncle_fu", "sohee", "ono_anna"])
+check("voices_for matches on the REPO when the id has no family token",
+      voice.voices_for({"kind": "audio", "format": "tts-mlx", "id": "8bit",
+                        "repo": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"})
+      == ["serena", "vivian", "ryan", "aiden", "dylan", "eric", "uncle_fu", "sohee", "ono_anna"])
+check("voices_for matches case-insensitively",
+      voice.voices_for({**QWEN_MLX, "id": "QWEN3-TTS-XL"}) == ["serena", "vivian", "ryan", "aiden", "dylan", "eric", "uncle_fu", "sohee", "ono_anna"])
+check("voices_for returns the Kokoro ids", voice.voices_for(KOKORO)[0] == "af_heart")
+check("Kokoro list is a useful size (not one, not fifty)",
+      6 <= len(voice.voices_for(KOKORO)) <= 10)
+check("every offered Kokoro id looks like a real voice token",
+      all(re.fullmatch(r"[abe][fm]_[a-z]+", v) for v in voice.voices_for(KOKORO)))
+check("voices_for returns a COPY (a caller cannot corrupt the table)",
+      voice.voices_for(KOKORO) is not voice.KNOWN_VOICES["kokoro"])
+check("voices_for is EMPTY for every tts-gguf — llama-tts has no --voice",
+      voice.voices_for(GGUF) == []
+      and voice.voices_for({**GGUF, "id": "qwen3-tts-gguf"}) == []
+      and voice.voices_for({**GGUF, "id": "kokoro-gguf"}) == [])
+check("voices_for is empty for an unrecognised mlx family (→ free text in the UI)",
+      voice.voices_for(UNKNOWN_MLX) == [])
+check("voices_for is empty for an STT model", voice.voices_for(STT) == [])
+check("voices_for is empty for chat models and junk",
+      voice.voices_for(CHAT_MLX) == [] and voice.voices_for(CHAT_GGUF) == []
+      and voice.voices_for(None) == [] and voice.voices_for({}) == [])
+
+check("normalize_voice trims", voice.normalize_voice("  Ethan \n") == "Ethan")
+check("normalize_voice maps None/'' to the CLEAR sentinel ''",
+      voice.normalize_voice(None) == "" and voice.normalize_voice("   ") == "")
+
+check("a known voice validates", voice.validate_voice_choice(QWEN_MLX, "Chelsie") is None)
+check("an UNKNOWN name still validates (the table is an offer, not a whitelist)",
+      voice.validate_voice_choice(QWEN_MLX, "af_river") is None)
+check("empty string validates — it is the CLEAR operation",
+      voice.validate_voice_choice(QWEN_MLX, "") is None)
+check("a free-text voice on an unrecognised mlx model validates",
+      voice.validate_voice_choice(UNKNOWN_MLX, "whoever") is None)
+check("a missing entry is refused", voice.validate_voice_choice(None, "x") is not None)
+_g = voice.validate_voice_choice(GGUF, "Chelsie")
+check("a tts-gguf is refused", _g is not None)
+check("the tts-gguf refusal names llama.cpp and 'no voice parameter'",
+      "llama.cpp" in _g and "no voice parameter" in _g)
+check("an STT model is refused",
+      voice.validate_voice_choice(STT, "x") is not None)
+check("a chat model is refused",
+      voice.validate_voice_choice(CHAT_MLX, "x") is not None)
+check("a non-string voice is refused",
+      voice.validate_voice_choice(QWEN_MLX, 7) is not None
+      and voice.validate_voice_choice(QWEN_MLX, ["a"]) is not None)
+check("a voice longer than the cap is refused",
+      voice.validate_voice_choice(QWEN_MLX, "v" * (voice.VOICE_NAME_MAX + 1)) is not None)
+check("a voice exactly at the cap is accepted",
+      voice.validate_voice_choice(QWEN_MLX, "v" * voice.VOICE_NAME_MAX) is None)
+
+# argv round-trip: the whole point of the picker is this one flag.
+check("a pinned voice reaches the mlx argv",
+      voice.tts_argv({**QWEN_MLX, "voice": "Ethan"}, "t", "/d/o.wav", LB, MP)[-2:]
+      == ["--voice", "Ethan"])
+check("a whitespace-only voice never reaches the argv",
+      "--voice" not in voice.tts_argv({**QWEN_MLX, "voice": "   "}, "t", "/d/o.wav", LB, MP))
+check("a voice key on a tts-gguf entry is IGNORED by tts_argv (no such flag)",
+      "--voice" not in voice.tts_argv({**GGUF, "voice": "Chelsie"}, "t", "/o.wav", LB, MP))
+
+check("audio_entry_view carries the offer list to the panel",
+      voice.audio_entry_view(QWEN_MLX)["voices"] == ["serena", "vivian", "ryan", "aiden", "dylan", "eric", "uncle_fu", "sohee", "ono_anna"])
+check("audio_entry_view reports the pinned voice",
+      voice.audio_entry_view({**QWEN_MLX, "voice": "Ethan"})["voice"] == "Ethan")
+check("audio_entry_view reports no voices for a gguf",
+      voice.audio_entry_view(GGUF)["voices"] == [])
+
+# Bridge wiring, read from app.py's SOURCE (importing app builds httpx clients).
+APP_SRC = (ROOT / "bridge" / "app.py").read_text()
+check("app.py exposes POST /api/voice/entry-voice",
+      '@app.post("/api/voice/entry-voice")' in APP_SRC)
+check("the endpoint validates through voice.validate_voice_choice",
+      "_voice.validate_voice_choice(" in APP_SRC)
+check("the endpoint writes through the atomic _registry_update helper",
+      "def _registry_update(" in APP_SRC and "_registry_update(mid," in APP_SRC)
+check("_registry_update writes atomically (tmp + os.replace), like its siblings",
+      re.search(r"def _registry_update\(.*?_os\.replace\(tmp, reg\)", APP_SRC, re.S)
+      is not None)
+check("an empty voice CLEARS the key rather than storing null",
+      '{"voice": v or None}' in APP_SRC)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {FAILS}")

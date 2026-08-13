@@ -313,6 +313,33 @@ check("the Kokoro card carries the misaki/torch warning",
 shutil.rmtree(tmp, ignore_errors=True)
 shutil.rmtree(apiroot, ignore_errors=True)
 
+# ── voice pin survives a RESCAN ──────────────────────────────────────────────
+# Same class as the ctx-preservation rule: a scan reads FILES, but the chosen voice
+# is a USER decision that lives nowhere on disk. Without the carry-forward, one
+# click of RESCAN would silently un-pin every local / hf-cache voice model.
+_ex = [{"id": "Kokoro-82M-bf16", "kind": "audio", "format": "tts-mlx",
+        "source": "local", "voice": "af_heart"},
+       {"id": "Qwen3-TTS-8bit", "kind": "audio", "format": "tts-mlx",
+        "source": "audio-hf-cache", "voice": "Ethan"},
+       {"id": "dl-tts", "kind": "audio", "format": "tts-mlx",
+        "source": "download", "voice": "Chelsie"}]
+_fresh_local = [{"id": "Kokoro-82M-bf16", "kind": "audio", "format": "tts-mlx",
+                 "source": "local"}]
+_fresh_cache = [{"id": "Qwen3-TTS-8bit", "kind": "audio", "format": "tts-mlx",
+                 "source": "audio-hf-cache"}]
+_m = {e["id"]: e for e in sr.merge(_ex, [], [], _fresh_local, _fresh_cache)}
+check("rescan keeps a pinned voice on a LOCAL audio entry",
+      _m["Kokoro-82M-bf16"].get("voice") == "af_heart")
+check("rescan keeps a pinned voice on an HF-CACHE audio entry",
+      _m["Qwen3-TTS-8bit"].get("voice") == "Ethan")
+check("a download-sourced entry is preserved whole, voice included",
+      _m["dl-tts"].get("voice") == "Chelsie")
+check("an entry with no prior pin stays unpinned",
+      "voice" not in sr.merge([], [], [], [{"id": "n", "source": "local"}], [])[0])
+check("_keep_voice never mutates its input",
+      (lambda e: (sr._keep_voice(e, {"k": "v"}), "voice" not in e)[1])({"id": "k"}))
+
+
 print()
 print(f"{'FAILED: ' + ', '.join(FAILS) if FAILS else 'ALL PASS'}")
 sys.exit(1 if FAILS else 0)
