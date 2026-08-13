@@ -64,6 +64,20 @@ check('a fence with no language is still removed',
 check('inline code delimiters are stripped, the word survives',
       P.speakText('run the `install` script') === 'run the install script');
 
+// ── markdown emphasis: the engine read "asterisk asterisk Temperature…" aloud ────
+check('**bold** loses its markers, keeps the word',
+      P.speakText('the **Temperature** is high') === 'the Temperature is high');
+check('*emphasis* and ***both*** are stripped too',
+      P.speakText('*one* and ***two***') === 'one and two');
+check('__bold__ and _em_ are stripped',
+      P.speakText('__a__ then _b_') === 'a then b');
+check('a heading loses its hashes',
+      P.speakText('## Current conditions:\nsunny') === 'Current conditions: sunny');
+check('list bullets are not read',
+      P.speakText('- **Wind**: 11 mph\n- **Rain**: none') === 'Wind: 11 mph Rain: none');
+check('a lone asterisk in prose survives',
+      P.speakText('5 * 3 equals 15') === '5 * 3 equals 15');
+
 // ── whitespace / trimming ───────────────────────────────────────────────────────
 check('newlines and runs of spaces collapse to one space',
       P.speakText('a\n\n\nb    c\td') === 'a b c d');

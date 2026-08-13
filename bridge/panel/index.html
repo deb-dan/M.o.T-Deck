@@ -3520,6 +3520,13 @@ function speakText(raw){
   s = s.replace(/```[\s\S]*?```/g, ' ');   // complete fenced blocks, content included
   s = s.replace(/```[\s\S]*/, ' ');        // an unterminated fence (truncated turn)
   s = s.replace(/`/g, '');                 // inline-code delimiters (keep the words)
+  // Markdown EMPHASIS markers — the engine read "**Temperature**" as
+  // "asterisk asterisk Temperature…" (Debi 2026-08-13). Strip the markers, keep
+  // the words. Bounded (1-3) so a literal lone * in prose survives.
+  s = s.replace(/(\*{1,3})(\S(?:[^*]*?\S)?)\1/g, '$2');  // **bold** / *em* / ***both***
+  s = s.replace(/(__|_)(\S(?:[^_]*?\S)?)\1/g, '$2');     // __bold__ / _em_
+  s = s.replace(/^#{1,6}\s+/gm, '');                     // heading hashes
+  s = s.replace(/^\s*[-*+]\s+/gm, '');                   // list bullets
   s = s.replace(/\s+/g, ' ');
   return s.trim();
 }

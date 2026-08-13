@@ -4997,10 +4997,36 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
     err = _voice.validate_ref_choice(entry, path, ref_text)
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
+    ref_text = ref_text.strip()
+    if path and not ref_text:
+        # AUTO-TRANSCRIBE ONCE AT PIN TIME (Fable fix 2026-08-13, root-caused from
+        # Debi's 30s-per-render report): mlx-audio's generate_audio, handed a clip
+        # with NO ref_text, loads whisper-large-v3-turbo (~1.6GB) to transcribe the
+        # clip on EVERY render, then discards it (generate.py: "Ref_text not found.
+        # Transcribing ref_audio..."). Transcribing once HERE with the harness's own
+        # default STT (whisper-base, sub-second — Gate-2 measured) and storing the
+        # text makes every render skip that path. Best-effort: no STT default or a
+        # failed transcription just leaves ref_text empty (slow but working).
+        try:
+            v = (cfg().get("voice") or {}) if isinstance(cfg().get("voice"), dict) else {}
+            stt_id = str(v.get("stt_model") or "").strip()
+            stt_entry = _voice.find_entry(audio, stt_id) if stt_id else None
+            if stt_entry:
+                with open(path, "rb") as f:
+                    clip_bytes = f.read()
+                sfx = os.path.splitext(path)[1].lstrip(".").lower() or "wav"
+                ref_text = (await asyncio.to_thread(functools.partial(
+                    _voice.stt_transcribe, stt_entry, clip_bytes, sfx,
+                    root=ROOT)) or "").strip()
+                if ref_text:
+                    print(f"[voice] entry-ref transcribed clip once: "
+                          f"{ref_text[:60]!r}", flush=True)
+        except Exception as e:                                      # noqa: BLE001
+            print(f"[voice] entry-ref auto-transcribe skipped: {e}", flush=True)
     patch = {"ref_audio": path or None,
              # Clearing the clip clears its transcript too: a caption with no audio
              # is not a voice, it is a stray sentence prepended to every render.
-             "ref_text": (ref_text.strip() or None) if path else None}
+             "ref_text": (ref_text[:500] or None) if path else None}
     updated = _registry_update(mid, patch)
     if updated is None:
         return JSONResponse(
