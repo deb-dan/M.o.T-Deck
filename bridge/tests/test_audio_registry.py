@@ -414,6 +414,39 @@ check("an entry with no prior pin stays unpinned",
 check("_keep_voice never mutates its input",
       (lambda e: (sr._keep_voice(e, {"k": "v"}), "voice" not in e)[1])({"id": "k"}))
 
+# ── EVERY user decision survives a rescan, not just the voice ──────────────────
+# A rescan reads FILES. The pinned reference clip, its transcript and the hidden flag
+# live nowhere on disk, so without the carry-forward one RESCAN click silently
+# un-pins the cloned voice and un-hides everything the user hid — the exact bug the
+# `voice` carry-forward already fixed once, in the same function.
+_ex2 = [
+    {"id": "omni", "source": "local", "kind": "audio", "format": "tts-mlx",
+     "ref_audio": "/Users/d/data/voices/debi.wav", "ref_text": "hello there",
+     "voice": "af_heart"},
+    {"id": "junk-cache", "source": "audio-hf-cache", "kind": "audio",
+     "format": "stt-mlx", "hidden": True},
+    {"id": "lms-chat", "source": "lmstudio-import", "format": "gguf", "hidden": True},
+]
+_fresh2_local = [{"id": "omni", "source": "local", "kind": "audio", "format": "tts-mlx"}]
+_fresh2_cache = [{"id": "junk-cache", "source": "audio-hf-cache", "kind": "audio",
+                  "format": "stt-mlx"}]
+_fresh2_lms = [{"id": "lms-chat", "source": "lmstudio-import", "format": "gguf"}]
+_m2 = {e["id"]: e for e in sr.merge(_ex2, [], _fresh2_lms, _fresh2_local, _fresh2_cache)}
+check("rescan keeps a pinned REFERENCE CLIP",
+      _m2["omni"].get("ref_audio") == "/Users/d/data/voices/debi.wav")
+check("rescan keeps the clip's TRANSCRIPT (else every render reloads whisper)",
+      _m2["omni"].get("ref_text") == "hello there")
+check("rescan still keeps the named voice", _m2["omni"].get("voice") == "af_heart")
+check("rescan keeps HIDDEN on an hf-cache entry", _m2["junk-cache"].get("hidden") is True)
+check("rescan keeps HIDDEN on an lmstudio import", _m2["lms-chat"].get("hidden") is True)
+check("an entry that was never hidden does not become hidden",
+      "hidden" not in sr.merge([], [], [], [{"id": "n2", "source": "local"}], [])[0])
+check("_keep_user never mutates its input",
+      (lambda e: (sr._keep_user(e, {"k": {"hidden": True}}), "hidden" not in e)[1])
+      ({"id": "k"}))
+check("a freshly scanned value wins over the remembered one",
+      sr._keep_user({"id": "k", "voice": "new"}, {"k": {"voice": "old"}})["voice"] == "new")
+
 
 print()
 print(f"{'FAILED: ' + ', '.join(FAILS) if FAILS else 'ALL PASS'}")

@@ -42,7 +42,7 @@ function grab(name) {
 
 const NAMES = ['esc', 'fmtGB', 'isAppOwned', 'srcLabel', 'srcBadge',
                'audioEngineLabel', 'audioDefaultId', 'audioRowHtml',
-               'voiceChoiceMode'];
+               'voiceChoiceMode', 'audioVoiceBadge', 'isHideable'];
 const src = NAMES.map(grab).join('\n');
 // The panel's esc() escapes via a detached element's textContent→innerHTML; node has
 // no DOM, so stub exactly that one behaviour (& < > escaped, quotes are NOT — which
@@ -164,6 +164,42 @@ check('the library delete is a two-step (a recording cannot be re-made)',
       /dataset\.armed[\s\S]{0,200}sure\?/.test(html));
 check('a saved recording is auto-pinned onto the model it was recorded for',
       /async function saveClip[\s\S]{0,900}setEntryRef\(id, saved\)/.test(html));
+
+// ── tts sub-badge: HOW this model's voice is chosen, read off the entry ─────────
+// Both facts already ride on audio_entry_view (voices / cloning), so the badge is a
+// label rather than a probe — and it must stay SILENT when we have no verdict.
+check('a model with declared names badges "voices"',
+      P.audioVoiceBadge({ role: 'tts', voices: ['serena'] }) === 'voices');
+check('a cloning model badges "cloning"',
+      P.audioVoiceBadge({ role: 'tts', cloning: true }) === 'cloning');
+check('declared names WIN over the cloning verdict (same rule as the picker)',
+      P.audioVoiceBadge({ role: 'tts', voices: ['serena'], cloning: true }) === 'voices');
+check('no verdict ⇒ no badge (silence is not a verdict)',
+      P.audioVoiceBadge({ role: 'tts' }) === ''
+      && P.audioVoiceBadge({ role: 'tts', voices: [] }) === '');
+check('an STT row never gets a voice badge',
+      P.audioVoiceBadge({ role: 'stt', voices: ['x'] }) === '');
+check('junk never throws',
+      P.audioVoiceBadge(null) === '' && P.audioVoiceBadge({}) === '');
+check('the badge reaches the row markup',
+      P.audioRowHtml({ id: 'x', role: 'tts', cloning: true }, false).includes('cloning'));
+
+// ── hide: read-only imports ONLY (app-owned rows keep Delete and nothing else) ──
+check('an LM Studio import is hideable', P.isHideable('lmstudio-import') === true);
+check('a Jan import is hideable', P.isHideable('jan-import') === true);
+check('an HF-cache audio entry is hideable', P.isHideable('audio-hf-cache') === true);
+check('a downloaded (app-owned) model is NOT hideable — it has a real Delete',
+      P.isHideable('download') === false);
+check('a local (app-owned) model is NOT hideable', P.isHideable('local') === false);
+check('an unknown/absent source is not hideable',
+      P.isHideable('') === false && P.isHideable(undefined) === false);
+check('the panel hide rule matches the bridge allowlist',
+      /HIDEABLE_SOURCES = \("lmstudio-import", "jan-import", "audio-hf-cache"\)/
+        .test(fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8')));
+check('hiding is a two-step, like Delete',
+      /function hideBtn[\s\S]{0,800}dataset\.armed/.test(html));
+check('the hidden rows are unhide-able from the list bottom',
+      /function renderHiddenRow[\s\S]{0,1600}setModelHidden\(h\.id, false\)/.test(html));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

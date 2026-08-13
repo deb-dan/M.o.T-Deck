@@ -1820,6 +1820,83 @@ def _set_yaml_scalar(block: str, key: str, value: str) -> None:
     p.write_text("\n".join(lines))
 
 
+# ── hidden models ───────────────────────────────────────────────────────────────
+# Debi's ask: the HF cache and LM Studio hand us models that will never be used here,
+# and the list is the worse for them. HIDE is deliberately NOT delete: the files
+# belong to another app, so the only honest operation is to stop listing them.
+#
+# Only IMPORTED / CACHED sources may be hidden. An app-owned model (source
+# download/local) already has a real Delete, and offering both would give the same
+# row two different ways to disappear — one of which does not free any disk.
+HIDEABLE_SOURCES = ("lmstudio-import", "jan-import", "audio-hf-cache")
+
+
+def _is_hidden(m: object) -> bool:
+    return bool(isinstance(m, dict) and m.get("hidden"))
+
+
+def _hideable(m: object) -> bool:
+    """PURE. True when this entry may be hidden from the lists."""
+    return bool(isinstance(m, dict)
+                and str(m.get("source") or "") in HIDEABLE_SOURCES)
+
+
+def _hidden_view(m: dict) -> dict:
+    """The minimum a hidden row needs: enough to name it and to unhide it."""
+    return {"id": m.get("id"), "name": m.get("name") or m.get("id"),
+            "source": m.get("source"),
+            "kind": ("audio" if (_voice is not None and _voice.is_audio_entry(m))
+                     else "chat")}
+
+
+@app.post("/api/models/hide")
+async def api_models_hide(req: Request) -> JSONResponse:
+    """{id, hidden} → hide/unhide one imported model from every list.
+
+    Writes `hidden:true` onto the registry entry through the SAME atomic
+    _registry_update the voice pins use, and seed_registry.merge carries it across a
+    RESCAN (a rescan reads FILES and hiding is a user decision that lives nowhere on
+    disk — exactly the bug the voice-pin carry-forward already fixed once)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    mid = str(body.get("id") or "").strip()
+    want = bool(body.get("hidden", True))
+    if not mid:
+        return JSONResponse({"ok": False, "error": "no model id given"}, status_code=400)
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if entry is None:
+        return JSONResponse({"ok": False, "error": f"'{mid}' is not in the registry"},
+                            status_code=400)
+    # Unhiding is always allowed — otherwise a source change could strand a row.
+    if want and not _hideable(entry):
+        return JSONResponse(
+            {"ok": False, "error": f"'{mid}' is app-owned — delete it instead of "
+                                   f"hiding it (hiding is for read-only imports)"},
+            status_code=400)
+    # A model that is IN USE must not be hidden: it would vanish from every picker
+    # while still being the thing the harness runs, which is the one state a user
+    # cannot reason about. Refuse and say which role holds it.
+    if want:
+        c = cfg()
+        v = _voice_cfg()
+        in_use = {"the chat runner": (c.get("runner", {}) or {}).get("model"),
+                  "the aux runner": (c.get("aux", {}) or {}).get("model"),
+                  "the default TTS": v["tts_model"], "the default STT": v["stt_model"]}
+        for role, held in in_use.items():
+            if held and held == mid:
+                return JSONResponse(
+                    {"ok": False, "error": f"'{mid}' is {role} right now — clear it "
+                                           f"there first, then hide it"},
+                    status_code=400)
+    _registry_update(mid, {"hidden": True if want else None})
+    print(f"[models] {'hid' if want else 'unhid'} {mid}", flush=True)
+    return JSONResponse({"ok": True, "id": mid, "hidden": want})
+
+
 def _split_audio(models: list) -> tuple:
     """(chat, audio) partition of a registry list. Degrades to 'everything is a chat
     model' when bridge/voice.py is unavailable — never crashes the Models pane."""
@@ -1943,7 +2020,7 @@ def api_models() -> JSONResponse:
     aux picker and the chat model popover, and a TTS backbone in any of those would
     wedge the runner. The partition lives in ONE place (bridge/voice.split_audio)."""
     import json as _json
-    installed, audio, err = [], [], None
+    installed, audio, hidden, err = [], [], [], None
     c = cfg()
     rc = c.get("runner", {})
     adapter = (rc.get("adapter") or "auto")
@@ -1965,6 +2042,14 @@ def api_models() -> JSONResponse:
                            timeout=60, check=False)
             models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
         models, _audio_models = _split_audio(models)
+        # HIDDEN: a read-only import the user does not want in their lists (Debi's
+        # ask — the HF cache and LM Studio both hand us models we will never use).
+        # They are filtered out of `installed` and `audio` at the BRIDGE, not in the
+        # panel, so a hidden model cannot leak into the chat popover, the runner
+        # switch, or the aux picker through a renderer that forgot to filter.
+        hidden = [_hidden_view(m) for m in (models + _audio_models) if _is_hidden(m)]
+        models = [m for m in models if not _is_hidden(m)]
+        _audio_models = [m for m in _audio_models if not _is_hidden(m)]
         if _voice is not None:
             audio = [_voice.audio_entry_view(m) for m in _audio_models]
         for m in models:
@@ -1978,6 +2063,7 @@ def api_models() -> JSONResponse:
                 "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path")})
     except Exception as e:
         err = str(e)[:200]
+        hidden = []
     port = rc.get("port")
     # Authoritative "live" = what the runner is ACTUALLY serving (ISSUE C), not just
     # "runner.model is set + port answers". runner_up is now gated on a real load, so
@@ -1993,7 +2079,10 @@ def api_models() -> JSONResponse:
         "runner_up": bool(live_id), "live_id": live_id,
         "aux": aux, "adapter": adapter, "ledger": ledger, "error": err,
         # Phase A (Models → Audio tab) reads these; the chat lists above never see them.
-        "audio": audio, "voice": vcfg})
+        "audio": audio, "voice": vcfg,
+        # The models the user hid — a light view, only ever used to draw the
+        # "N hidden — show" affordance and to unhide them again.
+        "hidden": hidden})
 
 
 @app.post("/api/models/rescan")
@@ -4850,7 +4939,10 @@ def voice_config_get() -> JSONResponse:
     available = []
     if _voice is not None:
         _, audio = _split_audio(_registry_models())
-        available = [_voice.audio_entry_view(m) for m in audio]
+        # Hidden models are filtered here too, not only in /api/models — this list
+        # feeds the composer's AUDIO popover, and a model hidden from the Models page
+        # that still appeared in the composer would make "hide" mean two things.
+        available = [_voice.audio_entry_view(m) for m in audio if not _is_hidden(m)]
     return JSONResponse({
         "ok": _voice is not None,
         "tts_model": v["tts_model"], "stt_model": v["stt_model"],
@@ -4954,6 +5046,61 @@ async def voice_entry_voice(req: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated)})
 
 
+async def _transcribe_clip(path: str, audio: list) -> str:
+    """Transcribe ONE reference clip with the harness's own default STT model, or ''.
+
+    THE POINT (root-caused 2026-08-13 from Debi's 30s-per-render report): mlx-audio's
+    `generate_audio`, handed a ref_audio with NO ref_text, loads
+    whisper-large-v3-turbo (~1.6GB) to transcribe the clip on EVERY render and then
+    discards it (generate.py: "Ref_text not found. Transcribing ref_audio…"). Doing it
+    ONCE here with whisper-base (sub-second, Gate-2 measured) makes every subsequent
+    render skip that path entirely.
+
+    Best-effort by design: no STT default, an unreadable clip or a failed
+    transcription all return '' — the render still works, it is just slow, which is
+    strictly better than refusing to pin a clip because dictation is not set up.
+    """
+    if _voice is None:
+        return ""
+    try:
+        vc = cfg().get("voice")
+        v = vc if isinstance(vc, dict) else {}
+        stt_id = str(v.get("stt_model") or "").strip()
+        stt_entry = _voice.find_entry(audio, stt_id) if stt_id else None
+        if not stt_entry:
+            return ""
+        with open(path, "rb") as f:
+            clip_bytes = f.read()
+        sfx = os.path.splitext(path)[1].lstrip(".").lower() or "wav"
+        return (await asyncio.to_thread(functools.partial(
+            _voice.stt_transcribe, stt_entry, clip_bytes, sfx, root=ROOT)) or "").strip()
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[voice] clip transcription skipped: {e}", flush=True)
+        return ""
+
+
+async def _heal_ref_text(entry: dict, audio: list) -> "dict | None":
+    """Fill in a MISSING ref_text on an already-pinned entry and persist it.
+
+    Returns the updated entry, or None when nothing could be healed. This is the
+    self-heal for clips pinned BEFORE pin-time transcription existed: without it the
+    fix would only ever apply to clips pinned after the upgrade, and Debi's existing
+    pin would keep paying whisper-large on every single render forever.
+    """
+    path = str(entry.get("ref_audio") or "").strip()
+    if not path or _voice is None:
+        return None
+    text = await _transcribe_clip(path, audio)
+    if not text:
+        return None
+    updated = _registry_update(entry.get("id"), {"ref_text": text[:_voice.REF_TEXT_MAX]})
+    if updated is None:
+        return None
+    print(f"[voice] ref_text self-healed for {entry.get('id')}: {text[:60]!r}",
+          flush=True)
+    return updated
+
+
 @app.post("/api/voice/entry-ref")
 async def voice_entry_ref(req: Request) -> JSONResponse:
     """{id, path|name, ref_text?} → pin a REFERENCE CLIP onto one audio entry.
@@ -5006,23 +5153,12 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
         # Transcribing ref_audio..."). Transcribing once HERE with the harness's own
         # default STT (whisper-base, sub-second — Gate-2 measured) and storing the
         # text makes every render skip that path. Best-effort: no STT default or a
-        # failed transcription just leaves ref_text empty (slow but working).
-        try:
-            v = (cfg().get("voice") or {}) if isinstance(cfg().get("voice"), dict) else {}
-            stt_id = str(v.get("stt_model") or "").strip()
-            stt_entry = _voice.find_entry(audio, stt_id) if stt_id else None
-            if stt_entry:
-                with open(path, "rb") as f:
-                    clip_bytes = f.read()
-                sfx = os.path.splitext(path)[1].lstrip(".").lower() or "wav"
-                ref_text = (await asyncio.to_thread(functools.partial(
-                    _voice.stt_transcribe, stt_entry, clip_bytes, sfx,
-                    root=ROOT)) or "").strip()
-                if ref_text:
-                    print(f"[voice] entry-ref transcribed clip once: "
-                          f"{ref_text[:60]!r}", flush=True)
-        except Exception as e:                                      # noqa: BLE001
-            print(f"[voice] entry-ref auto-transcribe skipped: {e}", flush=True)
+        # failed transcription just leaves ref_text empty (slow but working). ONE
+        # implementation, shared with the /api/voice/tts self-heal.
+        ref_text = await _transcribe_clip(path, audio)
+        if ref_text:
+            print(f"[voice] entry-ref transcribed clip once: {ref_text[:60]!r}",
+                  flush=True)
     patch = {"ref_audio": path or None,
              # Clearing the clip clears its transcript too: a caption with no audio
              # is not a voice, it is a stray sentence prepended to every render.
@@ -5038,14 +5174,108 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
 
 
 @app.get("/api/voice/library")
-def voice_library() -> JSONResponse:
+def voice_library(folder: str = "") -> JSONResponse:
     """The reference clips in data/voices — the voice library. A plain directory
     listing: name, absolute path and size, sorted, never raising when the dir does
-    not exist yet (it is created on the first save)."""
+    not exist yet (it is created on the first save).
+
+    `?folder=<abs path>` lists an EXTRA source instead (non-recursive, capped). The
+    folder must be one the user has already added: this endpoint reads a directory
+    named by a query parameter, so an allowlist of exact configured directories is
+    the whole boundary — no prefix matching, no descent into children.
+    """
     if _voice is None:
         return _voice_unavailable()
+    if folder:
+        folders = _voice.load_folders(ROOT)
+        if not _voice.folder_allowed(folder, folders):
+            return JSONResponse(
+                {"ok": False, "error": "that folder is not one of your clip folders "
+                                       "— add it first"}, status_code=400)
+        clips = _voice.folder_entries(folder)
+        return JSONResponse({"ok": True, "dir": _voice.normalize_folder(folder),
+                             "clips": clips, "folder": True,
+                             "capped": len(clips) >= _voice.FOLDER_CLIPS_CAP})
     clips = _voice.library_entries(ROOT)
     return JSONResponse({"ok": True, "dir": _voice.voices_dir(ROOT), "clips": clips})
+
+
+@app.get("/api/voice/library/folders")
+def voice_library_folders() -> JSONResponse:
+    """The configured extra clip folders + the suggested ones that exist on this Mac.
+
+    A folder is a POINTER, never a copy: nothing is imported and nothing is moved, so
+    removing one only forgets the pointer. `missing:true` marks a folder that has since
+    been deleted or unmounted — shown rather than silently dropped, because a folder
+    that vanished is information."""
+    if _voice is None:
+        return _voice_unavailable()
+    folders = _voice.load_folders(ROOT)
+    out = []
+    for p in folders:
+        real = _voice.normalize_folder(p)
+        out.append({"path": p, "real": real, "missing": real is None,
+                    "count": len(_voice.folder_entries(p)) if real else 0})
+    return JSONResponse({"ok": True, "folders": out,
+                         "suggested": _voice.suggested_folders(ROOT),
+                         "max": _voice.FOLDER_LIST_MAX})
+
+
+@app.post("/api/voice/library/folders/add")
+async def voice_library_folder_add(req: Request) -> JSONResponse:
+    """{path} → remember one more clip folder. Idempotent; validates that it IS a
+    directory (a typo must fail here, not later as an empty chip)."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    raw = str(body.get("path") or "").strip()
+    if not raw:
+        return JSONResponse({"ok": False, "error": "no folder path given"},
+                            status_code=400)
+    real = _voice.normalize_folder(raw)
+    if not real:
+        return JSONResponse(
+            {"ok": False, "error": f"no such folder: {raw[:200]}"}, status_code=400)
+    folders = _voice.load_folders(ROOT)
+    if any(_voice.normalize_folder(f) == real for f in folders):
+        return JSONResponse({"ok": True, "folders": folders, "added": False})
+    if len(folders) >= _voice.FOLDER_LIST_MAX:
+        return JSONResponse(
+            {"ok": False, "error": f"that is {_voice.FOLDER_LIST_MAX} folders already "
+                                   f"— remove one first"}, status_code=400)
+    folders = folders + [real]
+    _voice.save_folders(folders, ROOT)
+    print(f"[voice] clip folder added: {real}", flush=True)
+    return JSONResponse({"ok": True, "folders": folders, "added": True})
+
+
+@app.post("/api/voice/library/folders/remove")
+async def voice_library_folder_remove(req: Request) -> JSONResponse:
+    """{path} → forget one clip folder. The FILES ARE NEVER TOUCHED — this endpoint
+    has no delete in it at all, which is why it can safely accept an arbitrary path."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    raw = str(body.get("path") or "").strip()
+    real = _voice.normalize_folder(raw)
+    folders = _voice.load_folders(ROOT)
+    kept = [f for f in folders
+            if f != raw and (real is None or _voice.normalize_folder(f) != real)]
+    if len(kept) != len(folders):
+        _voice.save_folders(kept, ROOT)
+        print(f"[voice] clip folder removed (files untouched): {raw}", flush=True)
+    return JSONResponse({"ok": True, "folders": kept,
+                         "removed": len(kept) != len(folders)})
 
 
 @app.post("/api/voice/library/save")
@@ -5155,12 +5385,38 @@ async def voice_tts(req: Request) -> Response:
     err = _voice.validate_tts_request(text, entry)
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
+
+    # SELF-HEAL (1c): an entry pinned BEFORE the pin-time transcription shipped still
+    # has a clip and no transcript, and mlx-audio reacts to that by loading
+    # whisper-large-v3-turbo on EVERY render and throwing it away again. Heal it here,
+    # once, before the render that would otherwise pay for it — same best-effort guard
+    # as the pin-time path (no STT default ⇒ the old slow-but-working behaviour).
+    if _voice.needs_ref_text(entry):
+        healed = await _heal_ref_text(entry, audio)
+        if healed is not None:
+            entry = healed
+
+    # REPLAY CACHE (1a): a second ▶ speak of the same reply, with the same model,
+    # voice and clip, is the same wav. The key covers all of them (plus the clip's
+    # stat), so there is nothing to invalidate.
+    ckey = _voice.entry_cache_key(entry, text)
+    hit = _voice.cache_get(ckey)
+    if hit is not None:
+        print(f"[voice] render CACHED ({len(hit)} bytes) model={mid}", flush=True)
+        return Response(content=hit, media_type="audio/wav", headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'inline; filename="speech.wav"',
+            "X-Harness-Voice-Model": mid,
+            "X-Harness-Voice-Cached": "1",
+        })
+
+    stats, t0 = {}, time.time()
     try:
         # spawn_guard is the ledger gate: it runs ONLY when a worker is actually
         # about to be spawned (an already-resident model is already accounted for).
         wav = await asyncio.to_thread(
             functools.partial(_voice.tts_render, entry, text, ROOT,
-                              spawn_guard=_voice_spawn_guard))
+                              spawn_guard=_voice_spawn_guard, stats=stats))
     except _voice.VoiceBudget as e:
         print(f"[voice] tts refused ({mid}): {e.message}", flush=True)
         return JSONResponse({"ok": False, "error": e.message}, status_code=409)
@@ -5173,10 +5429,21 @@ async def voice_tts(req: Request) -> Response:
     except Exception as e:                                   # noqa: BLE001
         print(f"[voice] tts crashed ({mid}): {str(e)[:200]}", flush=True)
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
+    _voice.cache_put(ckey, wav)
+    # TIMING (1b): one line per render, so "why was that slow" is answerable from the
+    # log alone — a cold spawn, a re-load, or the model's own generation time.
+    print(f"[voice] render {time.time() - t0:.1f}s "
+          f"(engine {float(stats.get('engine_secs') or 0.0):.1f}s, "
+          f"load {float(stats.get('load_secs') or 0.0):.1f}s, "
+          f"worker={'SPAWNED' if stats.get('spawned') else 'reused'}, "
+          f"path={stats.get('path') or '?'}) "
+          f"model={mid} voice={stats.get('voice') or '(default)'} "
+          f"ref={stats.get('ref') or '(none)'} chars={len(text)}", flush=True)
     return Response(content=wav, media_type="audio/wav", headers={
         "Cache-Control": "no-store",
         "Content-Disposition": 'inline; filename="speech.wav"',
         "X-Harness-Voice-Model": mid,
+        "X-Harness-Voice-Cached": "0",
     })
 
 

@@ -369,18 +369,24 @@
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
   #chat-input:focus { border-color:var(--gold); }
-  #chat-send:hover, #chat-talk:hover { border-color:var(--gold); }
+  #chat-send:hover, #chat-talk:hover, #chat-auto:hover { border-color:var(--gold); }
   /* PHASE D: Send + ● talk share ONE reduced size (Fable: ~30% off the base button's
      12.5px/7px-15px). Scoped to these two ids — button.primary elsewhere (Models,
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
      size that WebKit rounds unpredictably across zoom levels. */
   #chat-send, #chat-talk { font-size:9px; padding:5px 10px; letter-spacing:.06em; }
-  /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13) */
-  #chat-talk { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
+  /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13).
+     AUTO-DICTATION v1: the `auto` chip rides the SAME rule — it is the same class of
+     control at the same size, so it shares the selector rather than adding one. */
+  #chat-talk, #chat-auto { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
   #chat-talk.rec .talk-dot { color:var(--bad); }
-  #chat-talk .talk-t { font-family:var(--mono); }
+  #chat-talk .talk-t, #chat-auto .talk-t { font-family:var(--mono); }
+  /* AUTO-DICTATION v1 — the ONE new rule this slice adds: listening state. Same
+     glyph-carries-the-colour idiom as .rec above, gold instead of --bad (no pulse
+     animation: that would need a new @keyframes, and the panel has exactly one). */
+  #chat-auto.on .talk-dot { color:var(--gold); }
 
   /* session rail + chat column live side by side under the header */
   #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; overflow:hidden; }
@@ -995,6 +1001,11 @@
             <button class="primary" id="chat-talk" onclick="toggleTalk()"
               title="Dictate — record and transcribe into the message box"
               aria-label="Dictate into the message box" hidden>● talk</button>
+            <!-- AUTO-DICTATION v1: hands-free continuous mode. Same visibility gate as
+                 ● talk (an STT default must exist); mutually exclusive with it. -->
+            <button class="primary" id="chat-auto" onclick="toggleAuto()"
+              title="Hands-free dictation — listen continuously and transcribe each utterance"
+              aria-label="Hands-free dictation" hidden>auto</button>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
@@ -1733,6 +1744,8 @@ function showView(v) {
   // the model popover is position:fixed too — never let it linger over another view
   if (v !== 'chat' && typeof closeModelPop === 'function') closeModelPop();
   if (v !== 'chat' && typeof closeAudioPop === 'function') closeAudioPop();
+  // AUTO-DICTATION: the mic must never stay live behind another view.
+  if (v !== 'chat' && typeof stopAuto === 'function') stopAuto('left the Chat view');
   if (v === 'chat' && !chatSid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
@@ -1892,6 +1905,8 @@ function setMode(m) {
   if (typeof closeModelPop === 'function') closeModelPop();
   if (typeof closeAudioPop === 'function') closeAudioPop();
   if (m === prev) return;
+  // AUTO-DICTATION: a lane switch is a different conversation — drop the live mic.
+  if (typeof stopAuto === 'function') stopAuto('lane switch');
   maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
@@ -3727,6 +3742,7 @@ function renderTalkBtn(){
     btn.textContent = TALK_LABEL;
     btn.title = voiceCfg.stt_model + '\n' + TALK_TITLE;
   }
+  renderAutoBtn();     // the `auto` chip rides the SAME config read and visibility gate
 }
 
 function talkPaint(sec){
@@ -3749,6 +3765,7 @@ function toggleTalk(){
 async function startTalk(){
   const btn = document.getElementById('chat-talk');
   if (!btn || talkRec) return;
+  if (autoVad) stopAuto('manual dictation started');   // manual and auto are exclusive
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
     speakFlash(btn, 'no mic', 'this webview cannot record audio');
     renderTalkBtn(); return;
@@ -3828,15 +3845,387 @@ async function finishTalk(chunks, fmt){
     speakFlash(btn, 'err', msg); renderTalkBtn(); return;
   }
   const text = String(j.text || '').trim();
-  const box = document.getElementById('chat-input');
   if (!text){ speakFlash(btn, 'err', 'nothing was heard'); renderTalkBtn(); return; }
-  if (box){
-    const cur = box.value || '';
-    box.value = cur ? (cur.replace(/\s+$/, '') + ' ' + text) : text;
+  appendTranscript(text);
+  renderTalkBtn();
+}
+
+/* The ONE place a transcript reaches the composer — manual dictation and auto mode
+   share it, so "appended, never auto-sent" is a single fact rather than two copies
+   that could drift. Returns false when there is no box to write into. */
+function appendTranscript(text, focus){
+  const box = document.getElementById('chat-input');
+  const t = String(text || '').trim();
+  if (!box || !t) return false;
+  const cur = box.value || '';
+  box.value = cur ? (cur.replace(/\s+$/, '') + ' ' + t) : t;
+  if (focus !== false){
     box.focus();
     try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) {}
   }
-  renderTalkBtn();
+  return true;
+}
+
+/* ═══ AUTO-DICTATION v1 — hands-free continuous mode ══════════════════════════
+   ARCHITECTURE (settled by the 2026-08-08 audio research + two live gates, do not
+   deviate without re-running them):
+
+     mic → AudioWorklet (RMS per block) → main-thread segmenter → per-utterance
+     Float32 → 16 kHz mono wav → the EXISTING POST /api/voice/stt → appended to the
+     composer, NEVER auto-sent.
+
+   WHY this shape and not the obvious alternatives:
+   • NOT MediaRecorder chunking. `ondataavailable` chunks are NOT independently
+     decodable (W3C: only the first carries the container header) — a chunk stream
+     would decode as garbage on the bridge.
+   • NOT streaming / LocalAgreement. That needs a persistent whisper model, which
+     would collide with the one-shot render lock. GATE 2 measured whisper-base at
+     0.75-0.90s per utterance on Debi's Mac with run 2 ≈ run 1, i.e. cold start does
+     NOT dominate — so v1 rides the existing one-shot endpoint and needs no worker.
+   • NOT silero-VAD yet. That is 2.2MB of vendored onnx+wasm; an energy VAD costs
+     zero bytes and GATE 1 proved AudioWorklet actually runs here (550 process()
+     calls in 2s @48kHz in the app's WKWebView). Silero is the recorded follow-up if
+     the energy gate proves too noisy in practice.
+   HONEST LIMIT: an energy VAD triggers on any loud sound — music, a fan, typing near
+   the mic. The empty-transcript skip below is the second line of defence (whisper
+   hallucinates on silence, so an empty result is treated as "nothing was said"). */
+
+const VAD_BLOCK = 512;            // samples per posted block (~10.7ms @48k)
+const VAD_OPEN_FRAMES = 3;        // consecutive above-threshold blocks to open an utterance
+const VAD_HANGOVER_MS = 800;      // below-threshold time that closes one
+const VAD_PREROLL_MS = 300;       // audio kept from BEFORE the trigger (saves the first word)
+const VAD_TAIL_MS = 200;          // audio kept after the last speech block
+const VAD_MIN_MS = 400;           // shorter than this is a cough, not an utterance
+const VAD_MAX_MS = 30000;         // hard cut — a 30s monologue is flushed and continues
+const VAD_NOISE_MS = 2000;        // rolling window the noise floor is the median of
+const VAD_WARMUP_MS = 600;        // listen-only period before the gate can open at all
+const VAD_MULT = 3;               // threshold = 3× the noise floor …
+const VAD_FLOOR = 0.006;          // … but never below this (a silent room's median is ~0)
+const VAD_THR_MAX = 0.12;         // … and never above this (a deaf VAD is worse than a noisy one)
+const VAD_MAX_ERRORS = 3;         // consecutive STT failures before auto mode gives up
+const AUTO_LABEL = 'auto';
+const AUTO_TITLE = 'Hands-free dictation — listen continuously and transcribe each utterance';
+
+let autoVad = null;               // the live session; null = off
+
+/* PURE: the noise floor of a window of RMS samples = their MEDIAN.
+   Median not mean: one door slam inside the window would drag a mean up for two
+   seconds and deafen the VAD; the median shrugs it off. */
+function vadNoiseFloor(list){
+  const a = [];
+  for (let i = 0; i < (list ? list.length : 0); i++){
+    const v = Number(list[i]);
+    if (isFinite(v) && v >= 0) a.push(v);
+  }
+  if (!a.length) return 0;
+  a.sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+/* PURE: the segmenter's initial state. frameMs is derived from the REAL sample rate
+   at capture time, so every ms constant above converts to a block count correctly
+   whether the webview gives us 48k (observed) or 44.1k. */
+function vadInit(frameMs){
+  const ms = Number(frameMs) > 0 ? Number(frameMs) : 1;
+  const fr = (x) => Math.max(1, Math.round(x / ms));
+  return {
+    frameMs: ms,
+    open: VAD_OPEN_FRAMES,                   // a block count already, not a duration
+    hangover: fr(VAD_HANGOVER_MS),
+    preroll: fr(VAD_PREROLL_MS),
+    tail: fr(VAD_TAIL_MS),
+    minFrames: fr(VAD_MIN_MS),
+    maxFrames: fr(VAD_MAX_MS),
+    noiseCap: fr(VAD_NOISE_MS),
+    warm: fr(VAD_WARMUP_MS),
+    n: -1,          // absolute index of the last block seen
+    speaking: false,
+    run: 0,         // consecutive above-threshold blocks while idle
+    silence: 0,     // consecutive below-threshold blocks while speaking
+    start: 0,       // absolute index the CUT starts at (pre-roll applied)
+    vstart: 0,      // absolute index the SPEECH starts at (no pre-roll) — the length gate
+    noise: [],      // rolling non-speech RMS window
+    thr: VAD_FLOOR
+  };
+}
+
+/* PURE: feed ONE block's RMS. Returns { st, emit } with a NEW state object — no
+   mutation, so the whole decision table is table-testable off synthetic sequences.
+   emit is null, or { from, to, ms, ok, reason }: an absolute block half-open range
+   [from, to) to cut, and whether it is long enough to be worth transcribing. */
+function vadStep(st, rms){
+  const s = {
+    frameMs: st.frameMs, open: st.open, hangover: st.hangover, preroll: st.preroll,
+    tail: st.tail, minFrames: st.minFrames, maxFrames: st.maxFrames,
+    noiseCap: st.noiseCap, warm: st.warm, n: st.n + 1, speaking: st.speaking,
+    run: st.run, silence: st.silence, start: st.start, vstart: st.vstart,
+    noise: st.noise, thr: st.thr
+  };
+  const v = (isFinite(Number(rms)) && Number(rms) > 0) ? Number(rms) : 0;
+  const loud = v > s.thr;
+  let emit = null;
+
+  if (!s.speaking){
+    // WARM-UP: for the first ~600ms the gate cannot open at all and EVERY block
+    // teaches the floor. Without this, starting auto mode in a room whose ambient
+    // level is already above the clamp (a fan, a laptop next to the mic) would open
+    // an utterance on the very first block and never learn anything — the floor only
+    // learns from silence, and it would never see any.
+    const warming = s.noise.length < s.warm;
+    if (loud && !warming){
+      s.run++;
+      if (s.run >= s.open){
+        s.speaking = true;
+        s.silence = 0;
+        s.vstart = s.n - s.run + 1;                      // where the SPEECH began
+        // the CUT starts earlier still: a pre-roll before the trigger, so a word
+        // whose onset is quiet is not clipped off.
+        s.start = Math.max(0, s.vstart - s.preroll);
+        s.run = 0;
+      }
+    } else {
+      s.run = 0;
+      // Outside warm-up the floor learns from silence ONLY — feeding it speech would
+      // let a talker raise the threshold until they stopped being heard.
+      const noise = s.noise.concat([v]);
+      s.noise = noise.length > s.noiseCap ? noise.slice(noise.length - s.noiseCap) : noise;
+      // Clamped at BOTH ends: in a silent room the median is ~0 (and a threshold of
+      // zero would trigger on nothing at all), while a loud one must not push the
+      // threshold above ordinary speech (~0.1-0.4 RMS) or the VAD would go deaf.
+      s.thr = Math.min(VAD_THR_MAX, Math.max(VAD_FLOOR, VAD_MULT * vadNoiseFloor(s.noise)));
+    }
+  } else {
+    if (loud) s.silence = 0; else s.silence++;
+    const hitMax = (s.n - s.start + 1) >= s.maxFrames;
+    if (s.silence >= s.hangover || hitMax){
+      // a pause SHORTER than the hangover never reaches here — that is the whole
+      // point: "the cat… sat" stays one utterance.
+      const vend = hitMax ? (s.n + 1) : (s.n - s.silence + 1);   // last speech block +1
+      const to = hitMax ? vend : Math.min(s.n + 1, vend + s.tail);
+      const from = s.start;
+      // The length gate measures the SPEECH, not the padded cut: pre-roll + tail add
+      // 500ms to every utterance, so a cough would otherwise sail past a 400ms floor.
+      const spoken = Math.max(0, vend - s.vstart);
+      emit = { from: from, to: to, ms: Math.max(0, to - from) * s.frameMs,
+               speechMs: spoken * s.frameMs,
+               ok: spoken >= s.minFrames, reason: hitMax ? 'max' : 'hangover' };
+      s.speaking = false; s.run = 0; s.silence = 0; s.start = 0; s.vstart = 0;
+    }
+  }
+  return { st: s, emit: emit };
+}
+
+/* PURE: linear-interpolation resample of mono Float32.
+   ⚠️ No anti-alias filter: content above the new Nyquist folds back. For 48k→16k
+   speech this is inaudible to whisper (and mlx-whisper resamples the same naive way
+   internally), but it IS a known simplification. */
+function resampleLinear(input, inRate, outRate){
+  const n0 = input ? input.length : 0;
+  if (!n0 || !(inRate > 0) || !(outRate > 0)) return new Float32Array(0);
+  if (inRate === outRate) return Float32Array.from(input);
+  const ratio = inRate / outRate;
+  const n = Math.max(1, Math.floor(n0 / ratio));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++){
+    const pos = i * ratio, i0 = Math.floor(pos);
+    const i1 = Math.min(i0 + 1, n0 - 1), f = pos - i0;
+    out[i] = input[i0] * (1 - f) + input[i1] * f;
+  }
+  return out;
+}
+
+/* PURE: splice an absolute block range out of the ring buffer. `base` is the absolute
+   index of frames[0] (blocks older than that have been pruned). */
+function vadSplice(frames, base, from, to){
+  const a = Math.max(0, from - base), b = Math.min(frames.length, to - base);
+  let n = 0;
+  for (let i = a; i < b; i++) n += frames[i].length;
+  const out = new Float32Array(n);
+  let at = 0;
+  for (let i = a; i < b; i++){ out.set(frames[i], at); at += frames[i].length; }
+  return out;
+}
+
+function autoOn(){ return !!autoVad; }
+
+/* The ▶ speak flash idiom, with the ONE thing it cannot do for us: speakFlash restores
+   SPEAK_LABEL after 2s (it was written for the speak button), so using it on this chip
+   would leave a button reading "▶ speak" in the composer. Same shape, right restore.
+   ⚠️ NOTE: the manual ● talk path calls speakFlash directly and DOES exhibit that —
+   left alone here as an out-of-slice pre-existing defect rather than edited blind. */
+function autoFlash(btn, text, title){
+  if (!btn) return;
+  btn.disabled = false;
+  btn.classList.remove('on');
+  btn.textContent = text;
+  btn.title = title || AUTO_TITLE;
+  setTimeout(() => { if (document.body.contains(btn) && !autoVad) renderAutoBtn(); }, 2000);
+}
+
+function renderAutoBtn(){
+  const btn = document.getElementById('chat-auto');
+  if (!btn) return;
+  const on = sttOn();
+  btn.hidden = !on;
+  if (!on && autoVad) stopAuto('the speech-to-text default was cleared');
+  btn.classList.toggle('on', autoOn());
+  btn.innerHTML = '';
+  if (autoOn()){
+    const dot = document.createElement('span');
+    dot.className = 'talk-dot'; dot.textContent = '● ';
+    const t = document.createElement('span');
+    t.className = 'talk-t'; t.textContent = 'auto';
+    btn.appendChild(dot); btn.appendChild(t);
+    const busy = autoVad && autoVad.busy;
+    btn.title = (voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '')
+      + (busy ? 'transcribing…' : 'Listening — click to stop')
+      + '\nTranscripts are appended to the box, never sent.';
+  } else {
+    btn.textContent = AUTO_LABEL;
+    btn.title = (voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '') + AUTO_TITLE;
+  }
+}
+
+function toggleAuto(){
+  if (autoVad) stopAuto(''); else startAuto();
+}
+
+async function startAuto(){
+  const btn = document.getElementById('chat-auto');
+  if (!btn || autoVad) return;
+  if (talkRec) stopTalk(true);                  // manual and auto are exclusive
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia
+      || typeof AudioWorkletNode === 'undefined'){
+    autoFlash(btn, 'no mic', 'this webview cannot capture audio'); return;
+  }
+  let stream, ctx;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e){
+    console.warn('[auto] getUserMedia failed', e);
+    autoFlash(btn, 'err', 'microphone permission — see Logs/README'); return;
+  }
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!ctx.audioWorklet) throw new Error('AudioContext.audioWorklet missing');
+    // The processor is a Blob-URL module — the exact load path GATE 1 proved works
+    // in this webview. It only measures and forwards; every decision is on the main
+    // thread where it can be unit-tested.
+    const src =
+      'class V extends AudioWorkletProcessor{' +
+      'constructor(o){super();this.N=o.processorOptions.block;this.b=new Float32Array(this.N);this.i=0;}' +
+      'process(inp){const c=inp[0]&&inp[0][0];if(!c)return true;' +
+      'for(let k=0;k<c.length;k++){this.b[this.i++]=c[k];' +
+      'if(this.i>=this.N){let s=0;for(let j=0;j<this.N;j++)s+=this.b[j]*this.b[j];' +
+      'const cp=this.b.slice(0);this.port.postMessage({rms:Math.sqrt(s/this.N),buf:cp},[cp.buffer]);' +
+      'this.i=0;}}return true;}}' +
+      'registerProcessor("harness-vad",V);';
+    const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    if (ctx.state === 'suspended') await ctx.resume();   // a suspended ctx pumps no frames
+    const node = new AudioWorkletNode(ctx, 'harness-vad',
+      { processorOptions: { block: VAD_BLOCK } });
+    const frameMs = (VAD_BLOCK / ctx.sampleRate) * 1000;
+    autoVad = { ctx: ctx, stream: stream, node: node, rate: ctx.sampleRate,
+                st: vadInit(frameMs), frames: [], base: 0,
+                queue: [], busy: false, errors: 0, stopping: false };
+    node.port.onmessage = (ev) => autoFrame(ev.data);
+    ctx.createMediaStreamSource(stream).connect(node);   // never connect to output
+  } catch (e){
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e2) {}
+    try { if (ctx) ctx.close(); } catch (e2) {}
+    autoVad = null;
+    console.warn('[auto] worklet setup failed', e);
+    autoFlash(btn, 'err', String((e && e.message) || e)); return;
+  }
+  renderAutoBtn();
+}
+
+/* One block from the worklet: buffer it, step the segmenter, flush on a close. */
+function autoFrame(msg){
+  const a = autoVad;
+  if (!a || a.stopping || !msg || !msg.buf) return;
+  const buf = new Float32Array(msg.buf);
+  a.frames.push(buf);
+  const r = vadStep(a.st, msg.rms);
+  a.st = r.st;
+  if (r.emit){
+    if (r.emit.ok) autoEnqueue(vadSplice(a.frames, a.base, r.emit.from, r.emit.to));
+    // a too-short emit is dropped silently: a cough should cost nothing.
+  }
+  // Prune everything that can no longer be needed. While speaking, nothing before
+  // the utterance start; while idle, only the pre-roll window has to survive.
+  const keepFrom = a.st.speaking ? a.st.start
+                                 : (a.base + a.frames.length - (a.st.preroll + a.st.open + 2));
+  const drop = Math.max(0, Math.min(a.frames.length, keepFrom - a.base));
+  if (drop > 0){ a.frames.splice(0, drop); a.base += drop; }
+}
+
+function autoEnqueue(pcm){
+  const a = autoVad;
+  if (!a || !pcm || !pcm.length) return;
+  a.queue.push(pcm);
+  autoDrain();
+}
+
+/* Utterances are transcribed STRICTLY one at a time: /api/voice/stt takes the global
+   one-shot render lock and would 409 a second concurrent request. Serialising here
+   also keeps the transcript order equal to the spoken order. */
+async function autoDrain(){
+  const a = autoVad;
+  if (!a || a.busy || !a.queue.length) return;
+  a.busy = true;
+  renderAutoBtn();
+  const pcm = a.queue.shift();
+  try {
+    const wav = wavFromPcm(resampleLinear(pcm, a.rate, 16000), 16000);
+    const res = await fetch('/api/voice/stt?fmt=wav',
+      { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+    let j = null;
+    try { j = await res.json(); } catch (e) {}
+    if (!res.ok || !j || !j.ok){
+      const msg = (j && j.error) || ('the bridge refused (' + res.status + ')');
+      throw new Error(msg);
+    }
+    // An empty transcript is NOT an error here — it is the VAD having gated in a
+    // door slam. Silently skipping is the second defence against whisper's habit of
+    // hallucinating a sentence out of silence.
+    const text = String(j.text || '').trim();
+    if (text) appendTranscript(text, false);
+    if (autoVad === a) a.errors = 0;
+  } catch (e){
+    console.warn('[auto] stt failed', e);
+    if (autoVad === a){
+      a.errors++;
+      if (a.errors >= VAD_MAX_ERRORS){
+        const btn = document.getElementById('chat-auto');
+        stopAuto('');
+        autoFlash(btn, 'err', String((e && e.message) || e));
+        return;
+      }
+    }
+  } finally {
+    if (autoVad === a){ a.busy = false; renderAutoBtn(); }
+  }
+  if (autoVad === a && a.queue.length) autoDrain();
+}
+
+/* The ONLY teardown path. Every exit — the button, a lane switch, leaving Chat, the
+   STT default being cleared, three failures in a row — comes through here, because
+   the mic light staying on after auto mode ends would be the worst kind of bug. */
+function stopAuto(reason){
+  const a = autoVad;
+  if (!a) return;
+  a.stopping = true;
+  autoVad = null;
+  try { if (a.node){ a.node.port.onmessage = null; a.node.disconnect(); } } catch (e) {}
+  try { a.stream.getTracks().forEach(t => t.stop()); } catch (e) {}   // drops the mic light
+  try { if (a.ctx) a.ctx.close(); } catch (e) {}
+  a.queue = []; a.frames = [];
+  if (reason) console.log('[auto] stopped: ' + reason);
+  renderAutoBtn();
 }
 
 async function refreshBrowse(){
@@ -4195,6 +4584,71 @@ function renderModels(r){
   applyModelsSection();
 }
 
+/* ---------- HIDE (read-only imports only) ----------
+   The HF cache and LM Studio hand us models that will never be used here, and hiding
+   is the only honest operation on files another app owns — DELETE would reach outside
+   data/models/, which the bridge refuses anyway.
+
+   PURE: may this row be hidden? Mirrors HIDEABLE_SOURCES in bridge/app.py; app-owned
+   rows keep Delete and nothing else, so one row never has two ways to vanish. */
+function isHideable(src){
+  return src === 'lmstudio-import' || src === 'jan-import' || src === 'audio-hf-cache';
+}
+async function setModelHidden(id, hidden){
+  try {
+    const res = await fetch('/api/models/hide', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, hidden: !!hidden})});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  await initModels();
+}
+/* Two-step arm→confirm, same idiom as Delete (WKWebView has no confirm()). */
+function hideBtn(id, name, src){
+  if (!isHideable(src)) return null;
+  const b = document.createElement('button'); b.className = 'mp-act';
+  b.textContent = 'hide from list';
+  b.title = 'Stop listing ' + name + ' here. Its files are NEVER touched — unhide it '
+          + 'from the bottom of the list.';
+  b.onclick = () => {
+    if (b.dataset.armed){ setModelHidden(id, true); return; }
+    b.dataset.armed = '1'; b.textContent = 'hide? click again';
+    setTimeout(() => { if (b.dataset.armed){ delete b.dataset.armed;
+      b.textContent = 'hide from list'; } }, 3000);
+  };
+  return b;
+}
+/* The list-bottom "N hidden — show" toggle. `kind` filters the payload's hidden array
+   so the chat list never offers to unhide a voice model and vice versa. */
+let hiddenOpen = false;
+function renderHiddenRow(col, r, kind){
+  const all = (r.hidden || []).filter(h => (h.kind || 'chat') === kind);
+  if (!all.length) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:10px 4px 2px;color:var(--faint);font:10px var(--mono);'
+    + 'letter-spacing:.08em';
+  const t = document.createElement('span');
+  t.textContent = all.length + ' hidden — ' + (hiddenOpen ? 'collapse' : 'show');
+  t.style.cursor = 'pointer';
+  t.onclick = () => { hiddenOpen = !hiddenOpen; initModels(); };
+  wrap.appendChild(t);
+  if (hiddenOpen){
+    for (const h of all){
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-top:6px;display:flex;gap:8px;align-items:center';
+      const n = document.createElement('span');
+      n.textContent = h.id; n.style.cssText = 'flex:1;word-break:break-all';
+      const u = document.createElement('button'); u.className = 'mp-act';
+      u.textContent = 'unhide'; u.title = 'Put ' + h.id + ' back in the list';
+      u.onclick = () => setModelHidden(h.id, false);
+      row.appendChild(n); row.appendChild(u);
+      wrap.appendChild(row);
+    }
+  }
+  col.appendChild(wrap);
+}
+
 // Pure state-machine helper (Fable ISSUE 2) — unit-tested. isLive = runner up AND
 // this is the active model → Eject. Otherwise: some other model live → Switch;
 // nothing live → Load.
@@ -4245,6 +4699,7 @@ function renderList(r){
   const aux = r.aux || {};
   if (!(r.installed || []).length){
     col.innerHTML = '<div class="cs-empty">No installed models in the registry (data/models.json). Run scripts/seed_registry.py or download a model via Search / Download.</div>';
+    renderHiddenRow(col, r, 'chat');
     return;
   }
   for (const m of r.installed){
@@ -4257,6 +4712,7 @@ function renderList(r){
     row.onclick = () => selectInstalled(m.id);
     col.appendChild(row);
   }
+  renderHiddenRow(col, r, 'chat');
 }
 
 // Aux runner control — full-width strip under the split (unchanged behavior).
@@ -4316,6 +4772,62 @@ let voiceLib = [];          // [{name, stem, path, size}]
 let voiceLibDir = '';
 let voiceLibLoaded = false;
 let pendingClip = null;     // {blob, fmt, id} — a just-recorded clip awaiting a name
+/* Extra clip FOLDERS: pointers to directories that already hold usable clips (a
+   VoiceStudio export dir, a folder of samples). Nothing is copied — a folder chip
+   expands into its own pinnable clips, and removing a folder only forgets the
+   pointer. */
+let voiceFolders = [];      // [{path, real, missing, count}]
+let voiceSuggested = [];    // [{label, path}] — offered only when they exist
+let voiceFoldersLoaded = false;
+let foldersOpen = false;    // the `folders ⌄` disclosure
+let openFolder = '';        // which folder's clips are expanded
+let folderClips = {};       // path -> [{name, stem, path, size}]
+async function loadVoiceFolders(force){
+  if (voiceFoldersLoaded && !force) return;
+  voiceFoldersLoaded = true;
+  try {
+    const res = await fetch('/api/voice/library/folders');
+    const j = await res.json().catch(() => ({}));
+    if (j && j.ok){ voiceFolders = j.folders || []; voiceSuggested = j.suggested || []; }
+  } catch (e) {}
+  renderAudioDetail();
+}
+async function loadFolderClips(path){
+  if (folderClips[path]) return;
+  folderClips[path] = [];                   // set FIRST: a re-render must not re-fetch
+  try {
+    const res = await fetch('/api/voice/library?folder=' + encodeURIComponent(path));
+    const j = await res.json().catch(() => ({}));
+    if (j && j.ok) folderClips[path] = j.clips || [];
+    else voiceErr = (j && j.error) || 'could not read that folder';
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  renderAudioDetail();
+}
+async function addClipFolder(path){
+  voiceErr = '';
+  const p = String(path || '').trim();
+  if (!p) return;
+  try {
+    const res = await fetch('/api/voice/library/folders/add', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: p})});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  folderClips = {};
+  await loadVoiceFolders(true);
+}
+async function removeClipFolder(path){
+  voiceErr = '';
+  try {
+    const res = await fetch('/api/voice/library/folders/remove', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: path})});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  if (openFolder === path) openFolder = '';
+  delete folderClips[path];
+  await loadVoiceFolders(true);
+}
 async function loadVoiceLib(force){
   if (voiceLibLoaded && !force) return;
   voiceLibLoaded = true;                    // set FIRST: a re-render must not re-fetch
@@ -4331,8 +4843,21 @@ function audioDefaultId(r, role){
   const v = (r && r.voice) || {};
   return (role === 'stt' ? v.stt_model : v.tts_model) || '';
 }
+/* PURE: the sub-badge that says HOW this TTS model's voice is chosen — 'voices' when
+   the checkpoint declares named speakers, 'cloning' when its voice comes from a
+   reference clip instead. Both facts already ride on the entry (audio_entry_view
+   carries `voices` and `cloning`), so this is a label, not a probe. '' for STT and
+   for anything we have no verdict about — silence is not a verdict. */
+function audioVoiceBadge(a){
+  if (!a || (a.role || 'tts') !== 'tts') return '';
+  if (a.voices && a.voices.length) return 'voices';
+  if (a.cloning) return 'cloning';
+  return '';
+}
 function audioRowHtml(a, isDefault){
   const b = ['<span class="mpill">' + esc(a.role || 'tts') + '</span>'];
+  const vb = audioVoiceBadge(a);
+  if (vb) b.push('<span class="mpill">' + esc(vb) + '</span>');
   if (isDefault) b.push('<span class="mpill live">default</span>');
   b.push('<span class="mpill fmt">' + esc(audioEngineLabel(a)) + '</span>');
   const sb = srcBadge(a.source); if (sb) b.push(sb);
@@ -4359,6 +4884,7 @@ function renderAudio(r){
       col.appendChild(row);
     }
   }
+  renderHiddenRow(col, r, 'audio');
   renderAudioDetail();
   renderAudioGet();
   markAudioSelRows();
@@ -4440,6 +4966,8 @@ function renderAudioDetail(){
     const note = document.createElement('span'); note.className = 'md-imnote';
     note.textContent = 'Managed by ' + (srcLabel(a.source) || 'another app') + ' — remove it there';
     acts.appendChild(note);
+    const h = hideBtn(a.id, a.name || a.id, a.source);
+    if (h) acts.appendChild(h);
   }
   renderAudioVoice(a);
   if (voiceErr){
@@ -4504,6 +5032,7 @@ function renderAudioVoice(a){
   const lab = document.createElement('div');
   lab.className = 'md-loadphase'; lab.style.marginTop = '16px';
   lab.textContent = 'Voice' + (cur ? '' : ' · model default');
+  if (cur) lab.appendChild(clearPinLink('Un-pin ' + cur, () => setEntryVoice(a.id, '')));
   box.appendChild(lab);
   const row = document.createElement('div');
   row.className = 'md-actions'; row.style.marginTop = '8px';
@@ -4587,10 +5116,15 @@ const CLIP_MAX_S = 10;      // ~10s is what the engine keeps (ref_audio_max_dura
 let clipRec = null;         // {rec, stream, timer, t0, fmt, id, cancelled} while recording
 function renderVoiceClips(a, box){
   loadVoiceLib();           // fetches once, then re-renders
+  loadVoiceFolders();
   const cur = a.ref_audio || '';
   const lab = document.createElement('div');
   lab.className = 'md-loadphase'; lab.style.marginTop = '16px';
   lab.textContent = 'Voice · reference clip' + (cur ? '' : ' · model default');
+  // An explicit un-pin beside the label. 'model default' already does this, but it
+  // reads as a CHOICE among clips rather than as "undo what I pinned" — and Debi
+  // asked for the undo to be findable.
+  if (cur) lab.appendChild(clearPinLink('Un-pin ' + cur, () => setEntryRef(a.id, '')));
   box.appendChild(lab);
   const row = document.createElement('div');
   row.className = 'md-actions'; row.style.marginTop = '8px';
@@ -4650,6 +5184,17 @@ function renderVoiceClips(a, box){
          () => { pendingClip = null; renderAudioDetail(); });
     setTimeout(() => { try { inp.focus(); } catch (e) {} }, 0);
   }
+  // ⊕ ADD CLIP FILE — the recorder is not the only way to get a voice in here. A
+  // VoiceStudio export, a downloaded sample, anything the user already has: pick it,
+  // it is re-encoded to wav client-side (same reason as the recorder — the engine's
+  // m4a path needs ffprobe, which our provisioned ffmpeg does not ship) and saved
+  // into the library under its own name.
+  if (!clipRec && !pendingClip){
+    chip('⊕ add clip file', false,
+         'Pick an audio file — it is copied into the voice library and pinned',
+         () => pickClipFile(a.id));
+  }
+  renderClipFolders(a, box, cur);
   // ref_text: optional, and worth offering — without it the engine transcribes the
   // clip with whisper on EVERY render (a second model load each time).
   if (cur){
@@ -4670,6 +5215,142 @@ function renderVoiceClips(a, box){
   box.appendChild(n);
 }
 
+/* A faint inline "clear" beside a row label — the explicit un-pin. Shared by the
+   named-voice row and the clip row so both un-pins look and read the same. */
+function clearPinLink(title, onclick){
+  const c = document.createElement('span');
+  c.textContent = 'clear';
+  c.title = title;
+  c.style.cssText = 'margin-left:10px;color:var(--faint);cursor:pointer;'
+    + 'font:10px var(--mono);letter-spacing:.08em;text-transform:none';
+  c.onmouseenter = () => { c.style.color = 'var(--gold)'; };
+  c.onmouseleave = () => { c.style.color = 'var(--faint)'; };
+  c.onclick = onclick;
+  return c;
+}
+
+/* ---------- extra clip FOLDERS ----------
+   A pointer, never a copy. Each configured folder is a chip; clicking it expands ITS
+   clips as pinnable chips (pinned by ABSOLUTE PATH — entry-ref accepts one, and the
+   file is only ever read). Removing a folder forgets the pointer and touches no file,
+   which the tooltip says out loud because "remove" next to a list of files reads like
+   a delete otherwise. */
+function renderClipFolders(a, box, cur){
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '10px';
+  box.appendChild(wrap);
+  const head = document.createElement('div');
+  head.style.cssText = 'color:var(--faint);font:10px var(--mono);letter-spacing:.08em;'
+    + 'cursor:pointer';
+  const n = voiceFolders.length;
+  head.textContent = 'folders' + (n ? ' (' + n + ')' : '') + (foldersOpen ? ' ⌃' : ' ⌄');
+  head.title = 'Clip folders outside data/voices — pointers, never copies';
+  head.onclick = () => { foldersOpen = !foldersOpen; renderAudioDetail(); };
+  wrap.appendChild(head);
+  if (!foldersOpen) return;
+
+  const row = document.createElement('div');
+  row.className = 'md-actions'; row.style.marginTop = '8px';
+  wrap.appendChild(row);
+  const chip = (text, on, title, onclick) => {
+    const b = document.createElement('button');
+    b.className = 'mp-act' + (on ? ' on' : '');
+    b.textContent = text; b.title = title; b.onclick = onclick;
+    row.appendChild(b);
+    return b;
+  };
+  for (const f of voiceFolders){
+    const label = (f.path || '').split('/').filter(Boolean).pop() || f.path;
+    const b = chip(label + (f.missing ? ' · missing' : ''), openFolder === f.path,
+                   f.path + (f.missing ? ' — this folder is gone or unmounted'
+                                       : ' (' + f.count + ' clips)'),
+                   () => { openFolder = (openFolder === f.path ? '' : f.path);
+                           if (openFolder) loadFolderClips(openFolder);
+                           renderAudioDetail(); });
+    const x = document.createElement('span');
+    x.style.cssText = 'opacity:.45;margin-left:8px';
+    x.textContent = '✕';
+    x.title = 'Stop listing this folder — the files themselves are NEVER touched';
+    x.onclick = (ev) => {
+      ev.stopPropagation();
+      if (x.dataset.armed){ removeClipFolder(f.path); return; }
+      x.dataset.armed = '1'; x.textContent = 'sure?'; x.style.opacity = '1';
+      setTimeout(() => { if (x.dataset.armed){ delete x.dataset.armed;
+        x.textContent = '✕'; x.style.opacity = '.45'; } }, 3000);
+    };
+    b.appendChild(x);
+  }
+  // Suggested folders appear ONLY when they exist on this Mac (bridge-side check), so
+  // a one-click offer never leads to an error.
+  for (const s of voiceSuggested){
+    chip('＋ ' + s.label, false, 'Add ' + s.path, () => addClipFolder(s.path));
+  }
+  // ⚠️ A TYPED PATH, not a folder picker: WKWebView's directory picker is the same
+  // class of silent no-op that broke ⊕ attach, and a box that does nothing is worse
+  // than a box that asks you to paste.
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.placeholder = '/path/to/folder';
+  inp.style.cssText = 'background:var(--card);color:var(--cream);border:1px solid '
+    + 'var(--line2);border-radius:8px;padding:4px 10px;font:11px var(--mono);'
+    + 'letter-spacing:.06em;outline:none;width:200px';
+  inp.onkeydown = e => { if (e.key === 'Enter') addClipFolder(inp.value); };
+  row.appendChild(inp);
+  chip('⊕ add folder', false, 'Remember this folder as a source of clips',
+       () => addClipFolder(inp.value));
+
+  if (openFolder && folderClips[openFolder]){
+    const clips = folderClips[openFolder];
+    const crow = document.createElement('div');
+    crow.className = 'md-actions'; crow.style.marginTop = '8px';
+    wrap.appendChild(crow);
+    if (!clips.length){
+      const e = document.createElement('span');
+      e.style.cssText = 'color:var(--faint);font:10px var(--mono);letter-spacing:.06em';
+      e.textContent = 'no audio files in this folder';
+      crow.appendChild(e);
+    }
+    for (const c of clips){
+      const b = document.createElement('button');
+      b.className = 'mp-act' + (c.name === cur ? ' on' : '');
+      b.textContent = c.stem;
+      b.title = 'Always speak with the voice in ' + c.path;
+      b.onclick = () => setEntryRef(a.id, c.path);   // absolute → sent as `path`
+      crow.appendChild(b);
+    }
+  }
+}
+
+/* ⊕ add clip file — a hidden <input type=file>. runOpenPanelWith is already
+   implemented in the Swift shell (without it the dialog is a silent no-op — that was
+   the ⊕ attach bug), so this works in the app as well as the browser. */
+function pickClipFile(id){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'audio/*';
+  inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    try { document.body.removeChild(inp); } catch (e) {}
+    if (!f) return;
+    voiceErr = '';
+    let blob = f, sfx = (f.name.split('.').pop() || '').toLowerCase();
+    if (sfx !== 'wav'){
+      // Same reason as the recorder: re-encode to wav so the engine needs no external
+      // tool. If the browser cannot decode it, fall back to the file's own bytes.
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const buf = await ctx.decodeAudioData(await f.arrayBuffer());
+        blob = wavFromBuffer(buf); sfx = 'wav';
+        try { await ctx.close(); } catch (e) {}
+      } catch (e){ console.warn('[clip] wav encode failed, storing raw', e); }
+    }
+    const stem = (f.name.replace(/\.[^.]+$/, '') || 'clip').slice(0, 48);
+    pendingClip = { blob: blob, fmt: sfx, id: id };
+    await saveClip(id, stem);
+  };
+  inp.click();
+}
+
 /* PURE: an AudioBuffer → a 16-bit mono PCM wav Blob.
    WHY encode client-side: mlx-audio reads wav/mp3/flac with miniaudio, but M4A and
    WebM go through `shutil.which("ffmpeg")` + ffprobe — and the bridge (and therefore
@@ -4678,7 +5359,15 @@ function renderVoiceClips(a, box){
    fail at render time. Encoding here means the library is always in the format the
    engine reads with no external tool at all. */
 function wavFromBuffer(buf){
-  const ch = buf.getChannelData(0), n = ch.length, rate = buf.sampleRate;
+  return wavFromPcm(buf.getChannelData(0), buf.sampleRate);
+}
+
+/* PURE: mono Float32 PCM + a sample rate → the same 16-bit wav Blob. Split out of
+   wavFromBuffer (byte-identical output) because auto-dictation holds raw Float32
+   frames from an AudioWorklet, not an AudioBuffer — and building a throwaway
+   AudioBuffer just to hand it back would be ceremony. */
+function wavFromPcm(ch, rate){
+  const n = ch.length;
   const ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
   const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
   str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
@@ -4788,10 +5477,14 @@ async function deleteClip(name){
   await initModels();        // the bridge un-pins any entry that used it
 }
 
-/* '' clears the pin. `text` is the optional transcript of the clip. */
+/* '' clears the pin. `text` is the optional transcript of the clip.
+   An ABSOLUTE path (a clip from an extra folder) is sent as `path`; a bare basename
+   is sent as `name` and resolved inside data/voices by the bridge. A library clip
+   name is always a basename, so the '/' test can never misread one. */
 async function setEntryRef(id, name, text){
   voiceErr = '';
-  const body = { id: id, name: name || '' };
+  const raw = String(name || '');
+  const body = raw.startsWith('/') ? { id: id, path: raw } : { id: id, name: raw };
   if (text !== undefined) body.ref_text = String(text || '');
   else {
     const a = ((lastModels || {}).audio || []).find(x => x.id === id);
@@ -5109,6 +5802,8 @@ function renderDetail(){
       note.title = 'The harness only indexes this model; its files live outside data/models/, '
                  + 'so it cannot be deleted here.';
       acts.appendChild(note);
+      const h = hideBtn(m.id, m.name || m.id, m.source);
+      if (h) acts.appendChild(h);
     }
     if (loadingThis){
       const load = document.createElement('div'); load.className = 'md-load';

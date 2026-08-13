@@ -430,15 +430,38 @@ def load_existing(path):
 RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
 
 
+# Keys that are USER DECISIONS, not facts about files. A rescan reads the disk, so it
+# can never reproduce any of them — without carrying them forward, one RESCAN click
+# silently un-pins every voice, un-pins every reference clip, and un-hides everything
+# the user hid. (The `voice` half of this was already a shipped fix; `ref_audio` /
+# `ref_text` / `hidden` are the same bug in the same place.)
+USER_KEYS = ("voice", "ref_audio", "ref_text", "hidden")
+
+
 def _keep_voice(entry, existing_voice):
     """Carry a user-pinned `voice` across a rescan. PURE (returns a copy when it
     changes anything). A freshly scanned entry never carries one — the voice is a
-    choice, not a file — so an existing pin for the same id wins."""
+    choice, not a file — so an existing pin for the same id wins.
+
+    Kept as the narrow single-key helper it always was; _keep_user generalises it.
+    """
     v = existing_voice.get(entry.get("id"))
     if v and not str(entry.get("voice") or "").strip():
         entry = dict(entry)
         entry["voice"] = v
     return entry
+
+
+def _keep_user(entry, existing_user):
+    """Carry EVERY user-decision key across a rescan. PURE.
+
+    `existing_user` is {id: {key: value}}. A freshly scanned entry that already
+    carries a value keeps its own (nothing does today, but the rule must be
+    'the scan wins when the scan knows', not 'the past always wins')."""
+    prev = existing_user.get(entry.get("id")) or {}
+    add = {k: v for k, v in prev.items()
+           if v not in (None, "", False) and entry.get(k) in (None, "", False)}
+    return dict(entry, **add) if add else entry
 
 
 def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
@@ -469,14 +492,20 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     # nowhere on disk. Without this, hitting RESCAN would silently un-pin the voice
     # of every local / hf-cache voice model (download-sourced entries are kept whole,
     # so they were never at risk).
-    existing_voice = {m.get("id"): m.get("voice")
-                      for m in existing if str(m.get("voice") or "").strip()}
+    # id -> {user key: value}. Same rule for the pinned voice, the pinned reference
+    # clip + its transcript, and the hidden flag: all four are USER decisions that
+    # live nowhere on disk, so a file scan would silently erase them.
+    existing_user = {}
+    for m in existing:
+        keep = {k: m.get(k) for k in USER_KEYS if m.get(k) not in (None, "", False)}
+        if keep:
+            existing_user[m.get("id")] = keep
     local_filled = []
     for m in local_entries:
         if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
             m = dict(m)
             m["ctx"] = existing_ctx[m["id"]]
-        m = _keep_voice(m, existing_voice)
+        m = _keep_user(m, existing_user)
         local_filled.append(m)
     kept = [m for m in existing if m.get("source") not in RESCANNED_SOURCES]
     result = kept + list(jan_entries) + local_filled
@@ -486,12 +515,12 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
             m = dict(m)
             m["id"] = f"{m['id']}-lms"
         used.add(m.get("id"))
-        result.append(m)
+        result.append(_keep_user(m, existing_user))
     for m in audio_cache_entries:
         if m.get("id") in used:
             continue
         used.add(m.get("id"))
-        result.append(_keep_voice(m, existing_voice))
+        result.append(_keep_user(m, existing_user))
     return result
 
 

@@ -95,9 +95,11 @@ check('● talk sits AFTER Send (textarea → Send → talk)',
   && html.indexOf('id="chat-talk"') > html.indexOf('id="chat-send"'));
 check('● talk ships hidden (shown only when an STT default exists)',
   /id="chat-talk"[\s\S]{0,400}?hidden>/.test(html));
+// AUTO-DICTATION v1 widened the smaller override to `#chat-talk, #chat-auto` — the
+// auto chip is the same class of control at the same size, so it shares the rule.
 check('Send keeps the shared size rule; talk carries its own smaller override',
   html.indexOf('#chat-send, #chat-talk {') >= 0
-  && /#chat-talk\s*\{[^}]*font-size:7px/.test(html));
+  && /#chat-talk,\s*#chat-auto\s*\{[^}]*font-size:7px/.test(html));
 check('the size rule does NOT touch button.primary globally',
   !/button\.primary\s*\{[^}]*font-size:9px/.test(html));
 check('the button rides loadVoiceCfg (same read as the AUDIO chip)',

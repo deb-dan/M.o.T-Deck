@@ -1141,6 +1141,7 @@ class VoiceWorker:
         self.mlx_py = mlx_py or mlx_python(self.root)
         self.proc = None
         self.started_at = 0.0
+        self.load_secs = 0.0            # what the cold load actually cost (timing)
         self.renders = 0
         self._seq = 0
         self._lock = threading.Lock()          # one in-flight request
@@ -1190,8 +1191,12 @@ class VoiceWorker:
         threading.Thread(target=self._reader, args=(self.proc.stdout, self._q),
                          daemon=True).start()
         try:
-            self._request({"cmd": "load", "model": self.model_path},
-                          WORKER_LOAD_TIMEOUT_S)
+            resp = self._request({"cmd": "load", "model": self.model_path},
+                                 WORKER_LOAD_TIMEOUT_S)
+            try:
+                self.load_secs = float(resp.get("secs") or 0.0)
+            except (TypeError, ValueError):
+                self.load_secs = 0.0
         except VoiceError:
             self.stop()
             raise
@@ -1363,7 +1368,7 @@ def worker_stop_if_model(model_id: str, reason: str = "") -> bool:
 
 def get_worker(entry: dict, root: "str | Path | None" = None,
                mlx_py: "str | None" = None,
-               spawn_guard=None) -> VoiceWorker:
+               spawn_guard=None, stats: "dict | None" = None) -> VoiceWorker:
     """The resident worker for `entry`, spawning or respawning as needed.
 
     `spawn_guard(size_bytes) -> str | None` is the ledger hook: the bridge owns
@@ -1391,30 +1396,49 @@ def get_worker(entry: dict, root: "str | Path | None" = None,
                             root=root, mlx_py=mlx_py)
             w.start()                       # raises with nothing left running
             _WORKER = w
-            print(f"[voice] worker resident: {mid}", flush=True)
+            if stats is not None:
+                stats["spawned"] = True
+                stats["load_secs"] = w.load_secs
+            print(f"[voice] worker resident: {mid} "
+                  f"(load {w.load_secs:.1f}s)", flush=True)
+        elif stats is not None:
+            stats["spawned"] = False
+            stats["load_secs"] = 0.0
         return w
 
 
 def tts_render_worker(entry: dict, text: str,
                       root: "str | Path | None" = None,
                       mlx_py: "str | None" = None,
-                      spawn_guard=None) -> bytes:
+                      spawn_guard=None, stats: "dict | None" = None) -> bytes:
     """A tts-mlx render through the resident worker. Deliberately does NOT take the
     global one-shot lock — nothing multi-GB is being loaded here, so a speak render
-    no longer blocks dictation (or vice versa)."""
+    no longer blocks dictation (or vice versa).
+
+    `stats` (optional, mutated in place) carries the timing breakdown back to the
+    caller so a slow render is DIAGNOSABLE from the bridge log rather than merely
+    reported: which engine, whether the worker had to be spawned, what the load cost,
+    and what the engine itself says the generation took.
+    """
     root = Path(root or ROOT)
     err = validate_tts_request(text, entry)
     if err:
         raise VoiceError(err)
-    w = get_worker(entry, root=root, mlx_py=mlx_py, spawn_guard=spawn_guard)
+    w = get_worker(entry, root=root, mlx_py=mlx_py, spawn_guard=spawn_guard,
+                   stats=stats)
     tmp_root = root / "data" / "tmp"
     tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_dir = tempfile.mkdtemp(prefix="tts-", dir=str(tmp_root))
     try:
         out_path = os.path.join(tmp_dir, "out.wav")
-        w.render(text, str(entry.get("voice") or "").strip(), out_path,
-                 ref_audio=str(entry.get("ref_audio") or "").strip(),
-                 ref_text=str(entry.get("ref_text") or "").strip())
+        resp = w.render(text, str(entry.get("voice") or "").strip(), out_path,
+                        ref_audio=str(entry.get("ref_audio") or "").strip(),
+                        ref_text=str(entry.get("ref_text") or "").strip())
+        if stats is not None:
+            try:
+                stats["engine_secs"] = float(resp.get("secs") or 0.0)
+            except (TypeError, ValueError):
+                stats["engine_secs"] = 0.0
         # The worker already applied render_ok; re-checking here keeps the invariant
         # stated at BOTH ends of the pipe rather than trusting one side of it.
         if not render_ok(out_path):
@@ -1424,6 +1448,285 @@ def tts_render_worker(entry: dict, text: str,
             return f.read()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ── the REPLAY CACHE ────────────────────────────────────────────────────────────
+# WHY: a re-listen re-rendered from scratch. The resident worker removed the model
+# LOAD from that cost, but OmniVoice's generation itself is iterative (an unmask loop
+# over N steps) and a paragraph legitimately takes seconds — so the second ▶ speak on
+# the SAME reply was still a wait for audio we had already produced once.
+#
+# The key is everything that can change the audio: the model, the resolved voice, the
+# reference clip (path AND its stat, so replacing a clip in place is a miss), its
+# transcript, and the text. Nothing else invalidates because nothing else is in the
+# key — there is deliberately no clear-on-write anywhere in this module.
+RENDER_CACHE_MAX_ENTRIES = 8
+RENDER_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+
+def ref_stamp(path: object) -> str:
+    """'<size>:<mtime>' for a reference clip, '' when there is none / it is gone.
+
+    This is what makes 'delete debi.wav, record a new debi.wav' a cache MISS. Without
+    it the key would say "the same clip" about two different recordings at one path.
+    """
+    p = str(path or "").strip()
+    if not p:
+        return ""
+    try:
+        st = os.stat(p)
+        return f"{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return ""
+
+
+def render_cache_key(model_id: object, voice: object, ref_audio: object,
+                     ref_text: object, text: object, stamp: object = "") -> str:
+    """sha256 over everything that can change the rendered audio. PURE.
+
+    Fields are joined with '\\x00' rather than a printable separator so no field's
+    content can impersonate a boundary (a ref_text containing '|' must not be able to
+    collide with a different (ref_text, text) split).
+    """
+    import hashlib
+    parts = [str(model_id or ""), str(voice or ""), str(ref_audio or ""),
+             str(ref_text or ""), str(stamp or ""), str(text or "")]
+    return hashlib.sha256("\x00".join(parts).encode("utf-8", "replace")).hexdigest()
+
+
+class RenderCache:
+    """A tiny LRU of wav bytes. Bounded by BOTH a count and a byte budget — one
+    2000-char render is ~2MB, so a count alone would not bound the memory.
+
+    Thread-safe; every operation is O(entries) at worst and entries is 8.
+    """
+
+    def __init__(self, max_entries: int = RENDER_CACHE_MAX_ENTRIES,
+                 max_bytes: int = RENDER_CACHE_MAX_BYTES):
+        self.max_entries = int(max_entries)
+        self.max_bytes = int(max_bytes)
+        self._d = {}                     # key -> bytes (insertion order = LRU order)
+        self._bytes = 0
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: str) -> "bytes | None":
+        with self._lock:
+            v = self._d.pop(key, None)
+            if v is None:
+                self.misses += 1
+                return None
+            self._d[key] = v             # re-insert = most recently used
+            self.hits += 1
+            return v
+
+    def put(self, key: str, wav: bytes) -> bool:
+        """False when the payload alone exceeds the budget (never evict everything
+        for one clip that will not fit anyway)."""
+        if not key or not isinstance(wav, (bytes, bytearray)) or not wav:
+            return False
+        blob = bytes(wav)
+        if len(blob) > self.max_bytes:
+            return False
+        with self._lock:
+            old = self._d.pop(key, None)
+            if old is not None:
+                self._bytes -= len(old)
+            self._d[key] = blob
+            self._bytes += len(blob)
+            while self._d and (len(self._d) > self.max_entries
+                               or self._bytes > self.max_bytes):
+                k = next(iter(self._d))
+                self._bytes -= len(self._d.pop(k))
+            return True
+
+    def clear(self) -> None:
+        with self._lock:
+            self._d.clear()
+            self._bytes = 0
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {"entries": len(self._d), "bytes": self._bytes,
+                    "hits": self.hits, "misses": self.misses,
+                    "max_entries": self.max_entries, "max_bytes": self.max_bytes}
+
+
+_RENDER_CACHE = RenderCache()
+
+
+def cache_get(key: str) -> "bytes | None":
+    return _RENDER_CACHE.get(key)
+
+
+def cache_put(key: str, wav: bytes) -> bool:
+    return _RENDER_CACHE.put(key, wav)
+
+
+def cache_clear() -> None:
+    _RENDER_CACHE.clear()
+
+
+def cache_stats() -> dict:
+    return _RENDER_CACHE.stats()
+
+
+def entry_cache_key(entry: "dict | None", text: object) -> str:
+    """The replay key for ONE render of `entry`. Uses the RESOLVED voice (the same
+    value tts_render will actually pass the engine), so a model-default render and an
+    explicit pin of that same default share one cache slot instead of two."""
+    e = entry or {}
+    ref = str(e.get("ref_audio") or "").strip()
+    return render_cache_key(e.get("id"), resolve_render_voice(e), ref,
+                            e.get("ref_text"), text, ref_stamp(ref))
+
+
+# ── the ref_text self-heal ──────────────────────────────────────────────────────
+def needs_ref_text(entry: "dict | None") -> bool:
+    """True when this entry would make the engine transcribe its clip on EVERY render.
+
+    THE 30s BUG: `generate_audio`, handed a ref_audio with no ref_text, loads
+    whisper-large-v3-turbo (~1.6GB) to transcribe the clip, renders, then DISCARDS the
+    whisper model — every single time (generate.py: "Ref_text not found. Transcribing
+    ref_audio…"). Pinning transcribes once at pin time, but an entry pinned BEFORE
+    that fix shipped still has no ref_text, so /api/voice/tts heals it in place.
+    PURE — the healing itself belongs to the bridge (it owns the STT default).
+    """
+    if entry_format(entry) != "tts-mlx":
+        return False
+    return bool(str((entry or {}).get("ref_audio") or "").strip()) \
+        and not str((entry or {}).get("ref_text") or "").strip()
+
+
+# ── extra clip FOLDERS (sources beyond data/voices) ─────────────────────────────
+# Debi's ask: point the picker at folders that already hold usable clips (a
+# VoiceStudio export dir, a folder of samples) without copying them into data/voices.
+#
+# ⚠️ PENDING FABLE QA — the folder LIST is persisted in its own json under data/,
+# NOT in harness.yaml. `_set_yaml_scalar` is a line-scan SCALAR writer; representing a
+# list would mean teaching the critical ops path (which ship.sh's manifest merge also
+# round-trips) a new shape, and the empty-as-empty incident is a standing reminder of
+# what a yaml round-trip costs. A folder list is per-machine runtime state, exactly
+# like data/models.json — so it lives beside it.
+FOLDERS_FILENAME = "voice_folders.json"
+FOLDER_LIST_MAX = 12          # a picker, not a filesystem browser
+FOLDER_CLIPS_CAP = 200        # a folder of 5000 samples must not build 5000 chips
+
+
+def folders_path(root: "str | Path | None" = None) -> str:
+    return str(Path(root or ROOT) / "data" / FOLDERS_FILENAME)
+
+
+def normalize_folder(path: object) -> "str | None":
+    """A typed path → an absolute, ~-expanded, symlink-resolved directory path.
+    None when it is empty or does not name a directory. Not a security boundary on
+    its own — see folder_allowed."""
+    p = str(path or "").strip()
+    if not p:
+        return None
+    p = os.path.realpath(os.path.expanduser(p))
+    return p if os.path.isdir(p) else None
+
+
+def load_folders(root: "str | Path | None" = None) -> list:
+    """The configured extra folders, de-duplicated and order-preserving. Never
+    raises: a corrupt file degrades to 'no extra folders', which is the state the
+    feature started in."""
+    try:
+        with open(folders_path(root), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    raw = data.get("folders") if isinstance(data, dict) else data
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for p in raw:
+        if isinstance(p, str) and p.strip() and p not in out:
+            out.append(p.strip())
+    return out[:FOLDER_LIST_MAX]
+
+
+def save_folders(folders: list, root: "str | Path | None" = None) -> None:
+    """Atomic write, same tmp+replace shape as the registry."""
+    p = folders_path(root)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".harness-tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"folders": list(folders or [])[:FOLDER_LIST_MAX]}, f, indent=2)
+    os.replace(tmp, p)
+
+
+def folder_allowed(path: object, folders: "list | None") -> bool:
+    """True only when `path` IS one of the configured folders (realpath-compared).
+
+    The listing endpoint is a directory read driven by a query parameter, so this is
+    the whole boundary: no prefix matching, no children — an allowlist of exact
+    directories the user themselves added.
+    """
+    p = normalize_folder(path)
+    if not p:
+        return False
+    for f in (folders or []):
+        if normalize_folder(f) == p:
+            return True
+    return False
+
+
+def folder_entries(path: object, cap: int = FOLDER_CLIPS_CAP) -> list:
+    """Audio files DIRECTLY inside `path` (never recursive), same shape as
+    library_entries. Never raises — an unreadable folder is an empty list."""
+    d = normalize_folder(path)
+    if not d:
+        return []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        if len(out) >= cap:
+            break
+        p = os.path.join(d, n)
+        try:
+            if not os.path.isfile(p) or normalize_ref_suffix(n) is None:
+                continue
+            out.append({"name": n, "stem": os.path.splitext(n)[0],
+                        "path": p, "size": os.path.getsize(p)})
+        except OSError:
+            continue
+    return out
+
+
+# Folders worth OFFERING as one click, and ONLY when they exist on this machine.
+# ⚠️ PENDING FABLE QA: VoiceStudio is an optional component that is not cloned in the
+# dev sandbox, so its on-disk output layout is UNVERIFIED. What IS known from
+# scripts/start_component.sh: it is launched with cwd=vendor/voicestudio and (per the
+# recon) resolves its data dir relative to that cwd, and voicebox is launched with an
+# explicit --data-dir "$ROOT/data/voicebox". The candidates below follow from those
+# two facts, and a candidate that does not exist is simply never offered — so a wrong
+# guess costs nothing and a right one saves a typed path.
+SUGGESTED_FOLDER_CANDIDATES = (
+    ("VoiceStudio output", "vendor/voicestudio/data/outputs"),
+    ("VoiceStudio voices", "vendor/voicestudio/data/voices"),
+    ("VoiceStudio data", "vendor/voicestudio/data"),
+    ("Voicebox output", "data/voicebox/outputs"),
+)
+
+
+def suggested_folders(root: "str | Path | None" = None) -> list:
+    """[{label, path}] for every suggested folder that EXISTS and is not already
+    configured. Existence-gated on purpose: an offer that leads to an empty error is
+    worse than no offer."""
+    base = Path(root or ROOT)
+    have = {normalize_folder(f) for f in load_folders(root)}
+    out = []
+    for label, rel in SUGGESTED_FOLDER_CANDIDATES:
+        p = normalize_folder(str(base / rel))
+        if p and p not in have:
+            out.append({"label": label, "path": p})
+    return out
 
 
 # ── dispatch ────────────────────────────────────────────────────────────────────
@@ -1457,7 +1760,7 @@ def tts_render(entry: dict, text: str,
                llama_bin: "str | None" = None,
                mlx_py: "str | None" = None,
                use_worker: bool = True,
-               spawn_guard=None) -> bytes:
+               spawn_guard=None, stats: "dict | None" = None) -> bytes:
     """Render `text` with `entry` and return the wav bytes. THE single entry point.
 
     tts-mlx goes through the RESIDENT worker (model loaded once, no global lock);
@@ -1479,10 +1782,18 @@ def tts_render(entry: dict, text: str,
     ev = resolve_render_voice(entry)
     if ev != str(entry.get("voice") or "").strip():
         entry = dict(entry, voice=ev)
+    if stats is not None:
+        stats.setdefault("engine", fmt)
+        stats.setdefault("voice", ev)
+        stats.setdefault("ref", os.path.basename(str(entry.get("ref_audio") or "")))
 
     if fmt == "tts-mlx" and use_worker:
+        if stats is not None:
+            stats["path"] = "worker"
         return tts_render_worker(entry, text, root=root, mlx_py=mlx_py,
-                                 spawn_guard=spawn_guard)
+                                 spawn_guard=spawn_guard, stats=stats)
+    if stats is not None:
+        stats["path"] = "one-shot"
     lb = llama_bin or llama_tts_bin(root)
     mp = mlx_py or mlx_python(root)
     if fmt == "tts-gguf" and not (os.path.isfile(lb) and os.access(lb, os.X_OK)):
