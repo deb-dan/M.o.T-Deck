@@ -369,7 +369,7 @@
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
   #chat-input:focus { border-color:var(--gold); }
-  #chat-send:hover, #chat-talk:hover, #chat-auto:hover { border-color:var(--gold); }
+  #chat-send:hover, #chat-talk:hover, #chat-auto:hover, #chat-conv:hover { border-color:var(--gold); }
   /* PHASE D: Send + ● talk share ONE reduced size (Fable: ~30% off the base button's
      12.5px/7px-15px). Scoped to these two ids — button.primary elsewhere (Models,
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
@@ -378,15 +378,17 @@
   /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13).
      AUTO-DICTATION v1: the `auto` chip rides the SAME rule — it is the same class of
      control at the same size, so it shares the selector rather than adding one. */
-  #chat-talk, #chat-auto { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
+  #chat-talk, #chat-auto, #chat-conv { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
   #chat-talk.rec .talk-dot { color:var(--bad); }
-  #chat-talk .talk-t, #chat-auto .talk-t { font-family:var(--mono); }
+  #chat-talk .talk-t, #chat-auto .talk-t, #chat-conv .talk-t { font-family:var(--mono); }
   /* AUTO-DICTATION v1 — the ONE new rule this slice adds: listening state. Same
      glyph-carries-the-colour idiom as .rec above, gold instead of --bad (no pulse
      animation: that would need a new @keyframes, and the panel has exactly one). */
-  #chat-auto.on .talk-dot { color:var(--gold); }
+  /* CONVERSATION MODE rides the SAME rule — same class of control, same meaning of
+     "live". Zero new CSS rules this slice: only selector extensions. */
+  #chat-auto.on .talk-dot, #chat-conv.on .talk-dot { color:var(--gold); }
 
   /* session rail + chat column live side by side under the header */
   #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; overflow:hidden; }
@@ -1006,6 +1008,11 @@
             <button class="primary" id="chat-auto" onclick="toggleAuto()"
               title="Hands-free dictation — listen continuously and transcribe each utterance"
               aria-label="Hands-free dictation" hidden>auto</button>
+            <!-- CONVERSATION MODE: speak → auto-send → reply is auto-spoken → listen
+                 again. Needs BOTH an STT and a TTS default (renderConvBtn). -->
+            <button class="primary" id="chat-conv" onclick="toggleConv()"
+              title="Conversation — speak, the reply is sent and read back to you"
+              aria-label="Hands-free conversation" hidden>conv</button>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
@@ -1745,6 +1752,7 @@ function showView(v) {
   if (v !== 'chat' && typeof closeModelPop === 'function') closeModelPop();
   if (v !== 'chat' && typeof closeAudioPop === 'function') closeAudioPop();
   // AUTO-DICTATION: the mic must never stay live behind another view.
+  if (v !== 'chat' && typeof stopConv === 'function') stopConv('left the Chat view');
   if (v !== 'chat' && typeof stopAuto === 'function') stopAuto('left the Chat view');
   if (v === 'chat' && !chatSid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
@@ -1906,6 +1914,7 @@ function setMode(m) {
   if (typeof closeAudioPop === 'function') closeAudioPop();
   if (m === prev) return;
   // AUTO-DICTATION: a lane switch is a different conversation — drop the live mic.
+  if (typeof stopConv === 'function') stopConv('lane switch');
   if (typeof stopAuto === 'function') stopAuto('lane switch');
   maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
@@ -3347,6 +3356,10 @@ async function loadVoiceCfg(){
   if (pop && !pop.hidden) renderAudioPop();
   refreshSpeakChips();
   renderTalkBtn();     // PHASE D: the ● talk button rides the SAME config read
+  // CONVERSATION: the only chip that needs BOTH halves of this read (an STT default
+  // AND a TTS default), so it hangs off loadVoiceCfg directly rather than off the
+  // STT-gated renderTalkBtn chain.
+  renderConvBtn();
 }
 
 /* PURE: the popover's TTS row list — llama.cpp (tts-gguf) rows FIRST, then MLX,
@@ -3547,7 +3560,7 @@ function speakText(raw){
 }
 
 // exactly one clip plays app-wide; starting another stops (and resets) the previous
-let currentAudio = null;     // {audio, url, btn, wrap}
+let currentAudio = null;     // {audio, url, btn, wrap, onDone?}
 const SPEAK_LABEL = '▶ speak', SPEAK_TITLE = 'Speak this reply';
 
 function stopSpeaking(){
@@ -3559,6 +3572,10 @@ function stopSpeaking(){
   if (c.btn && document.body.contains(c.btn)){
     c.btn.disabled = false; c.btn.textContent = SPEAK_LABEL; c.btn.title = SPEAK_TITLE;
   }
+  // CONVERSATION MODE: playback ENDING is what re-arms the mic, and this is the one
+  // funnel every end passes through — natural end, an error, a manual ■ stop, or a
+  // teardown. Fired last so the callback can never see a half-cleared currentAudio.
+  if (c.onDone){ try { c.onDone(); } catch (e) {} }
 }
 
 function speakFlash(btn, text, title){
@@ -3573,32 +3590,36 @@ function speakFlash(btn, text, title){
   }, 2000);
 }
 
-async function msgSpeak(wrap, btn){
-  if (currentAudio && currentAudio.btn === btn){ stopSpeaking(); return; }   // ■ stop
+/* Returns TRUE only when playback actually STARTED. Conversation mode needs both
+   halves of that answer: a false return is a render/playback failure it must count,
+   while a true return means the `onDone` callback will fire later (from
+   stopSpeaking) and is the ONLY thing that re-arms the mic. */
+async function msgSpeak(wrap, btn, onDone){
+  if (currentAudio && currentAudio.btn === btn){ stopSpeaking(); return false; }   // ■ stop
   stopSpeaking();
   const text = speakText(msgRaw(wrap));
-  if (!text){ speakFlash(btn, 'nothing to speak', 'this message is code only'); return; }
+  if (!text){ speakFlash(btn, 'nothing to speak', 'this message is code only'); return false; }
   btn.disabled = true; btn.textContent = '…'; btn.title = 'Rendering…';
   let res;
   try {
     res = await fetch('/api/voice/tts', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
   } catch (e) {
-    speakFlash(btn, 'err', 'could not reach the bridge'); return;
+    speakFlash(btn, 'err', 'could not reach the bridge'); return false;
   }
   if (!res.ok){
     let msg = '';
     try { const j = await res.json(); msg = (j && j.error) || ''; } catch (e) {}
     if (!msg) msg = (res.status === 409) ? 'a render is already in progress'
                                          : ('the bridge refused (' + res.status + ')');
-    speakFlash(btn, 'err', msg); return;
+    speakFlash(btn, 'err', msg); return false;
   }
   let url;
   try {
     const blob = await res.blob();
     url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    currentAudio = { audio, url, btn, wrap };
+    currentAudio = { audio, url, btn, wrap, onDone: onDone || null };
     audio.onended = () => { if (currentAudio && currentAudio.audio === audio) stopSpeaking(); };
     audio.onerror = () => {
       const b = currentAudio && currentAudio.btn;
@@ -3607,10 +3628,12 @@ async function msgSpeak(wrap, btn){
     };
     btn.disabled = false; btn.textContent = '■ stop'; btn.title = 'Stop playback';
     await audio.play();
+    return true;
   } catch (e) {
     if (url) { try { URL.revokeObjectURL(url); } catch (e2) {} }
     currentAudio = null;
     speakFlash(btn, 'err', String((e && e.message) || e));
+    return false;
   }
 }
 
@@ -3765,6 +3788,7 @@ function toggleTalk(){
 async function startTalk(){
   const btn = document.getElementById('chat-talk');
   if (!btn || talkRec) return;
+  if (convOn()) stopConv('manual dictation started');  // conv and manual are exclusive
   if (autoVad) stopAuto('manual dictation started');   // manual and auto are exclusive
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
     speakFlash(btn, 'no mic', 'this webview cannot record audio');
@@ -4047,7 +4071,11 @@ function vadSplice(frames, base, from, to){
   return out;
 }
 
-function autoOn(){ return !!autoVad; }
+/* The capture session is SHARED between auto-dictation and conversation mode, so
+   "is it on" always has to name WHICH — otherwise the auto chip would light up gold
+   while conversation mode is the thing actually holding the mic. */
+function autoOn(){ return !!autoVad && autoVad.mode !== 'conv'; }
+function convOn(){ return !!autoVad && autoVad.mode === 'conv'; }
 
 /* The ▶ speak flash idiom, with the ONE thing it cannot do for us: speakFlash restores
    SPEAK_LABEL after 2s (it was written for the speak button), so using it on this chip
@@ -4059,8 +4087,10 @@ function autoFlash(btn, text, title){
   btn.disabled = false;
   btn.classList.remove('on');
   btn.textContent = text;
-  btn.title = title || AUTO_TITLE;
-  setTimeout(() => { if (document.body.contains(btn) && !autoVad) renderAutoBtn(); }, 2000);
+  btn.title = title || (btn.id === 'chat-conv' ? CONV_TITLE : AUTO_TITLE);
+  setTimeout(() => {
+    if (document.body.contains(btn) && !autoVad){ renderAutoBtn(); renderConvBtn(); }
+  }, 2000);
 }
 
 function renderAutoBtn(){
@@ -4068,7 +4098,7 @@ function renderAutoBtn(){
   if (!btn) return;
   const on = sttOn();
   btn.hidden = !on;
-  if (!on && autoVad) stopAuto('the speech-to-text default was cleared');
+  if (!on && autoOn()) stopAuto('the speech-to-text default was cleared');
   btn.classList.toggle('on', autoOn());
   btn.innerHTML = '';
   if (autoOn()){
@@ -4088,11 +4118,15 @@ function renderAutoBtn(){
 }
 
 function toggleAuto(){
-  if (autoVad) stopAuto(''); else startAuto();
+  if (convOn()) stopConv('auto dictation started');   // conv and auto are exclusive
+  if (autoVad) stopAuto(''); else startAuto('auto');
 }
 
-async function startAuto(){
-  const btn = document.getElementById('chat-auto');
+/* `mode` is 'auto' (dictation — transcripts are APPENDED) or 'conv' (conversation —
+   transcripts are SENT and the reply is spoken back). The capture half is identical,
+   so it is shared rather than duplicated: one worklet, one segmenter, ONE teardown. */
+async function startAuto(mode){
+  const btn = document.getElementById(mode === 'conv' ? 'chat-conv' : 'chat-auto');
   if (!btn || autoVad) return;
   if (talkRec) stopTalk(true);                  // manual and auto are exclusive
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia
@@ -4129,6 +4163,7 @@ async function startAuto(){
       { processorOptions: { block: VAD_BLOCK } });
     const frameMs = (VAD_BLOCK / ctx.sampleRate) * 1000;
     autoVad = { ctx: ctx, stream: stream, node: node, rate: ctx.sampleRate,
+                mode: (mode === 'conv' ? 'conv' : 'auto'), frameMs: frameMs,
                 st: vadInit(frameMs), frames: [], base: 0,
                 queue: [], busy: false, errors: 0, stopping: false };
     node.port.onmessage = (ev) => autoFrame(ev.data);
@@ -4141,12 +4176,20 @@ async function startAuto(){
     autoFlash(btn, 'err', String((e && e.message) || e)); return;
   }
   renderAutoBtn();
+  renderConvBtn();
 }
 
 /* One block from the worklet: buffer it, step the segmenter, flush on a close. */
 function autoFrame(msg){
   const a = autoVad;
   if (!a || a.stopping || !msg || !msg.buf) return;
+  // ═ THE FEEDBACK-LOOP GATE (conversation mode's critical invariant) ═
+  // While the harness is thinking or SPEAKING, the segmenter is off entirely — the
+  // block is dropped before it is buffered or measured. Nothing the assistant says
+  // can be segmented, transcribed, or taught to the noise floor. The mic stream
+  // stays open (re-acquiring it every turn would re-prompt and flicker the OS
+  // indicator); it is the SEGMENTER, not the capture, that is suspended.
+  if (a.mode === 'conv' && convGated(convSt)) return;
   const buf = new Float32Array(msg.buf);
   a.frames.push(buf);
   const r = vadStep(a.st, msg.rms);
@@ -4167,6 +4210,9 @@ function autoEnqueue(pcm){
   const a = autoVad;
   if (!a || !pcm || !pcm.length) return;
   a.queue.push(pcm);
+  // Conversation mode closes the gate the moment an utterance exists — the STT call
+  // is itself a phase the mic must not be listening through.
+  if (a.mode === 'conv') convEvent('utterance');
   autoDrain();
 }
 
@@ -4193,21 +4239,31 @@ async function autoDrain(){
     // door slam. Silently skipping is the second defence against whisper's habit of
     // hallucinating a sentence out of silence.
     const text = String(j.text || '').trim();
-    if (text) appendTranscript(text, false);
+    if (a.mode === 'conv'){
+      // conversation mode: an empty transcript is still a SUCCESSFUL call (the VAD
+      // gated in a noise) — it resets the failure counter and simply resumes.
+      if (autoVad === a) convEvent(text ? 'transcript' : 'transcript_empty', text);
+    } else if (text) appendTranscript(text, false);
     if (autoVad === a) a.errors = 0;
   } catch (e){
-    console.warn('[auto] stt failed', e);
+    console.warn('[' + a.mode + '] stt failed', e);
     if (autoVad === a){
-      a.errors++;
-      if (a.errors >= VAD_MAX_ERRORS){
-        const btn = document.getElementById('chat-auto');
-        stopAuto('');
-        autoFlash(btn, 'err', String((e && e.message) || e));
-        return;
+      if (a.mode === 'conv'){
+        // the failure counter for conversation mode lives in convSt, so one place
+        // owns "how many things have gone wrong in a row" for the whole loop.
+        convEvent('stt_fail', String((e && e.message) || e));
+      } else {
+        a.errors++;
+        if (a.errors >= VAD_MAX_ERRORS){
+          const btn = document.getElementById('chat-auto');
+          stopAuto('');
+          autoFlash(btn, 'err', String((e && e.message) || e));
+          return;
+        }
       }
     }
   } finally {
-    if (autoVad === a){ a.busy = false; renderAutoBtn(); }
+    if (autoVad === a){ a.busy = false; renderAutoBtn(); renderConvBtn(); }
   }
   if (autoVad === a && a.queue.length) autoDrain();
 }
@@ -4224,8 +4280,308 @@ function stopAuto(reason){
   try { a.stream.getTracks().forEach(t => t.stop()); } catch (e) {}   // drops the mic light
   try { if (a.ctx) a.ctx.close(); } catch (e) {}
   a.queue = []; a.frames = [];
-  if (reason) console.log('[auto] stopped: ' + reason);
+  if (reason) console.log('[' + a.mode + '] stopped: ' + reason);
   renderAutoBtn();
+  renderConvBtn();
+}
+
+/* ═══ CONVERSATION MODE — hands-free speak ⇄ reply ════════════════════════════
+   Debi's ask: speak, and the harness answers OUT LOUD, then listens again.
+
+       LISTENING ──utterance──▶ THINKING ──transcript──▶ WAITING (turn streams)
+            ▲                                                │
+            │                                            turn end
+       (300ms grace)                                         ▼
+         GRACE ◀──playback ends──  SPEAKING  ◀──render+play──┘
+
+   THE CRITICAL INVARIANT: THE MIC MUST NEVER HEAR THE ASSISTANT. The VAD is gated
+   OFF in every phase except LISTENING — including THINKING (an STT call in flight),
+   WAITING (the reply is streaming) and SPEAKING (the reply is playing out loud) —
+   and a 300ms grace runs after playback before the segmenter re-arms, because the
+   tail of a clip and the speaker's own decay would otherwise open an utterance made
+   of the harness's own voice. That loop would be self-sustaining and unstoppable.
+
+   The state machine is PURE (convInit/convStep/convGated: a new object per step, no
+   DOM, no audio, no fetch) so the whole transition table is table-testable —
+   bridge/tests/test_conv_mode.js mirrors it. The impure half below only turns the
+   returned `action` into a side effect.
+
+   ⚠️ OUT OF SCOPE v1: BARGE-IN. You cannot interrupt playback by talking over it —
+   doing so needs the mic live DURING playback, which is exactly the invariant above,
+   and would require echo cancellation good enough to subtract our own output. Click
+   ■ stop on the reply (or the conv chip) to cut it short; stopping playback resumes
+   listening immediately, which is the manual version of the same thing. */
+
+const CONV_GRACE_MS = 300;        // silence after playback before the mic re-arms
+const CONV_MAX_ERRORS = 3;        // consecutive STT/TTS failures before it gives up
+const CONV_LABEL = 'conv';
+const CONV_TITLE = 'Conversation — speak, the reply is sent and read back to you';
+
+/* PURE: the initial state. `phase` is the whole machine; the two counters are
+   CONSECUTIVE failures (any success resets its own counter). */
+function convInit(){
+  return { phase: 'off', sttErrors: 0, ttsErrors: 0, reason: '' };
+}
+
+/* PURE: is the segmenter suspended? TRUE in every phase but 'listening'. This is the
+   feedback-loop gate expressed as one readable predicate rather than a scatter of
+   flags, so a new phase added later is gated by DEFAULT (fail closed). */
+function convGated(st){
+  return !st || st.phase !== 'listening';
+}
+
+/* PURE: one event → { st, action }. A NEW state object every time.
+   Events: start · stop · utterance · transcript · transcript_empty · stt_fail
+           turn_start · send_fail · turn_end · speak_ok · speak_skip · speak_fail
+           grace_done
+   Actions: null · 'transcribe' · 'send' · 'speak' · 'grace' · 'give_up' */
+function convStep(st, ev, detail){
+  const s = { phase: st.phase, sttErrors: st.sttErrors, ttsErrors: st.ttsErrors,
+              reason: st.reason };
+  const stop = (why) => { s.phase = 'off'; s.reason = why || ''; };
+
+  if (ev === 'stop'){ stop(detail || ''); return { st: s, action: null }; }
+  if (ev === 'start'){
+    // starting always resets the counters: a fresh session must not inherit the
+    // failures that ended the previous one.
+    return { st: { phase: 'listening', sttErrors: 0, ttsErrors: 0, reason: '' },
+             action: null };
+  }
+  // Every other event is ignored while off — a late callback from a torn-down
+  // session (a clip finishing after stopConv) must never restart the loop.
+  if (s.phase === 'off') return { st: s, action: null };
+
+  switch (ev){
+    case 'utterance':
+      // only meaningful while listening; the gate should already have prevented
+      // one from arriving in any other phase, so this is belt-and-braces.
+      if (s.phase !== 'listening') return { st: s, action: null };
+      s.phase = 'thinking';
+      return { st: s, action: 'transcribe' };
+
+    case 'transcript':
+      if (s.phase !== 'thinking') return { st: s, action: null };
+      s.sttErrors = 0;
+      s.phase = 'waiting';               // gated from here until playback ends
+      return { st: s, action: 'send' };
+
+    case 'transcript_empty':
+      // NOT a failure: the VAD gated in a door slam and whisper honestly heard
+      // nothing. It resets the counter and simply goes back to listening.
+      if (s.phase !== 'thinking') return { st: s, action: null };
+      s.sttErrors = 0;
+      s.phase = 'listening';
+      return { st: s, action: null };
+
+    case 'stt_fail':
+      s.sttErrors++;
+      if (s.sttErrors >= CONV_MAX_ERRORS){
+        stop(detail || 'speech-to-text failed repeatedly');
+        return { st: s, action: 'give_up' };
+      }
+      s.phase = 'listening';
+      return { st: s, action: null };
+
+    case 'turn_start':
+      // The user typed and sent by hand mid-conversation. That is a normal turn:
+      // gate the mic and let the reply be spoken like any other. Also fired by our
+      // OWN send, where it is a no-op (already waiting).
+      if (s.phase === 'waiting') return { st: s, action: null };
+      s.phase = 'waiting';
+      return { st: s, action: null };
+
+    case 'send_fail':
+      stop(detail || 'the message could not be sent');
+      return { st: s, action: 'give_up' };
+
+    case 'turn_end':
+      if (s.phase !== 'waiting') return { st: s, action: null };
+      s.phase = 'speaking';              // still gated
+      return { st: s, action: 'speak' };
+
+    case 'speak_ok':
+      // playback finished (or was stopped) — the grace window, THEN listening.
+      if (s.phase !== 'speaking') return { st: s, action: null };
+      s.ttsErrors = 0;
+      s.phase = 'grace';
+      return { st: s, action: 'grace' };
+
+    case 'speak_skip':
+      // nothing speakable in the reply (a pure code block). Not a failure — no
+      // counter moves, and the loop continues.
+      if (s.phase !== 'speaking') return { st: s, action: null };
+      s.phase = 'grace';
+      return { st: s, action: 'grace' };
+
+    case 'speak_fail':
+      if (s.phase !== 'speaking') return { st: s, action: null };
+      s.ttsErrors++;
+      if (s.ttsErrors >= CONV_MAX_ERRORS){
+        stop(detail || 'the voice engine failed repeatedly');
+        return { st: s, action: 'give_up' };
+      }
+      // a single failed render skips speaking and resumes — through the grace path,
+      // so there is exactly ONE way back to listening.
+      s.phase = 'grace';
+      return { st: s, action: 'grace' };
+
+    case 'grace_done':
+      if (s.phase !== 'grace') return { st: s, action: null };
+      s.phase = 'listening';
+      return { st: s, action: null };
+  }
+  return { st: s, action: null };
+}
+
+/* PURE: the chip's label for a phase. Exactly the three states Debi sees. */
+function convLabel(st){
+  const p = st ? st.phase : 'off';
+  if (p === 'listening') return 'listening';
+  if (p === 'thinking' || p === 'waiting') return '…';
+  if (p === 'speaking' || p === 'grace') return 'speaking';
+  return CONV_LABEL;
+}
+
+let convSt = convInit();          // THE named state object — no scattered flags
+let convGraceTimer = null;
+let convWrap = null;              // the assistant bubble whose reply is being spoken
+
+function convAvail(){ return sttOn() && voiceOn(); }   // needs BOTH defaults
+
+function renderConvBtn(){
+  const btn = document.getElementById('chat-conv');
+  if (!btn) return;
+  const avail = convAvail();
+  btn.hidden = !avail;
+  if (!avail && convOn()) stopConv('a voice default was cleared');
+  btn.classList.toggle('on', convOn());
+  btn.innerHTML = '';
+  if (convOn()){
+    const dot = document.createElement('span');
+    dot.className = 'talk-dot';
+    dot.textContent = (convSt.phase === 'speaking' || convSt.phase === 'grace') ? '▸ ' : '● ';
+    const t = document.createElement('span');
+    t.className = 'talk-t'; t.textContent = convLabel(convSt);
+    btn.appendChild(dot); btn.appendChild(t);
+    btn.title = CONV_TITLE + '\nClick to stop.';
+  } else {
+    btn.textContent = CONV_LABEL;
+    btn.title = CONV_TITLE;
+  }
+}
+
+function toggleConv(){
+  if (convOn()) stopConv(''); else startConv();
+}
+
+async function startConv(){
+  if (convOn()) return;
+  if (autoOn()) stopAuto('conversation mode started');   // conv and auto are exclusive
+  if (talkRec) stopTalk(true);                           // …and manual dictation too
+  convSt = convStep(convSt, 'start').st;
+  await startAuto('conv');                               // shared capture half
+  // …and if capture never came up (no mic, permission refused, worklet failure —
+  // startAuto has already flashed the reason on the chip), the machine must not be
+  // left claiming to listen through a microphone that does not exist.
+  if (!convOn()) convSt = convStep(convSt, 'stop', 'capture did not start').st;
+  renderConvBtn();
+}
+
+/* Feed the machine and perform whatever it decided. The ONLY place a conv action
+   becomes a side effect — every caller goes through here, never through convStep. */
+function convEvent(ev, detail){
+  const r = convStep(convSt, ev, detail);
+  const prev = convSt;
+  convSt = r.st;
+  // Entering the turn drops anything the segmenter had already queued: an utterance
+  // captured a moment before the gate closed belongs to the turn that is now in
+  // flight, not to the next one. (NOT on 'thinking' — that is the phase whose whole
+  // job is to drain the utterance that just arrived.)
+  if (autoVad && autoVad.mode === 'conv'
+      && (convSt.phase === 'waiting' || convSt.phase === 'speaking')) autoVad.queue = [];
+  // Re-arming the segmenter resets it, so each listening window re-learns the room
+  // (and can never resume mid-utterance from before the gate).
+  if (autoVad && autoVad.mode === 'conv'
+      && prev.phase !== 'listening' && convSt.phase === 'listening'){
+    autoVad.st = vadInit(autoVad.frameMs);
+    autoVad.frames = []; autoVad.base = 0;
+  }
+  switch (r.action){
+    case 'send':  convSend(detail); break;
+    case 'speak': convSpeak(); break;
+    case 'grace':
+      if (convGraceTimer) clearTimeout(convGraceTimer);
+      convGraceTimer = setTimeout(() => {
+        convGraceTimer = null; convEvent('grace_done');
+      }, CONV_GRACE_MS);
+      break;
+    case 'give_up': {
+      const why = convSt.reason;
+      const btn = document.getElementById('chat-conv');
+      stopConv('');                       // releases the mic; convSt already 'off'
+      autoFlash(btn, 'err', why || CONV_TITLE);
+      console.warn('[conv] gave up: ' + why);
+      return;
+    }
+  }
+  renderConvBtn();
+}
+
+/* The transcript goes into the composer and is SENT — visible in the transcript
+   exactly like a typed message, which is the point: a misheard word is on the
+   record rather than silently reinterpreted. The box is left editable throughout. */
+function convSend(text){
+  const box = document.getElementById('chat-input');
+  const t = String(text || '').trim();
+  if (!box || !t){ convEvent('send_fail', 'nothing to send'); return; }
+  if (chatBusy){ convEvent('send_fail', 'a turn was already in flight'); return; }
+  // Anything the user had half-typed is kept in front of the transcript rather than
+  // thrown away — losing typed words to a stray noise would be unforgivable.
+  const cur = (box.value || '').trim();
+  box.value = cur ? (cur + ' ' + t) : t;
+  try { sendChat(); } catch (e){
+    console.warn('[conv] send failed', e);
+    convEvent('send_fail', String((e && e.message) || e));
+  }
+}
+
+/* Speak the reply through the EXISTING ▶ speak path — same endpoint, same replay
+   cache, same speakText() stripping, same single-clip-app-wide rule. */
+function convSpeak(){
+  const wrap = convWrap;
+  convWrap = null;
+  if (!wrap || !document.body.contains(wrap)){ convEvent('speak_skip'); return; }
+  let btn = wrap.querySelector(':scope > .msg-voice .msg-act');
+  // A reply with no ▶ speak line (voice switched off mid-turn) still gets a button
+  // object so msgSpeak's flash path has somewhere to write; it is simply not in the
+  // DOM, and speakFlash's contains() check makes that a no-op.
+  if (!btn) btn = document.createElement('button');
+  stopSpeaking();
+  msgSpeak(wrap, btn, () => convEvent('speak_ok')).then(ok => {
+    if (!ok) convEvent('speak_fail', 'the reply could not be spoken');
+  }).catch(e => convEvent('speak_fail', String((e && e.message) || e)));
+}
+
+/* Called from sendChat's finally: THE turn ended (any lane, any outcome, including
+   a user-clicked Stop — the finally always runs). */
+function convTurnEnd(holder){
+  if (!convOn()) return;
+  convWrap = holder || null;
+  convEvent('turn_end');
+}
+
+/* THE ONE conversation exit. The chip, a lane switch, leaving Chat, a cleared voice
+   default, repeated failures and a failed send all come through here — it releases
+   the mic (via the single stopAuto teardown), kills any playback, and clears the
+   grace timer, so nothing can re-arm a loop that is supposed to be over. */
+function stopConv(reason){
+  if (convGraceTimer){ clearTimeout(convGraceTimer); convGraceTimer = null; }
+  convSt = convStep(convSt, 'stop', reason).st;
+  convWrap = null;
+  stopSpeaking();                    // the assistant must not keep talking
+  if (autoVad && autoVad.mode === 'conv') stopAuto(reason || 'conversation ended');
+  if (reason) console.log('[conv] stopped: ' + reason);
+  renderConvBtn();
 }
 
 async function refreshBrowse(){
@@ -5209,9 +5565,11 @@ function renderVoiceClips(a, box){
   }
   const n = document.createElement('div');
   n.className = 'md-imnote'; n.style.marginTop = '10px'; n.style.maxWidth = '100%';
-  n.textContent = 'This model clones the voice it hears — add .wav clips to '
-    + (voiceLibDir || 'data/voices') + ' to grow this list (wav, mp3 and flac need '
-    + 'no extra tools; m4a needs ffmpeg).';
+  // The suffix list is REF_AUDIO_SUFFIXES (bridge/voice.py) — all four already work;
+  // the note used to say ".wav clips", which read as a restriction that was never real.
+  n.textContent = 'This model clones the voice it hears — add wav / mp3 / flac / m4a '
+    + 'clips to ' + (voiceLibDir || 'data/voices') + ' to grow this list (wav, mp3 '
+    + 'and flac need no extra tools; m4a needs ffmpeg).';
   box.appendChild(n);
 }
 
@@ -6746,6 +7104,10 @@ async function sendChat() {
   if (!text) return;
   inp.value = '';
   chatBusy = true;
+  // CONVERSATION MODE: a turn is starting — gate the mic. Fired for OUR sends (a
+  // no-op, already waiting) and for a message the user types by hand mid-conv,
+  // which is treated as a normal turn: spoken back, then listening resumes.
+  if (typeof convOn === 'function' && convOn()) convEvent('turn_start');
   const sendBtn = document.getElementById('chat-send');
   if (chatMode === 'hermes'){
     sendBtn.textContent = 'Stop';
@@ -6942,6 +7304,9 @@ async function sendChat() {
       const p = pendingAttachDrop; pendingAttachDrop = null;
       dropSidecarAttachment(p.text);
     }
+    // CONVERSATION MODE: THE turn ended — any lane, any outcome, including a
+    // user-clicked Stop (this finally always runs). Speak the reply, then listen.
+    if (typeof convOn === 'function' && convOn()) convTurnEnd(holder);
   }
 }
 
