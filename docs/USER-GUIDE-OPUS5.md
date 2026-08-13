@@ -77,6 +77,11 @@ sits in between, so it's the fastest option and the one to use for ordinary
 conversation, writing, and thinking out loud. It has no tools and no web access —
 answers come from the model itself.
 
+The faint note under the chips — *direct to runner — no tools, fastest* — is saying
+exactly that: your message goes to the loaded model ("the runner") and nothing else
+handles it. Agent and Hermes are slower because more machinery is involved, not
+because the model is.
+
 **Chat is the only mode that takes images.** Attach one with the **⊕** button beside
 the message box, or simply **drag an image onto the chat** — the message bar shows a
 gold dashed outline when you're over the drop zone. PNG, JPEG and WebP up to 8 MB.
@@ -149,6 +154,25 @@ ability to **drive your Chrome browser** — clicking, typing, navigating, readi
 It needs the Browser MCP Chrome extension installed and a tab connected. One flip wires
 it into both agents; flipping it off removes it from both. Hermes picks up the change
 on new conversations.
+
+### Voice
+
+Set a text-to-speech and/or speech-to-text default in **Models → Audio** and four
+controls appear around the composer:
+
+| Control | What it does |
+|---|---|
+| **▶ speak** | Under each assistant reply — reads it aloud in the pinned voice. A second listen of the same reply is instant (renders are cached). |
+| **● talk** | Records you, then appends the transcript to the message box. Never sends on its own. |
+| **auto** | Hands-free dictation: listens continuously and appends each utterance. Still never sends. |
+| **conv** | Full conversation: you speak → it sends → the reply streams → the reply is spoken → it listens again. |
+
+**conv only appears when both a TTS and an STT default are set** — with only one of
+them the loop cannot close. Its label doubles as the status readout
+(`● listening` / `● …` / `▸ speaking`). Click a lit chip again to stop; the macOS
+microphone indicator going out is the proof the mic was released. You can't talk over
+a reply that's playing — press **■ stop** on the clip and listening resumes
+immediately.
 
 ---
 

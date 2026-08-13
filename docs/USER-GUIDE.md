@@ -92,6 +92,32 @@ title themselves after your first message; you can rename inline (click the name
 delete (✕, then confirm), or duplicate one. While any turn is running, the Send
 button becomes **Stop**, and Stop genuinely stops it.
 
+### The note under the chips
+
+In Chat mode a faint line reads *direct to runner — no tools, fastest*. That's the
+whole difference between the three routes said in five words: **Chat** is a straight
+line to the model you loaded (nothing between you and it), **Agent** goes the long way
+round through Odysseus so it can search and research, and **Hermes** goes the long way
+round through the agent so it can actually do things. Slower modes are slower because
+they can do more.
+
+### Speaking and listening
+
+Once you've set a voice model in **Models → Audio**, four small controls appear:
+
+- **▶ speak** sits under every assistant reply and reads it aloud in the pinned voice.
+  Press it again on the same reply and it plays instantly — renders are cached.
+- **● talk** records you and drops the transcript into the message box. It never sends
+  by itself, so a misheard word stays editable.
+- **auto** is hands-free dictation: it listens, and each time you stop speaking the
+  transcript is appended to the box. Still never sent.
+- **conv** is a full conversation: you speak, it sends, the reply streams and is read
+  back to you, then it listens again. It only appears when you've set **both** a
+  text-to-speech and a speech-to-text default — half of the loop is no loop.
+
+Click a lit chip again to stop. When the mic is released the macOS microphone
+indicator goes out — that's the honest signal that nothing is listening.
+
 ---
 
 ## Giving it eyes

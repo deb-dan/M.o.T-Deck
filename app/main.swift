@@ -153,7 +153,71 @@ final class DropWebView: WKWebView {
     }
 }
 
+// ── downloads ──
+// A WKWebView SAVES NOTHING by itself: a response it cannot display (an audio export
+// from VoiceStudio, a log file, anything sent as Content-Disposition: attachment) and
+// every `<a download>` click are simply DROPPED unless the host app answers the
+// download delegate. That is exactly the silent-no-op class that broke ⊕ attach
+// (runOpenPanelWith) and ● talk (requestMediaCapturePermissionFor) — Debi hit it as
+// "the download button in the VoiceStudio tab does nothing".
+//
+// One handler instance is shared by all five tabs. It must be RETAINED by the app:
+// WKDownload.delegate is weak, so a handler created per download would deallocate
+// before decideDestination is ever called.
+@available(macOS 11.3, *)
+final class DownloadHandler: NSObject, WKDownloadDelegate {
+    // download → where we told WebKit to put it (downloadDidFinish carries no URL).
+    private var dests: [ObjectIdentifier: URL] = [:]
+
+    // Never-clobber " (n)" suffixing, matching the artifact-save discipline: a
+    // generated clip or export cannot be re-made if we silently overwrite it.
+    static func destination(for suggested: String) -> URL {
+        let fm = FileManager.default
+        let dir = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory() + "/Downloads")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // BASENAME ONLY — suggestedFilename is page-controlled data and must never be
+        // able to climb out of ~/Downloads.
+        var base = (suggested as NSString).lastPathComponent
+        if base.isEmpty || base == "." || base == ".." { base = "download" }
+        let ext = (base as NSString).pathExtension
+        let stem = (base as NSString).deletingPathExtension
+        var candidate = dir.appendingPathComponent(base)
+        var n = 2
+        while fm.fileExists(atPath: candidate.path) && n < 1000 {
+            let name = ext.isEmpty ? "\(stem) (\(n))" : "\(stem) (\(n)).\(ext)"
+            candidate = dir.appendingPathComponent(name)
+            n += 1
+        }
+        return candidate
+    }
+
+    func download(_ download: WKDownload,
+                  decideDestinationUsing response: URLResponse,
+                  suggestedFilename: String,
+                  completionHandler: @escaping (URL?) -> Void) {
+        let url = DownloadHandler.destination(for: suggestedFilename)
+        dests[ObjectIdentifier(download)] = url
+        completionHandler(url)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let url = dests.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        // The ONLY completion signal: reveal the file in Finder once. Deliberately not a
+        // notification (needs a bundle-level surface + a thing to dismiss) and not a
+        // page-side toast (the SPA is a third party we do not script).
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        dests.removeValue(forKey: ObjectIdentifier(download))
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+    // retained handler for every tab's downloads (see DownloadHandler); AnyObject so the
+    // stored property itself carries no availability requirement.
+    var downloadHandler: AnyObject?
     var window: NSWindow!
     var dropOverlay: NSView?
     var panelWV: WKWebView!      // Mission Control (:8700)
@@ -182,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var resolvedRoot = harnessRoot
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if #available(macOS 11.3, *) { downloadHandler = DownloadHandler() }
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -537,6 +602,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if let u = webView.url, u.scheme == "http" { failedLoads.remove(ObjectIdentifier(webView)) }
     }
 
+    // ── download routing (all five tabs share this delegate) ──
+    // A response the webview cannot render (attachment disposition, unknown MIME) is
+    // turned into a download instead of being silently discarded. Everything WebKit CAN
+    // show is still shown — byte-compatible with the previous no-delegate default.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if #available(macOS 11.3, *), !navigationResponse.canShowMIMEType {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    // `<a download>` clicks — including the blob: URLs a SPA builds client-side.
+    // WebKit sets shouldPerformDownload for them; every other navigation is allowed
+    // exactly as before (no delegate = .allow).
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if #available(macOS 11.3, *), navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    @available(macOS 11.3, *)
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
+                 didBecome download: WKDownload) {
+        download.delegate = downloadHandler as? WKDownloadDelegate
+    }
+
+    @available(macOS 11.3, *)
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
+                 didBecome download: WKDownload) {
+        download.delegate = downloadHandler as? WKDownloadDelegate
+    }
+
     func showUnreachable(_ wv: WKWebView) {
         failedLoads.insert(ObjectIdentifier(wv))
         wv.loadHTMLString(
@@ -610,7 +714,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url { NSWorkspace.shared.open(url) }
+        // blob:/data:/javascript: are in-page constructs — handing one to NSWorkspace
+        // does nothing useful (a `<a download target=_blank>` on a client-built blob
+        // lands here). Everything else keeps the previous behaviour exactly.
+        if let url = navigationAction.request.url {
+            let s = (url.scheme ?? "").lowercased()
+            if s != "blob" && s != "data" && s != "javascript" { NSWorkspace.shared.open(url) }
+        }
         return nil
     }
 

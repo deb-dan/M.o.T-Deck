@@ -21,6 +21,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DST="$HOME/Library/Application Support/Harness"
 APP="/Applications/Harness.app"
 
+# The cowork sandbox cannot unlink files under this mount, so an interrupted git
+# operation there leaves .git/HEAD.lock / .git/index.lock behind and every later
+# commit fails with "Unable to create ... File exists". They ARE removable from the
+# Mac, which is the only place ship.sh runs — so clear them here, best-effort.
+# ⚠️ PENDING FABLE QA — ops-path edit. Safe by construction (no git process runs
+# during ship.sh, and failure is swallowed), but ship.sh is Fable-lane.
+rm -f "$ROOT/.git/HEAD.lock" "$ROOT/.git/index.lock" 2>/dev/null || true
+
 [[ -d "$DST" ]] || { echo "[ship] ERROR: no snapshot at $DST (fat app not provisioned?)"; exit 1; }
 [[ -d "$APP" ]] || { echo "[ship] ERROR: $APP not found"; exit 1; }
 
