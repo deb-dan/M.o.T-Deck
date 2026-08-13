@@ -205,6 +205,11 @@ for line in sys.stdin:
         out = req["out"]
         if mode != "nowav":
             open(out, "wb").write(b"RIFF" + b"\0" * 64)
+        # echo the reference back so the test can prove the pin reached the engine
+        # cwd is the ROOT the worker was spawned in; the temp render dir is deleted
+        open(os.path.join("data", "seen.json"), "w").write(
+            json.dumps({"ref_audio": req.get("ref_audio"), "ref_text": req.get("ref_text"),
+                        "voice": req.get("voice")}))
         print(json.dumps({"id": rid, "ok": True, "out": out, "bytes": 68}), flush=True)
     else:
         print(json.dumps({"id": rid, "ok": True}), flush=True)
@@ -262,6 +267,19 @@ try:
                             mlx_py=sys.executable)
     check("changing the VOICE does not respawn the worker",
           voice.worker_resident()["pid"] == pid1)
+
+    # REFERENCE AUDIO: same rule, and it is the ONLY voice control a zero-shot
+    # model has — a clip change that cost a 3.6GB reload would be unusable.
+    voice.tts_render_worker(dict(MLX_ENTRY, ref_audio="/lib/debi.wav",
+                                 ref_text="one two"), "r", root=R, mlx_py=sys.executable)
+    seen = json.loads((R / "data" / "seen.json").read_text())
+    check("the pinned CLIP reaches the worker over the protocol",
+          seen["ref_audio"] == "/lib/debi.wav" and seen["ref_text"] == "one two")
+    check("changing the REFERENCE CLIP does not respawn the worker",
+          voice.worker_resident()["pid"] == pid1)
+    voice.tts_render_worker(MLX_ENTRY, "plain", root=R, mlx_py=sys.executable)
+    check("an unpinned render sends an EMPTY reference (the worker normalises to None)",
+          json.loads((R / "data" / "seen.json").read_text())["ref_audio"] == "")
 
     # a model change MUST respawn
     voice.tts_render_worker(MLX_OTHER, "other", root=R, mlx_py=sys.executable)

@@ -4301,6 +4301,24 @@ function showModelsSection(sec){
 /* ---------- AUDIO tab: installed voice models ---------- */
 let aSel = null;            // selected audio model id
 let voiceErr = '';          // last /api/voice/config failure, surfaced in the detail pane
+/* ---------- the VOICE LIBRARY (reference clips for cloning models) ----------
+   A zero-shot model (OmniVoice, Qwen3-TTS Base) has no speaker table at all, so it
+   renders a DIFFERENT random voice every ▶ speak. The only way to hear the same
+   person twice is to hand it the same CLIP twice — data/voices holds those clips. */
+let voiceLib = [];          // [{name, stem, path, size}]
+let voiceLibDir = '';
+let voiceLibLoaded = false;
+let pendingClip = null;     // {blob, fmt, id} — a just-recorded clip awaiting a name
+async function loadVoiceLib(force){
+  if (voiceLibLoaded && !force) return;
+  voiceLibLoaded = true;                    // set FIRST: a re-render must not re-fetch
+  try {
+    const res = await fetch('/api/voice/library');
+    const j = await res.json().catch(() => ({}));
+    if (j && j.ok){ voiceLib = j.clips || []; voiceLibDir = j.dir || ''; }
+  } catch (e) {}
+  renderAudioDetail();
+}
 function audioEngineLabel(a){ return a.engine === 'mlx' ? 'mlx' : 'llama.cpp'; }
 function audioDefaultId(r, role){
   const v = (r && r.voice) || {};
@@ -4441,11 +4459,19 @@ function renderAudioDetail(){
      'text'  — a tts-mlx model with no verdict either way: free text, because a real
                voice we have never heard of must still be typable
      'none'  — tts-gguf (llama-tts has NO --voice flag at all) or an STT model
+     'clips' — the model is CLONING-capable and declares no names (entry.cloning):
+               voice identity comes from a reference wav, so the picker is the
+               voice library plus a record button. This REPLACES the old 'note'
+               dead-end for these models — the note said what was impossible
+               without offering the thing that is possible.
    Mirrored by bridge/tests/test_audio_rows.js. */
 function voiceChoiceMode(a){
   if (!a || (a.role || 'tts') !== 'tts') return 'none';
   if (a.format !== 'tts-mlx') return 'none';
+  // Declared names WIN over the cloning verdict: a checkpoint that lists speakers
+  // is driven by them, whatever else its config says.
   if (a.voices && a.voices.length) return 'chips';
+  if (a.cloning) return 'clips';
   return a.voice_note ? 'note' : 'text';
 }
 function renderAudioVoice(a){
@@ -4453,6 +4479,7 @@ function renderAudioVoice(a){
   if (!box) return;
   box.innerHTML = '';
   const mode = voiceChoiceMode(a);
+  if (mode === 'clips'){ renderVoiceClips(a, box); return; }
   if (mode === 'none' || mode === 'note'){
     const txt = mode === 'note'
       ? a.voice_note
@@ -4545,6 +4572,234 @@ function renderAudioVoice(a){
     box.appendChild(n);
   }
 }
+/* ---------- the clip picker (cloning models) ----------
+   Chips are the library's clip STEMS; the pinned one is gold, exactly like a named
+   voice — because it IS the same decision, expressed in the only vocabulary this
+   family of models has. */
+const CLIP_MAX_S = 10;      // ~10s is what the engine keeps (ref_audio_max_duration_s)
+let clipRec = null;         // {rec, stream, timer, t0, fmt, id, cancelled} while recording
+function renderVoiceClips(a, box){
+  loadVoiceLib();           // fetches once, then re-renders
+  const cur = a.ref_audio || '';
+  const lab = document.createElement('div');
+  lab.className = 'md-loadphase'; lab.style.marginTop = '16px';
+  lab.textContent = 'Voice · reference clip' + (cur ? '' : ' · model default');
+  box.appendChild(lab);
+  const row = document.createElement('div');
+  row.className = 'md-actions'; row.style.marginTop = '8px';
+  box.appendChild(row);
+  const chip = (text, on, title, onclick) => {
+    const b = document.createElement('button');
+    b.className = 'mp-act' + (on ? ' on' : '');
+    b.textContent = text; b.title = title; b.onclick = onclick;
+    row.appendChild(b);
+    return b;
+  };
+  // The honest label for "no clip": this model does not HAVE a default voice — it
+  // improvises one per render. That is the behaviour a clip opts out of.
+  chip('model default', !cur,
+       'Random voice per render — pin a clip for a consistent voice',
+       () => setEntryRef(a.id, ''));
+  for (const c of voiceLib){
+    const on = c.name === cur;
+    const b = chip(c.stem, on, 'Always speak with the voice in ' + c.name,
+                   () => setEntryRef(a.id, c.name));
+    // Two-step delete, INSIDE the chip: the library is a folder of files and a
+    // stray click must never destroy a recording that cannot be re-made.
+    const x = document.createElement('span');
+    x.style.cssText = 'opacity:.45;margin-left:8px';
+    x.textContent = '✕';
+    x.title = 'Remove ' + c.name + ' from the library';
+    x.onclick = (ev) => {
+      ev.stopPropagation();
+      if (x.dataset.armed){ deleteClip(c.name); return; }
+      x.dataset.armed = '1'; x.textContent = 'sure?'; x.style.opacity = '1';
+      setTimeout(() => { if (x.dataset.armed){ delete x.dataset.armed;
+        x.textContent = '✕'; x.style.opacity = '.45'; } }, 3000);
+    };
+    b.appendChild(x);
+  }
+  if (clipRec && clipRec.id === a.id){
+    const sec = Math.floor((Date.now() - clipRec.t0) / 1000);
+    chip('■ ' + talkTime(sec), true, 'Stop recording', () => stopClipRec(false));
+  } else if (!pendingClip){
+    chip('🎙 record ' + CLIP_MAX_S + 's', false,
+         'Record a short clip of the voice you want and pin it',
+         () => startClipRec(a.id));
+  }
+  // A just-recorded clip waits here for a name — never auto-named, because the
+  // name is what the chip will read forever after.
+  if (pendingClip && pendingClip.id === a.id){
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.placeholder = 'name this voice'; inp.maxLength = 48;
+    inp.style.cssText = 'background:var(--card);color:var(--cream);border:1px solid '
+      + 'var(--line2);border-radius:8px;padding:4px 10px;font:11px var(--mono);'
+      + 'letter-spacing:.06em;outline:none;width:140px';
+    inp.onkeydown = e => { if (e.key === 'Enter') saveClip(a.id, inp.value); };
+    row.appendChild(inp);
+    chip('save', false, 'Save this recording into the voice library and pin it',
+         () => saveClip(a.id, inp.value));
+    chip('discard', false, 'Throw the recording away',
+         () => { pendingClip = null; renderAudioDetail(); });
+    setTimeout(() => { try { inp.focus(); } catch (e) {} }, 0);
+  }
+  // ref_text: optional, and worth offering — without it the engine transcribes the
+  // clip with whisper on EVERY render (a second model load each time).
+  if (cur){
+    const t = document.createElement('input');
+    t.type = 'text'; t.value = a.ref_text || ''; t.maxLength = 500;
+    t.placeholder = 'what the clip says (optional)';
+    t.style.cssText = 'background:var(--card);color:var(--cream);border:1px solid '
+      + 'var(--line2);border-radius:8px;padding:4px 10px;font:11px var(--mono);'
+      + 'letter-spacing:.06em;outline:none;width:100%;margin-top:10px';
+    t.onkeydown = e => { if (e.key === 'Enter') setEntryRef(a.id, cur, t.value); };
+    box.appendChild(t);
+  }
+  const n = document.createElement('div');
+  n.className = 'md-imnote'; n.style.marginTop = '10px'; n.style.maxWidth = '100%';
+  n.textContent = 'This model clones the voice it hears — add .wav clips to '
+    + (voiceLibDir || 'data/voices') + ' to grow this list (wav, mp3 and flac need '
+    + 'no extra tools; m4a needs ffmpeg).';
+  box.appendChild(n);
+}
+
+/* PURE: an AudioBuffer → a 16-bit mono PCM wav Blob.
+   WHY encode client-side: mlx-audio reads wav/mp3/flac with miniaudio, but M4A and
+   WebM go through `shutil.which("ffmpeg")` + ffprobe — and the bridge (and therefore
+   the worker) runs with a Finder-minimal PATH and our provisioned ffmpeg ships NO
+   ffprobe. A clip saved in the recorder's own container would load in the panel and
+   fail at render time. Encoding here means the library is always in the format the
+   engine reads with no external tool at all. */
+function wavFromBuffer(buf){
+  const ch = buf.getChannelData(0), n = ch.length, rate = buf.sampleRate;
+  const ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++){
+    const s = Math.max(-1, Math.min(1, ch[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+async function startClipRec(id){
+  if (clipRec || pendingClip) return;
+  const box = document.getElementById('ad-voice');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia
+      || typeof MediaRecorder === 'undefined'){
+    voiceErr = 'this webview cannot record audio'; renderAudioDetail(); return;
+  }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e){ voiceErr = 'microphone permission was refused'; renderAudioDetail(); return; }
+  const { mime, fmt } = talkMime();      // same container choice as dictation
+  let rec;
+  try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+  catch (e){
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e2) {}
+    voiceErr = 'this webview cannot record ' + (mime || 'audio');
+    renderAudioDetail(); return;
+  }
+  const chunks = [];
+  rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  rec.onstop = () => finishClipRec(chunks, fmt);
+  clipRec = { rec, stream, fmt, id, t0: Date.now(), timer: null, cancelled: false };
+  clipRec.timer = setInterval(() => {
+    if (!clipRec) return;
+    if ((Date.now() - clipRec.t0) / 1000 >= CLIP_MAX_S){ stopClipRec(false); return; }
+    renderAudioDetail();                 // repaints the ■ M:SS chip
+  }, 1000);
+  try { rec.start(); } catch (e){ stopClipRec(true); voiceErr = String(e && e.message || e); }
+  renderAudioDetail();
+}
+
+function stopClipRec(cancel){
+  const r = clipRec;
+  if (!r) return;
+  r.cancelled = !!cancel;
+  if (r.timer) clearInterval(r.timer);
+  r.timer = null;
+  try { if (r.rec && r.rec.state !== 'inactive') r.rec.stop(); } catch (e) {}
+  try { r.stream.getTracks().forEach(t => t.stop()); } catch (e) {}   // drops the mic light
+  if (cancel){ clipRec = null; renderAudioDetail(); }
+}
+
+async function finishClipRec(chunks, fmt){
+  const r = clipRec;
+  clipRec = null;
+  if (!r || r.cancelled){ renderAudioDetail(); return; }
+  const blob = new Blob(chunks, { type: (chunks[0] && chunks[0].type) || '' });
+  if (!blob.size){ voiceErr = 'nothing was recorded'; renderAudioDetail(); return; }
+  let out = blob, sfx = (fmt === 'mp4' ? 'm4a' : fmt);
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    out = wavFromBuffer(buf); sfx = 'wav';
+    try { await ctx.close(); } catch (e) {}
+  } catch (e) {
+    // ⚠️ Fallback: store the recorder's own container. It still plays, but an m4a
+    // reference needs ffmpeg+ffprobe on PATH at render time (see wavFromBuffer).
+    console.warn('[clip] wav encode failed, storing raw', e);
+  }
+  pendingClip = { blob: out, fmt: sfx, id: r.id };
+  renderAudioDetail();
+}
+
+async function saveClip(id, name){
+  const p = pendingClip;
+  if (!p || !String(name || '').trim()) return;
+  voiceErr = '';
+  let saved = '';
+  try {
+    const res = await fetch('/api/voice/library/save?name=' + encodeURIComponent(name)
+                            + '&fmt=' + encodeURIComponent(p.fmt),
+                            { method: 'POST', headers: { 'Content-Type': 'audio/' + p.fmt },
+                              body: p.blob });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+    else saved = j.name;
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  pendingClip = null;
+  await loadVoiceLib(true);
+  if (saved) await setEntryRef(id, saved);   // a clip you just recorded is the one you want
+  else renderAudioDetail();
+}
+
+async function deleteClip(name){
+  voiceErr = '';
+  try {
+    const res = await fetch('/api/voice/library/delete', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch (e){ voiceErr = 'could not reach the bridge'; }
+  await loadVoiceLib(true);
+  await initModels();        // the bridge un-pins any entry that used it
+}
+
+/* '' clears the pin. `text` is the optional transcript of the clip. */
+async function setEntryRef(id, name, text){
+  voiceErr = '';
+  const body = { id: id, name: name || '' };
+  if (text !== undefined) body.ref_text = String(text || '');
+  else {
+    const a = ((lastModels || {}).audio || []).find(x => x.id === id);
+    if (a && a.ref_text && name) body.ref_text = a.ref_text;   // keep the transcript on a re-pin
+  }
+  try {
+    const res = await fetch('/api/voice/entry-ref', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch { voiceErr = 'could not reach the bridge'; }
+  stopSpeaking();          // a clip rendered with the old voice must not outlive it
+  await initModels();      // re-read /api/models → the entry's new ref_audio
+}
+
 async function setEntryVoice(id, voice){
   voiceErr = '';
   try {

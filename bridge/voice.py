@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -269,7 +270,7 @@ def voices_for_entry(entry: "dict | None") -> dict:
          files we cannot read at all
     """
     blank = {"voices": [], "dialects": {}, "model_type": None,
-             "note": "", "source": "none"}
+             "note": "", "source": "none", "cloning": False}
     if not is_tts_entry(entry) or entry_format(entry) != "tts-mlx":
         return blank
     path = str((entry or {}).get("path") or "").strip()
@@ -287,20 +288,26 @@ def voices_for_entry(entry: "dict | None") -> dict:
 
     cfg = read_model_config(path)
     cv = voices_from_config(cfg)
+    pt = [] if cv["voices"] else voices_from_dir(path)
+    # CLONING is decided from the SAME config read — the panel must be able to branch
+    # on it without a second probe (audio_entry_view runs on every /api/models poll).
+    cloning = is_cloning_model(cfg) or _config_says_no_names(cfg, cv)
     if cv["voices"]:
         out = dict(blank, voices=cv["voices"], dialects=cv["dialects"],
-                   model_type=cv["model_type"], source="config")
+                   model_type=cv["model_type"], source="config", cloning=cloning)
     else:
-        pt = voices_from_dir(path)
         if pt:
-            out = dict(blank, voices=pt, model_type=cv["model_type"], source="dir")
+            out = dict(blank, voices=pt, model_type=cv["model_type"], source="dir",
+                       cloning=cloning)
         elif _config_says_no_names(cfg, cv):
             out = dict(blank, model_type=cv["model_type"], source="config",
+                       cloning=cloning,
                        note=NO_VOICES_NOTE + (QWEN_SIBLING_HINT
                                               if _is_qwen3_tts(entry) else ""))
         else:
             tbl = voices_for(entry)
             out = dict(blank, voices=tbl, model_type=cv["model_type"],
+                       cloning=cloning,
                        source=("table" if tbl else "none"))
     with _VOICES_CACHE_LOCK:
         _VOICES_CACHE[path] = (stamp, out)
@@ -322,6 +329,40 @@ def _config_says_no_names(cfg: object, cv: dict) -> bool:
     # A declared-but-empty spk_id is the Base checkpoint's actual fingerprint.
     return isinstance(talker, dict) and isinstance(talker.get("spk_id"), dict) \
         and not talker["spk_id"]
+
+
+# ── cloning models (zero-shot: voice identity comes from AUDIO, never a name) ───
+# WHY: OmniVoice renders a DIFFERENT random voice on every ▶ speak (Debi-observed),
+# and no amount of --voice fixes it — `Model.generate()` in mlx_audio/tts/models/
+# omnivoice/omnivoice.py takes `ref_audio` / `ref_text` / `ref_audio_max_duration_s`
+# and has NO speaker table at all (source-read 2026-08-13). For this family the only
+# way to hear the same person twice is to hand it the same clip twice.
+#
+# The discriminator is the config's own model_type. mlx-audio ROUTES on it
+# (utils.MODEL_REMAPPING["omnivoice"] = "omnivoice"), so a checkpoint that loads as
+# OmniVoice necessarily declares it — this is not a name guess like the old family
+# table was.
+CLONING_MODEL_TYPES = ("base", "voice_design", "omnivoice")
+
+
+def is_cloning_model(cfg: object) -> bool:
+    """True when the model's own config says voice identity comes from reference
+    audio rather than from a name. PURE, and defensive: a config is third-party data.
+
+    ⚠️ PENDING FABLE QA: both `tts_model_type` (Qwen3-TTS's key) and `model_type`
+    (mlx-audio's routing key, where "omnivoice" lives) are checked against ONE set.
+    A checkpoint whose plain model_type is literally "base" would therefore be called
+    cloning — which is the harmless direction: it would be offered a clip picker for
+    a parameter it ignores, and a named-voice model is protected anyway because
+    declared names win in voices_for_entry.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    for key in ("tts_model_type", "model_type"):
+        v = cfg.get(key)
+        if isinstance(v, str) and v.strip().lower() in CLONING_MODEL_TYPES:
+            return True
+    return False
 
 
 def _is_qwen3_tts(entry: "dict | None") -> bool:
@@ -356,6 +397,175 @@ def validate_voice_choice(entry: "dict | None", voice: object) -> "str | None":
         return (f"that voice name is too long ({len(v)} characters) — "
                 f"the cap is {VOICE_NAME_MAX}")
     return None
+
+
+# ── reference audio + the voice library ─────────────────────────────────────────
+# A cloning model's voice IS a wav file, so pinning one is exactly the same kind of
+# decision as pinning a name: it lives ON the registry entry (`ref_audio`, absolute
+# path) next to `voice`, and the two may coexist — the engine ignores whichever it
+# has no parameter for.
+#
+# `data/voices/` is the LIBRARY: a plain directory of clips (recorded in-panel or
+# dropped in by hand). It is deliberately not a database — a folder the user can
+# open in Finder is the least surprising store for files they can already play.
+REF_AUDIO_SUFFIXES = ("wav", "mp3", "flac", "m4a")
+REF_AUDIO_MAX_BYTES = 15 * 1024 * 1024      # a reference clip is seconds, not minutes
+REF_TEXT_MAX = 500                          # a transcript of ~10s of speech
+VOICE_LIB_DIRNAME = "voices"
+VOICE_LIB_NAME_MAX = 48
+# Kept out of a saved filename: path separators, the traversal dots and anything a
+# shell or a URL would treat as structure. An allowlist, not a denylist — the name is
+# user input that becomes a filename.
+_CLIP_NAME_RE = re.compile(r"[^A-Za-z0-9 ._-]+")
+
+
+def voices_dir(root: "str | Path | None" = None) -> str:
+    return str(Path(root or ROOT) / "data" / VOICE_LIB_DIRNAME)
+
+
+def normalize_ref_suffix(suffix: object) -> "str | None":
+    """'.WAV' / 'audio/mpeg' / 'clip.m4a' → a bare supported suffix, else None. PURE."""
+    s = str(suffix or "").strip().lower()
+    if not s:
+        return None
+    s = s.split(";")[0].strip()
+    if "/" in s:                       # a mime type
+        s = s.split("/")[-1].strip()
+    if "." in s:                       # a filename
+        s = s.rsplit(".", 1)[-1]
+    s = s.lstrip(".")
+    s = {"mpeg": "mp3", "mpga": "mp3", "x-m4a": "m4a", "x-wav": "wav",
+         "wave": "wav", "vnd.wave": "wav"}.get(s, s)
+    return s if s in REF_AUDIO_SUFFIXES else None
+
+
+def sanitize_clip_name(name: object, fmt: object = "") -> "str | None":
+    """A user-supplied clip name → a safe basename with a forced suffix. PURE.
+
+    None when unusable. The suffix comes from `fmt` when given (the recorder knows
+    its container better than the typed name does) and only otherwise from the name.
+    """
+    raw = str(name or "").strip().replace("\\", "/")
+    raw = os.path.basename(raw).replace("\x00", "")
+    stem, dot, own = raw.rpartition(".")
+    if not dot:
+        stem, own = raw, ""
+    sfx = normalize_ref_suffix(fmt) or normalize_ref_suffix(own)
+    if not sfx:
+        return None
+    stem = _CLIP_NAME_RE.sub("", stem).strip(" .")
+    if not stem or len(stem) > VOICE_LIB_NAME_MAX:
+        return None
+    return f"{stem}.{sfx}"
+
+
+def unique_clip_path(dir_path: str, name: str) -> str:
+    """A path in `dir_path` that does not exist yet — ' (n)' suffixed, never
+    clobbering. Same policy as the artifact save (a recording is unrecoverable; an
+    overwrite would silently destroy the voice someone already pinned)."""
+    stem, _, sfx = str(name).rpartition(".")
+    path = os.path.join(dir_path, name)
+    n = 1
+    while os.path.exists(path) and n < 100:
+        path = os.path.join(dir_path, f"{stem} ({n}).{sfx}")
+        n += 1
+    return path
+
+
+def library_entries(root: "str | Path | None" = None) -> list:
+    """Every usable clip in data/voices, sorted. Never raises."""
+    d = voices_dir(root)
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        p = os.path.join(d, n)
+        try:
+            if not os.path.isfile(p):
+                continue
+            if normalize_ref_suffix(n) is None:
+                continue
+            out.append({"name": n, "stem": os.path.splitext(n)[0],
+                        "path": p, "size": os.path.getsize(p)})
+        except OSError:
+            continue
+    return out
+
+
+def library_target(name: object, root: "str | Path | None" = None) -> tuple:
+    """(abs path, None) when `name` resolves to a file STRICTLY inside data/voices,
+    else (None, reason). Same containment discipline as _deletable_target: realpath
+    both sides, then require the prefix — a delete endpoint must never be talked out
+    of its own directory by a '../' or a symlink.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        return None, "no clip name given"
+    d = os.path.realpath(voices_dir(root))
+    p = os.path.realpath(os.path.join(d, os.path.basename(raw.replace("\\", "/"))))
+    if not p.startswith(d + os.sep):
+        return None, "that clip is not in the voice library"
+    if not os.path.isfile(p):
+        return None, f"no clip named '{os.path.basename(raw)}' in the voice library"
+    return p, None
+
+
+def validate_ref_audio(path: object) -> "str | None":
+    """None when `path` is a usable reference clip, else a user-facing reason. The
+    checks are the file's, not the model's: exists, a container the engine's loader
+    understands, and small enough that a mis-click cannot hand it an album."""
+    p = str(path or "").strip()
+    if not p:
+        return "no clip given"
+    if normalize_ref_suffix(p) is None:
+        return (f"unsupported clip format — expected one of "
+                f"{', '.join(REF_AUDIO_SUFFIXES)}")
+    if not os.path.isfile(p):
+        return f"no such clip: {os.path.basename(p)}"
+    try:
+        size = os.path.getsize(p)
+    except OSError:
+        return f"could not read {os.path.basename(p)}"
+    if size <= 0:
+        return f"{os.path.basename(p)} is empty"
+    if size > REF_AUDIO_MAX_BYTES:
+        return (f"that clip is too large ({size // (1024 * 1024)} MB) — the cap is "
+                f"{REF_AUDIO_MAX_BYTES // (1024 * 1024)} MB; a reference clip only "
+                f"needs a few seconds")
+    return None
+
+
+def validate_ref_choice(entry: "dict | None", path: object,
+                        ref_text: object = "") -> "str | None":
+    """None when `path` may be written onto `entry` as its reference clip, else a
+    reason. '' clears (the key is REMOVED, same semantics as the voice pin).
+
+    The tts-gguf refusal is the truth about llama.cpp, not a nicety: llama-tts takes
+    `--tts-speaker-file`, which is a different mechanism with a different file format,
+    and pretending otherwise would produce a pin that silently does nothing.
+    """
+    if not entry:
+        return "no such model in the registry"
+    if not is_tts_entry(entry):
+        return (f"'{entry.get('id')}' is not a TTS model "
+                f"(format {entry_format(entry) or 'unknown'})")
+    if entry_format(entry) == "tts-gguf":
+        return ("llama.cpp models have no ref_audio parameter — llama-tts uses "
+                "--tts-speaker-file, a different mechanism the harness does not "
+                "wire yet")
+    if not isinstance(path, str):
+        return "clip path must be a string"
+    if not isinstance(ref_text, str):
+        return "ref_text must be a string"
+    if len(ref_text or "") > REF_TEXT_MAX:
+        return (f"that transcript is too long ({len(ref_text)} characters) — the cap "
+                f"is {REF_TEXT_MAX}")
+    p = path.strip()
+    if not p:
+        return None                     # clearing is always allowed
+    return validate_ref_audio(p)
 
 
 class VoiceError(RuntimeError):
@@ -555,6 +765,13 @@ def audio_entry_view(m: dict) -> dict:
         "dialects": vv["dialects"],
         "voice_source": vv["source"],
         "tts_model_type": vv["model_type"],
+        # CLONING: this checkpoint takes its voice from AUDIO, so the panel offers a
+        # clip picker instead of names. The clip's NAME (never the whole path) is what
+        # the UI needs; the path stays server-side, where it is validated.
+        "cloning": bool(vv.get("cloning")),
+        "ref_audio": (os.path.basename(str(m.get("ref_audio")))
+                      if m.get("ref_audio") else None),
+        "ref_text": m.get("ref_text") or None,
         "lang": m.get("lang") or None,
         "source": m.get("source"),
         "repo": m.get("repo"),
@@ -598,6 +815,18 @@ def tts_argv(entry: dict, text: str, out_path: str,
         voice = str(entry.get("voice") or "").strip()
         if voice:
             argv += ["--voice", voice]
+        # Reference audio: the ONLY voice control a zero-shot model has (OmniVoice
+        # and the Qwen3-TTS Base variant both ignore names entirely). Emitted only
+        # when pinned, and never on the gguf branch above — llama-tts has no such
+        # flag. `--ref_text` is optional and improves the clone; without it the
+        # engine transcribes the clip itself with whisper (generate.py:274-292),
+        # which works but costs a second model load per render.
+        ref = str(entry.get("ref_audio") or "").strip()
+        if ref:
+            argv += ["--ref_audio", ref]
+            ref_text = str(entry.get("ref_text") or "").strip()
+            if ref_text:
+                argv += ["--ref_text", ref_text]
         return argv
     raise ValueError(f"unsupported TTS format {fmt!r} "
                      f"(expected one of {', '.join(TTS_FORMATS)})")
@@ -1042,14 +1271,21 @@ class VoiceWorker:
             return resp
 
     # ── the one public operation ───────────────────────────────────────────────
-    def render(self, text: str, voice: str, out_path: str) -> dict:
+    def render(self, text: str, voice: str, out_path: str,
+               ref_audio: str = "", ref_text: str = "") -> dict:
         """One render. VoiceBusy (→409) when another render holds this worker, which
-        mirrors the one-shot path's answer rather than queueing behind it."""
+        mirrors the one-shot path's answer rather than queueing behind it.
+
+        `ref_audio`/`ref_text` are PER REQUEST, exactly like `voice`: changing the
+        pinned clip must never cost a respawn — the model is what the worker holds,
+        the reference is just an argument to generate().
+        """
         if not self._lock.acquire(blocking=False):
             raise VoiceBusy("a voice render is already in progress — try again in a moment")
         try:
             resp = self._request(
-                {"cmd": "tts", "text": text, "voice": voice or "", "out": out_path},
+                {"cmd": "tts", "text": text, "voice": voice or "", "out": out_path,
+                 "ref_audio": ref_audio or "", "ref_text": ref_text or ""},
                 WORKER_TIMEOUT_S)
             self.renders += 1
             return resp
@@ -1176,7 +1412,9 @@ def tts_render_worker(entry: dict, text: str,
     tmp_dir = tempfile.mkdtemp(prefix="tts-", dir=str(tmp_root))
     try:
         out_path = os.path.join(tmp_dir, "out.wav")
-        w.render(text, str(entry.get("voice") or "").strip(), out_path)
+        w.render(text, str(entry.get("voice") or "").strip(), out_path,
+                 ref_audio=str(entry.get("ref_audio") or "").strip(),
+                 ref_text=str(entry.get("ref_text") or "").strip())
         # The worker already applied render_ok; re-checking here keeps the invariant
         # stated at BOTH ends of the pipe rather than trusting one side of it.
         if not render_ok(out_path):

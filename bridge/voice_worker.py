@@ -14,7 +14,8 @@ PROTOCOL — JSON lines over stdin/stdout. No port, no auth surface, no framing
         ← {"id":1,"ok":true,"loaded":false}
         → {"id":2,"cmd":"load","model":"/path/to/model-dir"}
         ← {"id":2,"ok":true,"model":"/path/to/model-dir","secs":31.4}
-        → {"id":3,"cmd":"tts","text":"hello","voice":"serena","out":"/tmp/x/out.wav"}
+        → {"id":3,"cmd":"tts","text":"hello","voice":"serena","out":"/tmp/x/out.wav",
+           "ref_audio":"/…/data/voices/debi.wav","ref_text":"…"}   (both optional)
         ← {"id":3,"ok":true,"out":"/tmp/x/out.wav","bytes":88244,"secs":1.9}
         ← {"id":n,"ok":false,"error":"…"}                        (any failure)
 
@@ -147,13 +148,20 @@ def validate_request(req: object) -> str:
     return ""
 
 
-def render_kwargs(text: str, voice: object, out_path: str) -> dict:
+def render_kwargs(text: str, voice: object, out_path: str,
+                  ref_audio: object = None, ref_text: object = None) -> dict:
     """The full generate_audio kwargs for one render, minus the model object. PURE,
     so the CLI-parity contract above is asserted by a test rather than by hope.
 
     `voice` is normalised to None when empty: the CLI passes None (argparse default)
     and generate_audio's own signature default is "af_heart", so passing '' or
     omitting it would silently impose a Kokoro voice name on every model.
+
+    `ref_audio`/`ref_text` follow the same rule and for the same reason: argparse
+    defaults both to None, and generate_audio branches on `ref_audio` being falsy —
+    an empty STRING would take the cloning path with a path of '' and raise
+    "Reference audio file not found: ". They are per-REQUEST, never per-worker: the
+    voice a zero-shot model speaks in is an argument, not part of the loaded model.
     """
     out_dir = os.path.dirname(str(out_path)) or "."
     stem = os.path.splitext(os.path.basename(str(out_path)))[0]
@@ -161,6 +169,8 @@ def render_kwargs(text: str, voice: object, out_path: str) -> dict:
     kw.update({
         "text": str(text),
         "voice": (str(voice).strip() or None) if voice else None,
+        "ref_audio": (str(ref_audio).strip() or None) if ref_audio else None,
+        "ref_text": (str(ref_text).strip() or None) if ref_text else None,
         "output_path": out_dir,
         "file_prefix": stem,
         "join_audio": True,      # without it the engine writes <stem>_000.wav parts
@@ -221,7 +231,8 @@ class TtsWorker:
         if self.model is None:
             return make_response(rid, False, "no model loaded — send load first")
         out = str(req["out"]).strip()
-        kw = render_kwargs(req.get("text") or "", req.get("voice"), out)
+        kw = render_kwargs(req.get("text") or "", req.get("voice"), out,
+                           req.get("ref_audio"), req.get("ref_text"))
         t0 = time.time()
         try:
             os.makedirs(kw["output_path"], exist_ok=True)

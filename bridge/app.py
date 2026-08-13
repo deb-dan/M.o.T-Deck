@@ -4954,6 +4954,150 @@ async def voice_entry_voice(req: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated)})
 
 
+@app.post("/api/voice/entry-ref")
+async def voice_entry_ref(req: Request) -> JSONResponse:
+    """{id, path|name, ref_text?} → pin a REFERENCE CLIP onto one audio entry.
+
+    A zero-shot ("cloning") model such as OmniVoice has no speaker table at all —
+    `model.generate()` takes ref_audio/ref_text and nothing else — so it renders a
+    different random voice every time unless it is handed the same clip every time.
+    This endpoint is that pin, and it lives on the registry entry beside `voice` for
+    the same reason: it is a property of THIS model choice.
+
+    `name` resolves inside the voice library (data/voices); `path` accepts any clip
+    on disk (⚠️ PENDING FABLE QA: deliberately not confined to data/voices — Debi may
+    point at a clip they already have; it is only ever READ, never deleted). An empty
+    path/name CLEARS the pin (the key is removed, never stored as null).
+
+    The resident worker is deliberately NOT restarted: the reference travels per
+    request, exactly like the voice name, so a clip change costs no reload.
+    """
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    mid = str(body.get("id") or "").strip()
+    if not mid:
+        return JSONResponse({"ok": False, "error": "no model id given"}, status_code=400)
+    ref_text = body.get("ref_text", "")
+    if not isinstance(ref_text, str):
+        ref_text = ""
+    name = str(body.get("name") or "").strip()
+    path = str(body.get("path") or "").strip()
+    if name and not path:
+        path, why = _voice.library_target(name, ROOT)
+        if not path:
+            return JSONResponse({"ok": False, "error": why}, status_code=400)
+    _, audio = _split_audio(_registry_models())
+    entry = _voice.find_entry(audio, mid)
+    err = _voice.validate_ref_choice(entry, path, ref_text)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    patch = {"ref_audio": path or None,
+             # Clearing the clip clears its transcript too: a caption with no audio
+             # is not a voice, it is a stray sentence prepended to every render.
+             "ref_text": (ref_text.strip() or None) if path else None}
+    updated = _registry_update(mid, patch)
+    if updated is None:
+        return JSONResponse(
+            {"ok": False, "error": f"'{mid}' is no longer in the registry"},
+            status_code=400)
+    print(f"[voice] entry-ref {mid} → {os.path.basename(path) if path else '(cleared)'}",
+          flush=True)
+    return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated)})
+
+
+@app.get("/api/voice/library")
+def voice_library() -> JSONResponse:
+    """The reference clips in data/voices — the voice library. A plain directory
+    listing: name, absolute path and size, sorted, never raising when the dir does
+    not exist yet (it is created on the first save)."""
+    if _voice is None:
+        return _voice_unavailable()
+    clips = _voice.library_entries(ROOT)
+    return JSONResponse({"ok": True, "dir": _voice.voices_dir(ROOT), "clips": clips})
+
+
+@app.post("/api/voice/library/save")
+async def voice_library_save(req: Request) -> JSONResponse:
+    """RAW audio body + ?name=&fmt= → save a recorded clip into data/voices.
+
+    Same body shape as /api/voice/stt (the panel already holds a Blob from
+    MediaRecorder; multipart would buy nothing for a single part). The name is
+    sanitized to a basename with a suffix forced from ?fmt=, and an existing file is
+    NEVER clobbered — a recording cannot be re-made, so ' (n)' is the only safe
+    policy. The bytes are not decoded or transcoded here: mlx-audio's own loader
+    reads the container at render time.
+    """
+    if _voice is None:
+        return _voice_unavailable()
+    raw = await req.body()
+    if not raw:
+        return JSONResponse({"ok": False, "error": "no audio received"}, status_code=400)
+    if len(raw) > _voice.REF_AUDIO_MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"that clip is too large "
+                                   f"({len(raw) // (1024 * 1024)} MB) — the cap is "
+                                   f"{_voice.REF_AUDIO_MAX_BYTES // (1024 * 1024)} MB"},
+            status_code=413)
+    fmt = (req.query_params.get("fmt") or "").strip() or req.headers.get("content-type", "")
+    name = _voice.sanitize_clip_name(req.query_params.get("name") or "", fmt)
+    if not name:
+        return JSONResponse(
+            {"ok": False, "error": f"give the clip a short name and a supported format "
+                                   f"({', '.join(_voice.REF_AUDIO_SUFFIXES)})"},
+            status_code=400)
+    d = _voice.voices_dir(ROOT)
+    os.makedirs(d, exist_ok=True)
+    path = _voice.unique_clip_path(d, name)
+    try:
+        with open(path, "wb") as f:
+            f.write(raw)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"could not save the clip: {str(e)[:200]}"},
+                            status_code=500)
+    print(f"[voice] library saved {len(raw)} bytes → {path}", flush=True)
+    return JSONResponse({"ok": True, "name": os.path.basename(path), "path": path,
+                         "size": len(raw)})
+
+
+@app.post("/api/voice/library/delete")
+async def voice_library_delete(req: Request) -> JSONResponse:
+    """{name} → remove one clip from data/voices. Containment-guarded (realpath must
+    land strictly inside the library dir), and any registry entry pinned to it is
+    un-pinned in the same breath — a pin at a deleted file would only fail later, at
+    speak time, far from the click that caused it."""
+    if _voice is None:
+        return _voice_unavailable()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    path, why = _voice.library_target(body.get("name"), ROOT)
+    if not path:
+        return JSONResponse({"ok": False, "error": why}, status_code=400)
+    try:
+        os.remove(path)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"could not delete: {str(e)[:200]}"},
+                            status_code=500)
+    unpinned = []
+    for m in _registry_models():
+        if str(m.get("ref_audio") or "") == path:
+            _registry_update(m.get("id"), {"ref_audio": None, "ref_text": None})
+            unpinned.append(m.get("id"))
+    print(f"[voice] library deleted {os.path.basename(path)}"
+          f"{' (unpinned ' + ', '.join(unpinned) + ')' if unpinned else ''}", flush=True)
+    return JSONResponse({"ok": True, "deleted": os.path.basename(path),
+                         "unpinned": unpinned})
+
+
 @app.post("/api/voice/tts")
 async def voice_tts(req: Request) -> Response:
     """{text, model_id?} → audio/wav bytes. model_id defaults to voice.tts_model.

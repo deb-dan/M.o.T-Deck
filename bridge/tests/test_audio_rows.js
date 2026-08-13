@@ -127,6 +127,22 @@ check('junk gets no picker',
 check('an entry with no role defaults to tts (the view always sets one)',
       P.voiceChoiceMode({ id: 'x', format: 'tts-mlx', voices: ['a'] }) === 'chips');
 
+// ── 'clips': a cloning model's picker is the voice LIBRARY, not a name box ──────
+check('a cloning model with no names gets the clip picker',
+      P.voiceChoiceMode({ id: 'o', role: 'tts', format: 'tts-mlx', voices: [],
+                          cloning: true }) === 'clips');
+check('declared names BEAT the cloning verdict',
+      P.voiceChoiceMode({ id: 'o', role: 'tts', format: 'tts-mlx', voices: ['serena'],
+                          cloning: true }) === 'chips');
+check('the clip picker replaces the old dead-end note for these models',
+      P.voiceChoiceMode({ id: 'o', role: 'tts', format: 'tts-mlx', voices: [],
+                          cloning: true, voice_note: 'no named voices' }) === 'clips');
+check('a NON-cloning model with no names still gets free text',
+      P.voiceChoiceMode({ id: 'u', role: 'tts', format: 'tts-mlx', voices: [] }) === 'text');
+check('a gguf model never gets a clip picker (llama-tts has no ref_audio)',
+      P.voiceChoiceMode({ id: 'g', role: 'tts', format: 'tts-gguf',
+                          cloning: true }) === 'none');
+
 /* Panel wiring facts, asserted against the panel SOURCE — the picker is only
    useful if it actually writes, and only one surface may write. */
 check('the detail pane writes through POST /api/voice/entry-voice',
@@ -142,6 +158,12 @@ check('the composer popover only DISPLAYS the voice (no picker there)',
       && !/renderAudioPop[\s\S]{0,4000}entry-voice/.test(html));
 check('switching voice stops any clip rendered with the old one',
       /async function setEntryVoice[\s\S]{0,900}stopSpeaking\(\)/.test(html));
+check('switching the REFERENCE CLIP also stops a clip rendered with the old voice',
+      /async function setEntryRef[\s\S]{0,900}stopSpeaking\(\)/.test(html));
+check('the library delete is a two-step (a recording cannot be re-made)',
+      /dataset\.armed[\s\S]{0,200}sure\?/.test(html));
+check('a saved recording is auto-pinned onto the model it was recorded for',
+      /async function saveClip[\s\S]{0,900}setEntryRef\(id, saved\)/.test(html));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
