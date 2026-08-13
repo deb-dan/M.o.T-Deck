@@ -25,8 +25,10 @@ What is pinned here, and why each one exists:
 Run: python3 bridge/tests/test_voice_tts.py   (from repo root)
 """
 import ast
+import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -276,8 +278,14 @@ check("the tts endpoint answers with audio/wav", 'media_type="audio/wav"' in asr
 check("the tts endpoint maps VoiceBusy → 409",
       re.search(r"except _voice\.VoiceBusy[\s\S]{0,200}status_code=409", asrc) is not None)
 check("the tts endpoint maps an over-long body → 413", "status_code=413" in asrc)
+# NARROWED 2026-08-13 (persistent worker): the call is now wrapped in a
+# functools.partial so the ledger spawn_guard can be passed as a keyword —
+# asyncio.to_thread's own *args are positional-only. The INVARIANT is unchanged:
+# a render never runs on the event loop.
 check("the render runs off the event loop (asyncio.to_thread)",
-      "asyncio.to_thread(_voice.tts_render" in asrc)
+      re.search(r"asyncio\.to_thread\([\s\S]{0,120}_voice\.tts_render", asrc) is not None)
+check("the render is handed the ledger spawn guard",
+      "spawn_guard=_voice_spawn_guard" in asrc)
 check("app.py imports voice defensively (a stale snapshot must still boot)",
       "_voice, _VOICE_ERR = None" in asrc)
 
@@ -430,6 +438,151 @@ check("audio_entry_view reports the pinned voice",
       voice.audio_entry_view({**QWEN_MLX, "voice": "Ethan"})["voice"] == "Ethan")
 check("audio_entry_view reports no voices for a gguf",
       voice.audio_entry_view(GGUF)["voices"] == [])
+
+# ── config-derived voices (the AUTHORITATIVE picker source) ──────────────────
+# The static table guesses at a FAMILY; a family is not a checkpoint. Base and
+# CustomVoice share every token and have opposite behaviour, so only config.json
+# can separate them — these tests pin that it is what we actually read.
+print("\n-- config-derived voices --")
+
+# The real CustomVoice shape (research-verified: tts_model_type discriminates,
+# talker_config.spk_id lists the nine speakers, two of them dialects).
+CV_CFG = {
+    "tts_model_type": "custom_voice",
+    "talker_config": {
+        "spk_id": {"serena": 0, "vivian": 1, "ryan": 2, "aiden": 3, "dylan": 4,
+                   "eric": 5, "uncle_fu": 6, "sohee": 7, "ono_anna": 8},
+        "spk_is_dialect": {"dylan": True, "eric": True, "serena": False},
+    },
+}
+BASE_CFG = {"tts_model_type": "base",
+            "talker_config": {"spk_id": {}, "speaker_encoder": {"dim": 512}}}
+
+_cv = voice.voices_from_config(CV_CFG)
+check("voices_from_config reads all nine CustomVoice speakers",
+      _cv["voices"] == ["serena", "vivian", "ryan", "aiden", "dylan",
+                        "eric", "uncle_fu", "sohee", "ono_anna"])
+check("voices_from_config preserves the checkpoint's own order",
+      _cv["voices"][0] == "serena" and _cv["voices"][-1] == "ono_anna")
+check("voices_from_config reports the model type",
+      _cv["model_type"] == "custom_voice")
+check("voices_from_config marks the two dialect speakers",
+      _cv["dialects"]["dylan"] is True and _cv["dialects"]["eric"] is True
+      and _cv["dialects"]["serena"] is False)
+check("dialect flags are limited to DECLARED voices (a stray key cannot leak)",
+      voice.voices_from_config(
+          {"talker_config": {"spk_id": {"a": 0},
+                             "spk_is_dialect": {"a": 1, "ghost": True}}}
+      )["dialects"] == {"a": True})
+_b = voice.voices_from_config(BASE_CFG)
+check("voices_from_config finds no names in the Base checkpoint",
+      _b["voices"] == [] and _b["model_type"] == "base")
+check("voices_from_config survives every surprise type",
+      all(voice.voices_from_config(x)["voices"] == []
+          for x in (None, [], "config", 7, {"talker_config": "nope"},
+                    {"talker_config": {"spk_id": None}},
+                    {"talker_config": {"spk_id": [1, 2]}},
+                    {"tts_model_type": 5})))
+check("a LIST spk_id still yields names (a shape we have not seen, but might)",
+      voice.voices_from_config(
+          {"talker_config": {"spk_id": ["alpha", "beta"]}})["voices"]
+      == ["alpha", "beta"])
+check("a non-string tts_model_type is simply unknown, never a crash",
+      voice.voices_from_config({"tts_model_type": {"a": 1}})["model_type"] is None)
+
+# voices_for_entry against REAL directories.
+_vd = tempfile.mkdtemp(prefix="voices-")
+try:
+    def _mk(name, cfg=None, pt=()):
+        d = os.path.join(_vd, name)
+        os.makedirs(os.path.join(d, "voices") if pt else d, exist_ok=True)
+        if cfg is not None:
+            with open(os.path.join(d, "config.json"), "w") as f:
+                json.dump(cfg, f)
+        for v in pt:
+            open(os.path.join(d, "voices", v + ".pt"), "wb").close()
+        return d
+
+    voice.clear_voices_cache()
+    cvd = _mk("Qwen3-TTS-CustomVoice-8bit", CV_CFG)
+    bad = _mk("Qwen3-TTS-Base-8bit", BASE_CFG)
+    kok = _mk("Kokoro-82M-bf16", {"model_type": "style_tts2"},
+              pt=("af_heart", "am_adam", "bf_emma"))
+    mys = _mk("SomeNewTTS-mlx", {"model_type": "whatever"})
+
+    def _e(path, mid=None):
+        return {"kind": "audio", "format": "tts-mlx",
+                "id": mid or os.path.basename(path), "path": path}
+
+    r = voice.voices_for_entry(_e(cvd))
+    check("voices_for_entry reads the CustomVoice config off disk",
+          r["voices"][0] == "serena" and len(r["voices"]) == 9
+          and r["source"] == "config" and not r["note"])
+    check("voices_for_entry carries the dialect flags through",
+          r["dialects"].get("eric") is True)
+
+    r = voice.voices_for_entry(_e(bad))
+    check("voices_for_entry offers NO voices for the Base checkpoint",
+          r["voices"] == [] and r["source"] == "config")
+    check("the Base checkpoint gets the honest reference-audio note",
+          voice.NO_VOICES_NOTE in r["note"])
+    check("the Qwen note NAMES the verified CustomVoice sibling repo",
+          voice.QWEN_CUSTOMVOICE_REPO in r["note"])
+    check("a non-Qwen nameless model gets the note WITHOUT the Qwen hint",
+          voice.QWEN_CUSTOMVOICE_REPO not in voice.voices_for_entry(
+              _e(_mk("Nameless-TTS-mlx", BASE_CFG)))["note"])
+
+    r = voice.voices_for_entry(_e(kok))
+    check("voices_for_entry lists Kokoro's voices/*.pt stems",
+          r["voices"] == ["af_heart", "am_adam", "bf_emma"] and r["source"] == "dir")
+    check("a voices/ dir yields no spurious note", r["note"] == "")
+
+    r = voice.voices_for_entry(_e(mys))
+    check("a config with NO verdict falls through to free text (no note, no chips)",
+          r["voices"] == [] and r["note"] == "" and r["source"] == "none")
+
+    r = voice.voices_for_entry({"kind": "audio", "format": "tts-mlx",
+                                "id": "kokoro-82m", "path": "/nope/not/here"})
+    check("an unreadable model dir falls back to the STATIC table (last resort)",
+          r["voices"][0] == "af_heart" and r["source"] == "table")
+    check("voices_for_entry is empty for tts-gguf and stt",
+          voice.voices_for_entry(GGUF)["voices"] == []
+          and voice.voices_for_entry(STT)["voices"] == []
+          and voice.voices_for_entry(None)["voices"] == [])
+
+    # Cache: the panel polls /api/models, so this runs constantly.
+    voice.clear_voices_cache()
+    voice.voices_for_entry(_e(cvd))
+    _seen = []
+    _real_read = voice.read_model_config
+    voice.read_model_config = lambda p: (_seen.append(p), _real_read(p))[1]
+    try:
+        voice.voices_for_entry(_e(cvd))
+        check("a repeat lookup is served from cache (no re-read per poll)",
+              _seen == [])
+        with open(os.path.join(cvd, "config.json"), "w") as f:
+            json.dump(BASE_CFG, f)
+        os.utime(os.path.join(cvd, "config.json"), (1, 1))
+        after = voice.voices_for_entry(_e(cvd))
+        check("a CHANGED config busts the cache (a re-download must not go stale)",
+              _seen != [] and after["voices"] == [])
+    finally:
+        voice.read_model_config = _real_read
+        with open(os.path.join(cvd, "config.json"), "w") as f:
+            json.dump(CV_CFG, f)          # undo the cache-bust edit
+
+    voice.clear_voices_cache()
+    av = voice.audio_entry_view(_e(bad))
+    check("audio_entry_view carries voice_note for a nameless model",
+          av["voices"] == [] and voice.NO_VOICES_NOTE in (av["voice_note"] or ""))
+    av = voice.audio_entry_view(_e(cvd))
+    check("audio_entry_view carries dialects + voice_source for a named model",
+          av["dialects"].get("dylan") is True and av["voice_source"] == "config"
+          and av["voice_note"] is None and av["tts_model_type"] == "custom_voice")
+finally:
+    shutil.rmtree(_vd, ignore_errors=True)
+    voice.clear_voices_cache()
+
 
 # Bridge wiring, read from app.py's SOURCE (importing app builds httpx clients).
 APP_SRC = (ROOT / "bridge" / "app.py").read_text()

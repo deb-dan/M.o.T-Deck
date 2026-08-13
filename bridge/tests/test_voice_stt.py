@@ -205,9 +205,17 @@ with tempfile.TemporaryDirectory() as d:
     check("our provisioned ffmpeg is found when PATH has none",
           got == str(ours) or got == __import__("shutil").which("ffmpeg"))
 
-# ── the global lock is SHARED with TTS (one multi-GB load at a time) ─────────
-check("stt and tts share one render lock",
+# ── the one-shot lock: STT shares it with tts-gguf, NOT with tts-mlx ──────────
+# NARROWED 2026-08-13 (persistent worker). It used to guard every render; now it
+# guards only the paths that still load a multi-GB model per call (llama-tts and
+# mlx_whisper). A tts-mlx render goes through the resident worker and takes NO global
+# lock, which is what stopped speaking from blocking dictation.
+check("stt uses the one-shot render lock",
       voice.render_lock() is voice._RENDER_LOCK)
+_vsrc = (ROOT / "bridge" / "voice.py").read_text()
+check("the resident worker path does NOT take the one-shot lock",
+      "_RENDER_LOCK" not in
+      _vsrc[_vsrc.index("def tts_render_worker"):_vsrc.index("# ── dispatch")])
 lock = voice.render_lock()
 check("lock acquired → stt_transcribe raises VoiceBusy, not a queue",
       lock.acquire(blocking=False))

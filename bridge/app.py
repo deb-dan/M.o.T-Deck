@@ -6,6 +6,7 @@ Gearbox (M2) and adapter/self-heal (M3) are stubs; see gearbox.py / adapter.py.
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import socket
 import subprocess
@@ -397,7 +398,10 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               "voicestudio", "voicebox",
               # install-time log (voicebox's fragile dep graph writes here — must be
               # viewable in-panel, not just from a terminal; Fable QA fix 2026-08-07)
-              "voicebox-install")
+              "voicebox-install",
+              # the resident TTS worker's stderr — the ONLY place the engine's own
+              # traceback lands now that stdout is protocol-only
+              "voice-worker")
 
 
 @app.post("/api/logs/{name}/clear")
@@ -1868,11 +1872,29 @@ def _budget_bytes() -> int:
     return int(gb * (1024 ** 3))
 
 
+def _resident_voice_bytes() -> int:
+    """RAM claimed by a RESIDENT voice model, approximated the same way chat models
+    are (weight file size). Zero whenever no worker is alive.
+
+    This closes the recorded "the ledger ignores voice models" item — and it only
+    became true-able when the persistent worker landed. One-shot renders really are
+    transient (the process dies with the request), so counting them would have made
+    the budget lie; a worker that holds 3.6GB until it is unloaded is exactly the
+    persistent slot the earlier verdict said to revisit for."""
+    if _voice is None:
+        return 0
+    try:
+        return int((_voice.worker_resident() or {}).get("size_bytes") or 0)
+    except Exception:                                            # noqa: BLE001
+        return 0
+
+
 def _loaded_models_bytes(exclude_slot: str | None = None) -> int:
     """Approx RAM (by file size) used by models currently SERVED: main runner's
-    active model (if its port is up) + aux model (if its port is up). exclude_slot
-    ('main'|'aux') omits that slot — used to get 'other-slot usage' for a switch of
-    that slot (so its own current usage isn't double-counted against the candidate)."""
+    active model (if its port is up) + aux model (if its port is up) + a resident
+    voice worker. exclude_slot ('main'|'aux'|'voice') omits that slot — used to get
+    'other-slot usage' for a switch of that slot (so its own current usage isn't
+    double-counted against the candidate)."""
     c = cfg()
     # Chat models ONLY: an audio entry must never be able to claim ledger budget
     # (voice weights are transient by design — spec §Architecture 1), and if an
@@ -1886,7 +1908,22 @@ def _loaded_models_bytes(exclude_slot: str | None = None) -> int:
     ax = c.get("aux", {}) or {}
     if exclude_slot != "aux" and ax.get("port") and _port_alive_sync(int(ax["port"])):
         total += _model_size(models, ax.get("model") or "")
+    if exclude_slot != "voice":
+        total += _resident_voice_bytes()
     return total
+
+
+def _voice_spawn_guard(size_bytes: int) -> "str | None":
+    """Ledger gate handed to voice.get_worker(). None = spawn allowed, else the
+    refusal text. Same shape as the runner/aux switch gates, and deliberately owned
+    HERE: voice.py must not learn to read harness.yaml."""
+    other = _loaded_models_bytes(exclude_slot="voice")
+    budget = _budget_bytes()
+    if size_bytes and not _within_budget(int(size_bytes), other, budget):
+        return (f"loading that voice model would exceed the model-RAM budget "
+                f"({(int(size_bytes) + other) / 1024**3:.1f} > {budget / 1024**3:.0f} GB) "
+                f"— eject a chat model first")
+    return None
 
 
 def _within_budget(candidate_bytes: int, other_slot_bytes: int, budget_bytes: int) -> bool:
@@ -2165,6 +2202,11 @@ async def api_delete_model(req: Request) -> JSONResponse:
     # deleted weights would only fail later, at speak time, far from this click.
     vc = _voice_cfg()
     was_voice = [k for k in ("tts_model", "stt_model") if vc.get(k) == mid]
+    # …and if it is RESIDENT in the persistent worker, kill that first: the process
+    # holds the weights open, and on a re-download the same path would then serve a
+    # deleted checkpoint from memory.
+    if _voice is not None:
+        _voice.worker_stop_if_model(mid, "model deleted")
     for k in was_voice:
         _set_yaml_scalar("voice", k, "")
 
@@ -2373,6 +2415,343 @@ async def hf_card(repo: str) -> JSONResponse:
         return JSONResponse({"repo": repo, "markdown": text[:20000]})
     except Exception as e:
         return JSONResponse({"repo": repo, "markdown": "", "error": str(e)[:200]})
+
+
+# ── Audio HF search (T2) ──────────────────────────────────────────────────────
+# WHY: the Audio tab shipped with five curated starters and Debi asked the obvious
+# question — "why are there only these models". This is the discovery half. It is a
+# SEPARATE surface from /api/models/hf because voice discovery is nothing like chat
+# discovery: the useful axis is pipeline_tag + framework, not a quant filename, and
+# the RESULT of a search must be probed before it can be trusted (see below).
+#
+# THREE web-verified facts drive the shape of this code (2026-08-08 research):
+#   1. `?library=` on the models API is SILENTLY IGNORED. Never send it; `?filter=`
+#      is the parameter that actually narrows.
+#   2. TTS discovery must be a UNION of `filter=mlx-audio` and `filter=mlx` — the
+#      mlx-audio tag alone MISSES Kokoro, the best quality-per-MB model we offer.
+#   3. TAGS LIE. `openai/whisper-medium` carries every whisper token and is a
+#      TRANSFORMERS checkpoint that mlx_whisper cannot load (it died with
+#      "ModelDimensions.__init__() unexpected keyword '_name_or_path'" on Debi's
+#      machine). Only config.json settles it — hence the probe endpoint.
+AUDIO_SEARCH_KINDS = ("tts", "tts-gguf", "stt")
+
+# ⚠️ PENDING FABLE QA: the kind vocabulary is THREE, not the brief's two. The GGUF
+# TTS lane is a different query shape (filter=gguf + a text term, no pipeline_tag —
+# GGUF repos are not pipeline-tagged) and mixing its hits into the MLX list would
+# make one result list whose rows mean different things. A third chip is cheaper
+# than a heterogeneous list.
+AUDIO_SEARCH_QUERIES = {
+    "tts": ({"filter": "mlx-audio", "pipeline_tag": "text-to-speech"},
+            {"filter": "mlx", "pipeline_tag": "text-to-speech"}),
+    "stt": ({"filter": "mlx", "pipeline_tag": "automatic-speech-recognition"},),
+    "tts-gguf": ({"filter": "gguf"},),
+}
+# The GGUF lane has no pipeline tag to lean on, so an empty box still needs a term.
+AUDIO_GGUF_DEFAULT_TERM = "tts"
+
+# Licences we will NOT offer a Get for. Non-commercial covers the whole cc-by-nc
+# family (Spark-TTS = cc-by-nc-sa, Voxtral-TTS = cc-by-nc with 20 tempting named
+# voices). The row is still SHOWN — hiding a model would be a worse lie than
+# showing it with the reason its button is off.
+_NC_PREFIXES = ("cc-by-nc", "cc-nc")
+_NC_SUBSTRINGS = ("noncommercial", "non-commercial")
+_UNKNOWN_LICENSES = ("", "other", "unknown", "none")
+# OpenRAIL is NOT non-commercial — it permits commercial use with behavioural
+# use-restrictions. Blocking it would cost real models for no legal reason on a
+# personal machine, so it gets an honest amber badge instead (Fable fix 2026-08-13).
+_RESTRICTED_PREFIXES = ("creativeml-openrail", "openrail", "bigscience-openrail")
+
+LICENSE_NC_REASON = "non-commercial licence"
+
+
+def hf_license(meta: object) -> str:
+    """PURE: the licence id for a model, from cardData.license or a `license:*` tag.
+
+    The list API returns tags but usually no cardData; the single-model API returns
+    both. Reading either means one function serves both call sites.
+    """
+    if not isinstance(meta, dict):
+        return ""
+    card = meta.get("cardData")
+    lic = card.get("license") if isinstance(card, dict) else None
+    if isinstance(lic, (list, tuple)):
+        lic = lic[0] if lic else None
+    if not isinstance(lic, str) or not lic.strip():
+        lic = meta.get("license") if isinstance(meta.get("license"), str) else None
+    if isinstance(lic, str) and lic.strip():
+        return lic.strip().lower()
+    for t in (meta.get("tags") or []):
+        if isinstance(t, str) and t.lower().startswith("license:"):
+            return t.split(":", 1)[1].strip().lower()
+    return ""
+
+
+def audio_license_badge(license_id: object) -> dict:
+    """PURE: {"license", "badge", "reason"} for one licence id.
+
+    badge ∈ ok | unknown | nc.
+      nc      → Get DISABLED, reason shown on the row.
+      unknown → amber badge, Get STILL ENABLED. ⚠️ PENDING FABLE QA: this is Debi's
+                own machine and a missing license tag is extremely common on model
+                repos (kitten, soprano, the ggml-org GGUF mirrors all lack one);
+                refusing them would hide half of HuggingFace over metadata hygiene.
+                We badge the uncertainty instead of pretending to know.
+      ok      → apache/mit/etc.
+    """
+    lic = (license_id or "").strip().lower() if isinstance(license_id, str) else ""
+    if lic in _UNKNOWN_LICENSES:
+        return {"license": lic, "badge": "unknown", "reason": "licence unknown"}
+    if lic.startswith(_NC_PREFIXES) or any(s in lic for s in _NC_SUBSTRINGS):
+        return {"license": lic, "badge": "nc", "reason": LICENSE_NC_REASON}
+    if lic.startswith(_RESTRICTED_PREFIXES):
+        # amber like unknown, but with the true reason; Get stays ENABLED
+        return {"license": lic, "badge": "unknown", "reason": "use-restricted licence"}
+    return {"license": lic, "badge": "ok", "reason": ""}
+
+
+# Replicated from scripts/seed_registry.py (the bridge does not import scripts/).
+# bridge/tests/test_audio_search.py asserts these are BYTE-IDENTICAL to the seed
+# copy, so the two can never drift apart silently.
+AUDIO_WHISPER_REQUIRED = ("n_mels", "n_audio_state", "n_audio_head",
+                          "n_audio_layer", "n_vocab", "n_text_state")
+AUDIO_WHISPER_VETO = ("_name_or_path", "architectures", "transformers_version",
+                      "num_mel_bins", "d_model", "encoder_layers",
+                      "decoder_layers", "is_encoder_decoder")
+
+
+def is_mlx_whisper_cfg(cfg: object) -> bool:
+    """PURE: True only for a config.json that is an mlx-whisper ModelDimensions."""
+    if not isinstance(cfg, dict):
+        return False
+    if any(k in cfg for k in AUDIO_WHISPER_VETO):
+        return False
+    return all(k in cfg for k in AUDIO_WHISPER_REQUIRED)
+
+
+_TTS_TOKENS = ("tts", "text-to-speech", "speech", "voice", "kokoro", "outetts")
+
+
+def _file_pairs(files: object) -> list:
+    """Coerce a caller's `files` into [(path:str, size:int)]. Third-party JSON goes
+    through every one of these functions; a TypeError here would blank the Audio tab."""
+    out = []
+    for it in (files if isinstance(files, (list, tuple)) else []):
+        if isinstance(it, (list, tuple)) and len(it) == 2 and isinstance(it[0], str):
+            out.append((it[0], it[1] if isinstance(it[1], int) else 0))
+    return out
+
+
+def gguf_tts_pair(files: object) -> tuple:
+    """PURE: (backbone, mmproj) from [(path, size)] — or (None, None).
+
+    llama-tts needs BOTH halves; a repo with only one is not a usable TTS model.
+    Preference mirrors the curated starter exactly (Q4_K_M backbone, Q8_0 projector)
+    so a searched Qwen3-TTS lands byte-identical to the offered one.
+    """
+    import os as _os
+    ggufs = [(p, s) for p, s in _file_pairs(files) if p.lower().endswith(".gguf")]
+    mm = [p for p, _ in ggufs if "mmproj" in _os.path.basename(p).lower()]
+    back = [(p, s or 0) for p, s in ggufs
+            if "mmproj" not in _os.path.basename(p).lower()]
+    if not mm or not back:
+        return (None, None)
+    pick = next((p for p, _ in back if "q4_k_m" in p.lower()),
+                min(back, key=lambda t: t[1])[0])
+    proj = next((p for p in mm if "q8_0" in p.lower()), mm[0])
+    return (pick, proj)
+
+
+def audio_probe_verdict(repo: object, cfg: object, files: object,
+                        tags: object = (), pipeline: object = "") -> dict:
+    """PURE: classify one HF repo for the Audio tab. Never raises.
+
+    Returns {format, warn, file, mmproj, can_get, block_reason} where format ∈
+      tts-mlx | stt-mlx | tts-gguf   → a lane the harness can actually drive
+      transformers                   → the whisper-medium class: LOOKS right, is not
+      unknown                        → we could not tell; Get stays off
+
+    ORDER MATTERS. The transformers veto is applied ONLY on the ASR lane: a TTS
+    config that happens to carry `architectures` (several mlx-audio conversions do)
+    must not be condemned by a rule written for whisper.
+    """
+    import os as _os
+    repo = repo if isinstance(repo, str) else ""
+    pipeline = (pipeline or "").lower() if isinstance(pipeline, str) else ""
+    # tags/files are third-party JSON: a surprise type here must not take out the tab.
+    tagset = {t.lower() for t in (tags if isinstance(tags, (list, tuple)) else [])
+              if isinstance(t, str)}
+    pairs = _file_pairs(files)
+    paths = [p for p, _ in pairs]
+    lowp = [p.lower() for p in paths]
+    has_weights = any(p.endswith((".safetensors", ".npz")) for p in lowp)
+    has_cfg = any(_os.path.basename(p) == "config.json" for p in paths)
+    cfgd = cfg if isinstance(cfg, dict) else {}
+    asr_lane = ("whisper" in repo.lower()
+                or pipeline == "automatic-speech-recognition"
+                or "automatic-speech-recognition" in tagset)
+
+    def _out(fmt, warn="", file=None, mmproj=None):
+        # An MLX verdict with no weights/config in the tree would send the Get into
+        # whole-repo mode, which 400s ("not an MLX model"). Better to say we do not
+        # know than to hand the user a button that cannot work.
+        if fmt in ("tts-mlx", "stt-mlx") and not (has_weights and has_cfg):
+            fmt, warn = "unknown", ("looks like a voice model but ships no "
+                                    "safetensors/npz weights + config.json")
+        blocked = {"transformers": "transformers checkpoint — not an MLX conversion; "
+                                   "mlx_whisper cannot load it",
+                   "unknown": "the harness could not identify an engine for this repo"}
+        reason = blocked.get(fmt, "")
+        if fmt == "unknown" and warn:
+            reason = warn                      # the specific miss beats the generic one
+        return {"format": fmt, "warn": warn, "file": file, "mmproj": mmproj,
+                "can_get": fmt not in blocked, "block_reason": reason}
+
+    # 1. The checkpoint says it is a TTS model (strongest possible evidence).
+    if "tts_model_type" in cfgd or isinstance(cfgd.get("talker_config"), dict):
+        return _out("tts-mlx")
+    # 2. mlx-audio's own tag.
+    if "mlx-audio" in tagset:
+        return _out("tts-mlx")
+    # 3/4. The whisper lane — shape decides, name never does.
+    if is_mlx_whisper_cfg(cfgd):
+        return _out("stt-mlx")
+    if asr_lane and cfgd and any(k in cfgd for k in AUDIO_WHISPER_VETO):
+        return _out("transformers")
+    # 5. GGUF TTS pair (backbone + projector). A TTS token is required: every
+    #    vision chat model is also a gguf+mmproj pair and must not land here.
+    back, proj = gguf_tts_pair(pairs)
+    if back and (any(t in repo.lower() for t in _TTS_TOKENS)
+                 or any(t in tagset for t in _TTS_TOKENS)):
+        return _out("tts-gguf", file=back, mmproj=proj)
+    # 6/7. Tag-only fallbacks for a correctly-shaped MLX repo we cannot fingerprint.
+    if has_weights and has_cfg:
+        if pipeline == "text-to-speech" or "text-to-speech" in tagset:
+            return _out("tts-mlx", warn="not tagged mlx-audio — engine support is "
+                                        "unverified for this repo")
+        if asr_lane:
+            return _out("transformers" if cfgd else "unknown")
+    return _out("unknown")
+
+
+def audio_probe_size(fmt: object, files: object, back=None, proj=None) -> int:
+    """PURE: bytes the Get would actually download for this verdict."""
+    pairs = _file_pairs(files)
+    if fmt == "tts-gguf":
+        want = {back, proj}
+        return sum(s for p, s in pairs if p in want)
+    if fmt in ("tts-mlx", "stt-mlx"):
+        return sum(s for _, s in _mlx_repo_files(
+            [{"path": p, "size": s, "type": "file"} for p, s in pairs]))
+    return 0
+
+
+def audio_probe_voices(cfg: object, files: object) -> list:
+    """PURE: named voices this repo declares — config.json spk_id, or Kokoro's
+    voices/*.pt stems. Same two mechanisms voices_for_entry resolves on disk, read
+    here from the HF tree so the count is visible BEFORE downloading."""
+    names = []
+    if _voice is not None:
+        try:
+            names = list(_voice.voices_from_config(cfg).get("voices") or [])
+        except Exception:                                  # noqa: BLE001
+            names = []
+    if names:
+        return names
+    out = []
+    for p, _ in _file_pairs(files):
+        low = p.lower().replace("\\", "/")
+        if low.startswith("voices/") and low.endswith(".pt"):
+            out.append(p.split("/")[-1][:-3])
+    return sorted(out)
+
+
+async def _hf_json(path: str, params=None):
+    """GET a HuggingFace JSON endpoint; None on any non-200/exception."""
+    try:
+        r = await _HF.get(path, params=params or {})
+        return r.json() if r.status_code == 200 else None
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+@app.get("/api/models/hf/audio")
+async def hf_audio_search(q: str = "", kind: str = "tts", limit: int = 25) -> JSONResponse:
+    """Search HuggingFace for VOICE models. kind ∈ tts | tts-gguf | stt.
+
+    The tts kind is the documented UNION of two queries (mlx-audio ∪ mlx) deduped
+    by repo id — mlx-audio alone misses Kokoro.
+    """
+    kind = (kind or "tts").strip().lower()
+    if kind not in AUDIO_SEARCH_KINDS:
+        return JSONResponse({"error": f"unknown kind {kind!r}"}, status_code=400)
+    q = (q or "").strip()
+    term = q or (AUDIO_GGUF_DEFAULT_TERM if kind == "tts-gguf" else "")
+    seen, out = set(), []
+    for base in AUDIO_SEARCH_QUERIES[kind]:
+        params = dict(base, limit=limit, sort="downloads", direction="-1")
+        if term:
+            params["search"] = term
+        rows = await _hf_json("/api/models", params)
+        if rows is None:
+            continue
+        for m in rows:
+            repo = m.get("id") or m.get("modelId")
+            if not repo or repo in seen:
+                continue
+            seen.add(repo)
+            lic = audio_license_badge(hf_license(m))
+            out.append({"repo": repo, "downloads": m.get("downloads", 0),
+                        "likes": m.get("likes", 0),
+                        "pipeline": m.get("pipeline_tag"),
+                        "updated": m.get("lastModified") or m.get("createdAt"),
+                        **lic})
+    if not out and not seen:
+        return JSONResponse({"error": "HuggingFace search failed"}, status_code=502)
+    out.sort(key=lambda r: r.get("downloads") or 0, reverse=True)
+    return JSONResponse(out[:limit * 2])
+
+
+@app.get("/api/models/hf/audio/probe")
+async def hf_audio_probe(repo: str) -> JSONResponse:
+    """Config-probe ONE repo: what engine (if any) can drive it, how big the Get is,
+    how many named voices it declares, and whether its licence lets us offer it.
+
+    This is the whisper-medium fix generalised: a row is never Get-able because of
+    what it is CALLED, only because of what its config.json and file tree say."""
+    repo = (repo or "").strip()
+    if not repo:
+        return JSONResponse({"error": "repo required"}, status_code=400)
+    meta = await _hf_json(f"/api/models/{repo}") or {}
+    tree = await _hf_json(f"/api/models/{repo}/tree/main",
+                          {"recursive": "true"}) or []
+    files = [(it.get("path", ""), it.get("size") or 0) for it in tree
+             if isinstance(it, dict) and (it.get("type") or "file") == "file"
+             and it.get("path")]
+    cfg = None
+    if any(os.path.basename(p) == "config.json" for p, _ in files):
+        try:
+            r = await _HF.get(f"/{repo}/raw/main/config.json")
+            if r.status_code == 200:
+                import json as _json
+                cfg = _json.loads(r.text)
+                if not isinstance(cfg, dict):
+                    cfg = None
+        except Exception:                                  # noqa: BLE001
+            cfg = None
+    v = audio_probe_verdict(repo, cfg, files, meta.get("tags") or [],
+                            meta.get("pipeline_tag") or "")
+    lic = audio_license_badge(hf_license(meta))
+    if lic["badge"] == "nc":
+        v["can_get"] = False
+        v["block_reason"] = lic["reason"]
+    voices = audio_probe_voices(cfg, files)
+    return JSONResponse({"repo": repo, **v, **lic,
+                         "size_bytes": audio_probe_size(v["format"], files,
+                                                        v.get("file"), v.get("mmproj")),
+                         "voices": voices, "voice_count": len(voices),
+                         "downloads": meta.get("downloads", 0),
+                         "likes": meta.get("likes", 0),
+                         "files": len(files)})
 
 
 # ── Download manager (Bridge-owned, no Jan) ──────────────────────────────────
@@ -4477,6 +4856,10 @@ def voice_config_get() -> JSONResponse:
         "tts_model": v["tts_model"], "stt_model": v["stt_model"],
         "available": available,
         "max_chars": (_voice.VOICE_MAX_CHARS if _voice else 0),
+        # What is loaded IN MEMORY right now (persistent worker). None = nothing
+        # resident, so the next ▶ speak pays the load. The Audio tab shows this as a
+        # `resident` pill + an Unload action.
+        "resident": (_voice.worker_resident() if _voice else None),
         "error": _VOICE_ERR or None,
     })
 
@@ -4497,6 +4880,7 @@ async def voice_config_set(req: Request) -> JSONResponse:
     if not isinstance(body, dict):
         body = {}
     _, audio = _split_audio(_registry_models())
+    v_before = _voice_cfg()
     changed = []
     for field, key, pred, label in (
             ("tts_model", "tts_model", _voice.is_tts_entry, "TTS"),
@@ -4516,6 +4900,13 @@ async def voice_config_set(req: Request) -> JSONResponse:
                     {"ok": False, "error": f"'{mid}' is a {_voice.audio_entry_view(entry)['role']} "
                                            f"model — it cannot be the default {label} model"},
                     status_code=400)
+        if key == "tts_model" and mid != v_before["tts_model"]:
+            # The resident worker holds exactly one checkpoint. Clearing the default
+            # must free that RAM immediately (Debi's ratified lifecycle), and a SWITCH
+            # would otherwise leave the old model resident — charged to the ledger —
+            # until someone happened to speak again. ⚠️ PENDING FABLE QA: the spec
+            # named only the clear case; killing on a switch too is strictly tidier.
+            _voice.worker_stop("tts default " + ("cleared" if not mid else f"→ {mid}"))
         _set_yaml_scalar("voice", key, mid)
         changed.append(f"{key}={mid or '(off)'}")
     if changed:
@@ -4595,7 +4986,14 @@ async def voice_tts(req: Request) -> Response:
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
     try:
-        wav = await asyncio.to_thread(_voice.tts_render, entry, text, ROOT)
+        # spawn_guard is the ledger gate: it runs ONLY when a worker is actually
+        # about to be spawned (an already-resident model is already accounted for).
+        wav = await asyncio.to_thread(
+            functools.partial(_voice.tts_render, entry, text, ROOT,
+                              spawn_guard=_voice_spawn_guard))
+    except _voice.VoiceBudget as e:
+        print(f"[voice] tts refused ({mid}): {e.message}", flush=True)
+        return JSONResponse({"ok": False, "error": e.message}, status_code=409)
     except _voice.VoiceBusy as e:
         return JSONResponse({"ok": False, "error": e.message}, status_code=409)
     except _voice.VoiceError as e:
@@ -4664,3 +5062,19 @@ async def voice_stt(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
     print(f"[voice] stt {mid}: {len(raw)} bytes → {len(text)} chars", flush=True)
     return JSONResponse({"ok": True, "text": text, "model_id": mid})
+
+
+@app.post("/api/voice/unload")
+def voice_unload() -> JSONResponse:
+    """Kill the resident TTS worker, freeing its weights (and its ledger claim).
+
+    Deliberately does NOT clear the default: this is 'give me the RAM back', not
+    'turn voice off'. The next ▶ speak simply pays the load again — which is also
+    the honest way to verify the worker is doing its job."""
+    if _voice is None:
+        return _voice_unavailable()
+    before = _voice.worker_resident()
+    stopped = _voice.worker_stop("unload requested")
+    return JSONResponse({"ok": True, "stopped": bool(stopped),
+                         "was": (before or {}).get("model"),
+                         "resident": _voice.worker_resident()})

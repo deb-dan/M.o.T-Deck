@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -105,7 +106,11 @@ VOICE_NAME_MAX = 64
 
 
 def voices_for(entry: "dict | None") -> list:
-    """The named voices worth OFFERING for this registry entry. PURE.
+    """The named voices worth OFFERING for this registry entry, from the STATIC
+    table. PURE. ⚠️ DEMOTED (2026-08-13): this is the OFFER OF LAST RESORT — the
+    authoritative source is the model's own config.json (voices_for_entry). It
+    survives only for a model whose files we cannot read (an HF repo id that was
+    never downloaded, a moved directory).
 
     Empty list ⇒ the UI must not show chips: either the engine has no voice
     parameter (every tts-gguf) or we simply do not know this family's names (then
@@ -121,6 +126,208 @@ def voices_for(entry: "dict | None") -> list:
         if token in hay:
             return list(names)
     return []
+
+
+# ── config-derived voices (the AUTHORITATIVE source) ────────────────────────────
+# WHY this exists: the static table above is a guess about a FAMILY, and a family is
+# not a checkpoint. `mlx-community/Qwen3-TTS-…-Base-8bit` and `…-CustomVoice-8bit`
+# share every family token and have OPPOSITE voice behaviour — CustomVoice declares
+# nine named speakers, Base declares none and silently ignores any name you pass
+# (Debi's A/B, then source-confirmed). Only the model's own config.json can tell
+# them apart, so that is what we read.
+#
+# The discriminator is `tts_model_type` in config.json:
+#     custom_voice → named voices, listed in talker_config.spk_id (name → id)
+#     base         → cloning-only (spk_id:{}); a name does nothing
+#     voice_design → described by instruction text, not by name
+# and `talker_config.spk_is_dialect` (name → bool) marks the regional speakers
+# (dylan = Beijing, eric = Sichuan) so the UI can say so rather than leaving the
+# user to discover it by listening.
+#
+# Kokoro is a SECOND mechanism with the same UI: its 54 voices are not in config at
+# all, they are the stems of `voices/*.pt` files in the model dir.
+CONFIG_FILENAME = "config.json"
+VOICES_SUBDIR = "voices"
+VOICE_PT_SUFFIX = ".pt"
+
+# The honest thing to say about a checkpoint that declares no names. It is NOT an
+# error state — cloning models are a legitimate design; they just cannot be driven
+# by a name, so offering a text box would be inviting a no-op.
+NO_VOICES_NOTE = ("this model has no named voices — voice control needs "
+                  "reference audio")
+# HF-verified 2026-08-13 (api/models/… returned 200, pipeline_tag text-to-speech,
+# library mlx-audio): the CustomVoice sibling really exists under this exact id, so
+# naming it in the note is a usable instruction rather than a guess.
+QWEN_CUSTOMVOICE_REPO = "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+QWEN_SIBLING_HINT = (f" — for named voices use the CustomVoice variant "
+                     f"({QWEN_CUSTOMVOICE_REPO})")
+
+# The model types that constitute an AUTHORITATIVE "there are no names here"
+# verdict. Anything else (an absent/unknown tts_model_type) leaves the question
+# open, and an open question falls through to the voices/ dir and then the table
+# rather than telling the user something we do not know.
+NO_NAME_MODEL_TYPES = ("base", "voice_design")
+
+
+def voices_from_config(cfg: object) -> dict:
+    """Named voices declared by a model's own config.json. PURE.
+
+    Returns {"voices": [names…], "dialects": {name: bool}, "model_type": str|None}.
+    Defensive against every surprise shape: a config is third-party data and a
+    TypeError here would take out the whole Audio tab.
+    """
+    out = {"voices": [], "dialects": {}, "model_type": None}
+    if not isinstance(cfg, dict):
+        return out
+    mt = cfg.get("tts_model_type")
+    if isinstance(mt, str) and mt.strip():
+        out["model_type"] = mt.strip().lower()
+    talker = cfg.get("talker_config")
+    if not isinstance(talker, dict):
+        return out
+    spk = talker.get("spk_id")
+    names = []
+    if isinstance(spk, dict):
+        # Insertion order is the checkpoint's own order — nicer than alphabetical
+        # (serena/vivian/ryan/… reads like the model card).
+        names = [k.strip() for k in spk.keys()
+                 if isinstance(k, str) and k.strip()]
+    elif isinstance(spk, (list, tuple)):
+        names = [v.strip() for v in spk if isinstance(v, str) and v.strip()]
+    out["voices"] = names
+    dial = talker.get("spk_is_dialect")
+    if isinstance(dial, dict) and names:
+        known = set(names)
+        out["dialects"] = {k.strip(): bool(v) for k, v in dial.items()
+                           if isinstance(k, str) and k.strip() in known}
+    return out
+
+
+def voices_from_dir(model_dir: object) -> list:
+    """Kokoro's mechanism: the stems of <model_dir>/voices/*.pt. Sorted, guarded."""
+    try:
+        vdir = os.path.join(str(model_dir or ""), VOICES_SUBDIR)
+        if not os.path.isdir(vdir):
+            return []
+        return sorted(n[:-len(VOICE_PT_SUFFIX)] for n in os.listdir(vdir)
+                      if n.lower().endswith(VOICE_PT_SUFFIX) and len(n) > 3)
+    except OSError:
+        return []
+
+
+def read_model_config(model_dir: object) -> "dict | None":
+    """<model_dir>/config.json, or None when absent/unreadable/not an object."""
+    try:
+        p = os.path.join(str(model_dir or ""), CONFIG_FILENAME)
+        if not os.path.isfile(p):
+            return None
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _config_stamp(model_dir: str) -> tuple:
+    """(config mtime, voices-dir mtime) — the cache key's freshness half. A model
+    dir does not change under us in practice, but a re-download does, and getting a
+    stale voice list after replacing a checkpoint would be a genuinely confusing bug."""
+    def _m(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+    return (_m(os.path.join(model_dir, CONFIG_FILENAME)),
+            _m(os.path.join(model_dir, VOICES_SUBDIR)))
+
+
+# The panel re-reads /api/models on a timer, and audio_entry_view runs for EVERY
+# audio entry on every one of those calls — without this, a two-second poll would
+# stat and json-parse every voice model forever.
+_VOICES_CACHE = {}                    # path -> (stamp, result dict)
+_VOICES_CACHE_LOCK = threading.Lock()
+
+
+def clear_voices_cache() -> None:
+    with _VOICES_CACHE_LOCK:
+        _VOICES_CACHE.clear()
+
+
+def voices_for_entry(entry: "dict | None") -> dict:
+    """The voices to OFFER for one registry entry, resolved from the model itself.
+
+    Returns {"voices", "dialects", "model_type", "note", "source"} where source is
+    one of "config" | "dir" | "table" | "none" — the panel does not branch on it,
+    but it makes a wrong answer diagnosable from the API response alone.
+
+    Resolution order, strongest evidence first:
+      1. config.json talker_config.spk_id      → the checkpoint's own declaration
+      2. voices/*.pt stems                     → Kokoro's declaration
+      3. config says base/voice_design (or declares an EMPTY spk_id) → no voices,
+         plus an honest note. This is the case that fixes Debi's Base model.
+      4. the static KNOWN_VOICES table         → last resort, for a model whose
+         files we cannot read at all
+    """
+    blank = {"voices": [], "dialects": {}, "model_type": None,
+             "note": "", "source": "none"}
+    if not is_tts_entry(entry) or entry_format(entry) != "tts-mlx":
+        return blank
+    path = str((entry or {}).get("path") or "").strip()
+    if not path or not os.path.isdir(path):
+        # An HF repo id, or a directory that has moved. Nothing to read → the table
+        # is all we have, and an offer we cannot verify beats no offer at all.
+        return dict(blank, voices=voices_for(entry),
+                    source=("table" if voices_for(entry) else "none"))
+
+    stamp = _config_stamp(path)
+    with _VOICES_CACHE_LOCK:
+        hit = _VOICES_CACHE.get(path)
+        if hit and hit[0] == stamp:
+            return dict(hit[1])
+
+    cfg = read_model_config(path)
+    cv = voices_from_config(cfg)
+    if cv["voices"]:
+        out = dict(blank, voices=cv["voices"], dialects=cv["dialects"],
+                   model_type=cv["model_type"], source="config")
+    else:
+        pt = voices_from_dir(path)
+        if pt:
+            out = dict(blank, voices=pt, model_type=cv["model_type"], source="dir")
+        elif _config_says_no_names(cfg, cv):
+            out = dict(blank, model_type=cv["model_type"], source="config",
+                       note=NO_VOICES_NOTE + (QWEN_SIBLING_HINT
+                                              if _is_qwen3_tts(entry) else ""))
+        else:
+            tbl = voices_for(entry)
+            out = dict(blank, voices=tbl, model_type=cv["model_type"],
+                       source=("table" if tbl else "none"))
+    with _VOICES_CACHE_LOCK:
+        _VOICES_CACHE[path] = (stamp, out)
+    return dict(out)
+
+
+def _config_says_no_names(cfg: object, cv: dict) -> bool:
+    """True only when the config gives a POSITIVE verdict of 'no named voices'.
+
+    An absent or unrecognised tts_model_type is not a verdict — silence must not be
+    read as "there are none", or every non-Qwen model would grow a note claiming
+    something we never checked.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    if (cv.get("model_type") or "") in NO_NAME_MODEL_TYPES:
+        return True
+    talker = cfg.get("talker_config")
+    # A declared-but-empty spk_id is the Base checkpoint's actual fingerprint.
+    return isinstance(talker, dict) and isinstance(talker.get("spk_id"), dict) \
+        and not talker["spk_id"]
+
+
+def _is_qwen3_tts(entry: "dict | None") -> bool:
+    hay = " ".join(str((entry or {}).get(k) or "")
+                   for k in ("id", "repo", "path", "name")).lower()
+    return "qwen3-tts" in hay or "qwen3_tts" in hay
 
 
 def normalize_voice(voice: object) -> str:
@@ -164,16 +371,24 @@ class VoiceBusy(VoiceError):
     """A render is already in flight (one at a time). Maps to HTTP 409."""
 
 
-# ONE global render lock, not one per engine: two engines rendering at once would
-# each load a multi-GB model, and the ledger deliberately does not account for voice
-# weights (spec: transient RAM only). Serialising is the cheap safe answer, and a
-# TTS render is a couple of seconds. ⚠️ PENDING FABLE QA (per-engine locks would
-# allow tts+stt concurrency later).
+# The ONE-SHOT render lock. Scope NARROWED when the persistent worker landed
+# (2026-08-13): it now guards ONLY the paths that still spawn a fresh multi-GB
+# process per request — llama-tts (tts-gguf) and mlx_whisper (STT). A tts-mlx render
+# goes through VoiceWorker instead, which holds its OWN per-worker lock and must NOT
+# take this one.
+#
+# WHY THAT MATTERS BEYOND SPEED: with one shared lock, speaking blocked dictation and
+# dictation blocked speaking (a recorded Fable QA watch-item). A resident worker no
+# longer loads anything per render, so serialising it against whisper bought safety
+# we no longer need to pay for. tts-gguf and STT still share this lock: they DO each
+# load a multi-GB model per call, which is exactly the concurrency the lock exists
+# to prevent.
 _RENDER_LOCK = threading.Lock()
 
 
 def render_lock() -> threading.Lock:
-    """Exposed so tests (and any future STT path) can reason about the same lock."""
+    """Exposed so tests can reason about the same lock. Guards the ONE-SHOT engines
+    (tts-gguf, stt-mlx) only — see the comment above."""
     return _RENDER_LOCK
 
 
@@ -318,6 +533,7 @@ def audio_download_entry(base: dict, voice_format: str) -> dict:
 def audio_entry_view(m: dict) -> dict:
     """JSON view of an audio registry entry for /api/voice/config + /api/models."""
     fmt = entry_format(m)
+    vv = voices_for_entry(m)
     return {
         "id": m.get("id"),
         "name": m.get("name") or m.get("id"),
@@ -329,9 +545,16 @@ def audio_entry_view(m: dict) -> dict:
         "path": m.get("path"),
         "mmproj": m.get("mmproj"),
         "voice": m.get("voice") or None,
-        # The names the Audio-tab detail pane offers as chips. [] ⇒ free text
-        # (unknown family) or no picker at all (tts-gguf / stt) — see voices_for.
-        "voices": voices_for(m),
+        # The names the Audio-tab detail pane offers as chips, read from the MODEL
+        # (config.json spk_id, or Kokoro's voices/*.pt) and only falling back to the
+        # static table. [] + a voice_note ⇒ this checkpoint genuinely has no names
+        # and the pane shows the note INSTEAD of a picker; [] with no note ⇒ we do
+        # not know this family, so free text. See voices_for_entry.
+        "voices": vv["voices"],
+        "voice_note": vv["note"] or None,
+        "dialects": vv["dialects"],
+        "voice_source": vv["source"],
+        "tts_model_type": vv["model_type"],
         "lang": m.get("lang") or None,
         "source": m.get("source"),
         "repo": m.get("repo"),
@@ -634,6 +857,337 @@ def render_ok(out_path: str) -> bool:
         return False
 
 
+# ── persistent MLX TTS worker ───────────────────────────────────────────────────
+# THE PROBLEM IT SOLVES: `python -m mlx_audio.tts.generate` reloads the whole 3.6GB
+# checkpoint on every invocation, so a re-listen cost as much as the first listen.
+# bridge/voice_worker.py keeps the model resident and renders on demand over JSON
+# lines on a pipe (no port, no auth surface). This half owns its lifecycle.
+#
+# LIFECYCLE (Debi-ratified):
+#   spawn   — lazily, on the first tts-mlx render
+#   respawn — on a MODEL change (a worker holds exactly one checkpoint)
+#   voice   — per REQUEST, so a voice change costs nothing: no reload
+#   kill    — when the TTS default is cleared/changed, on Unload, on the model's
+#             deletion, or on any protocol failure. NO idle timeout: a resident
+#             model is the whole point, and the ledger keeps it honest.
+class VoiceBudget(VoiceError):
+    """Spawning the worker would blow the model-RAM budget. Maps to HTTP 409 — the
+    same 'free something first' shape the runner switch returns."""
+
+
+WORKER_TIMEOUT_S = 120          # one render; same cap as the one-shot path
+WORKER_LOAD_TIMEOUT_S = 300     # ⚠️ a cold 3.6GB load legitimately outlasts a render
+WORKER_LOG_LINES = 4000         # the worker log is trimmed to this on each spawn
+
+
+def worker_script(root: "str | Path | None" = None) -> str:
+    return str(Path(root or ROOT) / "bridge" / "voice_worker.py")
+
+
+def worker_argv(mlx_py: str, script: str) -> list:
+    """PURE. Explicit interpreter + explicit script path — the Finder-minimal-PATH
+    rule applies to anything the bridge spawns, and `python` alone would be wrong
+    even if it resolved (the worker needs the MLX venv, not ours)."""
+    return [str(mlx_py), str(script)]
+
+
+def worker_log_path(root: "str | Path | None" = None) -> str:
+    return str(Path(root or ROOT) / "data" / "logs" / "voice-worker.log")
+
+
+class VoiceWorker:
+    """A handle on one resident worker process. One in-flight request at a time.
+
+    Every failure mode collapses to the same answer: kill the process and mark it
+    down. The next render spawns a fresh one, so a wedged or crashed worker costs a
+    single slow render, never a stuck panel.
+    """
+
+    def __init__(self, model_id: str, model_path: str, size_bytes: int = 0,
+                 root: "str | Path | None" = None, mlx_py: "str | None" = None):
+        self.model_id = model_id
+        self.model_path = model_path
+        self.size_bytes = int(size_bytes or 0)
+        self.root = Path(root or ROOT)
+        self.mlx_py = mlx_py or mlx_python(self.root)
+        self.proc = None
+        self.started_at = 0.0
+        self.renders = 0
+        self._seq = 0
+        self._lock = threading.Lock()          # one in-flight request
+        self._q = None
+        self._logf = None
+
+    # ── plumbing ───────────────────────────────────────────────────────────────
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def _reader(self, stdout, q):
+        """Own thread: readline() has no timeout, so the timeout lives on the queue."""
+        try:
+            for line in stdout:
+                q.put(line)
+        except (OSError, ValueError):
+            pass
+        finally:
+            q.put(None)                        # EOF sentinel — the process is gone
+
+    def start(self) -> None:
+        """Spawn + `load`. Raises VoiceError if either fails (nothing is left running)."""
+        import queue as _queue
+        if not os.path.isfile(self.mlx_py):
+            raise VoiceError(f"the MLX runtime is missing at {self.mlx_py} — "
+                             f"run scripts/install_mlx.sh")
+        script = worker_script(self.root)
+        if not os.path.isfile(script):
+            raise VoiceError(f"the voice worker is missing at {script}")
+        logp = worker_log_path(self.root)
+        os.makedirs(os.path.dirname(logp), exist_ok=True)
+        _trim_log(logp, WORKER_LOG_LINES)
+        self._logf = open(logp, "a", encoding="utf-8", errors="replace")
+        self._logf.write(f"\n=== voice worker {self.model_id} "
+                         f"({time.strftime('%Y-%m-%d %H:%M:%S')}) ===\n")
+        self._logf.flush()
+        try:
+            self.proc = subprocess.Popen(
+                worker_argv(self.mlx_py, script),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._logf,
+                cwd=str(self.root), text=True, bufsize=1)
+        except OSError as e:
+            self._close_log()
+            raise VoiceError(f"could not start the voice worker: {str(e)[:200]}")
+        self.started_at = time.time()
+        self._q = _queue.Queue()
+        threading.Thread(target=self._reader, args=(self.proc.stdout, self._q),
+                         daemon=True).start()
+        try:
+            self._request({"cmd": "load", "model": self.model_path},
+                          WORKER_LOAD_TIMEOUT_S)
+        except VoiceError:
+            self.stop()
+            raise
+
+    def _close_log(self) -> None:
+        try:
+            if self._logf:
+                self._logf.close()
+        except OSError:
+            pass
+        self._logf = None
+
+    def stop(self) -> None:
+        """Idempotent. Closing stdin is the polite exit (the worker loop ends at EOF);
+        kill is the guarantee."""
+        p, self.proc = self.proc, None
+        if p is not None:
+            try:
+                if p.stdin:
+                    p.stdin.close()
+            except OSError:
+                pass
+            try:
+                p.wait(timeout=2)
+            except Exception:                                   # noqa: BLE001
+                try:
+                    p.kill()
+                    p.wait(timeout=2)
+                except Exception:                               # noqa: BLE001
+                    pass
+        self._close_log()
+        self._q = None
+
+    def _request(self, payload: dict, timeout: float) -> dict:
+        """Send one request, wait for its reply. Any protocol trouble kills the
+        process and raises — a half-read pipe can never be trusted again."""
+        if not self.alive():
+            raise VoiceError("the voice worker is not running")
+        self._seq += 1
+        rid = self._seq
+        line = json.dumps(dict(payload, id=rid), ensure_ascii=True) + "\n"
+        try:
+            self.proc.stdin.write(line)
+            self.proc.stdin.flush()
+        except (OSError, ValueError) as e:
+            self.stop()
+            raise VoiceError(f"the voice worker stopped accepting input "
+                             f"({str(e)[:120]})", _log_tail(worker_log_path(self.root)))
+        deadline = time.time() + timeout
+        while True:
+            try:
+                raw = self._q.get(timeout=max(0.05, deadline - time.time()))
+            except Exception:                                   # queue.Empty
+                self.stop()
+                raise VoiceError(
+                    f"the voice worker did not answer within {int(timeout)}s",
+                    _log_tail(worker_log_path(self.root)))
+            if raw is None:
+                self.stop()
+                raise VoiceError("the voice worker exited",
+                                 _log_tail(worker_log_path(self.root)))
+            try:
+                resp = json.loads(raw)
+            except ValueError:
+                # Not protocol json. The worker redirects fd 1 to stderr precisely so
+                # this cannot happen; if it does, the stream is untrustworthy.
+                self.stop()
+                raise VoiceError("the voice worker sent something that was not a "
+                                 "response", _log_tail(worker_log_path(self.root)))
+            if not isinstance(resp, dict):
+                continue
+            if resp.get("id") not in (rid, 0):
+                continue                       # a stale reply; keep reading
+            if not resp.get("ok"):
+                raise VoiceError(str(resp.get("error") or "the voice worker failed"),
+                                 _log_tail(worker_log_path(self.root)))
+            return resp
+
+    # ── the one public operation ───────────────────────────────────────────────
+    def render(self, text: str, voice: str, out_path: str) -> dict:
+        """One render. VoiceBusy (→409) when another render holds this worker, which
+        mirrors the one-shot path's answer rather than queueing behind it."""
+        if not self._lock.acquire(blocking=False):
+            raise VoiceBusy("a voice render is already in progress — try again in a moment")
+        try:
+            resp = self._request(
+                {"cmd": "tts", "text": text, "voice": voice or "", "out": out_path},
+                WORKER_TIMEOUT_S)
+            self.renders += 1
+            return resp
+        finally:
+            self._lock.release()
+
+    def info(self) -> dict:
+        return {"model": self.model_id, "path": self.model_path,
+                "size_bytes": self.size_bytes, "renders": self.renders,
+                "uptime_s": int(time.time() - self.started_at) if self.started_at else 0,
+                "pid": (self.proc.pid if self.alive() else None)}
+
+
+def _trim_log(path: str, keep: int) -> None:
+    """Keep the worker log bounded without rotating files around (one long-lived
+    process appends to one fd — a rename would orphan its output)."""
+    try:
+        if not os.path.isfile(path):
+            return
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if len(lines) > keep:
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(lines[-keep:])
+    except OSError:
+        pass
+
+
+def _log_tail(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()[-VOICE_LOG_TAIL:]
+    except OSError:
+        return ""
+
+
+# ── the module-level singleton (at most ONE resident model) ─────────────────────
+_WORKER = None                      # VoiceWorker | None
+_WORKER_MUTEX = threading.Lock()    # guards the swap, NOT the render
+
+
+def worker_resident() -> "dict | None":
+    """What is resident right now, or None. Read by the ledger and /api/voice/config.
+    A dead-but-not-reaped worker reports None: the ledger must not charge for RAM
+    that a crashed process already gave back."""
+    w = _WORKER
+    if w is None or not w.alive():
+        return None
+    return w.info()
+
+
+def worker_stop(reason: str = "") -> bool:
+    """Kill the resident worker if there is one. Idempotent; True when one died."""
+    global _WORKER
+    with _WORKER_MUTEX:
+        w, _WORKER = _WORKER, None
+        if w is None:
+            return False
+        was = w.alive()
+        w.stop()
+        if was:
+            print(f"[voice] worker stopped ({w.model_id})"
+                  f"{' — ' + reason if reason else ''}", flush=True)
+        return was
+
+
+def worker_stop_if_model(model_id: str, reason: str = "") -> bool:
+    """Kill only when the resident model IS `model_id`. Used by the callers that
+    invalidate one model (default changed/cleared, model deleted)."""
+    w = _WORKER
+    if w is None or w.model_id != str(model_id or ""):
+        return False
+    return worker_stop(reason)
+
+
+def get_worker(entry: dict, root: "str | Path | None" = None,
+               mlx_py: "str | None" = None,
+               spawn_guard=None) -> VoiceWorker:
+    """The resident worker for `entry`, spawning or respawning as needed.
+
+    `spawn_guard(size_bytes) -> str | None` is the ledger hook: the bridge owns
+    harness.yaml and the RAM budget, so voice.py asks rather than reads. A returned
+    string is the refusal shown to the user (VoiceBudget → 409). It is consulted
+    ONLY on a real spawn — an already-resident model is already accounted for.
+    """
+    global _WORKER
+    mid = str(entry.get("id") or "")
+    path = str(entry.get("path") or "")
+    with _WORKER_MUTEX:
+        w = _WORKER
+        if w is not None and (not w.alive() or w.model_id != mid):
+            why = "model changed" if w.alive() else "process gone"
+            w.stop()
+            _WORKER = None
+            print(f"[voice] worker replaced ({w.model_id} → {mid}, {why})", flush=True)
+            w = None
+        if w is None:
+            if spawn_guard is not None:
+                refusal = spawn_guard(int(entry.get("size_bytes") or 0))
+                if refusal:
+                    raise VoiceBudget(refusal)
+            w = VoiceWorker(mid, path, entry.get("size_bytes") or 0,
+                            root=root, mlx_py=mlx_py)
+            w.start()                       # raises with nothing left running
+            _WORKER = w
+            print(f"[voice] worker resident: {mid}", flush=True)
+        return w
+
+
+def tts_render_worker(entry: dict, text: str,
+                      root: "str | Path | None" = None,
+                      mlx_py: "str | None" = None,
+                      spawn_guard=None) -> bytes:
+    """A tts-mlx render through the resident worker. Deliberately does NOT take the
+    global one-shot lock — nothing multi-GB is being loaded here, so a speak render
+    no longer blocks dictation (or vice versa)."""
+    root = Path(root or ROOT)
+    err = validate_tts_request(text, entry)
+    if err:
+        raise VoiceError(err)
+    w = get_worker(entry, root=root, mlx_py=mlx_py, spawn_guard=spawn_guard)
+    tmp_root = root / "data" / "tmp"
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(prefix="tts-", dir=str(tmp_root))
+    try:
+        out_path = os.path.join(tmp_dir, "out.wav")
+        w.render(text, str(entry.get("voice") or "").strip(), out_path)
+        # The worker already applied render_ok; re-checking here keeps the invariant
+        # stated at BOTH ends of the pipe rather than trusting one side of it.
+        if not render_ok(out_path):
+            raise VoiceError(f"{entry.get('id')} produced no audio",
+                             _log_tail(worker_log_path(root)))
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ── dispatch ────────────────────────────────────────────────────────────────────
 def _tail(*chunks: object) -> str:
     return ("".join(str(c or "") for c in chunks))[-VOICE_LOG_TAIL:]
@@ -642,12 +1196,20 @@ def _tail(*chunks: object) -> str:
 def tts_render(entry: dict, text: str,
                root: "str | Path | None" = None,
                llama_bin: "str | None" = None,
-               mlx_py: "str | None" = None) -> bytes:
-    """Render `text` with `entry` and return the wav bytes.
+               mlx_py: "str | None" = None,
+               use_worker: bool = True,
+               spawn_guard=None) -> bytes:
+    """Render `text` with `entry` and return the wav bytes. THE single entry point.
 
-    Raises VoiceBusy when another render holds the lock, VoiceError otherwise
-    (validation, missing engine, timeout, or an empty/absent output wav). The temp
-    directory is ALWAYS removed, including on timeout.
+    tts-mlx goes through the RESIDENT worker (model loaded once, no global lock);
+    tts-gguf stays a one-shot llama-tts call under the global lock. `use_worker=False`
+    forces the old one-shot MLX path — kept because it is the fallback a broken
+    worker degrades to, and because the tests exercise the argv surface through it.
+
+    Raises VoiceBusy when another render is in flight, VoiceBudget when spawning a
+    worker would blow the RAM budget, VoiceError otherwise (validation, missing
+    engine, timeout, or an empty/absent output wav). The temp directory is ALWAYS
+    removed, including on timeout.
     """
     root = Path(root or ROOT)
     err = validate_tts_request(text, entry)
@@ -655,6 +1217,9 @@ def tts_render(entry: dict, text: str,
         raise VoiceError(err)
 
     fmt = entry_format(entry)
+    if fmt == "tts-mlx" and use_worker:
+        return tts_render_worker(entry, text, root=root, mlx_py=mlx_py,
+                                 spawn_guard=spawn_guard)
     lb = llama_bin or llama_tts_bin(root)
     mp = mlx_py or mlx_python(root)
     if fmt == "tts-gguf" and not (os.path.isfile(lb) and os.access(lb, os.X_OK)):

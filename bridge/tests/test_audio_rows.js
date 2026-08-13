@@ -104,6 +104,17 @@ const QMLX = { id: 'Qwen3-TTS-8bit', role: 'tts', format: 'tts-mlx',
 check('a known mlx family gets chips', P.voiceChoiceMode(QMLX) === 'chips');
 check('an mlx model with no known voices gets free text',
       P.voiceChoiceMode({ ...QMLX, voices: [] }) === 'text');
+// The Base-checkpoint case: the model's OWN config says it has no named voices, so
+// the pane must state that rather than offering a box whose contents the engine
+// silently ignores (Debi's A/B: two "different" voices, one identical render).
+check('a model whose config declares NO named voices gets the note, not a box',
+      P.voiceChoiceMode({ ...QMLX, voices: [],
+                          voice_note: 'this model has no named voices' }) === 'note');
+check('declared voices WIN over a stale note (chips beat prose)',
+      P.voiceChoiceMode({ ...QMLX, voice_note: 'x' }) === 'chips');
+check('a note on a tts-gguf changes nothing — there is no voice flag at all',
+      P.voiceChoiceMode({ id: 'g', role: 'tts', format: 'tts-gguf',
+                          voices: [], voice_note: 'x' }) === 'none');
 check('a missing voices array still gets free text (never a crash)',
       P.voiceChoiceMode({ id: 'x', role: 'tts', format: 'tts-mlx' }) === 'text');
 check('a tts-gguf gets NO picker (llama.cpp has no voice parameter)',

@@ -181,6 +181,73 @@ def audio_format_for(dir_name, filenames):
     return None
 
 
+# ── the whisper config probe (closes a real false-positive) ──────────────────
+# `openai/whisper-medium` in the HF cache is a TRANSFORMERS checkpoint: it carries a
+# whisper token in the name, a config.json and safetensors, so the NAME-based
+# classifier above happily called it stt-mlx — and then mlx_whisper died with
+# `ModelDimensions.__init__() unexpected keyword '_name_or_path'`, at dictation time,
+# far from the cause. (A whole-repo download of one would also drag ~12GB of four
+# redundant weight formats.) The filename layer cannot tell these apart; the CONFIG
+# can, because the two projects use disjoint vocabularies:
+#
+#   mlx-whisper : config.json IS a serialised ModelDimensions — n_mels, n_audio_state,
+#                 n_audio_head, n_audio_layer, n_vocab, n_text_state, …
+#   transformers: _name_or_path, architectures, transformers_version, num_mel_bins,
+#                 d_model, encoder_layers, decoder_layers, is_encoder_decoder
+#                 (whisper-medium trips all eight)
+#
+# So: any veto key present ⇒ reject outright; otherwise ALL six required keys must be
+# there. Both halves matter — the veto catches a transformers config that happens to
+# gain an mlx-looking key, the requirement catches a config that is neither.
+MLX_WHISPER_REQUIRED = ("n_mels", "n_audio_state", "n_audio_head",
+                        "n_audio_layer", "n_vocab", "n_text_state")
+MLX_WHISPER_VETO = ("_name_or_path", "architectures", "transformers_version",
+                    "num_mel_bins", "d_model", "encoder_layers",
+                    "decoder_layers", "is_encoder_decoder")
+
+
+def is_mlx_whisper_config(cfg):
+    """PURE: True only for a config.json that is an mlx-whisper ModelDimensions."""
+    if not isinstance(cfg, dict):
+        return False
+    if any(k in cfg for k in MLX_WHISPER_VETO):
+        return False
+    return all(k in cfg for k in MLX_WHISPER_REQUIRED)
+
+
+def _read_json(path):
+    """A dict, or None when absent/unreadable/not an object. Never raises."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def audio_format_probed(dir_name, filenames, folder, strict=True):
+    """audio_format_for + the config probe for the stt-mlx verdict only.
+
+    `strict=True` (the HF cache) FAILS CLOSED: an unreadable config means we do not
+    know, and "do not know" must not become "hand this to mlx_whisper" — the cache is
+    full of other apps' downloads and a false positive there is exactly the bug this
+    closes.
+
+    ⚠️ PENDING FABLE QA — `strict=False` (data/models/, our OWN tree) keeps the old
+    name-token behaviour when the config cannot be READ (present but corrupt/
+    unparseable). Rationale: a folder we downloaded ourselves with the stt-mlx hint is
+    ours, and silently dropping it from the registry over a parse error would look
+    like the model vanished. A config that parses is always obeyed, in both modes.
+    """
+    fmt = audio_format_for(dir_name, filenames)
+    if fmt != "stt-mlx":
+        return fmt
+    cfg = _read_json(os.path.join(folder, "config.json"))
+    if cfg is None:
+        return None if strict else fmt
+    return "stt-mlx" if is_mlx_whisper_config(cfg) else None
+
+
 def _audio_entry(model_id, fmt, folder, filenames, source):
     """Build one audio registry entry from an already-classified folder."""
     names = sorted(filenames or [])
@@ -224,7 +291,7 @@ def scan_audio_local(local_dir):
             files = os.listdir(folder)
         except OSError:
             continue
-        fmt = audio_format_for(name, files)
+        fmt = audio_format_probed(name, files, folder, strict=False)
         if fmt:
             entries.append(_audio_entry(name, fmt, folder, files, "local"))
     return entries
@@ -267,7 +334,7 @@ def scan_audio_hf_cache(hub_dir):
             files = os.listdir(folder)
         except OSError:
             continue
-        fmt = audio_format_for(leaf, files)
+        fmt = audio_format_probed(leaf, files, folder, strict=True)
         if fmt in ("tts-mlx", "stt-mlx"):
             entries.append(_audio_entry(leaf, fmt, folder, files, "audio-hf-cache"))
     return entries

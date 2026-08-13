@@ -486,12 +486,13 @@
   /* HF browser (lives in the left column when browse view is toggled) */
   #models-browse .mb-toprow { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
   .mb-searchrow { display:flex; gap:10px; margin-top:12px; }
-  #mb-q { flex:1; background:var(--card); color:var(--cream); border:1px solid var(--line2);
+  /* #as-* = the Audio tab's HF search (T2): same search-row grammar, no new rules. */
+  #mb-q, #as-q { flex:1; background:var(--card); color:var(--cream); border:1px solid var(--line2);
       border-radius:10px; padding:11px 14px; font:13px -apple-system,sans-serif; outline:none; }
-  #mb-q:focus { border-color:var(--gold); }
-  #mb-go { font:11px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--gold);
+  #mb-q:focus, #as-q:focus { border-color:var(--gold); }
+  #mb-go, #as-go { font:11px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--gold);
       background:transparent; border:1px solid var(--line2); border-radius:10px; padding:0 18px; cursor:pointer; }
-  #mb-go:hover { border-color:var(--gold); }
+  #mb-go:hover, #as-go:hover { border-color:var(--gold); }
   #mb-fmt, #mb-sort { background:var(--card); color:var(--dim); border:1px solid var(--line2);
       border-radius:10px; font:10.5px var(--mono); letter-spacing:.04em; padding:0 8px; cursor:pointer; }
   .hfcard { margin-top:11px; border-top:1px solid var(--line); padding-top:12px; max-height:360px; overflow-y:auto;
@@ -1098,6 +1099,31 @@
         <div id="models-audio-detail"><div class="cs-empty">Select a voice model</div></div>
       </div>
       <div id="audio-get" class="md-sec" style="margin-top:26px"></div>
+
+      <!-- SEARCH HF (T2) — discovery beyond the five curated starters. Collapsed by
+           default: the curated list stays the first thing the tab shows. Results are
+           .mrow rows; a clicked row expands an INLINE probe card underneath it rather
+           than driving #models-audio-detail, which belongs to INSTALLED entries. -->
+      <div id="audio-search" class="md-sec" style="margin-top:26px">
+        <button class="chip" id="as-toggle" onclick="toggleAudioSearch()">SEARCH HF ⌄</button>
+        <div id="as-body" hidden>
+          <div class="mb-searchrow">
+            <input id="as-q" placeholder="Search HuggingFace voice models… (kokoro, whisper, tts …)"
+                   onkeydown="if(event.key==='Enter'){audioSearch();}">
+            <select id="as-kind" onchange="audioSearch()" title="Lane">
+              <option value="tts">TTS · MLX</option>
+              <option value="tts-gguf">TTS · llama.cpp</option>
+              <option value="stt">Speech-to-text · MLX</option>
+            </select>
+            <button id="as-go" onclick="audioSearch()">Search</button>
+          </div>
+          <div class="cs-empty" style="margin-top:8px">Licences come from each model’s own
+            metadata. Non-commercially licensed models are listed but cannot be downloaded
+            here. Tags lie about frameworks — click a result and the harness reads its
+            config.json before offering a Get.</div>
+          <div id="as-results"></div>
+        </div>
+      </div>
     </div>
 
     <div id="downloads-sec" hidden><span class="cs-title" style="display:block;margin-top:26px">Downloads</span><div id="dl-list"></div></div>
@@ -1437,6 +1463,7 @@ const LOG_SOURCES = [
   {n:'runner', label:'runner'}, {n:'guard', label:'path-guard'},
   {n:'voicestudio', label:'voicestudio'}, {n:'voicebox', label:'voicebox'},
   {n:'voicebox-install', label:'voicebox install'},
+  {n:'voice-worker', label:'voice worker'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -3277,16 +3304,28 @@ async function chatModelChange(id){
    piece of state — the configured default TTS model (harness.yaml voice.tts_model,
    read through /api/voice/config). Empty = voice off: the chip says so and NO
    ▶ Speak action is rendered anywhere, so the chip is the single discovery path. */
-let voiceCfg = { tts_model: '', stt_model: '', available: [] };
+let voiceCfg = { tts_model: '', stt_model: '', available: [], resident: null };
 let voicePopErr = '';        // last /api/voice/config failure, shown inside the popover
+let lastResidentId = '';     // last seen resident model id (re-render trigger only)
 
 async function loadVoiceCfg(){
   try {
     const r = await (await fetch('/api/voice/config')).json();
     voiceCfg = { tts_model: r.tts_model || '', stt_model: r.stt_model || '',
-                 available: r.available || [] };
+                 available: r.available || [],
+                 // which model is loaded IN MEMORY (persistent worker), or null
+                 resident: r.resident || null };
   } catch { /* bridge down — keep the last known state, chip just doesn't move */ }
   renderAudioBtn();
+  // The Audio detail pane shows the `resident` pill + Unload, so it has to follow
+  // this read — but ONLY when the resident model actually CHANGED. This function is
+  // on the periodic refresh, and an unconditional re-render would blow away the
+  // free-text voice input mid-typing.
+  const rid = (voiceCfg.resident && voiceCfg.resident.model) || '';
+  if (rid !== lastResidentId){
+    lastResidentId = rid;
+    if (typeof renderAudioDetail === 'function') renderAudioDetail();
+  }
   const pop = document.getElementById('audio-pop');
   if (pop && !pop.hidden) renderAudioPop();
   refreshSpeakChips();
@@ -3620,6 +3659,53 @@ function talkMime(supported){
 }
 
 function sttOn(){ return !!(voiceCfg && voiceCfg.stt_model); }
+
+/* AUTO-DICTATION GATE 1 — the AudioWorklet-in-WKWebView spike (research 2026-08-08).
+   silero-VAD needs an AudioWorkletProcessor pumping mic frames; WKWebView has a
+   history of silent no-ops (⊕ attach, drag, mic grant), so before any VAD work we
+   prove, live: (1) audioWorklet exists, (2) a Blob-URL module loads, (3) process()
+   actually runs against the real mic stream. Verdict is shown AND logged. */
+async function audioWorkletSpike(){
+  // alert() is a silent no-op in the app's WKWebView (recorded gotcha — no
+  // runJavaScriptAlertPanel delegate), so the verdict goes to the activity feed
+  // (Mission Control), the console, and alert() as a browser-only bonus.
+  const say = (msg) => {
+    try { feed('voice', msg); } catch(_){}
+    console.log(msg);
+    try { alert(msg); } catch(_){}
+    try { showView('mc'); } catch(_){}
+  };
+  try {
+    if (typeof AudioWorkletNode === 'undefined')
+      return say('worklet spike: FAIL — AudioWorkletNode is undefined in this webview');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = new AudioContext();
+    if (!ctx.audioWorklet){ stream.getTracks().forEach(t => t.stop());
+      return say('worklet spike: FAIL — AudioContext.audioWorklet missing'); }
+    const src = 'class P extends AudioWorkletProcessor{constructor(){super();this.n=0;}' +
+      'process(i){this.n++;if(this.n%50===0)this.port.postMessage(this.n);return true;}}' +
+      'registerProcessor("harness-spike",P);';
+    const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);   // the Blob-URL load IS part of the test
+    URL.revokeObjectURL(url);
+    const node = new AudioWorkletNode(ctx, 'harness-spike');
+    let frames = 0;
+    node.port.onmessage = (e) => { frames = e.data; };
+    ctx.createMediaStreamSource(stream).connect(node);   // do NOT connect to output (no feedback)
+    await new Promise(r => setTimeout(r, 2000));
+    const rate = ctx.sampleRate;
+    stream.getTracks().forEach(t => t.stop());
+    try { await ctx.close(); } catch(_){}
+    // 2s at 128-sample quanta ≈ 750 callbacks @48k; anything >100 proves the pump.
+    if (frames > 100)
+      say(`worklet spike: PASS — ${frames} process() calls in 2s @ ${rate}Hz. VAD is viable here.`);
+    else
+      say(`worklet spike: FAIL — module loaded but only ${frames} process() calls in 2s ` +
+          '(silent no-op class). Auto-dictation needs another capture path.');
+  } catch (e) {
+    say('worklet spike: FAIL — ' + (e && e.message ? e.message : String(e)));
+  }
+}
 
 function renderTalkBtn(){
   const btn = document.getElementById('chat-talk');
@@ -4251,6 +4337,22 @@ function renderAudio(r){
   markAudioSelRows();
 }
 function selectAudio(id){ aSel = id; voiceErr = ''; renderAudioDetail(); markAudioSelRows(); }
+/* PURE-ish: which model the persistent TTS worker currently holds in memory ('' =
+   none). Read from /api/voice/config, not /api/models — residency is a runtime fact
+   about a process, not a property of the registry. */
+function audioResidentId(){ return (voiceCfg.resident && voiceCfg.resident.model) || ''; }
+async function voiceUnload(){
+  voiceErr = '';
+  try {
+    const res = await fetch('/api/voice/unload', {method:'POST'});
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+  } catch { voiceErr = 'could not reach the bridge'; }
+  stopSpeaking();       // a clip from the unloaded model must not outlive it
+  await loadVoiceCfg(); // re-read residency → the pill + Unload disappear
+  renderAudioDetail();
+  initModels();         // the RAM ledger stamp drops by this model's size
+}
 function markAudioSelRows(){
   document.querySelectorAll('#audio-listcol .mrow').forEach(el =>
     el.classList.toggle('sel', el.dataset.aid === aSel));
@@ -4265,8 +4367,13 @@ function renderAudioDetail(){
   const isDefault = a.id === audioDefaultId(r, role);
   const meta = [esc(a.id), esc(audioEngineLabel(a)), esc(a.format || ''),
                 fmtGB(a.size_bytes), esc(a.source || '')].filter(Boolean).join(' · ');
+  // RESIDENT = this model is loaded in memory right now (persistent TTS worker), so
+  // the next ▶ speak skips the multi-GB load. Reuses the gold `.mpill.live` pill —
+  // same "this one is active" meaning as the default pill, no new CSS.
+  const resident = audioResidentId() === a.id;
   d.innerHTML = `<div class="md-title">${esc(a.name || a.id)}</div>
-    <div class="md-meta">${meta}${isDefault ? ' · default ' + esc(role.toUpperCase()) : ''}</div>
+    <div class="md-meta">${meta}${isDefault ? ' · default ' + esc(role.toUpperCase()) : ''}${
+      resident ? ' <span class="mpill live">resident</span>' : ''}</div>
     <div class="md-actions" id="ad-actions"></div>
     <div id="ad-voice"></div>
     <div class="md-div"></div>
@@ -4284,6 +4391,16 @@ function renderAudioDetail(){
     set.onclick = () => setVoiceDefault(a.id, role);
   }
   acts.appendChild(set);
+  // Unload — free the resident weights WITHOUT turning voice off. The default stays,
+  // so the next ▶ speak simply pays the load again.
+  if (resident){
+    const un = document.createElement('button'); un.className = 'mp-act';
+    un.textContent = 'Unload';
+    un.title = 'Free this model from memory (it stays the default — the next '
+             + 'speak reloads it)';
+    un.onclick = () => voiceUnload();
+    acts.appendChild(un);
+  }
   // Delete — same guarded two-step as chat models; the bridge refuses anything that
   // is not app-owned AND under data/models/ even if called directly.
   if (isAppOwned(a.source)){
@@ -4310,27 +4427,39 @@ function renderAudioDetail(){
    stored ON the registry entry (a voice is a property of a model choice, not a
    global) and bridge/voice.tts_argv emits --voice only when it is set.
 
+   The names now come from the MODEL's own config.json (or Kokoro's voices/*.pt),
+   not from a family guess — so a CustomVoice checkpoint shows its nine real
+   speakers and a Base checkpoint shows the truth about itself instead.
+
    PURE: which picker, if any, this model gets.
-     'chips' — we know this family's documented voice names (entry.voices)
-     'text'  — a tts-mlx model whose family we don't recognise: free text, because
-               a real voice we have never heard of must still be typable
+     'chips' — the model declares voice names (entry.voices)
+     'note'  — the model's own config says it has NO named voices (entry.voice_note):
+               show the note and NOTHING else. A free-text box here would invite
+               typing a name the engine silently ignores — worse than no control.
+     'text'  — a tts-mlx model with no verdict either way: free text, because a real
+               voice we have never heard of must still be typable
      'none'  — tts-gguf (llama-tts has NO --voice flag at all) or an STT model
    Mirrored by bridge/tests/test_audio_rows.js. */
 function voiceChoiceMode(a){
   if (!a || (a.role || 'tts') !== 'tts') return 'none';
   if (a.format !== 'tts-mlx') return 'none';
-  return (a.voices && a.voices.length) ? 'chips' : 'text';
+  if (a.voices && a.voices.length) return 'chips';
+  return a.voice_note ? 'note' : 'text';
 }
 function renderAudioVoice(a){
   const box = document.getElementById('ad-voice');
   if (!box) return;
   box.innerHTML = '';
   const mode = voiceChoiceMode(a);
-  if (mode === 'none'){
-    if ((a.role || 'tts') === 'tts'){
+  if (mode === 'none' || mode === 'note'){
+    const txt = mode === 'note'
+      ? a.voice_note
+      : ((a.role || 'tts') === 'tts'
+         ? 'voice is fixed by the model (llama.cpp has no voice parameter)' : '');
+    if (txt){
       const n = document.createElement('div');
       n.className = 'md-imnote'; n.style.marginTop = '14px'; n.style.maxWidth = '100%';
-      n.textContent = 'voice is fixed by the model (llama.cpp has no voice parameter)';
+      n.textContent = txt;
       box.appendChild(n);
     }
     return;
@@ -4357,8 +4486,21 @@ function renderAudioVoice(a){
   chip('model default', !cur, 'Let the engine choose (mlx-audio picks a random '
        + 'named voice per render)', () => setEntryVoice(a.id, ''));
   if (mode === 'chips'){
-    for (const v of a.voices) chip(v, v === cur, 'Always speak as ' + v,
-                                   () => setEntryVoice(a.id, v));
+    // spk_is_dialect from the checkpoint: dylan speaks Beijing, eric Sichuan. The
+    // tag is a faint suffix INSIDE the existing chip — no new CSS primitive, and the
+    // user learns it from the picker instead of from a surprise accent.
+    const dial = a.dialects || {};
+    for (const v of a.voices){
+      const b = chip(v, v === cur,
+                     'Always speak as ' + v + (dial[v] ? ' (a dialect voice)' : ''),
+                     () => setEntryVoice(a.id, v));
+      if (dial[v]){
+        const t = document.createElement('span');
+        t.style.cssText = 'opacity:.5;margin-left:6px';
+        t.textContent = 'dialect';
+        b.appendChild(t);
+      }
+    }
   } else {
     const inp = document.createElement('input');
     inp.type = 'text'; inp.value = cur; inp.placeholder = 'voice name';
@@ -4479,6 +4621,137 @@ function renderAudioGet(){
     list.appendChild(row);
   }
   box.appendChild(list);
+}
+
+/* ---------- SEARCH HF (T2): voice-model discovery ----------
+   The five starters answer "what should I get first"; this answers Debi's actual
+   question, "why are there only these models". Everything below is display; every
+   VERDICT (engine, licence, downloadable-or-not) comes from the bridge probe, so
+   the panel can never talk a user into a download the bridge would refuse.
+
+   PURE helpers (mirrored by bridge/tests/test_audio_search.js): */
+function audioLicPill(badge){
+  // Reuses the existing fit-pill palette — ok/amber/bad — so no new CSS exists.
+  return badge === 'nc' ? 'fit-no' : (badge === 'unknown' ? 'fit-slow' : 'fit-ok');
+}
+function audioLicText(row){
+  return (row && row.license) ? row.license : 'licence unknown';
+}
+function audioProbeSummary(p){
+  // One line that says what this repo IS. Never invents a size we did not measure.
+  if (!p) return '';
+  const bits = [];
+  const label = {'tts-mlx':'TTS · MLX', 'stt-mlx':'Speech-to-text · MLX',
+                 'tts-gguf':'TTS · llama.cpp',
+                 'transformers':'transformers checkpoint',
+                 'unknown':'unrecognised'}[p.format] || p.format;
+  bits.push(label);
+  if (p.size_bytes) bits.push(fmtGB(p.size_bytes));
+  if (p.voice_count) bits.push(p.voice_count + ' named voice' + (p.voice_count === 1 ? '' : 's'));
+  return bits.join(' · ');
+}
+function audioGetState(p){
+  // {disabled, label, reason} — the button must never lie about what it will do.
+  if (!p) return { disabled:true, label:'Get', reason:'probe failed' };
+  if (!p.can_get) return { disabled:true, label:'Unavailable',
+                           reason: p.block_reason || 'not downloadable' };
+  return { disabled:false, label:'Get', reason:'' };
+}
+
+let asOpen = false, asSel = '';
+function toggleAudioSearch(){
+  asOpen = !asOpen;
+  const body = document.getElementById('as-body');
+  const btn = document.getElementById('as-toggle');
+  if (body) body.hidden = !asOpen;
+  if (btn) btn.textContent = asOpen ? 'SEARCH HF ⌃' : 'SEARCH HF ⌄';
+  if (asOpen){ const q = document.getElementById('as-q'); if (q) q.focus(); }
+}
+async function audioSearch(){
+  const res = document.getElementById('as-results');
+  if (!res) return;
+  const q = (document.getElementById('as-q').value || '').trim();
+  const kind = document.getElementById('as-kind').value;
+  asSel = '';
+  res.innerHTML = '<div class="cs-empty">Searching HuggingFace…</div>';
+  let list;
+  try {
+    list = await (await fetch('/api/models/hf/audio?kind=' + encodeURIComponent(kind)
+                              + '&q=' + encodeURIComponent(q))).json();
+  } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; return; }
+  if (!Array.isArray(list)){
+    res.innerHTML = '<div class="cs-empty">HF error: '
+      + esc((list && list.error) || 'unknown') + '</div>'; return;
+  }
+  if (!list.length){
+    res.innerHTML = '<div class="cs-empty">No voice models found for that search.</div>'; return;
+  }
+  res.innerHTML = '';
+  const have = new Set(((lastModels || {}).audio || []).map(a => a.id));
+  for (const m of list){
+    const wrap = document.createElement('div');
+    const row = document.createElement('div'); row.className = 'mrow'; row.dataset.arepo = m.repo;
+    const badges = [`<span class="msize">▼ ${(m.downloads || 0).toLocaleString()}</span>`,
+                    `<span class="msize">♥ ${m.likes || 0}</span>`,
+                    `<span class="fitpill ${audioLicPill(m.badge)}">${esc(audioLicText(m))}</span>`];
+    if (m.updated) badges.push('<span class="msize">' + relTimeLong(m.updated) + '</span>');
+    if (have.has(m.repo.split('/').pop())) badges.push('<span class="mpill live">in library</span>');
+    row.innerHTML = `<div class="mname" style="font-size:13.5px;word-break:break-all">${esc(m.repo)}</div>
+      <div class="mbadges">${badges.join('')}</div>`;
+    const card = document.createElement('div'); card.className = 'md-sec'; card.hidden = true;
+    row.onclick = () => audioProbe(m, row, card);
+    wrap.appendChild(row); wrap.appendChild(card);
+    res.appendChild(wrap);
+  }
+}
+async function audioProbe(m, row, card){
+  // Click again = collapse; only one card open at a time (the list stays readable).
+  if (asSel === m.repo){ asSel = ''; card.hidden = true; markAudioHfRows(); return; }
+  asSel = m.repo; markAudioHfRows();
+  document.querySelectorAll('#as-results .md-sec').forEach(el => { el.hidden = true; });
+  card.hidden = false;
+  card.innerHTML = '<div class="cs-empty">Reading this model’s config…</div>';
+  let p;
+  try { p = await (await fetch('/api/models/hf/audio/probe?repo='
+                               + encodeURIComponent(m.repo))).json(); }
+  catch { card.innerHTML = '<div class="cs-empty">Could not reach the bridge.</div>'; return; }
+  if (!p || p.error){
+    card.innerHTML = '<div class="cs-empty">Probe failed: '
+      + esc((p && p.error) || 'unknown') + '</div>'; return;
+  }
+  const st = audioGetState(p);
+  card.innerHTML = `<div class="hffile" style="display:block;line-height:1.7">
+      <div style="color:var(--cream)">${esc(audioProbeSummary(p))}</div>
+      ${p.warn ? `<div style="color:var(--gold);white-space:normal">⚠ ${esc(p.warn)}</div>` : ''}
+      ${st.disabled ? `<div style="color:var(--bad);white-space:normal">${esc(st.reason)}</div>` : ''}
+      ${p.voices && p.voices.length ? `<div style="color:var(--dim);white-space:normal">voices: ${
+          esc(p.voices.slice(0, 12).join(', '))}${p.voices.length > 12 ? ' …' : ''}</div>` : ''}
+      ${p.file ? `<div style="color:var(--faint);white-space:normal">${esc(p.file)}${
+          p.mmproj ? ' + ' + esc(p.mmproj) : ''}</div>` : ''}
+      <div style="color:var(--faint);white-space:normal">${esc(p.repo)} · ${esc(audioLicText(p))}</div>
+    </div>`;
+  const b = document.createElement('button'); b.className = 'hfget'; b.style.marginTop = '6px';
+  b.textContent = st.label; b.disabled = st.disabled;
+  if (st.disabled) b.title = st.reason;
+  else b.onclick = async (ev) => {
+    ev.stopPropagation();
+    b.disabled = true; b.textContent = 'Starting…';
+    // Same truthful-Get rule as the starters: a refusal puts its reason ON the card.
+    const r = await dlStart(p.repo, p.file || '',
+                           { voice_format: p.format, mmproj: p.mmproj || '' });
+    if (r && r.ok){ b.textContent = 'Downloading — progress in Downloads below'; }
+    else {
+      b.disabled = false; b.textContent = 'Get';
+      let e = card.querySelector('.mp-err');
+      if (!e){ e = document.createElement('div'); e.className = 'mp-err'; card.insertBefore(e, b); }
+      e.textContent = (r && r.log) || 'download failed';
+    }
+  };
+  card.appendChild(b);
+}
+function markAudioHfRows(){
+  document.querySelectorAll('#as-results .mrow').forEach(el =>
+    el.classList.toggle('sel', el.dataset.arepo === asSel));
 }
 
 function selectInstalled(id){ mSel = { kind:'installed', id }; renderDetail(); markSelRows(); }
@@ -6634,6 +6907,10 @@ const commands = () => {
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.
     {t:'Preview artifacts ▸', k:'◧', sub:'art'},
+    // AUTO-DICTATION GATE 1 (research 2026-08-08): does AudioWorklet actually run
+    // in THIS WKWebView? Same silent-no-op class as ⊕ attach / drag / mic — only a
+    // live probe answers it. Result lands as an alert-style toolbar note.
+    {t:'AudioWorklet spike (voice dev)', k:'∿', f:audioWorkletSpike},
     {t:'Edit current artifact', k:'✎', f:paletteEditArtifact},   // CANVAS (Fable spec)
   ];
   if (lastStatus) for (const [n,c] of Object.entries(lastStatus.components)) {

@@ -197,9 +197,31 @@ check("a folder matching BOTH scanners yields exactly one entry", len(dupes) == 
 check("…and that one entry is the AUDIO one", dupes[0].get("kind") == "audio")
 
 # ══ 4. scan_audio_hf_cache ═════════════════════════════════════════════════════
+# A real mlx-whisper config.json IS a serialised ModelDimensions. The cache scan now
+# probes for that shape, so this fixture has to be honest.
+MLX_WHISPER_CFG = {"n_mels": 80, "n_audio_ctx": 1500, "n_audio_state": 512,
+                   "n_audio_head": 8, "n_audio_layer": 6, "n_vocab": 51865,
+                   "n_text_ctx": 448, "n_text_state": 512, "n_text_head": 8,
+                   "n_text_layer": 6}
+# openai/whisper-medium as it actually sits in the HF cache — a TRANSFORMERS
+# checkpoint. This is the entry that used to be classified stt-mlx and then blew up
+# inside mlx_whisper with `unexpected keyword '_name_or_path'`.
+HF_WHISPER_CFG = {"_name_or_path": "openai/whisper-medium",
+                  "architectures": ["WhisperForConditionalGeneration"],
+                  "transformers_version": "4.27.0.dev0", "num_mel_bins": 80,
+                  "d_model": 1024, "encoder_layers": 24, "decoder_layers": 24,
+                  "is_encoder_decoder": True, "vocab_size": 51865}
+
+
+def write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(obj, f)
+
+
 hub = os.path.join(tmp, "hub")
 snap = os.path.join(hub, "models--mlx-community--whisper-base-mlx", "snapshots", "abc123")
-touch(os.path.join(snap, "config.json"), 10)
+write_json(os.path.join(snap, "config.json"), MLX_WHISPER_CFG)
 touch(os.path.join(snap, "weights.safetensors"), 137)
 chat = os.path.join(hub, "models--mlx-community--Qwen3-35B-8bit", "snapshots", "def456")
 touch(os.path.join(chat, "config.json"), 10)
@@ -215,6 +237,59 @@ check("hf cache: source audio-hf-cache (read-only ⇒ NOT deletable)",
 check("hf cache: classified stt-mlx", cache[0]["format"] == "stt-mlx")
 check("hf cache: a missing hub dir is not an error",
       sr.scan_audio_hf_cache(os.path.join(tmp, "nope")) == [])
+
+# ══ 4b. the whisper CONFIG PROBE — the recorded false-positive ═════════════════
+# Name + files are IDENTICAL between an MLX conversion and a transformers checkpoint;
+# only the config separates them, which is why the probe exists at all.
+print()
+check("is_mlx_whisper_config accepts a real ModelDimensions config",
+      sr.is_mlx_whisper_config(MLX_WHISPER_CFG))
+check("is_mlx_whisper_config REJECTS the transformers whisper-medium config",
+      not sr.is_mlx_whisper_config(HF_WHISPER_CFG))
+check("whisper-medium trips all EIGHT veto keys (the recorded 8/8)",
+      sum(1 for k in sr.MLX_WHISPER_VETO if k in HF_WHISPER_CFG) == 8)
+check("every veto key alone is enough to reject an otherwise-perfect config",
+      all(not sr.is_mlx_whisper_config({**MLX_WHISPER_CFG, k: "x"})
+          for k in sr.MLX_WHISPER_VETO))
+check("every required key is genuinely required",
+      all(not sr.is_mlx_whisper_config({k: v for k, v in MLX_WHISPER_CFG.items()
+                                        if k != miss})
+          for miss in sr.MLX_WHISPER_REQUIRED))
+check("is_mlx_whisper_config survives junk input",
+      not any(sr.is_mlx_whisper_config(x) for x in (None, [], "cfg", 3, {})))
+
+hub2 = os.path.join(tmp, "hub2")
+med = os.path.join(hub2, "models--openai--whisper-medium", "snapshots", "aaa")
+write_json(os.path.join(med, "config.json"), HF_WHISPER_CFG)
+touch(os.path.join(med, "model.safetensors"), 3000)
+ok = os.path.join(hub2, "models--mlx-community--whisper-base-mlx", "snapshots", "bbb")
+write_json(os.path.join(ok, "config.json"), MLX_WHISPER_CFG)
+touch(os.path.join(ok, "model.safetensors"), 137)
+noc = os.path.join(hub2, "models--someone--whisper-mystery", "snapshots", "ccc")
+touch(os.path.join(noc, "config.json"), 4)          # present but not json
+touch(os.path.join(noc, "model.safetensors"), 50)
+c2 = [m["id"] for m in sr.scan_audio_hf_cache(hub2)]
+check("hf cache: the transformers whisper-medium is NO LONGER classified stt-mlx",
+      "whisper-medium" not in c2)
+check("hf cache: a real MLX whisper conversion still passes", "whisper-base-mlx" in c2)
+check("hf cache FAILS CLOSED on an unreadable config", "whisper-mystery" not in c2)
+check("audio_format_probed keeps its name-token answer for tts (probe is stt-only)",
+      sr.audio_format_probed("Kokoro-82M-bf16",
+                             ["config.json", "model.safetensors"],
+                             os.path.join(models, "Kokoro-82M-bf16"),
+                             strict=True) == "tts-mlx")
+# ⚠️ our OWN tree is lenient about an unparseable config — see audio_format_probed.
+lmys = os.path.join(tmp, "models", "whisper-local-broken")
+touch(os.path.join(lmys, "config.json"), 4)
+touch(os.path.join(lmys, "model.safetensors"), 50)
+check("data/models/ keeps the name-token fallback when the config is unreadable",
+      sr.audio_format_probed("whisper-local-broken",
+                             os.listdir(lmys), lmys, strict=False) == "stt-mlx")
+write_json(os.path.join(lmys, "config.json"), HF_WHISPER_CFG)
+check("…but a config that PARSES is obeyed in the local tree too",
+      sr.audio_format_probed("whisper-local-broken",
+                             os.listdir(lmys), lmys, strict=False) is None)
+shutil.rmtree(lmys, ignore_errors=True)
 
 # ══ 5. merge semantics ═════════════════════════════════════════════════════════
 existing = [
