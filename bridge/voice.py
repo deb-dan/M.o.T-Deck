@@ -1193,6 +1193,27 @@ def _tail(*chunks: object) -> str:
     return ("".join(str(c or "") for c in chunks))[-VOICE_LOG_TAIL:]
 
 
+def resolve_render_voice(entry: dict) -> str:
+    """The voice a render should actually use, '' meaning engine default.
+
+    DEFAULT-VOICE FALLBACK (Debi 2026-08-13: "model default" on the CustomVoice
+    checkpoint rendered NOTHING — that model refuses a voiceless render, unlike
+    Base which ignores names). When no voice is pinned and the model's OWN config
+    declares named voices, use its first declared name: deterministic, and always
+    a name the checkpoint itself vouches for. Models without config-declared
+    voices are untouched (Base/Kokoro keep engine-default behaviour).
+    """
+    pinned = str((entry or {}).get("voice") or "").strip()
+    if pinned:
+        return pinned
+    if entry_format(entry) != "tts-mlx":
+        return ""
+    vinfo = voices_for_entry(entry)
+    if vinfo.get("source") == "config" and vinfo.get("voices"):
+        return str(vinfo["voices"][0])
+    return ""
+
+
 def tts_render(entry: dict, text: str,
                root: "str | Path | None" = None,
                llama_bin: "str | None" = None,
@@ -1217,6 +1238,10 @@ def tts_render(entry: dict, text: str,
         raise VoiceError(err)
 
     fmt = entry_format(entry)
+    ev = resolve_render_voice(entry)
+    if ev != str(entry.get("voice") or "").strip():
+        entry = dict(entry, voice=ev)
+
     if fmt == "tts-mlx" and use_worker:
         return tts_render_worker(entry, text, root=root, mlx_py=mlx_py,
                                  spawn_guard=spawn_guard)

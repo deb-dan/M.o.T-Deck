@@ -375,7 +375,8 @@
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
      size that WebKit rounds unpredictably across zoom levels. */
   #chat-send, #chat-talk { font-size:9px; padding:5px 10px; letter-spacing:.06em; }
-  #chat-talk { flex:none; white-space:nowrap; }
+  /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13) */
+  #chat-talk { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
   #chat-talk.rec .talk-dot { color:var(--bad); }
@@ -988,11 +989,12 @@
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-            <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg). -->
+            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
+            <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg).
+                 AFTER Send + 40% smaller than it (Debi 2026-08-13). -->
             <button class="primary" id="chat-talk" onclick="toggleTalk()"
               title="Dictate — record and transcribe into the message box"
               aria-label="Dictate into the message box" hidden>● talk</button>
-            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
@@ -4483,14 +4485,25 @@ function renderAudioVoice(a){
   // Clearing is a first-class choice, not an absence: it hands the pick back to
   // the engine (which is exactly the random-per-render behaviour), so it is
   // labelled honestly rather than as "off".
-  chip('model default', !cur, 'Let the engine choose (mlx-audio picks a random '
-       + 'named voice per render)', () => setEntryVoice(a.id, ''));
+  chip('model default', !cur,
+       (a.voice_source === 'config' && a.voices && a.voices.length)
+         // Debi 2026-08-13: a voiceless render ERRs on CustomVoice-type models, so
+         // the bridge now falls back to the model's own first declared voice.
+         ? 'Uses the model’s first declared voice (' + a.voices[0] + ')'
+         : 'Let the engine choose (mlx-audio picks a random named voice per render)',
+       () => setEntryVoice(a.id, ''));
   if (mode === 'chips'){
     // spk_is_dialect from the checkpoint: dylan speaks Beijing, eric Sichuan. The
     // tag is a faint suffix INSIDE the existing chip — no new CSS primitive, and the
     // user learns it from the picker instead of from a surprise accent.
     const dial = a.dialects || {};
-    for (const v of a.voices){
+    // Kokoro declares 54 — a wall of chips is worse than none (Debi 2026-08-13).
+    // Show the first 12 (a pinned voice beyond the cap is always included) and a
+    // free-text box for the rest.
+    const CHIP_CAP = 12;
+    let shown = a.voices.slice(0, CHIP_CAP);
+    if (cur && a.voices.includes(cur) && !shown.includes(cur)) shown = shown.concat([cur]);
+    for (const v of shown){
       const b = chip(v, v === cur,
                      'Always speak as ' + v + (dial[v] ? ' (a dialect voice)' : ''),
                      () => setEntryVoice(a.id, v));
@@ -4500,6 +4513,20 @@ function renderAudioVoice(a){
         t.textContent = 'dialect';
         b.appendChild(t);
       }
+    }
+    if (a.voices.length > CHIP_CAP){
+      const more = document.createElement('span');
+      more.style.cssText = 'color:var(--faint);font:10px var(--mono);letter-spacing:.06em';
+      more.textContent = `+${a.voices.length - shown.length} more — type a name:`;
+      row.appendChild(more);
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.value = shown.includes(cur) ? '' : cur;
+      inp.placeholder = 'voice name'; inp.maxLength = 64;
+      inp.style.cssText = 'background:var(--card);color:var(--cream);border:1px solid '
+        + 'var(--line2);border-radius:8px;padding:4px 10px;font:11px var(--mono);'
+        + 'letter-spacing:.06em;outline:none;width:120px';
+      inp.onkeydown = e => { if (e.key === 'Enter') setEntryVoice(a.id, inp.value); };
+      row.appendChild(inp);
     }
   } else {
     const inp = document.createElement('input');

@@ -89,13 +89,15 @@ check('the mime always matches the fmt when a mime is chosen',
 
 /* ---- wiring facts read straight out of the panel source -------------------- */
 check('the ● talk button exists in the composer', html.indexOf('id="chat-talk"') >= 0);
-check('● talk sits between the textarea and Send',
-  html.indexOf('id="chat-talk"') > html.indexOf('id="chat-input"')
-  && html.indexOf('id="chat-talk"') < html.indexOf('id="chat-send"'));
+// Debi 2026-08-13: talk moved AFTER Send and reads ~40% smaller than it.
+check('● talk sits AFTER Send (textarea → Send → talk)',
+  html.indexOf('id="chat-send"') > html.indexOf('id="chat-input"')
+  && html.indexOf('id="chat-talk"') > html.indexOf('id="chat-send"'));
 check('● talk ships hidden (shown only when an STT default exists)',
   /id="chat-talk"[\s\S]{0,400}?hidden>/.test(html));
-check('Send and talk share ONE reduced size rule',
-  html.indexOf('#chat-send, #chat-talk {') >= 0);
+check('Send keeps the shared size rule; talk carries its own smaller override',
+  html.indexOf('#chat-send, #chat-talk {') >= 0
+  && /#chat-talk\s*\{[^}]*font-size:7px/.test(html));
 check('the size rule does NOT touch button.primary globally',
   !/button\.primary\s*\{[^}]*font-size:9px/.test(html));
 check('the button rides loadVoiceCfg (same read as the AUDIO chip)',

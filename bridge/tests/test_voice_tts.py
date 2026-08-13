@@ -537,6 +537,20 @@ try:
           r["voices"] == ["af_heart", "am_adam", "bf_emma"] and r["source"] == "dir")
     check("a voices/ dir yields no spurious note", r["note"] == "")
 
+    # DEFAULT-VOICE FALLBACK (Debi 2026-08-13): "model default" on CustomVoice ERR'd
+    # because that checkpoint refuses a voiceless render. resolve_render_voice()
+    # falls back to the model's own first declared name — and ONLY for config-source.
+    check("no pin + config voices → the first declared name",
+          voice.resolve_render_voice(_e(cvd)) == "serena")
+    check("a pinned voice always wins over the fallback",
+          voice.resolve_render_voice(dict(_e(cvd), voice="ryan")) == "ryan")
+    check("Base (no declared names) stays voiceless",
+          voice.resolve_render_voice(_e(bad)) == "")
+    check("Kokoro (dir-source) keeps engine-default behaviour",
+          voice.resolve_render_voice(_e(kok)) == "")
+    check("tts-gguf is untouched by the fallback",
+          voice.resolve_render_voice(dict(GGUF)) == "")
+
     r = voice.voices_for_entry(_e(mys))
     check("a config with NO verdict falls through to free text (no note, no chips)",
           r["voices"] == [] and r["note"] == "" and r["source"] == "none")
