@@ -879,10 +879,85 @@
   .cm-s-default .cm-attribute { color:var(--accent); }
   .cm-s-default .cm-def, .cm-s-default .cm-variable-2 { color:var(--cream); }
   .cm-s-default .cm-property { color:var(--fg); }
+
+  /* ============ OPTIONAL "COMPACT" CHROME — html[data-chrome="compact"] ============
+     Fable design (2026-08-14), Debi's LM-Studio-style button vision. A THIRD theme
+     axis, INDEPENDENT of light/dark: it changes CONTROL DENSITY + SHAPE only, so the
+     small-caps mono text-chips read as real buttons. It touches NO palette token, NO
+     content typography and NO editorial serif header.
+       · Every rule below is prefixed html[data-chrome="compact"] — with the attribute
+         absent (the default) the panel is byte-for-byte today's chrome.
+       · This block is the sanctioned exception to the zero-new-rules discipline and is
+         deliberately the LAST thing in the stylesheet, so it wins on equal specificity.
+       · 18 rules. Gold-fill "active" uses var(--bg) as its ink rather than the
+         hardcoded #171420 the editorial chips use, so it stays legible in BOTH themes.
+     ------------------------------------------------------------------------------- */
+  html[data-chrome="compact"] {
+    /* chrome-text stack, set ONLY inside this axis (the mono chips lose their mono) */
+    --chrome-font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+  /* (1a) topbar / sub-tab chips — solid ground, firm border, Title case as authored */
+  html[data-chrome="compact"] .chip {
+    font:11.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
+    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
+    padding:5px 11px; }
+  html[data-chrome="compact"] .chip:hover {
+    background:var(--card); border-color:var(--gold); color:var(--cream); }
+  /* (1b) icon-only chips (◐ ▣ ⌘K ↻ ⊕) become 26px square icon buttons */
+  html[data-chrome="compact"] .chip.chip-icon {
+    width:26px; height:26px; padding:0; font-size:12.5px; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center; }
+  /* the chrome toggle can only read "on" while compact IS on — so its off state needs
+     no rule outside this block */
+  html[data-chrome="compact"] #chrome-chip { color:var(--gold); border-color:var(--gold); }
+  /* (1c) Models / Capabilities sub-tabs — active = filled, the button idiom */
+  html[data-chrome="compact"] .caps-tab.on {
+    background:var(--gold); border-color:var(--gold); color:var(--bg); }
+  /* (1d) model-popover row actions (Eject / Switch / aux / voice chips) */
+  html[data-chrome="compact"] .mp-act {
+    font:10px var(--chrome-font); letter-spacing:normal; text-transform:none;
+    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
+    padding:3px 9px; color:var(--dim); }
+  html[data-chrome="compact"] .mp-act:hover {
+    background:var(--card); border-color:var(--gold); color:var(--cream); }
+  html[data-chrome="compact"] .mp-act.on {
+    background:var(--gold); border-color:var(--gold); color:var(--bg); }
+  /* (1e) composer lane chips (Agent / Chat / Hermes / ⚙ Tools) */
+  html[data-chrome="compact"] .mode-chip {
+    font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
+    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
+    padding:4px 9px; }
+  html[data-chrome="compact"] .mode-chip:hover {
+    background:var(--card); border-color:var(--gold); color:var(--cream); }
+  html[data-chrome="compact"] .mode-chip.on {
+    background:var(--gold); border-color:var(--gold); color:var(--bg); }
+  /* Browse stays the quieter CAPABILITY — outline, never filled (the editorial
+     restraint rule, re-expressed in button shape) */
+  html[data-chrome="compact"] #mode-browse {
+    font-size:10px; padding:4px 9px; letter-spacing:normal; }
+  html[data-chrome="compact"] #mode-browse.on {
+    background:var(--card2); border-color:var(--gold); color:var(--gold); }
+  /* the two closed pickers keep their truncation, gain the button ground */
+  html[data-chrome="compact"] #chat-model-btn,
+  html[data-chrome="compact"] #chat-audio-btn {
+    font:10.5px var(--chrome-font); letter-spacing:normal; padding:4px 8px;
+    background:var(--card2); border-color:var(--line2); }
+  /* voice / dictation micro-chips scale WITH the row rather than to one flat size —
+     11.5px here would blow the composer apart */
+  html[data-chrome="compact"] #chat-talk,
+  html[data-chrome="compact"] #chat-auto,
+  html[data-chrome="compact"] #chat-conv {
+    font-size:9.5px; padding:4px 8px; letter-spacing:normal; border-radius:6px; }
+  /* (2) primary buttons read firmer */
+  html[data-chrome="compact"] button.primary { border-radius:8px; border-width:1px; }
+  html[data-chrome="compact"] #chat-send { padding:6px 12px; letter-spacing:normal; }
+  /* ============================ end compact chrome ============================== */
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
   try { if (localStorage.getItem('harness-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
+  // COMPACT CHROME (2026-08-14): a SECOND, independent axis, applied in the SAME
+  // pre-paint pass so controls never reflow after first paint. Editorial = default.
+  try { if (localStorage.getItem('harness-chrome') === 'compact') document.documentElement.dataset.chrome = 'compact'; } catch (e) {}
 </script>
 </head>
 <body>
@@ -910,6 +985,8 @@
   <!-- FABLE: style pass — PHASE 1.5 topbar icon-ified (glyph only; word on hover) -->
   <div class="topbar">
     <span class="chip chip-icon" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">◐</span>
+    <!-- compact chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
+    <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle compact chrome (button-style controls)" aria-label="Toggle compact chrome">▣</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
     <span class="chip chip-icon" onclick="refresh(true)" title="Refresh status" aria-label="Refresh status">↻</span>
   </div>
@@ -1737,6 +1814,17 @@ function toggleTheme() {
   try { localStorage.setItem('harness-theme', toLight ? 'light' : 'dark'); } catch (e) {}
 }
 
+// COMPACT CHROME (2026-08-14): the density/shape axis, deliberately SEPARATE from
+// toggleTheme — the two are independent, and folding them into one 4-state cycle
+// would make a click on ◐ non-deterministic. Editorial (no attribute) = default.
+function toggleChrome() {
+  const on = document.documentElement.dataset.chrome !== 'compact';
+  if (on) document.documentElement.dataset.chrome = 'compact';
+  else document.documentElement.removeAttribute('data-chrome');
+  try { localStorage.setItem('harness-chrome', on ? 'compact' : 'editorial'); } catch (e) {}
+  feed('chrome', on ? 'compact chrome on' : 'editorial chrome on');
+}
+
 function showView(v) {
   document.getElementById('view-mc').hidden = (v !== 'mc');
   document.getElementById('view-chat').hidden = (v !== 'chat');
@@ -1969,14 +2057,16 @@ async function initCaps() {
     const rv = await fetch('/api/voice/status');
     voiceSnap = await rv.json();
   } catch (e) { voiceSnap = null; }
+  await loadHermesTools();
   try {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
   } catch (e) {
     stamp.textContent = 'Odysseus unreachable — start it in Mission Control';
-    // The voice rows also write Hermes's config, so keep them usable on this path.
+    // The voice rows and the Hermes toolset rows write HERMES's config, not
+    // Odysseus's, so both stay usable on this path.
     const t = document.getElementById('caps-sec-tools');
-    if (t) t.innerHTML = renderVoiceMcp();
+    if (t) t.innerHTML = renderHermesTools() + renderVoiceMcp();
     applyCapsSection();
     return;
   }
@@ -2077,7 +2167,7 @@ function renderCaps() {
   // output into its section container instead of one long scroll.
   const setSec = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
   setSec('caps-sec-general', generalHtml);
-  setSec('caps-sec-tools', renderBuiltinTools() + renderMcpServers() + renderVoiceMcp());
+  setSec('caps-sec-tools', renderHermesTools() + renderBuiltinTools() + renderMcpServers() + renderVoiceMcp());
   setSec('caps-sec-skills', renderSkills());
   setSec('caps-sec-models', renderModelsCaps());
   applyCapsSection();
@@ -2487,6 +2577,144 @@ async function toggleVoiceMcp(name, on, el) {
     if (el) el.checked = !on;
     if (errEl) { errEl.textContent = (on ? 'Enable' : 'Disable') + ' failed: ' + (e.message || e); errEl.hidden = false; }
   } finally { if (el) el.disabled = false; }
+}
+
+/* ---------- Hermes tools (the toolset TRIMMING lever) ----------
+   Every enabled toolset's schemas — plus, when the `skills` toolset is on, the WHOLE
+   skill index — ride in the Hermes lane's system prompt. On a small local model that
+   prefill is the wait. These switches write ~/.hermes/config.yaml's
+   platform_toolsets.cli through Hermes's OWN writer (bridge /api/hermes/toolsets) and
+   take effect on the NEXT chat — no restart.
+
+   Reuses the caps grammar wholesale: .caps-group/.cap-h/.cap-card/.cap-row/.cap-sw/
+   .cap-pill/.cap-count/.cap-btn — ZERO new CSS rules. */
+let hermesToolsSnap = null;
+
+/* PURE: the note under a row. The `skills` toolset is the single biggest lever —
+   dropping it removes 3 tool schemas AND the entire skill index (upstream gates the
+   whole <available_skills> block on skills_list/skill_view/skill_manage being in the
+   schema), so that row says so with the real skill count. */
+function hermesToolsetNote(t, snap) {
+  const n = (t && t.tool_count) || 0;
+  const base = n === 1 ? '1 tool' : n + ' tools';
+  if (t && t.name === 'skills') {
+    const c = ((snap && snap.skills) || {}).count || 0;
+    return base + (c ? ' + the whole skill index (' + c + ' skills)' : ' + the skill index');
+  }
+  return base;
+}
+
+/* PURE: is this switch actually authoritative? Two ways it is not — Hermes stopped
+   (nothing to write to) or focus mode (upstream returns its own toolset list before
+   the config list is ever read). Never render a live-looking switch that does
+   nothing. */
+function hermesToolsetLocked(snap) {
+  if (!snap || !snap.running) return 'start Hermes to change its toolsets';
+  if (snap.focus_override) return 'agent.coding_context is “focus” — Hermes picks its own toolsets and ignores this list';
+  return '';
+}
+
+function renderHermesTools() {
+  const snap = hermesToolsSnap;
+  if (!snap) return '';
+  const lock = hermesToolsetLocked(snap);
+  const head = '<span class="cap-h">Hermes tools</span>';
+  const wrap = inner => `<div class="caps-group" id="caps-hermes-tools">${head}
+    <div class="cap-desc" style="margin:-4px 0 10px">Which toolsets the Hermes lane hands the model. Fewer toolsets = a smaller system prompt = faster turns on a local model. Takes effect on the next chat — no restart.</div>
+    <div class="cap-card">${inner}</div></div>`;
+  if (!snap.running) {
+    const cfg = snap.config || {};
+    const cur = Array.isArray(cfg.platform_toolsets_cli)
+      ? ('configured: ' + esc(cfg.platform_toolsets_cli.join(', ') || '(none)'))
+      : 'not configured yet — Hermes uses its full default set';
+    return wrap(`<div class="cap-row"><div class="cap-txt">
+      <div class="cap-desc" style="margin-top:0">${esc(lock)}.<br>${cur}</div></div></div>`);
+  }
+  const rows = (snap.toolsets || []).map(t => {
+    const on = !!t.enabled;
+    const id = 'hts-' + escAttr(t.name);
+    const big = (t.name === 'skills') ? '<span class="cap-pill on">biggest lever</span>' : '';
+    // A toolset parked in agent.disabled_toolsets is subtracted LAST by Hermes, so it
+    // can never be turned on from here — mark it rather than let it snap back.
+    const pinned = ((snap.config || {}).disabled_toolsets || []).indexOf(t.name) >= 0
+      ? '<span class="cap-pill off">forced off in config</span>' : '';
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(t.label || t.name)}<span class="cap-count">${esc(hermesToolsetNote(t, snap))}</span>${big}${pinned}</div>
+        <div class="cap-desc">${esc(t.name)}${t.description ? ' · ' + esc(t.description) : ''}</div>
+        <div class="cap-err" id="${id}-err" hidden></div></div>
+      <div class="cap-ctl"><label class="cap-sw">
+        <input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${lock ? 'disabled' : ''}
+          onchange="toggleHermesToolset('${escAttr(t.name)}', this.checked, this)">
+        <span class="track"></span><span class="knob"></span></label></div></div>`;
+  }).join('');
+  const lockNote = lock
+    ? `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">${esc(lock)}</div></div></div>`
+    : '';
+  const presets = `<div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">${snap.enabled_count}/${snap.total} toolsets on<span class="cap-count">${snap.tool_count_enabled} of ${snap.tool_count_total} tools in the prompt</span></div>
+      <div class="cap-desc">“Minimal” keeps file, terminal and clarify — enough to read, write, run things and ask you a question. Everything back on restores Hermes's full surface.</div>
+      <button class="cap-btn" id="hts-preset-minimal" ${lock ? 'disabled' : ''}
+        onclick="hermesToolsPreset('minimal', this)">Minimal preset</button>
+      <button class="cap-btn" id="hts-preset-all" style="margin-left:8px" ${lock ? 'disabled' : ''}
+        onclick="hermesToolsPreset('all', this)">Everything back on</button>
+      <div class="cap-err" id="hts-preset-err" hidden></div></div></div>`;
+  return wrap(presets + lockNote + rows);
+}
+
+async function loadHermesTools() {
+  try {
+    const r = await fetch('/api/hermes/toolsets');
+    hermesToolsSnap = await r.json();
+  } catch (e) { hermesToolsSnap = null; }
+}
+
+async function refreshHermesTools() {
+  const prev = hermesToolsSnap;
+  await loadHermesTools();
+  // A transient /api/hermes/toolsets failure must not DELETE the group from the
+  // section (renderHermesTools returns '' with no snapshot, and there would then be
+  // no #caps-hermes-tools left for the next refresh to swap). Keep what we had.
+  if (!hermesToolsSnap) { hermesToolsSnap = prev; return false; }
+  const host = document.getElementById('caps-hermes-tools');
+  if (host) host.outerHTML = renderHermesTools();
+  return true;
+}
+
+function hermesToolsErr(id, msg) {
+  const e = document.getElementById(id);
+  if (e) { e.textContent = msg; e.hidden = false; }
+}
+
+async function hermesToolsWrite(payload, errId, el) {
+  const e0 = document.getElementById(errId);
+  if (e0) { e0.hidden = true; e0.textContent = ''; }
+  if (el) el.disabled = true;
+  try {
+    const r = await fetch('/api/hermes/toolsets', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || (j.note || ('HTTP ' + r.status)));
+    feed('hermes toolsets: ' + j.enabled_count + '/' + j.total + ' on · '
+         + j.tool_count_enabled + ' tools in the prompt — applies to the next chat');
+    await refreshHermesTools();
+    // Honest tail: a name that refused to turn on is reported, not swallowed.
+    if ((j.stuck || []).length) hermesToolsErr(errId,
+      'still off (forced off by agent.disabled_toolsets in ~/.hermes/config.yaml): ' + j.stuck.join(', '));
+    return true;
+  } catch (err) {
+    if (el) el.disabled = false;
+    hermesToolsErr(errId, (err.message || err));
+    return false;
+  }
+}
+
+async function toggleHermesToolset(name, on, el) {
+  const ok = await hermesToolsWrite({name, on}, 'hts-' + name + '-err', el);
+  if (!ok && el) el.checked = !on;      // the re-render is skipped on failure
+}
+
+async function hermesToolsPreset(kind, btn) {
+  await hermesToolsWrite({preset: kind}, 'hts-preset-err', btn);
 }
 
 function toggleMcpAdd(btn) {
@@ -8886,6 +9114,7 @@ const commands = () => {
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
+    {t:'Toggle compact chrome', k:'▣', f:toggleChrome},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.

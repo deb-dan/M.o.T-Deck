@@ -4899,6 +4899,323 @@ def _hermes_has_mcp(name: str = "browsermcp") -> bool:
     return _hermes_get_mcp(name) is not None
 
 
+# ── Hermes TOOLSET TRIMMING LEVER ────────────────────────────────────────────
+# WHY: the Hermes lane hands the model every enabled toolset's schema PLUS the whole
+# skill index, which on a small local model is minutes of prefill before a single
+# token comes back. Trimming the toolset list is the lever.
+#
+# THE MECHANISM, read out of the pin (v2026.7.30), not guessed:
+#   • Our lane is the dashboard's JSON-RPC gateway (tui_gateway). It resolves the
+#     model's toolsets in `_load_enabled_toolsets()` (tui_gateway/server.py:3779),
+#     consumed per session build at server.py:6163 — via
+#     `_get_platform_tools(cfg, "cli", include_default_mcp_servers=True)`
+#     (server.py:3910). So the key is `platform_toolsets.cli`, NOT some `tools.*`
+#     key: `tools.disabled_toolsets` / `enabled_toolsets` / `toolsets.enabled` DO
+#     NOT EXIST. (Top-level `toolsets:` exists but is vestigial — only kanban and
+#     `hermes dump` read it.)
+#   • `_get_platform_tools` (hermes_cli/tools_config.py:2195) has NO memoisation and
+#     `load_config()` is mtime+size keyed (hermes_cli/config.py:3105), and
+#     `get_tool_definitions`'s own memo key includes the config mtime
+#     (model_tools.py:320-336) — so a config edit takes effect on the NEXT CHAT
+#     with NO Hermes restart. That is why this endpoint never asks for one.
+#   • `agent.disabled_toolsets` (default [], config_defaults.py:228) is subtracted
+#     LAST (tools_config.py:2455-2463) — we never write it, but we REPORT it,
+#     because a name sitting in there can never be re-enabled from this panel.
+#   • `agent.coding_context: "focus"` (default "auto", config_defaults.py:131) makes
+#     `coding_selection()` return a toolset list and `_load_enabled_toolsets()`
+#     RETURNS EARLY (server.py:3797-3803) — the config list is then never read at
+#     all. Only `focus` does this (agent/coding_context.py:506-520), so the default
+#     is safe, but we detect it and say so rather than showing dead switches.
+#
+# WRITES GO THROUGH HERMES'S OWN WRITER, not our yaml round-trip:
+#   `PUT /api/tools/toolsets/{name}` (hermes_cli/web_routers/tools.py:113) does
+#   load_config → `_get_platform_tools(..., include_default_mcp_servers=False)` →
+#   add/discard → `_save_platform_tools` (tools_config.py:2491) → `save_config`
+#   (strip_defaults=True, atomic_yaml_write). That helper is the only thing that
+#   knows to preserve MCP-server names parked in the same list, to route
+#   platform-restricted toolsets (discord → platform_toolsets.discord), and to keep
+#   the `known_*_toolsets` bookkeeping coherent. Reimplementing it here would be a
+#   SECOND writer of the same key that could drift from upstream at any pin bump.
+#   The price is that writing needs Hermes RUNNING — the same precedent the voice
+#   MCP rows already set (a switch that cannot work is disabled, not silently
+#   ineffective).
+HERMES_MINIMAL_TOOLSETS = ("file", "terminal", "clarify")
+
+# `platform_toolsets.cli: []` is a FOOTGUN, not a "no tools" setting: with an empty
+# list `has_explicit_config` is False (tools_config.py:2231), the else-branch expands
+# nothing, and `_load_enabled_toolsets` turns an empty result into `return None`
+# (server.py:3915-3917) — which `get_tool_definitions` reads as ENABLE EVERYTHING.
+# Disabling the last toolset would therefore hand the model MORE tools than it had.
+HERMES_TOOLSETS_EMPTY_REASON = (
+    "at least one toolset must stay on — Hermes reads an empty list as "
+    "“all toolsets”, so this would give the model more tools, not fewer")
+
+
+def hermes_toolset_names(rows) -> list:
+    """PURE. Toolset names out of a /api/tools/toolsets payload, order preserved."""
+    out = []
+    for r in (rows if isinstance(rows, list) else []):
+        if isinstance(r, dict):
+            n = r.get("name")
+            if isinstance(n, str) and n.strip():
+                out.append(n.strip())
+    return out
+
+
+def hermes_toolsets_enabled(rows) -> list:
+    """PURE. The subset currently reported ENABLED (upstream already accounted for
+    _DEFAULT_OFF_TOOLSETS and agent.disabled_toolsets when it built this)."""
+    return [r.get("name").strip() for r in (rows if isinstance(rows, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("name"), str)
+            and r["name"].strip() and r.get("enabled")]
+
+
+def hermes_preset_desired(rows, preset: str):
+    """PURE. Resolve a preset chip to a desired-enabled set, INTERSECTED with what
+    this Hermes build actually offers (so a renamed/removed toolset upstream cannot
+    make a preset write a name the dashboard would 400 on).
+
+    Returns None for an unknown preset — callers must treat that as a 400, never as
+    'no change' (silently doing nothing to a tool surface is the wrong failure)."""
+    names = hermes_toolset_names(rows)
+    p = (preset or "").strip().lower()
+    if p == "minimal":
+        return [n for n in names if n in set(HERMES_MINIMAL_TOOLSETS)]
+    if p in ("all", "everything"):
+        return list(names)
+    return None
+
+
+def hermes_toolsets_valid(rows, desired) -> str:
+    """PURE. '' when `desired` is a safe target, else the honest reason string.
+    Unknown names are NOT fatal here (they are dropped + reported by the plan)."""
+    known = set(hermes_toolset_names(rows))
+    if not known:
+        return "Hermes reported no configurable toolsets"
+    if not [n for n in (desired or []) if n in known]:
+        return HERMES_TOOLSETS_EMPTY_REASON
+    return ""
+
+
+def hermes_toolset_plan(rows, desired):
+    """PURE. The minimal set of upstream PUTs to reach `desired`.
+
+    Returns {"plan": [(name, enabled), ...], "unknown": [...], "unchanged": n}.
+    Only toolsets whose state actually CHANGES are in the plan, so re-applying a
+    preset is zero writes and each write is one atomic upstream save."""
+    want = {n for n in (desired or []) if isinstance(n, str)}
+    known = set(hermes_toolset_names(rows))
+    now = set(hermes_toolsets_enabled(rows))
+    plan, unchanged = [], 0
+    for name in hermes_toolset_names(rows):       # stable, payload order
+        target = name in want
+        if target == (name in now):
+            unchanged += 1
+        else:
+            plan.append((name, target))
+    return {"plan": plan, "unknown": sorted(want - known), "unchanged": unchanged}
+
+
+def hermes_toolset_view(rows, skills=None) -> dict:
+    """PURE. Panel-shaped view of the probe: per-row tool COUNTS (real, from the
+    payload's own resolved tool list) and the aggregate.
+
+    Deliberately NO token estimate: the probe carries tool NAMES, not schemas, so
+    any per-toolset token figure would be invented. Counts are the honest proxy."""
+    out, en_tools, all_tools = [], 0, 0
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str):
+            continue
+        tools = [t for t in (r.get("tools") or []) if isinstance(t, str)]
+        on = bool(r.get("enabled"))
+        all_tools += len(tools)
+        if on:
+            en_tools += len(tools)
+        out.append({"name": r["name"].strip(),
+                    "label": str(r.get("label") or r["name"]).strip(),
+                    "description": str(r.get("description") or "").strip(),
+                    "platform": str(r.get("platform") or "").strip(),
+                    "enabled": on, "tools": tools, "tool_count": len(tools)})
+    sk = skills if isinstance(skills, dict) else {}
+    return {"toolsets": out,
+            "enabled_count": sum(1 for r in out if r["enabled"]),
+            "total": len(out),
+            "tool_count_enabled": en_tools,
+            "tool_count_total": all_tools,
+            "skills": {"count": int(sk.get("count") or 0),
+                       "disabled_count": int(sk.get("disabled_count") or 0)}}
+
+
+def hermes_skills_summary(payload) -> dict:
+    """PURE. Count skills out of the dashboard's /api/skills payload. Accepts a bare
+    list or {"skills": [...]} and never raises on a surprise shape — a broken count
+    must not blank the group."""
+    rows = payload.get("skills") if isinstance(payload, dict) else payload
+    rows = rows if isinstance(rows, list) else []
+    rows = [r for r in rows if isinstance(r, dict)]
+    return {"count": len(rows),
+            "disabled_count": sum(1 for r in rows if r.get("enabled") is False)}
+
+
+def _hermes_toolset_config() -> dict:
+    """Raw truth off disk for the three keys that decide the lane's tool surface.
+    Readable with Hermes STOPPED, so the panel can still say what is configured."""
+    try:
+        with open(_hermes_config_path()) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    pts = data.get("platform_toolsets")
+    cli = (pts or {}).get("cli") if isinstance(pts, dict) else None
+    agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+    dis = agent.get("disabled_toolsets")
+    return {
+        # None = never saved → Hermes falls back to the hermes-cli composite.
+        "platform_toolsets_cli": ([str(x) for x in cli] if isinstance(cli, list) else None),
+        "disabled_toolsets": ([str(x) for x in dis] if isinstance(dis, list) else []),
+        "coding_context": str(agent.get("coding_context") or "auto").strip().lower(),
+    }
+
+
+async def _hermes_dash(method: str, path: str, **kw):
+    """One REST call to Hermes's own dashboard on loopback (token-gated, same header
+    as the session-rename call). Raises on transport failure; callers decide."""
+    import httpx
+    tok = _hermes_token()
+    if not tok:
+        raise RuntimeError("no Hermes dashboard token")
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        return await c.request(method, f"http://127.0.0.1:{_hermes_port()}{path}",
+                               headers={"X-Hermes-Session-Token": tok}, **kw)
+
+
+async def _hermes_toolset_rows() -> list:
+    r = await _hermes_dash("GET", "/api/tools/toolsets")
+    if r.status_code >= 400:
+        raise RuntimeError(f"toolsets probe {r.status_code}")
+    rows = r.json()
+    return rows if isinstance(rows, list) else []
+
+
+@app.get("/api/hermes/toolsets")
+async def hermes_toolsets_get() -> JSONResponse:
+    """The lever's read side. The CATALOG is always PROBED from the running Hermes
+    (GET /api/tools/toolsets) rather than hardcoded, so a pin bump that adds or
+    renames a toolset cannot leave a stale table in our source; when Hermes is down
+    we report `running:false` + the raw config and invent nothing."""
+    cfgv = _hermes_toolset_config()
+    base = {"config": cfgv,
+            # focus mode makes _load_enabled_toolsets return BEFORE reading the
+            # config list — the switches below would be cosmetic. Say so.
+            "focus_override": cfgv["coding_context"] == "focus",
+            "restart_required": False}
+    try:
+        rows = await _hermes_toolset_rows()
+    except Exception as e:
+        return JSONResponse({**base, "running": False, "source": "config",
+                             **hermes_toolset_view([]), "error": str(e)[:200]})
+    skills = {}
+    try:                                  # best-effort: a skill count is a nicety
+        rs = await _hermes_dash("GET", "/api/skills")
+        if rs.status_code < 400:
+            skills = hermes_skills_summary(rs.json())
+    except Exception:
+        skills = {}
+    return JSONResponse({**base, "running": True, "source": "probe",
+                         **hermes_toolset_view(rows, skills)})
+
+
+@app.post("/api/hermes/toolsets")
+async def hermes_toolsets_set(req: Request) -> JSONResponse:
+    """The lever's write side. Body is ONE of:
+        {"preset": "minimal"|"all"}   — the chips
+        {"enabled": ["file", ...]}    — an explicit desired-enabled set
+        {"name": "web", "on": false}  — one row's switch
+
+    Every change is an upstream `PUT /api/tools/toolsets/{name}` (see the block
+    comment above) and only CHANGED toolsets are written, so re-applying a preset
+    costs zero writes. Takes effect on the NEXT Hermes chat — no restart
+    (`restart_required` is reported so the panel never has to assume)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    # Shape first, so a malformed body is always the specific 400 and never gets
+    # masked by a 409 just because Hermes happens to be stopped.
+    if not (body.get("preset") is not None
+            or isinstance(body.get("enabled"), list)
+            or (isinstance(body.get("name"), str) and body["name"].strip())):
+        return JSONResponse({"ok": False, "error": "preset, enabled or name required"},
+                            status_code=400)
+    try:
+        rows = await _hermes_toolset_rows()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Hermes is not reachable — "
+                             f"start it first ({str(e)[:120]})"}, status_code=409)
+
+    if body.get("preset") is not None:
+        desired = hermes_preset_desired(rows, str(body.get("preset")))
+        if desired is None:
+            return JSONResponse({"ok": False, "error": "unknown preset"},
+                                status_code=400)
+    elif isinstance(body.get("enabled"), list):
+        desired = [str(x) for x in body["enabled"]]
+    elif isinstance(body.get("name"), str) and body["name"].strip():
+        now = set(hermes_toolsets_enabled(rows))
+        nm = body["name"].strip()
+        desired = sorted(now | {nm}) if body.get("on") else sorted(now - {nm})
+    else:                                     # unreachable — the shape gate above
+        return JSONResponse({"ok": False, "error": "preset, enabled or name required"},
+                            status_code=400)
+
+    bad = hermes_toolsets_valid(rows, desired)
+    if bad:
+        return JSONResponse({"ok": False, "error": bad}, status_code=400)
+
+    p = hermes_toolset_plan(rows, desired)
+    changed, failed = [], []
+    for name, on in p["plan"]:
+        try:
+            r = await _hermes_dash("PUT", f"/api/tools/toolsets/{name}",
+                                   json={"enabled": bool(on)})
+            if r.status_code >= 400:
+                failed.append(f"{name}:{r.status_code}")
+            else:
+                changed.append(name)
+        except Exception as e:
+            failed.append(f"{name}:{str(e)[:60]}")
+
+    # Re-probe and report the TRUTH rather than our intent. A name that refuses to
+    # turn on is almost always sitting in agent.disabled_toolsets, which upstream
+    # subtracts last (tools_config.py:2455) — so name that cause instead of leaving
+    # the user staring at a switch that snaps back.
+    stuck = []
+    try:
+        after = await _hermes_toolset_rows()
+        now = set(hermes_toolsets_enabled(after))
+        stuck = sorted({n for n in desired if n in set(hermes_toolset_names(after))
+                        and n not in now})
+    except Exception:
+        after = rows
+    view = hermes_toolset_view(after)
+    print(f"[hermes-tools] {len(changed)} changed, {len(p['plan'])} planned, "
+          f"{view['enabled_count']}/{view['total']} toolsets on "
+          f"({view['tool_count_enabled']} tools) failed={failed} stuck={stuck}",
+          flush=True)
+    return JSONResponse({
+        "ok": not failed, "changed": changed, "failed": failed,
+        "unknown": p["unknown"], "stuck": stuck,
+        "enabled": sorted(hermes_toolsets_enabled(after)),
+        "enabled_count": view["enabled_count"], "total": view["total"],
+        "tool_count_enabled": view["tool_count_enabled"],
+        "restart_required": False,
+        "note": ("takes effect on the next Hermes chat" if not failed else
+                 "some toolsets could not be written — " + " · ".join(failed)),
+    }, status_code=200 if not failed else 502)
+
+
 @app.get("/api/browse/status")
 async def browse_status() -> JSONResponse:
     try:

@@ -317,6 +317,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var rightTab = 1
     var focusedPane = 0              // 0 = left, 1 = right — the tab strip's + ⌘R's target
     var clickMonitor: Any?
+    // ── drag a tab onto a pane ──
+    // Second monitor, deliberately separate from clickMonitor (which only ever cares
+    // about clicks INSIDE a pane; a strip click is in neither, so the two can never
+    // fight over the same event). See runTabGesture for why this owns the whole
+    // gesture — click included — rather than watching for drags after the fact.
+    var tabDragMonitor: Any?
+    var tabDragActive = false
+    var dragGhostWin: NSWindow?      // the translucent label following the cursor
+    var dragHintWin: NSWindow?       // the gold rect over the pane that would receive it
     var hermesLastActive: Date?
     let staleAfter: TimeInterval = 600   // 10 minutes backgrounded → reload on re-select
     var bridgeProcess: Process?
@@ -352,6 +361,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             target: self, action: #selector(tabChanged(_:)))
         seg.selectedSegment = 0
         seg.translatesAutoresizingMaskIntoConstraints = false
+        // Segment widths are now EXPLICIT. NSSegmentedControl exposes no per-segment
+        // hit test, and `width(forSegment:)` returns 0 for an auto-sized segment — i.e.
+        // with autosizing the geometry is unreadable, and this slice has to know which
+        // LABEL the pointer is on (for the drag AND, because it now owns the gesture,
+        // for the ordinary click too). Setting the widths ourselves makes the rendered
+        // layout and our model the same numbers. ⚠️ this is a small rendered change:
+        // the strip's width becomes measured-text + 26pt per segment rather than
+        // AppKit's own autosize. At the 900pt minimum window width the five titles come
+        // to roughly 450pt, so it cannot collide with the ⫽ button.
+        setSegmentWidths()
         tabBar.addSubview(seg)
 
         // ⫽ — the split toggle, at the right end of the strip.
@@ -519,6 +538,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             // A click on the tab strip or the ⫽ button is in NEITHER pane → focus is
             // left exactly where it was, which is what makes the strip route correctly.
             return ev
+        }
+
+        // Drag a TAB LABEL onto a pane. This monitor claims a mouseDown that lands on a
+        // segment and runs the ENTIRE gesture itself (see runTabGesture) — that is not
+        // gold-plating, it is the only shape that works: NSSegmentedControl handles a
+        // click in a cell tracking loop that pulls events straight off the queue, so a
+        // monitor watching for .leftMouseDragged afterwards would never be called. Any
+        // mouseDown we cannot resolve to a segment (the ⫽ button, the bare strip) is
+        // returned untouched and behaves exactly as it does today.
+        tabDragMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] ev in
+            guard let s = self, !s.tabDragActive else { return ev }
+            guard ev.window === s.window else { return ev }
+            guard let idx = s.segmentAt(ev.locationInWindow) else { return ev }
+            s.runTabGesture(startingAt: ev.locationInWindow, tab: idx)
+            return nil   // consumed: we performed either the click or the drag ourselves
         }
 
         window.center()
@@ -772,14 +806,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         ud.set(rightTab, forKey: "harness.split.right")
     }
 
-    // THE v2 routing rule. The strip drives the FOCUSED pane. If the OTHER pane already
-    // holds the requested tab, the two panes SWAP — one webview, two panes, and a
-    // predictable visible outcome instead of v1's out-of-nowhere placeholder.
-    @objc func tabChanged(_ sender: NSSegmentedControl) {
-        let idx = sender.selectedSegment
+    // THE v2 routing rule. If the OTHER pane already holds the requested tab, the two
+    // panes SWAP — one webview, two panes, and a predictable visible outcome instead of
+    // v1's out-of-nowhere placeholder.
+    //
+    // The destination pane is a PARAMETER. The strip passes
+    // the focused pane; a tab dropped on a pane passes that pane. One body, so the click
+    // path and the drag path cannot drift apart — including the swap.
+    func routeTab(_ idx: Int, toPane p: Int) {
         guard idx >= 0 && idx < tabTitles.count else { return }
         let wasHermes = hermesVisible()
-        if splitOn && focusedPane == 1 {
+        if splitOn && p == 1 {
             if idx == currentTab { currentTab = rightTab }   // swap
             rightTab = idx
         } else {
@@ -795,7 +832,252 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         updateFocusStrips()
         // A previously failed tab retries automatically on re-select (component may be up now).
         retryIfFailed(webViewFor(idx))
+    }
+
+    @objc func tabChanged(_ sender: NSSegmentedControl) {
+        let idx = sender.selectedSegment
+        routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
         slog("tab -> \(idx) focus=\(focusedPane) left=\(currentTab) right=\(rightTab)")
+    }
+
+    // ── drag a tab onto a pane ──
+
+    // Explicit per-segment widths — the whole reason the geometry below is knowable.
+    func setSegmentWidths() {
+        let f = seg.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        for (i, t) in tabTitles.enumerated() {
+            let w = (t as NSString).size(withAttributes: [.font: f]).width
+            seg.setWidth((w + 26).rounded(), forSegment: i)
+        }
+    }
+
+    // Which segment is under a WINDOW-coordinate point, or nil if the point is not on the
+    // strip at all (⫽ button, tab-bar background, anywhere else) — in which case the
+    // caller must leave the event completely alone.
+    func segmentAt(_ windowPoint: NSPoint) -> Int? {
+        guard seg != nil else { return nil }
+        let p = seg.convert(windowPoint, from: nil)
+        guard seg.bounds.contains(p) else { return nil }
+        var widths: [CGFloat] = []
+        var total: CGFloat = 0
+        let n = seg.segmentCount
+        guard n > 0 else { return nil }
+        for i in 0..<n {
+            let w = seg.width(forSegment: i)
+            // 0 = autosized: cannot happen while setSegmentWidths() runs at construction,
+            // but degrade to an equal share rather than to a divide-by-zero.
+            let ww = w > 0 ? w : seg.bounds.width / CGFloat(n)
+            widths.append(ww)
+            total += ww
+        }
+        guard total > 0 else { return nil }
+        // The control's bounds are a little wider than the sum of the segment widths
+        // (bezel inset + separators). A SMALL slack is inset at the two ends; a large one
+        // means AppKit spread the extra space into the segments, so scale instead. Either
+        // way the boundary error is a couple of points on ~80pt segments.
+        let slack = seg.bounds.width - total
+        var scale: CGFloat = 1
+        var x = seg.bounds.minX
+        if slack > 8 { scale = seg.bounds.width / total } else { x += max(0, slack / 2) }
+        for (i, w) in widths.enumerated() {
+            if i == widths.count - 1 { return i }   // last segment is the catch-all
+            x += w * scale
+            if p.x < x { return i }
+        }
+        return nil
+    }
+
+    // The content area, in window coordinates. A release ABOVE this (the strip, the
+    // titlebar) cancels the drag — dropping a tab back on the strip means "never mind".
+    func contentRectInWindow() -> NSRect { return splitView.convert(splitView.bounds, to: nil) }
+
+    // Which pane would receive a drop at this point. With the split ON the real pane
+    // frames decide (so a dragged divider is honoured); with it OFF there is only one
+    // pane, so the geometric halves of the content area are what "left" and "right" mean.
+    func paneTarget(for wp: NSPoint) -> Int? {
+        let c = contentRectInWindow()
+        guard c.contains(wp) else { return nil }
+        if splitOn, rightPane.superview === splitView {
+            if rightPane.bounds.contains(rightPane.convert(wp, from: nil)) { return 1 }
+            if leftPane.bounds.contains(leftPane.convert(wp, from: nil)) { return 0 }
+            // on the divider itself → fall through to the halves
+        }
+        return wp.x < c.midX ? 0 : 1
+    }
+
+    // The rect the gold hint covers: the target PANE when split is on, the target HALF
+    // when it is off (which is exactly what the drop will then create).
+    func dropHintRect(for wp: NSPoint) -> NSRect? {
+        guard let p = paneTarget(for: wp) else { return nil }
+        if splitOn, rightPane.superview === splitView {
+            let pane: NSView = (p == 1) ? rightPane! : leftPane!
+            return pane.convert(pane.bounds, to: nil)
+        }
+        let c = contentRectInWindow()
+        return NSRect(x: (p == 0) ? c.minX : c.midX, y: c.minY, width: c.width / 2, height: c.height)
+    }
+
+    // A borderless, mouse-transparent child window. ⚠️ deliberately a WINDOW rather than
+    // an overlay NSView: the container is an autolayout hierarchy, so a frame-positioned
+    // subview would be re-laid-out from under us mid-drag, and an extra subview of a pane
+    // host would also have to be reasoned about in applyPanes (which asserts what the
+    // last subview of a host is, for the DropOverlay). A child window touches neither.
+    func makeFloater(_ size: NSSize) -> NSWindow {
+        let w = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                         styleMask: [.borderless], backing: .buffered, defer: false)
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.hasShadow = false
+        w.ignoresMouseEvents = true   // must never interfere with the tracking loop
+        w.level = .floating
+        let v = NSView(frame: NSRect(origin: .zero, size: size))
+        v.wantsLayer = true
+        w.contentView = v
+        return w
+    }
+
+    func beginDragVisuals(_ tab: Int, at wp: NSPoint) {
+        let title = tabTitles[tab]
+        let font = NSFont.systemFont(ofSize: 12)
+        let tw = (title as NSString).size(withAttributes: [.font: font]).width
+        let size = NSSize(width: (tw + 22).rounded(), height: 22)
+
+        // hint first, ghost second → the ghost is the higher child window. Both are
+        // FRAMED BEFORE being added as children, so neither can flash at screen origin.
+        let hint = makeFloater(NSSize(width: 10, height: 10))
+        hint.contentView?.layer?.backgroundColor = paneGold.withAlphaComponent(0.10).cgColor
+        hint.contentView?.layer?.borderColor = paneGold.cgColor
+        hint.contentView?.layer?.borderWidth = 2
+        if let r = dropHintRect(for: wp) { hint.setFrame(window.convertToScreen(r), display: false) }
+        else { hint.alphaValue = 0 }
+        window.addChildWindow(hint, ordered: .above)
+        dragHintWin = hint
+
+        let ghost = makeFloater(size)
+        ghost.setFrameOrigin(window.convertPoint(toScreen: NSPoint(x: wp.x + 12, y: wp.y - 26)))
+        ghost.contentView?.layer?.backgroundColor = paneInk.withAlphaComponent(0.92).cgColor
+        ghost.contentView?.layer?.borderColor = paneGold.cgColor
+        ghost.contentView?.layer?.borderWidth = 1
+        ghost.contentView?.layer?.cornerRadius = 4
+        let l = NSTextField(labelWithString: title)
+        l.font = font
+        l.textColor = paneCream
+        l.alignment = .center
+        l.isBordered = false
+        l.drawsBackground = false
+        l.frame = NSRect(x: 0, y: 3, width: size.width, height: 16)
+        ghost.contentView?.addSubview(l)
+        ghost.alphaValue = 0.92
+        window.addChildWindow(ghost, ordered: .above)
+        dragGhostWin = ghost
+    }
+
+    func moveDragVisuals(to wp: NSPoint) {
+        if let g = dragGhostWin {
+            // just below/right of the pointer, so the label never sits under it
+            let origin = window.convertPoint(toScreen: NSPoint(x: wp.x + 12, y: wp.y - 26))
+            g.setFrameOrigin(origin)
+        }
+        guard let h = dragHintWin else { return }
+        if let r = dropHintRect(for: wp) {
+            // addChildWindow already showed it; only the frame + alpha move from here.
+            h.setFrame(window.convertToScreen(r), display: true)
+            h.alphaValue = 1
+        } else {
+            h.alphaValue = 0   // released here = cancel, so show no target
+        }
+    }
+
+    func endDragVisuals() {
+        for w in [dragHintWin, dragGhostWin] {
+            guard let w = w else { continue }
+            window.removeChildWindow(w)
+            w.orderOut(nil)
+        }
+        dragHintWin = nil
+        dragGhostWin = nil
+    }
+
+    // The whole gesture, from the mouseDown we swallowed to the mouseUp. Below the
+    // movement threshold it is a CLICK and is performed exactly as the control's own
+    // target/action would have performed it; above it, it is a drag.
+    //
+    // ⚠️ because the mouseDown is consumed, the segment does not draw its pressed
+    // highlight during a click. The selection and the action are identical.
+    func runTabGesture(startingAt start: NSPoint, tab: Int) {
+        tabDragActive = true
+        defer { tabDragActive = false; endDragVisuals() }
+        var dragging = false
+        var last = start
+        var cancelled = false
+        loop: while true {
+            // A per-event 60s ceiling so a lost mouseUp can never wedge the strip.
+            guard let ev = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .keyDown],
+                                          until: Date(timeIntervalSinceNow: 60),
+                                          inMode: .eventTracking, dequeue: true) else {
+                cancelled = true
+                slog("drag -> cancelled (no event for 60s)")
+                break loop
+            }
+            switch ev.type {
+            case .keyDown:
+                // ⚠️ a keyDown may not be delivered at all while a mouse button is held;
+                // releasing over the strip is the cancel that always works.
+                if ev.keyCode == 53 { cancelled = true; slog("drag -> cancelled (esc)"); break loop }
+            case .leftMouseDragged:
+                last = ev.locationInWindow
+                if !dragging, hypot(last.x - start.x, last.y - start.y) >= 10 {
+                    dragging = true
+                    beginDragVisuals(tab, at: last)
+                    slog("drag -> begin \(tabTitles[tab])")
+                }
+                if dragging { moveDragVisuals(to: last) }
+            case .leftMouseUp:
+                last = ev.locationInWindow
+                break loop
+            default: break
+            }
+        }
+        if cancelled { return }
+        if !dragging {
+            // Plain click: the strip's normal behaviour, unchanged.
+            seg.selectedSegment = tab
+            tabChanged(seg)
+            return
+        }
+        guard let p = paneTarget(for: last) else {
+            slog("drag -> cancelled (released outside the content area)")
+            return
+        }
+        dropTab(tab, onPane: p)
+    }
+
+    // Assign a dragged tab to a pane. Split ON → the ordinary routing rule (including the
+    // swap) against that pane. Split OFF → a drop on the LEFT half is just a tab switch,
+    // and a drop on the RIGHT half OPENS the split with the dragged tab on the right.
+    func dropTab(_ tab: Int, onPane p: Int) {
+        if p == 1 && !splitOn {
+            // ⚠️ dropping the tab the single pane is ALREADY showing onto the right half
+            // has no sibling to swap with, so the tab MOVES right and the left takes the
+            // next one — the same step ⫽ itself makes.
+            if tab == currentTab { currentTab = (tab + 1) % tabTitles.count }
+            rightTab = tab
+            persistTabs()
+            ensureLoaded(currentTab)
+            ensureLoaded(rightTab)
+            // Same rule as a tab switch: a Hermes dashboard that has been backgrounded
+            // long enough for WebKit to drop its sockets gets its reload as it reappears.
+            maybeReloadStaleHermes(tab)
+            setSplit(true, persist: true)
+            setFocus(1)
+            retryIfFailed(webViewFor(tab))
+            slog("drag -> opened split: left=\(currentTab) right=\(rightTab)")
+            return
+        }
+        routeTab(tab, toPane: p)
+        setFocus(p)      // the pane you dropped onto becomes the focused one (syncs the strip)
+        syncStrip()
+        slog("drag -> tab \(tab) to pane \(p) (left=\(currentTab) right=\(rightTab))")
     }
 
     // ✕ closes THAT pane: split turns off, the SURVIVOR's tab becomes the one tab, and

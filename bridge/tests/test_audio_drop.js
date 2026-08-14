@@ -85,9 +85,15 @@ check('the split view autosaves its divider',
 check('min pane width 420 is enforced on the divider drag',
       /constrainMinCoordinate[\s\S]{0,200}420/.test(swift) &&
       /constrainMaxCoordinate[\s\S]{0,200}420/.test(swift));
-check('the strip routes to the FOCUSED pane and swaps on collision',
-      /func tabChanged[\s\S]{0,700}if splitOn && focusedPane == 1 \{[\s\S]{0,120}if idx == currentTab \{ currentTab = rightTab \}/.test(swift) &&
+// UPDATED HONESTLY for the drag-a-tab slice: the swap moved OUT of tabChanged into
+// routeTab(_:toPane:) so the click path and the drop path share one body. The two facts
+// are now pinned separately, which is strictly stronger than the old single grep — it
+// also forbids the strip quietly stopping to route to the focused pane.
+check('the routing rule takes the destination pane as a parameter and swaps on collision',
+      /func routeTab\(_ idx: Int, toPane p: Int\)[\s\S]{0,700}if splitOn && p == 1 \{[\s\S]{0,120}if idx == currentTab \{ currentTab = rightTab \}/.test(swift) &&
       /if splitOn && idx == rightTab \{ rightTab = currentTab \}/.test(swift));
+check('the strip routes to the FOCUSED pane through that one rule',
+      /func tabChanged[\s\S]{0,240}routeTab\(idx, toPane: \(splitOn && focusedPane == 1\) \? 1 : 0\)/.test(swift));
 check('the strip mirrors the focused pane\'s tab',
       /func focusedTab\(\)[\s\S]{0,160}focusedPane == 1\) \? rightTab : currentTab/.test(swift) &&
       /func syncStrip\(\)[\s\S]{0,200}seg\.selectedSegment = t/.test(swift));
@@ -121,6 +127,56 @@ check('⌘R targets the focused pane',
       /func visibleWebView\(\)[\s\S]{0,300}focusedPane == 1/.test(swift));
 check('the split diagnostics name focus and both tabs',
       /slog\("applyPanes left=[\s\S]{0,80}focus=/.test(swift));
+
+// ── drag a tab onto a pane (v2 enhancement) ──
+// NSSegmentedControl handles a click in a cell tracking loop that pulls events straight
+// off the queue, so a monitor watching for .leftMouseDragged after the fact would never
+// fire. The shell therefore claims the mouseDown itself and runs the whole gesture —
+// which makes "a plain click is completely unaffected" a thing that must be PINNED.
+check('a second monitor claims only a mouseDown that lands on a segment',
+      /tabDragMonitor = NSEvent\.addLocalMonitorForEvents\(matching: \[\.leftMouseDown\]\)/.test(swift) &&
+      /guard let idx = s\.segmentAt\(ev\.locationInWindow\) else \{ return ev \}/.test(swift) &&
+      /s\.runTabGesture\(startingAt: ev\.locationInWindow, tab: idx\)/.test(swift));
+check('the focus monitor is still its own, untouched monitor',
+      /clickMonitor = NSEvent\.addLocalMonitorForEvents/.test(swift) &&
+      /var tabDragMonitor: Any\?/.test(swift));
+check('segment geometry is knowable: widths are set explicitly at construction',
+      /func setSegmentWidths\(\)[\s\S]{0,300}seg\.setWidth\(/.test(swift) &&
+      /setSegmentWidths\(\)\n\s*tabBar\.addSubview\(seg\)/.test(swift));
+check('segmentAt returns nil off the strip so the event is left alone',
+      /func segmentAt\(_ windowPoint: NSPoint\) -> Int\?/.test(swift) &&
+      /guard seg\.bounds\.contains\(p\) else \{ return nil \}/.test(swift));
+check('below the 10pt threshold the gesture is the ordinary click, performed verbatim',
+      /hypot\(last\.x - start\.x, last\.y - start\.y\) >= 10/.test(swift) &&
+      /if !dragging \{[\s\S]{0,200}seg\.selectedSegment = tab\n\s*tabChanged\(seg\)/.test(swift));
+check('the drag runs its own tracking loop (the control never gets the events)',
+      /NSApp\.nextEvent\(matching: \[\.leftMouseDragged, \.leftMouseUp, \.keyDown\]/.test(swift) &&
+      /inMode: \.eventTracking, dequeue: true/.test(swift));
+check('a lost mouseUp cannot wedge the strip',
+      /until: Date\(timeIntervalSinceNow: 60\)/.test(swift) &&
+      /drag -> cancelled \(no event for 60s\)/.test(swift));
+check('Esc and a release outside the content area both cancel',
+      /ev\.keyCode == 53 \{ cancelled = true/.test(swift) &&
+      /guard let p = paneTarget\(for: last\) else \{[\s\S]{0,140}return\n\s*\}/.test(swift) &&
+      /drag -> cancelled \(released outside the content area\)/.test(swift));
+check('the drop target is the real pane when split is on, the half when it is off',
+      /func paneTarget\(for wp: NSPoint\) -> Int\?[\s\S]{0,600}rightPane\.bounds\.contains[\s\S]{0,120}return 1/.test(swift) &&
+      /return wp\.x < c\.midX \? 0 : 1/.test(swift));
+check('a drop on the right half with the split OFF opens the split',
+      /func dropTab\(_ tab: Int, onPane p: Int\)[\s\S]{0,600}if p == 1 && !splitOn \{[\s\S]{0,700}setSplit\(true, persist: true\)/.test(swift));
+check('a drop with the split ON reuses the shared routing rule + swap',
+      /func dropTab\([\s\S]{0,1300}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
+check('the drop persists through the existing keys, no new ones',
+      /func dropTab\([\s\S]{0,800}persistTabs\(\)/.test(swift) &&
+      !/harness\.split\.drag/.test(swift));
+check('the ghost + hint are mouse-transparent child windows, cleaned up on every exit',
+      /func makeFloater\([\s\S]{0,400}ignoresMouseEvents = true/.test(swift) &&
+      /defer \{ tabDragActive = false; endDragVisuals\(\) \}/.test(swift) &&
+      /func endDragVisuals\(\)[\s\S]{0,300}window\.removeChildWindow\(w\)/.test(swift));
+check('the drag has its own [split] diagnostics',
+      /slog\("drag -> begin /.test(swift) &&
+      /slog\("drag -> tab /.test(swift) &&
+      /slog\("drag -> opened split: /.test(swift));
 
 // ── composer auto-grow ──
 check('growInput caps the box at 3x its measured base height',
