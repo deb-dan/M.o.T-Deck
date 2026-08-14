@@ -350,6 +350,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // never refreshes, so without this a toolset/skill switched from OUR Capabilities
     // page leaves that page showing the pre-change state for up to `staleAfter`.
     var hermesCfgGen: Int?
+    // ── config-generation POLL ──
+    // The reload used to be triggered only from maybeReloadStaleHermes, which runs when a
+    // tab BECOMES visible. A Hermes pane sitting beside Mission Control in split view
+    // never "becomes" visible, so it never got the reload — toggle a toolset here and
+    // Hermes's Skills page kept saying `inactive` until ⌘R. This timer asks the SAME
+    // question (syncHermesGen — not a second copy of the logic) on a slow tick, and only
+    // exists while a Hermes surface is actually on screen.
+    var hermesGenTimer: Timer?
+    // ⚠️ BUILDER NUMBER. The generation only moves when the user acts in this panel, so a
+    // few seconds of latency is invisible; 4s reads as immediate while costing one
+    // loopback GET of an endpoint the shell already polls. Not gated on window occlusion:
+    // a reload behind a minimised window is harmless and the alternative (observing
+    // occlusion changes to re-arm) is more machinery than one cheap request is worth.
+    let hermesGenPoll: TimeInterval = 4
     var bridgeProcess: Process?
     var spawnedBridge = false
     // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
@@ -793,6 +807,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // left strip alone and could therefore be pessimistic. With one strip that mistake
     // is avoidable, so this asks the real question.
     func hermesVisible() -> Bool { return currentTab == 2 || (splitOn && rightTab == 2) }
+
+    // Every Hermes surface currently ON SCREEN — the question the config-generation
+    // reload actually needs answered. Usually just the primary; when a pane holds a
+    // SECOND INSTANCE ("ghost") of the Hermes tab, BOTH panes show Hermes (one primary,
+    // one copy) and both are equally stale after a config change, so both are returned
+    // and both get reloaded. Reloading only the primary would leave the copy in the other
+    // half of the window still lying about Hermes's state.
+    //
+    // The ghost flags are only ever set while the split is on and both panes hold the
+    // same tab (applyPanes normalises them first), so the two tests below cannot both
+    // claim the same pane. The primary is gated on `hermesLoaded` — a page that has never
+    // loaded has nothing to reload; a ghost loads itself on creation, so it needs no flag.
+    func visibleHermesWebViews() -> [WKWebView] {
+        var out: [WKWebView] = []
+        let leftShowsHermes = currentTab == 2
+        let rightShowsHermes = splitOn && rightTab == 2
+        if hermesLoaded,
+           (leftShowsHermes && !leftIsGhost) || (rightShowsHermes && !rightIsGhost) {
+            out.append(hermesWV)
+        }
+        if (leftShowsHermes && leftIsGhost) || (rightShowsHermes && rightIsGhost),
+           let g = secondInstances[2] {
+            out.append(g)
+        }
+        return out
+    }
+
+    // Start/stop the poll from the ONE place that knows what is on screen: applyPanes is
+    // called by every path that changes it (tab route, split on/off, pane close, second
+    // instance), so there is no second rule to keep in step. No Hermes on screen — or no
+    // Hermes page loaded yet — means NO timer at all, rather than a timer that returns
+    // early. Idempotent: an applyPanes pass that changed nothing does not restack it.
+    func updateHermesGenTimer() {
+        if !visibleHermesWebViews().isEmpty {
+            if hermesGenTimer != nil { return }
+            hermesGenTimer = Timer.scheduledTimer(withTimeInterval: hermesGenPoll,
+                                                  repeats: true) { [weak self] _ in
+                guard let s = self else { return }
+                // Belt and braces: if the layout ever changed without applyPanes running,
+                // the timer retires itself instead of polling forever.
+                if s.visibleHermesWebViews().isEmpty { s.updateHermesGenTimer(); return }
+                s.syncHermesGen(reloadIfNewer: true, why: "poll")
+            }
+            NSLog("%@", "[hermes] gen poll -> on (every \(Int(hermesGenPoll))s)" as NSString)
+        } else if let t = hermesGenTimer {
+            t.invalidate()
+            hermesGenTimer = nil
+            NSLog("%@", "[hermes] gen poll -> off (no Hermes on screen)" as NSString)
+        }
+    }
 
     // The strip always MIRRORS the focused pane. Setting selectedSegment
     // programmatically does not fire the control's action, so this cannot recurse.
@@ -1333,6 +1397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //
     // Rule 1 still fires exactly when it always did. Rule 2 is only reached when
     // rule 1 did not fire (one reload is enough) and is entirely asynchronous.
+    //
+    // Rule 2 is ALSO driven by updateHermesGenTimer's poll, which is what covers a Hermes
+    // pane that was already on screen (split view — it never "becomes" visible). This
+    // call site stays so that a tab switch checks IMMEDIATELY instead of waiting a tick.
     func maybeReloadStaleHermes(_ idx: Int) {
         guard idx == 2, hermesLoaded,
               !failedLoads.contains(ObjectIdentifier(hermesWV)),
@@ -1359,7 +1427,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // a bridge that is down, or a slow one all degrade to exactly today's behaviour.
     // Never blocks the UI thread (URLSession callback + a short timeout); the recorded
     // value is written BEFORE the reload decision, so a reload can never loop.
-    func syncHermesGen(reloadIfNewer: Bool) {
+    //
+    // `why` only labels the log line, so a poll-driven reload is distinguishable from a
+    // tab-select one in `log stream` without reading the code.
+    func syncHermesGen(reloadIfNewer: Bool, why: String = "tab") {
         var req = URLRequest(url: bridgeURL.appendingPathComponent("api/status"))
         req.timeoutInterval = 2.0
         req.cachePolicy = .reloadIgnoringLocalCacheData
@@ -1378,12 +1449,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 //                Recorded silently above; a restart is not a change.
                 guard reloadIfNewer, let p = prev, gen > p else { return }
                 // Re-check visibility/health on the main thread: the fetch is async, so
-                // the user may have switched away or the page may have failed since.
-                guard self.hermesLoaded, self.hermesVisible(),
-                      !self.failedLoads.contains(ObjectIdentifier(self.hermesWV)),
-                      self.hermesWV.url?.scheme == "http" else { return }
-                NSLog("%@", "[hermes] reload -> config generation \(gen)" as NSString)
-                self.hermesWV.reload()
+                // the user may have switched away or the page may have failed since it
+                // was issued. visibleHermesWebViews() answers the visibility half (and
+                // the hermesLoaded half for the primary); the filter answers the health
+                // half, per surface, exactly as the single-webview version did.
+                let targets = self.visibleHermesWebViews().filter {
+                    !self.failedLoads.contains(ObjectIdentifier($0))
+                        && $0.url?.scheme == "http"
+                }
+                guard !targets.isEmpty else { return }
+                NSLog("%@", "[hermes] reload -> config generation \(gen) (\(why))" as NSString)
+                for wv in targets { wv.reload() }
             }
         }.resume()
     }
@@ -1468,6 +1544,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // run the binary from a terminal, and one click tells you exactly what fired and
         // what widths came out of it. Cheap; keeps this class of bug one paste away.
         slog("applyPanes left=\(leftIdx) right=\(rightTab) focus=\(focusedPane) borrows=\(rightBorrows) ghosts=\(leftIsGhost ? "L" : "-")\(rightIsGhost ? "R" : "-")(\(secondInstances.count)) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
+
+        // Last, because it reads the state this function just settled: arm the
+        // config-generation poll iff a Hermes surface ended up on screen, tear it down
+        // otherwise. Every path that changes what is visible funnels through here (and
+        // ensureLoaded — which sets hermesLoaded — always runs BEFORE it), so this one
+        // call site covers tab routing, ⫽, a pane ✕, a drag-drop and a second instance.
+        updateHermesGenTimer()
     }
 
     func makeRightPlaceholder() -> NSView {

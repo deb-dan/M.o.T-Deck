@@ -323,15 +323,15 @@ check('...and NAMES the platform it controls',
 check('...and still NAMES the trap (Hermes’s own page fetches once on open, '
     + 'SkillsPage.tsx:155-174, and never live-refreshes)',
   /Skills → TOOLSETS/.test(out2) && /never refreshes itself/.test(out2));
-// The shell now reloads that webview on a tab switch when our config generation has
-// moved (app/main.swift syncHermesGen). The copy may therefore promise the automatic
-// reload — but ONLY for the case the mechanism actually covers. A Hermes tab already
-// open BESIDE the panel in split view never becomes visible, so no reload is
-// triggered, and the sentence has to say so rather than overclaim.
-check('...and now promises the automatic reload for the case it really covers',
-  /switching to the Hermes tab reloads it for you/i.test(out2));
-check('...while still telling the truth about split view, where nothing switches',
-  /split view/i.test(out2) && /⌘R/.test(out2));
+// The shell reloads that webview whenever our config generation has moved and a Hermes
+// surface is on screen — on a tab switch (maybeReloadStaleHermes) AND on a poll while it
+// is already visible (updateHermesGenTimer), which is what covers split view. The copy
+// may therefore promise the automatic reload for BOTH, and the only case left uncovered
+// is a Hermes dashboard open outside this app, which it must still name.
+check('...and now promises the automatic reload, not a tab switch you have to make',
+  /the harness reloads that tab for you/i.test(out2));
+check('...covering split view explicitly, and still naming the one case it cannot reach',
+  /split view/i.test(out2) && /outside<\/i> this app/i.test(out2) && /⌘R/.test(out2));
 check('the defaults preset chip no longer promises "everything"',
   out2.indexOf('Everything back on') < 0
   && out2.indexOf(">Hermes's defaults<") >= 0);

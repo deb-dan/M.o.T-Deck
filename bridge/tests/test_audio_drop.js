@@ -308,8 +308,10 @@ check('a bridge restart (gen back to 0) is recorded, never reloaded for — the 
       'compare is a STRICT increase against a KNOWN previous value',
       /let p = prev, gen > p else \{ return \}/.test(swift) &&
       /var hermesCfgGen: Int\?/.test(swift));
+// The single-webview guard became a per-surface one when ghosts were covered (below),
+// but it asks exactly the same two questions: is it visible, is it healthy.
 check('visibility and health are re-checked on the main thread after the fetch',
-      /guard self\.hermesLoaded, self\.hermesVisible\(\),[\s\S]{0,220}scheme == "http" else \{ return \}/
+      /let targets = self\.visibleHermesWebViews\(\)\.filter \{[\s\S]{0,220}failedLoads\.contains\(ObjectIdentifier\(\$0\)\)[\s\S]{0,120}scheme == "http"[\s\S]{0,80}\}\s*\n\s*guard !targets\.isEmpty else \{ return \}/
         .test(swift));
 check('every OTHER Hermes load path records the generation too (first load, ⌘R, retry)',
       /hermesLoaded = true[\s\S]{0,160}syncHermesGen\(reloadIfNewer: false\)/.test(swift) &&
@@ -317,10 +319,60 @@ check('every OTHER Hermes load path records the generation too (first load, ⌘R
         .test(swift) &&
       /func reloadTab[\s\S]{0,700}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
         .test(swift));
-check('the reload announces itself in the house log idiom',
-      /\[hermes\] reload -> config generation \\\(gen\)/.test(swift));
+check('the reload announces itself in the house log idiom, saying what triggered it',
+      /\[hermes\] reload -> config generation \\\(gen\) \(\\\(why\)\)/.test(swift));
 check('no new UserDefaults key was invented for any of this',
       !/harness\.hermes\.gen/.test(swift) && !/harness\.hermes\.config/.test(swift));
+
+// ── the SPLIT-VIEW gap: a poll, gated on Hermes actually being on screen ──
+// maybeReloadStaleHermes only runs when a tab BECOMES visible, so a Hermes pane sitting
+// beside Mission Control was never checked (Debi's own layout: toggle a toolset, wait
+// five minutes, Hermes's Skills page still says `inactive`). A repeating timer now asks
+// the SAME question while a Hermes surface is visible — and must not exist otherwise.
+const tim = swift.slice(swift.indexOf('func updateHermesGenTimer'),
+                        swift.indexOf('func syncStrip'));
+check('there is exactly ONE poll and ONE place that arms it',
+      (swift.match(/func updateHermesGenTimer/g) || []).length === 1
+      && (swift.match(/updateHermesGenTimer\(\)/g) || []).length === 3   // decl + 2 calls
+      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 1);
+check('the poll calls the EXISTING sync, not a second copy of the logic',
+      /syncHermesGen\(reloadIfNewer: true, why: "poll"\)/.test(tim)
+      && !/hermes_config_gen/.test(tim) && !/URLSession/.test(tim));
+check('the interval is a named constant, not a magic number at the call site',
+      /let hermesGenPoll: TimeInterval = \d/.test(swift)
+      && /withTimeInterval: hermesGenPoll/.test(tim));
+check('the timer only exists while a Hermes surface is ON SCREEN',
+      /if !visibleHermesWebViews\(\)\.isEmpty \{/.test(tim));
+check('...and is INVALIDATED and dropped the moment it is not',
+      /else if let t = hermesGenTimer \{[\s\S]{0,160}t\.invalidate\(\)[\s\S]{0,80}hermesGenTimer = nil/
+        .test(tim));
+check('...and is never restacked by a repeat arm',
+      /if hermesGenTimer != nil \{ return \}/.test(tim));
+check('the tick re-checks visibility and retires itself rather than polling forever',
+      /if s\.visibleHermesWebViews\(\)\.isEmpty \{ s\.updateHermesGenTimer\(\); return \}/.test(tim));
+check('the closure does not retain the delegate strongly',
+      /\{ \[weak self\] _ in/.test(tim));
+check('arming happens from applyPanes — the one place that settles what is visible',
+      /applyPanes[\s\S]{0,3200}updateHermesGenTimer\(\)\s*\n\s*\}/.test(swift));
+check('the tab-select entry point is KEPT, so a switch checks immediately',
+      /maybeReloadStaleHermes\(idx\)/.test(swift)
+      && /syncHermesGen\(reloadIfNewer: true\)/.test(swift));
+check('the 600s staleness rule stayed independent of all of this',
+      !/staleAfter/.test(tim) && /let staleAfter: TimeInterval = 600/.test(swift));
+
+// Ghosts: with a SECOND INSTANCE of the Hermes tab both panes show Hermes, and both are
+// equally stale after a config change — so both are reloaded, not just the primary.
+const vis = swift.slice(swift.indexOf('func visibleHermesWebViews'),
+                        swift.indexOf('func updateHermesGenTimer'));
+check('the visible set covers a Hermes ghost as well as the primary',
+      /secondInstances\[2\]/.test(vis) && /out\.append\(hermesWV\)/.test(vis));
+check('...the primary is still gated on hermesLoaded',
+      /if hermesLoaded,/.test(vis));
+check('...both panes are asked, so split view is genuinely covered',
+      /let leftShowsHermes = currentTab == 2/.test(vis)
+      && /let rightShowsHermes = splitOn && rightTab == 2/.test(vis));
+check('...and every visible Hermes surface is reloaded, not only the first',
+      /for wv in targets \{ wv\.reload\(\) \}/.test(swift));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

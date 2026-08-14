@@ -224,14 +224,14 @@ check('the group NAMES the global write scope in the description',
       out.indexOf('off on <b>every</b> Hermes surface') > 0);
 check('the group carries the Hermes-page staleness warning',
       out.indexOf('loads its list once when it opens and never refreshes') > 0);
-// Same softening as the toolset group: the shell reloads the Hermes webview on a tab
-// switch when our config generation has moved, so the copy may promise that — but the
-// split-view case (Hermes already visible beside the panel, no tab switch) is NOT
-// covered and must still be named.
-check('...and now promises the automatic reload only for the tab switch',
-      /switching to the Hermes tab reloads it for you/i.test(out));
-check('...and still names the split-view case, where ⌘R is on the user',
-      /split view/i.test(out) && out.indexOf('⌘R') > 0);
+// Same promise as the toolset group: the shell reloads the Hermes webview whenever our
+// config generation has moved and a Hermes surface is on screen — including split view,
+// where a poll (updateHermesGenTimer) does the work no tab switch could. The one case it
+// cannot reach is a Hermes dashboard open outside this app, and the copy names it.
+check('...and now promises the automatic reload, split view included',
+      /the harness reloads that tab for you/i.test(out) && /split view/i.test(out));
+check('...and still names the one case ⌘R is on the user',
+      /outside<\/i> this app/i.test(out) && out.indexOf('⌘R') > 0);
 check('the shown count is rendered', out.indexOf('4 shown') > 0);
 check('the defaults chip is present and named after HERMES, not "everything"',
       out.indexOf(">Hermes's defaults<") > 0);

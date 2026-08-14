@@ -470,15 +470,18 @@ check("the group NAMES the global scope",
       "off on <b>every</b> Hermes surface" in PANEL)
 check("the staleness warning is carried, like the toolset group's",
       "loads its list once when it opens and never refreshes" in PANEL)
-# The shell now reloads the Hermes webview on a tab switch when the bridge's
-# `hermes_config_gen` has moved (app/main.swift syncHermesGen), so the copy promises
-# that — but ONLY for the tab switch. Split view never switches tabs, so ⌘R stays the
-# instruction there and the sentence must not overclaim.
-check("...and the promise of an automatic reload is scoped to the tab switch",
-      PANEL.count("switching to the Hermes tab reloads it for you") == 2)
-check("...with the split-view exception named on both groups",
-      PANEL.count("already open beside this one in split view") == 1
-      and PANEL.count("already open <i>beside</i> this one in split view") == 1)
+# The shell reloads the Hermes webview whenever `hermes_config_gen` has moved and a
+# Hermes surface is on screen — on a tab switch AND on a poll while it is already
+# visible (app/main.swift updateHermesGenTimer), which is what makes split view work.
+# Both groups may therefore promise it outright; the only case left is a Hermes
+# dashboard open OUTSIDE this app, which both groups must still name.
+check("...and both groups promise the automatic reload outright",
+      PANEL.count("the harness reloads that tab for you") == 2)
+check("...with split view covered, not excepted, on both groups",
+      PANEL.count("already open <i>beside</i> this one in split view") == 1
+      and PANEL.count("in split view too") == 1)
+check("...and the one genuinely uncovered case named on both",
+      PANEL.count("<i>outside</i> this app") == 2)
 
 print()
 print(("FAILED: " + "; ".join(FAILS)) if FAILS else "ALL PASS")

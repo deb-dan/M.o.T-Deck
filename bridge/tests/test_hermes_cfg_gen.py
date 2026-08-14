@@ -172,9 +172,16 @@ check("the shell records BEFORE deciding (so a reload cannot loop)",
       SWIFT.index("self.hermesCfgGen = gen") < SWIFT.index("let p = prev, gen > p"))
 _swift_stale = (SWIFT.split("func maybeReloadStaleHermes", 1)[1]
                 .split("func syncHermesGen", 1)[0])
-check("the check hangs off the EXISTING staleness entry point, not a second one",
+check("the check still hangs off the EXISTING staleness entry point",
       SWIFT.count("func maybeReloadStaleHermes") == 1
       and "syncHermesGen(reloadIfNewer: true)" in _swift_stale)
+# That entry point only runs when a tab BECOMES visible, which never happens to a Hermes
+# pane already open beside the panel in split view. A visibility-gated poll drives the
+# SAME function for that case — one implementation, two triggers.
+check("...and a visibility-gated poll drives the same function for split view",
+      SWIFT.count("func updateHermesGenTimer") == 1
+      and 'syncHermesGen(reloadIfNewer: true, why: "poll")' in SWIFT
+      and SWIFT.count("func syncHermesGen") == 1)
 check("the 600s staleness rule survives untouched inside it",
       "Date().timeIntervalSince(since) > staleAfter" in _swift_stale
       and "hermesLastActive = nil" in _swift_stale)
