@@ -496,6 +496,29 @@ def library_entries(root: "str | Path | None" = None) -> list:
     """
     out = list(_flat_library_entries(root))
     out.extend(starter_entries(root))
+    # Bounded copies made by the length guard are listed too, and for the same reason
+    # the starter set is: a pin points AT one of them, so if the picker could not show
+    # it the pinned chip would silently read as "nothing pinned".
+    out.extend(_subdir_library_entries(trimmed_dir(root), "trimmed"))
+    return out
+
+
+def _subdir_library_entries(d: str, flag: str) -> list:
+    """Clips in one library SUBDIR, tagged with `flag`. Never raises."""
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        p = os.path.join(d, n)
+        try:
+            if not os.path.isfile(p) or normalize_ref_suffix(n) is None:
+                continue
+            out.append({"name": n, "stem": os.path.splitext(n)[0], "path": p,
+                        "size": os.path.getsize(p), flag: True})
+        except OSError:
+            continue
     return out
 
 
@@ -558,6 +581,8 @@ STARTER_MANIFEST = "starter.json"
 STARTER_UTTERANCES = 3          # ~3.6s mean each → ~10s, which is what the engine keeps
 STARTER_SAMPLE_RATE = 24000     # mono; the reference clip is a voice, not a master
 STARTER_PAGE = 12               # rows fetched per speaker once its offset is known
+STARTER_OFFSETS = "starter_offsets.json"
+STARTER_BUDGET_SECS = 240       # a wall-clock cap for the whole run (see the endpoint)
 VCTK_DATASET = "sanchit-gandhi/vctk"
 VCTK_ROWS_URL = "https://datasets-server.huggingface.co/rows"
 VCTK_ROWS_TOTAL = 88156         # mic1+mic2 interleaved, speaker-ordered (API-verified)
@@ -568,20 +593,35 @@ VCTK_MIC = "_mic1"              # DPA 4035 omni — the universal convention in 
 # "Unknown", mic2 missing) appear nowhere below.
 # ⚠️ Every accent label in every speech corpus is SELF-REPORTED. These thirteen are
 # the research's picks and still want an ear check before being treated as canonical.
+#
+# `alt` = the research §6.2 table's named ALTERNATES for that accent slot, tried in
+# order only when the primary speaker is genuinely ABSENT from the mirror. A live probe
+# on 2026-08-14 found all thirteen primaries present and the speaker column contiguous
+# (p225 … p376, then s5), so this path should never fire — but the mirror is a
+# third-party convenience service, and a slot that can name its own substitute beats a
+# slot that just reports a hole. ⚠️ A substitution CHANGES THE VOICE while keeping the
+# accent slot, so it is reported explicitly rather than swapped in silently.
 STARTER_VOICES = (
     {"slot": "us-m-1", "speaker": "p311", "sex": "M", "accent": "American", "region": "Iowa"},
     {"slot": "us-m-2", "speaker": "p334", "sex": "M", "accent": "American", "region": "Chicago"},
-    {"slot": "us-m-3", "speaker": "p345", "sex": "M", "accent": "American", "region": "Florida"},
+    {"slot": "us-m-3", "speaker": "p345", "sex": "M", "accent": "American", "region": "Florida",
+     "alt": ("p360",)},
     {"slot": "us-f-1", "speaker": "p294", "sex": "F", "accent": "American", "region": "San Francisco"},
-    {"slot": "us-f-2", "speaker": "p339", "sex": "F", "accent": "American", "region": "Pennsylvania"},
+    {"slot": "us-f-2", "speaker": "p339", "sex": "F", "accent": "American", "region": "Pennsylvania",
+     "alt": ("p299", "p306")},
     {"slot": "uk-m-1", "speaker": "p232", "sex": "M", "accent": "English", "region": "Southern England"},
     {"slot": "uk-m-2", "speaker": "p243", "sex": "M", "accent": "English", "region": "London"},
-    {"slot": "uk-m-3", "speaker": "p287", "sex": "M", "accent": "English", "region": "York"},
+    {"slot": "uk-m-3", "speaker": "p287", "sex": "M", "accent": "English", "region": "York",
+     "alt": ("p256",)},
     {"slot": "uk-f-1", "speaker": "p225", "sex": "F", "accent": "English", "region": "Southern England"},
-    {"slot": "uk-f-2", "speaker": "p276", "sex": "F", "accent": "English", "region": "Oxford"},
-    {"slot": "other-1", "speaker": "p245", "sex": "M", "accent": "Irish", "region": "Dublin"},
-    {"slot": "other-2", "speaker": "p252", "sex": "M", "accent": "Scottish", "region": "Edinburgh"},
-    {"slot": "other-3", "speaker": "p376", "sex": "M", "accent": "Indian", "region": ""},
+    {"slot": "uk-f-2", "speaker": "p276", "sex": "F", "accent": "English", "region": "Oxford",
+     "alt": ("p267",)},
+    {"slot": "other-1", "speaker": "p245", "sex": "M", "accent": "Irish", "region": "Dublin",
+     "alt": ("p364",)},
+    {"slot": "other-2", "speaker": "p252", "sex": "M", "accent": "Scottish", "region": "Edinburgh",
+     "alt": ("p262",)},
+    {"slot": "other-3", "speaker": "p376", "sex": "M", "accent": "Indian", "region": "",
+     "alt": ("p248",)},
 )
 
 VCTK_LICENSE = "CC BY 4.0"
@@ -699,21 +739,92 @@ def starter_ref_text(clip_path: object, root: "str | Path | None" = None) -> str
     return str(meta.get("text") or "").strip()[:REF_TEXT_MAX]
 
 
+class VctkProbeUnavailable(Exception):
+    """A probe could not answer — a 429, a timeout, a transport error, or an offset
+    the caller has not fetched yet.
+
+    THIS IS NOT THE SAME OUTCOME AS "the speaker is absent", and conflating the two is
+    the bug that shipped: the first build returned None for both, so every slot that
+    lost one HTTP request reported "speaker not found in the dataset mirror" — a
+    statement that was FALSE (a live probe found all thirteen present) and that hid the
+    only real remedy, which is to wait a moment and ask again.
+    """
+
+
+def starter_fetch_order(specs: object = None) -> list:
+    """PURE: the slots sorted by SPEAKER ID ascending.
+
+    THE FIX for the "2 added — 11 failed" bug. `STARTER_VOICES` is ordered by ACCENT
+    SLOT (us-m-1 p311, us-m-2 p334, us-m-3 p345, us-f-1 p294, …) because that is the
+    order the picker should read in. The fetch, however, carries a monotonically
+    advancing `lo` floor into each next binary search — "the next speaker is never
+    earlier than the last" — and that carry is only TRUE if the speakers are visited in
+    ascending order. Visited in slot order, the floor ran past p345 on the third slot
+    and every lower-numbered speaker after it (p294, p339, p232, p243, p287, p225,
+    p276, p245, p252 — nine of them) was searched only in the region ABOVE p345, where
+    it cannot possibly be, and was reported missing.
+
+    Fixing it by sorting the WALK rather than the TABLE keeps the picker's reading
+    order intact and keeps the floor optimisation (which is what holds the whole run
+    inside the datasets-server's rate limit).
+    """
+    rows = list(specs if specs is not None else STARTER_VOICES)
+    return sorted(rows, key=lambda s: str((s or {}).get("speaker") or ""))
+
+
+def starter_candidates(spec: object) -> list:
+    """PURE: [primary, *alternates] for one slot. Defensive about `alt` being absent,
+    a bare string, or junk — the table is hand-written and a typo there must not take
+    the whole fetch down."""
+    if not isinstance(spec, dict):
+        return []
+    out = [str(spec.get("speaker") or "")]
+    alt = spec.get("alt")
+    if isinstance(alt, str):
+        alt = (alt,)
+    for a in (alt if isinstance(alt, (list, tuple)) else ()):
+        s = str(a or "").strip()
+        if s and s not in out:
+            out.append(s)
+    return [s for s in out if s]
+
+
+def vctk_total_rows(payload: object, fallback: int = VCTK_ROWS_TOTAL) -> int:
+    """PURE: `num_rows_total` out of a /rows response, else the pinned fallback.
+
+    The row count is the binary search's upper bound, so a hardcoded one that the
+    mirror has since grown past would make every search subtly wrong (and a shrunken
+    one would silently hide the tail speakers). The number rides on every single page
+    we fetch, so there is no reason to guess it."""
+    try:
+        n = int((payload or {}).get("num_rows_total"))       # type: ignore[union-attr]
+    except (TypeError, ValueError, AttributeError):
+        return int(fallback)
+    return n if n > 0 else int(fallback)
+
+
 def vctk_speaker_bounds(speaker: object, probe, total: int = VCTK_ROWS_TOTAL,
                         lo: int = 0) -> "int | None":
     """PURE-ish: the offset of `speaker`'s FIRST row, by binary search.
 
     The dataset is speaker-ordered and every id is `p` + three digits, so a plain
-    string compare is a correct ordering. `probe(offset) -> speaker_id | None` is
-    INJECTED, which is what makes this testable without a network: the whole search
-    is exercised against a synthetic list in bridge/tests/test_starter_voices.py.
+    string compare is a correct ordering. (Live-verified 2026-08-14: the column runs
+    p225 … p376 and then the one non-`p` speaker, `s5`, which sorts LAST under a string
+    compare because 's' > 'p' — so it sits exactly where the ordering assumption needs
+    it and cannot break the search.) `probe(offset) -> speaker_id | None` is INJECTED,
+    which is what makes this testable without a network: the whole search is exercised
+    against a synthetic list in bridge/tests/test_starter_voices.py.
 
     Why a search at all: the canonical VCTK download is a 10.94 GB zip with no
     per-speaker path, and the datasets-server's `/filter?where=` returned an empty
-    body for this dataset in repeated tests (research §6.3) — so paging `/rows` by
-    offset is the only route that works, and finding the offset is the cost.
-    Returns None when the speaker is not found (a mirror that reshuffled), which is a
-    per-clip failure, never a whole-run one.
+    body for this dataset in repeated tests (research §6.3, re-confirmed live) — so
+    paging `/rows` by offset is the only route that works, and finding the offset is
+    the cost.
+
+    Returns None ONLY when the speaker is genuinely absent (lower_bound landed on a
+    different speaker, or the input was junk). A probe that cannot answer raises
+    `VctkProbeUnavailable` instead — see that class for why the two must not be the
+    same answer.
     """
     want = str(speaker or "")
     if not want or total <= 0:
@@ -724,7 +835,7 @@ def vctk_speaker_bounds(speaker: object, probe, total: int = VCTK_ROWS_TOTAL,
         mid = (lo + hi) // 2
         got = probe(mid)
         if got is None:
-            return None
+            raise VctkProbeUnavailable(f"no answer for row {mid}")
         if str(got) >= want:
             hi = mid
         else:
@@ -732,7 +843,89 @@ def vctk_speaker_bounds(speaker: object, probe, total: int = VCTK_ROWS_TOTAL,
     if lo >= int(total):
         return None
     got = probe(lo)                      # lower_bound lands on >= want; require ==
-    return lo if (got is not None and str(got) == want) else None
+    if got is None:
+        raise VctkProbeUnavailable(f"no answer for row {lo}")
+    return lo if str(got) == want else None
+
+
+def starter_offsets_path(root: "str | Path | None" = None) -> str:
+    return os.path.join(starter_dir(root), STARTER_OFFSETS)
+
+
+def read_starter_offsets(root: "str | Path | None" = None) -> dict:
+    """{speaker id → first row offset} learned by earlier runs. Never raises.
+
+    The research said it outright — "build an offset index once and cache it" — and the
+    first build did not. Persisting it is what makes a RE-RUN cheap: the second click
+    spends its requests on the clips that are missing instead of re-deriving thirteen
+    offsets it already knew, which is precisely the situation a partial run leaves
+    behind. Only integer values survive the read, so a corrupt file degrades to "no
+    cache" rather than to a wrong offset.
+    """
+    try:
+        with open(starter_offsets_path(root), "r", encoding="utf-8",
+                  errors="replace") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in data.items():
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n >= 0:
+            out[str(k)] = n
+    return out
+
+
+def write_starter_offsets(data: dict, root: "str | Path | None" = None) -> None:
+    """Atomic, same discipline as the manifest."""
+    d = starter_dir(root)
+    os.makedirs(d, exist_ok=True)
+    path = starter_offsets_path(root)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({str(k): int(v) for k, v in (data or {}).items()}, f, indent=2)
+    os.replace(tmp, path)
+
+
+def starter_present(slot: object, speaker: object,
+                    root: "str | Path | None" = None) -> "str | None":
+    """The file already on disk for this slot, or None. PURE-ish (two stats).
+
+    Checks BOTH suffixes on purpose: the happy path writes `<slot>-<spk>.wav`, but the
+    no-ffmpeg degrade writes `<slot>-<spk>.flac`, and the first build's skip test only
+    knew about the wav — so on a machine without ffmpeg every re-run re-downloaded
+    every clip it already had.
+    """
+    d = starter_dir(root)
+    stem = os.path.splitext(starter_clip_name(slot, speaker))[0]
+    for sfx in ("wav", "flac"):
+        p = os.path.join(d, f"{stem}.{sfx}")
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def vctk_retry_delay(attempt: int, base: float = 0.8, cap: float = 6.0,
+                     jitter: float = 0.0) -> float:
+    """PURE: the backoff for probe attempt `attempt` (0-based). Exponential, capped,
+    plus a caller-supplied jitter fraction (injected, so this stays testable — a random
+    call inside would make the delay table unassertable).
+
+    Why any backoff at all: one full run is ~200 requests to a service the research
+    itself described as "a convenience service, not a CDN contract" that "rate-limits",
+    and the first build had NO retry anywhere — so a single 429 did not slow the run
+    down, it deleted a voice from it.
+    """
+    d = float(base) * (2 ** max(0, int(attempt)))
+    return min(float(cap), d) * (1.0 + max(0.0, float(jitter)))
 
 
 def vctk_pick_utterances(rows: object, speaker: object,
@@ -773,6 +966,157 @@ def ffmpeg_concat_argv(ff_bin: str, srcs: list, dst: str) -> list:
     argv += ["-filter_complex", f"concat=n={n}:v=0:a=1",
              "-ac", "1", "-ar", str(STARTER_SAMPLE_RATE), "-f", "wav", str(dst)]
     return argv
+
+
+# ── CLIP LENGTH: a reference clip is seconds, not minutes ────────────────────────
+# WHY (Debi's Mac, 2026-08-14): a 7.28 MB mp3 of ~30s+ was pinned successfully and then
+# every render "churned for minutes". The 15 MB byte cap let it through, and bytes were
+# the wrong unit: what actually costs time is DURATION, and mlx-audio's OmniVoice only
+# ever LISTENS to the first ten seconds of it anyway (`ref_audio_max_duration_s=10` in
+# models/omnivoice) — plus, without a stored transcript, whisper-large-v3-turbo gets
+# handed the whole thing. So everything past ~10s is pure cost with zero effect on the
+# voice, and the honest fix is to bound the reference rather than the file.
+REF_CLIP_TRIM_SECS = 12         # a little over the 10s the engine reads, for safety
+REF_CLIP_LONG_SECS = 15         # at or under this, leave the clip completely alone
+REF_CLIP_MAX_SECS = 30          # the hard refusal, and ONLY when we cannot trim
+TRIMMED_DIRNAME = "trimmed"
+# ⚠️ HEURISTIC, and deliberately a CONSERVATIVE one. Only a wav states its own duration
+# in a header we can read for free; mp3/flac/m4a would need a decoder (and our
+# provisioned ffmpeg ships no ffprobe). 40 000 B/s ≈ 320 kbps — the TOP of the mp3
+# range — so the estimate reads SHORT for anything encoded lower, which errs toward
+# accepting a real clip rather than refusing one. It can only cause a false refusal on a
+# machine with no ffmpeg at all, and with ffmpeg an over-estimate costs nothing (`-t 12`
+# on a shorter clip simply copies it).
+NONWAV_EST_BYTES_PER_SEC = 40000
+
+
+def wav_duration_secs(head: object, size: int = 0) -> "float | None":
+    """PURE: seconds of audio in a RIFF/WAVE file, from its header alone.
+
+    `head` is the first few KB of the file and `size` its total length on disk. Returns
+    None for anything that is not a wav we understand — a caller must treat "unknown"
+    as "do not block", never as zero.
+
+    The data-chunk size is preferred, but a wav written by a streaming encoder carries
+    0 or 0xFFFFFFFF there, so an implausible value falls back to (file size − header).
+    """
+    b = head if isinstance(head, (bytes, bytearray)) else b""
+    if len(b) < 44 or b[0:4] != b"RIFF" or b[8:12] != b"WAVE":
+        return None
+    byte_rate = 0
+    data_bytes = 0
+    i = 12
+    while i + 8 <= len(b):
+        cid = bytes(b[i:i + 4])
+        try:
+            csz = int.from_bytes(b[i + 4:i + 8], "little")
+        except (TypeError, ValueError):
+            return None
+        body = i + 8
+        if cid == b"fmt " and body + 16 <= len(b):
+            byte_rate = int.from_bytes(b[body + 8:body + 12], "little")
+        elif cid == b"data":
+            data_bytes = csz
+            if not (0 < data_bytes < (1 << 32) - 1):
+                data_bytes = max(0, int(size or 0) - body)
+            break
+        if csz <= 0:
+            break
+        i = body + csz + (csz & 1)                  # RIFF chunks are word-aligned
+    if byte_rate <= 0:
+        return None
+    if data_bytes <= 0:
+        data_bytes = max(0, int(size or 0) - 44)
+    if data_bytes <= 0:
+        return None
+    return data_bytes / float(byte_rate)
+
+
+def estimate_clip_secs(path: object) -> tuple:
+    """(seconds | None, method) for a clip on disk. One small read, never raises.
+
+    method is "wav-header" (near-exact) or "size" (the ⚠️ heuristic above) or
+    "unknown" — carried out so the user-facing message can be honest about which.
+    """
+    p = str(path or "")
+    if not p or not os.path.isfile(p):
+        return None, "unknown"
+    try:
+        size = os.path.getsize(p)
+    except OSError:
+        return None, "unknown"
+    sfx = normalize_ref_suffix(p)
+    if sfx == "wav":
+        try:
+            with open(p, "rb") as f:
+                head = f.read(8192)
+        except OSError:
+            return None, "unknown"
+        secs = wav_duration_secs(head, size)
+        if secs is not None:
+            return secs, "wav-header"
+    if size <= 0:
+        return None, "unknown"
+    return size / float(NONWAV_EST_BYTES_PER_SEC), "size"
+
+
+def clip_length_verdict(secs: object, have_ffmpeg: object,
+                        method: str = "") -> tuple:
+    """PURE: (action, message) for a clip of `secs` seconds.
+
+    action ∈ 'ok' (nothing to say) · 'trim' (make a bounded copy and pin THAT) ·
+    'warn' (accept as-is, but say it will be slow) · 'refuse' (too long and we have no
+    way to shorten it). An UNKNOWN duration is always 'ok': a guard that cannot measure
+    must not block.
+    """
+    ff = bool(have_ffmpeg)
+    try:
+        s = float(secs)                                       # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "ok", ""
+    if s <= 0 or s <= REF_CLIP_LONG_SECS:
+        return "ok", ""
+    about = f"{'about ' if method == 'size' else ''}{s:.0f}s"
+    if ff:
+        return "trim", (f"that clip is {about} long — pinning the first "
+                        f"{REF_CLIP_TRIM_SECS}s of it, which is all the model listens "
+                        f"to (~10s). The original is untouched.")
+    if s > REF_CLIP_MAX_SECS:
+        return "refuse", (f"that clip is {about} long and the limit without ffmpeg is "
+                          f"{REF_CLIP_MAX_SECS}s. The model only listens to the first "
+                          f"~10s, so a long clip adds minutes of render time and no "
+                          f"voice — trim it to ~10s, or install ffmpeg (it ships with "
+                          f"the voicebox / voicestudio install) and the harness will "
+                          f"trim it for you.")
+    return "warn", (f"that clip is {about} long — the model only listens to the first "
+                    f"~10s, so the extra is render time for nothing. Trimming needs "
+                    f"ffmpeg, which is not installed.")
+
+
+def trimmed_dir(root: "str | Path | None" = None) -> str:
+    """Where bounded copies live: data/voices/trimmed/. A SUBDIR, exactly like the
+    starter set, so it is listed by the picker but is not reachable through
+    library_target() — a trimmed copy is derived, and a delete button on a derived file
+    would only strand the pin it exists to serve."""
+    return os.path.join(voices_dir(root), TRIMMED_DIRNAME)
+
+
+def trimmed_clip_path(src: object, root: "str | Path | None" = None) -> str:
+    """PURE: the bounded copy's path for `src`. Always wav (we are re-encoding anyway,
+    and wav is the one container every engine reads with no external tool) and always a
+    BASENAME-derived name, so nothing from the source path can climb out of the dir."""
+    stem = os.path.splitext(os.path.basename(str(src or "clip")))[0] or "clip"
+    return os.path.join(trimmed_dir(root), f"{stem}-{REF_CLIP_TRIM_SECS}s.wav")
+
+
+def ffmpeg_trim_argv(ff_bin: str, src: object, dst: object,
+                     secs: int = REF_CLIP_TRIM_SECS) -> list:
+    """PURE: one input → the first `secs` seconds as mono 24 kHz wav. `-t` BEFORE the
+    output (a duration limit on the output stream); on a clip already shorter than
+    `secs` this is simply a re-encode of the whole thing, which is why the trim branch
+    is safe to take on an over-estimate."""
+    return [str(ff_bin), "-nostdin", "-y", "-i", str(src), "-t", str(int(secs)),
+            "-ac", "1", "-ar", str(STARTER_SAMPLE_RATE), "-f", "wav", str(dst)]
 
 
 def validate_ref_audio(path: object) -> "str | None":

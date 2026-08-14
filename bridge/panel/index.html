@@ -3594,6 +3594,10 @@ function speakText(raw){
   s = s.replace(/(__|_)(\S(?:[^_]*?\S)?)\1/g, '$2');     // __bold__ / _em_
   s = s.replace(/^#{1,6}\s+/gm, '');                     // heading hashes
   s = s.replace(/^\s*[-*+]\s+/gm, '');                   // list bullets
+  // Emoji / pictographs — the engine tries to PRONOUNCE them (Debi 2026-08-14:
+  // "attempts to read the smiley faces and says something weird"). Strip the
+  // symbol planes; ordinary punctuation and accented letters survive.
+  s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, ' ');
   s = s.replace(/\s+/g, ' ');
   return s.trim();
 }
@@ -5343,13 +5347,22 @@ async function getStarterVoices(){
     const res = await fetch('/api/voice/library/starter', { method: 'POST' });
     const j = await res.json().catch(() => ({}));
     const saved = (j && j.saved) || [], failed = (j && j.failed) || [],
-          skipped = (j && j.skipped) || [];
-    // Per-clip honesty: a partial run says exactly how partial it was, and why.
-    for (const f of failed) feed('voice', 'starter voice ' + f.slot + ' (' + f.speaker
-                                 + ') failed: ' + f.reason);
+          skipped = (j && j.skipped) || [], subbed = (j && j.substituted) || [];
+    // Per-clip honesty: a partial run says exactly how partial it was, and why. The
+    // REASON is the whole value of these lines — "2 added, 11 failed" with no reason is
+    // what left the 2026-08-14 bug undiagnosable from the panel alone.
+    for (const f of failed) feed('voice', 'starter voice ' + esc(f.slot) + ' ('
+                                 + esc(f.speaker) + ') failed — ' + esc(f.reason));
+    // ⚠️ A substitution keeps the ACCENT SLOT and changes the speaker, so it is said
+    // out loud rather than quietly filled in.
+    for (const s of subbed) feed('voice', 'starter voice ' + esc(s.slot) + ': '
+                                 + esc(s.wanted) + ' is not in the mirror — used '
+                                 + esc(s.used) + ' for the same accent slot');
     starterMsg = saved.length + ' added'
       + (skipped.length ? ', ' + skipped.length + ' already there' : '')
-      + (failed.length ? ' — ' + failed.length + ' failed (see the activity feed)' : '');
+      + (subbed.length ? ', ' + subbed.length + ' substituted' : '')
+      + (failed.length ? ' — ' + failed.length + ' failed: '
+         + ((failed[0] && failed[0].reason) || '') : '');
     if (j && j.ffmpeg === false){
       starterMsg += ' · no ffmpeg — clips are single ~4s utterances, not ~10s';
     }
@@ -5799,7 +5812,11 @@ function renderVoiceClips(a, box){
   // the note used to say ".wav clips", which read as a restriction that was never real.
   n.textContent = 'This model clones the voice it hears — add wav / mp3 / flac / m4a '
     + 'clips to ' + (voiceLibDir || 'data/voices') + ' to grow this list (wav, mp3 '
-    + 'and flac need no extra tools; m4a needs ffmpeg).';
+    + 'and flac need no extra tools; m4a needs ffmpeg). '
+    // The honest sentence about the length guard: it explains both why a long clip
+    // gets swapped for a shorter copy AND why it was never worth pinning a long one.
+    + 'Long clips are trimmed to ~12s — the model only listens to the first ~10 '
+    + 'seconds.';
   box.appendChild(n);
 }
 
@@ -6083,6 +6100,13 @@ async function setEntryRef(id, name, text){
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
+    // The bridge says so when it trimmed (or could not trim) a long clip. Silently
+    // pinning a DIFFERENT file than the one that was clicked would be the wrong kind
+    // of helpful, so the swap is announced.
+    else if (j && j.note) feed('voice', esc(j.note));
+    // A refusal is the length guard doing its job — put the reason where errors go AND
+    // in the feed, because the picker's error line is easy to miss mid-scroll.
+    if (voiceErr && /clip is/.test(voiceErr)) feed('voice', esc(voiceErr));
   } catch { voiceErr = 'could not reach the bridge'; }
   stopSpeaking();          // a clip rendered with the old voice must not outlive it
   await initModels();      // re-read /api/models → the entry's new ref_audio

@@ -158,8 +158,12 @@ check('the composer popover only DISPLAYS the voice (no picker there)',
       && !/renderAudioPop[\s\S]{0,4000}entry-voice/.test(html));
 check('switching voice stops any clip rendered with the old one',
       /async function setEntryVoice[\s\S]{0,900}stopSpeaking\(\)/.test(html));
+// Window widened 2026-08-14: setEntryRef gained the length-guard note/refusal
+// surfacing, so stopSpeaking() sits further down the function. The INVARIANT under test
+// is unchanged (a re-pin must kill a clip rendered with the old reference) — only the
+// distance is, and a proximity window is not the fact being pinned.
 check('switching the REFERENCE CLIP also stops a clip rendered with the old voice',
-      /async function setEntryRef[\s\S]{0,900}stopSpeaking\(\)/.test(html));
+      /async function setEntryRef[\s\S]{0,1600}stopSpeaking\(\)/.test(html));
 check('the library delete is a two-step (a recording cannot be re-made)',
       /dataset\.armed[\s\S]{0,200}sure\?/.test(html));
 check('a saved recording is auto-pinned onto the model it was recorded for',

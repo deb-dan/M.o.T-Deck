@@ -78,6 +78,14 @@ check('list bullets are not read',
 check('a lone asterisk in prose survives',
       P.speakText('5 * 3 equals 15') === '5 * 3 equals 15');
 
+// ── emoji: the engine tries to pronounce pictographs (Debi 2026-08-14) ──────────
+check('emoji are stripped, words survive',
+      P.speakText('Sure thing! \u{1F60A} Let me know.') === 'Sure thing! Let me know.');
+check('multiple emoji + variation selectors are stripped',
+      P.speakText('ok \u2705\uFE0F done \u{1F389}') === 'ok done');
+check('accented letters are NOT stripped',
+      P.speakText('caf\u00e9 na\u00efve') === 'caf\u00e9 na\u00efve');
+
 // ── whitespace / trimming ───────────────────────────────────────────────────────
 check('newlines and runs of spaces collapse to one space',
       P.speakText('a\n\n\nb    c\td') === 'a b c d');

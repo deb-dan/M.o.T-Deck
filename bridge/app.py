@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+import random
 import socket
 import subprocess
 import threading
@@ -5140,6 +5141,31 @@ async def _heal_ref_text(entry: dict, audio: list) -> "dict | None":
     return updated
 
 
+def _trim_ref_clip(ff: "str | None", src: str) -> tuple:
+    """(path to a ≤REF_CLIP_TRIM_SECS copy, "") or (None, reason). Never raises.
+
+    The copy lives in data/voices/trimmed/ and is what gets PINNED; the source file is
+    only read. Re-trimming the same source is skipped when a non-empty copy is already
+    there, so pinning the same long clip twice costs one ffmpeg run, not two.
+    """
+    if not ff or _voice is None:
+        return None, "no ffmpeg"
+    try:
+        dst = _voice.trimmed_clip_path(src, ROOT)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isfile(dst) and os.path.getsize(dst) > 0 \
+                and os.path.getmtime(dst) >= os.path.getmtime(src):
+            return dst, ""
+        argv = _voice.ffmpeg_trim_argv(ff, src, dst, _voice.REF_CLIP_TRIM_SECS)
+        c = subprocess.run(argv, capture_output=True, text=True, cwd=str(ROOT),
+                           timeout=120)
+        if os.path.isfile(dst) and os.path.getsize(dst) > 0:
+            return dst, ""
+        return None, ((c.stderr or "").strip()[-160:] or "ffmpeg produced no wav")
+    except Exception as e:                                   # noqa: BLE001
+        return None, f"{type(e).__name__}: {str(e)[:120]}"
+
+
 @app.post("/api/voice/entry-ref")
 async def voice_entry_ref(req: Request) -> JSONResponse:
     """{id, path|name, ref_text?} → pin a REFERENCE CLIP onto one audio entry.
@@ -5184,6 +5210,34 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
     ref_text = ref_text.strip()
+    # ── LENGTH GUARD (2026-08-14, from Debi's 7.28 MB / ~30s mp3) ────────────────
+    # The engine reads only the first ~10s of a reference clip (OmniVoice's
+    # ref_audio_max_duration_s=10), so everything past that is render time bought for
+    # nothing — and a long clip ALSO makes the pin-time transcription below far more
+    # expensive. When we can measure the clip and we have ffmpeg, pin a bounded COPY
+    # instead; without ffmpeg, an over-long clip is refused with the reason and the
+    # limit named. The original file is never touched either way.
+    length_note = ""
+    if path:
+        secs, method = _voice.estimate_clip_secs(path)
+        ff = _voice.ffmpeg_bin(ROOT)
+        action, msg = _voice.clip_length_verdict(secs, bool(ff), method)
+        if action == "refuse":
+            return JSONResponse({"ok": False, "error": msg}, status_code=400)
+        if action == "trim":
+            trimmed, why = _trim_ref_clip(ff, path)
+            if trimmed:
+                path, length_note = trimmed, msg
+                # A trimmed clip is a DIFFERENT clip, so a transcript supplied for the
+                # original no longer describes it. Dropping it costs one whisper pass
+                # and keeps the ref_text honest.
+                ref_text = ""
+                print(f"[voice] entry-ref trimmed to {_voice.REF_CLIP_TRIM_SECS}s → "
+                      f"{path}", flush=True)
+            else:
+                length_note = f"{msg} (the trim failed: {why} — pinning it as it is)"
+        elif action == "warn":
+            length_note = msg
     if path and not ref_text:
         # A STARTER clip comes WITH its ground-truth transcript (the corpus utterance
         # text), so it never pays a transcription — not the whisper-per-render one
@@ -5218,7 +5272,8 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
             status_code=400)
     print(f"[voice] entry-ref {mid} → {os.path.basename(path) if path else '(cleared)'}",
           flush=True)
-    return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated)})
+    return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated),
+                         "note": length_note})
 
 
 @app.get("/api/voice/library")
@@ -5257,19 +5312,57 @@ def voice_library(folder: str = "") -> JSONResponse:
                          "voice_notice": _voice.VOICE_AI_NOTICE})
 
 
-async def _vctk_rows(offset: int, length: int) -> "list | None":
-    """One page of the VCTK datasets-server listing, or None. Never raises."""
-    try:
-        r = await _HF_ANY.get(_voice.VCTK_ROWS_URL, params={
-            "dataset": _voice.VCTK_DATASET, "config": "default", "split": "train",
-            "offset": int(offset), "length": int(length)})
-        if r.status_code != 200:
-            return None
-        j = r.json()
-        rows = j.get("rows") if isinstance(j, dict) else None
-        return rows if isinstance(rows, list) else None
-    except Exception:                                       # noqa: BLE001
-        return None
+_VCTK_TRIES = 4                 # 1 attempt + 3 retries; ~0.8/1.6/3.2s apart
+_VCTK_PACE_SECS = 0.06          # a small gap between requests — see below
+
+
+async def _vctk_rows(offset: int, length: int, tries: int = _VCTK_TRIES) -> tuple:
+    """One page of the VCTK datasets-server listing as (rows, total, error).
+
+    On success: (list, num_rows_total, ""). On failure: (None, 0, reason) — and the
+    REASON is carried out, because the whole point of this rewrite is that the caller
+    must be able to tell "the mirror does not have this speaker" from "we were rate
+    limited". Never raises.
+
+    RETRY + PACING (the second half of the 2026-08-14 bug): one full run of thirteen
+    slots is ~200 anonymous requests to a service the research itself flagged as
+    rate-limiting, and the first build had no retry, no backoff and no gap between
+    requests at all — so a single 429 anywhere in the run cost a voice and reported it
+    as a missing speaker. Retries are exponential with jitter (`vctk_retry_delay`, pure
+    and unit-tested), and 4xx that are NOT 429 fail immediately: a 404 will not become a
+    200 no matter how long we wait.
+    """
+    last = "unknown error"
+    for attempt in range(max(1, int(tries))):
+        if attempt:
+            await asyncio.sleep(_voice.vctk_retry_delay(attempt - 1,
+                                                        jitter=random.random() * 0.4))
+        try:
+            r = await _HF_ANY.get(_voice.VCTK_ROWS_URL, params={
+                "dataset": _voice.VCTK_DATASET, "config": "default", "split": "train",
+                "offset": int(offset), "length": int(length)})
+        except Exception as e:                              # noqa: BLE001
+            last = f"{type(e).__name__}: {str(e)[:120]}"
+            continue
+        if r.status_code == 200:
+            try:
+                j = r.json()
+            except Exception:                               # noqa: BLE001
+                last = "the mirror returned a body that is not JSON"
+                continue
+            rows = j.get("rows") if isinstance(j, dict) else None
+            if not isinstance(rows, list):
+                last = "the mirror returned no rows"
+                continue
+            await asyncio.sleep(_VCTK_PACE_SECS)
+            return rows, _voice.vctk_total_rows(j), ""
+        if r.status_code == 429:
+            last = "rate limited by the dataset mirror (HTTP 429)"
+            continue
+        if 400 <= r.status_code < 500:
+            return None, 0, f"the dataset mirror refused the request (HTTP {r.status_code})"
+        last = f"the dataset mirror is having trouble (HTTP {r.status_code})"
+    return None, 0, last
 
 
 @app.post("/api/voice/library/starter")
@@ -5287,15 +5380,31 @@ async def voice_library_starter() -> JSONResponse:
     speaker-ordered, so each speaker's first offset is found by BINARY SEARCH (pure,
     unit-tested with an injected probe) and then one page is read from there. Signed
     asset URLs EXPIRE, so metadata and audio are fetched in one pass and nothing is
-    cached. `/filter?where=` is deliberately not used — it returned an empty body for
-    this dataset in repeated testing.
+    cached. `/filter?where=` is deliberately not used — re-confirmed live on
+    2026-08-14: it still returns an empty body for this dataset.
 
     PARTIAL SUCCESS IS THE DESIGN: each slot lands independently and a failure is
-    reported per-slot with its reason. Re-running only fetches what is missing.
+    reported per-slot with its reason. Re-running only fetches what is missing, and
+    now costs almost no probes either — the offset index it learned is persisted.
 
-    ⚠️ NONE of the network path could be exercised in the sandbox. It is code-reasoned
-    against a live probe of the endpoint's real response shape (verified: rows carry
-    speaker_id / file / text and audio[0].src), and it fails LOUDLY per clip.
+    ⚠️ FIXED 2026-08-14 after Debi's Mac reported "2 added — 11 failed". Two defects,
+    both in the LOOKUP half:
+
+      1. the slots were walked in ACCENT-SLOT order (p311, p334, p345, p294, …) while
+         the `lo` floor carried forward monotonically. The floor is only sound if the
+         speakers ascend, so from the fourth slot on, every lower-numbered speaker was
+         searched exclusively in the region ABOVE p345 and reported absent. Nine slots
+         failed this way on every single run, deterministically. FIX:
+         `starter_fetch_order()` walks by speaker id; the table keeps its reading order.
+      2. a probe that FAILED (429 / timeout) was cached as None and read as "speaker
+         absent" — a false statement that also poisoned that offset for every later
+         search. FIX: `VctkProbeUnavailable` separates the two outcomes, failures are
+         never cached, and `_vctk_rows` retries with backoff + jitter and paces itself.
+
+    A live probe the same day found all thirteen speakers present and the column
+    contiguous (p225 … p376 then s5), so no substitution was needed to fix this — the
+    `alt` lists exist for a mirror that changes later, and a substitution is always
+    reported, never silent.
     """
     if _voice is None:
         return _voice_unavailable()
@@ -5307,58 +5416,141 @@ async def voice_library_starter() -> JSONResponse:
         return JSONResponse({"ok": False, "error": f"could not create {d}: {e}"},
                             status_code=500)
     man = _voice.read_starter_manifest(ROOT)
-    saved, failed, skipped = [], [], []
+    saved, failed, skipped, substituted = [], [], [], []
+    deadline = time.time() + _voice.STARTER_BUDGET_SECS
 
-    # One shared probe cache: the thirteen searches overlap heavily (the speakers are
-    # in ascending order and so are their offsets), so a probed offset is worth
-    # remembering — it turns ~13 independent 17-step searches into far fewer requests.
-    probes: dict = {}
+    # The probe cache, seeded from what earlier runs learned. Only SUCCESSFUL answers
+    # ever go in: caching a failure is what turned one 429 into a permanently missing
+    # voice. The thirteen searches overlap heavily (speakers ascend and so do their
+    # offsets), so a remembered offset turns ~13 independent 17-step searches into far
+    # fewer requests — and a re-run into almost none.
+    known = _voice.read_starter_offsets(ROOT)
+    probes: dict = {v: k for k, v in known.items()}
 
-    async def probe_async(off: int) -> "str | None":
+    class _PastEnd(Exception):
+        """The mirror answered, and the answer was 'there is nothing at that row'."""
+
+    # PRIME the row count from one real page before any search runs. The binary search's
+    # upper bound has to be right BEFORE the first probe, and a hardcoded total that the
+    # mirror has since shrunk would send that probe past the end of the data — where the
+    # server returns a perfectly good 200 with an empty list, which is not a failure and
+    # so cannot be retried out of. Caught in a synthetic run of this exact walk.
+    _first, _tot, _err = await _vctk_rows(0, 1)
+    total_rows = _tot or _voice.VCTK_ROWS_TOTAL
+    if _first is None:
+        return JSONResponse({"ok": False, "saved": [], "skipped": [], "substituted": [],
+                             "ffmpeg": bool(ff), "attribution": _voice.VCTK_ATTRIBUTION,
+                             "failed": [{"slot": s["slot"], "speaker": s["speaker"],
+                                         "reason": f"could not reach the dataset "
+                                                   f"mirror: {_err}"}
+                                        for s in _voice.STARTER_VOICES]},
+                            status_code=502)
+
+    async def probe_async(off: int) -> str:
+        """The speaker at `off`. Raises rather than lying: VctkProbeUnavailable when the
+        mirror could not answer, _PastEnd when it answered 'nothing there'."""
+        nonlocal total_rows
         if off in probes:
             return probes[off]
-        rows = await _vctk_rows(off, 1)
-        sid = None
+        rows, tot, err = await _vctk_rows(off, 1)
+        if tot:
+            total_rows = tot
+        if rows is None:
+            raise _voice.VctkProbeUnavailable(err or "the mirror gave no answer")
+        sid = ""
         if rows and isinstance(rows[0], dict):
             row = rows[0].get("row")
             if isinstance(row, dict):
-                sid = str(row.get("speaker_id") or "") or None
+                sid = str(row.get("speaker_id") or "")
+        if not sid:
+            total_rows = min(total_rows, off)   # the data ends before here
+            raise _PastEnd(off)
         probes[off] = sid
         return sid
 
+    async def find_offset(spk: str, lo: int) -> "int | None":
+        """The pure binary search, pumped: run it against the cache, and when it asks
+        for an offset we have not seen, fetch that one and start over. Bounded by the
+        search depth (~18 probes over 88k rows), 60 rounds of headroom."""
+        if spk in known:
+            return known[spk]
+        for _round in range(60):
+            missing = []
+
+            def sync_probe(o, _m=missing):
+                if o in probes:
+                    return probes[o]
+                _m.append(o)
+                return None                # aborts the search; we fetch and retry
+            try:
+                return _voice.vctk_speaker_bounds(spk, sync_probe, total_rows, lo)
+            except _voice.VctkProbeUnavailable:
+                if not missing:
+                    raise
+            try:
+                await probe_async(missing[0])
+            except _PastEnd:
+                continue        # total_rows just shrank; re-run with the real bound
+        raise _voice.VctkProbeUnavailable("the offset search did not converge")
+
     lo = 0
-    for spec in _voice.STARTER_VOICES:
+    for spec in _voice.starter_fetch_order(_voice.STARTER_VOICES):
         slot, spk = spec["slot"], spec["speaker"]
         name = _voice.starter_clip_name(slot, spk)
         dst = os.path.join(d, name)
-        if os.path.isfile(dst) and os.path.getsize(dst) > 0 and man.get(name):
-            skipped.append(name)
+        # RE-RUNNABLE: a slot already on disk is skipped. Checks BOTH suffixes, because
+        # the no-ffmpeg degrade writes .flac and the old wav-only test meant a machine
+        # without ffmpeg re-downloaded everything it already had on every click.
+        have = _voice.starter_present(slot, spk, ROOT)
+        if have and man.get(os.path.basename(have)):
+            skipped.append(os.path.basename(have))
+            continue
+        if time.time() > deadline:
+            failed.append({"slot": slot, "speaker": spk,
+                           "reason": "ran out of time for this run — click again to "
+                                     "carry on with the slots that are still missing"})
             continue
         try:
-            # The binary search is PURE and takes a SYNC probe, so the async fetches
-            # are pumped through a small trampoline: run the pure search against a
-            # cache, and when it asks for an offset we have not seen, fetch it and
-            # start the search over. Bounded by the search depth (~17 rounds).
-            offset = None
-            for _round in range(40):
-                missing = []
-
-                def sync_probe(o, _m=missing):
-                    if o in probes:
-                        return probes[o]
-                    _m.append(o)
-                    return None            # aborts the search; we fetch and retry
-                offset = _voice.vctk_speaker_bounds(spk, sync_probe,
-                                                    _voice.VCTK_ROWS_TOTAL, lo)
-                if not missing:
+            # The primary speaker, then the research's named alternates for this accent
+            # slot. Only a genuine ABSENCE moves to the next candidate; a probe failure
+            # fails the slot with its real reason, because retrying a rate limit under a
+            # different speaker id would just spend the budget faster.
+            offset, used = None, spk
+            for cand in _voice.starter_candidates(spec):
+                offset = await find_offset(cand, lo if cand >= spk else 0)
+                if offset is not None:
+                    used = cand
                     break
-                await probe_async(missing[0])
             if offset is None:
+                cands = _voice.starter_candidates(spec)
                 failed.append({"slot": slot, "speaker": spk,
-                               "reason": "speaker not found in the dataset mirror"})
+                               "reason": f"not present in the dataset mirror "
+                                         f"(tried {', '.join(cands)}) — fill this slot "
+                                         f"by hand with ⊕ add clip file"})
                 continue
-            lo = offset                       # the next speaker is never earlier
-            rows = await _vctk_rows(offset, _voice.STARTER_PAGE)
+            if used != spk:
+                # ⚠️ A SUBSTITUTION CHANGES THE VOICE, keeping only the accent slot.
+                substituted.append({"slot": slot, "wanted": spk, "used": used})
+                print(f"[voice] starter {slot}: {spk} absent — substituting {used} "
+                      f"({spec.get('accent')})", flush=True)
+            spk = used
+            name = _voice.starter_clip_name(slot, spk)
+            dst = os.path.join(d, name)
+            known[spk] = offset
+            if used == spec["speaker"]:
+                # The floor advances ONLY on a primary hit. The walk is sorted by
+                # PRIMARY speaker, so a primary offset is a sound floor for the next
+                # primary — an alternate's offset is not (p376's alternate is p248,
+                # which sits near the very start), and this is exactly the class of
+                # mistake that caused the bug being fixed.
+                lo = max(lo, offset)
+            rows, tot, err = await _vctk_rows(offset, _voice.STARTER_PAGE)
+            if tot:
+                total_rows = tot
+            if rows is None:
+                failed.append({"slot": slot, "speaker": spk,
+                               "reason": f"could not read this speaker's rows: {err}"})
+                continue
             picks = _voice.vctk_pick_utterances(rows, spk)
             if not picks:
                 failed.append({"slot": slot, "speaker": spk,
@@ -5366,13 +5558,26 @@ async def voice_library_starter() -> JSONResponse:
                 continue
             parts = []
             for i, p in enumerate(picks):
-                try:
-                    r = await _HF_ANY.get(p["src"])
-                    if r.status_code != 200 or not r.content:
-                        raise RuntimeError(f"HTTP {r.status_code}")
-                except Exception as e:                       # noqa: BLE001
+                # Same retry discipline as the row pages — the asset host is the same
+                # rate-limited service, and losing one of three utterances costs the
+                # whole slot.
+                r, why = None, "unknown error"
+                for attempt in range(_VCTK_TRIES):
+                    if attempt:
+                        await asyncio.sleep(_voice.vctk_retry_delay(
+                            attempt - 1, jitter=random.random() * 0.4))
+                    try:
+                        r = await _HF_ANY.get(p["src"])
+                    except Exception as e:                   # noqa: BLE001
+                        r, why = None, f"{type(e).__name__}: {str(e)[:100]}"
+                        continue
+                    if r.status_code == 200 and r.content:
+                        break
+                    why = f"HTTP {r.status_code}"
+                    r = None
+                if r is None:
                     failed.append({"slot": slot, "speaker": spk,
-                                   "reason": f"clip download failed: {e}"})
+                                   "reason": f"clip download failed: {why}"})
                     parts = []
                     break
                 src = os.path.join(d, f".{slot}-{i}.flac")
@@ -5418,13 +5623,31 @@ async def voice_library_starter() -> JSONResponse:
                         "source": "VCTK 0.92 (CC BY 4.0)"}
             _voice.write_starter_manifest(man, ROOT)
             saved.append(key)
+        except _voice.VctkProbeUnavailable as e:
+            # The honest reason, NOT "speaker not found". This distinction is the whole
+            # point of the class: it tells Debi to click again rather than to believe a
+            # voice is gone.
+            failed.append({"slot": slot, "speaker": spk,
+                           "reason": f"could not reach the dataset mirror: {e} "
+                                     f"— click again in a minute"})
         except Exception as e:                               # noqa: BLE001
-            failed.append({"slot": slot, "speaker": spk, "reason": str(e)})
+            failed.append({"slot": slot, "speaker": spk,
+                           "reason": f"{type(e).__name__}: {str(e)[:160]}"})
+    # Persist whatever offsets this run learned even if it failed part-way: the next
+    # click then spends its requests on the missing clips, not on re-deriving offsets.
+    try:
+        _voice.write_starter_offsets(known, ROOT)
+    except OSError as e:
+        print(f"[voice] starter offset index not written: {e}", flush=True)
+    for f in failed:
+        print(f"[voice] starter {f['slot']} ({f['speaker']}) failed: {f['reason']}",
+              flush=True)
     print(f"[voice] starter voices: {len(saved)} saved, {len(skipped)} already there, "
-          f"{len(failed)} failed", flush=True)
+          f"{len(failed)} failed, {len(substituted)} substituted "
+          f"({len(probes)} offsets known)", flush=True)
     return JSONResponse({"ok": bool(saved or skipped) or not failed,
                          "saved": saved, "skipped": skipped, "failed": failed,
-                         "ffmpeg": bool(ff),
+                         "substituted": substituted, "ffmpeg": bool(ff),
                          "attribution": _voice.VCTK_ATTRIBUTION})
 
 
@@ -5544,9 +5767,29 @@ async def voice_library_save(req: Request) -> JSONResponse:
     except OSError as e:
         return JSONResponse({"ok": False, "error": f"could not save the clip: {str(e)[:200]}"},
                             status_code=500)
-    print(f"[voice] library saved {len(raw)} bytes → {path}", flush=True)
+    # LENGTH GUARD, save side. The library keeps what it was given — trimming a stored
+    # recording behind the user's back would be a worse surprise than a slow render —
+    # so this only REFUSES the case we could neither use nor shorten (over-long AND no
+    # ffmpeg anywhere), and otherwise reports the estimate so the pin can say what it
+    # is about to do. The file is removed again on refusal: a clip the harness has just
+    # told the user it will not accept must not be left sitting in the library.
+    note = ""
+    if _voice is not None:
+        secs, method = _voice.estimate_clip_secs(path)
+        action, msg = _voice.clip_length_verdict(secs, bool(_voice.ffmpeg_bin(ROOT)),
+                                                 method)
+        if action == "refuse":
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return JSONResponse({"ok": False, "error": msg}, status_code=400)
+        if action in ("trim", "warn"):
+            note = msg
+    print(f"[voice] library saved {len(raw)} bytes → {path}"
+          + (f" ({note})" if note else ""), flush=True)
     return JSONResponse({"ok": True, "name": os.path.basename(path), "path": path,
-                         "size": len(raw)})
+                         "size": len(raw), "note": note})
 
 
 @app.post("/api/voice/library/delete")
