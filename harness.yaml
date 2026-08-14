@@ -6,14 +6,39 @@ version: "0.1.0"                # local harness version — shown in the MC Vers
 components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
-    pin: v2026.7.30           # release tag — never track a branch (bumped from v2026.7.20, Fable contract-checked 2026-07-31: dashboard flags kept in subcommands/dashboard.py, HERMES_DESKTOP + loopback-auth + mcp_servers intact, v0.19.1)
+    pin: v2026.8.13           # release tag — never track a branch.
+                              # 2026-08-14 bump v2026.7.30 → v2026.8.13 (update sweep; 2565 commits in range).
+                              # Contract-checked against a real v2026.8.13 checkout: 13/14 asserts passed; the ONE
+                              # failure was a COSMETIC import reformat in hermes_cli/plugins.py (the tools.approval
+                              # import became parenthesised multi-line at L5884) — resolve_pre_tool_block still exists
+                              # (L5851) and still CALLS request_tool_approval (L5900), so the path-guard escalation is
+                              # unbroken. The TEST was widened (both forms + the call site) — see
+                              # bridge/contract_tests/test_hermes_ws_contract.py.
+                              # Verified present at the candidate: all 8 /api/ws JSON-RPC methods + all 9 events,
+                              # HERMES_DASHBOARD_SESSION_TOKEN, the approval protocol (choices/_redact/resolve/
+                              # is_interrupted), pre_tool_call in VALID_HOOKS w/ block|approve|message|rule_key,
+                              # mcp_servers config shape, loopback ⇒ no auth, HERMES_DESKTOP cron ticker, web_dist.
+                              # ⚠️ WATCH-ITEM: --port/--host/--insecure/--skip-build moved into a shared
+                              # _add_server_runtime_args(); --no-open is still a real flag on `dashboard` (only the
+                              # `serve` copy is SUPPRESS). A now-hidden --tui compat shim carries a comment saying it
+                              # is "safe to delete once the floor app version is well past 0.16.0" — evidence upstream
+                              # DOES prune dashboard flags. Our contract test pins --no-open/--skip-build.
+                              # (prev v2026.7.30, before that v2026.7.20)
     installed: true
     enabled: false
     port: 9119                # hermes serve REST API (persistent surface)
     depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
   odysseus:
     repo: https://github.com/pewdiepie-archdaemon/odysseus.git
-    pin: 25c9e735ef5ce605f47f8f666ac6689056d2c10c   # 2026-07-31 bump (Fable contract-checked): _explicit_web_intent OK, chat_stream/sessions/auth/mcp/history intact, seed deps (ModelEndpoint/get_db_session/src.settings) present, X-Frame OK. Upstream REMOVED /session/{id}/fork + /session/{id}/message → bridge rewired to inject_messages. (prev e57f60bd)
+    # ⚠️ BRANCH FACT (corrected 2026-08-14 by the update sweep — the comment used to imply `main`):
+    # this commit is on the upstream **dev** branch (the repo's default HEAD), NOT `main`.
+    #   merge-base --is-ancestor 25c9e73 origin/main → NO   |   origin/dev → YES
+    #   origin/main cf4e240 (2026-07-23) is a STALE side branch that sits BEHIND us and contains
+    #   at least one change upstream later REVERTED (f06a0a3 restores session URL hash writes).
+    # Anyone bumping "Odysseus to latest main" would silently move us BACKWARD by three weeks —
+    # and every contract test would pass while they did it, because the seams exist on both
+    # branches. Any future bump must be `git -C vendor/odysseus fetch origin dev` + a dev SHA.
+    pin: 25c9e735ef5ce605f47f8f666ac6689056d2c10c   # dev@25c9e73 — 2026-07-31 bump (Fable contract-checked): _explicit_web_intent OK, chat_stream/sessions/auth/mcp/history intact, seed deps (ModelEndpoint/get_db_session/src.settings) present, X-Frame OK. Upstream REMOVED /session/{id}/fork + /session/{id}/message → bridge rewired to inject_messages. (prev e57f60bd)
     installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
@@ -60,10 +85,22 @@ components:
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
   adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx  (jan retired 2026-07-23)
-  llamacpp_pin: b10295       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
-                             # 2026-08-06: b10094 → b10295. NOTE release CI lags a fresh tag: b10297 existed but had
-                             # NO macos-arm64 asset; b10295 does (verified against the release page). Always pin a tag
-                             # whose llama-<tag>-bin-macos-arm64.tar.gz actually exists.
+  llamacpp_pin: b10427       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
+                             # 2026-08-06: b10094 → b10295. 2026-08-14: b10295 → b10427 (update sweep).
+                             # NOTE release CI lags a fresh tag: b10297 existed but had NO macos-arm64 asset.
+                             # b10427's llama-b10427-bin-macos-arm64.tar.gz WAS verified present (302 to the CDN;
+                             # a bogus tag and a bogus filename both 404, so the check discriminates). Always pin a
+                             # tag whose llama-<tag>-bin-macos-arm64.tar.gz actually exists.
+                             # Every flag we depend on verified in the b10427 source: -a/--alias (arg.cpp:2966),
+                             # --repeat-penalty (:2080), --spec-type (:4139, DRAFT_MTP still an enum member),
+                             # llama-tts -m/-mm/-p/-o (tools/tts/tts.cpp:37), --tts-lang (:4317),
+                             # --tts-speaker-file (:4325); -mv/--vocoder-model still ABSENT (our contract test
+                             # asserts that absence — still correct).
+                             # ⚠️ WATCH-ITEM (new in range, #26118): common_params_apply_system_config() now reads
+                             # /etc/llama.cpp/config.ini then ${XDG_CONFIG_HOME:-~/.config}/llama.cpp/config.ini IF
+                             # THEY EXIST, applied BEFORE env and CLI (our argv still wins). Neither file exists on
+                             # Debi's Mac ⇒ no-op today, but llama-server's behaviour is no longer determined by our
+                             # argv alone. ⚠️ install_llamacpp.sh keeps NO backup — copy data/llamacpp aside first.
   binary:                    # explicit path to llama-server; empty = auto-discover (our pin → Jan backends → LM Studio)
   mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
   port: 6767                 # canonical headless endpoint (jan serve --port)
@@ -127,13 +164,29 @@ build:
   # OFFLINE first-run fails ("no matching distribution"). Bump = edit here only, rebuild fat,
   # then re-verify one MLX chat turn (and re-check the mlx wire-id path in bridge/app.py).
   mlx_lm_pin: "0.31.3"
-  mlx_vlm_pin: "0.6.10"
+  # 2026-08-14 bump 0.6.10 → 0.6.13 (update sweep): server arg surface changed
+  # ADDITIVELY ONLY (+--kv-key-bits/--kv-value-bits/--kv-key-scheme/--kv-value-scheme/
+  # --max-num-seqs); no removals, requirements.txt identical. Our launch line
+  # (mlx_vlm.server --model/--host/--port) is unaffected.
+  mlx_vlm_pin: "0.6.13"
   # mlx-audio powers the MLX half of the harness-native voice capability (the
   # `voice:` block above). It is ALREADY pulled in transitively as an mlx-vlm dep,
   # so pinning it here just makes the version deliberate: the provisioned venv had
   # 0.4.4 while the Phase-0 recon read 0.4.7 sources — install_mlx.sh now asks for
   # the recon'd version so installed reality matches the argv surface we build.
-  mlx_audio_pin: "0.4.7"
+  # 2026-08-14 bump 0.4.7 → 0.4.8 (update sweep). The CLI_PARITY_KWARGS re-derivation
+  # rule was DISCHARGED by measurement, not assumption: mlx_audio/tts/generate.py and
+  # mlx_audio/stt/generate.py are md5-IDENTICAL between 0.4.7 and 0.4.8, and
+  # tts/models/omnivoice/ is identical too — so the argparse default dict that
+  # bridge/voice_worker.py mirrors cannot have changed. The rule still stands for
+  # every FUTURE bump (a drift there is silently-wrong audio, not an error).
+  # 0.4.8 is a RESAMPLING-QUALITY release (new mlx_audio/resample.py replacing the
+  # scipy resample_poly path, streaming miniaudio downsample, istftnet changes).
+  # ⚠️ The honest risk is AUDIO, not API — istftnet is the Kokoro/kitten vocoder and
+  # the resample path feeds every reference clip. Also: RenderCache keys do NOT
+  # include the engine version, so 0.4.7-era cached renders keep being served after
+  # the bump — A/B with fresh text or after a bridge restart.
+  mlx_audio_pin: "0.4.8"
   # mlx-whisper: the STT half (Phase D dictation). One-shot `mlx_whisper` console
   # script out of the SAME data/mlx-venv — no second venv, no torch. Pin per the
   # Fable spec amendment §6.

@@ -9,6 +9,7 @@ loudly if a future tag renames or removes one.
 
 Run: pytest bridge/contract_tests/ (from harness root). No network, no build.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -217,9 +218,23 @@ def test_path_guard_hook_contract():
     assert "def resolve_pre_tool_block" in plugins, (
         "resolve_pre_tool_block gone — approve directives would no longer reach "
         "the approval gate")
-    assert "from tools.approval import request_tool_approval" in plugins, (
-        "resolve_pre_tool_block no longer calls request_tool_approval — plugin "
-        "escalations would not open an approval card")
+    # The escalation seam: resolve_pre_tool_block must IMPORT request_tool_approval
+    # from tools.approval AND actually CALL it. Both forms of the import count —
+    # v2026.7.30 wrote it on one line, v2026.8.13 reformatted it to a parenthesised
+    # multi-line import (hermes_cli/plugins.py:5884). That reformat is cosmetic and
+    # the old literal-string assertion failed on it; this replacement is STRICTLY
+    # STRONGER, because it also pins the CALL SITE inside resolve_pre_tool_block —
+    # which is the thing that actually opens the approval card. Widened 2026-08-14
+    # for the v2026.7.30 → v2026.8.13 bump; passes at BOTH tags.
+    assert re.search(
+        r"from\s+tools\.approval\s+import\s+(?:\(\s*(?:[\w,\s]*?,\s*)?)?request_tool_approval",
+        plugins), (
+        "plugins.py no longer imports request_tool_approval from tools.approval — "
+        "plugin escalations would not open an approval card")
+    _resolver = plugins.split("def resolve_pre_tool_block", 1)[1].split("\ndef ", 1)[0]
+    assert "request_tool_approval(" in _resolver, (
+        "resolve_pre_tool_block no longer CALLS request_tool_approval — an "
+        "'approve' directive from the path-guard would never reach the human gate")
     appr = (HERMES / "tools" / "approval.py").read_text(errors="replace")
     assert "def request_tool_approval" in appr, (
         "request_tool_approval gone from tools/approval.py — fence has no gate")

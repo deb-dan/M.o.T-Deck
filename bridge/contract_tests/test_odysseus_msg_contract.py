@@ -100,6 +100,43 @@ def test_unpaged_history_returns_metadata():
         "server-written metrics would vanish from history")
 
 
+def test_bridge_never_pages_history():
+    """OUR CLIENT must never send limit/offset to GET /api/history/{sid}.
+
+    Two independent reasons, both load-bearing, and the second one is NEW:
+
+      1. (original) The unpaged handler is the one that emits full `metadata`,
+         including the `_db_id` every per-message action keys off. A paged
+         variant historically omitted it — pass a page param and the panel's
+         Copy/Edit/Delete/Fork chips go dark.
+      2. (2026-08-14 update sweep, upstream #5929 `fix(history): defer full
+         transcript hydration to model sends`) On Odysseus **dev** the canonical
+         handler gained optional `limit`/`offset`, and **the paged branch is
+         CAPPED AT 100 ROWS**. So the never-page rule is now also the only thing
+         standing between us and a SILENTLY TRUNCATED transcript — a failure that
+         looks like data loss, not like an error.
+
+    This asserts the invariant on the side we control (bridge/app.py), which
+    holds at the CURRENT pin (where the params may not exist yet) and at any
+    future one. ⚠️ At the Odysseus bump, ADD the upstream half: pin that
+    `limit is None` takes the metadata-preserving in-memory branch in
+    routes/history/history_routes.py — that is the actual upstream invariant.
+    """
+    src = (ROOT / "bridge" / "app.py").read_text(errors="replace")
+    calls = [ln.strip() for ln in src.splitlines()
+             if "/api/history/" in ln and "_ody_req" in ln]
+    assert calls, (
+        "no GET /api/history/{sid} call found in bridge/app.py — this test can "
+        "no longer see the seam it guards; re-point it at the new call site")
+    for ln in calls:
+        for bad in ("limit", "offset", "params", "?"):
+            assert bad not in ln, (
+                f"bridge/app.py pages GET /api/history: {ln!r}\n"
+                "Odysseus's paged branch CAPS AT 100 ROWS and drops "
+                "metadata._db_id — transcripts would silently truncate and the "
+                "per-message actions would go dark. Never pass limit/offset.")
+
+
 def test_db_id_is_stamped_on_persisted_messages():
     if not ODY.exists():
         return
