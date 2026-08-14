@@ -342,6 +342,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var dragHintWin: NSWindow?       // the gold rect over the pane that would receive it
     var hermesLastActive: Date?
     let staleAfter: TimeInterval = 600   // 10 minutes backgrounded → reload on re-select
+    // ── Hermes config generation ──
+    // The bridge's `hermes_config_gen` (see the _HERMES_CFG_GEN block in bridge/app.py)
+    // as it stood when the Hermes webview last loaded. nil = we have never successfully
+    // read it, which is treated as "no change" — the whole mechanism fails toward
+    // today's behaviour. Hermes's own Skills page fetches its lists once on mount and
+    // never refreshes, so without this a toolset/skill switched from OUR Capabilities
+    // page leaves that page showing the pre-change state for up to `staleAfter`.
+    var hermesCfgGen: Int?
     var bridgeProcess: Process?
     var spawnedBridge = false
     // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
@@ -1297,7 +1305,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func ensureLoaded(_ idx: Int) {
         switch idx {
         case 1: if !odyLoaded { odyLoaded = true; odyWV.load(URLRequest(url: odysseusURL)) }
-        case 2: if !hermesLoaded { hermesLoaded = true; hermesWV.load(URLRequest(url: hermesURL)) }
+        // The first Hermes load records the generation it is loading against, so the
+        // first tab switch back compares like with like instead of making no claim.
+        case 2: if !hermesLoaded {
+            hermesLoaded = true
+            hermesWV.load(URLRequest(url: hermesURL))
+            syncHermesGen(reloadIfNewer: false)
+        }
         // Voice tabs: components are OPTIONAL and usually stopped → the first load
         // normally fails into the "Not reachable yet" placeholder, and re-select /
         // ⌘R retries via the shared failedLoads path. No staleness reload (that
@@ -1308,21 +1322,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    // Called from every path that makes the Hermes tab visible (routeTab + the
+    // drag-opens-the-split branch). TWO independent reload rules live here — one
+    // entry point, so they cannot drift:
+    //
+    //   1. STALENESS (unchanged): backgrounded longer than `staleAfter`, so WebKit
+    //      will have dropped the dashboard's sockets.
+    //   2. CONFIG GENERATION (new): we changed Hermes's configuration since this
+    //      page loaded, and that page never refreshes itself.
+    //
+    // Rule 1 still fires exactly when it always did. Rule 2 is only reached when
+    // rule 1 did not fire (one reload is enough) and is entirely asynchronous.
     func maybeReloadStaleHermes(_ idx: Int) {
-        guard idx == 2, hermesLoaded, let since = hermesLastActive,
-              Date().timeIntervalSince(since) > staleAfter,
+        guard idx == 2, hermesLoaded,
               !failedLoads.contains(ObjectIdentifier(hermesWV)),
               hermesWV.url?.scheme == "http" else { return }
-        // Backgrounded long enough that WebKit will have dropped its sockets →
-        // reload so the dashboard reconnects instead of showing "session ended".
-        hermesLastActive = nil
-        hermesWV.reload()
+        if let since = hermesLastActive, Date().timeIntervalSince(since) > staleAfter {
+            // Backgrounded long enough that WebKit will have dropped its sockets →
+            // reload so the dashboard reconnects instead of showing "session ended".
+            hermesLastActive = nil
+            hermesWV.reload()
+            // A reload for ANY reason re-reads the generation, so a later compare
+            // cannot fire against a value from before this page.
+            syncHermesGen(reloadIfNewer: false)
+            return
+        }
+        syncHermesGen(reloadIfNewer: true)
+    }
+
+    // Read `hermes_config_gen` off the bridge's EXISTING /api/status and record it
+    // against the currently loaded Hermes page. With `reloadIfNewer` the webview is
+    // reloaded first when the bridge has moved on since that page loaded.
+    //
+    // FAIL SAFE BY CONSTRUCTION: any transport error, non-200, unparseable body or
+    // missing/wrong-typed field returns without touching anything — an older bridge,
+    // a bridge that is down, or a slow one all degrade to exactly today's behaviour.
+    // Never blocks the UI thread (URLSession callback + a short timeout); the recorded
+    // value is written BEFORE the reload decision, so a reload can never loop.
+    func syncHermesGen(reloadIfNewer: Bool) {
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/status"))
+        req.timeoutInterval = 2.0
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            guard err == nil,
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let d = data,
+                  let raw = try? JSONSerialization.jsonObject(with: d),
+                  let obj = raw as? [String: Any],
+                  let gen = obj["hermes_config_gen"] as? Int else { return }
+            DispatchQueue.main.async {
+                let prev = self.hermesCfgGen
+                self.hermesCfgGen = gen          // record FIRST → cannot loop
+                // prev == nil  → never read it before: no claim, no reload.
+                // gen < prev   → the bridge restarted (the counter is process-lifetime).
+                //                Recorded silently above; a restart is not a change.
+                guard reloadIfNewer, let p = prev, gen > p else { return }
+                // Re-check visibility/health on the main thread: the fetch is async, so
+                // the user may have switched away or the page may have failed since.
+                guard self.hermesLoaded, self.hermesVisible(),
+                      !self.failedLoads.contains(ObjectIdentifier(self.hermesWV)),
+                      self.hermesWV.url?.scheme == "http" else { return }
+                NSLog("%@", "[hermes] reload -> config generation \(gen)" as NSString)
+                self.hermesWV.reload()
+            }
+        }.resume()
     }
 
     func retryIfFailed(_ wv: WKWebView) {
         guard failedLoads.contains(ObjectIdentifier(wv)) else { return }
         failedLoads.remove(ObjectIdentifier(wv))
         wv.load(URLRequest(url: urlFor(wv)))
+        if wv === hermesWV { syncHermesGen(reloadIfNewer: false) }
     }
 
     // Reparent a view into a pane. Constraints against the OLD superview die with the
@@ -1459,6 +1529,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // If the last load failed (or we're on the placeholder), go back to the real URL.
         if let u = wv.url, u.scheme == "http" { wv.reload() }
         else { wv.load(URLRequest(url: urlFor(wv))) }
+        // A manual reload is still a reload: re-record so the automatic rule does not
+        // fire a second time for a change this ⌘R already picked up.
+        if wv === hermesWV { syncHermesGen(reloadIfNewer: false) }
     }
 
     // Failed navigation → dark editorial placeholder (never a white void) + retry paths.

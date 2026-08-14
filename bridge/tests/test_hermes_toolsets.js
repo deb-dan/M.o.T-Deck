@@ -25,17 +25,42 @@ function check(name, cond) {
   if (!cond) fails.push(name);
 }
 
+/* Extract a function body by brace matching.
+ *
+ * HONEST UPGRADE (2026-08-15): the previous three-line version treated every
+ * quote as a string delimiter with no comment or nested-template handling, and
+ * only worked here by luck — an apostrophe in an ordinary prose comment
+ * ("Hermes's page says…") opened a string that swallowed the rest of the file,
+ * and `${cond ? `<div>` : ''}` made it count an interpolation's `}` as a real
+ * brace. It silently returned a TRUNCATED function rather than failing, which
+ * is the worst possible failure for a test that evals what it extracts. No
+ * assertion changed; the extractor just stopped being able to lie. */
 function grab(name) {
   const at = html.indexOf('function ' + name + '(');
   if (at < 0) throw new Error('function ' + name + ' not found in the panel');
-  let i = html.indexOf('{', at), depth = 0, inStr = null, prev = '';
-  for (let j = i; j < html.length; j++) {
-    const c = html[j];
-    if (inStr) { if (c === inStr && prev !== '\\') inStr = null; }
-    else if (c === '"' || c === "'" || c === '`') inStr = c;
-    else if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return html.slice(at, j + 1); }
-    prev = c;
+  const stack = [];        // {t:'sq'|'dq'|'tpl'} or {t:'itp', d:<depth at ${>}
+  let depth = 0, prev = '';
+  for (let j = html.indexOf('{', at); j < html.length; j++) {
+    const c = html[j], top = stack[stack.length - 1], bs = prev === '\\';
+    const t = top && top.t;
+    if (t === 'sq' || t === 'dq') {
+      if (!bs && c === (t === 'sq' ? "'" : '"')) stack.pop();
+    } else if (t === 'tpl') {
+      if (!bs && c === '`') stack.pop();
+      else if (!bs && c === '$' && html[j + 1] === '{') { stack.push({t: 'itp', d: depth}); j++; }
+    } else {
+      if (c === '/' && html[j + 1] === '/') { j = html.indexOf('\n', j); if (j < 0) break; prev = '\n'; continue; }
+      if (c === '/' && html[j + 1] === '*') { j = html.indexOf('*/', j) + 1; if (j < 1) break; prev = '/'; continue; }
+      if (c === "'") stack.push({t: 'sq'});
+      else if (c === '"') stack.push({t: 'dq'});
+      else if (c === '`') stack.push({t: 'tpl'});
+      else if (c === '{') depth++;
+      else if (c === '}') {
+        if (t === 'itp' && depth === top.d) stack.pop();
+        else if (--depth === 0) return html.slice(at, j + 1);
+      }
+    }
+    prev = bs ? '' : c;
   }
   throw new Error('unbalanced braces extracting ' + name);
 }
@@ -45,8 +70,25 @@ const escAttr = s => esc(s).replace(/"/g, '&quot;');
 var hermesToolsSnap = null;   // the panel's module-level snapshot, under our control here
 var hermesToolsIntent = {};   // our own in-session asks (see hermesToolsetSync)
 var hermesToolsSummary = null;// the `check` card, null = closed
+// The per-skill sub-list hangs off the `skills` row, so renderHermesTools now
+// calls into it. Evaluated for REAL (never stubbed) so a break in that coupling
+// shows up here instead of only at runtime. Its own behaviour is covered by
+// bridge/tests/test_hermes_skills.js.
+var hermesSkillsSnap = null;
+var hermesSkillsOpen = false;
+var hermesSkillsFilter = '';
+eval(grab('hermesSkillMatch'));
+eval(grab('hermesSkillsShown'));
+eval(grab('hermesSkillCountNote'));
+eval(grab('hermesSkillsLocked'));
+eval(grab('hermesSkillsMootNote'));
+eval(grab('hermesSkillsExpander'));
+eval(grab('hermesSkillRows'));
+eval(grab('renderHermesSkills'));
 eval(grab('hermesToolsetNote'));
 eval(grab('hermesToolsetExtra'));
+eval(grab('hermesToolsetScopeNote'));
+eval(grab('hermesToolsetScopePill'));
 eval(grab('hermesToolsetSync'));
 eval(grab('hermesToolsetLocked'));
 eval(grab('renderHermesToolsCheck'));
@@ -83,13 +125,14 @@ check('stopped beats focus in the message (start it first)',
 // ── renderHermesTools ────────────────────────────────────────────────────────
 const SNAP = {
   running: true, source: 'probe', focus_override: false, restart_required: false,
-  enabled_count: 2, total: 3, tool_count_enabled: 6, tool_count_total: 10,
+  enabled_count: 2, total: 3, other_count: 0, platform: 'cli',
+  tool_count_enabled: 6, tool_count_total: 10,
   skills: {count: 78, disabled_count: 0},
   config: {platform_toolsets_cli: ['file', 'skills'], disabled_toolsets: [], coding_context: 'auto'},
   toolsets: [
-    {name: 'file', label: 'File Operations', description: 'read, write', enabled: true, tools: ['a','b','c'], tool_count: 3},
-    {name: 'skills', label: 'Skills', description: 'list, view', enabled: true, tools: ['x','y','z'], tool_count: 3},
-    {name: 'web', label: 'Web Search', description: 'web_search', enabled: false, tools: ['w'], tool_count: 1},
+    {name: 'file', label: 'File Operations', description: 'read, write', enabled: true, tools: ['a','b','c'], tool_count: 3, platform: 'cli', platform_label: 'CLI', lever: true, config_only: false, default_off: false},
+    {name: 'skills', label: 'Skills', description: 'list, view', enabled: true, tools: ['x','y','z'], tool_count: 3, platform: 'cli', platform_label: 'CLI', lever: true, config_only: false, default_off: false},
+    {name: 'web', label: 'Web Search', description: 'web_search', enabled: false, tools: ['w'], tool_count: 1, platform: 'cli', platform_label: 'CLI', lever: true, config_only: false, default_off: false},
   ],
 };
 const out = renderHermesTools();   // reads the module-level snapshot
@@ -268,8 +311,32 @@ check('the group heads with the count of rows out of sync',
 check('exactly ONE adopt chip for the whole group',
   (out2.match(/hermesToolsAdopt/g) || []).length === 1);
 check('the Check chip is always offered', out2.indexOf('hermesToolsCheck(this)') >= 0);
-check('the group says out2 loud that the switches show HERMES’s answer',
-  /Every switch above shows what HERMES reports/.test(out2));
+// HONEST MOVE: this sentence used to sit on the preset row and said only "what
+// HERMES reports". It now sits in the group header and is strictly stronger — it
+// also NAMES the platform these switches govern, which is the fact whose absence
+// sent Debi to cross-check a second app.
+check('the group says out loud that the switches show HERMES’s answer',
+  /Every switch shows what HERMES reports/.test(out2));
+check('...and NAMES the platform it controls',
+  out2.indexOf('<b>cli</b> platform') >= 0
+  && /the one this chat runs on/.test(out2));
+check('...and still NAMES the trap (Hermes’s own page fetches once on open, '
+    + 'SkillsPage.tsx:155-174, and never live-refreshes)',
+  /Skills → TOOLSETS/.test(out2) && /never refreshes itself/.test(out2));
+// The shell now reloads that webview on a tab switch when our config generation has
+// moved (app/main.swift syncHermesGen). The copy may therefore promise the automatic
+// reload — but ONLY for the case the mechanism actually covers. A Hermes tab already
+// open BESIDE the panel in split view never becomes visible, so no reload is
+// triggered, and the sentence has to say so rather than overclaim.
+check('...and now promises the automatic reload for the case it really covers',
+  /switching to the Hermes tab reloads it for you/i.test(out2));
+check('...while still telling the truth about split view, where nothing switches',
+  /split view/i.test(out2) && /⌘R/.test(out2));
+check('the defaults preset chip no longer promises "everything"',
+  out2.indexOf('Everything back on') < 0
+  && out2.indexOf(">Hermes's defaults<") >= 0);
+check('...and says which toolsets it deliberately leaves off',
+  /video analysis/i.test(out2) && /one row at a time/.test(out2));
 hermesToolsSnap.toolsets[1].drift = '';
 out2 = renderHermesTools();
 check('no drift ⇒ no pill and no adopt chip',
@@ -296,6 +363,71 @@ check('a write drops a stale verify card instead of leaving a confident wrong nu
 check('the preset path deliberately records NO client intent (the preset membership '
   + 'lives once, in the bridge)',
   grab('hermesToolsPreset').indexOf('hermesToolsIntent') < 0);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NON-LEVER ROWS SAY WHAT THEY ARE. One list from Hermes carries three kinds of
+// row and only the cli ones reach the model in this lane; a row that does not
+// must not sit in the grid looking identical to the ones that do.
+// ═══════════════════════════════════════════════════════════════════════════
+check('a cli row gets no scope pill and no scope note',
+  hermesToolsetScopePill({name: 'file', lever: true}) === ''
+  && hermesToolsetScopeNote({name: 'file', lever: true}) === '');
+check('the config-only stt row is named for what it is — Hermes’s speech-to-text '
+  + 'switch, not a prompt toolset',
+  hermesToolsetScopePill({name: 'stt', lever: false, config_only: true})
+    === 'not a prompt toolset'
+  && /speech-to-text/.test(hermesToolsetScopeNote({name: 'stt', lever: false, config_only: true}))
+  && /saves nothing here/.test(hermesToolsetScopeNote({name: 'stt', lever: false, config_only: true})));
+check('an other-platform row NAMES the platform it controls and says the model '
+  + 'here never gets its tools',
+  hermesToolsetScopePill({name: 'discord', lever: false, platform: 'discord', platform_label: 'Discord'})
+    === 'Discord only'
+  && /Discord platform, not this chat lane/.test(
+       hermesToolsetScopeNote({name: 'discord', lever: false, platform: 'discord', platform_label: 'Discord'}))
+  && /never gets these tools/.test(
+       hermesToolsetScopeNote({name: 'discord', lever: false, platform: 'discord', platform_label: 'Discord'})));
+check('a missing platform_label degrades to the raw platform, never to blank',
+  hermesToolsetScopePill({name: 'd', lever: false, platform: 'discord'}) === 'discord only');
+check('scope helpers are total against junk',
+  hermesToolsetScopePill(null) === '' && hermesToolsetScopeNote(null) === ''
+  && hermesToolsetScopePill({lever: false}) === 'other platform only');
+
+// the row renders both, and the skills two-layer sentence still wins on its own row
+hermesToolsSnap = JSON.parse(JSON.stringify(SNAP));
+hermesToolsSnap.other_count = 2;
+hermesToolsSnap.toolsets.push(
+  {name: 'stt', label: 'Speech-to-Text', description: 'voice', enabled: true,
+   tools: [], tool_count: 0, platform: 'cli', platform_label: 'CLI',
+   lever: false, config_only: true, default_off: false},
+  {name: 'discord', label: 'Discord', description: 'fetch messages', enabled: true,
+   tools: ['discord_send'], tool_count: 1, platform: 'discord',
+   platform_label: 'Discord', lever: false, config_only: false, default_off: true});
+const hs = renderHermesTools();
+check('both non-lever rows STILL RENDER (hiding a switch Hermes shows would be its '
+  + 'own lie)', hs.indexOf('Speech-to-Text') >= 0 && hs.indexOf('>Discord<') >= 0);
+check('each non-lever row carries its pill in the existing faint grammar',
+  hs.indexOf('not a prompt toolset</span>') >= 0
+  && hs.indexOf('Discord only</span>') >= 0);
+check('the header says how many rows were left out of the counts',
+  /2 more rows below belong to other Hermes surfaces/.test(hs));
+check('the skills row still gets its two-layer sentence, not a scope note',
+  /skill library in/.test(hs));
+check('a lever row carries NO scope pill', (hs.match(/only<\/span>/g) || []).length === 1);
+hermesToolsSnap.other_count = 0;
+check('no non-lever rows ⇒ no "left out" sentence',
+  renderHermesTools().indexOf('belong to other Hermes surfaces') < 0);
+
+// the Check card names the lane it counted
+hermesToolsSnap = JSON.parse(JSON.stringify(SNAP));
+hermesToolsSummary = {ok: true, platform: 'cli', tool_count: 12,
+  tools: ['read_file', 'terminal'], always: {toolset: 'project', tools: ['project_list']},
+  skill_index: false, skill_count: 78, excludes_mcp: true};
+const hc = renderHermesTools();
+check('the Check card names the lane it counted',
+  /cli lane/.test(hc) && /Counted for the cli lane only/.test(hc));
+check('...and still says MCP tools are not in the number',
+  /MCP servers are not counted/.test(hc));
+hermesToolsSummary = null;
 
 console.log();
 console.log(fails.length ? ('FAILED: ' + fails.join(', ')) : 'all checks passed');

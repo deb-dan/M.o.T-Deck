@@ -34,9 +34,13 @@ sys.path.insert(0, str(ROOT))
 import yaml  # noqa: E402
 from bridge.app import (  # noqa: E402
     HERMES_MINIMAL_TOOLSETS, HERMES_TOOLSETS_EMPTY_REASON,
+    HERMES_LEVER_PLATFORM, HERMES_CONFIG_ONLY_TOOLSETS,
+    HERMES_DEFAULT_OFF_TOOLSETS,
     hermes_toolset_names, hermes_toolsets_enabled, hermes_preset_desired,
     hermes_toolsets_valid, hermes_toolset_plan, hermes_toolset_view,
     hermes_skills_summary, _hermes_toolset_config, _hermes_config_path,
+    hermes_toolset_platform, hermes_toolset_is_lever, hermes_lever_names,
+    hermes_lever_enabled, hermes_toolset_result,
 )
 
 FAILS = []
@@ -91,10 +95,28 @@ check("minimal preset matches the constant",
 check("minimal is INTERSECTED with what Hermes offers — a floor name this build "
       "lacks is dropped, never written",
       hermes_preset_desired([row("file", True)], "minimal") == ["file"])
-check("all preset = every offered name",
-      hermes_preset_desired(ROWS, "all") == hermes_toolset_names(ROWS))
+# THE REGRESSION THAT PRODUCED DEBI'S "video-analysis is ON and I never enabled it":
+# `all` used to mean "every name in the catalog", which turned on the SEVEN toolsets
+# upstream ships OFF (_DEFAULT_OFF_TOOLSETS, tools_config.py:155). It now means
+# Hermes's own default set for this lane.
+check("'all' preset = Hermes's DEFAULTS, not every row — default-off toolsets stay off",
+      hermes_preset_desired(ROWS, "all") == ["web", "terminal", "file", "skills",
+                                             "clarify", "memory"])
+check("'all' never turns on a default-off toolset (spotify is one)",
+      "spotify" not in hermes_preset_desired(ROWS, "all"))
+for _off in HERMES_DEFAULT_OFF_TOOLSETS:
+    check(f"'all' never enables the default-off toolset {_off!r}",
+          _off not in hermes_preset_desired(
+              ROWS + [row(_off, False, ["t_" + _off])], "all"))
+check("VIDEO ANALYSIS specifically — the row from Debi's screenshot — is never "
+      "turned on by a preset",
+      "video" not in hermes_preset_desired(ROWS + [row("video", False, ["video_analyze"])], "all")
+      and "video" not in hermes_preset_desired(
+          ROWS + [row("video", False, ["video_analyze"])], "minimal"))
 check("'everything' is an alias of all",
-      hermes_preset_desired(ROWS, "everything") == hermes_toolset_names(ROWS))
+      hermes_preset_desired(ROWS, "everything") == hermes_preset_desired(ROWS, "all"))
+check("'defaults' names the same thing honestly",
+      hermes_preset_desired(ROWS, "defaults") == hermes_preset_desired(ROWS, "all"))
 check("preset is case/space tolerant",
       hermes_preset_desired(ROWS, " Minimal ") == hermes_preset_desired(ROWS, "minimal"))
 for junk in ("", "off", "none", "MIN", "lean", None, "clear"):
@@ -134,8 +156,9 @@ p2 = hermes_toolset_plan(ROWS, hermes_toolsets_enabled(ROWS))
 check("re-applying the CURRENT state is ZERO writes", p2["plan"] == []
       and p2["unchanged"] == len(ROWS))
 p3 = hermes_toolset_plan(ROWS, hermes_preset_desired(ROWS, "all"))
-check("'all' from this state only turns the two off rows on",
-      sorted(n for n, on in p3["plan"] if on) == ["clarify", "spotify"]
+check("'all' from this state turns ONLY clarify on — spotify is default-off and "
+      "stays off (it used to be switched on here)",
+      sorted(n for n, on in p3["plan"] if on) == ["clarify"]
       and [n for n, on in p3["plan"] if not on] == [])
 p4 = hermes_toolset_plan(ROWS, ["file", "ghost", "phantom"])
 check("unknown names are REPORTED", p4["unknown"] == ["ghost", "phantom"])
@@ -165,11 +188,14 @@ check("view has NO token estimate field (schemas are not in the probe, so any "
       "per-toolset token figure would be invented)",
       not [k for k in v if "token" in k]
       and not [k for k in v["toolsets"][0] if "token" in k])
-check("view row keeps name/label/description/enabled/tools/tool_count/needs_setup"
-      "/drift",
+check("view row keeps name/label/description/platform(+label)/lever/config_only/"
+      "default_off/enabled/tools/tool_count/needs_setup/drift",
       set(v["toolsets"][0]) == {"name", "label", "description", "platform",
-                               "enabled", "tools", "tool_count", "needs_setup",
-                               "drift"})
+                               "platform_label", "lever", "config_only",
+                               "default_off", "enabled", "tools", "tool_count",
+                               "needs_setup", "drift"})
+check("the view NAMES the platform this lever controls",
+      v["platform"] == HERMES_LEVER_PLATFORM == "cli")
 
 # ── needs_setup: UPSTREAM's own `configured` bool, mirrored not invented ──────
 # Provenance: web_routers/tools.py:107 (the field) ← tools_config._toolset_has_keys
@@ -262,13 +288,13 @@ check("the dashboard call carries the session token header",
       '"X-Hermes-Session-Token": tok' in SRC)
 check("the loopback probe stays on 127.0.0.1",
       'f"http://127.0.0.1:{_hermes_port()}{path}"' in SRC)
-check("NO second writer: the lever never writes platform_toolsets itself "
-      "(that key appears in app.py only as a READ)",
-      SRC.count("platform_toolsets") == SRC.count('.get("platform_toolsets")')
-      + SRC.count("platform_toolsets_cli") + SRC.count("platform_toolsets.cli")
-      + SRC.count("platform_toolsets.discord"))
+check("NO second writer: app.py never SUBSCRIPTS platform_toolsets (a write would "
+      "need `config[\"platform_toolsets\"]`); the one access is a .get() READ",
+      '["platform_toolsets"]' not in SRC
+      and "['platform_toolsets']" not in SRC
+      and SRC.count('.get("platform_toolsets")') == 1)
 check("the empty-set guard is actually called before any write",
-      SRC.index("hermes_toolsets_valid(rows, desired)")
+      SRC.index("hermes_toolsets_valid(rows, desired, scope)")
       < SRC.index('"PUT", f"/api/tools/toolsets/{name}"'))
 check("a POST with Hermes down is a 409 naming the fix, not a silent success",
       "is not reachable — " in SRC and "status_code=409" in SRC)
@@ -388,8 +414,15 @@ check("re-applying minimal is 200 with ZERO extra writes",
       code == 200 and d.puts == before and j["changed"] == [])
 
 code, j = post({"preset": "all"}, d)
-check("POST all turns everything on", code == 200
-      and d.enabled == set(hermes_toolset_names(ROWS)))
+# HONEST CHANGE: this used to assert "everything", which is precisely the defect —
+# `spotify` is in _DEFAULT_OFF_TOOLSETS (tools_config.py:155), so a preset that
+# turned it on was enabling something Hermes ships off. The assertion is now the
+# stronger one: Hermes's OWN default set, and a NEGATIVE that the default-off row
+# was never written.
+check("POST 'all' restores Hermes's defaults, NOT every row", code == 200
+      and d.enabled == set(hermes_toolset_names(ROWS)) - {"spotify"})
+check("POST 'all' never issued a PUT for the default-off row",
+      "spotify" not in [n for n, _ in d.puts])
 code, j = post({"name": "skills", "on": False}, d)
 check("single toggle off works", code == 200 and "skills" not in d.enabled)
 check("single toggle wrote exactly one PUT", d.puts[-1] == ("skills", False))
@@ -576,6 +609,179 @@ check("the summary endpoint writes nothing (no PUT/POST anywhere in its body)",
 check("the GET passes the on-disk config into the view, so drift is computed from "
       "the persisted intent and not from our memory",
       "hermes_toolset_view(rows, skills, cfgv)" in SRC)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHICH ROWS THIS LEVER GOVERNS — the platform/scope question Debi's report
+# forced. `GET /api/tools/toolsets` returns three kinds of row in ONE list and
+# only one of them reaches the model in this lane:
+#   cli rows        → platform_toolsets.cli → _get_platform_tools(cfg,"cli")
+#                     (tui_gateway/server.py:3910). THE LEVER.
+#   discord rows    → _TOOLSET_PLATFORM_RESTRICTIONS (tools_config.py:202) makes
+#                     _toolset_configuration_platform return "discord"
+#                     (:216) and _toolset_allowed_for_platform (:207) means a cli
+#                     session can NEVER get their tools.
+#   config-only stt → _CONFIG_ONLY_TOOLSETS (:164); its `enabled` is
+#                     config.stt.enabled (web_routers/tools.py:86-94) and it
+#                     ships ZERO tool schemas.
+# ═════════════════════════════════════════════════════════════════════════════
+DROW = row("discord", True, ["discord_send", "discord_fetch"], platform="discord")
+SROW = row("stt", True, [], "Speech-to-Text")
+MIXED = ROWS + [DROW, SROW]
+
+check("platform defaults to cli when the field is missing (fail OPEN — an unknown "
+      "row is far likelier to be an ordinary cli row than a restricted one)",
+      hermes_toolset_platform({"name": "x"}) == "cli"
+      and hermes_toolset_platform({"name": "x", "platform": "  "}) == "cli"
+      and hermes_toolset_platform(None) == "cli"
+      and hermes_toolset_platform({"name": "x", "platform": "discord"}) == "discord")
+check("a cli row IS the lever", hermes_toolset_is_lever(row("file", True)) is True)
+check("a discord-platform row is NOT the lever", hermes_toolset_is_lever(DROW) is False)
+check("the config-only stt row is NOT the lever even though its platform is cli",
+      hermes_toolset_is_lever(SROW) is False)
+check("stt is the config-only set we mirror from upstream",
+      HERMES_CONFIG_ONLY_TOOLSETS == ("stt",))
+check("lever names skip both non-lever kinds",
+      hermes_lever_names(MIXED) == hermes_toolset_names(ROWS))
+check("lever enabled skips both non-lever kinds even when they report enabled",
+      hermes_lever_enabled(MIXED) == hermes_toolsets_enabled(ROWS))
+check("lever helpers are total against junk",
+      hermes_lever_names(None) == [] and hermes_lever_enabled("x") == []
+      and hermes_lever_names([None, 1, {"name": 2}]) == [])
+
+# PRESETS NEVER REACH A NON-LEVER ROW. The old code sent every catalog name, so
+# "Minimal" issued PUT stt {enabled:false} → config.stt.enabled=false, silently
+# disabling Hermes's speech-to-text for ZERO prompt saving; and both presets wrote
+# platform_toolsets.discord.
+check("no preset ever names the config-only stt row",
+      "stt" not in hermes_preset_desired(MIXED, "minimal")
+      and "stt" not in hermes_preset_desired(MIXED, "all"))
+check("no preset ever names a discord-platform row",
+      "discord" not in hermes_preset_desired(MIXED, "minimal")
+      and "discord" not in hermes_preset_desired(MIXED, "all"))
+pm = hermes_toolset_plan(MIXED, hermes_preset_desired(MIXED, "minimal"))
+check("MINIMAL never writes stt (that PUT would disable Hermes's speech-to-text)",
+      "stt" not in [n for n, _ in pm["plan"]])
+check("MINIMAL never writes a discord row (that PUT writes platform_toolsets.discord)",
+      "discord" not in [n for n, _ in pm["plan"]])
+check("MINIMAL still turns off exactly the surplus LEVER rows",
+      sorted(n for n, on in pm["plan"] if not on) == ["memory", "skills", "web"])
+pa = hermes_toolset_plan(MIXED, hermes_preset_desired(MIXED, "all"))
+check("Hermes's-defaults preset touches no non-lever row either",
+      not ({"stt", "discord"} & {n for n, _ in pa["plan"]}))
+
+# A SINGLE ROW stays flippable on purpose — the row is on screen and labelled, so
+# aiming at it is a deliberate act. Scope is how the two are told apart.
+ps = hermes_toolset_plan(MIXED, ["stt"], ["stt"])
+check("an explicit single-row toggle CAN still reach stt", ps["plan"] == [])
+ps2 = hermes_toolset_plan(MIXED, [], ["stt"])
+check("...and can turn it off when aimed at deliberately",
+      ps2["plan"] == [("stt", False)])
+ps3 = hermes_toolset_plan(MIXED, [], ["web"])
+check("a scoped single-row toggle changes NOTHING else",
+      ps3["plan"] == [("web", False)])
+ps4 = hermes_toolset_plan(MIXED, ["clarify"], ["clarify"])
+check("a scoped turn-on is one write", ps4["plan"] == [("clarify", True)])
+
+# THE EMPTY-LIST GUARD WAS DEFEATABLE. It tested `desired` against ALL known
+# names, so an enabled stt row (zero schemas) or a discord row satisfied it while
+# every real cli toolset went off — landing platform_toolsets.cli: [] which
+# upstream reads as ENABLE EVERYTHING (tools_config.py:2231 → server.py:3915).
+ONE = [row("file", True, ["read_file"]), SROW, DROW]
+check("turning the LAST cli toolset off is refused even though stt+discord are on",
+      hermes_toolsets_valid(ONE, [], ["file"]) == HERMES_TOOLSETS_EMPTY_REASON)
+check("...and the plan that would have done it is never reached (400 first)",
+      hermes_toolsets_valid(ONE, [], ["file"]) != "")
+check("turning stt off while a cli toolset remains on is allowed",
+      hermes_toolsets_valid(ONE, [], ["stt"]) == "")
+check("a catalog with rows but NO cli rows gets its own honest reason",
+      hermes_toolsets_valid([SROW, DROW], ["stt"])
+      == "Hermes reported no toolsets for this chat lane")
+check("no catalog at all still gets the original reason",
+      hermes_toolsets_valid([], ["file"]) == "Hermes reported no configurable toolsets")
+
+# the projected result the guard is built on
+check("result = current lever state with the scope replaced",
+      hermes_toolset_result(MIXED, ["file"], ["file", "web"]) == {"file", "terminal", "skills", "memory"})
+check("result with no scope = the desired lever set",
+      hermes_toolset_result(MIXED, ["file", "stt", "discord", "ghost"]) == {"file"})
+check("result never contains a non-lever name",
+      not ({"stt", "discord"} & hermes_toolset_result(MIXED, ["stt", "discord", "file"])))
+check("result is total against junk", hermes_toolset_result(None, None) == set()
+      and hermes_toolset_result(MIXED, None, []) == set(hermes_lever_enabled(MIXED)))
+
+# COUNTS AND THE CHECK CARD ARE LANE-SCOPED. Counting a discord row's tools made
+# the headline (and the "Hermes will hand the model N tools" card) claim schemas
+# the model in this lane can never receive.
+vm = hermes_toolset_view(MIXED, {"count": 78})
+check("headline counts only lever rows", vm["enabled_count"] == 5 and vm["total"] == 7)
+check("the non-lever rows are reported separately, not hidden", vm["other_count"] == 2)
+check("non-lever rows STILL RENDER (hiding a switch Hermes shows would be its own lie)",
+      {t["name"] for t in vm["toolsets"]} == set(hermes_toolset_names(MIXED)))
+check("a discord row's tools are not in the prompt totals",
+      vm["tool_count_enabled"] == hermes_toolset_view(ROWS)["tool_count_enabled"]
+      and vm["tool_count_total"] == hermes_toolset_view(ROWS)["tool_count_total"])
+check("rows carry lever/config_only/platform_label so the panel can label them",
+      [t for t in vm["toolsets"] if t["name"] == "discord"][0]["lever"] is False
+      and [t for t in vm["toolsets"] if t["name"] == "stt"][0]["config_only"] is True
+      and [t for t in vm["toolsets"] if t["name"] == "discord"][0]["platform"] == "discord"
+      and [t for t in vm["toolsets"] if t["name"] == "file"][0]["lever"] is True)
+check("rows carry default_off so a row Hermes ships off can say so",
+      [t for t in vm["toolsets"] if t["name"] == "spotify"][0]["default_off"] is True
+      and [t for t in vm["toolsets"] if t["name"] == "file"][0]["default_off"] is False)
+sm = A.hermes_tool_summary(MIXED)
+check("the Check card counts the cli lane only — a discord tool is never claimed",
+      "discord_send" not in sm["tools"]
+      and sm["tool_count"] == A.hermes_tool_summary(ROWS)["tool_count"])
+check("the Check card names the lane it counted", sm["platform"] == "cli")
+
+# DRIFT under the corrected reading: the config-only row can never be flagged,
+# because it is not in platform_toolsets.cli by construction.
+check("stt is never flagged as drift, even if its name sits in the cli list",
+      A.hermes_toolset_drift([row("stt", False, [], "Speech-to-Text")],
+                             {"platform_toolsets_cli": ["stt"]}) == [])
+
+# ── DEBI'S EXACT REPORT, reproduced end to end ───────────────────────────────
+# Screenshots: our page said Terminal OFF while Hermes's said active, and our page
+# said Video Analysis ON while Hermes's said inactive — and she never enabled video.
+# Both surfaces read the SAME field of the SAME endpoint, so the only way our page
+# can show video ON is that something WROTE it: the old "Everything back on".
+DEBI = [row("web", True, ["web_search"]), row("terminal", True, ["terminal"]),
+        row("file", True, ["read_file"]), row("clarify", True, ["clarify"]),
+        row("video", False, ["video_analyze"], "Video Analysis"),
+        row("x_search", False, ["x_search"]), SROW]
+_all = hermes_preset_desired(DEBI, "all")
+check("REGRESSION: 'Everything back on' no longer enables Video Analysis",
+      "video" not in _all and "x_search" not in _all)
+check("REGRESSION: and it no longer flips Hermes's speech-to-text off",
+      "stt" not in [n for n, _ in hermes_toolset_plan(DEBI, _all)["plan"]])
+_after_all = [row(r["name"], r["name"] in set(_all) if hermes_toolset_is_lever(r)
+                  else r["enabled"], r["tools"], r["label"],
+                  platform=r["platform"]) for r in DEBI]
+check("REGRESSION: after the defaults preset, Video Analysis reads OFF on our page "
+      "— which is what Hermes's own page was showing all along",
+      [t for t in hermes_toolset_view(_after_all)["toolsets"]
+       if t["name"] == "video"][0]["enabled"] is False)
+_off_term = hermes_toolset_plan(DEBI, [], ["terminal"])
+check("REGRESSION: turning Terminal off is ONE PUT to the cli platform and nothing "
+      "else — so Hermes's own page shows it inactive the moment that page reloads",
+      _off_term["plan"] == [("terminal", False)])
+
+# ── the mirrored upstream constants (contract-pinned separately) ─────────────
+check("the default-off mirror is upstream's seven names",
+      sorted(HERMES_DEFAULT_OFF_TOOLSETS)
+      == ["discord", "discord_admin", "homeassistant", "spotify", "video",
+          "video_gen", "x_search"])
+check("the lever platform is cli", HERMES_LEVER_PLATFORM == "cli")
+
+# ── wiring for the scope ─────────────────────────────────────────────────────
+_SRC = (ROOT / "bridge" / "app.py").read_text()
+check("the POST scopes a single-row toggle to that row",
+      'scope = [nm]' in _SRC)
+check("the POST validates and plans with the SAME scope",
+      "hermes_toolsets_valid(rows, desired, scope)" in _SRC
+      and "hermes_toolset_plan(rows, desired, scope)" in _SRC)
+check("the POST reports the LANE's enabled set, so it can never disagree with its "
+      "own count", "sorted(hermes_lever_enabled(after))" in _SRC)
 
 print()
 print(("FAILED: " + ", ".join(FAILS)) if FAILS else "all checks passed")

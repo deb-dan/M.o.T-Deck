@@ -267,6 +267,61 @@ check('sending shrinks the box back to its base',
       /inp\.value = '';\s*\n\s*growInput\(inp\);/.test(html));
 check('the box scrolls internally past the cap', /overflow-y:auto; \}/.test(html));
 
+// ── Hermes config-generation reload ──
+// Hermes's own Skills page fetches its lists ONCE on mount (SkillsPage.tsx:155-174)
+// and never refreshes, so a toolset/skill switched from OUR Capabilities page left it
+// showing the pre-change state until the 600s staleness rule happened to fire. The
+// shell now reloads that webview when the bridge's `hermes_config_gen` has increased
+// since the page loaded. What is pinned here is the wiring and, above all, the
+// FAIL-SAFE and NO-LOOP properties — neither can be exercised without swiftc.
+const gen = swift.slice(swift.indexOf('func maybeReloadStaleHermes'),
+                        swift.indexOf('func retryIfFailed'));
+check('there is still exactly ONE Hermes reload entry point',
+      (swift.match(/func maybeReloadStaleHermes/g) || []).length === 1 &&
+      (swift.match(/func syncHermesGen/g) || []).length === 1);
+check('the 600s staleness rule is intact and INDEPENDENT of the new one',
+      /Date\(\)\.timeIntervalSince\(since\) > staleAfter/.test(gen) &&
+      /hermesLastActive = nil/.test(gen) &&
+      /hermesWV\.reload\(\)/.test(gen));
+check('a staleness reload re-records the generation instead of comparing',
+      /hermesWV\.reload\(\)[\s\S]{0,240}syncHermesGen\(reloadIfNewer: false\)[\s\S]{0,40}return/
+        .test(gen));
+check('the config-generation check runs only when staleness did NOT fire',
+      gen.indexOf('syncHermesGen(reloadIfNewer: false)') <
+      gen.indexOf('syncHermesGen(reloadIfNewer: true)'));
+check('it reads the field off the EXISTING /api/status (no new bridge route)',
+      /appendingPathComponent\("api\/status"\)/.test(swift) &&
+      /obj\["hermes_config_gen"\] as\? Int/.test(swift) &&
+      !/api\/hermes\/gen/.test(swift));
+check('the fetch is asynchronous and short — never blocks the UI thread',
+      /URLSession\.shared\.dataTask[\s\S]{0,900}\}\.resume\(\)/.test(swift) &&
+      /req\.timeoutInterval = 2\.0/.test(swift) &&
+      /DispatchQueue\.main\.async \{[\s\S]{0,600}hermesCfgGen = gen/.test(swift));
+check('FAIL SAFE: an error, a non-200, an unparseable body or a missing field all ' +
+      'return without touching anything',
+      /guard err == nil,[\s\S]{0,320}statusCode == 200,[\s\S]{0,320}as\? Int else \{ return \}/
+        .test(swift));
+check('NO LOOP: the generation is recorded BEFORE the reload decision',
+      swift.indexOf('self.hermesCfgGen = gen') <
+      swift.indexOf('guard reloadIfNewer, let p = prev, gen > p'));
+check('a bridge restart (gen back to 0) is recorded, never reloaded for — the ' +
+      'compare is a STRICT increase against a KNOWN previous value',
+      /let p = prev, gen > p else \{ return \}/.test(swift) &&
+      /var hermesCfgGen: Int\?/.test(swift));
+check('visibility and health are re-checked on the main thread after the fetch',
+      /guard self\.hermesLoaded, self\.hermesVisible\(\),[\s\S]{0,220}scheme == "http" else \{ return \}/
+        .test(swift));
+check('every OTHER Hermes load path records the generation too (first load, ⌘R, retry)',
+      /hermesLoaded = true[\s\S]{0,160}syncHermesGen\(reloadIfNewer: false\)/.test(swift) &&
+      /func retryIfFailed[\s\S]{0,240}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
+        .test(swift) &&
+      /func reloadTab[\s\S]{0,700}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
+        .test(swift));
+check('the reload announces itself in the house log idiom',
+      /\[hermes\] reload -> config generation \\\(gen\)/.test(swift));
+check('no new UserDefaults key was invented for any of this',
+      !/harness\.hermes\.gen/.test(swift) && !/harness\.hermes\.config/.test(swift));
+
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
 process.exit(fails.length ? 1 : 0);

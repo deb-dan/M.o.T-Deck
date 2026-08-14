@@ -316,3 +316,137 @@ def test_the_listing_excludes_default_mcp_servers():
     assert "include_default_mcp_servers=False" in win
     gw = _read("tui_gateway/server.py")
     assert re.search(r'_get_platform_tools\(cfg, "cli", include_default_mcp_servers=True\)', gw)
+
+
+# ── PLATFORM: which rows the lever governs ───────────────────────────────────
+# Debi's live report ("our page and Hermes's page disagree in both directions")
+# put the platform question at the centre, so every fact the scope now depends on
+# is pinned here. The finding these pins encode: our panel and Hermes's own
+# Skills → TOOLSETS page read the SAME field of the SAME endpoint, and that field
+# is computed PER ROW for that row's own configuration platform.
+
+def test_listing_computes_enabled_for_each_rows_own_platform():
+    """`GET /api/tools/toolsets` does not serve one platform — it resolves the
+    enabled set for EACH row's own configuration platform and reports it as
+    `platform` on the row.
+
+    This is the fact that refutes "the listing serves a different platform than we
+    write": the same helper decides the row's platform for both the READ and the
+    PUT, so an ordinary toolset's `enabled` is its `platform_toolsets.cli` state,
+    which is exactly what our lane resolves.
+    """
+    src = _read("hermes_cli/web_routers/tools.py")
+    assert "_toolset_configuration_platform(name)" in src
+    assert "enabled_by_platform = {" in src, \
+        "the listing no longer resolves per-platform enabled sets"
+    assert re.search(
+        r"enabled_by_platform\[target_platform\]", src), \
+        "the row's enabled is no longer taken from its own platform's set"
+    assert '"platform": target_platform' in src, \
+        "rows no longer carry the platform their PUT writes"
+    assert '"platform_label"' in src
+
+
+def test_the_put_writes_the_same_platform_the_listing_reported():
+    """The write target is `_toolset_configuration_platform(name)` — the identical
+    call the listing used. Read and write can therefore not disagree about which
+    `platform_toolsets.<x>` key a row belongs to."""
+    src = _read("hermes_cli/web_routers/tools.py")
+    put = src.split('@router.put("/api/tools/toolsets/{name}")')[1].split("@router.")[0]
+    assert "target_platform = _toolset_configuration_platform(name)" in put
+    assert "_save_platform_tools(config, target_platform, enabled)" in put
+
+
+def test_configuration_platform_is_cli_except_for_restricted_toolsets():
+    """`_toolset_configuration_platform` defaults to "cli" and only diverges for a
+    toolset pinned to another platform by `_TOOLSET_PLATFORM_RESTRICTIONS`.
+
+    Those rows are the ones our lever must NOT count or preset: their PUT writes
+    `platform_toolsets.discord`, and `_toolset_allowed_for_platform` means a cli
+    session can never be given their tools.
+    """
+    src = _read("hermes_cli/tools_config.py")
+    assert 'def _toolset_configuration_platform(ts_key: str, default: str = "cli")' in src, \
+        "the configuration-platform default is no longer cli"
+    assert "def _toolset_allowed_for_platform(" in src
+    assert "_TOOLSET_PLATFORM_RESTRICTIONS" in src
+    m = re.search(r"_TOOLSET_PLATFORM_RESTRICTIONS:\s*Dict\[str,\s*Set\[str\]\]\s*=\s*\{(.*?)\n\}",
+                  src, re.S)
+    assert m, "the platform-restriction map moved or changed shape"
+    assert '"discord"' in m.group(1) and '"discord_admin"' in m.group(1)
+
+
+def test_config_only_toolsets_are_not_platform_toolsets_at_all():
+    """`stt` is in `_CONFIG_ONLY_TOOLSETS`: its row's `enabled` comes from
+    `config.stt.enabled` and its PUT writes that section, NOT platform_toolsets.
+
+    It ships zero tool schemas, so a preset that switched it off saved nothing in
+    the prompt and silently disabled Hermes's speech-to-text. Our mirror of this
+    set is asserted byte-identical below.
+    """
+    from bridge.app import HERMES_CONFIG_ONLY_TOOLSETS
+    src = _read("hermes_cli/tools_config.py")
+    m = re.search(r"_CONFIG_ONLY_TOOLSETS\s*=\s*\{([^}]*)\}", src)
+    assert m, "_CONFIG_ONLY_TOOLSETS moved or changed shape"
+    upstream = {s.strip().strip('"\'') for s in m.group(1).split(",") if s.strip()}
+    assert upstream == set(HERMES_CONFIG_ONLY_TOOLSETS), (
+        f"our HERMES_CONFIG_ONLY_TOOLSETS mirror is stale: upstream={upstream}")
+    routes = _read("hermes_cli/web_routers/tools.py")
+    assert "_CONFIG_ONLY_TOOLSETS" in routes
+    assert 'section["enabled"] = bool(body.enabled)' in routes, \
+        "the config-only PUT no longer writes its own config section"
+
+
+def test_default_off_toolsets_mirror_is_current():
+    """`_DEFAULT_OFF_TOOLSETS` is what upstream subtracts when it expands the
+    platform composite — i.e. the toolsets Hermes ships OFF.
+
+    Our "Hermes's defaults" preset subtracts the same set. Before this pin, the
+    preset sent every catalog name, which is what turned Video Analysis on for a
+    user who never asked for it. A release that adds or removes a default-off
+    toolset must trip here rather than drift.
+    """
+    from bridge.app import HERMES_DEFAULT_OFF_TOOLSETS
+    src = _read("hermes_cli/tools_config.py")
+    m = re.search(r"_DEFAULT_OFF_TOOLSETS\s*=\s*\{([^}]*)\}", src)
+    assert m, "_DEFAULT_OFF_TOOLSETS moved or changed shape"
+    upstream = {s.strip().strip('"\'') for s in m.group(1).split(",") if s.strip()}
+    assert upstream == set(HERMES_DEFAULT_OFF_TOOLSETS), (
+        f"our HERMES_DEFAULT_OFF_TOOLSETS mirror is stale: upstream={upstream}")
+    assert "video" in upstream, "Video Analysis is no longer default-off upstream"
+    assert "enabled_toolsets -= default_off" in src, \
+        "the default-off set is no longer subtracted from the composite expansion"
+
+
+def test_upstream_skills_page_reads_the_same_endpoint_and_field():
+    """Hermes's own Skills → TOOLSETS page renders `ts.enabled` from
+    `GET /api/tools/toolsets` — the identical field our switches render.
+
+    So the two surfaces cannot structurally disagree; a disagreement can only be
+    staleness. Which is the next pin.
+    """
+    api = _read("web/src/lib/api.ts")
+    assert re.search(r"getToolsets:\s*\(profile\?: string\)\s*=>", api)
+    assert '`/api/tools/toolsets${profileQuery(profile)}`' in api
+    page = _read("web/src/pages/SkillsPage.tsx")
+    assert "api.getToolsets(" in page
+    assert "ts.enabled" in page and "t.common.active" in page, \
+        "the active/inactive badge no longer comes from the row's enabled field"
+
+
+def test_upstream_skills_page_does_not_live_refresh():
+    """The page fetches its toolset list ONCE per mount (a useEffect keyed only on
+    the selected profile) and otherwise only after its own Configure drawer writes.
+
+    This is the whole reason a cross-check between the two apps disagrees in both
+    directions: our panel re-reads Hermes on every refresh and after every write;
+    Hermes's page keeps whatever it fetched when the tab was opened. Our group
+    header now says so and tells the user to reload that tab. If upstream ever adds
+    polling or an invalidation, this pin trips and that sentence can be dropped.
+    """
+    page = _read("web/src/pages/SkillsPage.tsx")
+    body = page.split("api.getToolsets(selectedProfile")[1].split("const handleToggleSkill")[0]
+    assert "}, [selectedProfile]);" in body, \
+        "the toolsets fetch effect's dependency list changed — re-check staleness"
+    assert "setInterval" not in page and "useSWR" not in page and "refetchInterval" not in page, \
+        "the Skills page appears to poll now; the panel's stale-tab warning may be obsolete"
