@@ -44,6 +44,22 @@ sed -i '' 's/^    pin: v2026\.7\.30.*/    pin: v2026.8.13/' "$DST/harness.yaml"
 ./scripts/ship.sh
 ```
 
+**‼️ RESTART HERMES FIRST — `ship.sh` restarts the app and bridge but deliberately
+leaves components running, so the OLD Hermes process keeps serving until you stop it.**
+ONE command, and it must run **from the SNAPSHOT** (the app's Hermes venv is the one
+that got the 0.20.1 install; running it from the repo would start the repo's copy):
+
+```
+cd ~/Library/Application\ Support/Harness && ./scripts/start_component.sh hermes
+```
+
+That script is a full restart by construction: `hermes dashboard --stop` → `pkill` →
+listener-scoped port kill → **re-seeds guards/harness-path-guard into ~/.hermes** →
+re-patches the runner endpoint into config.yaml → relaunches. Then confirm the Hermes
+tab's sidebar footer reads **v0.20.1** (it says v0.19.1 while the old process is alive).
+Then check Hermes tab → Config → Security → `approvals.mode` is still **manual** (the
+default is `smart`, which hands approvals to a guardian model and shows no card).
+
 Verify: dashboard :9119 · a Hermes-lane chat streams in the panel · a dangerous
 command shows the approval card and Once works · a write outside the workspace
 shows the path-guard card · `./scripts/test_hermes.sh` = PASS.
