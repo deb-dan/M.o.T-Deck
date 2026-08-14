@@ -361,9 +361,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splitView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(splitView)
 
+        // ⚠️ TAMIC stays FALSE on the panes. NSSplitView's autolayout mode (the one
+        // NSSplitViewController itself uses) expects constraint-based arranged subviews;
+        // flipping these to true would give the pane its autoresizing mask derived from
+        // its CURRENT frame — which for a runtime-inserted `NSView()` is .zero, i.e.
+        // strictly worse than the bug we are fixing. The children inside each pane keep
+        // their own TAMIC=false constraints either way.
         leftPane = NSView()
         leftPane.translatesAutoresizingMaskIntoConstraints = false
         splitView.addArrangedSubview(leftPane)   // the right pane is added only when split is ON
+        // Lower holding priority than the right pane (default 250) → when the WINDOW
+        // resizes, the left pane is the one that gives way, which is the sane default
+        // for "the right pane is the thing I just opened".
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(249), forSubviewAt: 0)
 
         rightPane = NSView()
         rightPane.translatesAutoresizingMaskIntoConstraints = false
@@ -390,7 +400,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         park.isHidden = true
         container.addSubview(park)
 
+        // Min pane width, the LAYOUT half of the rule the divider-drag delegate enforces.
+        // ⚠️ DELIBERATELY NOT REQUIRED. As `required` these fought the split view's own
+        // frame engine the moment rightPane joined the hierarchy (a split view positions
+        // its arranged subviews itself; a required width minimum it does not know about
+        // has to be resolved by BREAKING a constraint — possibly ours — which is silent
+        // to the user and was one half of the "⫽ does nothing" bug). At 750 the engine
+        // satisfies them when it can and quietly relaxes them when it cannot, and the
+        // hard 420 floor still holds where it actually matters: constrainMin/MaxCoordinate
+        // on the drag, and positionDivider() on insertion.
+        let leftMin = leftPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420)
+        let rightMin = rightPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420)
+        leftMin.priority = NSLayoutConstraint.Priority(750)
+        rightMin.priority = NSLayoutConstraint.Priority(750)
+
         NSLayoutConstraint.activate([
+            leftMin, rightMin,
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
             tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -403,10 +428,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             splitView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            // min pane width, the layout half of the rule the divider-drag delegate
-            // enforces. Feasible by construction: window.minSize.width (900) > 2×420 + divider.
-            leftPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
-            rightPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
             park.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             park.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             park.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -642,12 +663,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    // Permanent split diagnostics. Visible with
+    //   log stream --predicate 'process == "Harness"'
+    // or by running /Applications/Harness.app/Contents/MacOS/Harness from a terminal.
+    // NSString cast, not a bare String, so the %@ CVarArg is unambiguous.
+    func slog(_ s: String) { NSLog("%@", ("[split] " + s) as NSString) }
+
     @objc func toggleSplit(_ sender: Any?) {
         // Opening onto a placeholder would be a useless first impression, so a fresh
         // split that collides with the left tab steps the right pane to the next tab.
         if !splitOn && rightTab == currentTab { rightTab = (currentTab + 1) % tabTitles.count }
         rightSeg.selectedSegment = rightTab
+        slog("toggle -> \(!splitOn) (rightTab \(rightTab), currentTab \(currentTab))")
         setSplit(!splitOn, persist: true)
+    }
+
+    // THE FIX for "clicking ⫽ does nothing visible". `addArrangedSubview` alone never
+    // POSITIONS the divider: a split view derives pane frames in adjustSubviews/resize,
+    // so a pane inserted at runtime arrives at the frame it already had — for a freshly
+    // built `NSView()` that is .zero, i.e. a right pane 0pt wide with the divider flush
+    // against the window's right edge. No crash, button state flips, nothing visible.
+    // So: force a layout pass, then set the divider explicitly.
+    //
+    // Only intervenes when a pane is DEGENERATE (< the 420 floor). A divider restored
+    // from the autosave, or one the user dragged, is left exactly where it was.
+    func positionDivider() {
+        guard splitOn, rightPane.superview === splitView else { return }
+        splitView.layoutSubtreeIfNeeded()
+        let total = splitView.bounds.width
+        guard total > 0 else { return }   // pre-window-display; the async pass retries
+        if leftPane.frame.width < 420 || rightPane.frame.width < 420 {
+            let pos = max(420, min(total - 420, (total / 2).rounded()))
+            splitView.setPosition(pos, ofDividerAt: 0)
+            splitView.layoutSubtreeIfNeeded()
+        }
+        slog("panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width)) of \(Int(total))")
     }
 
     func setSplit(_ on: Bool, persist: Bool) {
@@ -666,6 +716,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         UserDefaults.standard.set(rightTab, forKey: "harness.split.right")
         if on && rightTab != currentTab { ensureLoaded(rightTab) }
         applyPanes()
+        let attached = (rightPane.superview === splitView)
+        slog("setSplit(\(on)) rightAttached=\(attached) arranged=\(splitView.arrangedSubviews.count)")
+        if on {
+            positionDivider()
+            // At LAUNCH restore, setSplit runs before the window is on screen, so
+            // splitView.bounds is still zero and the sync pass above no-ops. One
+            // runloop later the frame is real — this is that second chance.
+            DispatchQueue.main.async { [weak self] in self?.positionDivider() }
+        }
     }
 
     func webViewFor(_ idx: Int) -> WKWebView {
@@ -754,6 +813,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if leftIdx == 0 { attach(ov, to: leftPane) }
             else if rightBorrows && rightTab == 0 { attach(ov, to: rightHost) }
         }
+
+        // Permanent diagnostics: `log stream --predicate 'process == "Harness"'`, or just
+        // run the binary from a terminal, and one click on ⫽ tells you exactly what fired
+        // and what widths came out of it. Cheap; keeps this class of bug one paste away.
+        slog("applyPanes left=\(leftIdx) right=\(rightTab) borrows=\(rightBorrows) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
     }
 
     func makeRightPlaceholder() -> NSView {
