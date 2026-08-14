@@ -5197,7 +5197,7 @@ def hermes_toolset_plan(rows, desired):
     return {"plan": plan, "unknown": sorted(want - known), "unchanged": unchanged}
 
 
-def hermes_toolset_view(rows, skills=None) -> dict:
+def hermes_toolset_view(rows, skills=None, cfg=None) -> dict:
     """PURE. Panel-shaped view of the probe: per-row tool COUNTS (real, from the
     payload's own resolved tool list) and the aggregate.
 
@@ -5228,15 +5228,132 @@ def hermes_toolset_view(rows, skills=None) -> dict:
                     # (web/src/pages/SkillsPage.tsx:606). Fail OPEN — only an EXPLICIT
                     # False is a warning, so a build that omits the key (or a probe
                     # shape we do not know) can never invent a scary pill.
-                    "needs_setup": r.get("configured") is False})
+                    "needs_setup": r.get("configured") is False,
+                    # Filled in below from the persisted intent; "" = agrees.
+                    "drift": ""})
+    off = {d["name"] for d in hermes_toolset_drift(rows, cfg)}
+    for t in out:
+        if t["name"] in off:
+            t["drift"] = "off"
     sk = skills if isinstance(skills, dict) else {}
     return {"toolsets": out,
             "enabled_count": sum(1 for r in out if r["enabled"]),
             "total": len(out),
             "tool_count_enabled": en_tools,
             "tool_count_total": all_tools,
+            "out_of_sync": sorted(off),
             "skills": {"count": int(sk.get("count") or 0),
                        "disabled_count": int(sk.get("disabled_count") or 0)}}
+
+
+# ── DO OUR SWITCHES MATCH WHAT HERMES HANDS THE MODEL? ───────────────────────
+# The reason this exists: a switch that reports OUR intent rather than Hermes's
+# behaviour is exactly the doubt this panel has to kill. Every row above already
+# RENDERS Hermes's own `enabled` field (web_routers/tools.py:97, computed by
+# `_get_platform_tools`, tools_config.py:2195) — never our last write — so the
+# switch itself cannot lie. What was missing is the WHY when the two disagree.
+
+# The gateway folds `project` in unconditionally on the resolve path our lane
+# takes — `return sorted(enabled | {"project"})` (tui_gateway/server.py:3921) —
+# and `project` is NOT in CONFIGURABLE_TOOLSETS (tools_config.py:95-122), so it
+# has no row and no switch. Its three tools are therefore in the model's schema
+# no matter what this panel does, and the summary says so rather than quietly
+# under-reporting by three. (toolsets.py:254-257.)
+HERMES_GATEWAY_ALWAYS_TOOLSET = "project"
+HERMES_GATEWAY_ALWAYS_TOOLS = ("project_list", "project_create", "project_switch")
+
+# Upstream gates the ENTIRE <available_skills> block on these three tool names
+# being in the schema — `has_skills_tools` (agent/system_prompt.py:299), else
+# `skills_prompt = ""` (:326). Hermes's own banner uses the toolset name for the
+# same purpose (`"skills" in _enabled_ts`, hermes_cli/banner.py:780, which then
+# reports `0 skills` and "Skills toolset disabled"). We test the TOOL NAMES, so
+# a rename of the toolset key cannot make us claim an index that is not there.
+HERMES_SKILL_INDEX_TOOLS = ("skills_list", "skill_view", "skill_manage")
+
+
+def hermes_toolset_drift(rows, cfg) -> list:
+    """PURE. Toolsets we ASKED Hermes for that Hermes does NOT report as enabled.
+
+    INTENT is the PERSISTED one: every write goes through Hermes's own
+    `PUT /api/tools/toolsets/{name}` → `_save_platform_tools` (tools_config.py:2491),
+    so `platform_toolsets.cli` on disk IS the record of what this panel asked for.
+    TRUTH is the probe's `enabled`. A disagreement is real and is worth naming —
+    `agent.disabled_toolsets` is subtracted LAST (tools_config.py:2455) and
+    `agent.coding_context: "focus"` short-circuits the list entirely
+    (tui_gateway/server.py:3797) — both of which silently override a switch.
+
+    ONE DIRECTION ONLY, and that is deliberate: "listed but Hermes says off" is
+    unambiguous, while "enabled but not in our list" has legitimate causes we
+    cannot distinguish from the payload — a composite name like `hermes-cli`
+    sitting in the same list expands to more toolsets (tools_config.py:2240-2260),
+    and the config-only toolsets (`_CONFIG_ONLY_TOOLSETS = {"stt"}`,
+    tools_config.py:164) are enabled by their own config section and never appear
+    in the list at all. Flagging those would be a false alarm, and a false
+    "out of sync" pill is worse than none. The other direction is covered
+    panel-side by our own in-session intent, which cannot be wrong about itself.
+
+    Fails OPEN in every unknown: no saved list (None = never configured) ⇒ no
+    claim; a row whose configuration platform is not `cli` ⇒ skipped, because
+    platform-restricted toolsets persist to their own key
+    (`_toolset_configuration_platform`, tools_config.py:216)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    cli = cfg.get("platform_toolsets_cli")
+    if not isinstance(cli, list):
+        return []
+    want = {str(x).strip() for x in cli if str(x).strip()}
+    out = []
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str):
+            continue
+        name = r["name"].strip()
+        plat = str(r.get("platform") or "cli").strip() or "cli"
+        if not name or plat != "cli" or name not in want:
+            continue
+        if not r.get("enabled"):
+            out.append({"name": name, "intent": True, "reported": False})
+    return out
+
+
+def hermes_tool_summary(rows, skills=None) -> dict:
+    """PURE. "What will Hermes actually hand the model?" — computed from the same
+    payload Hermes's own Skills→TOOLSETS page renders, so it can be checked in one
+    click without cross-referencing two apps.
+
+    The union is de-duplicated because toolsets overlap (`resolve_toolset`,
+    toolsets.py:719, composes and dedups the same way), and the gateway's
+    unconditional `project` fold is reported SEPARATELY rather than hidden inside
+    the number — it is real, it is in the prompt, and no switch here controls it.
+
+    HONEST LIMIT carried in the payload as `excludes_mcp`: the listing endpoint
+    resolves with `include_default_mcp_servers=False` (web_routers/tools.py:76)
+    while the runtime resolve uses True (tui_gateway/server.py:3910), so tools
+    coming from connected MCP servers are NOT counted here."""
+    en, tools = [], []
+    seen = set()
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str):
+            continue
+        if not r.get("enabled"):
+            continue
+        en.append(r["name"].strip())
+        for t in (r.get("tools") or []):
+            if isinstance(t, str) and t.strip() and t.strip() not in seen:
+                seen.add(t.strip())
+                tools.append(t.strip())
+    extra = [t for t in HERMES_GATEWAY_ALWAYS_TOOLS if t not in seen]
+    sk = skills if isinstance(skills, dict) else {}
+    return {
+        "toolsets": sorted(en),
+        "tools": sorted(tools),
+        "tool_count": len(tools) + len(extra),
+        "from_toolsets_count": len(tools),
+        "always": {"toolset": HERMES_GATEWAY_ALWAYS_TOOLSET,
+                   "tools": list(extra)},
+        # Exactly upstream's own predicate, on tool NAMES not a toolset name.
+        "skill_index": any(t in seen for t in HERMES_SKILL_INDEX_TOOLS),
+        "skill_count": int(sk.get("count") or 0),
+        "excludes_mcp": True,
+    }
 
 
 def hermes_skills_summary(payload) -> dict:
@@ -5317,7 +5434,39 @@ async def hermes_toolsets_get() -> JSONResponse:
     except Exception:
         skills = {}
     return JSONResponse({**base, "running": True, "source": "probe",
-                         **hermes_toolset_view(rows, skills)})
+                         **hermes_toolset_view(rows, skills, cfgv)})
+
+
+@app.get("/api/hermes/toolsets/summary")
+async def hermes_toolsets_summary() -> JSONResponse:
+    """The VERIFY affordance: read LIVE from Hermes and answer the one question the
+    switches cannot answer on their own — "what will Hermes hand the model?".
+
+    Deliberately a FRESH probe rather than the panel's snapshot: the whole point is
+    that Debi does not have to trust our cached view (or open Hermes's own Skills →
+    TOOLSETS page) to check. 409 when Hermes is down — a summary computed off a
+    stale config would be exactly the kind of confident-but-wrong number this slice
+    exists to remove."""
+    try:
+        rows = await _hermes_toolset_rows()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Hermes is not reachable — "
+                             f"start it first ({str(e)[:120]})"}, status_code=409)
+    skills = {}
+    try:
+        rs = await _hermes_dash("GET", "/api/skills")
+        if rs.status_code < 400:
+            skills = hermes_skills_summary(rs.json())
+    except Exception:
+        skills = {}
+    # In `agent.coding_context: "focus"` the lane's resolver RETURNS ITS OWN toolset
+    # list before the config list is read (tui_gateway/server.py:3797-3803), so this
+    # listing's enabled set is not what the model gets. Say so on the card rather
+    # than print a confident number that does not apply — the exact failure mode
+    # this whole affordance exists to remove.
+    cfgv = _hermes_toolset_config()
+    return JSONResponse({"ok": True, "focus_override": cfgv["coding_context"] == "focus",
+                         **hermes_tool_summary(rows, skills)})
 
 
 @app.post("/api/hermes/toolsets")

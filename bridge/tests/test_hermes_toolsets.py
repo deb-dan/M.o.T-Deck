@@ -165,9 +165,11 @@ check("view has NO token estimate field (schemas are not in the probe, so any "
       "per-toolset token figure would be invented)",
       not [k for k in v if "token" in k]
       and not [k for k in v["toolsets"][0] if "token" in k])
-check("view row keeps name/label/description/enabled/tools/tool_count/needs_setup",
+check("view row keeps name/label/description/enabled/tools/tool_count/needs_setup"
+      "/drift",
       set(v["toolsets"][0]) == {"name", "label", "description", "platform",
-                               "enabled", "tools", "tool_count", "needs_setup"})
+                               "enabled", "tools", "tool_count", "needs_setup",
+                               "drift"})
 
 # ── needs_setup: UPSTREAM's own `configured` bool, mirrored not invented ──────
 # Provenance: web_routers/tools.py:107 (the field) ← tools_config._toolset_has_keys
@@ -454,7 +456,126 @@ check("GET does not flag the default posture", get(FakeDash(["file"]))[1]["focus
 code, j = get(FakeDash([], down=True))
 check("GET with Hermes down is a 200 with running:false (the panel renders a note, "
       "not an error state)", code == 200 and j["running"] is False and j["error"])
+code, j = get(FakeDash(["file", "skills"]))
+check("GET carries the drift verdict on every row (no field ⇒ the panel would have "
+      "to guess)", all("drift" in t for t in j["toolsets"]))
+check("GET carries the out_of_sync roll-up", isinstance(j["out_of_sync"], list))
+
+# ── /api/hermes/toolsets/summary — the VERIFY affordance ─────────────────────
+def summary(dash):
+    A._hermes_dash = dash
+    r = asyncio.run(A.hermes_toolsets_summary())
+    return r.status_code, json.loads(r.body)
+
+
+code, j = summary(FakeDash(["file", "terminal", "clarify"]))
+check("summary → 200 with ok", code == 200 and j["ok"] is True)
+check("summary counts the union of the ENABLED toolsets' tools plus the gateway's "
+      "always-folded project toolset (4+2+1 = 7, +3)", j["tool_count"] == 10)
+check("summary names the tools, not just a number",
+      "write_file" in j["tools"] and "clarify" in j["tools"])
+check("summary never leaks a disabled toolset's tools",
+      "web_search" not in j["tools"] and "spotify_play" not in j["tools"])
+check("summary reports the always-on toolset separately rather than hiding it in "
+      "the number", j["always"]["toolset"] == "project"
+      and len(j["always"]["tools"]) == 3)
+check("summary says the skill index is ABSENT when the skills toolset is off",
+      j["skill_index"] is False)
+check("summary still reports how many skills exist (the library is untouched)",
+      j["skill_count"] == 78)
+check("summary states the MCP limit rather than pretending completeness",
+      j["excludes_mcp"] is True)
+
+code, j = summary(FakeDash(["skills"]))
+check("summary says the skill index is PRESENT when skills is on",
+      j["skill_index"] is True)
+CFG.write_text(yaml.safe_dump({"agent": {"coding_context": "focus"}}))
+check("summary flags focus mode, where the toolset list is not what the lane uses",
+      summary(FakeDash(["file"]))[1]["focus_override"] is True)
+CFG.write_text(yaml.safe_dump({"agent": {"coding_context": "auto"}}))
+check("summary does not flag the default posture",
+      summary(FakeDash(["file"]))[1]["focus_override"] is False)
+check("summary with Hermes down → 409 naming the fix (never a confident number "
+      "computed off a stale read)", summary(FakeDash([], down=True))[0] == 409)
 A._hermes_dash = _real_dash
+
+# ── drift: PERSISTED intent (platform_toolsets.cli) vs Hermes's own report ────
+D = A.hermes_toolset_drift
+NOCFG = {"platform_toolsets_cli": None}
+check("no saved list ⇒ NO claim (fail open — we never asked for anything)",
+      D(ROWS, NOCFG) == [] and D(ROWS, {}) == [] and D(ROWS, None) == []
+      and D(ROWS, {"platform_toolsets_cli": "file"}) == [])
+check("a name we asked for that Hermes reports OFF is the drift",
+      [d["name"] for d in D(ROWS, {"platform_toolsets_cli": ["file", "clarify"]})]
+      == ["clarify"])
+check("drift row carries both sides so the panel need not re-derive them",
+      D(ROWS, {"platform_toolsets_cli": ["clarify"]})[0]
+      == {"name": "clarify", "intent": True, "reported": False})
+check("a name we asked for that Hermes reports ON is NOT drift",
+      D(ROWS, {"platform_toolsets_cli": ["file", "web", "memory"]}) == [])
+check("ENABLED-but-not-listed is deliberately NOT flagged: a composite in the same "
+      "list expands, and the config-only toolsets (stt) are enabled by their own "
+      "section and never appear here — flagging those would be a false alarm",
+      D(ROWS, {"platform_toolsets_cli": ["clarify"]}) == [
+          {"name": "clarify", "intent": True, "reported": False}])
+check("a row configured on ANOTHER platform is skipped (discord persists to "
+      "platform_toolsets.discord, so our cli list says nothing about it)",
+      D([row("discord", False, ["discord_send"], platform="discord")],
+        {"platform_toolsets_cli": ["discord"]}) == [])
+check("a name in the list that Hermes does not report at all is not invented",
+      D(ROWS, {"platform_toolsets_cli": ["ghost"]}) == [])
+check("drift is total against junk rows",
+      D([None, 1, {"name": ""}, {"name": "file"}],
+        {"platform_toolsets_cli": ["file"]})
+      == [{"name": "file", "intent": True, "reported": False}])
+check("drift lands on the view rows and in the roll-up",
+      [t["drift"] for t in hermes_toolset_view(
+          ROWS, None, {"platform_toolsets_cli": ["clarify"]})["toolsets"]
+       if t["name"] == "clarify"] == ["off"]
+      and hermes_toolset_view(ROWS, None,
+                              {"platform_toolsets_cli": ["clarify"]})["out_of_sync"]
+      == ["clarify"])
+check("no cfg ⇒ every row's drift is empty (the view can be built without one)",
+      {t["drift"] for t in hermes_toolset_view(ROWS)["toolsets"]} == {""})
+
+# ── summary totality ─────────────────────────────────────────────────────────
+S = A.hermes_tool_summary
+check("summary of junk is a zero summary, never a raise",
+      S(None)["tool_count"] == 3 and S("rows")["tools"] == []
+      and S([None, 1, {"enabled": True}])["tools"] == [])
+check("duplicate tool names across two enabled toolsets are counted ONCE "
+      "(resolve_toolset composes and dedups the same way)",
+      S([row("a", True, ["t1", "t2"]), row("b", True, ["t2", "t3"])])
+      ["from_toolsets_count"] == 3)
+check("a tool that IS one of the project tools is not double counted",
+      S([row("a", True, ["project_list"])])["tool_count"] == 3)
+check("the skill-index verdict is computed from TOOL names, not the toolset name — "
+      "a renamed toolset key cannot make us claim an index that is not there",
+      S([row("whatever", True, ["skill_view"])])["skill_index"] is True
+      and S([row("skills", True, ["nothing_like_it"])])["skill_index"] is False)
+
+# ── the constants are upstream facts, pinned here and in the contract test ───
+check("the always-folded toolset is `project`", A.HERMES_GATEWAY_ALWAYS_TOOLSET == "project")
+check("its three tools are the ones toolsets.py declares",
+      sorted(A.HERMES_GATEWAY_ALWAYS_TOOLS)
+      == ["project_create", "project_list", "project_switch"])
+check("the skill-index gate is upstream's three tool names",
+      sorted(A.HERMES_SKILL_INDEX_TOOLS)
+      == ["skill_manage", "skill_view", "skills_list"])
+
+# ── wiring ───────────────────────────────────────────────────────────────────
+SRC = (ROOT / "bridge" / "app.py").read_text()
+check("the summary endpoint exists and is a GET",
+      '@app.get("/api/hermes/toolsets/summary")' in SRC)
+check("the summary re-probes Hermes rather than reusing a cached view",
+      "_hermes_toolset_rows()" in SRC.split(
+          '@app.get("/api/hermes/toolsets/summary")')[1].split("@app.")[0])
+check("the summary endpoint writes nothing (no PUT/POST anywhere in its body)",
+      '"PUT"' not in SRC.split('@app.get("/api/hermes/toolsets/summary")')[1]
+      .split("@app.")[0])
+check("the GET passes the on-disk config into the view, so drift is computed from "
+      "the persisted intent and not from our memory",
+      "hermes_toolset_view(rows, skills, cfgv)" in SRC)
 
 print()
 print(("FAILED: " + ", ".join(FAILS)) if FAILS else "all checks passed")

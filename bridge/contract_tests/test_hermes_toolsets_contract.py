@@ -228,3 +228,91 @@ def test_upstreams_own_ui_uses_the_same_field_for_setup_needed():
     page = _read("web/src/pages/SkillsPage.tsx")
     assert re.search(r"!\s*ts\.configured", page), \
         "Hermes's TOOLSETS page no longer branches its setup warning on !configured"
+
+
+def test_toolsets_listing_carries_enabled_and_the_tool_list():
+    """THE two fields the reconcile + verify slice stands on.
+
+    `enabled` is what every switch in our Capabilities panel RENDERS — we never
+    show our own last write — and `tools` is what the "Hermes will hand the model
+    N tools" card counts. A rename of either would turn both surfaces into a
+    confident lie (a missing `enabled` reads as off; a missing `tools` reads as
+    zero), which is precisely the doubt this slice exists to remove.
+    """
+    src = _read("hermes_cli/web_routers/tools.py")
+    i = src.index("/toolsets")
+    win = src[i:i + 6000]
+    assert '"enabled": is_enabled' in win, \
+        "the toolsets row lost its `enabled` key or stopped computing it"
+    assert '"tools": tools' in win, "the toolsets row lost its resolved `tools` list"
+    assert "resolve_toolset(name)" in win, \
+        "`tools` is no longer the resolved toolset (our count would stop matching)"
+    # `enabled` is derived from the platform toolset list — the same key our
+    # switches write — not from some separate per-row flag.
+    assert "_get_platform_tools(" in win
+    assert "enabled_by_platform[target_platform]" in win
+
+
+def test_available_is_an_alias_of_enabled_not_a_readiness_flag():
+    """Recorded so a future reader does not reach for `available` thinking it means
+    "ready to use" — at this pin it is literally the same bool."""
+    src = _read("hermes_cli/web_routers/tools.py")
+    win = src[src.index("/toolsets"):][:6000]
+    assert '"available": is_enabled' in win
+
+
+def test_gateway_always_folds_in_the_project_toolset():
+    """Our verify card reports these three tools SEPARATELY because no switch in
+    the panel controls them: the lane's resolver adds `project` unconditionally,
+    and `project` is not a configurable toolset, so it has no row. If this fold
+    disappears (or the toolset's tools change), the card's total would silently
+    stop matching what Hermes hands the model.
+    """
+    src = _read("tui_gateway/server.py")
+    assert re.search(r'return sorted\(enabled \| \{"project"\}\)', src), \
+        "the gateway no longer folds `project` into every session's toolsets"
+    ts = _read("toolsets.py")
+    block = ts[ts.index('"project": {'):][:400]
+    for tool in ("project_list", "project_create", "project_switch"):
+        assert tool in block, f"the project toolset no longer declares {tool}"
+    cfg = _read("hermes_cli/tools_config.py")
+    head = cfg[cfg.index("CONFIGURABLE_TOOLSETS = ["):]
+    head = head[:head.index("\n]")]
+    assert '("project"' not in head, \
+        "`project` became configurable — it now has a row and must not be " \
+        "double-counted as an always-on extra"
+
+
+def test_skill_index_gate_is_the_three_skill_tool_names():
+    """Our card says "skill index: PRESENT/ABSENT" from exactly upstream's own
+    predicate, computed over TOOL names so a toolset rename cannot fool it."""
+    src = _read("agent/system_prompt.py")
+    assert re.search(
+        r"has_skills_tools\s*=\s*any\(\s*name in agent\.valid_tool_names\s+for name in "
+        r"\['skills_list', 'skill_view', 'skill_manage'\]\)", src), \
+        "the <available_skills> gate is no longer those three tool names"
+    assert 'skills_prompt = ""' in src, \
+        "an ungated skills prompt would make our ABSENT verdict wrong"
+
+
+def test_the_banner_reports_zero_skills_when_the_toolset_is_off():
+    """Provenance for the two-layer sentence on the skills row: Hermes's OWN banner
+    already reports 0 skills with the toolset off, while the library on disk is
+    untouched. Our wording mirrors that rather than inventing a distinction."""
+    src = _read("hermes_cli/banner.py")
+    assert '_skills_enabled = (not _enabled_ts) or ("skills" in _enabled_ts)' in src
+    assert "Skills toolset disabled" in src
+    assert 'summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]' in src, \
+        "the banner's tools/skills summary line moved — the numbers our verify " \
+        "card is meant to match are computed there"
+
+
+def test_the_listing_excludes_default_mcp_servers():
+    """The honest limit our card prints: the listing resolves WITHOUT default MCP
+    servers while the runtime resolve includes them, so MCP tools are not in our
+    count."""
+    src = _read("hermes_cli/web_routers/tools.py")
+    win = src[src.index("/toolsets"):][:6000]
+    assert "include_default_mcp_servers=False" in win
+    gw = _read("tui_gateway/server.py")
+    assert re.search(r'_get_platform_tools\(cfg, "cli", include_default_mcp_servers=True\)', gw)

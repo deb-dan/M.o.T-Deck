@@ -43,8 +43,13 @@ function grab(name) {
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const escAttr = s => esc(s).replace(/"/g, '&quot;');
 var hermesToolsSnap = null;   // the panel's module-level snapshot, under our control here
+var hermesToolsIntent = {};   // our own in-session asks (see hermesToolsetSync)
+var hermesToolsSummary = null;// the `check` card, null = closed
 eval(grab('hermesToolsetNote'));
+eval(grab('hermesToolsetExtra'));
+eval(grab('hermesToolsetSync'));
 eval(grab('hermesToolsetLocked'));
+eval(grab('renderHermesToolsCheck'));
 eval(grab('renderHermesTools'));
 
 // ── hermesToolsetNote ────────────────────────────────────────────────────────
@@ -169,8 +174,13 @@ check('an empty catalog renders the group without throwing',
 // ── wiring / negatives ───────────────────────────────────────────────────────
 check('the write path is the bridge endpoint, not Hermes directly',
   html.indexOf("fetch('/api/hermes/toolsets'") >= 0);
+/* The shape moved when the intent map arrived (a failed write must also stop being
+   an "ask", or the row would show a permanent out-of-sync pill for something Hermes
+   was never told). The INVARIANT is unchanged and both halves are pinned. */
 check('a failed toggle re-arms the switch instead of lying',
-  /if \(!ok && el\) el\.checked = !on;/.test(html));
+  /el\.checked = !on;/.test(html));
+check('a failed toggle also drops the recorded intent (a write that never landed is not an ask)',
+  /delete hermesToolsIntent\[name\];/.test(html));
 check('stuck names are surfaced, not swallowed',
   html.indexOf('agent.disabled_toolsets in ~/.hermes/config.yaml') >= 0);
 check('a successful write logs to the activity feed', /feed\('hermes toolsets: /.test(html));
@@ -184,6 +194,108 @@ check('a transient refresh failure keeps the group in the DOM instead of deletin
 check('the render function touches no chat state (it is a caps-only surface)',
   grab('renderHermesTools').indexOf('sendChat') < 0
   && grab('renderHermesTools').indexOf('hermesSid') < 0);
+
+// ── hermesToolsetSync: does the row disagree with what we asked for? ─────────
+const T = (o) => Object.assign({name: 'web', enabled: true, drift: ''}, o);
+check('agreement is silence', hermesToolsetSync(T({enabled: true}), {web: true}) === ''
+  && hermesToolsetSync(T({enabled: false}), {web: false}) === '');
+check('no intent and no drift ⇒ no claim (a fresh panel never accuses Hermes)',
+  hermesToolsetSync(T({enabled: true}), {}) === ''
+  && hermesToolsetSync(T({enabled: false}), {}) === '');
+check('we asked OFF, Hermes says on', hermesToolsetSync(T({enabled: true}), {web: false}) === 'on');
+check('we asked ON, Hermes says off', hermesToolsetSync(T({enabled: false}), {web: true}) === 'off');
+check('the PERSISTED drift from the bridge is honoured with no client intent at all',
+  hermesToolsetSync(T({enabled: false, drift: 'off'}), {}) === 'off');
+check('a stale drift flag cannot fire against a row Hermes now reports ON',
+  hermesToolsetSync(T({enabled: true, drift: 'off'}), {}) === '');
+check('the word printed is always HERMES’s side, never ours',
+  hermesToolsetSync(T({enabled: true}), {web: false}) === 'on');
+check('sync is total against junk', hermesToolsetSync(null, {}) === ''
+  && hermesToolsetSync({}, {}) === '' && hermesToolsetSync(T({}), null) === '');
+
+// ── the two layers, said on the skills row ───────────────────────────────────
+check('the skills row explains that the LIBRARY stays enabled — the exact confusion '
+  + 'that made two apps have to be cross-read',
+  /library/i.test(hermesToolsetExtra({name: 'skills'}))
+  && /prompt/i.test(hermesToolsetExtra({name: 'skills'})));
+check('no other row gets the sentence', hermesToolsetExtra({name: 'web'}) === ''
+  && hermesToolsetExtra(null) === '');
+
+// ── the verify card ──────────────────────────────────────────────────────────
+hermesToolsSummary = null;
+check('no card until Check is pressed', renderHermesToolsCheck() === '');
+hermesToolsSummary = {ok: true, tools: ['read_file', 'terminal'], tool_count: 5,
+  always: {toolset: 'project', tools: ['project_list', 'project_create', 'project_switch']},
+  skill_index: false, skill_count: 78, excludes_mcp: true};
+let card = renderHermesToolsCheck();
+check('the card leads with the number Debi wants to compare against the banner',
+  card.indexOf('hand the model 5 tools') >= 0);
+check('the card NAMES the tools', card.indexOf('read_file') >= 0 && card.indexOf('terminal') >= 0);
+check('the always-added project tools are shown too, so the list adds up to the number',
+  card.indexOf('project_switch') >= 0);
+check('an absent skill index says the library is untouched (both layers, again)',
+  /skill index: ABSENT/.test(card) && card.indexOf('78 skills stay installed') >= 0);
+hermesToolsSummary.skill_index = true;
+check('a present skill index says all N skills are in the prompt',
+  /skill index: PRESENT/.test(renderHermesToolsCheck()));
+hermesToolsSummary.focus_override = true;
+check('focus mode makes the card SAY the figures do not apply, rather than print a '
+  + 'confident number Hermes will ignore',
+  /coding_context is “focus”/.test(renderHermesToolsCheck())
+  && renderHermesToolsCheck().indexOf('NOT what it will hand the model') >= 0);
+delete hermesToolsSummary.focus_override;
+check('the default posture prints no such warning',
+  renderHermesToolsCheck().indexOf('NOT what it will hand') < 0);
+check('the card admits it cannot see MCP tools',
+  renderHermesToolsCheck().indexOf('MCP servers are not counted') >= 0);
+hermesToolsSummary = {error: 'Hermes is not reachable — start it first'};
+check('a failed check shows the reason instead of a made-up number',
+  renderHermesToolsCheck().indexOf('not reachable') >= 0
+  && renderHermesToolsCheck().indexOf('hand the model') < 0);
+hermesToolsSummary = null;
+
+// ── render wiring: pill, adopt chip, check chip ──────────────────────────────
+hermesToolsSnap = {running: true, enabled_count: 1, total: 2, tool_count_enabled: 1,
+  tool_count_total: 3, config: {}, skills: {count: 78},
+  toolsets: [{name: 'file', label: 'File', enabled: true, tool_count: 1, drift: ''},
+             {name: 'clarify', label: 'Clarify', enabled: false, tool_count: 1, drift: 'off'}]};
+hermesToolsIntent = {};
+let out2 = renderHermesTools();
+check('a drifting row renders the pill in the existing grammar (zero new CSS)',
+  out2.indexOf('cap-pill off">out of sync — Hermes says off') >= 0);
+check('the group heads with the count of rows out of sync',
+  out2.indexOf('1 out of sync') >= 0);
+check('exactly ONE adopt chip for the whole group',
+  (out2.match(/hermesToolsAdopt/g) || []).length === 1);
+check('the Check chip is always offered', out2.indexOf('hermesToolsCheck(this)') >= 0);
+check('the group says out2 loud that the switches show HERMES’s answer',
+  /Every switch above shows what HERMES reports/.test(out2));
+hermesToolsSnap.toolsets[1].drift = '';
+out2 = renderHermesTools();
+check('no drift ⇒ no pill and no adopt chip',
+  out2.indexOf('out of sync') < 0 && out2.indexOf('hermesToolsAdopt') < 0);
+check('Check stays available even when everything agrees',
+  out2.indexOf('hermesToolsCheck(this)') >= 0);
+hermesToolsIntent = {clarify: true};
+check('our own in-session ask is enough to surface a disagreement, with no bridge '
+  + 'drift flag at all', renderHermesTools().indexOf('Hermes says off') >= 0);
+hermesToolsIntent = {};
+
+check('adopt RE-READS and never writes (the switches are already Hermes’s answer)',
+  grab('hermesToolsAdopt').indexOf('refreshHermesTools') >= 0
+  && grab('hermesToolsAdopt').indexOf("method:'POST'") < 0
+  && grab('hermesToolsAdopt').indexOf('/api/hermes/toolsets\'') < 0);
+check('adopt clears our claim rather than suppressing the bridge’s persisted one',
+  /hermesToolsIntent = \{\};/.test(grab('hermesToolsAdopt')));
+check('Check reads the dedicated summary endpoint, live',
+  grab('hermesToolsCheck').indexOf("fetch('/api/hermes/toolsets/summary')") >= 0);
+check('Check re-reads the rows too, so the card and the switches are never one '
+  + 'refresh apart', grab('hermesToolsCheck').indexOf('refreshHermesTools') >= 0);
+check('a write drops a stale verify card instead of leaving a confident wrong number',
+  grab('hermesToolsWrite').indexOf('hermesToolsSummary = null') >= 0);
+check('the preset path deliberately records NO client intent (the preset membership '
+  + 'lives once, in the bridge)',
+  grab('hermesToolsPreset').indexOf('hermesToolsIntent') < 0);
 
 console.log();
 console.log(fails.length ? ('FAILED: ' + fails.join(', ')) : 'all checks passed');

@@ -2690,6 +2690,26 @@ async function toggleVoiceMcp(name, on, el) {
    Reuses the caps grammar wholesale: .caps-group/.cap-h/.cap-card/.cap-row/.cap-sw/
    .cap-pill/.cap-count/.cap-btn — ZERO new CSS rules. */
 let hermesToolsSnap = null;
+/* Our OWN intent, this session only: name → the state we last asked Hermes for.
+   Nothing is seeded here at load — with no write there is no claim, so a fresh
+   panel can never accuse Hermes of drifting from something we never asked for.
+   The PERSISTED half of the same question (platform_toolsets.cli vs what Hermes
+   reports) is computed at the bridge and arrives as `t.drift`. */
+let hermesToolsIntent = {};
+let hermesToolsSummary = null;   // the `check` card, null = closed
+
+/* PURE: does this row disagree with what we last asked for? Returns '' (agrees or
+   nothing to compare), or the word for what HERMES says — which is the thing worth
+   printing, because the switch already shows Hermes's answer and the user needs to
+   know it is not ours. `t.drift` is the bridge's persisted-intent finding; the
+   intent map is ours from this session. Either one alone is enough. */
+function hermesToolsetSync(t, intent) {
+  if (!t || typeof t.name !== 'string') return '';
+  const want = (intent || {})[t.name];
+  if (want !== undefined && !!want !== !!t.enabled) return t.enabled ? 'on' : 'off';
+  if (t.drift === 'off' && !t.enabled) return 'off';
+  return '';
+}
 
 /* PURE: the note under a row. The `skills` toolset is the single biggest lever —
    dropping it removes 3 tool schemas AND the entire skill index (upstream gates the
@@ -2703,6 +2723,16 @@ function hermesToolsetNote(t, snap) {
     return base + (c ? ' + the whole skill index (' + c + ' skills)' : ' + the skill index');
   }
   return base;
+}
+
+/* PURE: the two-layer sentence for the skills row. Debi's confusion was real and
+   structural — Hermes's own Skills→ALL page says "78/78 enabled" (the LIBRARY on
+   disk) while this switch is about the INDEX in the prompt. Both are true at once;
+   say so on the row rather than leaving two apps to be cross-read. */
+function hermesToolsetExtra(t) {
+  if (!t || t.name !== 'skills') return '';
+  return 'Removes the skill index from the model’s prompt — the skill library in '
+       + 'Hermes stays installed and enabled (its Skills page will still say N/N).';
 }
 
 /* PURE: is this switch actually authoritative? Two ways it is not — Hermes stopped
@@ -2747,9 +2777,18 @@ function renderHermesTools() {
     // point. Fail-open at the bridge, so no field ⇒ no pill.
     const setup = t.needs_setup
       ? '<span class="cap-pill off">needs setup in Hermes</span>' : '';
+    // The switch below already shows HERMES's answer (snap.toolsets[].enabled comes
+    // straight off GET /api/tools/toolsets on every load). This pill exists for the
+    // case where that answer is not the one we asked for — so the disagreement is
+    // visible here instead of being discovered by cross-checking Hermes's own page.
+    const sync = hermesToolsetSync(t, hermesToolsIntent);
+    const drift = sync
+      ? `<span class="cap-pill off">out of sync — Hermes says ${esc(sync)}</span>` : '';
+    const extra = hermesToolsetExtra(t);
     return `<div class="cap-row"><div class="cap-txt">
-        <div class="cap-name">${esc(t.label || t.name)}<span class="cap-count">${esc(hermesToolsetNote(t, snap))}</span>${big}${pinned}${setup}</div>
+        <div class="cap-name">${esc(t.label || t.name)}<span class="cap-count">${esc(hermesToolsetNote(t, snap))}</span>${big}${pinned}${setup}${drift}</div>
         <div class="cap-desc">${esc(t.name)}${t.description ? ' · ' + esc(t.description) : ''}</div>
+        ${extra ? `<div class="cap-desc">${esc(extra)}</div>` : ''}
         <div class="cap-err" id="${id}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${lock ? 'disabled' : ''}
@@ -2759,15 +2798,56 @@ function renderHermesTools() {
   const lockNote = lock
     ? `<div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">${esc(lock)}</div></div></div>`
     : '';
+  // One adopt chip for the whole group, not one per row: "adopt" is a decision
+  // about the view, not about a toolset. It re-READS and re-renders — it never
+  // writes, because the honest fix for "Hermes disagrees" is to believe Hermes.
+  const nsync = (snap.toolsets || []).filter(t => hermesToolsetSync(t, hermesToolsIntent)).length;
+  const adopt = nsync
+    ? `<button class="cap-btn" style="margin-left:8px" onclick="hermesToolsAdopt(this)"
+         title="Discard what this panel is showing, re-read Hermes and render its answer. Writes nothing.">Adopt Hermes's state</button>`
+    : '';
   const presets = `<div class="cap-row"><div class="cap-txt">
-      <div class="cap-name">${snap.enabled_count}/${snap.total} toolsets on<span class="cap-count">${snap.tool_count_enabled} of ${snap.tool_count_total} tools in the prompt</span></div>
-      <div class="cap-desc">“Minimal” keeps file, terminal and clarify — enough to read, write, run things and ask you a question. Everything back on restores Hermes's full surface.</div>
+      <div class="cap-name">${snap.enabled_count}/${snap.total} toolsets on<span class="cap-count">${snap.tool_count_enabled} of ${snap.tool_count_total} tools in the prompt</span>${nsync ? `<span class="cap-pill off">${nsync} out of sync</span>` : ''}</div>
+      <div class="cap-desc">“Minimal” keeps file, terminal and clarify — enough to read, write, run things and ask you a question. Everything back on restores Hermes's full surface. Every switch above shows what HERMES reports, re-read on every refresh — not what we last asked for.</div>
       <button class="cap-btn" id="hts-preset-minimal" ${lock ? 'disabled' : ''}
         onclick="hermesToolsPreset('minimal', this)">Minimal preset</button>
       <button class="cap-btn" id="hts-preset-all" style="margin-left:8px" ${lock ? 'disabled' : ''}
         onclick="hermesToolsPreset('all', this)">Everything back on</button>
+      <button class="cap-btn" id="hts-check" style="margin-left:8px"
+        onclick="hermesToolsCheck(this)"
+        title="Ask Hermes what it will hand the model, right now.">Check</button>${adopt}
       <div class="cap-err" id="hts-preset-err" hidden></div></div></div>`;
-  return wrap(presets + lockNote + rows);
+  return wrap(presets + renderHermesToolsCheck() + lockNote + rows);
+}
+
+/* The verify card. Renders ONLY what the bridge read live from Hermes — including
+   the two things a naive count would get wrong: the `project` toolset the gateway
+   folds in whatever we do, and the MCP tools this listing cannot see. */
+function renderHermesToolsCheck() {
+  const s = hermesToolsSummary;
+  if (!s) return '';
+  if (s.error) {
+    return `<div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">Check</div>
+      <div class="cap-err" style="margin-top:4px">${esc(s.error)}</div></div></div>`;
+  }
+  const always = ((s.always || {}).tools || []);
+  const list = (s.tools || []).concat(always);
+  const idx = s.skill_index
+    ? `skill index: PRESENT — the model's prompt carries all ${s.skill_count} skills`
+    : `skill index: ABSENT — the ${s.skill_count} skills stay installed in Hermes, but none of them are in the model's prompt`;
+  // Focus mode makes the whole computation inapplicable — upstream picks its own
+  // toolsets before this list is read. A wrong-but-confident number here would be
+  // the very thing this card exists to abolish.
+  const focus = s.focus_override
+    ? `<div class="cap-err" style="margin-top:6px">agent.coding_context is “focus” — Hermes picks its own toolsets for this lane, so the figures below are NOT what it will hand the model.</div>` : '';
+  return `<div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">Hermes will hand the model ${s.tool_count} tools<span class="cap-count">read live from Hermes just now</span></div>${focus}
+      <div class="cap-desc" style="margin-top:6px">${esc(list.join(', '))}</div>
+      <div class="cap-desc" style="margin-top:6px">${esc(idx)}</div>
+      <div class="cap-desc" style="margin-top:6px">${always.length ? esc(always.length + ' of these (' + always.join(', ') + ') come from the “' + ((s.always||{}).toolset||'') + '” toolset, which the Hermes gateway adds to every session — no switch here controls it. ') : ''}Tools from connected MCP servers are not counted.</div>
+      <button class="cap-btn" style="margin-top:8px" onclick="hermesToolsSummary=null;refreshHermesToolsRender()">Close</button>
+      </div></div>`;
 }
 
 async function loadHermesTools() {
@@ -2775,6 +2855,44 @@ async function loadHermesTools() {
     const r = await fetch('/api/hermes/toolsets');
     hermesToolsSnap = await r.json();
   } catch (e) { hermesToolsSnap = null; }
+}
+
+/* Re-render from the snapshot we already have — no fetch. Used by the check card's
+   own Close, which must not cost a probe. */
+function refreshHermesToolsRender() {
+  const host = document.getElementById('caps-hermes-tools');
+  if (host) host.outerHTML = renderHermesTools();
+}
+
+/* "Adopt Hermes's state": drop our claim, re-read, re-render. It writes NOTHING —
+   the switches are already Hermes's answer, so adopting is exactly "stop showing a
+   disagreement with something we asked for". If the bridge still reports a
+   PERSISTED disagreement (a name in platform_toolsets.cli that Hermes refuses to
+   enable — almost always agent.disabled_toolsets), the pill correctly stays: that
+   one is not ours to clear, and hiding it would be the lie we are removing. */
+async function hermesToolsAdopt(btn) {
+  if (btn) btn.disabled = true;
+  hermesToolsIntent = {};
+  const ok = await refreshHermesTools();
+  if (!ok) { if (btn) btn.disabled = false; return; }
+  feed('hermes toolsets: adopted Hermes’s reported state (nothing written)');
+}
+
+/* The verify affordance. A FRESH read at the bridge, never the panel snapshot. */
+async function hermesToolsCheck(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const r = await fetch('/api/hermes/toolsets/summary');
+    const j = await r.json();
+    hermesToolsSummary = (r.ok && j.ok) ? j
+      : {error: (j.error || ('HTTP ' + r.status))};
+  } catch (e) {
+    hermesToolsSummary = {error: (e.message || String(e))};
+  }
+  // Re-read the rows too, so the card and the switches can never be one refresh
+  // apart — a summary that disagreed with the switches above it would be worse
+  // than no summary at all.
+  if (!await refreshHermesTools()) refreshHermesToolsRender();
 }
 
 async function refreshHermesTools() {
@@ -2805,6 +2923,9 @@ async function hermesToolsWrite(payload, errId, el) {
     if (!r.ok || !j.ok) throw new Error(j.error || (j.note || ('HTTP ' + r.status)));
     feed('hermes toolsets: ' + j.enabled_count + '/' + j.total + ' on · '
          + j.tool_count_enabled + ' tools in the prompt — applies to the next chat');
+    // A verify card computed BEFORE this write would now be quietly wrong; drop it
+    // rather than leave a confident stale number on screen (Check re-reads).
+    hermesToolsSummary = null;
     await refreshHermesTools();
     // Honest tail: a name that refused to turn on is reported, not swallowed.
     if ((j.stuck || []).length) hermesToolsErr(errId,
@@ -2818,10 +2939,23 @@ async function hermesToolsWrite(payload, errId, el) {
 }
 
 async function toggleHermesToolset(name, on, el) {
+  // Record the ASK before the write, so a request that reports success but leaves
+  // Hermes reporting the opposite shows as `out of sync` on the very next render
+  // instead of silently snapping back.
+  hermesToolsIntent[name] = !!on;
   const ok = await hermesToolsWrite({name, on}, 'hts-' + name + '-err', el);
-  if (!ok && el) el.checked = !on;      // the re-render is skipped on failure
+  if (!ok) {
+    delete hermesToolsIntent[name];     // a failed write is not an intent
+    if (el) el.checked = !on;           // the re-render is skipped on failure
+  }
 }
 
+/* Deliberately sets NO client-side intent: a preset's membership lives in ONE place
+   (HERMES_MINIMAL_TOOLSETS in bridge/app.py), and copying it here to compare against
+   would make a second home for the same constant — where a drift between the two
+   copies would show up as a false "out of sync" pill. The preset's own refusals are
+   already reported by the write (`stuck`), and anything it asked for and did not get
+   lands in platform_toolsets.cli, which the bridge's persisted-drift check reads. */
 async function hermesToolsPreset(kind, btn) {
   await hermesToolsWrite({preset: kind}, 'hts-preset-err', btn);
 }
