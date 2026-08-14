@@ -2967,6 +2967,14 @@ function stampFor(model){
 }
 
 async function initChat() {
+  // 2026-08-14b: re-entering the Chat view is NOT a session switch. This runs
+  // from showView('chat') whenever no Odysseus session is bound — which is the
+  // NORMAL state of the Hermes lane (it needs no Odysseus session at all, and
+  // Odysseus is often stopped). Before the turn-lifecycle slice the selects it
+  // calls were no-ops while busy; after it they stopped the turn, so simply
+  // leaving Chat and coming back mid-turn interrupted a healthy Hermes turn and
+  // rebuilt the pane from the stored (by then interrupted) Hermes transcript.
+  if (chatBusy) return;   // a live turn owns the pane; nothing here may touch it
   const stamp = document.getElementById('chat-stamp');
   if (chatMode === 'hermes'){
     // Phase 3: re-entering the Chat view while in Hermes mode must NOT clobber
@@ -4806,10 +4814,22 @@ async function selectHermesSession(storedId){
   // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
-  // 2026-08-14: a running turn is STOPPED, not a reason to silently do nothing.
-  if (chatBusy) await stopTurnNow('session switch');
   if (chatMode !== 'hermes') return;   // Phase-3 fix: lane guard — never open a
                                        // Hermes session while the rail is Odysseus.
+                                       // 2026-08-14b: this guard now runs BEFORE
+                                       // the stop below — a call that is about to
+                                       // do nothing must not kill a live turn.
+  // 2026-08-14b REGRESSION FIX: re-opening the session you are ALREADY in is not
+  // a switch. initChat() calls exactly this on every re-entry to the Chat view,
+  // and the rail's active row is the easiest thing in the panel to click while
+  // waiting — before 2026-08-14 both were `if (chatBusy) return;` no-ops, and on
+  // 2026-08-14 they became `session.interrupt` + a pane rebuild, which is how a
+  // healthy-but-slow Hermes turn came back as Hermes's own "Operation
+  // interrupted." reply. Same session + live turn ⇒ leave the turn alone.
+  if (chatBusy && storedId && storedId === hermesStoredSid) return;
+  // A genuine switch to a DIFFERENT session still stops the turn first (Fable:
+  // stop-then-proceed) — you cannot stream turn A into session B's pane.
+  if (chatBusy) await stopTurnNow('session switch');
   hermesStoredSid = storedId;
   localStorage.setItem('harness-hermes-stored', storedId);
   renderSessions();
@@ -4845,10 +4865,15 @@ async function selectHermesSession(storedId){
 
 async function selectSession(sid){
   maybeCloseArtifact();   // artifact follows its conversation unless pinned
-  if (chatBusy) await stopTurnNow('session switch');   // never a silent no-op
   if (chatMode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
                                        // Odysseus row clicked under the Hermes
                                        // chip must NOT bind chatSid / wedge Send.
+                                       // 2026-08-14b: BEFORE the stop — a stale
+                                       // cross-lane click used to interrupt the
+                                       // running HERMES turn and then return.
+  if (chatBusy && sid && sid === chatSid) return;      // re-opening the session
+                                       // you are already in is not a switch
+  if (chatBusy) await stopTurnNow('session switch');   // never a silent no-op
   chatSid = sid;
   const s = chatSessions.find(x => x.id === sid);
   chatModel = ((s && s.model) || '').split('-').slice(0,2).join('-') || 'model';
@@ -7381,9 +7406,137 @@ async function approveHermes(card, choice){
   }
 }
 
+// ── Hermes — interactive ASK cards (the `clarify` tool) ─────────────────────
+// Hermes's clarify tool BLOCKS the agent thread on a gateway prompt and renders
+// a picker on its own dashboard. Our lane had no surface for it, so a turn that
+// asked a question just sat "working" until something timed out (Debi's "test"
+// repro). Same class as approvals, so same grammar: the card reuses the .approval
+// CSS wholesale (ZERO new rules) and carries the .approval class, which means
+// expireApprovals() freezes ask cards on turn end for free.
+//
+// UNLIKE approvals, clarify IS addressed by request_id (the gateway mints one
+// per prompt), so multiple asks in a turn are unambiguous — no FIFO guessing.
+// Free text is ALWAYS offered: every upstream renderer appends "Other (type your
+// answer)", and a choice-less clarify is open-ended by construction.
+const ASK_Q_TRUNC = 600;   // chars of question shown before the expand toggle
+
+function chatAsk(holder, req){
+  const card = document.createElement('div'); card.className = 'approval ask';
+  const q = String((req && req.question) || '');
+  const opts = Array.isArray(req && req.options) ? req.options.map(String) : [];
+  card._rid = String((req && req.request_id) || '');
+  const label = document.createElement('div'); label.className = 'ap-label';
+  label.textContent = '⚠ answer needed';
+  card.appendChild(label);
+  const qEl = document.createElement('pre'); qEl.className = 'ap-cmd';
+  qEl.textContent = q.length > ASK_Q_TRUNC ? q.slice(0, ASK_Q_TRUNC) + '…' : q;
+  card.appendChild(qEl);
+  if (q.length > ASK_Q_TRUNC){
+    const ex = document.createElement('button'); ex.className = 'ap-expand';
+    ex.textContent = 'expand';
+    ex.onclick = () => {
+      card._full = !card._full;
+      qEl.textContent = card._full ? q : q.slice(0, ASK_Q_TRUNC) + '…';
+      ex.textContent = card._full ? 'collapse' : 'expand';
+    };
+    card.appendChild(ex);
+  }
+  // ⚠ PENDING FABLE QA: multi_select is NOT rendered as checkboxes in v1 — a
+  // single pick still parses as a one-element list on the tool side (upstream
+  // says so itself, tui_gateway/server.py:5379-5387), and the free-text box
+  // accepts a comma-separated answer, which is exactly what upstream's
+  // _parse_multi_select_response expects. Shown as a faint hint instead of
+  // silently pretending the mode doesn't exist.
+  if (req && req.multi_select && opts.length){
+    const h = document.createElement('div'); h.className = 'dim';
+    h.style.margin = '0 0 6px';
+    h.style.font = '10.5px var(--mono)';
+    h.textContent = 'several answers allowed — pick one, or type them comma-separated';
+    card.appendChild(h);
+  }
+  const row = document.createElement('div'); row.className = 'ap-row';
+  for (const o of opts){
+    const b = document.createElement('button'); b.className = 'ap-btn';
+    b.textContent = o;
+    b.onclick = () => answerHermes(card, o);
+    row.appendChild(b);
+  }
+  // The cancel chip IS upstream's own skip: an empty answer is what
+  // _clear_pending sends when a session is interrupted, so the agent gets the
+  // same "no answer" it already knows how to handle.
+  const cx = document.createElement('button'); cx.className = 'ap-btn deny';
+  cx.textContent = 'cancel';
+  cx.onclick = () => answerHermes(card, '', {cancel: true});
+  row.appendChild(cx);
+  card.appendChild(row);
+  // Free text: an input + send, in the existing inline-style idiom (no new CSS).
+  if (!(req && req.allows_free_text === false)){
+    const frow = document.createElement('div'); frow.className = 'ap-row';
+    frow.style.marginTop = '8px';
+    const inp = document.createElement('input'); inp.type = 'text';
+    inp.className = 'ask-text';
+    inp.placeholder = opts.length ? 'or type your answer…' : 'type your answer…';
+    inp.style.cssText = 'flex:1;min-width:180px;font:11px var(--mono);padding:5px 9px;'
+      + 'background:#0a0910;border:1px solid var(--line);color:var(--cream);outline:none;';
+    const send = document.createElement('button'); send.className = 'ap-btn';
+    send.textContent = 'send';
+    const fire = () => { const v = inp.value.trim(); if (v) answerHermes(card, v); };
+    send.onclick = fire;
+    inp.onkeydown = (e) => { if (e.key === 'Enter'){ e.preventDefault(); fire(); } };
+    frow.appendChild(inp); frow.appendChild(send);
+    card.appendChild(frow);
+  }
+  // Same stream-position rule as approval cards (a question precedes the prose).
+  const body = holder.querySelector('.body');
+  if (body && !body.textContent) holder.insertBefore(card, body);
+  else holder.appendChild(card);
+  scrollChat();
+  return card;
+}
+
+async function answerHermes(card, answer, opts){
+  if (card._done) return;
+  const cancel = !!(opts && opts.cancel);
+  for (const el of card.querySelectorAll('.ap-btn, .ask-text')) el.disabled = true;
+  const old = card.querySelector('.ap-err'); if (old) old.remove();
+  try {
+    const r = await fetch('/api/hermes/answer', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: hermesSid, request_id: card._rid,
+                            answer: cancel ? '' : String(answer), cancel})});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    if (j.status === 'expired'){
+      // The gateway had already given up on this prompt — say so rather than
+      // claim an answer that never reached the agent.
+      expireApprovalCard(card);
+      return;
+    }
+    card._done = true;
+    card.textContent = '';
+    const done = document.createElement('div'); done.className = 'ap-done';
+    done.innerHTML = cancel
+      ? '<span class="no">✗</span> cancelled'
+      : `<span class="ok">✓</span> ${esc(String(answer))}`;
+    card.appendChild(done);
+  } catch (e){
+    const err = document.createElement('div'); err.className = 'ap-err';
+    err.textContent = 'answer failed: ' + (e && e.message || e);
+    card.appendChild(err);
+    // Re-arm: the prompt is still pending gateway-side.
+    for (const el of card.querySelectorAll('.ap-btn, .ask-text')) el.disabled = false;
+  }
+}
+
+function expireAskCard(holder, rid){
+  // clarify.expire: only the card that owns this request_id.
+  for (const card of holder.querySelectorAll('.approval.ask'))
+    if (!card._done && (!rid || card._rid === rid)) expireApprovalCard(card);
+}
+
 function expireApprovalCard(card){
   card._done = true;
-  for (const b of card.querySelectorAll('.ap-btn')) b.disabled = true;
+  for (const b of card.querySelectorAll('.ap-btn, .ask-text')) b.disabled = true;
   const lb = card.querySelector('.ap-label');
   if (lb && !lb.querySelector('.ap-expired')){
     const st = document.createElement('span'); st.className = 'ap-expired';
@@ -7394,6 +7547,8 @@ function expireApprovalCard(card){
 
 function expireApprovals(holder){
   // Turn ended (done/stop/interrupt/error) with cards still open → freeze them.
+  // ASK cards carry the .approval class too, so they are covered by this one
+  // selector — one freeze path, not two that can drift.
   for (const card of holder.querySelectorAll('.approval'))
     if (!card._done) expireApprovalCard(card);
 }
@@ -7426,7 +7581,7 @@ let curTurn = null;   // {lane, stage, ctl, holder, ended, timer, stopArmed}
 
 function turnStage(s){ if (curTurn && !curTurn.ended) curTurn.stage = s; }
 
-function turnArm(ms){
+function turnArm(ms, label){
   // Panel-side last resort. Armed for the HERMES lane only: that lane's bridge
   // relay emits a {"type":"hermes_ping"} heartbeat every ~20s, so a silence
   // longer than this means the relay itself is gone. The direct/agent lanes have
@@ -7434,9 +7589,27 @@ function turnArm(ms){
   // there could kill a healthy turn — they rely on the escape hatches instead.
   // ⚠ PENDING FABLE QA: lane asymmetry + the values.
   if (!curTurn || curTurn.ended || curTurn.done) return;
-  clearTimeout(curTurn.timer);
-  curTurn.timer = setTimeout(
-    () => forceEndTurn('no data from the bridge for ' + Math.round(ms / 1000) + 's'), ms);
+  const t = curTurn;
+  clearTimeout(t.timer);
+  t.timerLabel = label || 'stall';
+  t.timer = setTimeout(() => {
+    if (curTurn !== t) return;   // a later turn owns the panel now — never fire late
+    // DIAGNOSTIC (2026-08-14b): a watchdog that fires must SAY which one it was
+    // and how long the relay had actually been silent. The 2026-08-14 regression
+    // report ("it just got interrupted") was undiagnosable precisely because a
+    // turn could end with no record of what ended it.
+    const quiet = t.lastByte ? (Date.now() - t.lastByte) : -1;
+    const line = 'watchdog ' + (t.timerLabel || 'stall') + ' fired after ' +
+                 Math.round(ms / 1000) + 's · ' +
+                 (quiet < 0 ? 'no byte ever received' :
+                  Math.round(quiet / 1000) + 's since the last chunk') +
+                 ' · stage=' + (t.stage || 'unknown');
+    try { console.warn('[turn] ' + line); } catch (_) {}
+    try { if (t.holder) chatInspect(t.holder, {type: 'turn_watchdog',
+            timer: t.timerLabel || 'stall', armed_ms: ms, quiet_ms: quiet,
+            stage: t.stage || 'unknown'}); } catch (_) {}
+    forceEndTurn(line);
+  }, ms);
 }
 
 function turnHardRelease(t){
@@ -7565,7 +7738,7 @@ async function sendChat() {
   const turn = {lane: chatMode, stage: 'connecting', ctl: new AbortController(),
                 holder: holder, ended: false, timer: null, stopArmed: false};
   curTurn = turn;
-  if (turn.lane === 'hermes') turnArm(TURN_FIRSTBYTE_MS);
+  if (turn.lane === 'hermes') turnArm(TURN_FIRSTBYTE_MS, 'first-byte');
 
   try {
     // Chat mode = direct lane to the runner (no Odysseus per-turn overhead / aux-call
@@ -7593,7 +7766,11 @@ async function sendChat() {
       const {done, value} = await reader.read();
       if (done) break;
       // Any byte at all = the relay is alive → re-arm the last-resort watchdog.
-      if (turn.lane === 'hermes') turnArm(TURN_STALL_MS);
+      // This runs BEFORE any parsing, so the bridge's {"type":"hermes_ping"}
+      // heartbeat re-arms even if it were ever malformed — the re-arm can never
+      // depend on JSON.parse succeeding.
+      turn.lastByte = Date.now();
+      if (turn.lane === 'hermes') turnArm(TURN_STALL_MS, 'stall');
       buf += dec.decode(value, {stream:true});
       const parts = buf.split('\n\n'); buf = parts.pop();
       for (const part of parts) {
@@ -7665,6 +7842,14 @@ async function sendChat() {
             // Hermes Phase 2: interactive approval card at stream position.
             turnStage('awaiting approval');
             chatApproval(holder, j.request || {});
+          } else if (j.type === 'ask') {
+            // Hermes `clarify` tool: an interactive question at stream position.
+            // NOT auto-answered anywhere — including conversation mode, where the
+            // mic stays gated because the turn never ends (no turn_end fires).
+            turnStage('awaiting an answer');
+            chatAsk(holder, j.request || {});
+          } else if (j.type === 'ask_expire') {
+            expireAskCard(holder, String(j.request_id || ''));
           } else if (j.type === 'file_card') {
             // §F auto-trigger (Hermes lane): the bridge saw a successful
             // write_file/patch → render the existing produced-file card.

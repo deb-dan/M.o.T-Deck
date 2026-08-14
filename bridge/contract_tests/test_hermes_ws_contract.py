@@ -25,6 +25,7 @@ WS_METHODS = [
     "session.close",      # methods_session.py — close a live session pre-delete (Phase 3)
     "prompt.submit",      # methods_prompt.py  — start a turn (returns status: streaming)
     "approval.respond",   # methods_prompt.py  — Phase-2 approval card answer
+    "clarify.respond",    # methods_prompt.py  — ask-card answer (clarify tool)
 ]
 
 # Event types the bridge translates into panel SSE frames (emitted via
@@ -36,6 +37,10 @@ WS_EVENTS = [
     "tool.start",
     "tool.complete",
     "approval.request",
+    "clarify.request",
+    # NOTE: "clarify.expire" is deliberately NOT listed here — upstream never
+    # writes that literal, it BUILDS it (`f"{event.removesuffix('.request')}.expire"`,
+    # server.py:2892-2896). Pinned structurally in test_clarify_protocol_contract.
     "message.complete",
     "status.update",
     "gateway.ready",
@@ -114,6 +119,72 @@ def test_approval_protocol_contract():
     assert "is_interrupted()" in appr, (
         "approval wait no longer checks is_interrupted() — panel Stop during a "
         "pending card would wedge until the approval timeout (#8697 regressed)")
+
+
+def test_clarify_protocol_contract():
+    """ASK-CARD contract (bridge/app.py ask frames + panel chatAsk cards).
+
+    The `clarify` tool BLOCKS the agent thread on a gateway prompt; without a
+    surface for it a Hermes turn silently sits "working" until something times
+    out (the live repro). Everything the card leans on is upstream-internal:
+
+      * emit   — server.py:5376-5390 `clarify_callback` → `_block("clarify.request",
+                 sid, {"question": q, "choices": c[, "multi_select": True]})`;
+      * id     — `_block` mints one and stamps `payload["request_id"] = rid`
+                 (server.py:2856-2862). UNLIKE approvals this IS on the wire, and
+                 the whole card addressing depends on it;
+      * expire — a timed-out prompt emits `<event>.expire` with {"request_id"}
+                 (server.py:2886-2896), for the four blocking bridges whose
+                 respond handler tolerates a late reply;
+      * answer — `clarify.respond` → `_respond(rid, params, "answer",
+                 allow_expired=True)` (methods_prompt.py:836-842), which resolves
+                 on params["request_id"] alone and returns status ok|expired
+                 (server.py:9981-9992). No session_id is involved;
+      * free text — ALWAYS available: every renderer appends "Other (type your
+                 answer)" (tools/clarify_tool.py:22) and a choice-less clarify is
+                 open-ended by construction (:156-157).
+    """
+    if not HERMES.exists():
+        return
+    server = (HERMES / "tui_gateway" / "server.py").read_text(errors="replace")
+    assert '"clarify_callback"' in server, (
+        "the clarify_callback gateway wiring moved — ask cards have no source")
+    assert '{"question": q, "choices": c}' in server, (
+        "clarify.request payload keys changed (question/choices) — ask card blind")
+    assert 'payload["request_id"] = rid' in server, (
+        "_block no longer stamps request_id into the emitted payload — ask cards "
+        "would have nothing to answer with (approvals-style FIFO is NOT available "
+        "for clarify)")
+    assert 'f"{event.removesuffix(\'.request\')}.expire"' in server, (
+        "the *.expire notification for timed-out blocking prompts is gone — an "
+        "expired ask card would keep claiming it is answerable")
+    assert '"clarify.request",' in server, (
+        "clarify.request dropped out of the expire-eligible blocking-bridge set")
+    prompt = (HERMES / "tui_gateway" / "methods_prompt.py").read_text(errors="replace")
+    assert re.search(r'@method\("clarify\.respond"\)', prompt), (
+        "clarify.respond JSON-RPC method gone — ask cards cannot answer")
+    assert '_respond(rid, params, "answer", allow_expired=True)' in prompt, (
+        "clarify.respond's answer key / allow_expired tolerance changed — the "
+        "bridge sends params.answer and relies on the 'expired' status")
+    assert 'return _ok(rid, {"status": "expired"})' in server, (
+        "_respond no longer reports an expired prompt as status=expired — the "
+        "panel would stamp a late answer as delivered")
+    assert 'params.get("request_id", "")' in server, (
+        "_respond no longer addresses prompts by request_id")
+    # Panel Stop with a card open: session.interrupt must release the pending
+    # prompt (scoped to that session), or a Stop during an ask would wedge the
+    # agent thread until the clarify timeout — the exact hang this card fixes.
+    msess = (HERMES / "tui_gateway" / "methods_session.py").read_text(errors="replace")
+    assert "_clear_pending(sid)" in msess, (
+        "session.interrupt no longer releases pending gateway prompts — panel "
+        "Stop during an open ask card would no longer end the turn")
+    ctool = (HERMES / "tools" / "clarify_tool.py").read_text(errors="replace")
+    assert '"user_response": user_response' in ctool, (
+        "clarify no longer returns the raw user_response string — the card sends "
+        "the chosen LABEL, not an index, precisely because of this")
+    assert "Other (type your answer)" in ctool, (
+        "the always-appended free-text escape hatch is gone from the clarify "
+        "contract — the card's free-text box may no longer be honoured")
 
 
 def test_event_frame_shape_unchanged():

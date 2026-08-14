@@ -3968,6 +3968,35 @@ def hermes_event_to_frames(ev):
                       "request": {"command": p.get("command") or "",
                                   "description": str(p.get("description") or ""),
                                   "choices": [str(c) for c in ch]}}], "")
+        if t == "clarify.request":
+            # INTERACTIVE ASK CARD (2026-08-14). The `clarify` tool blocks the
+            # agent thread on a gateway prompt (tui_gateway/server.py:5376-5390
+            # clarify_callback → _block("clarify.request", …)); the payload is
+            # {question, choices?, multi_select? (only when True)} plus the
+            # request_id _block injects at server.py:2861. Without a surface for
+            # it the turn simply sat "working" until something timed out — the
+            # exact class approval cards already solved.
+            #
+            # allows_free_text is ALWAYS true and that is upstream's own rule,
+            # not our guess: every renderer appends an "Other (type your answer)"
+            # option (tools/clarify_tool.py:22, schema :233), and a clarify with
+            # NO choices is open-ended by construction (:157 empty list → None).
+            # The answer is a plain STRING either way — the tool returns it
+            # verbatim as user_response (clarify_tool.py:170).
+            ch = p.get("choices")
+            opts = [str(c) for c in ch if str(c or "").strip()] if isinstance(ch, list) else []
+            return ([{"type": "ask",
+                      "request": {"request_id": str(p.get("request_id") or ""),
+                                  "question": str(p.get("question") or ""),
+                                  "options": opts,
+                                  "multi_select": bool(p.get("multi_select")),
+                                  "allows_free_text": True}}], "")
+        if t == "clarify.expire":
+            # Upstream gave up waiting (server.py:2886-2896 emits `<x>.expire`
+            # for every blocking bridge whose respond tolerates a late reply).
+            # The card must stop pretending it is still answerable.
+            return ([{"type": "ask_expire",
+                      "request_id": str(p.get("request_id") or "")}], "")
         if t == "message.complete":
             # Final text is NOT re-emitted — the deltas already built the bubble.
             # ANY message.complete ends the turn: complete / error / interrupted
@@ -4199,7 +4228,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
             got_any = False
             silent = 0.0
             noted_slow = False
-            approval_pending = False  # Phase 2: an approval card awaits the user
+            # An INTERACTIVE CARD awaits the user: a Phase-2 approval, or (2026-08-14)
+            # a clarify/ask card. Both block the agent thread on a gateway prompt, so
+            # neither is "silence" — the watchdogs must not read them as a dead turn.
+            approval_pending = False
             stop_at = None  # monotonic deadline once a panel Stop was requested
             while True:
                 if stop_at is not None:
@@ -4232,7 +4264,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                                '"hermes turn idle >10min — giving up"}\n\n')
                         break
                     if approval_pending:
-                        # Phase 2: the approval card IS the status — suppress the
+                        # Phase 2 / ask cards: the card IS the status — suppress the
                         # 20s working note AND the liveness probe while the user
                         # decides (the agent thread is blocked in
                         # _await_gateway_decision; upstream's own 300s approval
@@ -4263,10 +4295,13 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     if stop_at is None:
                         stop_at = asyncio.get_running_loop().time() + 3.0
                     continue
-                # Phase 2: an approval.request opens a pending card; ANY other
-                # event means the wait resolved (post-decision tool/turn events
-                # only flow once resolve_gateway_approval unblocked the agent).
-                approval_pending = ((ev or {}).get("type") == "approval.request")
+                # An approval.request OR a clarify.request opens a pending card;
+                # ANY other event means the wait resolved (post-decision tool/turn
+                # events only flow once resolve_gateway_approval / clarify.respond
+                # unblocked the agent thread). clarify.expire is "any other event",
+                # which is exactly right: an expired card is no longer pending.
+                approval_pending = ((ev or {}).get("type")
+                                    in ("approval.request", "clarify.request"))
                 frames, action = hermes_event_to_frames(ev)
                 for fr in frames:
                     if fr.get("type") == "file_card":
@@ -4347,6 +4382,63 @@ async def hermes_approve(req: Request) -> JSONResponse:
         # resolved=0 → nothing was pending (card raced a timeout/interrupt);
         # surface it so the panel can stamp the card instead of lying "approved".
         return JSONResponse({"ok": True, "resolved": res.get("resolved")})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
+
+
+ASK_ANSWER_MAX = 4000   # chars accepted from the panel's free-text box
+
+
+@app.post("/api/hermes/answer")
+async def hermes_answer(req: Request) -> JSONResponse:
+    """Answer a pending clarify/ask card.
+
+    UNLIKE approvals, clarify prompts ARE addressed by id: _block mints a
+    request_id and stamps it into the emitted payload
+    (tui_gateway/server.py:2856-2862), and clarify.respond resolves purely on
+    it — `_respond(rid, params, "answer", allow_expired=True)`
+    (methods_prompt.py:836-842) reads params["request_id"] + params["answer"]
+    and never looks at a session (server.py:9981-9992). So {request_id, answer}
+    is the complete address; session_id is accepted for symmetry with
+    /api/hermes/approve and for logging only.
+
+    The ANSWER IS A PLAIN STRING — upstream stores it verbatim and the clarify
+    tool returns it as user_response (tools/clarify_tool.py:170). There is no
+    index protocol on the wire, so the panel sends the chosen option's LABEL.
+    ⚠ PENDING FABLE QA: the brief said `choice_index?|text?`; there is no
+    choice_index, because resolving one would mean the BRIDGE keeping a copy of
+    the option list — duplicated gateway state whose staleness could answer a
+    different question than the card on screen shows. The panel holds the list
+    it rendered and sends the label, so what is answered is what was displayed.
+
+    cancel:true sends the empty string, which is exactly what upstream's own
+    cancel path does (_clear_pending sets the answer to "" — server.py:2922-2926).
+
+    Result: {"ok":true,"status":"ok"|"expired"} — "expired" means the prompt was
+    already gone gateway-side (timeout / interrupt), so the panel must stamp the
+    card honestly instead of claiming the answer landed.
+    """
+    body = await req.json()
+    rid = str(body.get("request_id") or "").strip()
+    if not rid:
+        return JSONResponse({"error": "request_id required"}, status_code=400)
+    if body.get("cancel"):
+        answer = ""
+    else:
+        answer = body.get("answer")
+        if not isinstance(answer, str):
+            return JSONResponse({"error": "answer must be a string"}, status_code=400)
+        answer = answer.strip()
+        if not answer:
+            return JSONResponse({"error": "empty answer — use cancel:true to skip"},
+                                status_code=400)
+        if len(answer) > ASK_ANSWER_MAX:
+            return JSONResponse({"error": f"answer too long (max {ASK_ANSWER_MAX})"},
+                                status_code=400)
+    try:
+        res = await _HERMES.rpc("clarify.respond",
+                                {"request_id": rid, "answer": answer}, timeout=10.0)
+        return JSONResponse({"ok": True, "status": res.get("status") or "ok"})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
 

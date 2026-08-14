@@ -97,6 +97,63 @@ fr, act = F({"type": "approval.request",
 check("approval choices coerced to strings",
       fr[0]["request"]["choices"] == ["1", "deny"])
 
+# ASK CARDS (the `clarify` tool, 2026-08-14): ONE structured frame → the panel's
+# interactive picker; the turn KEEPS STREAMING (the agent thread is blocked on the
+# gateway prompt, not finished).
+fr, act = F({"type": "clarify.request",
+             "payload": {"question": "What should I test?",
+                         "choices": ["Functionality", "Performance", "Integration"],
+                         "request_id": "ab12cd34"}})
+check("clarify → ask frame, turn keeps streaming",
+      act == "" and fr == [{"type": "ask",
+                            "request": {"request_id": "ab12cd34",
+                                        "question": "What should I test?",
+                                        "options": ["Functionality", "Performance",
+                                                    "Integration"],
+                                        "multi_select": False,
+                                        "allows_free_text": True}}])
+# open-ended clarify (no choices) — upstream drops an empty list to None
+fr, act = F({"type": "clarify.request",
+             "payload": {"question": "Name the file?", "request_id": "r1"}})
+check("clarify with no choices → open-ended, free text still offered",
+      act == "" and fr[0]["request"]["options"] == []
+      and fr[0]["request"]["allows_free_text"] is True)
+# free text is NEVER withheld: upstream appends "Other (type your answer)" always
+check("allows_free_text is unconditional",
+      F({"type": "clarify.request",
+         "payload": {"question": "q", "choices": ["a"]}})[0][0]
+      ["request"]["allows_free_text"] is True)
+# multi_select is only present upstream when True
+fr, _ = F({"type": "clarify.request",
+           "payload": {"question": "q", "choices": ["a", "b"], "multi_select": True}})
+check("clarify multi_select forwarded", fr[0]["request"]["multi_select"] is True)
+# hostile / malformed payloads must never raise and never invent options
+fr, act = F({"type": "clarify.request", "payload": {}})
+check("clarify empty payload safe",
+      act == "" and fr == [{"type": "ask",
+                            "request": {"request_id": "", "question": "",
+                                        "options": [], "multi_select": False,
+                                        "allows_free_text": True}}])
+fr, _ = F({"type": "clarify.request",
+           "payload": {"question": "q", "choices": "Functionality"}})
+check("clarify non-list choices → no options (never split a string)",
+      fr[0]["request"]["options"] == [])
+fr, _ = F({"type": "clarify.request",
+           "payload": {"question": "q", "choices": [1, "b", None, "  ", ""]}})
+check("clarify options coerced to strings, blanks dropped",
+      fr[0]["request"]["options"] == ["1", "b"])
+# expiry: upstream gave up waiting → the card must stop claiming it is answerable
+fr, act = F({"type": "clarify.expire", "payload": {"request_id": "ab12cd34"}})
+check("clarify.expire → ask_expire, turn keeps streaming",
+      act == "" and fr == [{"type": "ask_expire", "request_id": "ab12cd34"}])
+fr, act = F({"type": "clarify.expire", "payload": {}})
+check("clarify.expire without id safe",
+      act == "" and fr == [{"type": "ask_expire", "request_id": ""}])
+# an ask NEVER ends the turn
+check("ask never ends a turn",
+      F({"type": "clarify.request", "payload": {"question": "q"}})[1] == ""
+      and F({"type": "clarify.expire", "payload": {}})[1] == "")
+
 # turn terminators
 fr, act = F({"type": "message.complete", "payload": {"text": "final answer"}})
 check("complete → done, text NOT re-emitted", fr == [] and act == "done")
@@ -205,6 +262,44 @@ fr, act = F({"type": "message.delta", "payload": None})
 check("null payload safe", fr == [] and act == "")
 fr, act = F({})
 check("empty event safe", fr == [] and act == "")
+
+# ── wiring greps: the pure mapper is only half the ask-card path ────────────
+_APP = (ROOT / "bridge" / "app.py").read_text()
+check("answer endpoint exists", '@app.post("/api/hermes/answer")' in _APP)
+check("answer endpoint calls clarify.respond",
+      '"clarify.respond"' in _APP and '"answer": answer' in _APP)
+check("answer endpoint addresses by request_id (not session FIFO)",
+      '{"request_id": rid, "answer": answer}' in _APP)
+check("answer endpoint requires a request_id",
+      '"request_id required"' in _APP)
+check("cancel sends the empty string upstream (upstream's own skip)",
+      'if body.get("cancel"):' in _APP and 'answer = ""' in _APP)
+check("expired status surfaced to the panel, not swallowed",
+      '"status": res.get("status") or "ok"' in _APP)
+# The watchdog suppression is what stops a pending card being read as a dead turn.
+check("a pending clarify suppresses the working-note/probe like an approval",
+      'in ("approval.request", "clarify.request")' in _APP)
+_PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
+check("panel renders the ask frame", "j.type === 'ask'" in _PANEL
+      and "chatAsk(holder" in _PANEL)
+check("panel handles ask_expire per request_id",
+      "j.type === 'ask_expire'" in _PANEL and "expireAskCard(holder" in _PANEL)
+check("ask cards reuse the approval grammar (so expireApprovals freezes them)",
+      "className = 'approval ask'" in _PANEL
+      and "querySelectorAll('.approval')" in _PANEL)
+check("ask card offers a cancel that posts cancel:true",
+      "answerHermes(card, '', {cancel: true})" in _PANEL)
+check("ask card free-text box exists and sends on Enter",
+      "ask-text" in _PANEL and "e.key === 'Enter'" in _PANEL)
+check("expired ask stamps instead of claiming an answer",
+      "j.status === 'expired'" in _PANEL and "expireApprovalCard(card)" in _PANEL)
+# NEGATIVE: nothing in the ask path may answer on the user's behalf — in
+# conversation mode the mic is gated because the turn never ends, and an
+# auto-answer would make the harness talk to itself.
+_ASK = _PANEL.split("function chatAsk(", 1)[1].split("\nfunction expireAskCard", 1)[0]
+check("ask path never auto-answers or auto-sends",
+      "convSend" not in _ASK and "sendChat" not in _ASK
+      and "setTimeout" not in _ASK)
 
 print(f"PASS {PASS}/{PASS}")
 sys.exit(0)

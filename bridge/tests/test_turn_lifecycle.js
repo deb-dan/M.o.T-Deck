@@ -114,8 +114,35 @@ for (const [fn, label] of [['newSession', '+NEW'], ['selectSession', 'a rail row
                            ['duplicateSession', 'duplicate']]) {
   const src = grab(fn);
   check(label + ' STOPS a running turn instead of returning silently',
-    /if \(chatBusy\) await stopTurnNow\(/.test(src) && !/if \(chatBusy\) return;/.test(src));
+    /if \(chatBusy\) await stopTurnNow\(/.test(src) && !/^\s*if \(chatBusy\) return;/m.test(src));
 }
+
+/* ── 4b. …but an INCIDENTAL re-open must never kill a healthy turn ────────
+ * REGRESSION (2026-08-14b, Debi: a slow-but-healthy Hermes turn came back as
+ * Hermes's own "Operation interrupted."). §4 above turned four no-ops into
+ * turn-killers, and three of them are reachable with no intent to stop
+ * anything: initChat() re-opens the CURRENT session on every entry to the Chat
+ * view (the Hermes lane binds no Odysseus session, so that path runs), the
+ * rail's ACTIVE row is the easiest thing to click while waiting, and the lane
+ * guards ran AFTER the stop, so a call that was about to return still fired
+ * session.interrupt. These four checks are the fence. */
+const selH = grab('selectHermesSession'), selO = grab('selectSession');
+check('re-opening the Hermes session you are ALREADY in leaves a running turn alone',
+  /if \(chatBusy && storedId && storedId === hermesStoredSid\) return;/.test(selH));
+check('re-opening the Odysseus session you are ALREADY in leaves a running turn alone',
+  /if \(chatBusy && sid && sid === chatSid\) return;/.test(selO));
+check('the Hermes lane guard runs BEFORE the stop — a cross-lane call that does '
+    + 'nothing must not interrupt the live turn',
+  selH.indexOf("if (chatMode !== 'hermes') return;") < selH.indexOf('await stopTurnNow('));
+check('the Odysseus lane guard runs BEFORE the stop (same rule, other lane)',
+  selO.indexOf("if (chatMode === 'hermes') return;") < selO.indexOf('await stopTurnNow('));
+const initc = grab('initChat');
+check('re-entering the Chat view NEVER touches a live turn (initChat is the path '
+    + 'that made simply leaving and coming back interrupt a Hermes turn)',
+  /if \(chatBusy\) return;/.test(initc)
+  && initc.indexOf('if (chatBusy) return;') < initc.indexOf('selectHermesSession('));
+check('…and it is the FIRST thing initChat does, before any session load',
+  initc.indexOf('if (chatBusy) return;') < initc.indexOf('loadSessions('));
 const mode = grab('setMode');
 check('a lane switch stops the running turn FIRST, before chatMode flips',
   /if \(chatBusy && m !== prev\) await stopTurnNow\('lane switch'\)/.test(mode)
@@ -149,9 +176,21 @@ check('conv-mode turn hooks are still inside the send path\'s try/finally, so a 
 /* ── 6. the panel watchdog + the heartbeat it depends on ─────────────────── */
 const arm = grab('turnArm');
 check('the watchdog is re-armed on EVERY received chunk',
-  /if \(turn\.lane === 'hermes'\) turnArm\(TURN_STALL_MS\);/.test(send));
+  /if \(turn\.lane === 'hermes'\) turnArm\(TURN_STALL_MS, 'stall'\);/.test(send));
 check('the first-byte watchdog is armed at send time',
-  /if \(turn\.lane === 'hermes'\) turnArm\(TURN_FIRSTBYTE_MS\);/.test(send));
+  /if \(turn\.lane === 'hermes'\) turnArm\(TURN_FIRSTBYTE_MS, 'first-byte'\);/.test(send));
+check('the re-arm happens on the RAW chunk, before any JSON.parse — a heartbeat '
+    + 'that failed to parse must still prove the relay is alive',
+  send.indexOf("turnArm(TURN_STALL_MS, 'stall')") < send.indexOf('JSON.parse(payload)'));
+check('every chunk stamps lastByte, so the diagnostic can report real silence',
+  /turn\.lastByte = Date\.now\(\);/.test(send));
+check('a watchdog that fires SAYS which timer it was and how long the relay was '
+    + 'actually silent (console + INSPECT), so the next report is self-explanatory',
+  /watchdog ' \+ \(t\.timerLabel/.test(arm)
+  && /since the last chunk/.test(arm)
+  && /chatInspect\(t\.holder, \{type: 'turn_watchdog'/.test(arm));
+check('a watchdog belonging to a superseded turn can never fire late',
+  /if \(curTurn !== t\) return;/.test(arm));
 check('the watchdog is HERMES-lane only (the other lanes have no heartbeat and a '
     + 'long local prefill emits nothing — arming there would kill healthy turns)',
   /HERMES lane only/.test(arm) || /hermes/i.test(arm));
