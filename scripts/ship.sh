@@ -131,17 +131,39 @@ lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
 sleep 1
 open "$APP"
 
+# 90s, not 30: a cold snapshot bridge (imports + registry read) can legitimately
+# take longer than 30s, and the old loop then FELL THROUGH and printed "bridge is
+# up" regardless — a false green that reads as a successful ship.
+SHIP_WAIT_S=90
+UP=0
 printf "[ship] waiting for the bridge"
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "$SHIP_WAIT_S"); do
   if curl -sf http://127.0.0.1:8700/status >/dev/null 2>&1 || \
      curl -sf http://127.0.0.1:8700/ >/dev/null 2>&1; then
-    break
+    UP=1; break
   fi
   printf "."; sleep 1
 done
 echo
 
-MARK="$(curl -s http://127.0.0.1:8700/openapi.json | python3 -c 'import sys,hashlib; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])' 2>/dev/null || echo none)"
+if [[ "$UP" -ne 1 ]]; then
+  echo "[ship] BRIDGE DID NOT COME UP within ${SHIP_WAIT_S}s — check data/logs/bridge.log (tail below)"
+  if [[ -f "$DST/data/logs/bridge.log" ]]; then
+    tail -15 "$DST/data/logs/bridge.log" || true
+  else
+    echo "[ship] (no $DST/data/logs/bridge.log yet)"
+  fi
+  exit 1
+fi
+
+# An EMPTY curl body still hashes — to da39a3ee (sha1 of nothing). Printing that as
+# a "fingerprint" alongside "bridge is up" is how a half-started bridge looked green.
+API_JSON="$(curl -s http://127.0.0.1:8700/openapi.json 2>/dev/null || true)"
 SNAP="$(python3 -c 'import hashlib; print(hashlib.sha1(open("'"$DST"'/bridge/app.py","rb").read()).hexdigest()[:8])' 2>/dev/null || echo none)"
-echo "[ship] bridge is up (api fingerprint $MARK, snapshot app.py $SNAP)"
+if [[ -z "$API_JSON" ]]; then
+  echo "[ship] bridge is up (fingerprint unavailable (bridge still starting?), snapshot app.py $SNAP)"
+else
+  MARK="$(printf '%s' "$API_JSON" | python3 -c 'import sys,hashlib; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])' 2>/dev/null || echo none)"
+  echo "[ship] bridge is up (api fingerprint $MARK, snapshot app.py $SNAP)"
+fi
 echo "[ship] done — the served code now matches the repo. ⌘R open tabs if the panel looks stale."

@@ -301,5 +301,66 @@ check("ask path never auto-answers or auto-sends",
       "convSend" not in _ASK and "sendChat" not in _ASK
       and "setTimeout" not in _ASK)
 
+# ── MULTI-SELECT v2 (2026-08-14): toggleable chips + a confirm ───────────────
+# v1 rendered multi_select as a faint hint and made the user do the joining by hand.
+check("multi_select is decided from the frame, not assumed",
+      "const multi = !!(req && req.multi_select) && opts.length > 0;" in _ASK)
+check("multi-select chips TOGGLE instead of answering",
+      "b.classList.toggle('on'," in _ASK and "picked.splice(i, 1)" in _ASK)
+check("a single-select chip still answers on the first click",
+      "b.onclick = () => answerHermes(card, o);" in _ASK)
+# Indexes, not labels: two choices may legitimately carry the same text and must then
+# toggle independently — keying on the label would move them as one.
+check("picks are tracked by option INDEX (duplicate labels stay independent)",
+      "const picked = [];" in _ASK and "picked.indexOf(idx)" in _ASK
+      and "picked.map(i => opts[i])" in _ASK)
+check("the confirm chip names the count and is dead until something is picked",
+      "'answer with ' + picked.length + ' selected'" in _ASK
+      and "goBtn.disabled = picked.length === 0;" in _ASK)
+check("the confirm chip is an ordinary .ap-btn (frozen by expire/disable like the rest)",
+      "goBtn.className = 'ap-btn ask-go'" in _ASK)
+check("a frozen card cannot be toggled or confirmed",
+      "if (card._done || b.disabled) return;" in _ASK
+      and "if (card._done || !picked.length) return;" in _ASK)
+check("the selected look reuses the gold .on grammar (one new CSS rule, outline only)",
+      ".cmsg .approval .ap-btn.on { color:var(--gold); border-color:var(--gold); }" in _PANEL)
+check("the collapsed card shows the labels, not the wire string",
+      "{label: labels.join(', ')}" in _PANEL and "esc(shown)" in _PANEL)
+# NEGATIVE: still nothing automatic, and the free-text/cancel paths are untouched.
+check("multi-select adds no timer and no auto-confirm",
+      "setTimeout" not in _ASK and "click()" not in _ASK)
+
+# ── askJoin (the shipped panel JS, run under node) ───────────────────────────
+# The join is the whole wire contract with upstream's _parse_multi_select_response
+# (vendor/hermes/tools/clarify_tool.py:86), so it is EXECUTED, not grepped.
+import shutil, subprocess, json as _json
+_node = shutil.which("node")
+if not _node:
+    print("  -- node unavailable, askJoin cases skipped")
+else:
+    _src = _PANEL.split("function askJoin(", 1)[1]
+    _src = "function askJoin(" + _src[:_src.index("\n}") + 2]
+    _cases = [
+        (["Functionality"], "Functionality"),
+        (["Functionality", "Performance"], "Functionality, Performance"),
+        ([], ""),
+        (["a", "b", "c"], "a, b, c"),
+        # a label containing a comma would be re-split by upstream → JSON-array form
+        (["Speed, latency", "Cost"], '["Speed, latency","Cost"]'),
+        (["one"], "one"),
+    ]
+    _script = _src + "\nconsole.log(JSON.stringify(" + _json.dumps(
+        [c[0] for c in _cases]) + ".map(askJoin)));"
+    _out = subprocess.run([_node, "-e", _script], capture_output=True, text=True)
+    assert _out.returncode == 0, _out.stderr
+    _got = _json.loads(_out.stdout.strip())
+    for (_inp, _want), _g in zip(_cases, _got):
+        check(f"askJoin({_inp!r}) -> {_want!r}", _g == _want)
+    # totality: junk must not throw (a hostile frame can reach here)
+    _script2 = _src + "\nconsole.log(JSON.stringify([askJoin(null), askJoin(undefined)]));"
+    _out2 = subprocess.run([_node, "-e", _script2], capture_output=True, text=True)
+    check("askJoin is total (null/undefined -> '')",
+          _out2.returncode == 0 and _json.loads(_out2.stdout.strip()) == ["", ""])
+
 print(f"PASS {PASS}/{PASS}")
 sys.exit(0)

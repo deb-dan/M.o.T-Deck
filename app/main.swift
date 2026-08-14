@@ -316,6 +316,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var splitOn = false
     var rightTab = 1
     var focusedPane = 0              // 0 = left, 1 = right — the tab strip's + ⌘R's target
+    // ── second instances ("ghosts") ──
+    // Debi's ask: dragging a tab the OTHER pane already shows should be able to open a
+    // SECOND copy of that app here instead of always swapping. The strip KEEPS the swap
+    // (clicking it stays predictable); the DRAG gained this power.
+    //
+    // The whole state addition is two booleans. A ghost can only exist while both panes
+    // hold the SAME tab, and the PRIMARY webview always lives in exactly one pane — so
+    // "which pane holds the copy" is the only fact to remember. At most one is true;
+    // both false is the ordinary two-different-tabs state.
+    var leftIsGhost = false
+    var rightIsGhost = false
+    // Lazily created, keyed by tab index. Destroyed the moment no pane shows them
+    // (see releaseUnusedGhosts) — the primaries are never destroyed.
+    var secondInstances: [Int: WKWebView] = [:]
     var clickMonitor: Any?
     // ── drag a tab onto a pane ──
     // Second monitor, deliberately separate from clickMonitor (which only ever cares
@@ -1056,11 +1070,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // swap) against that pane. Split OFF → a drop on the LEFT half is just a tab switch,
     // and a drop on the RIGHT half OPENS the split with the dragged tab on the right.
     func dropTab(_ tab: Int, onPane p: Int) {
+        // Would this drop collide with what the OTHER pane already shows? Then it is a
+        // request for a SECOND INSTANCE, not a swap — that is the point of this slice.
+        // With the split OFF the "other pane" is the single pane itself, so dropping its
+        // own tab on the right half is the same request and opens the split with BOTH
+        // panes on that app. (A drop of the current tab on the LEFT half still falls
+        // through to routeTab, where it is the no-op it always was.)
+        let other = splitOn ? (p == 1 ? currentTab : rightTab) : currentTab
+        if tab == other && (splitOn || p == 1) {
+            openSecondInstance(tab, onPane: p)
+            return
+        }
         if p == 1 && !splitOn {
-            // ⚠️ dropping the tab the single pane is ALREADY showing onto the right half
-            // has no sibling to swap with, so the tab MOVES right and the left takes the
-            // next one — the same step ⫽ itself makes.
-            if tab == currentTab { currentTab = (tab + 1) % tabTitles.count }
             rightTab = tab
             persistTabs()
             ensureLoaded(currentTab)
@@ -1078,6 +1099,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         setFocus(p)      // the pane you dropped onto becomes the focused one (syncs the strip)
         syncStrip()
         slog("drag -> tab \(tab) to pane \(p) (left=\(currentTab) right=\(rightTab))")
+    }
+
+    // ── second instances ("ghosts") ──
+
+    // Tab → URL, independent of any webview identity. urlFor(_:) resolves by IDENTITY and
+    // therefore cannot answer for a ghost, so both now go through this one table.
+    func urlForTab(_ idx: Int) -> URL {
+        switch idx {
+        case 1: return odysseusURL
+        case 2: return hermesURL
+        case 3: return voiceStudioURL
+        case 4: return voiceboxURL
+        default: return bridgeURL
+        }
+    }
+
+    // Create-on-first-need. The configuration is COPIED FROM THE PRIMARY (WKWebView's
+    // `configuration` getter returns a copy), which is what carries the Odysseus skin
+    // user script and the default website data store — so the second instance is styled
+    // like the first and shares its cookies/login rather than asking to log in again.
+    //
+    // ⚠️ a plain WKWebView, deliberately NOT a DropWebView: file-drop handling belongs to
+    // Mission Control's PRIMARY, and applyPanes keeps the DropOverlay with that one. A
+    // ghost of the panel tab (idx 0) is allowed, but you cannot drop files onto it.
+    func ghostFor(_ idx: Int) -> WKWebView {
+        if let g = secondInstances[idx] { return g }
+        let wv = WKWebView(frame: .zero, configuration: webViewFor(idx).configuration)
+        wv.translatesAutoresizingMaskIntoConstraints = false
+        wv.uiDelegate = self
+        wv.navigationDelegate = self
+        if #available(macOS 12.0, *) { wv.underPageBackgroundColor = paneInk }
+        secondInstances[idx] = wv
+        wv.load(URLRequest(url: urlForTab(idx)))
+        slog("ghost -> created \(tabTitles[idx])")
+        return wv
+    }
+
+    // Memory discipline: a ghost lives only as long as a pane is showing it. The PRIMARY
+    // is never destroyed, so closing the pane that holds the primary keeps the primary and
+    // discards the copy — ⚠️ which means that copy's own navigation state is lost, by
+    // design (there is nowhere honest to put it once there is one pane again).
+    func destroyGhost(_ idx: Int) {
+        guard let g = secondInstances.removeValue(forKey: idx) else { return }
+        g.stopLoading()
+        g.navigationDelegate = nil
+        g.uiDelegate = nil
+        failedLoads.remove(ObjectIdentifier(g))
+        g.removeFromSuperview()   // last strong reference goes with the dictionary entry
+        slog("ghost -> destroyed \(tabTitles[idx])")
+    }
+
+    // Called from applyPanes AFTER the ghost flags are normalised: anything the flags no
+    // longer claim is gone. That single rule covers closing the split, closing either
+    // pane, and moving a pane to a different tab.
+    func releaseUnusedGhosts() {
+        for idx in Array(secondInstances.keys) {   // Array(): the dict is mutated in here
+            let keptLeft = leftIsGhost && idx == currentTab
+            let keptRight = splitOn && rightIsGhost && idx == rightTab
+            if !keptLeft && !keptRight { destroyGhost(idx) }
+        }
+    }
+
+    // Show `tab` in pane `p` as a SECOND instance, the other pane keeping the primary.
+    // Only reachable from a drag (dropTab); the strip still swaps.
+    func openSecondInstance(_ tab: Int, onPane p: Int) {
+        if p == 1 {
+            rightTab = tab
+            rightIsGhost = true
+            leftIsGhost = false      // the left pane keeps/takes the primary
+            currentTab = tab
+        } else {
+            currentTab = tab
+            leftIsGhost = true
+            rightIsGhost = false     // the right pane keeps the primary
+            rightTab = tab
+        }
+        persistTabs()                // ⚠️ writes left == right; a relaunch repairs that to
+                                     // the swap-based arrangement (ghosts are NOT persisted)
+        ensureLoaded(tab)            // the primary loads on first borrow, exactly as before
+        _ = ghostFor(tab)            // the copy loads itself on creation
+        if !splitOn { setSplit(true, persist: true) }   // setSplit calls applyPanes
+        else { applyPanes() }
+        setFocus(p)
+        syncStrip()
+        slog("ghost -> tab \(tab) as a second instance in pane \(p) (left=\(currentTab) right=\(rightTab) leftGhost=\(leftIsGhost) rightGhost=\(rightIsGhost))")
     }
 
     // ✕ closes THAT pane: split turns off, the SURVIVOR's tab becomes the one tab, and
@@ -1234,9 +1340,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         ])
     }
 
-    // Place every webview. The swap rule keeps currentTab != rightTab whenever split is
-    // on, so `rightBorrows` is true in every normal state; the placeholder branch is a
-    // SAFETY NET for a state we should never be asked for, not a routine outcome.
+    // Place every webview. `rightBorrows` (two DIFFERENT tabs) is the ordinary state; the
+    // other legitimate one is "same tab, one pane holding a second instance". The
+    // placeholder branch remains a SAFETY NET for a state we should never be asked for.
     //
     // attach() early-returns when a view is already in the right host, so calling this
     // when nothing changed reparents nothing — no relayout, no page reload, no thrash.
@@ -1244,25 +1350,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let leftIdx = currentTab
         let rightBorrows = splitOn && rightTab != leftIdx
 
-        for (i, wv) in allWebViews().enumerated() {
-            if i == leftIdx { continue }
-            if rightBorrows && i == rightTab { continue }
+        // Normalise the ghost flags before anything reads them: a copy only makes sense
+        // while both panes hold the same tab, and only one pane can hold the copy.
+        if !splitOn || rightTab != leftIdx { leftIsGhost = false; rightIsGhost = false }
+        if leftIsGhost && rightIsGhost { rightIsGhost = false }
+        releaseUnusedGhosts()
+
+        // Which VIEW each pane holds. `rightWV == nil` while the split is ON is the OLD
+        // safety-net state (both panes asking for the same tab with no copy anywhere) and
+        // still renders the placeholder — it should be unreachable, not silently blank.
+        let leftWV: WKWebView = leftIsGhost ? ghostFor(leftIdx) : webViewFor(leftIdx)
+        var rightWV: WKWebView? = nil
+        if splitOn {
+            if rightIsGhost { rightWV = ghostFor(rightTab) }
+            else if rightBorrows || leftIsGhost { rightWV = webViewFor(rightTab) }
+        }
+
+        // Park every primary neither pane is showing (ghosts are never parked — they are
+        // destroyed instead, above).
+        for wv in allWebViews() where wv !== leftWV && wv !== rightWV {
             attach(wv, to: park)     // park is hidden → same effect as the old isHidden
         }
-        attach(webViewFor(leftIdx), to: leftHost)
-        if rightBorrows {
+        attach(leftWV, to: leftHost)
+        if let r = rightWV {
             if rightPlaceholder.superview != nil { rightPlaceholder.removeFromSuperview() }
-            attach(webViewFor(rightTab), to: rightHost)
+            attach(r, to: rightHost)
         } else if splitOn {
             attach(rightPlaceholder, to: rightHost)
         }
 
-        // The DropOverlay follows Mission Control's pane — file drops belong to it only.
-        // It must stay ABOVE the webview it guards, so it is re-added when (and only
-        // when) its host changed or a webview landed on top of it.
+        // The DropOverlay follows Mission Control's PRIMARY webview — file drops belong to
+        // it only, so a panel ghost gets no overlay. It must stay ABOVE the webview it
+        // guards, so it is re-added when (and only when) its host changed or a webview
+        // landed on top of it.
         if let ov = dropOverlay {
-            let target: NSView? = (leftIdx == 0) ? leftHost
-                                : ((rightBorrows && rightTab == 0) ? rightHost : nil)
+            let target: NSView? = (leftWV === panelWV) ? leftHost
+                                : ((rightWV === panelWV) ? rightHost : nil)
             if let t = target {
                 if ov.superview !== t { attach(ov, to: t) }
                 else if t.subviews.last !== ov { ov.removeFromSuperview(); attach(ov, to: t) }
@@ -1274,13 +1397,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Permanent diagnostics: `log stream --predicate 'process == "Harness"'`, or just
         // run the binary from a terminal, and one click tells you exactly what fired and
         // what widths came out of it. Cheap; keeps this class of bug one paste away.
-        slog("applyPanes left=\(leftIdx) right=\(rightTab) focus=\(focusedPane) borrows=\(rightBorrows) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
+        slog("applyPanes left=\(leftIdx) right=\(rightTab) focus=\(focusedPane) borrows=\(rightBorrows) ghosts=\(leftIsGhost ? "L" : "-")\(rightIsGhost ? "R" : "-")(\(secondInstances.count)) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
     }
 
     func makeRightPlaceholder() -> NSView {
-        // v2 SAFETY NET only. The swap rule means the two panes can never ask for the
-        // same tab, so this should be unreachable — it exists so that an impossible
-        // state renders something honest instead of an empty pane. It cannot BE
+        // v2 SAFETY NET only. The two panes CAN now hold the same tab — but when they do,
+        // one of them holds a second instance of it, so this is still unreachable: it
+        // exists so that a state with neither a distinct tab nor a copy renders something
+        // honest instead of an empty pane. It cannot BE
         // showUnreachable: that mechanism loads HTML into a webview, and the premise
         // here is that the webview is busy in the other pane.
         let v = NSView()
@@ -1308,13 +1432,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         return min(proposedMax, sv.bounds.width - 420)
     }
 
-    // The pane ⌘R acts on: the last one clicked (left when split is off).
+    // The pane ⌘R acts on: the last one clicked (left when split is off). A pane showing a
+    // SECOND INSTANCE reloads that copy, not the primary in the other pane.
     func visibleWebView() -> WKWebView? {
-        if focusedPane == 1 && splitOn && rightTab != currentTab { return webViewFor(rightTab) }
+        if focusedPane == 1 && splitOn && (rightTab != currentTab || rightIsGhost) {
+            return rightIsGhost ? secondInstances[rightTab] : webViewFor(rightTab)
+        }
+        if leftIsGhost { return secondInstances[currentTab] }
         return webViewFor(currentTab)
     }
 
     func urlFor(_ wv: WKWebView) -> URL {
+        // A second instance is not one of the five primaries, so ask the ghost table first
+        // — otherwise a ⌘R / retry on a ghost would send it to the bridge's URL.
+        if let hit = secondInstances.first(where: { $0.value === wv }) { return urlForTab(hit.key) }
         if wv === odyWV { return odysseusURL }
         if wv === hermesWV { return hermesURL }
         if wv === vsWV { return voiceStudioURL }

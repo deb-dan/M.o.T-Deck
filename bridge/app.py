@@ -4143,6 +4143,94 @@ def _hermes_stale_sid(err: Exception) -> bool:
     return "session" in s and ("not found" in s or "unknown" in s or "no such" in s)
 
 
+# ── MAX TURN TIME (2026-08-14) ────────────────────────────────────────────────
+# A 4B thinking model can spiral into a deliberation loop that never terminates:
+# it keeps EMITTING, so the relay's 20s-silence watchdogs never fire and the only
+# remaining bound was the 600s TOTAL-SILENCE hard guard — which such a turn never
+# trips either (it is not silent). Even when a guard did fire, only the RELAY gave
+# up: Hermes kept generating and kept cooking the CPU. So this guard is armed at
+# prompt.submit, measures TOTAL turn time (not silence), is checked on the EVENT
+# path as well as on the timeout tick, and its remedy is session.interrupt — it
+# kills the GENERATION, not just the stream.
+HERMES_MAX_TURN_S_DEFAULT = 600.0
+
+
+def hermes_max_turn_s(conf) -> float:
+    """Resolve `hermes.max_turn_s` (seconds). PURE.
+
+    0 (or negative) = DISABLED. Absent OR unparseable = the 600s default: this is
+    a safety guard, so a typo must not silently switch it off — disabling has to be
+    a deliberate `0`. Top-level `hermes:` block (NOT components.hermes) because
+    ship.sh's manifest merge is additive at the TOP level only: a new sub-key under
+    the already-present components.hermes would never reach the app snapshot.
+    """
+    try:
+        h = (conf or {}).get("hermes")
+    except Exception:
+        return HERMES_MAX_TURN_S_DEFAULT
+    if not isinstance(h, dict) or "max_turn_s" not in h:
+        return HERMES_MAX_TURN_S_DEFAULT
+    v = h.get("max_turn_s")
+    if isinstance(v, bool) or v is None:
+        return HERMES_MAX_TURN_S_DEFAULT
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return HERMES_MAX_TURN_S_DEFAULT
+    if f != f or f in (float("inf"), float("-inf")):   # NaN / inf
+        return HERMES_MAX_TURN_S_DEFAULT
+    return 0.0 if f <= 0 else f
+
+
+def hermes_turn_spent(now: float, started_at: float,
+                      paused_total: float = 0.0, paused_since=None) -> float:
+    """Turn time that COUNTS against the budget. PURE.
+
+    Wall clock since prompt.submit MINUS every interval spent waiting on an
+    interactive card (approval / clarify): a card that legitimately waits for Debi
+    must never be shot. `paused_total` is the sum of closed pauses; `paused_since`
+    is the start of the pause still open (None if not paused). Never negative.
+    """
+    spent = float(now) - float(started_at) - float(paused_total or 0.0)
+    if paused_since is not None:
+        spent -= max(0.0, float(now) - float(paused_since))
+    return spent if spent > 0 else 0.0
+
+
+def hermes_turn_overrun(spent_s: float, budget_s: float) -> bool:
+    """Has the turn blown its budget? PURE. budget <= 0 = disabled = never."""
+    try:
+        b = float(budget_s)
+        s = float(spent_s)
+    except (TypeError, ValueError):
+        return False
+    if not (b > 0):
+        return False
+    return s >= b
+
+
+def hermes_overrun_error(budget_s: float) -> str:
+    """The exact user-facing line for an overrun turn. PURE."""
+    n = int(budget_s) if float(budget_s) == int(float(budget_s)) else float(budget_s)
+    return (f"turn exceeded {n}s — interrupted server-side "
+            "(hermes.max_turn_s)")
+
+
+async def _hermes_kill_turn(sid: str, spent_s: float, budget_s: float) -> None:
+    """Stop the GENERATION for an over-budget turn + leave a durable trace.
+
+    Best-effort by design: whether or not the RPC lands, the relay ends the turn
+    (an unreachable gateway is exactly the case where the stream must still close).
+    """
+    print(f"[hermes] turn exceeded max_turn_s ({spent_s:.0f}s >= {budget_s:.0f}s) "
+          f"— sending session.interrupt for {sid or '?'}", flush=True)
+    try:
+        await _HERMES.rpc("session.interrupt", {"session_id": sid}, timeout=10.0)
+        print("[hermes] session.interrupt acknowledged", flush=True)
+    except Exception as e:
+        print(f"[hermes] session.interrupt FAILED: {str(e)[:200]}", flush=True)
+
+
 async def _hermes_session_working(sid: str) -> bool:
     """Best-effort probe: is this gateway session still running a turn?
 
@@ -4224,10 +4312,25 @@ async def hermes_chat(req: Request) -> StreamingResponse:
             #   • stop fallback: /api/hermes/stop nudges this queue with a
             #     _stop_requested sentinel; if no terminal event lands within ~3s
             #     the relay ends the turn itself;
-            #   • hard guard: 600s of TOTAL silence still aborts (unchanged).
+            #   • hard guard: 600s of TOTAL silence still aborts (unchanged);
+            #   • MAX TURN TIME (hermes.max_turn_s, default 600s, 0 = off): TOTAL
+            #     turn time from submit, checked on the EVENT path too — a runaway
+            #     deliberation loop keeps emitting, so every silence-based guard is
+            #     blind to it. Remedy is session.interrupt: the generation stops,
+            #     not just the stream. The clock PAUSES while an interactive card
+            #     is pending (see below) so a card waiting for Debi is never shot.
             got_any = False
             silent = 0.0
             noted_slow = False
+            # Read ONCE, at submit: a config edit mid-turn must not retune a live
+            # turn (same rule as the voice hangover read at capture time).
+            try:
+                max_turn = hermes_max_turn_s(cfg())
+            except Exception:
+                max_turn = HERMES_MAX_TURN_S_DEFAULT
+            turn_started = asyncio.get_running_loop().time()
+            pause_total = 0.0
+            pause_since = None
             # An INTERACTIVE CARD awaits the user: a Phase-2 approval, or (2026-08-14)
             # a clarify/ask card. Both block the agent thread on a gateway prompt, so
             # neither is "silence" — the watchdogs must not read them as a dead turn.
@@ -4254,6 +4357,22 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     # gone". Without it the panel could only wait out the 600s
                     # hard guard, which is what "stuck forever" felt like.
                     yield 'data: {"type":"hermes_ping"}\n\n'
+                    # Total-turn-time guard FIRST: it is the only one that also
+                    # stops Hermes, so when two guards come due on the same tick
+                    # the one that kills the generation should win.
+                    _spent = hermes_turn_spent(
+                        asyncio.get_running_loop().time(), turn_started,
+                        pause_total, pause_since)
+                    if hermes_turn_overrun(_spent, max_turn):
+                        await _hermes_kill_turn(sid, _spent, max_turn)
+                        yield ('data: {"type":"hermes_status","text":'
+                               + _json.dumps(hermes_overrun_error(max_turn))
+                               + '}\n\n')
+                        yield ('data: '
+                               + _json.dumps({"type": "proxy_error",
+                                              "error": hermes_overrun_error(max_turn)})
+                               + '\n\n')
+                        break
                     if not got_any and silent >= 60.0:
                         yield ('data: {"type":"proxy_error","error":'
                                '"no response from Hermes within 60s of submit — '
@@ -4300,8 +4419,18 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 # events only flow once resolve_gateway_approval / clarify.respond
                 # unblocked the agent thread). clarify.expire is "any other event",
                 # which is exactly right: an expired card is no longer pending.
+                _was_pending = approval_pending
                 approval_pending = ((ev or {}).get("type")
                                     in ("approval.request", "clarify.request"))
+                # PAUSE the max-turn clock for the whole time a card is on screen:
+                # a user deciding is not the model burning CPU, and shooting a turn
+                # that is WAITING FOR DEBI would be the worst failure of this guard.
+                _now = asyncio.get_running_loop().time()
+                if approval_pending and not _was_pending:
+                    pause_since = _now
+                elif _was_pending and not approval_pending and pause_since is not None:
+                    pause_total += max(0.0, _now - pause_since)
+                    pause_since = None
                 frames, action = hermes_event_to_frames(ev)
                 for fr in frames:
                     if fr.get("type") == "file_card":
@@ -4319,6 +4448,20 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                         _guard_audit(fr.get("path"), fr.get("tool"), sid, stored_sid)
                     yield f"data: {_json.dumps(fr, ensure_ascii=False)}\n\n"
                 if action == "done":
+                    break
+                # THE branch that matters for a runaway loop: a spiralling model
+                # emits continuously, so this is the only place the guard can see
+                # it (the timeout tick above never fires while events flow).
+                _spent = hermes_turn_spent(asyncio.get_running_loop().time(),
+                                           turn_started, pause_total, pause_since)
+                if hermes_turn_overrun(_spent, max_turn):
+                    await _hermes_kill_turn(sid, _spent, max_turn)
+                    yield ('data: {"type":"hermes_status","text":'
+                           + _json.dumps(hermes_overrun_error(max_turn)) + '}\n\n')
+                    yield ('data: '
+                           + _json.dumps({"type": "proxy_error",
+                                          "error": hermes_overrun_error(max_turn)})
+                           + '\n\n')
                     break
         except Exception as e:
             yield f'data: {_json.dumps({"type": "proxy_error", "error": str(e)[:300]})}\n\n'

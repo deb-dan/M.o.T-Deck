@@ -284,6 +284,10 @@
   /* FABLE style pass: the affirmative choices get the composer chips' gold hover;
      Deny stays faint — no gold, so the destructive-but-safe option never invites. */
   .cmsg .approval .ap-btn:not(.deny):hover:enabled { border-color:var(--gold); color:var(--cream); }
+  /* multi-select ask cards (v2, 2026-08-14): a PICKED option. Same gold-outline "on"
+     idiom #mode-browse.on uses — outline, never fill, so the confirm chip stays the
+     one primary action on the card. */
+  .cmsg .approval .ap-btn.on { color:var(--gold); border-color:var(--gold); }
   .cmsg .approval .ap-btn.deny { color:var(--faint); border-color:var(--line); }
   .cmsg .approval .ap-btn.deny:hover:enabled { color:var(--faint); border-color:var(--line); }
   .cmsg .approval .ap-btn:disabled { opacity:.45; cursor:default; }
@@ -947,9 +951,40 @@
   html[data-chrome="compact"] #chat-auto,
   html[data-chrome="compact"] #chat-conv {
     font-size:9.5px; padding:4px 8px; letter-spacing:normal; border-radius:6px; }
-  /* (2) primary buttons read firmer */
-  html[data-chrome="compact"] button.primary { border-radius:8px; border-width:1px; }
+  /* (2) primary buttons read firmer. The cream fill is RESTATED here because (3)
+     below ties with the base `button.primary` rule (both 0-1-1) and would win on
+     source order, flattening the one filled button in the panel. */
+  html[data-chrome="compact"] button.primary {
+    border-radius:8px; border-width:1px;
+    background:var(--cream); border-color:var(--cream); }
   html[data-chrome="compact"] #chat-send { padding:6px 12px; letter-spacing:normal; }
+  /* (3) THE BARE <button> — the 2026-08-14 miss that made the toggle look DEAD.
+     Mission Control's Start / Stop / Install / Logs / Retry, every .md-actions row,
+     the download rows and the setup checklist are UNCLASSED <button>s (base rule:
+     `button { … border-radius:9px; padding:7px 15px }` above), so not one of the
+     chip rules in (1) reached them: on the opening screen the whole axis came down
+     to a 1px radius change. `:not(.primary)` on the hover leaves the cream button's
+     own hover alone, and `.cmsg .msg-act` (0-2-0) still outranks this, so the
+     per-message Copy / Edit / Fork / Delete row stays borderless text. */
+  html[data-chrome="compact"] button {
+    font-size:12px; padding:6px 13px; border-radius:6px;
+    background:var(--card2); border-color:var(--line2); }
+  html[data-chrome="compact"] button:hover:not(.primary) {
+    background:var(--card); border-color:var(--gold); color:var(--cream); }
+  /* (4) Capabilities action buttons (Add server / presets / reset override) */
+  html[data-chrome="compact"] .cap-btn {
+    font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
+    background:var(--card2); border-radius:6px; padding:5px 11px; }
+  html[data-chrome="compact"] .cap-btn:hover {
+    background:var(--card); border-color:var(--gold); color:var(--cream); }
+  /* (5) approval + ask-card choice chips. The base selector is
+     `.cmsg .approval .ap-btn` (0-3-0), so the same three classes are needed HERE or
+     the attribute prefix alone (0-2-1) would silently lose — the one place in this
+     block where specificity, not coverage, is the hazard. Sets NO color and NO
+     border-color on purpose: a multi-select pick's gold `.on` state must still win. */
+  html[data-chrome="compact"] .cmsg .approval .ap-btn {
+    font:11px var(--chrome-font); letter-spacing:normal;
+    background:var(--card2); border-radius:6px; padding:5px 12px; }
   /* ============================ end compact chrome ============================== */
 </style>
 <script>
@@ -7669,25 +7704,58 @@ function chatAsk(holder, req){
     };
     card.appendChild(ex);
   }
-  // ⚠ PENDING FABLE QA: multi_select is NOT rendered as checkboxes in v1 — a
-  // single pick still parses as a one-element list on the tool side (upstream
-  // says so itself, tui_gateway/server.py:5379-5387), and the free-text box
-  // accepts a comma-separated answer, which is exactly what upstream's
-  // _parse_multi_select_response expects. Shown as a faint hint instead of
-  // silently pretending the mode doesn't exist.
-  if (req && req.multi_select && opts.length){
+  // MULTI-SELECT (v2, 2026-08-14): when the frame says multi_select the option chips
+  // become TOGGLES and a confirm chip joins the picks into the one answer string the
+  // tool side already knows how to read (askJoin below). v1 rendered a hint instead;
+  // a single pick still parses as a one-element list upstream, so the hint was honest
+  // — it just made the user do the joining by hand in the free-text box.
+  const multi = !!(req && req.multi_select) && opts.length > 0;
+  if (multi){
     const h = document.createElement('div'); h.className = 'dim';
     h.style.margin = '0 0 6px';
     h.style.font = '10.5px var(--mono)';
-    h.textContent = 'several answers allowed — pick one, or type them comma-separated';
+    h.textContent = 'several answers allowed — pick any number, then confirm';
     card.appendChild(h);
   }
   const row = document.createElement('div'); row.className = 'ap-row';
-  for (const o of opts){
+  // option INDEXES in the order they were picked — indexes, not labels, because two
+  // choices are allowed to carry the same text and must then toggle independently.
+  const picked = [];
+  let goBtn = null;
+  const syncGo = () => {
+    if (!goBtn) return;
+    goBtn.disabled = picked.length === 0;
+    goBtn.textContent = picked.length
+      ? 'answer with ' + picked.length + ' selected'
+      : 'select at least one';
+  };
+  opts.forEach((o, idx) => {
     const b = document.createElement('button'); b.className = 'ap-btn';
     b.textContent = o;
-    b.onclick = () => answerHermes(card, o);
+    if (multi){
+      // Toggle, never answer: the LABEL is the wire value (there is no index
+      // protocol upstream), so what gets answered is exactly what was displayed.
+      b.onclick = () => {
+        if (card._done || b.disabled) return;
+        const i = picked.indexOf(idx);
+        if (i >= 0) picked.splice(i, 1); else picked.push(idx);
+        b.classList.toggle('on', picked.indexOf(idx) >= 0);
+        syncGo();
+      };
+    } else {
+      b.onclick = () => answerHermes(card, o);
+    }
     row.appendChild(b);
+  });
+  if (multi){
+    goBtn = document.createElement('button'); goBtn.className = 'ap-btn ask-go';
+    goBtn.onclick = () => {
+      if (card._done || !picked.length) return;
+      const labels = picked.map(i => opts[i]);
+      answerHermes(card, askJoin(labels), {label: labels.join(', ')});
+    };
+    syncGo();
+    row.appendChild(goBtn);
   }
   // The cancel chip IS upstream's own skip: an empty answer is what
   // _clear_pending sends when a session is interrupted, so the agent gets the
@@ -7722,9 +7790,24 @@ function chatAsk(holder, req){
   return card;
 }
 
+// PURE. A multi-select answer travels as ONE string. Upstream's
+// _parse_multi_select_response (vendor/hermes/tools/clarify_tool.py:86) accepts three
+// forms — an actual list, a JSON array, or comma-separated — so comma-separated is the
+// plain choice. But it splits on "," unconditionally, which would turn a single choice
+// whose LABEL contains a comma into two answers; in that case the JSON-array form is
+// used instead (same function, `raw.startswith("[")` branch), which cannot be
+// mis-split. Upstream strips each element, so the space after the comma is free.
+function askJoin(labels){
+  const a = (labels || []).map(String);
+  return a.some(s => s.indexOf(',') >= 0) ? JSON.stringify(a) : a.join(', ');
+}
+
 async function answerHermes(card, answer, opts){
   if (card._done) return;
   const cancel = !!(opts && opts.cancel);
+  // What the collapsed card SHOWS may differ from what went on the wire (a JSON-array
+  // multi-select answer would be unreadable) — never the other way round.
+  const shown = (opts && opts.label) || String(answer);
   for (const el of card.querySelectorAll('.ap-btn, .ask-text')) el.disabled = true;
   const old = card.querySelector('.ap-err'); if (old) old.remove();
   try {
@@ -7745,7 +7828,7 @@ async function answerHermes(card, answer, opts){
     const done = document.createElement('div'); done.className = 'ap-done';
     done.innerHTML = cancel
       ? '<span class="no">✗</span> cancelled'
-      : `<span class="ok">✓</span> ${esc(String(answer))}`;
+      : `<span class="ok">✓</span> ${esc(shown)}`;
     card.appendChild(done);
   } catch (e){
     const err = document.createElement('div'); err.className = 'ap-err';

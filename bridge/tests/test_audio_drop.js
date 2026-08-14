@@ -120,9 +120,13 @@ check('the placeholder survives as a safety net',
 check('applyPanes does not thrash reparents when nothing changed',
       /func attach\([\s\S]{0,120}if v\.superview === host \{ return \}/.test(swift) &&
       /if ov\.superview !== t \{ attach\(ov, to: t\) \}/.test(swift));
-check('the DropOverlay follows Mission Control\'s pane host',
-      /let target: NSView\? = \(leftIdx == 0\) \? leftHost/.test(swift) &&
-      /rightBorrows && rightTab == 0\) \? rightHost : nil/.test(swift));
+// UPDATED HONESTLY for the second-instance slice: the overlay used to be located by TAB
+// INDEX, which cannot distinguish Mission Control's primary from a second instance of it.
+// It now follows the primary webview by IDENTITY — strictly stronger, and it is what keeps
+// file drops attached to the one webview that handles them.
+check('the DropOverlay follows Mission Control\'s PRIMARY webview, by identity',
+      /let target: NSView\? = \(leftWV === panelWV\) \? leftHost/.test(swift) &&
+      /\(rightWV === panelWV\) \? rightHost : nil/.test(swift));
 check('⌘R targets the focused pane',
       /func visibleWebView\(\)[\s\S]{0,300}focusedPane == 1/.test(swift));
 check('the split diagnostics name focus and both tabs',
@@ -162,12 +166,15 @@ check('Esc and a release outside the content area both cancel',
 check('the drop target is the real pane when split is on, the half when it is off',
       /func paneTarget\(for wp: NSPoint\) -> Int\?[\s\S]{0,600}rightPane\.bounds\.contains[\s\S]{0,120}return 1/.test(swift) &&
       /return wp\.x < c\.midX \? 0 : 1/.test(swift));
+// Distance widened 600→900: the collision branch now precedes this one inside dropTab.
 check('a drop on the right half with the split OFF opens the split',
-      /func dropTab\(_ tab: Int, onPane p: Int\)[\s\S]{0,600}if p == 1 && !splitOn \{[\s\S]{0,700}setSplit\(true, persist: true\)/.test(swift));
-check('a drop with the split ON reuses the shared routing rule + swap',
-      /func dropTab\([\s\S]{0,1300}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
+      /func dropTab\(_ tab: Int, onPane p: Int\)[\s\S]{0,900}if p == 1 && !splitOn \{[\s\S]{0,700}setSplit\(true, persist: true\)/.test(swift));
+// The two distances below were widened (1300→1600, 800→1000) because dropTab's body grew
+// by the collision branch. The facts pinned are unchanged.
+check('a non-colliding drop with the split ON reuses the shared routing rule + swap',
+      /func dropTab\([\s\S]{0,1600}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
 check('the drop persists through the existing keys, no new ones',
-      /func dropTab\([\s\S]{0,800}persistTabs\(\)/.test(swift) &&
+      /func dropTab\([\s\S]{0,1000}persistTabs\(\)/.test(swift) &&
       !/harness\.split\.drag/.test(swift));
 check('the ghost + hint are mouse-transparent child windows, cleaned up on every exit',
       /func makeFloater\([\s\S]{0,400}ignoresMouseEvents = true/.test(swift) &&
@@ -177,6 +184,72 @@ check('the drag has its own [split] diagnostics',
       /slog\("drag -> begin /.test(swift) &&
       /slog\("drag -> tab /.test(swift) &&
       /slog\("drag -> opened split: /.test(swift));
+
+// ── same tab in BOTH panes: on-demand second instances ("ghosts") ──
+// Debi's ask: dragging a tab the OTHER pane already shows opens a SECOND copy here
+// instead of always swapping. The STRIP keeps the swap — that separation is the design,
+// so both halves of it are pinned.
+check('the ghost state is two booleans plus one lazily-keyed dictionary',
+      /var leftIsGhost = false/.test(swift) && /var rightIsGhost = false/.test(swift) &&
+      /var secondInstances: \[Int: WKWebView\] = \[:\]/.test(swift));
+check('a COLLIDING drop opens a second instance instead of swapping',
+      /func dropTab\([\s\S]{0,900}let other = splitOn \? \(p == 1 \? currentTab : rightTab\) : currentTab[\s\S]{0,200}if tab == other && \(splitOn \|\| p == 1\) \{[\s\S]{0,120}openSecondInstance\(tab, onPane: p\)/
+        .test(swift));
+check('the STRIP still swaps: openSecondInstance is reachable ONLY from the drop path',
+      (swift.match(/openSecondInstance\(/g) || []).length === 2 &&        // decl + the one call
+      !/func routeTab\([\s\S]{0,900}openSecondInstance/.test(swift) &&
+      !/func tabChanged[\s\S]{0,300}openSecondInstance/.test(swift));
+check('the split-OFF right-half drop of the CURRENT tab no longer steps the left tab',
+      !/currentTab = \(tab \+ 1\) % tabTitles\.count/.test(swift));
+check('a second instance copies the primary\'s configuration (skin + shared cookies)',
+      /func ghostFor\(_ idx: Int\) -> WKWebView[\s\S]{0,600}WKWebView\(frame: \.zero, configuration: webViewFor\(idx\)\.configuration\)/
+        .test(swift));
+check('a second instance is a PLAIN WKWebView, not a DropWebView',
+      !/func ghostFor\([\s\S]{0,600}DropWebView/.test(swift));
+check('a second instance loads its own tab URL through the shared tab→URL table',
+      /func urlForTab\(_ idx: Int\) -> URL/.test(swift) &&
+      /func ghostFor\([\s\S]{0,700}wv\.load\(URLRequest\(url: urlForTab\(idx\)\)\)/.test(swift));
+check('urlFor asks the ghost table FIRST (else a ⌘R on a copy would go to the bridge)',
+      /func urlFor\(_ wv: WKWebView\) -> URL[\s\S]{0,400}secondInstances\.first\(where: \{ \$0\.value === wv \}\)[\s\S]{0,60}urlForTab\(hit\.key\)/
+        .test(swift));
+check('⌘R reloads the COPY when the focused pane is showing one',
+      /func visibleWebView\(\)[\s\S]{0,400}rightIsGhost \? secondInstances\[rightTab\] : webViewFor\(rightTab\)/.test(swift) &&
+      /if leftIsGhost \{ return secondInstances\[currentTab\] \}/.test(swift));
+// Memory discipline — the primary is never destroyed, the copy always is.
+check('destroyGhost stops loading, unparents, and drops the only strong reference',
+      /func destroyGhost\(_ idx: Int\)[\s\S]{0,500}secondInstances\.removeValue\(forKey: idx\)[\s\S]{0,400}g\.stopLoading\(\)[\s\S]{0,300}g\.removeFromSuperview\(\)/
+        .test(swift));
+check('destroyGhost forgets a failed load so the set cannot leak identifiers',
+      /func destroyGhost\([\s\S]{0,500}failedLoads\.remove\(ObjectIdentifier\(g\)\)/.test(swift));
+check('releaseUnusedGhosts iterates a COPY of the keys (the dict is mutated inside)',
+      /func releaseUnusedGhosts\(\)[\s\S]{0,200}for idx in Array\(secondInstances\.keys\)/.test(swift));
+check('a copy is kept only while a pane\'s ghost flag claims it',
+      /func releaseUnusedGhosts\([\s\S]{0,500}let keptLeft = leftIsGhost && idx == currentTab[\s\S]{0,200}let keptRight = splitOn && rightIsGhost && idx == rightTab[\s\S]{0,160}destroyGhost\(idx\)/
+        .test(swift));
+check('closing the split / a pane destroys the copy: applyPanes clears the flags first',
+      /func applyPanes\(\)[\s\S]{0,900}if !splitOn \|\| rightTab != leftIdx \{ leftIsGhost = false; rightIsGhost = false \}[\s\S]{0,200}releaseUnusedGhosts\(\)/
+        .test(swift));
+check('both panes can never be the copy (the primary lives in exactly one pane)',
+      /if leftIsGhost && rightIsGhost \{ rightIsGhost = false \}/.test(swift));
+check('a pane holds either the primary or the copy, and the placeholder still backs it up',
+      /let leftWV: WKWebView = leftIsGhost \? ghostFor\(leftIdx\) : webViewFor\(leftIdx\)/.test(swift) &&
+      /if rightIsGhost \{ rightWV = ghostFor\(rightTab\) \}/.test(swift) &&
+      /else if rightBorrows \|\| leftIsGhost \{ rightWV = webViewFor\(rightTab\) \}/.test(swift) &&
+      /\} else if splitOn \{\n\s*attach\(rightPlaceholder, to: rightHost\)/.test(swift));
+check('only primaries are parked; copies are destroyed, never parked',
+      /for wv in allWebViews\(\) where wv !== leftWV && wv !== rightWV \{[\s\S]{0,120}attach\(wv, to: park\)/.test(swift));
+// NEGATIVE: ghosts are deliberately NOT persisted — a relaunch restores the swap-based
+// arrangement, so no new defaults key may appear for them.
+check('no ghost state is persisted (no new UserDefaults key)',
+      !/harness\.split\.ghost/.test(swift) &&
+      (swift.match(/"harness\.split\.[a-z]+"/g) || [])
+        .every(k => ['"harness.split.on"', '"harness.split.left"',
+                     '"harness.split.right"', '"harness.split.focus"'].includes(k)));
+check('the second-instance path has its own [split] diagnostics',
+      /slog\("ghost -> created /.test(swift) &&
+      /slog\("ghost -> destroyed /.test(swift) &&
+      /slog\("ghost -> tab /.test(swift) &&
+      /slog\("applyPanes left=[\s\S]{0,140}ghosts=/.test(swift));
 
 // ── composer auto-grow ──
 check('growInput caps the box at 3x its measured base height',
