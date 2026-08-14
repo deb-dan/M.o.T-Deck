@@ -26,6 +26,8 @@ WS_METHODS = [
     "prompt.submit",      # methods_prompt.py  — start a turn (returns status: streaming)
     "approval.respond",   # methods_prompt.py  — Phase-2 approval card answer
     "clarify.respond",    # methods_prompt.py  — ask-card answer (clarify tool)
+    "session.interrupt",  # methods_session.py — panel Stop + the max-turn guard
+    "session.active_list",# methods_session.py — the relay's liveness probe
 ]
 
 # Event types the bridge translates into panel SSE frames (emitted via
@@ -76,6 +78,41 @@ def test_ws_methods_still_registered():
     src = _gateway_source()
     missing = [m for m in WS_METHODS if f'"{m}"' not in src]
     assert not missing, f"tui_gateway lost JSON-RPC method(s): {missing}"
+
+
+def test_active_list_status_vocabulary_is_unchanged():
+    """The relay's liveness probe (`_hermes_session_working`, bridge/app.py) treats a
+    session as ALIVE only when `session.active_list` reports one of
+    waiting/starting/working — anything else (or absent) ends the turn with
+    `· interrupted`. That vocabulary is upstream-INTERNAL, and a silent addition to
+    it is a live-turn killer: a genuinely busy session reporting a status we do not
+    recognise would be cut off mid-answer after the 20s silence tick.
+
+    Our own source carried this as a recorded gap ("cover in pin-bump contract tests
+    alongside the RPC names"); this is that cover. Verified unchanged at v2026.8.13.
+    """
+    if not HERMES.exists():
+        return
+    src = (HERMES / "tui_gateway" / "server.py").read_text(
+        encoding="utf-8", errors="replace")
+    i = src.index("def _session_live_status(")
+    body = src[i:]
+    body = body[:body.index("\ndef ", 10)]
+    returned = set(re.findall(r'return "([a-z_]+)"', body))
+    assert returned == {"waiting", "starting", "working", "idle"}, (
+        f"session.active_list's status vocabulary changed: {sorted(returned)}. The "
+        "bridge's liveness probe only accepts waiting/starting/working as ALIVE — a "
+        "new busy status would make it end live turns; a removed one would make it "
+        "hang. Reconcile _hermes_session_working before shipping this pin.")
+    # and it is still what active_list actually reports
+    ms = (HERMES / "tui_gateway" / "methods_session.py").read_text(
+        encoding="utf-8", errors="replace")
+    assert '@method("session.active_list")' in ms
+    assert "_session_live_item(sid, session, current)" in ms, \
+        "session.active_list no longer builds its rows from _session_live_item"
+    assert '"status": status' in src, "the live-session row lost its status field"
+    assert '"id": sid' in src, \
+        "the live-session row lost its `id` — the probe matches our sid on it"
 
 
 def test_ws_events_still_emitted():

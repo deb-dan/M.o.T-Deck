@@ -23,6 +23,24 @@ components:
                               # `serve` copy is SUPPRESS). A now-hidden --tui compat shim carries a comment saying it
                               # is "safe to delete once the floor app version is well past 0.16.0" — evidence upstream
                               # DOES prune dashboard flags. Our contract test pins --no-open/--skip-build.
+                              #
+                              # POST-BUMP RECONCILIATION (2026-08-14, the FULL gate — the pre-bump sweep above ran
+                              # only the WS contract, so it saw 13/14; the whole suite is 102 and found 3 more):
+                              #  1. BEHAVIOURAL — _DEFAULT_OFF_TOOLSETS gained `a2a` (tools_config.py:156). Our mirror
+                              #     HERMES_DEFAULT_OFF_TOOLSETS was stale, so "Hermes's defaults" would have switched
+                              #     a2a ON. Mirror corrected. (Latent in practice: a2a is a deferred-loading bundled
+                              #     platform plugin, so the row is normally absent from the catalog.)
+                              #  2. COSMETIC — _load_enabled_toolsets is now PARAMETERISED (server.py:4267). The arg
+                              #     is the SESSION SOURCE, not the platform_toolsets key: the config read on :4399 is
+                              #     still a hardcoded "cli", so the lever is unchanged. Test re-pinned, plus a NEGATIVE
+                              #     that the session platform is not what selects the key.
+                              #  3. COSMETIC — the `project` fold literal became _gui_surface_toolsets(platform)
+                              #     (server.py:4246/4410). `project` is still unconditional; `desktop_ui` is added for
+                              #     desktop-sourced sessions only, and ours send source="harness", so the Check card's
+                              #     count is still complete. Both halves now pinned.
+                              # ⚠️ The one to remember at the NEXT bump: HERMES_DESKTOP=1 (set by start_component.sh
+                              # for the cron ticker) is exactly what makes a source-less session resolve to "desktop".
+                              # Only our explicit session `source` keeps this lane off that surface.
                               # (prev v2026.7.30, before that v2026.7.20)
     installed: true
     enabled: false

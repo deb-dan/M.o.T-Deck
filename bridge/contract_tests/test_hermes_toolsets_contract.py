@@ -49,18 +49,99 @@ def test_agent_disabled_toolsets_is_subtracted_last():
         "agent.disabled_toolsets vanished from DEFAULT_CONFIG"
 
 
+def _load_enabled_toolsets_body(src: str) -> str:
+    """The body of tui_gateway's `_load_enabled_toolsets`, for scoped assertions."""
+    i = src.index("def _load_enabled_toolsets(")
+    body = src[i:]
+    return body[:body.index("\ndef ", 10)]
+
+
 def test_hermes_lane_resolves_toolsets_for_the_cli_platform():
     """Our lane is the dashboard's TUI gateway, and it resolves the model's
     toolsets for platform "cli" — so `platform_toolsets.cli` is the list the
     Hermes chat lane actually reads. If this platform string changes, every
     switch in the panel would write the wrong key while still reporting success.
+
+    ⚠️ v2026.8.13 PARAMETERISED the resolver (`_load_enabled_toolsets(platform)`),
+    which reads like the platform key became per-session. It did not: that argument
+    is the SESSION'S SOURCE and only selects the client-surface fold; the config
+    read below is still a hardcoded "cli". This test pins the distinction in both
+    directions, because getting it wrong silently points the whole lever at a key
+    nothing reads while every switch still reports success.
     """
     src = _read("tui_gateway/server.py")
     assert "def _load_enabled_toolsets(" in src
-    assert re.search(r'_get_platform_tools\(\s*cfg,\s*"cli"', src), \
-        'the TUI gateway no longer resolves toolsets for the "cli" platform'
-    assert "enabled_toolsets=_load_enabled_toolsets()" in src, \
-        "the agent factory no longer consumes _load_enabled_toolsets()"
+    body = _load_enabled_toolsets_body(src)
+
+    # (1) THE load-bearing fact: the configured list is read for "cli", hardcoded.
+    assert re.search(
+        r'_get_platform_tools\(\s*cfg,\s*"cli",\s*include_default_mcp_servers=True\s*\)',
+        body), 'the TUI gateway no longer resolves toolsets for the "cli" platform'
+
+    # (2) NEGATIVE: the session platform must NOT be what selects the config key.
+    #     If this ever fires, `platform_toolsets.cli` may not be our lane's list and
+    #     HERMES_LEVER_PLATFORM has to follow whatever the session actually resolves.
+    assert not re.search(r"_get_platform_tools\(\s*cfg,\s*(session_platform|platform)\b", body), \
+        "_get_platform_tools is now called with the SESSION platform — the lever's " \
+        "platform_toolsets.<x> key is no longer unconditionally `cli`"
+
+    # (3) the parameter's real meaning, pinned so it is not mistaken for the key
+    assert "def _load_enabled_toolsets(platform: str | None = None)" in src, \
+        "the resolver's signature changed again — re-derive what `platform` selects"
+    assert "session_platform = platform or _resolve_session_platform()" in body
+
+    # (4) the agent factory still consumes it (now with the session's source)
+    assert ("enabled_toolsets=_load_enabled_toolsets("
+            "_resolve_agent_platform(platform_override))" in src), \
+        "the agent factory no longer consumes _load_enabled_toolsets(<session platform>)"
+
+
+def test_our_session_source_is_honoured_and_is_not_the_desktop_surface():
+    """The bridge tags every Hermes session `source: HERMES_SESSION_SOURCE`, and that
+    string — not an env var — decides which CLIENT-SURFACE toolsets the gateway folds
+    into the model's schema (`_gui_surface_toolsets`). Two things must hold:
+
+      * an explicit `source` is honoured VERBATIM (`_resolve_session_source`), and
+      * it is not "desktop", whose fold adds the whole `desktop_ui` toolset.
+
+    This is load-bearing and easy to lose: `start_component.sh` launches the dashboard
+    with HERMES_DESKTOP=1 (for the cron ticker), which is exactly what
+    `_resolve_session_platform` turns into "desktop" when no source is given. Our
+    explicit source is the only thing keeping this lane off that surface — and it
+    should be, because those tools need a GUI renderer our panel does not implement.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from bridge.app import HERMES_SESSION_SOURCE
+
+    src = _read("tui_gateway/server.py")
+    # an explicit source wins over the env-derived platform
+    rss = src[src.index("def _resolve_session_source("):]
+    rss = rss[:rss.index("\ndef ", 10)]
+    assert re.search(r"if explicit:\s*\n\s*return explicit", rss), \
+        "an explicit session source is no longer honoured verbatim — our " \
+        "`source` may now be overridden by the HERMES_DESKTOP env var"
+    assert re.search(r"def _resolve_agent_platform\(source: str \| None\) -> str:\s*\n"
+                     r"\s*return _resolve_session_source\(source\)", src), \
+        "the agent platform is no longer the session source"
+    # session.create / session.resume pass params["source"] through it
+    ms = _read("tui_gateway/methods_session.py")
+    assert ms.count('_resolve_session_source(str(params.get("source") or "").strip() or None)') >= 2, \
+        "session.create/resume no longer derive their source from params"
+    assert "platform_override=source" in ms, \
+        "the resolved source is no longer handed to _make_agent"
+
+    # and our source is not the desktop surface
+    assert HERMES_SESSION_SOURCE and HERMES_SESSION_SOURCE != "desktop", \
+        "the bridge now tags its sessions 'desktop' — the Check card must count " \
+        "the desktop_ui toolset's tools as always-on extras"
+    # every session this bridge opens carries it — no literal left behind
+    app = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
+    assert '"source": "harness"' not in app, \
+        "a session.create/resume site went back to a literal source string"
+    assert app.count('"source": HERMES_SESSION_SOURCE') >= 4, \
+        "a session.create/resume site stopped sending our source — it would " \
+        "inherit the env-derived platform (desktop, via HERMES_DESKTOP=1)"
 
 
 def test_empty_toolset_list_still_means_ALL_tools():
@@ -262,25 +343,66 @@ def test_available_is_an_alias_of_enabled_not_a_readiness_flag():
 
 
 def test_gateway_always_folds_in_the_project_toolset():
-    """Our verify card reports these three tools SEPARATELY because no switch in
-    the panel controls them: the lane's resolver adds `project` unconditionally,
-    and `project` is not a configurable toolset, so it has no row. If this fold
-    disappears (or the toolset's tools change), the card's total would silently
-    stop matching what Hermes hands the model.
+    """Our verify card reports these tools SEPARATELY because no switch in the panel
+    controls them: the lane's resolver folds a CLIENT-SURFACE set on top of the
+    configured list, and its members are not configurable toolsets, so they have no
+    rows. If the fold disappears — or grows for our platform — the card's total would
+    silently stop matching what Hermes hands the model.
+
+    ⚠️ v2026.8.13 replaced the flat `sorted(enabled | {"project"})` literal with
+    `sorted(enabled | _gui_surface_toolsets(session_platform))`. The fold is intact;
+    it just became platform-aware, adding `desktop_ui` for desktop-sourced sessions
+    only. The assertions below pin BOTH halves — that `project` is still
+    unconditional, and that nothing else is added for a non-desktop source like ours
+    — so a future surface added to that set trips here instead of quietly making the
+    number too low.
     """
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from bridge.app import HERMES_GATEWAY_ALWAYS_TOOLSET, HERMES_GATEWAY_ALWAYS_TOOLS
+
     src = _read("tui_gateway/server.py")
-    assert re.search(r'return sorted\(enabled \| \{"project"\}\)', src), \
-        "the gateway no longer folds `project` into every session's toolsets"
+    # the fold still happens on the path our lane takes …
+    assert "return sorted(enabled | _gui_surface_toolsets(session_platform))" in src, \
+        "the gateway no longer folds the client-surface toolsets into every session"
+    # … and on the focus-mode early return, which bypasses the configured list
+    assert "return sorted({*selection, *_gui_surface_toolsets(session_platform)})" in src, \
+        "the focus-mode path no longer folds the client-surface toolsets"
+
+    # WHAT that set is, read out of the function rather than assumed
+    gui = src[src.index("def _gui_surface_toolsets("):]
+    gui = gui[:gui.index("\ndef ", 10)]
+    assert re.search(r'surfaces = \{"project"\}', gui), \
+        "`project` is no longer folded in unconditionally — our Check card must " \
+        "stop reporting its tools as always-on"
+    # the ONLY conditional member, and it is desktop-only (our source is not desktop)
+    conditional = re.findall(r'surfaces\.add\("([a-z0-9_]+)"\)', gui)
+    assert conditional == ["desktop_ui"], (
+        f"the client-surface fold gained members we do not count: {conditional} — "
+        "each is in the model's schema with no switch, so the Check card is now low")
+    assert re.search(r'if platform == "desktop":\s*\n\s*surfaces\.add\("desktop_ui"\)', gui), \
+        "desktop_ui is no longer gated on the desktop platform — it may now reach " \
+        "our lane, and its tools would be missing from the count"
+
+    # our constants still describe that set for a non-desktop source
+    assert HERMES_GATEWAY_ALWAYS_TOOLSET == "project"
     ts = _read("toolsets.py")
     block = ts[ts.index('"project": {'):][:400]
-    for tool in ("project_list", "project_create", "project_switch"):
-        assert tool in block, f"the project toolset no longer declares {tool}"
+    m = re.search(r'"tools":\s*\[([^\]]*)\]', block)
+    assert m, "the project toolset no longer declares a tools list"
+    upstream_tools = tuple(re.findall(r'"([a-z0-9_]+)"', m.group(1)))
+    assert upstream_tools == tuple(HERMES_GATEWAY_ALWAYS_TOOLS), (
+        "our always-on tool list drifted from the project toolset: "
+        f"upstream={upstream_tools}")
+
     cfg = _read("hermes_cli/tools_config.py")
     head = cfg[cfg.index("CONFIGURABLE_TOOLSETS = ["):]
     head = head[:head.index("\n]")]
     assert '("project"' not in head, \
         "`project` became configurable — it now has a row and must not be " \
         "double-counted as an always-on extra"
+    assert '("desktop_ui"' not in head, \
+        "`desktop_ui` became configurable — it would now render as a row"
 
 
 def test_skill_index_gate_is_the_three_skill_tool_names():
@@ -414,8 +536,40 @@ def test_default_off_toolsets_mirror_is_current():
     assert upstream == set(HERMES_DEFAULT_OFF_TOOLSETS), (
         f"our HERMES_DEFAULT_OFF_TOOLSETS mirror is stale: upstream={upstream}")
     assert "video" in upstream, "Video Analysis is no longer default-off upstream"
+    # ADDED at v2026.7.30 → v2026.8.13. Pinned by name in BOTH directions: this is
+    # the entry that proved the mirror can go stale, so a later removal upstream
+    # must trip here too rather than leave us subtracting a name Hermes now ships on.
+    assert "a2a" in upstream, (
+        "`a2a` left _DEFAULT_OFF_TOOLSETS — it was ADDED at v2026.8.13 and is the "
+        "reason this mirror needed correcting; if upstream now ships it ON, our "
+        "'Hermes's defaults' preset must stop subtracting it")
     assert "enabled_toolsets -= default_off" in src, \
         "the default-off set is no longer subtracted from the composite expansion"
+
+
+def test_a2a_reaches_the_catalog_only_as_a_plugin_toolset():
+    """WHY the stale `a2a` mirror was latent rather than live — recorded so the next
+    reader does not conclude the pin was cosmetic.
+
+    `a2a` is a bundled PLATFORM PLUGIN, not a built-in toolset: it is absent from
+    `toolsets.py` and from CONFIGURABLE_TOOLSETS, and can only appear as a row via
+    `_get_effective_configurable_toolsets`, which appends toolsets from plugins that
+    are actually LOADED. Bundled platform plugins are registered as deferred loaders
+    and import on first use, so on a normal install the row is absent — but "absent
+    today" is not "cannot appear", which is why the mirror is corrected anyway.
+    """
+    cfg = _read("hermes_cli/tools_config.py")
+    block = cfg[cfg.index("CONFIGURABLE_TOOLSETS = ["):]
+    block = block[:block.index("\n]")]
+    assert '("a2a"' not in block, \
+        "a2a became a built-in configurable toolset — it now has a row on every " \
+        "install, so the default-off mirror is load-bearing rather than latent"
+    ts = _read("toolsets.py")
+    assert '"a2a": {' not in ts, "a2a became a built-in toolset"
+    assert "def _get_effective_configurable_toolsets(" in cfg
+    assert "get_plugin_toolsets()" in cfg, \
+        "plugin toolsets no longer feed the configurable list — re-check whether a " \
+        "plugin toolset can still reach our catalog at all"
 
 
 def test_upstream_skills_page_reads_the_same_endpoint_and_field():

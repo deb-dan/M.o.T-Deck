@@ -4265,13 +4265,17 @@ async def _hermes_kill_segment(sid: str, spent_s: float, budget_s: float) -> Non
 async def _hermes_session_working(sid: str) -> bool:
     """Best-effort probe: is this gateway session still running a turn?
 
-    Uses session.active_list (methods_session.py:726 → _session_live_item status
-    ∈ waiting/starting/working/idle). Returns True on ANY doubt — a probe failure
-    must never kill a live stream. A session that is absent or "idle" while our
-    relay still waits means the turn ended WITHOUT a terminal event reaching us
-    (e.g. interrupted from the Hermes dashboard) → the caller ends the turn.
-    ⚠ PENDING FABLE QA: text-free structured probe, but the status vocabulary is
-    upstream-internal (cover in pin-bump contract tests alongside the RPC names).
+    Uses session.active_list (methods_session.py:942 → _session_live_item,
+    server.py:8072, status ∈ waiting/starting/working/idle via _session_live_status,
+    server.py:8040). Returns True on ANY doubt — a probe failure must never kill a
+    live stream. A session that is absent or "idle" while our relay still waits means
+    the turn ended WITHOUT a terminal event reaching us (e.g. interrupted from the
+    Hermes dashboard) → the caller ends the turn.
+
+    The status vocabulary is upstream-INTERNAL and a silent addition to it would cut
+    live turns off, so it is now contract-pinned as an exact set
+    (`test_active_list_status_vocabulary_is_unchanged`), closing the gap this
+    docstring used to just flag. Re-verified unchanged at v2026.8.13.
     """
     try:
         res = await _HERMES.rpc("session.active_list", {}, timeout=8.0)
@@ -4305,7 +4309,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 yield 'data: {"type":"proxy_error","error":"empty message"}\n\n'
                 return
             if not sid:
-                res = await _HERMES.rpc("session.create", {"source": "harness"})
+                res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
                 sid = str(res.get("session_id") or "")
                 if not sid:
                     yield 'data: {"type":"proxy_error","error":"session.create returned no id"}\n\n'
@@ -4323,7 +4327,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 # ONE retry: the persisted sid points at a dead gateway session
                 # (dashboard restarted) — mint a fresh one and resubmit.
                 _HERMES.close_queue(sid)
-                res = await _HERMES.rpc("session.create", {"source": "harness"})
+                res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
                 sid = str(res.get("session_id") or "")
                 if not sid:
                     raise RuntimeError("session.create returned no id")
@@ -4760,7 +4764,7 @@ async def hermes_sessions() -> JSONResponse:
 @app.post("/api/hermes/session/new")
 async def hermes_session_new() -> JSONResponse:
     try:
-        res = await _HERMES.rpc("session.create", {"source": "harness"})
+        res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
         return JSONResponse({"id": res.get("session_id"),
                              "stored_id": res.get("stored_session_id")})
     except Exception as e:
@@ -4786,7 +4790,7 @@ async def hermes_session_resume(req: Request) -> JSONResponse:
         return JSONResponse({"error": "id required"}, status_code=400)
     try:
         res = await _HERMES.rpc("session.resume",
-                                {"session_id": stored, "source": "harness"},
+                                {"session_id": stored, "source": HERMES_SESSION_SOURCE},
                                 timeout=30.0)
         return JSONResponse({
             "id": res.get("session_id") or "",
@@ -5132,33 +5136,41 @@ def _hermes_has_mcp(name: str = "browsermcp") -> bool:
 # skill index, which on a small local model is minutes of prefill before a single
 # token comes back. Trimming the toolset list is the lever.
 #
-# THE MECHANISM, read out of the pin (v2026.7.30), not guessed:
+# THE MECHANISM, read out of the pin (v2026.8.13), not guessed:
 #   • Our lane is the dashboard's JSON-RPC gateway (tui_gateway). It resolves the
-#     model's toolsets in `_load_enabled_toolsets()` (tui_gateway/server.py:3779),
-#     consumed per session build at server.py:6163 — via
+#     model's toolsets in `_load_enabled_toolsets()` (tui_gateway/server.py:4267),
+#     consumed per session build at server.py:6708 — via
 #     `_get_platform_tools(cfg, "cli", include_default_mcp_servers=True)`
-#     (server.py:3910). So the key is `platform_toolsets.cli`, NOT some `tools.*`
+#     (server.py:4399). So the key is `platform_toolsets.cli`, NOT some `tools.*`
 #     key: `tools.disabled_toolsets` / `enabled_toolsets` / `toolsets.enabled` DO
 #     NOT EXIST. (Top-level `toolsets:` exists but is vestigial — only kanban and
 #     `hermes dump` read it.)
-#   • `_get_platform_tools` (hermes_cli/tools_config.py:2195) has NO memoisation and
+#   • ⚠️ v2026.8.13 PARAMETERISED that resolver — `_load_enabled_toolsets(platform)`
+#     — and the argument is a TRAP for a reader skimming it: it is the SESSION'S
+#     SOURCE (`session.create`'s `source` field, resolved by `_resolve_agent_platform`
+#     → `_resolve_session_source`, server.py:3685-3699), NOT the
+#     `platform_toolsets.<x>` config key. The config read on line 4399 is still
+#     HARDCODED `"cli"`. The session source only picks the CLIENT-SURFACE toolsets
+#     folded in on top (`_gui_surface_toolsets`, server.py:4246 — see
+#     HERMES_GATEWAY_ALWAYS_TOOLSET below). So this lever's key is unchanged.
+#   • `_get_platform_tools` (hermes_cli/tools_config.py:2262) has NO memoisation and
 #     `load_config()` is mtime+size keyed (hermes_cli/config.py:3105), and
 #     `get_tool_definitions`'s own memo key includes the config mtime
 #     (model_tools.py:320-336) — so a config edit takes effect on the NEXT CHAT
 #     with NO Hermes restart. That is why this endpoint never asks for one.
 #   • `agent.disabled_toolsets` (default [], config_defaults.py:228) is subtracted
-#     LAST (tools_config.py:2455-2463) — we never write it, but we REPORT it,
+#     LAST (tools_config.py:2530) — we never write it, but we REPORT it,
 #     because a name sitting in there can never be re-enabled from this panel.
 #   • `agent.coding_context: "focus"` (default "auto", config_defaults.py:131) makes
 #     `coding_selection()` return a toolset list and `_load_enabled_toolsets()`
-#     RETURNS EARLY (server.py:3797-3803) — the config list is then never read at
-#     all. Only `focus` does this (agent/coding_context.py:506-520), so the default
+#     RETURNS EARLY (server.py:4285-4293) — the config list is then never read at
+#     all. Only `focus` does this (agent/coding_context.py:517-521), so the default
 #     is safe, but we detect it and say so rather than showing dead switches.
 #
 # WRITES GO THROUGH HERMES'S OWN WRITER, not our yaml round-trip:
-#   `PUT /api/tools/toolsets/{name}` (hermes_cli/web_routers/tools.py:113) does
+#   `PUT /api/tools/toolsets/{name}` (hermes_cli/web_routers/tools.py:123) does
 #   load_config → `_get_platform_tools(..., include_default_mcp_servers=False)` →
-#   add/discard → `_save_platform_tools` (tools_config.py:2491) → `save_config`
+#   add/discard → `_save_platform_tools` (tools_config.py:2560) → `save_config`
 #   (strip_defaults=True, atomic_yaml_write). That helper is the only thing that
 #   knows to preserve MCP-server names parked in the same list, to route
 #   platform-restricted toolsets (discord → platform_toolsets.discord), and to keep
@@ -5175,17 +5187,17 @@ HERMES_MINIMAL_TOOLSETS = ("file", "terminal", "clarify")
 #
 #  1. ordinary rows — `platform: "cli"`, persisted to `platform_toolsets.cli`,
 #     which is exactly what our lane resolves (`_get_platform_tools(cfg, "cli")`,
-#     tui_gateway/server.py:3910). THESE are the lever.
+#     tui_gateway/server.py:4399). THESE are the lever.
 #  2. platform-restricted rows — `_TOOLSET_PLATFORM_RESTRICTIONS`
-#     (tools_config.py:202-205) pins `discord`/`discord_admin` to the discord
-#     platform, so `_toolset_configuration_platform` (tools_config.py:216) makes
+#     (tools_config.py:216-220) pins `discord`/`discord_admin` to the discord
+#     platform, so `_toolset_configuration_platform` (tools_config.py:231) makes
 #     their row `platform: "discord"` and their PUT writes
-#     `platform_toolsets.discord`. `_toolset_allowed_for_platform` (:207) means
+#     `platform_toolsets.discord`. `_toolset_allowed_for_platform` (:222) means
 #     they can NEVER be enabled for cli — the model in this lane cannot get their
 #     tools no matter what the switch says.
-#  3. config-only rows — `_CONFIG_ONLY_TOOLSETS` (tools_config.py:164). `stt` is
+#  3. config-only rows — `_CONFIG_ONLY_TOOLSETS` (tools_config.py:165). `stt` is
 #     not a model toolset at all: its row's `enabled` is read from `config.stt.
-#     enabled` and its PUT writes that key (web_routers/tools.py:86-94, 137-146).
+#     enabled` and its PUT writes that key (web_routers/tools.py:97-104, 148-158).
 #     It ships ZERO tool schemas, so switching it off saves nothing in the prompt
 #     — and switching it off breaks Hermes's speech-to-text.
 #
@@ -5194,14 +5206,15 @@ HERMES_MINIMAL_TOOLSETS = ("file", "terminal", "clarify")
 # but they are labelled for what they are and no preset touches them.
 HERMES_LEVER_PLATFORM = "cli"
 
-# Mirrors `_CONFIG_ONLY_TOOLSETS` (hermes_cli/tools_config.py:164). Contract-pinned
+# Mirrors `_CONFIG_ONLY_TOOLSETS` (hermes_cli/tools_config.py:165). Contract-pinned
 # byte-identical, so a pin bump that adds one trips instead of silently letting a
 # preset write a config section.
 HERMES_CONFIG_ONLY_TOOLSETS = ("stt",)
 
-# Mirrors `_DEFAULT_OFF_TOOLSETS` (hermes_cli/tools_config.py:155) — the toolsets
+# Mirrors `_DEFAULT_OFF_TOOLSETS` (hermes_cli/tools_config.py:156) — the toolsets
 # upstream deliberately keeps OFF on a fresh install, subtracted from the composite
-# expansion in `_get_platform_tools` (tools_config.py:2320-2347).
+# expansion in `_get_platform_tools` (tools_config.py:2336-2344 mixed-config branch,
+# 2386-2411 implicit branch).
 #
 # This exists because "Everything back on" was NOT "back on": it sent every name in
 # the catalog, which turned on seven toolsets Hermes had never had on — Video
@@ -5210,14 +5223,27 @@ HERMES_CONFIG_ONLY_TOOLSETS = ("stt",)
 # default set; anything in here stays an explicit, per-row opt-in.
 #
 # Contract-pinned byte-identical against upstream's set, so a release that adds or
-# removes a default-off toolset trips a test rather than drifting quietly.
+# removes a default-off toolset trips a test rather than drifting quietly — and at
+# the v2026.7.30 → v2026.8.13 bump it DID: upstream added `a2a`. Left stale, the
+# "Hermes's defaults" preset would have switched a2a ON, which is the same defect
+# this constant exists to prevent, one release later.
+#
+# `a2a` is a BUNDLED PLATFORM PLUGIN (vendor/hermes/plugins/platforms/a2a/), not a
+# built-in toolset — it is absent from both `toolsets.py` and CONFIGURABLE_TOOLSETS,
+# and reaches the catalog only through `_get_effective_configurable_toolsets`
+# (tools_config.py:245-268), which appends whatever plugin toolsets are LOADED.
+# Bundled platform plugins are registered as DEFERRED loaders (plugins.py:3855) and
+# only import on first use, so the row is normally absent — the staleness was latent,
+# not live. The mirror is corrected anyway: "normally absent" is not "cannot appear",
+# and a preset must never be able to go past Hermes's own defaults.
 HERMES_DEFAULT_OFF_TOOLSETS = ("homeassistant", "spotify", "discord",
-                               "discord_admin", "video", "video_gen", "x_search")
+                               "discord_admin", "video", "video_gen", "x_search",
+                               "a2a")
 
 # `platform_toolsets.cli: []` is a FOOTGUN, not a "no tools" setting: with an empty
-# list `has_explicit_config` is False (tools_config.py:2231), the else-branch expands
+# list `has_explicit_config` is False (tools_config.py:2301), the else-branch expands
 # nothing, and `_load_enabled_toolsets` turns an empty result into `return None`
-# (server.py:3915-3917) — which `get_tool_definitions` reads as ENABLE EVERYTHING.
+# (server.py:4402-4403) — which `get_tool_definitions` reads as ENABLE EVERYTHING.
 # Disabling the last toolset would therefore hand the model MORE tools than it had.
 HERMES_TOOLSETS_EMPTY_REASON = (
     "at least one toolset must stay on — Hermes reads an empty list as "
@@ -5378,7 +5404,7 @@ def hermes_toolset_view(rows, skills=None, cfg=None) -> dict:
         lever = hermes_toolset_is_lever(r)
         # The headline totals are about THIS lane's prompt, so only lever rows count:
         # a discord-platform row's tools can never reach a cli session
-        # (`_toolset_allowed_for_platform`, tools_config.py:207) and the config-only
+        # (`_toolset_allowed_for_platform`, tools_config.py:222) and the config-only
         # `stt` row has no schemas at all. Counting them made the number bigger than
         # anything the model would ever see.
         if lever:
@@ -5426,22 +5452,53 @@ def hermes_toolset_view(rows, skills=None, cfg=None) -> dict:
 # The reason this exists: a switch that reports OUR intent rather than Hermes's
 # behaviour is exactly the doubt this panel has to kill. Every row above already
 # RENDERS Hermes's own `enabled` field (web_routers/tools.py:97, computed by
-# `_get_platform_tools`, tools_config.py:2195) — never our last write — so the
+# `_get_platform_tools`, tools_config.py:2262) — never our last write — so the
 # switch itself cannot lie. What was missing is the WHY when the two disagree.
 
-# The gateway folds `project` in unconditionally on the resolve path our lane
-# takes — `return sorted(enabled | {"project"})` (tui_gateway/server.py:3921) —
-# and `project` is NOT in CONFIGURABLE_TOOLSETS (tools_config.py:95-122), so it
-# has no row and no switch. Its three tools are therefore in the model's schema
-# no matter what this panel does, and the summary says so rather than quietly
-# under-reporting by three. (toolsets.py:254-257.)
+# The gateway folds CLIENT-SURFACE toolsets in on the resolve path our lane takes,
+# on top of whatever `platform_toolsets.cli` says — so their tools are in the
+# model's schema no matter what this panel does, and the summary reports them
+# SEPARATELY rather than quietly under-reporting.
+#
+# ⚠️ v2026.8.13 replaced the flat `return sorted(enabled | {"project"})` with
+# `return sorted(enabled | _gui_surface_toolsets(session_platform))`
+# (tui_gateway/server.py:4410; the focus-mode early return folds the same set at
+# :4293). `_gui_surface_toolsets` (server.py:4246-4264) is:
+#
+#     surfaces = {"project"}
+#     if platform == "desktop": surfaces.add("desktop_ui")
+#
+# i.e. `project` is STILL unconditional, and `desktop_ui` is added ONLY for a
+# session whose SOURCE is the desktop app. Ours is not: every session.create /
+# session.resume this bridge issues sends `source: HERMES_SESSION_SOURCE`
+# ("harness"), and `_resolve_session_source` (server.py:3685-3695) returns an
+# explicit source VERBATIM. So our lane's fold is exactly {"project"} and the
+# count below is still complete.
+#
+# That is worth stating plainly because it is load-bearing and NOT obvious:
+# `start_component.sh` launches the dashboard with HERMES_DESKTOP=1 (for the cron
+# ticker), and HERMES_DESKTOP=1 is precisely what `_resolve_session_platform`
+# (server.py:3659-3682) turns into "desktop" when no source is given. Our explicit
+# source is the ONLY thing keeping this lane off the desktop surface — which is the
+# right side to be on twice over: those 8 tools (read_terminal, open_preview,
+# focus_pane, …) need a GUI renderer our panel does not implement, so inheriting
+# them would both break the count and hand the model tools it cannot use.
+# Contract-pinned in both directions.
+#
+# `project` is NOT in CONFIGURABLE_TOOLSETS (tools_config.py:95-122), so it has no
+# row and no switch. (toolsets.py:260-264.)
 HERMES_GATEWAY_ALWAYS_TOOLSET = "project"
 HERMES_GATEWAY_ALWAYS_TOOLS = ("project_list", "project_create", "project_switch")
 
+# The `source` every Hermes session this bridge opens is tagged with. Named rather
+# than repeated as a literal because it is not cosmetic: it selects the session's
+# PLATFORM (server.py:3685-3699), which decides the client-surface fold above.
+HERMES_SESSION_SOURCE = "harness"
+
 # Upstream gates the ENTIRE <available_skills> block on these three tool names
-# being in the schema — `has_skills_tools` (agent/system_prompt.py:299), else
-# `skills_prompt = ""` (:326). Hermes's own banner uses the toolset name for the
-# same purpose (`"skills" in _enabled_ts`, hermes_cli/banner.py:780, which then
+# being in the schema — `has_skills_tools` (agent/system_prompt.py:412), else
+# `skills_prompt = ""` (:440). Hermes's own banner uses the toolset name for the
+# same purpose (`"skills" in _enabled_ts`, hermes_cli/banner.py:1058, which then
 # reports `0 skills` and "Skills toolset disabled"). We test the TOOL NAMES, so
 # a rename of the toolset key cannot make us claim an index that is not there.
 HERMES_SKILL_INDEX_TOOLS = ("skills_list", "skill_view", "skill_manage")
@@ -5451,19 +5508,19 @@ def hermes_toolset_drift(rows, cfg) -> list:
     """PURE. Toolsets we ASKED Hermes for that Hermes does NOT report as enabled.
 
     INTENT is the PERSISTED one: every write goes through Hermes's own
-    `PUT /api/tools/toolsets/{name}` → `_save_platform_tools` (tools_config.py:2491),
+    `PUT /api/tools/toolsets/{name}` → `_save_platform_tools` (tools_config.py:2560),
     so `platform_toolsets.cli` on disk IS the record of what this panel asked for.
     TRUTH is the probe's `enabled`. A disagreement is real and is worth naming —
-    `agent.disabled_toolsets` is subtracted LAST (tools_config.py:2455) and
+    `agent.disabled_toolsets` is subtracted LAST (tools_config.py:2530) and
     `agent.coding_context: "focus"` short-circuits the list entirely
-    (tui_gateway/server.py:3797) — both of which silently override a switch.
+    (tui_gateway/server.py:4285) — both of which silently override a switch.
 
     ONE DIRECTION ONLY, and that is deliberate: "listed but Hermes says off" is
     unambiguous, while "enabled but not in our list" has legitimate causes we
     cannot distinguish from the payload — a composite name like `hermes-cli`
-    sitting in the same list expands to more toolsets (tools_config.py:2240-2260),
+    sitting in the same list expands to more toolsets (tools_config.py:2315-2344),
     and the config-only toolsets (`_CONFIG_ONLY_TOOLSETS = {"stt"}`,
-    tools_config.py:164) are enabled by their own config section and never appear
+    tools_config.py:165) are enabled by their own config section and never appear
     in the list at all. Flagging those would be a false alarm, and a false
     "out of sync" pill is worse than none. The other direction is covered
     panel-side by our own in-session intent, which cannot be wrong about itself.
@@ -5471,9 +5528,9 @@ def hermes_toolset_drift(rows, cfg) -> list:
     Fails OPEN in every unknown: no saved list (None = never configured) ⇒ no
     claim; a row this lever does not govern ⇒ skipped, because a platform-restricted
     toolset persists to its own key (`_toolset_configuration_platform`,
-    tools_config.py:216) and a config-only row (`stt`) is not in
+    tools_config.py:231) and a config-only row (`stt`) is not in
     `platform_toolsets` at all — its `enabled` comes from `config.stt.enabled`
-    (web_routers/tools.py:86-94), so comparing it against the cli list would flag
+    (web_routers/tools.py:97-104), so comparing it against the cli list would flag
     every install that has ever saved one."""
     cfg = cfg if isinstance(cfg, dict) else {}
     cli = cfg.get("platform_toolsets_cli")
@@ -5498,20 +5555,22 @@ def hermes_tool_summary(rows, skills=None) -> dict:
     click without cross-referencing two apps.
 
     The union is de-duplicated because toolsets overlap (`resolve_toolset`,
-    toolsets.py:719, composes and dedups the same way), and the gateway's
-    unconditional `project` fold is reported SEPARATELY rather than hidden inside
-    the number — it is real, it is in the prompt, and no switch here controls it.
+    toolsets.py:756, composes and dedups the same way), and the gateway's
+    client-surface fold is reported SEPARATELY rather than hidden inside the
+    number — it is real, it is in the prompt, and no switch here controls it. For
+    this lane that fold is exactly `project`; see HERMES_GATEWAY_ALWAYS_TOOLSET
+    above for why `desktop_ui` is not in it.
 
     Counts the LEVER rows only, and that is a correction not a narrowing: this lane
-    resolves `_get_platform_tools(cfg, "cli")` (tui_gateway/server.py:3910), so a
+    resolves `_get_platform_tools(cfg, "cli")` (tui_gateway/server.py:4399), so a
     row whose configuration platform is `discord` can never contribute a schema here
-    (`_toolset_allowed_for_platform`, tools_config.py:207) and the config-only `stt`
-    row ships none at all (tools_config.py:164). Counting them made the card claim
+    (`_toolset_allowed_for_platform`, tools_config.py:222) and the config-only `stt`
+    row ships none at all (tools_config.py:165). Counting them made the card claim
     tools the model would never see.
 
     HONEST LIMIT carried in the payload as `excludes_mcp`: the listing endpoint
-    resolves with `include_default_mcp_servers=False` (web_routers/tools.py:76)
-    while the runtime resolve uses True (tui_gateway/server.py:3910), so tools
+    resolves with `include_default_mcp_servers=False` (web_routers/tools.py:82)
+    while the runtime resolve uses True (tui_gateway/server.py:4399), so tools
     coming from connected MCP servers are NOT counted here."""
     en, tools = [], []
     seen = set()
@@ -5556,7 +5615,7 @@ def hermes_skills_summary(payload) -> dict:
 # ── PER-SKILL TRIMMING — THE FINE INSTRUMENT BESIDE THE `skills` SWITCH ───────
 # The `skills` TOOLSET switch above is the blunt one: it drops three tool schemas
 # and with them the ENTIRE <available_skills> block (upstream gates the block on
-# skills_list/skill_view/skill_manage being in the schema, agent/system_prompt.py:299).
+# skills_list/skill_view/skill_manage being in the schema, agent/system_prompt.py:412).
 # This lever shrinks that block instead of removing it — disable the skills the
 # model does not need and the index gets smaller, one line at a time.
 #
@@ -5880,7 +5939,7 @@ async def hermes_toolsets_summary() -> JSONResponse:
     except Exception:
         skills = {}
     # In `agent.coding_context: "focus"` the lane's resolver RETURNS ITS OWN toolset
-    # list before the config list is read (tui_gateway/server.py:3797-3803), so this
+    # list before the config list is read (tui_gateway/server.py:4285-4293), so this
     # listing's enabled set is not what the model gets. Say so on the card rather
     # than print a confident number that does not apply — the exact failure mode
     # this whole affordance exists to remove.
@@ -5960,7 +6019,7 @@ async def hermes_toolsets_set(req: Request) -> JSONResponse:
 
     # Re-probe and report the TRUTH rather than our intent. A name that refuses to
     # turn on is almost always sitting in agent.disabled_toolsets, which upstream
-    # subtracts last (tools_config.py:2455) — so name that cause instead of leaving
+    # subtracts last (tools_config.py:2530) — so name that cause instead of leaving
     # the user staring at a switch that snaps back.
     stuck = []
     try:

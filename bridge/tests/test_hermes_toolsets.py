@@ -35,7 +35,8 @@ import yaml  # noqa: E402
 from bridge.app import (  # noqa: E402
     HERMES_MINIMAL_TOOLSETS, HERMES_TOOLSETS_EMPTY_REASON,
     HERMES_LEVER_PLATFORM, HERMES_CONFIG_ONLY_TOOLSETS,
-    HERMES_DEFAULT_OFF_TOOLSETS,
+    HERMES_DEFAULT_OFF_TOOLSETS, HERMES_SESSION_SOURCE,
+    HERMES_GATEWAY_ALWAYS_TOOLSET, HERMES_GATEWAY_ALWAYS_TOOLS,
     hermes_toolset_names, hermes_toolsets_enabled, hermes_preset_desired,
     hermes_toolsets_valid, hermes_toolset_plan, hermes_toolset_view,
     hermes_skills_summary, _hermes_toolset_config, _hermes_config_path,
@@ -767,11 +768,51 @@ check("REGRESSION: turning Terminal off is ONE PUT to the cli platform and nothi
       _off_term["plan"] == [("terminal", False)])
 
 # ── the mirrored upstream constants (contract-pinned separately) ─────────────
-check("the default-off mirror is upstream's seven names",
+# EIGHT at v2026.8.13: `a2a` was added upstream at this pin. Left out of the mirror,
+# "Hermes's defaults" would have switched it on — the same overshoot this constant
+# was introduced to stop, one release later.
+check("the default-off mirror is upstream's eight names",
       sorted(HERMES_DEFAULT_OFF_TOOLSETS)
-      == ["discord", "discord_admin", "homeassistant", "spotify", "video",
+      == ["a2a", "discord", "discord_admin", "homeassistant", "spotify", "video",
           "video_gen", "x_search"])
 check("the lever platform is cli", HERMES_LEVER_PLATFORM == "cli")
+
+# a2a can only ever be a PLUGIN row, so exercise it as one: a catalog that does
+# contain it must not have it turned on by the defaults preset.
+_A2A = ROWS + [row("a2a", False, ["a2a_send", "a2a_discover"])]
+check("REGRESSION (v2026.8.13): the defaults preset does not switch `a2a` on",
+      "a2a" not in hermes_preset_desired(_A2A, "all")
+      and "a2a" not in hermes_preset_desired(_A2A, "minimal"))
+check("…and a defaults preset over a catalog containing a2a plans no write for it",
+      all(n != "a2a" for n, _ in
+          hermes_toolset_plan(_A2A, hermes_preset_desired(_A2A, "all"))["plan"]))
+# ⚠️ RESET SEMANTICS, asserted rather than assumed: "Hermes's defaults" turns a
+# default-off toolset back OFF even when the user deliberately enabled it. That is
+# what the chip says on the tin, and it is the behaviour `video`/`spotify` have had
+# since the preset was introduced — a2a simply joins them. Pinned here because the
+# opposite reading ("never fight the user's opt-in") is equally arguable, so a
+# future change of mind should have to edit a test that states the choice.
+_A2A_ON = ROWS + [row("a2a", True, ["a2a_send"])]
+check("the defaults preset turns a user-enabled a2a back OFF — the chip is a reset, "
+      "and it treats a2a exactly as it already treats video/spotify",
+      ("a2a", False) in hermes_toolset_plan(
+          _A2A_ON, hermes_preset_desired(_A2A_ON, "all"))["plan"])
+_VID_ON = ROWS + [row("video", True, ["video_analyze"])]
+check("…which is the SAME rule the pre-existing default-off names follow",
+      ("video", False) in hermes_toolset_plan(
+          _VID_ON, hermes_preset_desired(_VID_ON, "all"))["plan"])
+
+# ── the session source that decides the client-surface fold ──────────────────
+# `HERMES_SESSION_SOURCE` is not cosmetic: it selects the session's PLATFORM
+# upstream (tui_gateway/server.py:3685-3699), which decides whether the gateway
+# folds `desktop_ui`'s eight tools into the schema on top of `project`. Our Check
+# card counts `project` only, so this must stay off the desktop surface.
+check("the bridge tags its Hermes sessions with a non-desktop source",
+      HERMES_SESSION_SOURCE and HERMES_SESSION_SOURCE != "desktop")
+check("the always-on extras are the project toolset's three tools",
+      HERMES_GATEWAY_ALWAYS_TOOLSET == "project"
+      and tuple(HERMES_GATEWAY_ALWAYS_TOOLS)
+      == ("project_list", "project_create", "project_switch"))
 
 # ── wiring for the scope ─────────────────────────────────────────────────────
 _SRC = (ROOT / "bridge" / "app.py").read_text()
