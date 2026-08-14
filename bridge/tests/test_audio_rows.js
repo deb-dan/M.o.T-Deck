@@ -40,10 +40,20 @@ function grab(name) {
   throw new Error('unbalanced braces extracting ' + name);
 }
 
+// Constants are read OUT of the panel too, so a value changed there cannot pass
+// silently against a stale expectation in here.
+function grabConst(name) {
+  const m = new RegExp('^const ' + name + ' =[\\s\\S]*?;$', 'm').exec(html);
+  if (!m) throw new Error('const ' + name + ' not found in the panel');
+  return m[0];
+}
+
 const NAMES = ['esc', 'fmtGB', 'isAppOwned', 'srcLabel', 'srcBadge',
                'audioEngineLabel', 'audioDefaultId', 'audioRowHtml',
-               'voiceChoiceMode', 'audioVoiceBadge', 'isHideable'];
-const src = NAMES.map(grab).join('\n');
+               'voiceChoiceMode', 'audioVoiceBadge', 'isHideable',
+               'omnivoiceBf16Hint'];
+const src = [grabConst('OMNIVOICE_FP32_MIN_BYTES'), grabConst('OMNIVOICE_BF16_HINT')]
+  .concat(NAMES.map(grab)).join('\n');
 // The panel's esc() escapes via a detached element's textContent→innerHTML; node has
 // no DOM, so stub exactly that one behaviour (& < > escaped, quotes are NOT — which
 // is why the panel has a separate escAttr for attribute contexts).
@@ -204,6 +214,35 @@ check('hiding is a two-step, like Delete',
       /function hideBtn[\s\S]{0,800}dataset\.armed/.test(html));
 check('the hidden rows are unhide-able from the list bottom',
       /function renderHiddenRow[\s\S]{0,1600}setModelHidden\(h\.id, false\)/.test(html));
+
+// ── the fp32 → bf16 nudge (nothing automatic; one sentence, or nothing) ────────
+const FP32 = { id: 'OmniVoice', role: 'tts', size_bytes: 3.27 * 1024 * 1024 * 1024 };
+check('a 3.27 GB OmniVoice entry gets the note',
+      P.omnivoiceBf16Hint(FP32).startsWith('a bf16 build (~2 GB, same quality)'));
+check('the note names the whole migration, ending in Delete',
+      /download it, set it as default, re-pin your clip, then Delete this one\.$/
+        .test(P.omnivoiceBf16Hint(FP32)));
+check('the id match is case-insensitive',
+      P.omnivoiceBf16Hint({ ...FP32, id: 'omnivoice-fp32' }) !== '');
+check('the bf16 build itself is never told to download itself',
+      P.omnivoiceBf16Hint({ ...FP32, id: 'OmniVoice-bfloat16' }) === ''
+      && P.omnivoiceBf16Hint({ ...FP32, id: 'OmniVoice-bf16' }) === '');
+check('a SMALL OmniVoice entry gets nothing (the threshold is the whole point)',
+      P.omnivoiceBf16Hint({ ...FP32, size_bytes: 2.04 * 1024 * 1024 * 1024 }) === '');
+check('exactly 3 GB is not "over 3 GB"',
+      P.omnivoiceBf16Hint({ ...FP32, size_bytes: 3 * 1024 * 1024 * 1024 }) === '');
+check('another big model is left alone',
+      P.omnivoiceBf16Hint({ id: 'whisper-large-v3-turbo', role: 'stt',
+                            size_bytes: 9e9 }) === '');
+check('an STT entry never gets a TTS suggestion',
+      P.omnivoiceBf16Hint({ ...FP32, role: 'stt' }) === '');
+check('junk never throws',
+      ['', null, undefined, {}, { id: 'x' }, { id: 'omnivoice', size_bytes: 'big' }]
+        .every(x => P.omnivoiceBf16Hint(x) === ''));
+check('the note is rendered on the audio detail pane',
+      /omnivoiceBf16Hint\(a\)[\s\S]{0,200}md-imnote/.test(html));
+check('nothing about it is automatic — it never calls a download or a default',
+      !/omnivoiceBf16Hint[\s\S]{0,400}(dlStart|setVoiceDefault)/.test(html));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

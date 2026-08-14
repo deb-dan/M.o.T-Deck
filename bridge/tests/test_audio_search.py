@@ -46,6 +46,52 @@ check("an unknown licence is STILL offerable (Debi's machine, her call)",
 check("a permissive-but-unlisted licence is ok, not unknown",
       A.audio_license_badge("bsd-3-clause")["badge"] == "ok")
 
+# ── known-mistagged repos (LICENSE_OVERRIDES) ─────────────────────────────────
+# k2-fsa's README licenses the WEIGHTS cc-by-nc; every mlx-community/OmniVoice*
+# repo tags itself apache-2.0 (the CODE licence), which defeated the gate.
+APACHE_TAGGED = {"cardData": {"license": "apache-2.0"}}
+for repo in ("mlx-community/OmniVoice-bfloat16", "mlx-community/OmniVoice",
+             "mlx-community/OmniVoice-4bit", "theoracleguy/OmniVoice-bf16",
+             "k2-fsa/OmniVoice", "someone/omnivoice-experiment",
+             "SHOUTY/OMNIVOICE-8BIT"):
+    row = A.audio_license_row(repo, APACHE_TAGGED)
+    check(f"{repo} is overridden to amber",  row["badge"] == "unknown")
+    check(f"{repo} carries the exact override reason",
+          row["reason"] == "weights CC-BY-NC per upstream README; code Apache-2.0")
+    check(f"{repo} names the weights term in its pill",
+          row["license"] == "cc-by-nc (weights)")
+    check(f"{repo} cites the upstream README",
+          row["source_url"] == "https://huggingface.co/k2-fsa/OmniVoice")
+check("the override reason is the module constant, not a copy",
+      A.LICENSE_OVERRIDES["omnivoice"]["reason"] == A.OMNIVOICE_LICENSE_REASON)
+# The whole point: Get stays ENABLED (badge is not "nc"), so the probe handler's
+# can_get override cannot fire for an OmniVoice row.
+check("an overridden row is NOT the nc badge that disables Get",
+      A.audio_license_row("mlx-community/OmniVoice-bfloat16",
+                          APACHE_TAGGED)["badge"] != "nc")
+
+check("a repo with no override falls through to the tag",
+      A.audio_license_row("mlx-community/Kokoro-82M-bf16", APACHE_TAGGED)
+      == A.audio_license_badge("apache-2.0"))
+check("an unlisted repo with an nc TAG is still disabled",
+      A.audio_license_row("SparkAudio/Spark-TTS-0.5B",
+                          {"cardData": {"license": "cc-by-nc-sa-4.0"}})["badge"] == "nc")
+check("an unlisted untagged repo is still amber-but-offerable",
+      A.audio_license_row("kitten/whatever", {})["badge"] == "unknown")
+check("license_override is a substring match, case-insensitively",
+      A.license_override("MLX-COMMUNITY/OmniVoice")
+      == A.license_override("x/omnivoice-y") != {})
+check("license_override returns {} for anything unlisted",
+      all(A.license_override(x) == {} for x in
+          ("mlx-community/Kokoro-82M-bf16", "", "   ", None, 3, [], {"a": 1})))
+check("license_override hands back a COPY (the table cannot be mutated)",
+      A.license_override("x/omnivoice") is not A.LICENSE_OVERRIDES["omnivoice"])
+check("every override record carries the four keys the UI reads",
+      all(set(rec) == {"license", "badge", "reason", "source_url"}
+          for rec in A.LICENSE_OVERRIDES.values()))
+check("no override silently DISABLES a Get (that needs a deliberate nc verdict)",
+      all(rec["badge"] != "nc" for rec in A.LICENSE_OVERRIDES.values()))
+
 check("hf_license reads cardData.license",
       A.hf_license({"cardData": {"license": "Apache-2.0"}}) == "apache-2.0")
 check("hf_license reads a LIST cardData.license",
@@ -208,9 +254,15 @@ check("the kinds the endpoint accepts are exactly the query table's keys",
 for frag in ('@app.get("/api/models/hf/audio")',
              '@app.get("/api/models/hf/audio/probe")',
              "async def hf_audio_search", "async def hf_audio_probe",
-             "audio_license_badge(hf_license(m))",
+             # BOTH licence call sites now go through the ONE override-aware seam
+             # (this assertion changed honestly: the seam moved, the badge logic
+             # underneath it is byte-identical).
+             "lic = audio_license_row(repo, m)",
+             "lic = audio_license_row(repo, meta)",
              "/raw/main/config.json"):
     check(f"app.py wires {frag}", frag in src)
+check("audio_license_badge is only reached THROUGH audio_license_row",
+      src.count("audio_license_badge(hf_license(") == 1)
 check("an nc licence overrides can_get in the probe handler",
       'if lic["badge"] == "nc":' in src and 'v["can_get"] = False' in src)
 check("the probe sorts nothing it did not measure — size comes from audio_probe_size",

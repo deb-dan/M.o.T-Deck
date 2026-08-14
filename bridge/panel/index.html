@@ -5491,6 +5491,29 @@ function markAudioSelRows(){
   document.querySelectorAll('#audio-listcol .mrow').forEach(el =>
     el.classList.toggle('sel', el.dataset.aid === aSel));
 }
+/* ---------- the fp32→bf16 nudge ----------
+   Nothing automatic: an installed model is a file Debi chose, and swapping it behind
+   her back would strand the clip pinned to it. This is ONE faint sentence on the
+   detail pane of an OmniVoice entry that is carrying the 3.27 GB fp32 weights, for
+   which a 2.04 GB bf16 build of the SAME checkpoint exists (same 612,577,280 params,
+   dtype is the only difference — docs/research/2026-08-14-omnivoice-provenance.md).
+   ⚠️ PENDING FABLE QA: this is a HARDCODED HEURISTIC — an id substring plus a size
+   threshold. It cannot mislead (both facts are read off the entry itself, and the
+   note only ever points at a download that already exists in the starters), but it
+   is the first place the panel reasons about a specific model family by name.
+   PURE; mirrored by bridge/tests/test_audio_rows.js. */
+const OMNIVOICE_FP32_MIN_BYTES = 3 * 1024 * 1024 * 1024;
+const OMNIVOICE_BF16_HINT =
+  'a bf16 build (~2 GB, same quality) is available in Get voice models — download it, '
+  + 'set it as default, re-pin your clip, then Delete this one.';
+function omnivoiceBf16Hint(a){
+  if (!a || (a.role || 'tts') !== 'tts') return '';
+  const id = String((a && a.id) || '');
+  if (!/omnivoice/i.test(id)) return '';
+  if (/bf(loat)?16/i.test(id)) return '';        // already the small build
+  if (!(Number(a.size_bytes) > OMNIVOICE_FP32_MIN_BYTES)) return '';
+  return OMNIVOICE_BF16_HINT;
+}
 function renderAudioDetail(){
   const d = document.getElementById('models-audio-detail');
   if (!d) return;
@@ -5509,6 +5532,8 @@ function renderAudioDetail(){
     <div class="md-meta">${meta}${isDefault ? ' · default ' + esc(role.toUpperCase()) : ''}${
       resident ? ' <span class="mpill live">resident</span>' : ''}</div>
     <div class="md-actions" id="ad-actions"></div>
+    ${omnivoiceBf16Hint(a) ? `<div class="md-imnote" style="margin-top:10px;max-width:100%">${
+        esc(omnivoiceBf16Hint(a))}</div>` : ''}
     <div id="ad-voice"></div>
     <div class="md-div"></div>
     <div class="md-path">${a.path ? esc(a.path) : 'path unknown'}${
@@ -6146,17 +6171,31 @@ async function setVoiceDefault(id, role){
    `fmt` hint is what makes the finished download register as an AUDIO model.
    ⚠️ Sizes/filenames are from Phase-0 recon — a real download is what confirms them. */
 const VOICE_STARTERS = [
+  /* The recommended TTS. Same 613M-parameter k2-fsa checkpoint VoiceStudio runs, in
+     Apple-silicon (MLX) form — id + 2.04 GB size confirmed live against the HF tree
+     API on 2026-08-14 (model 1.23 GB + audio_tokenizer 806 MB + tokenizer 11 MB).
+     bf16 is what mlx-audio's own README recommends; the plain `OmniVoice` repo is
+     fp32 (3.27 GB) for the same weights and the same quality. */
+  { title: 'OmniVoice bf16 · MLX  — recommended', repo: 'mlx-community/OmniVoice-bfloat16',
+    file: '', fmt: 'tts-mlx', size: '~2.04 GB',
+    desc: 'The model VoiceStudio runs, in Apple-silicon form; clones any voice from a '
+        + '10s clip — see the clip picker. 646 languages. It has no named voices at all, '
+        + 'so pin a reference clip (or use ⊕ get starter voices) to keep one consistent voice.',
+    lic: 'code Apache-2.0 · weights CC-BY-NC (upstream README)' },
   { title: 'Qwen3-TTS · llama.cpp', repo: 'ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF',
     file: 'Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf',
     mmproj: 'mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf',
     fmt: 'tts-gguf', size: '1.38 GB (0.96 + 0.42)',
-    desc: 'The default engine — runs on the llama.cpp binary the harness already ships. '
-        + 'Downloads BOTH halves: llama-tts needs the backbone and its mmproj projector.',
+    desc: 'Runs on the llama.cpp binary the harness already ships — the lightest option, '
+        + 'and the only one that needs no MLX. Downloads BOTH halves: llama-tts needs the '
+        + 'backbone and its mmproj projector. Voice quality is well below OmniVoice, and '
+        + 'llama.cpp has no voice parameter at all, so the voice is whatever the model does.',
     lic: 'Apache-2.0 (upstream Qwen)' },
   { title: 'Qwen3-TTS · MLX', repo: 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit',
     file: '', fmt: 'tts-mlx', size: '~1.8 GB',
-    desc: 'Apple-silicon build of the same model, with named voices (Chelsie, Ethan). '
-        + 'No extra packages beyond the existing MLX venv.',
+    desc: 'Apple-silicon build of the same model. This Base conversion declares NO named '
+        + 'voices (its sibling …-CustomVoice-8bit declares nine); voice quality is well '
+        + 'below OmniVoice — kept as an alternative, not a recommendation.',
     lic: 'Apache-2.0 (upstream Qwen)' },
   { title: 'Kokoro · MLX', repo: 'mlx-community/Kokoro-82M-bf16',
     file: '', fmt: 'tts-mlx', size: '~389 MB',
@@ -6240,6 +6279,14 @@ function audioLicPill(badge){
 function audioLicText(row){
   return (row && row.license) ? row.license : 'licence unknown';
 }
+/* PURE: the one licence sentence worth spending a line on. A tag-derived
+   "licence unknown" is already said by the pill, so only a REAL reason (an
+   override's mistag correction, or a use-restricted licence) earns a line. */
+function audioLicNote(row){
+  if (!row || !row.reason) return '';
+  if (row.badge === 'nc') return '';          // shown by the disabled-Get line
+  return row.reason === 'licence unknown' ? '' : row.reason;
+}
 function audioProbeSummary(p){
   // One line that says what this repo IS. Never invents a size we did not measure.
   if (!p) return '';
@@ -6300,8 +6347,10 @@ async function audioSearch(){
                     `<span class="fitpill ${audioLicPill(m.badge)}">${esc(audioLicText(m))}</span>`];
     if (m.updated) badges.push('<span class="msize">' + relTimeLong(m.updated) + '</span>');
     if (have.has(m.repo.split('/').pop())) badges.push('<span class="mpill live">in library</span>');
+    const licNote = audioLicNote(m);
     row.innerHTML = `<div class="mname" style="font-size:13.5px;word-break:break-all">${esc(m.repo)}</div>
-      <div class="mbadges">${badges.join('')}</div>`;
+      <div class="mbadges">${badges.join('')}</div>`
+      + (licNote ? `<div style="color:var(--gold);white-space:normal;font-size:11px">${esc(licNote)}</div>` : '');
     const card = document.createElement('div'); card.className = 'md-sec'; card.hidden = true;
     row.onclick = () => audioProbe(m, row, card);
     wrap.appendChild(row); wrap.appendChild(card);
@@ -6328,6 +6377,8 @@ async function audioProbe(m, row, card){
       <div style="color:var(--cream)">${esc(audioProbeSummary(p))}</div>
       ${p.warn ? `<div style="color:var(--gold);white-space:normal">⚠ ${esc(p.warn)}</div>` : ''}
       ${st.disabled ? `<div style="color:var(--bad);white-space:normal">${esc(st.reason)}</div>` : ''}
+      ${audioLicNote(p) ? `<div style="color:var(--gold);white-space:normal">${esc(audioLicNote(p))}${
+          p.source_url ? ' — ' + esc(p.source_url) : ''}</div>` : ''}
       ${p.voices && p.voices.length ? `<div style="color:var(--dim);white-space:normal">voices: ${
           esc(p.voices.slice(0, 12).join(', '))}${p.voices.length > 12 ? ' …' : ''}</div>` : ''}
       ${p.file ? `<div style="color:var(--faint);white-space:normal">${esc(p.file)}${

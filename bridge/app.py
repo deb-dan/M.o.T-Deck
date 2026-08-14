@@ -2556,6 +2556,66 @@ _RESTRICTED_PREFIXES = ("creativeml-openrail", "openrail", "bigscience-openrail"
 
 LICENSE_NC_REASON = "non-commercial licence"
 
+# ── known-mistagged repos ─────────────────────────────────────────────────────
+# Some upstreams tag the CODE licence on a repo whose WEIGHTS carry a different
+# one. Our licence gate reads the tag, so a mistag defeats it silently. This table
+# is the honest correction, consulted BEFORE the tag-derived badge at BOTH call
+# sites (the search rows and the single-repo probe).
+#
+# OmniVoice: k2-fsa's own README says verbatim — "Our code is released under the
+# Apache 2.0 License. The pre-trained model is licensed under the CC-BY-NC due to
+# constraints from its training data (e.g. Emilia)."
+#   https://huggingface.co/k2-fsa/OmniVoice   (see docs/research/2026-08-14-omnivoice-provenance.md)
+# The k2 repo itself carries NO licence tag; every mlx-community/OmniVoice* repo
+# tags itself apache-2.0 — the code licence, not the weights licence. Every one of
+# them declares base_model k2-fsa/OmniVoice with the identical 612,577,280 params,
+# i.e. a format conversion, so the weights term follows the conversion.
+#
+# ⚠️ PENDING FABLE QA: the badge is AMBER and **Get stays ENABLED**, unlike the
+# unambiguous cc-by-nc-TAGGED rows (Spark-TTS, Voxtral-TTS) which stay disabled.
+# Rationale: this is Debi's own machine and personal use is unaffected by CC-BY-NC;
+# the honest thing is to SAY the weights term, not to hide the model behind a
+# button we turn off. Same verdict shape as the recorded unknown-licence and
+# OpenRAIL calls — honesty over gatekeeping. Flipping this to "nc" would disable
+# Get on a model the harness already ships as its recommended TTS.
+OMNIVOICE_LICENSE_REASON = ("weights CC-BY-NC per upstream README; code Apache-2.0")
+
+# key = a lowercase SUBSTRING matched against the repo id (so every fork/quant of a
+# family is covered without listing them all — the mlx-community set alone is six
+# repos and theoracleguy has a seventh).
+LICENSE_OVERRIDES = {
+    "omnivoice": {
+        "license": "cc-by-nc (weights)",
+        "badge": "unknown",
+        "reason": OMNIVOICE_LICENSE_REASON,
+        "source_url": "https://huggingface.co/k2-fsa/OmniVoice",
+    },
+}
+
+
+def license_override(repo: object) -> dict:
+    """PURE: the override record for a repo id, or {} when nothing is known.
+
+    Substring match, case-insensitive, on the whole `org/name` string.
+    """
+    if not isinstance(repo, str) or not repo.strip():
+        return {}
+    low = repo.strip().lower()
+    for key, rec in LICENSE_OVERRIDES.items():
+        if key in low:
+            return dict(rec)
+    return {}
+
+
+def audio_license_row(repo: object, meta: object) -> dict:
+    """PURE: the licence record for one repo — override FIRST, tag second.
+
+    This is the ONE seam both the search rows and the probe go through, so a
+    known mistag can never reach the UI through one path and not the other.
+    """
+    ov = license_override(repo)
+    return ov if ov else audio_license_badge(hf_license(meta))
+
 
 def hf_license(meta: object) -> str:
     """PURE: the licence id for a model, from cardData.license or a `license:*` tag.
@@ -2828,7 +2888,7 @@ async def hf_audio_search(q: str = "", kind: str = "tts", limit: int = 25) -> JS
             if not repo or repo in seen:
                 continue
             seen.add(repo)
-            lic = audio_license_badge(hf_license(m))
+            lic = audio_license_row(repo, m)
             out.append({"repo": repo, "downloads": m.get("downloads", 0),
                         "likes": m.get("likes", 0),
                         "pipeline": m.get("pipeline_tag"),
@@ -2869,7 +2929,7 @@ async def hf_audio_probe(repo: str) -> JSONResponse:
             cfg = None
     v = audio_probe_verdict(repo, cfg, files, meta.get("tags") or [],
                             meta.get("pipeline_tag") or "")
-    lic = audio_license_badge(hf_license(meta))
+    lic = audio_license_row(repo, meta)
     if lic["badge"] == "nc":
         v["can_get"] = False
         v["block_reason"] = lic["reason"]

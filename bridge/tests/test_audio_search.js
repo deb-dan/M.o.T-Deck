@@ -37,6 +37,7 @@ function grab(name) {
 eval(grab('fmtGB'));
 eval(grab('audioLicPill'));
 eval(grab('audioLicText'));
+eval(grab('audioLicNote'));
 eval(grab('audioProbeSummary'));
 eval(grab('audioGetState'));
 
@@ -54,6 +55,45 @@ check('the licence id is shown verbatim when known',
 check('a missing licence says so instead of showing nothing',
       audioLicText({ license: '' }) === 'licence unknown'
       && audioLicText(null) === 'licence unknown');
+
+// ── the licence NOTE line (known-mistag overrides) ───────────────────────────
+const OV_REASON = 'weights CC-BY-NC per upstream README; code Apache-2.0';
+check('an override reason earns its own line',
+      audioLicNote({ badge: 'unknown', reason: OV_REASON }) === OV_REASON);
+check('a use-restricted reason earns a line too',
+      audioLicNote({ badge: 'unknown', reason: 'use-restricted licence' })
+      === 'use-restricted licence');
+check('"licence unknown" does NOT — the pill already says it',
+      audioLicNote({ badge: 'unknown', reason: 'licence unknown' }) === '');
+check('an nc row says it through the disabled-Get line, not twice',
+      audioLicNote({ badge: 'nc', reason: 'non-commercial licence' }) === '');
+check('an ok row with no reason prints nothing',
+      audioLicNote({ badge: 'ok', reason: '' }) === '');
+check('junk never throws',
+      audioLicNote(null) === '' && audioLicNote(undefined) === ''
+      && audioLicNote({}) === '');
+// Both surfaces must show it — a mistag warning on one screen only is worse than none.
+check('the search ROW renders the licence note',
+      /audioLicNote\(m\)/.test(html));
+check('the probe CARD renders the licence note + the source url',
+      /audioLicNote\(p\)[\s\S]{0,260}p\.source_url/.test(html));
+
+// ── the OmniVoice bf16 starter card ──────────────────────────────────────────
+check('the recommended starter is the bf16 MLX OmniVoice',
+      /repo: 'mlx-community\/OmniVoice-bfloat16'/.test(html));
+check('it is offered as a tts-mlx whole-repo download',
+      /OmniVoice-bfloat16'[\s\S]{0,120}fmt: 'tts-mlx'/.test(html));
+check('its size is the measured 2.04 GB, not a guess',
+      /OmniVoice-bfloat16'[\s\S]{0,160}~2\.04 GB/.test(html));
+check('its card states BOTH licence terms',
+      /code Apache-2\.0 · weights CC-BY-NC \(upstream README\)/.test(html));
+check('it sits FIRST in the starter list',
+      html.indexOf("mlx-community/OmniVoice-bfloat16")
+        < html.indexOf("ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF"));
+check('the two Qwen3-TTS starters are DEMOTED, not removed',
+      /repo: 'ggml-org\/Qwen3-TTS-12Hz-1\.7B-Base-GGUF'/.test(html)
+      && /repo: 'mlx-community\/Qwen3-TTS-12Hz-1\.7B-Base-8bit'/.test(html)
+      && (html.match(/below OmniVoice/g) || []).length === 2);
 
 // ── the probe summary line ───────────────────────────────────────────────────
 check('a tts-mlx probe reads engine · size · voices',
