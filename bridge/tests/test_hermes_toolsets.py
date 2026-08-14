@@ -49,10 +49,11 @@ def check(name, cond):
         FAILS.append(name)
 
 
-def row(name, enabled, tools=(), label=None, desc="", platform="cli"):
+def row(name, enabled, tools=(), label=None, desc="", platform="cli",
+        configured=True):
     return {"name": name, "label": label or name, "description": desc,
             "platform": platform, "platform_label": platform,
-            "enabled": enabled, "available": enabled, "configured": False,
+            "enabled": enabled, "available": enabled, "configured": configured,
             "tools": list(tools)}
 
 
@@ -164,9 +165,34 @@ check("view has NO token estimate field (schemas are not in the probe, so any "
       "per-toolset token figure would be invented)",
       not [k for k in v if "token" in k]
       and not [k for k in v["toolsets"][0] if "token" in k])
-check("view row keeps name/label/description/enabled/tools/tool_count",
+check("view row keeps name/label/description/enabled/tools/tool_count/needs_setup",
       set(v["toolsets"][0]) == {"name", "label", "description", "platform",
-                               "enabled", "tools", "tool_count"})
+                               "enabled", "tools", "tool_count", "needs_setup"})
+
+# ── needs_setup: UPSTREAM's own `configured` bool, mirrored not invented ──────
+# Provenance: web_routers/tools.py:107 (the field) ← tools_config._toolset_has_keys
+# :2589 (the producer) — the SAME field Hermes's Skills→TOOLSETS page prints its
+# amber "Setup needed" caption from (web/src/pages/SkillsPage.tsx:606).
+def ns(r):
+    return hermes_toolset_view([r])["toolsets"][0]["needs_setup"]
+
+
+check("configured:False → needs_setup True", ns(row("browser", True, configured=False)) is True)
+check("configured:True  → needs_setup False", ns(row("file", True, configured=True)) is False)
+# FAIL OPEN: only an EXPLICIT False warns. A build/probe shape that omits the key, or
+# returns junk in it, must never invent a scary pill on a working toolset.
+_bare = row("file", True)
+del _bare["configured"]
+check("missing configured → no warning (fail open)", ns(_bare) is False)
+check("configured:None → no warning", ns(row("x", True, configured=None)) is False)
+check("configured:'' → no warning (only a real False)", ns(row("x", True, configured="")) is False)
+check("configured:0 → no warning (0 is not False here — an explicit bool is required)",
+      ns(row("x", True, configured=0)) is False)
+check("configured:'no' → no warning", ns(row("x", True, configured="no")) is False)
+check("needs_setup is independent of our switch (knowing BEFORE enabling is the point)",
+      ns(row("browser", False, configured=False)) is True)
+check("needs_setup never affects the counts",
+      hermes_toolset_view([row("a", True, ["t"], configured=False)])["tool_count_enabled"] == 1)
 check("view drops junk rows", len(hermes_toolset_view([None, {}, {"name": 2}])["toolsets"]) == 0)
 check("view with no skills payload is zeroed, not missing",
       hermes_toolset_view(ROWS)["skills"] == {"count": 0, "disabled_count": 0})

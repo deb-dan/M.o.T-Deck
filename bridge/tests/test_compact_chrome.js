@@ -41,7 +41,33 @@ const noComments = block.replace(/\/\*[\s\S]*?\*\//g, '');
 const sels = (noComments.match(/([^{}]+)\{/g) || [])
   .map(s => s.slice(0, -1).trim()).filter(Boolean);
 
-ok(sels.length === 23, 'the compact block declares exactly 23 rules (got ' + sels.length + ')');
+ok(sels.length === 27, 'the compact block declares exactly 27 rules (got ' + sels.length + ')');
+
+// ---------------------------------------------------------------------------
+// STRUCTURAL GROUND TRUTH (added 2026-08-14h, third Mac failure). Two sessions
+// diagnosed "the toggle does nothing" from the stylesheet and both were wrong; the
+// missing step was proving the block is actually SERVED and actually PARSED. These
+// four assertions are what "the CSS is fine" is allowed to mean from now on.
+// ---------------------------------------------------------------------------
+{
+  const s0 = html.indexOf('<style>'), e0 = html.indexOf('</style>');
+  const abs = html.indexOf(START);
+  ok(html.indexOf(START, abs + 1) === -1,
+     'the compact block appears exactly ONCE in the file (not duplicated into an '
+     + 'artifact-iframe srcdoc template string)');
+  ok(s0 >= 0 && e0 > s0 && abs > s0 && abs < e0,
+     'the compact block lies inside the FIRST <style> element (byte range '
+     + s0 + '..' + e0 + ', block at ' + abs + ')');
+  // brace depth at the block's start must be 0, or an earlier unclosed rule /
+  // @media / @supports would swallow the whole axis silently.
+  const upto = css.slice(0, bi).replace(/\/\*[\s\S]*?\*\//g, '')
+                              .replace(/"[^"]*"|'[^']*'/g, '""');
+  let d = 0;
+  for (const ch of upto) { if (ch === '{') d++; else if (ch === '}') d--; }
+  ok(d === 0, 'CSS brace depth is 0 where the compact block starts (got ' + d + ')');
+  ok(!/@(media|supports|container)[^{}]*\{[^{}]*$/.test(upto),
+     'no at-rule wrapper is left open before the compact block');
+}
 
 const PREFIX = 'html[data-chrome="compact"]';
 for (const sel of sels) {
@@ -59,8 +85,9 @@ ok(!outside.includes('data-chrome'),
 // NEGATIVE: this axis must not touch the palette or content typography. The block
 // may READ tokens (var(--…)) but must never REDEFINE one, except its own font var.
 const decls = noComments.match(/--[a-z0-9-]+\s*:/g) || [];
-ok(decls.length === 1 && decls[0].startsWith('--chrome-font'),
-   'the block defines exactly one custom property (--chrome-font), redefining no palette token');
+ok(decls.length > 0 && decls.every(d => d.startsWith('--chrome-')),
+   'every custom property the block defines is namespaced --chrome-* (redefines no '
+   + 'palette token): ' + decls.join(' '));
 for (const t of ['--bg:', '--gold:', '--cream:', '--serif:', '--mono:']) {
   ok(!noComments.includes(t), 'the block never redefines ' + t);
 }
@@ -253,7 +280,37 @@ ok(delta({ tag: 'span', id: 'mode-agent', cls: ['mode-chip', 'on'] },
 // same specificity as the base button.primary rule and later in source order.
 { const w = winners({ tag: 'button', id: null, cls: ['primary'] }, ON);
   ok(w.background && w.background.v === 'var(--cream)',
-     'button.primary keeps its cream fill under compact chrome (source-order tie won)'); }
+     'button.primary keeps its cream fill under compact chrome (source-order tie won)');
+  ok(w['border-color'] && w['border-color'].v === 'var(--cream)',
+     'button.primary keeps its cream border under compact chrome');
+  // 2026-08-14h: the bare-button rule is (0,1,2) and OUTRANKS base button.primary
+  // (0,1,1) — a `color` on it would have made the one filled button light-on-light.
+  ok(w.color && w.color.v === '#171420',
+     'button.primary keeps its DARK ink under compact chrome (the bare-button rule '
+     + 'must not claim color)'); }
+// STATE NEGATIVES: compact `.cap-btn` is (0,2,1) and outranks `.cap-btn.arm` (0,2,0),
+// so the two-step-delete states are restated inside the block or they go flat.
+for (const [st, want] of [['arm', 'var(--bad)'], ['go', 'var(--gold)']]) {
+  const w = winners({ tag: 'button', id: null, cls: ['cap-btn', st] }, ON);
+  ok(w.color && w.color.v === want,
+     '.cap-btn.' + st + ' keeps ' + want + ' under compact chrome');
+  ok(w['border-color'] && w['border-color'].v === want,
+     '.cap-btn.' + st + ' keeps its ' + want + ' border under compact chrome');
+}
+for (const id of ['chat-model-btn', 'chat-audio-btn']) {
+  const w = winners({ tag: 'button', id: id, cls: ['mode-chip', 'empty'] }, ON);
+  ok(w.color && w.color.v === 'var(--faint)',
+     '#' + id + '.empty stays faint under compact chrome (the compact id rule is '
+     + '(1,1,1) and outranks the base (1,1,0) state rule)');
+}
+// lane chip + row-action active states must still be the gold fill with theme ink
+for (const cls of [['mode-chip', 'on'], ['mp-act', 'on']]) {
+  const w = winners({ tag: 'span', id: null, cls }, ON);
+  ok(w.background && w.background.v === 'var(--gold)',
+     '.' + cls[0] + '.on stays gold-filled under compact chrome');
+  ok(w.color && w.color.v === 'var(--bg)',
+     '.' + cls[0] + '.on uses theme-aware ink under compact chrome');
+}
 // NEGATIVE: the per-message action row must NOT become boxes (.cmsg .msg-act, 0-2-0,
 // still outranks the bare-button rule).
 { const w = winners({ tag: 'button', id: null, cls: ['msg-act'] }, ON);
@@ -266,6 +323,116 @@ ok(!sels.some(s => matchSel(s.split(',')[0].trim(),
                             { tag: 'button', id: null, cls: ['chip'] },
                             [OFF, { tag: 'body', id: null, cls: [] }])),
    'no compact rule matches anything while the attribute is absent');
+
+// ---------------------------------------------------------------------------
+// THE 2026-08-14h GUARD: a rule that WINS can still be a NO-OP, and that is what
+// three Mac reports actually were. `border-color:var(--line2)` on the bare button was
+// byte-identical to the base rule's own border-color; the "solid ground" was --card2
+// (#181527) on a --card (#14121d) parent, a lift of 4/3/10 — invisible. So resolve the
+// tokens for real and demand a PERCEPTUAL delta, plus the right hover direction.
+// ---------------------------------------------------------------------------
+{
+  const tok = {};
+  for (const m of css.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})\s*[;}]/g)) {
+    if (!(m[1] in tok)) tok[m[1]] = m[2];       // FIRST wins = the dark :root default
+  }
+  for (const t of ['--chrome-btn', '--chrome-btn-hi', '--chrome-edge',
+                   '--card', '--card2', '--line2', '--bg2']) {
+    ok(typeof tok[t] === 'string', 'token ' + t + ' resolves to a hex literal');
+  }
+  const lum = (h) => {
+    h = h.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const c = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map(x => x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratio = (a, b) => {
+    const x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+  // (1) the axis ground must not BE the base ground under another name
+  ok(tok['--chrome-btn'] !== tok['--card2'] && tok['--chrome-btn'] !== tok['--card'],
+     'the compact ground is its own value, not an alias of --card/--card2');
+  ok(tok['--chrome-edge'] !== tok['--line2'],
+     'the compact border colour differs from --line2 (the base border-color — '
+     + 'setting it again is a literal no-op)');
+  // (2) it must be VISIBLE against every surface a control sits on
+  for (const bg of ['--card', '--bg2']) {
+    ok(ratio(tok['--chrome-btn'], tok[bg]) >= 1.3,
+       'the compact ground is perceptible against ' + bg + ' (ratio '
+       + ratio(tok['--chrome-btn'], tok[bg]).toFixed(2) + ' >= 1.3)');
+  }
+  // (3) hover must go LIGHTER than rest — the shipped build went darker
+  ok(lum(tok['--chrome-btn-hi']) > lum(tok['--chrome-btn']),
+     'compact hover is LIGHTER than the resting ground (the shipped build inverted it)');
+  // (4) NO compact declaration may restate a value the base sheet already computes.
+  //     Resolved per element via the cascade resolver: if it is in the compact rule it
+  //     must actually differ with the attribute on.
+  for (const el of [{ tag: 'button', id: null, cls: [] },
+                    { tag: 'button', id: null, cls: ['cap-btn'] },
+                    { tag: 'span', id: 'mode-agent', cls: ['mode-chip'] },
+                    { tag: 'span', id: null, cls: ['chip'] }]) {
+    const a = winners(el, OFF), b = winners(el, ON);
+    for (const p of ['background', 'border-color']) {
+      if (!(b[p] && /--chrome-/.test(b[p].v))) continue;
+      ok((a[p] && a[p].v) !== b[p].v,
+         'compact ' + p + ' on ' + (el.id || el.cls[0] || el.tag)
+         + ' is a real change, not a restatement of the base value');
+    }
+  }
+  // (5) the light axis gets its own three tokens, or dark slate lands on warm paper
+  ok(/html\[data-chrome="compact"\]\[data-theme="light"\]/.test(noComments),
+     'the compact axis carries a light-theme override for its own surface tokens');
+  {
+    const lr = (noComments.match(
+      /html\[data-chrome="compact"\]\[data-theme="light"\]\s*\{([^}]*)\}/) || [null, ''])[1];
+    const lt = {};
+    for (const m of lr.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})/g)) lt[m[1]] = m[2];
+    for (const t of ['--chrome-btn', '--chrome-btn-hi', '--chrome-edge']) {
+      ok(typeof lt[t] === 'string', 'the light override defines ' + t);
+      ok(lt[t] !== tok[t], 'the light ' + t + ' is not the dark value');
+    }
+    // light surfaces are --card #ffffff and --bg2 #f2eee3
+    ok(ratio(lt['--chrome-btn'], '#ffffff') >= 1.3,
+       'the light compact ground is perceptible on a white card (ratio '
+       + ratio(lt['--chrome-btn'], '#ffffff').toFixed(2) + ')');
+    // direction INVERTS on paper: hover darkens. Asserted so a future "make them
+    // consistent" edit has to be deliberate.
+    ok(lum(lt['--chrome-btn-hi']) < lum(lt['--chrome-btn']),
+       'light-theme hover DARKENS (the inverse of dark theme, and correct on paper)');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RUNTIME SELF-CHECK. The next report must be ground truth, not a description:
+// toggleChrome reads the attribute BACK and asks getComputedStyle what a real
+// control resolved to, then feeds it. Cheap, permanent, and cannot throw.
+// ---------------------------------------------------------------------------
+ok(/function chromeProbe\(\)/.test(html), 'chromeProbe() exists');
+{
+  const pf = html.slice(html.indexOf('function chromeProbe()'));
+  const pb = pf.slice(0, pf.indexOf('\n}') + 2);
+  ok(/getAttribute\('data-chrome'\)/.test(pb),
+     'the probe reads the attribute BACK off <html> (not the variable it just set)');
+  ok(/getComputedStyle\(/.test(pb),
+     'the probe asks the BROWSER what it computed, not the stylesheet');
+  for (const p of ['borderRadius', 'backgroundColor', 'fontSize', 'textTransform']) {
+    ok(pb.includes(p), 'the probe reports ' + p);
+  }
+  ok(/try\s*\{/.test(pb) && /catch/.test(pb),
+     'the probe never throws (a self-check must not break what it watches)');
+  ok(!/setAttribute|removeAttribute|\.style\./.test(pb),
+     'the probe writes nothing — it only observes');
+  // ordering: the probe must run AFTER the attribute write inside toggleChrome
+  const t = html.slice(html.indexOf('function toggleChrome()'));
+  const tb = t.slice(0, t.indexOf('\n}') + 2);
+  ok(tb.indexOf("dataset.chrome = 'compact'") < tb.indexOf('chromeProbe()'),
+     'toggleChrome() probes AFTER setting the attribute');
+  ok(/feed\('chrome',\s*p\)/.test(tb),
+     'the probe result reaches the activity feed (visible without a console)');
+  ok(/console\.log/.test(tb), 'the probe result is also logged to the console');
+}
 
 console.log(fails ? `\n${fails} failure(s) of ${checks}` : `OK — 0 failure(s) (${checks} checks)`);
 process.exit(fails ? 1 : 0);

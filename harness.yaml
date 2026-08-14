@@ -142,16 +142,19 @@ voice:
 # deliberation loop that never terminates — and because it keeps EMITTING tokens,
 # every silence-based watchdog in the relay is blind to it: the turn cooked the CPU
 # until the 600s total-silence guard, and even then only the RELAY gave up while
-# Hermes kept generating. max_turn_s is TOTAL turn time measured from prompt.submit;
-# on overrun the bridge sends session.interrupt (stopping the GENERATION) and ends
-# the stream with a clear message. The clock PAUSES while an approval/clarify card
-# is waiting for you, so an interactive card is never shot for being slow.
+# Hermes kept generating. max_turn_s bounds ONE UNBROKEN GENERATION SEGMENT, NOT the
+# whole turn (2026-08-14h revision): the clock is armed at prompt.submit and RESET on
+# every tool.start / tool.complete and on every approval/clarify answer, and it PAUSES
+# while a card waits for you. So a legitimate hour-long research turn that keeps making
+# tool calls is never touched — only a model deliberating for this long with nothing to
+# show for it. On overrun the bridge sends session.interrupt (stopping the GENERATION)
+# and ends the stream with a clear message.
 #   0 = disabled. Absent or unparseable = 600 (a typo must not switch a guard off).
 # NOTE this is a TOP-LEVEL block, deliberately not components.hermes.*: ship.sh's
 # manifest merge is additive at the top level only, so a new sub-key under the
 # already-present components.hermes would never reach the app snapshot.
 hermes:
-  max_turn_s: 600             # seconds; 0 = no server-side turn limit
+  max_turn_s: 600             # seconds in ONE generation segment; 0 = no limit
 
 # Model-memory ledger — Bridge-side RAM accounting so main + aux (+ future voice)
 # model loads can't blow past physical memory. Budget is < 64GB to leave headroom

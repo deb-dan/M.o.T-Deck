@@ -178,3 +178,53 @@ def test_minimal_preset_names_are_real_configurable_toolsets():
     off_names = set(re.findall(r'"([a-z0-9_]+)"', off.group(1)))
     assert not (set(HERMES_MINIMAL_TOOLSETS) & off_names), \
         "a minimal-preset toolset became default-off upstream"
+
+
+def test_toolsets_listing_carries_a_configured_bool():
+    """`configured` on each /api/tools/toolsets row is our ONLY per-toolset setup
+    signal, and it is upstream's own — the same field its Skills→TOOLSETS page
+    prints "Setup needed" from. Our lever rows show a faint
+    `needs setup in Hermes` pill off it, so a rename must trip here rather than
+    silently make the pill vanish (we fail OPEN, so the failure is invisible).
+    """
+    src = _read("hermes_cli/web_routers/tools.py")
+    i = src.index("/toolsets")
+    win = src[i:i + 6000]
+    assert '"configured"' in win, "the toolsets row lost its `configured` key"
+    assert "_toolset_has_keys(" in win, \
+        "`configured` is no longer produced by _toolset_has_keys"
+    cfg = _read("hermes_cli/tools_config.py")
+    assert "def _toolset_has_keys(" in cfg
+
+
+def test_configured_is_optimistic_and_that_is_a_known_limit():
+    """HONEST LIMIT, pinned so nobody "fixes" our pill by trusting it more.
+
+    `_toolset_has_keys` returns True as soon as ANY provider in the category needs
+    no env vars (Local Browser, Edge TTS), so `browser`/`tts` can report
+    configured:true while a one-time post_setup install is still missing. The
+    accurate predicate `_toolset_needs_configuration_prompt` exists but is NOT
+    exposed over HTTP by any web router — if that changes, our pill should switch
+    to it.
+    """
+    cfg = _read("hermes_cli/tools_config.py")
+    assert "def _toolset_needs_configuration_prompt(" in cfg, \
+        "the accurate needs-setup predicate moved or was renamed"
+    # the no-key-provider short circuit that makes `configured` optimistic
+    body = cfg[cfg.index("def _toolset_has_keys("):][:2500]
+    assert "env_vars" in body
+    # and it is still absent from every web router
+    routers = ROOT / "vendor" / "hermes" / "hermes_cli" / "web_routers"
+    leaked = [p.name for p in routers.glob("*.py")
+              if "_toolset_needs_configuration_prompt" in
+              p.read_text(encoding="utf-8", errors="replace")]
+    assert not leaked, (
+        "upstream now exposes _toolset_needs_configuration_prompt over HTTP "
+        f"({leaked}) — the pill should use that instead of `configured`")
+
+
+def test_upstreams_own_ui_uses_the_same_field_for_setup_needed():
+    """Provenance: we mirror Hermes's own caption rather than inventing a rule."""
+    page = _read("web/src/pages/SkillsPage.tsx")
+    assert re.search(r"!\s*ts\.configured", page), \
+        "Hermes's TOOLSETS page no longer branches its setup warning on !configured"

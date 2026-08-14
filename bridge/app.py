@@ -4182,14 +4182,37 @@ def hermes_max_turn_s(conf) -> float:
     return 0.0 if f <= 0 else f
 
 
-def hermes_turn_spent(now: float, started_at: float,
-                      paused_total: float = 0.0, paused_since=None) -> float:
-    """Turn time that COUNTS against the budget. PURE.
+# SEGMENT, NOT TURN (2026-08-14h, Fable revision after Debi's objection): a cap on
+# TOTAL turn time punishes exactly the work the harness exists for — a research turn
+# that legitimately spends an hour making tool call after tool call. What must be
+# bounded is an UNBROKEN GENERATION STRETCH: the model talking to itself with nothing
+# to show for it. So the clock is a SEGMENT clock — it restarts every time the turn
+# makes visible progress (a tool starts or completes) and every time an interactive
+# card is answered — and only one continuous deliberation stretch longer than the
+# budget is interrupted. A turn with a tool call every few minutes runs forever.
+HERMES_SEGMENT_RESET_EVENTS = ("tool.start", "tool.complete")
 
-    Wall clock since prompt.submit MINUS every interval spent waiting on an
-    interactive card (approval / clarify): a card that legitimately waits for Debi
-    must never be shot. `paused_total` is the sum of closed pauses; `paused_since`
-    is the start of the pause still open (None if not paused). Never negative.
+
+def hermes_segment_resets(ev_type) -> bool:
+    """PURE. Does this gateway event END the current unbroken-generation segment?
+
+    Deliberately NOT message deltas: a spiralling model emits deltas continuously,
+    so resetting on them would make the guard blind to the only failure it exists
+    to catch. Tool lifecycle events are the honest "the turn is getting somewhere"
+    signal (card resolution is the other, handled by the relay's pause bookkeeping).
+    """
+    return isinstance(ev_type, str) and ev_type.strip() in HERMES_SEGMENT_RESET_EVENTS
+
+
+def hermes_segment_spent(now: float, started_at: float,
+                         paused_total: float = 0.0, paused_since=None) -> float:
+    """Segment time that COUNTS against the budget. PURE.
+
+    Wall clock since the segment began (prompt.submit, or the last reset) MINUS
+    every interval spent waiting on an interactive card (approval / clarify): a card
+    that legitimately waits for Debi must never be shot. `paused_total` is the sum of
+    closed pauses; `paused_since` is the start of the pause still open (None if not
+    paused). Never negative.
     """
     spent = float(now) - float(started_at) - float(paused_total or 0.0)
     if paused_since is not None:
@@ -4197,8 +4220,9 @@ def hermes_turn_spent(now: float, started_at: float,
     return spent if spent > 0 else 0.0
 
 
-def hermes_turn_overrun(spent_s: float, budget_s: float) -> bool:
-    """Has the turn blown its budget? PURE. budget <= 0 = disabled = never."""
+def hermes_segment_overrun(spent_s: float, budget_s: float) -> bool:
+    """Has this generation segment blown its budget? PURE.
+    budget <= 0 = disabled = never."""
     try:
         b = float(budget_s)
         s = float(spent_s)
@@ -4210,19 +4234,20 @@ def hermes_turn_overrun(spent_s: float, budget_s: float) -> bool:
 
 
 def hermes_overrun_error(budget_s: float) -> str:
-    """The exact user-facing line for an overrun turn. PURE."""
+    """The exact user-facing line for an over-budget generation segment. PURE."""
     n = int(budget_s) if float(budget_s) == int(float(budget_s)) else float(budget_s)
-    return (f"turn exceeded {n}s — interrupted server-side "
-            "(hermes.max_turn_s)")
+    return (f"generation exceeded {n}s without a tool call or output — likely a "
+            "deliberation loop; interrupted server-side (hermes.max_turn_s)")
 
 
-async def _hermes_kill_turn(sid: str, spent_s: float, budget_s: float) -> None:
-    """Stop the GENERATION for an over-budget turn + leave a durable trace.
+async def _hermes_kill_segment(sid: str, spent_s: float, budget_s: float) -> None:
+    """Stop the GENERATION for an over-budget segment + leave a durable trace.
 
     Best-effort by design: whether or not the RPC lands, the relay ends the turn
     (an unreachable gateway is exactly the case where the stream must still close).
     """
-    print(f"[hermes] turn exceeded max_turn_s ({spent_s:.0f}s >= {budget_s:.0f}s) "
+    print(f"[hermes] generation segment exceeded max_turn_s "
+          f"({spent_s:.0f}s >= {budget_s:.0f}s) "
           f"— sending session.interrupt for {sid or '?'}", flush=True)
     try:
         await _HERMES.rpc("session.interrupt", {"session_id": sid}, timeout=10.0)
@@ -4313,12 +4338,15 @@ async def hermes_chat(req: Request) -> StreamingResponse:
             #     _stop_requested sentinel; if no terminal event lands within ~3s
             #     the relay ends the turn itself;
             #   • hard guard: 600s of TOTAL silence still aborts (unchanged);
-            #   • MAX TURN TIME (hermes.max_turn_s, default 600s, 0 = off): TOTAL
-            #     turn time from submit, checked on the EVENT path too — a runaway
+            #   • MAX GENERATION SEGMENT (hermes.max_turn_s, default 600s, 0 = off):
+            #     time in ONE unbroken generation stretch — armed at submit, RESET on
+            #     every tool.start / tool.complete and on every card resolution, and
+            #     PAUSED while a card is pending. So a long research turn with tool
+            #     calls runs forever; only a model talking to itself with nothing to
+            #     show for it is cut. Checked on the EVENT path too — a runaway
             #     deliberation loop keeps emitting, so every silence-based guard is
             #     blind to it. Remedy is session.interrupt: the generation stops,
-            #     not just the stream. The clock PAUSES while an interactive card
-            #     is pending (see below) so a card waiting for Debi is never shot.
+            #     not just the stream.
             got_any = False
             silent = 0.0
             noted_slow = False
@@ -4328,7 +4356,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 max_turn = hermes_max_turn_s(cfg())
             except Exception:
                 max_turn = HERMES_MAX_TURN_S_DEFAULT
-            turn_started = asyncio.get_running_loop().time()
+            seg_started = asyncio.get_running_loop().time()
             pause_total = 0.0
             pause_since = None
             # An INTERACTIVE CARD awaits the user: a Phase-2 approval, or (2026-08-14)
@@ -4357,14 +4385,14 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     # gone". Without it the panel could only wait out the 600s
                     # hard guard, which is what "stuck forever" felt like.
                     yield 'data: {"type":"hermes_ping"}\n\n'
-                    # Total-turn-time guard FIRST: it is the only one that also
-                    # stops Hermes, so when two guards come due on the same tick
-                    # the one that kills the generation should win.
-                    _spent = hermes_turn_spent(
-                        asyncio.get_running_loop().time(), turn_started,
+                    # Segment guard FIRST: it is the only one that also stops
+                    # Hermes, so when two guards come due on the same tick the one
+                    # that kills the generation should win.
+                    _spent = hermes_segment_spent(
+                        asyncio.get_running_loop().time(), seg_started,
                         pause_total, pause_since)
-                    if hermes_turn_overrun(_spent, max_turn):
-                        await _hermes_kill_turn(sid, _spent, max_turn)
+                    if hermes_segment_overrun(_spent, max_turn):
+                        await _hermes_kill_segment(sid, _spent, max_turn)
                         yield ('data: {"type":"hermes_status","text":'
                                + _json.dumps(hermes_overrun_error(max_turn))
                                + '}\n\n')
@@ -4422,15 +4450,25 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 _was_pending = approval_pending
                 approval_pending = ((ev or {}).get("type")
                                     in ("approval.request", "clarify.request"))
-                # PAUSE the max-turn clock for the whole time a card is on screen:
+                # PAUSE the segment clock for the whole time a card is on screen:
                 # a user deciding is not the model burning CPU, and shooting a turn
                 # that is WAITING FOR DEBI would be the worst failure of this guard.
                 _now = asyncio.get_running_loop().time()
+                _resolved = False
                 if approval_pending and not _was_pending:
                     pause_since = _now
-                elif _was_pending and not approval_pending and pause_since is not None:
-                    pause_total += max(0.0, _now - pause_since)
-                    pause_since = None
+                elif _was_pending and not approval_pending:
+                    if pause_since is not None:
+                        pause_total += max(0.0, _now - pause_since)
+                        pause_since = None
+                    _resolved = True
+                # RESET the segment on visible progress: a tool starting or finishing,
+                # or a card being answered, both mean this is not one unbroken
+                # deliberation stretch. Runs BEFORE the end-of-body overrun check, so
+                # a resetting event is never judged against the pre-reset clock.
+                if _resolved or hermes_segment_resets((ev or {}).get("type")):
+                    seg_started = _now
+                    pause_total = 0.0
                 frames, action = hermes_event_to_frames(ev)
                 for fr in frames:
                     if fr.get("type") == "file_card":
@@ -4452,10 +4490,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 # THE branch that matters for a runaway loop: a spiralling model
                 # emits continuously, so this is the only place the guard can see
                 # it (the timeout tick above never fires while events flow).
-                _spent = hermes_turn_spent(asyncio.get_running_loop().time(),
-                                           turn_started, pause_total, pause_since)
-                if hermes_turn_overrun(_spent, max_turn):
-                    await _hermes_kill_turn(sid, _spent, max_turn)
+                _spent = hermes_segment_spent(asyncio.get_running_loop().time(),
+                                              seg_started, pause_total, pause_since)
+                if hermes_segment_overrun(_spent, max_turn):
+                    await _hermes_kill_segment(sid, _spent, max_turn)
                     yield ('data: {"type":"hermes_status","text":'
                            + _json.dumps(hermes_overrun_error(max_turn)) + '}\n\n')
                     yield ('data: '
@@ -5164,7 +5202,11 @@ def hermes_toolset_view(rows, skills=None) -> dict:
     payload's own resolved tool list) and the aggregate.
 
     Deliberately NO token estimate: the probe carries tool NAMES, not schemas, so
-    any per-toolset token figure would be invented. Counts are the honest proxy."""
+    any per-toolset token figure would be invented. Counts are the honest proxy.
+
+    Also carries `needs_setup` — see the field comment below for its provenance and
+    its one honest weakness (it is upstream's optimistic bool, not upstream's own
+    accurate `_toolset_needs_configuration_prompt`, which is not exposed over HTTP)."""
     out, en_tools, all_tools = [], 0, 0
     for r in (rows if isinstance(rows, list) else []):
         if not isinstance(r, dict) or not isinstance(r.get("name"), str):
@@ -5178,7 +5220,15 @@ def hermes_toolset_view(rows, skills=None) -> dict:
                     "label": str(r.get("label") or r["name"]).strip(),
                     "description": str(r.get("description") or "").strip(),
                     "platform": str(r.get("platform") or "").strip(),
-                    "enabled": on, "tools": tools, "tool_count": len(tools)})
+                    "enabled": on, "tools": tools, "tool_count": len(tools),
+                    # UPSTREAM's OWN setup signal, mirrored not invented: the row's
+                    # `configured` bool (web_routers/tools.py:107, produced by
+                    # tools_config._toolset_has_keys:2589) is the same field Hermes's
+                    # Skills→TOOLSETS page shows its amber "Setup needed" caption from
+                    # (web/src/pages/SkillsPage.tsx:606). Fail OPEN — only an EXPLICIT
+                    # False is a warning, so a build that omits the key (or a probe
+                    # shape we do not know) can never invent a scary pill.
+                    "needs_setup": r.get("configured") is False})
     sk = skills if isinstance(skills, dict) else {}
     return {"toolsets": out,
             "enabled_count": sum(1 for r in out if r["enabled"]),

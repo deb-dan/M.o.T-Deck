@@ -898,14 +898,34 @@
      ------------------------------------------------------------------------------- */
   html[data-chrome="compact"] {
     /* chrome-text stack, set ONLY inside this axis (the mono chips lose their mono) */
-    --chrome-font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
-  /* (1a) topbar / sub-tab chips — solid ground, firm border, Title case as authored */
+    --chrome-font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    /* THE 2026-08-14h FIX. Three Mac reports of "▣ turns gold and nothing else
+       changes" were NOT a cascade or coverage failure — the stylesheet was proven
+       correct: block last in the ONE served stylesheet, brace depth 0 at its start,
+       every rule winning its properties). The defect was in the VALUES: the axis
+       asked for "solid ground, firm border" and then reached for --card2 (#181527)
+       on a --card (#14121d) parent — a 4/3/10 RGB lift, invisible on a dark panel —
+       and for `border-color:var(--line2)`, which is BYTE-IDENTICAL to what the base
+       `button` rule already sets, i.e. a literal no-op. Hover went DARKER than rest
+       (--card < --card2), the wrong direction. So the axis has its own surface
+       tokens now, chosen to be unmistakable rather than tasteful-to-the-point-of-
+       absent, and hover is the LIGHTER of the pair. ⚠ builder values. */
+    --chrome-btn:#332b50; --chrome-btn-hi:#453b6b; --chrome-edge:#574b83; }
+  /* the light axis needs its own three, or the dark slate lands on warm paper. NOTE
+     the hover direction INVERTS here and that is correct: on paper a pressed-looking
+     control gets DARKER, on a dark panel it gets LIGHTER. */
+  html[data-chrome="compact"][data-theme="light"] {
+    --chrome-btn:#e3d9c0; --chrome-btn-hi:#d5c7a6; --chrome-edge:#b9a878; }
+  /* (1a) topbar / sub-tab chips — solid ground, firm border, Title case as authored.
+     color:var(--fg) not --dim: a control with a real ground carries a real label
+     (and --dim on --chrome-btn is only 2.9:1, which would have been a regression). */
   html[data-chrome="compact"] .chip {
     font:11.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
-    padding:5px 11px; }
+    color:var(--fg);
+    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
+    border-radius:5px; padding:5px 11px; }
   html[data-chrome="compact"] .chip:hover {
-    background:var(--card); border-color:var(--gold); color:var(--cream); }
+    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
   /* (1b) icon-only chips (◐ ▣ ⌘K ↻ ⊕) become 26px square icon buttons */
   html[data-chrome="compact"] .chip.chip-icon {
     width:26px; height:26px; padding:0; font-size:12.5px; line-height:1;
@@ -919,19 +939,20 @@
   /* (1d) model-popover row actions (Eject / Switch / aux / voice chips) */
   html[data-chrome="compact"] .mp-act {
     font:10px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
-    padding:3px 9px; color:var(--dim); }
+    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
+    border-radius:5px; padding:3px 9px; color:var(--fg); }
   html[data-chrome="compact"] .mp-act:hover {
-    background:var(--card); border-color:var(--gold); color:var(--cream); }
+    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
   html[data-chrome="compact"] .mp-act.on {
     background:var(--gold); border-color:var(--gold); color:var(--bg); }
   /* (1e) composer lane chips (Agent / Chat / Hermes / ⚙ Tools) */
   html[data-chrome="compact"] .mode-chip {
     font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    background:var(--card2); border:1px solid var(--line2); border-radius:6px;
-    padding:4px 9px; }
+    color:var(--fg);
+    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
+    border-radius:5px; padding:4px 10px; }
   html[data-chrome="compact"] .mode-chip:hover {
-    background:var(--card); border-color:var(--gold); color:var(--cream); }
+    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
   html[data-chrome="compact"] .mode-chip.on {
     background:var(--gold); border-color:var(--gold); color:var(--bg); }
   /* Browse stays the quieter CAPABILITY — outline, never filled (the editorial
@@ -939,18 +960,24 @@
   html[data-chrome="compact"] #mode-browse {
     font-size:10px; padding:4px 9px; letter-spacing:normal; }
   html[data-chrome="compact"] #mode-browse.on {
-    background:var(--card2); border-color:var(--gold); color:var(--gold); }
+    background:var(--chrome-btn); border-color:var(--gold); color:var(--gold); }
   /* the two closed pickers keep their truncation, gain the button ground */
   html[data-chrome="compact"] #chat-model-btn,
   html[data-chrome="compact"] #chat-audio-btn {
     font:10.5px var(--chrome-font); letter-spacing:normal; padding:4px 8px;
-    background:var(--card2); border-color:var(--line2); }
+    color:var(--fg); border-radius:5px;
+    background:var(--chrome-btn); border-color:var(--chrome-edge); }
+  /* third restatement, same specificity hazard: `#chat-model-btn.empty` is (1,1,0)
+     and the compact id rule is (1,1,1), so "nothing selected" would stop reading
+     faint without this. */
+  html[data-chrome="compact"] #chat-model-btn.empty,
+  html[data-chrome="compact"] #chat-audio-btn.empty { color:var(--faint); }
   /* voice / dictation micro-chips scale WITH the row rather than to one flat size —
      11.5px here would blow the composer apart */
   html[data-chrome="compact"] #chat-talk,
   html[data-chrome="compact"] #chat-auto,
   html[data-chrome="compact"] #chat-conv {
-    font-size:9.5px; padding:4px 8px; letter-spacing:normal; border-radius:6px; }
+    font-size:9.5px; padding:4px 8px; letter-spacing:normal; border-radius:5px; }
   /* (2) primary buttons read firmer. The cream fill is RESTATED here because (3)
      below ties with the base `button.primary` rule (both 0-1-1) and would win on
      source order, flattening the one filled button in the panel. */
@@ -966,17 +993,28 @@
      to a 1px radius change. `:not(.primary)` on the hover leaves the cream button's
      own hover alone, and `.cmsg .msg-act` (0-2-0) still outranks this, so the
      per-message Copy / Edit / Fork / Delete row stays borderless text. */
+  /* deliberately sets NO color: `html[…] button` is (0,1,2) and would outrank the
+     base `button.primary` (0,1,1), turning the one cream-filled button's dark ink
+     light-on-light. Base `button` already supplies var(--fg) for everything else. */
   html[data-chrome="compact"] button {
-    font-size:12px; padding:6px 13px; border-radius:6px;
-    background:var(--card2); border-color:var(--line2); }
+    font-size:12px; padding:6px 14px; border-radius:5px;
+    background:var(--chrome-btn); border-color:var(--chrome-edge); }
   html[data-chrome="compact"] button:hover:not(.primary) {
-    background:var(--card); border-color:var(--gold); color:var(--cream); }
+    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
   /* (4) Capabilities action buttons (Add server / presets / reset override) */
   html[data-chrome="compact"] .cap-btn {
     font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    background:var(--card2); border-radius:6px; padding:5px 11px; }
+    color:var(--fg); border-color:var(--chrome-edge);
+    background:var(--chrome-btn); border-radius:5px; padding:5px 11px; }
   html[data-chrome="compact"] .cap-btn:hover {
-    background:var(--card); border-color:var(--gold); color:var(--cream); }
+    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
+  /* …and the two-step-delete states RESTATED, for the same specificity reason as
+     button.primary above: `.cap-btn.arm` is (0,2,0) and the compact rule is (0,2,1),
+     so without these the armed ✕ would stop turning red. */
+  html[data-chrome="compact"] .cap-btn.arm {
+    color:var(--bad); border-color:var(--bad); }
+  html[data-chrome="compact"] .cap-btn.go {
+    color:var(--gold); border-color:var(--gold); }
   /* (5) approval + ask-card choice chips. The base selector is
      `.cmsg .approval .ap-btn` (0-3-0), so the same three classes are needed HERE or
      the attribute prefix alone (0-2-1) would silently lose — the one place in this
@@ -984,7 +1022,7 @@
      border-color on purpose: a multi-select pick's gold `.on` state must still win. */
   html[data-chrome="compact"] .cmsg .approval .ap-btn {
     font:11px var(--chrome-font); letter-spacing:normal;
-    background:var(--card2); border-radius:6px; padding:5px 12px; }
+    background:var(--chrome-btn); border-radius:5px; padding:5px 12px; }
   /* ============================ end compact chrome ============================== */
 </style>
 <script>
@@ -1852,12 +1890,40 @@ function toggleTheme() {
 // COMPACT CHROME (2026-08-14): the density/shape axis, deliberately SEPARATE from
 // toggleTheme — the two are independent, and folding them into one 4-state cycle
 // would make a click on ◐ non-deterministic. Editorial (no attribute) = default.
+/* PURE-ish (reads the live DOM, writes nothing): the RUNTIME SELF-CHECK.
+   Three Mac reports of "the toggle does nothing" were each diagnosed by reasoning
+   over the stylesheet, and each diagnosis was wrong or incomplete, because a
+   stylesheet cannot tell you what the BROWSER computed. This reads the attribute
+   BACK off <html> and asks getComputedStyle what a real control actually resolved
+   to — so the next report is ground truth instead of a description. Permanent and
+   cheap: one read per click. Never throws (a self-check that breaks the feature it
+   watches would be worse than no self-check). */
+function chromeProbe() {
+  try {
+    const attr = document.documentElement.getAttribute('data-chrome');
+    const el = document.getElementById('mode-chat')
+            || document.querySelector('#cards button')
+            || document.querySelector('.chip');
+    if (!el) return 'compact=' + attr + ' (no control on screen to probe)';
+    const c = getComputedStyle(el);
+    const fam = (c.fontFamily || '').split(',')[0].replace(/["']/g, '');
+    return 'compact=' + attr + ' probe=' + (el.id || el.className || el.tagName)
+      + ' radius=' + c.borderRadius + ' bg=' + c.backgroundColor
+      + ' edge=' + c.borderTopColor + ' font=' + c.fontSize + '/' + fam
+      + ' tt=' + c.textTransform;
+  } catch (e) { return 'probe failed: ' + (e && e.message); }
+}
+
 function toggleChrome() {
   const on = document.documentElement.dataset.chrome !== 'compact';
   if (on) document.documentElement.dataset.chrome = 'compact';
   else document.documentElement.removeAttribute('data-chrome');
   try { localStorage.setItem('harness-chrome', on ? 'compact' : 'editorial'); } catch (e) {}
   feed('chrome', on ? 'compact chrome on' : 'editorial chrome on');
+  // read-back AFTER the attribute write, so what it reports is what the browser has
+  const p = chromeProbe();
+  try { console.log('[chrome] ' + p); } catch (e) {}
+  feed('chrome', p);
 }
 
 function showView(v) {
@@ -2673,8 +2739,16 @@ function renderHermesTools() {
     // can never be turned on from here — mark it rather than let it snap back.
     const pinned = ((snap.config || {}).disabled_toolsets || []).indexOf(t.name) >= 0
       ? '<span class="cap-pill off">forced off in config</span>' : '';
+    // Upstream's OWN `configured:false` (the field its Skills→TOOLSETS page shows
+    // "Setup needed" from). Some toolsets — browser automation, image/video gen —
+    // need a one-time provider/key setup in Hermes itself, and a switch that
+    // presents them as ready is a lie. NOT gated on our switch state (unlike
+    // upstream's `enabled && !configured`): knowing BEFORE you turn it on is the
+    // point. Fail-open at the bridge, so no field ⇒ no pill.
+    const setup = t.needs_setup
+      ? '<span class="cap-pill off">needs setup in Hermes</span>' : '';
     return `<div class="cap-row"><div class="cap-txt">
-        <div class="cap-name">${esc(t.label || t.name)}<span class="cap-count">${esc(hermesToolsetNote(t, snap))}</span>${big}${pinned}</div>
+        <div class="cap-name">${esc(t.label || t.name)}<span class="cap-count">${esc(hermesToolsetNote(t, snap))}</span>${big}${pinned}${setup}</div>
         <div class="cap-desc">${esc(t.name)}${t.description ? ' · ' + esc(t.description) : ''}</div>
         <div class="cap-err" id="${id}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">

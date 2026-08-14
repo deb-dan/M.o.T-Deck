@@ -132,6 +132,36 @@ check('a toolset forced off by agent.disabled_toolsets is MARKED (it can never b
   + 'enabled from here, so the switch must not look effective)',
   renderHermesTools().indexOf('forced off in config') >= 0);
 
+// ── `needs setup in Hermes` pill (2026-08-14h) ────────────────────────────────
+// Mirrors UPSTREAM's own signal: the row's `configured:false`, which is what Hermes's
+// Skills→TOOLSETS page prints "Setup needed" from (web/src/pages/SkillsPage.tsx:606).
+// The bridge fails OPEN, so a row without the flag can never grow a scary pill.
+hermesToolsSnap = Object.assign({}, SNAP, {toolsets: [
+  {name: 'browser', label: 'Browser', description: 'automation', enabled: false,
+   tools: ['b'], tool_count: 1, needs_setup: true},
+  {name: 'file', label: 'File Operations', description: 'read, write', enabled: true,
+   tools: ['a'], tool_count: 1, needs_setup: false},
+]});
+const hsetup = renderHermesTools();
+check('a toolset upstream reports unconfigured gets a faint "needs setup in Hermes" pill',
+  hsetup.indexOf('needs setup in Hermes') >= 0);
+check('the pill uses the existing quiet .cap-pill off grammar (zero new CSS)',
+  /<span class="cap-pill off">needs setup in Hermes<\/span>/.test(hsetup));
+check('exactly ONE row carries it (a configured toolset does not)',
+  (hsetup.match(/needs setup in Hermes/g) || []).length === 1);
+check('the pill is shown even though the switch is OFF — knowing before you enable '
+  + 'it is the whole point (upstream gates its own caption on enabled &&)',
+  hsetup.indexOf('needs setup in Hermes') >= 0);
+check('the pill does not disable the switch (Hermes accepts the write either way)',
+  hsetup.indexOf('id="hts-browser"') >= 0
+  && !/id="hts-browser"[^>]*disabled/.test(hsetup));
+// NEGATIVE: a row with no needs_setup key renders no pill at all
+hermesToolsSnap = Object.assign({}, SNAP, {toolsets: [
+  {name: 'file', label: 'File', description: '', enabled: true, tools: ['a'], tool_count: 1},
+]});
+check('a row with no needs_setup field grows no pill (fail open, end to end)',
+  renderHermesTools().indexOf('needs setup') < 0);
+
 hermesToolsSnap = Object.assign({}, SNAP, {toolsets: []});
 check('an empty catalog renders the group without throwing',
   typeof renderHermesTools() === 'string');
