@@ -10,7 +10,9 @@
  * this test instead of letting the test drift from the shipped code:
  *
  *   vadNoiseFloor(list)        median of a rolling non-speech RMS window
- *   vadInit(frameMs)           initial state, ms constants → block counts
+ *   vadInit(frameMs, opts)     initial state, ms constants → block counts
+ *   vadRearm(st)               the next listening window: reset, but KEEP the floor
+ *   hangoverFor(fmt)           engine-aware close time (whisper 800 / parakeet 575)
  *   vadStep(st, rms)           the state machine, one block at a time
  *   vadSplice(frames, base, from, to)   ring-buffer cut
  *   resampleLinear(in, a, b)   48k → 16k
@@ -71,8 +73,12 @@ const VAD_MULT       = constant('VAD_MULT');
 const VAD_FLOOR      = constant('VAD_FLOOR');
 const VAD_THR_MAX    = constant('VAD_THR_MAX');
 
+const VAD_HANGOVER_FAST_MS = constant('VAD_HANGOVER_FAST_MS');
+
 eval(grab('vadNoiseFloor'));
+eval(grab('hangoverFor'));
 eval(grab('vadInit'));
+eval(grab('vadRearm'));
 eval(grab('vadStep'));
 eval(grab('vadSplice'));
 eval(grab('resampleLinear'));
@@ -131,6 +137,41 @@ check('every derived count is at least 1 block', (() => {
     .every(v => v >= 1);
 })());
 
+/* ---- hangoverFor: the engine-aware close time ------------------------------- */
+check('the whisper engine keeps the long, hallucination-tuned hangover',
+  hangoverFor('stt-mlx') === VAD_HANGOVER_MS);
+check('the mlx-audio/Parakeet engine closes sooner',
+  hangoverFor('stt-mlx-audio') === VAD_HANGOVER_FAST_MS);
+check('the fast hangover really is FASTER (this is the whole point)',
+  VAD_HANGOVER_FAST_MS < VAD_HANGOVER_MS);
+check('the fast hangover is not so short that it splits utterances at a natural '
+    + 'pause — in conv mode a split SENDS TWO MESSAGES', VAD_HANGOVER_FAST_MS >= 500);
+check('an unknown / empty / junk format degrades to the SAFE long hangover',
+  ['', 'stt-mlx-whatever', 'tts-mlx', undefined, null, 0, {}]
+    .every(v => hangoverFor(v) === VAD_HANGOVER_MS));
+
+/* ---- vadInit: the opts channel ---------------------------------------------- */
+check('vadInit with no opts is byte-for-byte the old behaviour',
+  vadInit(MS).hangover === fr(VAD_HANGOVER_MS) && vadInit(MS).noise.length === 0
+  && vadInit(MS).thr === VAD_FLOOR);
+check('an explicit hangoverMs is converted to blocks like every other constant',
+  vadInit(MS, { hangoverMs: VAD_HANGOVER_FAST_MS }).hangover
+    === fr(VAD_HANGOVER_FAST_MS));
+check('a zero/garbage hangoverMs falls back to the default, never to 0 blocks',
+  [0, -5, NaN, 'x', undefined].every(v =>
+    vadInit(MS, { hangoverMs: v }).hangover === fr(VAD_HANGOVER_MS)));
+check('a carried noise window is COPIED, not aliased (a later push must not reach '
+    + 'back into the old state)', (() => {
+  const src = [0.01, 0.02];
+  const s = vadInit(MS, { noise: src });
+  s.noise.push(0.9);
+  return src.length === 2;
+})());
+check('a carried threshold is used as the opening threshold',
+  vadInit(MS, { thr: 0.05 }).thr === 0.05);
+check('a junk carried threshold degrades to the floor',
+  [0, -1, NaN, 'x', null].every(v => vadInit(MS, { thr: v }).thr === VAD_FLOOR));
+
 /* ---- vadStep: purity -------------------------------------------------------- */
 const before = vadInit(MS);
 const snapshot = JSON.stringify(before);
@@ -153,6 +194,40 @@ check('speech DOES open once the warm-up window has passed',
   run(rep(QUIET, LEAD).concat(rep(LOUD, 10))).st.speaking === true);
 check('warm-up is what guarantees the pre-roll has history to roll back into',
   VAD_PREROLL_MS <= VAD_WARMUP_MS);
+
+/* ---- vadRearm: THE floor-carry behaviour change -----------------------------
+ * BEHAVIOUR CHANGE, recorded honestly: conversation mode used to re-arm with a bare
+ * vadInit(frameMs), which threw the learned noise floor away and made every single
+ * turn pay a fresh ~600ms deaf warm-up. Only the machine RESET was ever load-bearing
+ * (it is what makes resuming mid-utterance from before the feedback gate impossible);
+ * the floor is a property of the ROOM, and the room does not change between turns. */
+{
+  const learned = run(rep(0.02, WARM + 40)).st;
+  check('a warmed-up window has a full noise history and a raised threshold',
+    learned.noise.length >= learned.warm && learned.thr > VAD_FLOOR);
+  const re = vadRearm(learned);
+  check('re-arm CARRIES the learned noise floor forward (this is the ~600ms saving)',
+    re.noise.length === learned.noise.length && re.thr === learned.thr);
+  check('and therefore the next window is NOT warming up — it can open immediately',
+    re.noise.length >= re.warm);
+  check('speech opens on the very next blocks after a re-arm, with no warm-up wait',
+    run(rep(LOUD, VAD_OPEN_FRAMES + 1), re).st.speaking === true);
+  check('re-arm still RESETS the machine — that half was always the load-bearing one',
+    re.speaking === false && re.run === 0 && re.silence === 0
+    && re.start === 0 && re.vstart === 0 && re.n === -1);
+  check('re-arm keeps the session\'s engine-tuned hangover exactly (no ms round-trip)',
+    vadRearm(vadInit(MS, { hangoverMs: VAD_HANGOVER_FAST_MS })).hangover
+      === fr(VAD_HANGOVER_FAST_MS));
+  check('re-arm does not mutate the state it is given',
+    (() => { const snap = JSON.stringify(learned); vadRearm(learned);
+             return JSON.stringify(learned) === snap; })());
+  check('re-arm returns a NEW object', vadRearm(learned) !== learned);
+  check('re-arming a window that never finished warming up simply CONTINUES warming',
+    (() => { const r2 = vadRearm(run(rep(0.02, 5)).st);
+             return r2.noise.length === 5 && r2.noise.length < r2.warm; })());
+  check('a FIRST window (nothing carried) still pays the full warm-up',
+    run(rep(LOUD, WARM - 1)).st.speaking === false);
+}
 
 /* ---- vadStep: a clean utterance --------------------------------------------- */
 let r = run(rep(QUIET, LEAD).concat(rep(LOUD, 100), rep(QUIET, HANG + 5)));
@@ -372,13 +447,24 @@ check('a suspended AudioContext is resumed (a suspended ctx pumps no frames at a
 check('the warm-up window exists and is read from a named constant',
   html.indexOf('VAD_WARMUP_MS') >= 0 && /s\.noise\.length < s\.warm/.test(html));
 check('every VAD tunable is a named module-level constant, not a literal in the logic',
-  ['VAD_BLOCK', 'VAD_OPEN_FRAMES', 'VAD_HANGOVER_MS', 'VAD_PREROLL_MS', 'VAD_TAIL_MS',
+  ['VAD_BLOCK', 'VAD_OPEN_FRAMES', 'VAD_HANGOVER_MS', 'VAD_HANGOVER_FAST_MS',
+   'VAD_PREROLL_MS', 'VAD_TAIL_MS',
    'VAD_MIN_MS', 'VAD_MAX_MS', 'VAD_NOISE_MS', 'VAD_WARMUP_MS', 'VAD_MULT', 'VAD_FLOOR',
    'VAD_THR_MAX', 'VAD_MAX_ERRORS']
     .every(n => new RegExp('const ' + n + ' =').test(html)));
 check('the worklet is never connected to the output (no feedback howl)',
   /createMediaStreamSource\(stream\)\.connect\(node\)/.test(html)
   && !/node\.connect\(ctx\.destination\)/.test(html));
+check('the segmenter is tuned to the STT engine at CAPTURE time (switching the '
+    + 'default mid-session must not retune a live listener)',
+  /st: vadInit\(frameMs, \{ hangoverMs: hangoverFor\(sttFormat\(\)\) \}\)/.test(html));
+check('sttFormat reads the format off the SAME /api/voice/config payload the chips '
+    + 'already use — no second endpoint',
+  /function sttFormat\(\)\{[\s\S]{0,400}?voiceCfg\.stt_model[\s\S]{0,200}?voiceCfg\.available/
+    .test(html));
+check('the conv re-arm goes through vadRearm, never a bare vadInit',
+  /convSt\.phase === 'listening'\)\{\s*autoVad\.st = vadRearm\(autoVad\.st\)/.test(html)
+  && (html.match(/vadInit\(autoVad\.frameMs\)/g) || []).length === 0);
 
 console.log('');
 console.log((fails.length ? 'FAIL' : 'OK') + ' — ' + fails.length + ' failure(s)');

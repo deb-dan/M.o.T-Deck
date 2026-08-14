@@ -12,6 +12,7 @@ Registry shape (entries live in the EXISTING data/models.json, `kind: "audio"`):
     tts-mlx  : {id, name, kind:"audio", format:"tts-mlx",  path:<model dir or HF repo>,
                 size_bytes, [voice]}
     stt-mlx  : {id, name, kind:"audio", format:"stt-mlx",  path:<model dir or HF repo>}
+    stt-mlx-audio : {..., format:"stt-mlx-audio", path:<model dir>}   (Parakeet/NeMo)
 
 Three invariants this module exists to hold:
 
@@ -69,7 +70,18 @@ STT_SUFFIXES = ("wav", "webm", "mp4", "m4a", "mp3", "ogg", "flac")
 STT_SAMPLE_RATE = 16000        # what whisper wants; resampling here saves it the work
 
 TTS_FORMATS = ("tts-gguf", "tts-mlx")
-STT_FORMATS = ("stt-mlx",)
+# TWO speech-to-text engines, both selectable — the registry is what makes that free:
+# a whisper entry and a parakeet entry are just two rows, and the default-STT picker
+# chooses between them. NEITHER is removed by the other.
+#   stt-mlx        mlx-whisper   (the `mlx_whisper` console script)
+#   stt-mlx-audio  mlx-audio STT (`mlx_audio.stt.generate` — Parakeet/NeMo family)
+# WHY the second exists (research 2026-08-14 §3.6): whisper is a seq2seq model with a
+# text prior and HALLUCINATES phrases out of silence ("Thank you.", "Bye."). In conv
+# mode a phantom transcript is AUTO-SENT as a message, and the empty-transcript skip —
+# our only guard — is precisely the guard whisper defeats. Parakeet's RNNT/TDT decoder
+# has no text prior and emits nothing when there is no speech. That is a correctness
+# fix, not a speed one (see hangoverFor() in the panel for the speed half).
+STT_FORMATS = ("stt-mlx", "stt-mlx-audio")
 AUDIO_FORMATS = TTS_FORMATS + STT_FORMATS
 
 # ── named voices ────────────────────────────────────────────────────────────────
@@ -473,7 +485,21 @@ def unique_clip_path(dir_path: str, name: str) -> str:
 
 
 def library_entries(root: "str | Path | None" = None) -> list:
-    """Every usable clip in data/voices, sorted. Never raises."""
+    """Every usable clip in data/voices, sorted, PLUS the starter set. Never raises.
+
+    The starter clips live one level down in data/voices/starter/ and are appended
+    with `starter: True` and their ground-truth `ref_text`. They are deliberately NOT
+    reachable through library_target(): that function is the containment boundary of
+    the DELETE endpoint and it stays basename-flat, so a starter clip simply has no
+    delete path — which is also the right answer, since the whole set is one button
+    away from being re-fetched.
+    """
+    out = list(_flat_library_entries(root))
+    out.extend(starter_entries(root))
+    return out
+
+
+def _flat_library_entries(root: "str | Path | None" = None) -> list:
     d = voices_dir(root)
     try:
         names = sorted(os.listdir(d))
@@ -510,6 +536,243 @@ def library_target(name: object, root: "str | Path | None" = None) -> tuple:
     if not os.path.isfile(p):
         return None, f"no clip named '{os.path.basename(raw)}' in the voice library"
     return p, None
+
+
+# ── STARTER VOICE CLIPS (VCTK-13) ───────────────────────────────────────────────
+# WHY these and not others (research 2026-08-14 §6.1): VCTK 0.92 is the only source
+# that fills all thirteen accent slots at studio quality (48 kHz, hemi-anechoic, DPA
+# 4035) under ONE redistribution-friendly licence (CC BY 4.0) — and it was recorded
+# explicitly FOR speaker-adaptive TTS. It is literally the Voice Cloning Toolkit
+# corpus. Everything else was rejected on licence (EARS/Expresso/DAPS/L2-ARCTIC/
+# Speech Accent Archive are CC BY-NC; Google English Dialects is CC BY-SA and
+# ShareAlike would infect a trimmed clip), on provenance (every TTS project's bundled
+# sample wavs), or on consent framing (LibriVox names living volunteers and bans AI
+# voices on its own platform).
+#
+# ⚠️ ETHICS, stated plainly and NOT glossed: a CC BY licence gives the right to COPY
+# a recording. It does not give the right to impersonate the person in it. CC's own
+# deed says publicity/privacy/moral rights may still apply. These clips are shipped
+# for local voice synthesis on one Mac; do not use them to impersonate anyone.
+STARTER_DIRNAME = "starter"
+STARTER_MANIFEST = "starter.json"
+STARTER_UTTERANCES = 3          # ~3.6s mean each → ~10s, which is what the engine keeps
+STARTER_SAMPLE_RATE = 24000     # mono; the reference clip is a voice, not a master
+STARTER_PAGE = 12               # rows fetched per speaker once its offset is known
+VCTK_DATASET = "sanchit-gandhi/vctk"
+VCTK_ROWS_URL = "https://datasets-server.huggingface.co/rows"
+VCTK_ROWS_TOTAL = 88156         # mic1+mic2 interleaved, speaker-ordered (API-verified)
+VCTK_MIC = "_mic1"              # DPA 4035 omni — the universal convention in TTS recipes
+
+# slot · speaker · sex · accent · region. Hard exclusions honoured: p315 (transcripts
+# lost to a disk error — no ground-truth ref_text possible) and p280 (accent
+# "Unknown", mic2 missing) appear nowhere below.
+# ⚠️ Every accent label in every speech corpus is SELF-REPORTED. These thirteen are
+# the research's picks and still want an ear check before being treated as canonical.
+STARTER_VOICES = (
+    {"slot": "us-m-1", "speaker": "p311", "sex": "M", "accent": "American", "region": "Iowa"},
+    {"slot": "us-m-2", "speaker": "p334", "sex": "M", "accent": "American", "region": "Chicago"},
+    {"slot": "us-m-3", "speaker": "p345", "sex": "M", "accent": "American", "region": "Florida"},
+    {"slot": "us-f-1", "speaker": "p294", "sex": "F", "accent": "American", "region": "San Francisco"},
+    {"slot": "us-f-2", "speaker": "p339", "sex": "F", "accent": "American", "region": "Pennsylvania"},
+    {"slot": "uk-m-1", "speaker": "p232", "sex": "M", "accent": "English", "region": "Southern England"},
+    {"slot": "uk-m-2", "speaker": "p243", "sex": "M", "accent": "English", "region": "London"},
+    {"slot": "uk-m-3", "speaker": "p287", "sex": "M", "accent": "English", "region": "York"},
+    {"slot": "uk-f-1", "speaker": "p225", "sex": "F", "accent": "English", "region": "Southern England"},
+    {"slot": "uk-f-2", "speaker": "p276", "sex": "F", "accent": "English", "region": "Oxford"},
+    {"slot": "other-1", "speaker": "p245", "sex": "M", "accent": "Irish", "region": "Dublin"},
+    {"slot": "other-2", "speaker": "p252", "sex": "M", "accent": "Scottish", "region": "Edinburgh"},
+    {"slot": "other-3", "speaker": "p376", "sex": "M", "accent": "Indian", "region": ""},
+)
+
+VCTK_LICENSE = "CC BY 4.0"
+# The attribution block, verbatim from the research §6.4 — rendered in the panel next
+# to the button, because CC BY is only satisfied if the credit is actually VISIBLE.
+VCTK_ATTRIBUTION = (
+    "Reference voice clips (VCTK)\n"
+    "Source:    CSTR VCTK Corpus: English Multi-speaker Corpus for CSTR "
+    "Voice Cloning Toolkit (version 0.92)\n"
+    "Authors:   Junichi Yamagishi, Christophe Veaux, Kirsten MacDonald\n"
+    "Publisher: University of Edinburgh, The Centre for Speech Technology "
+    "Research (CSTR), 2019\n"
+    "DOI:       https://doi.org/10.7488/ds/2645\n"
+    "Licence:   Creative Commons Attribution 4.0 International (CC BY 4.0)\n"
+    "           https://creativecommons.org/licenses/by/4.0/\n"
+    "Changes made: individual utterances were extracted, concatenated into "
+    "~10-second single-speaker excerpts, loudness-normalised and resampled. "
+    "No other modification.\n"
+    "The University of Edinburgh and the corpus authors do not endorse this "
+    "software or any audio it generates."
+)
+VOICE_AI_NOTICE = (
+    "Voices in this list are AI-generated. Reference clips come from open speech "
+    "corpora whose speakers were recorded for speech-synthesis research, or are "
+    "machine-generated and depict no real person. Audio licences do not grant voice, "
+    "likeness or publicity rights — do not use these voices to impersonate any real "
+    "person."
+)
+
+
+def starter_dir(root: "str | Path | None" = None) -> str:
+    return os.path.join(voices_dir(root), STARTER_DIRNAME)
+
+
+def starter_clip_name(slot: object, speaker: object) -> str:
+    """PURE: the on-disk basename for one starter slot. The stem is what the picker
+    chip reads forever after, so it carries BOTH the slot and the VCTK speaker id —
+    the speaker id is the attribution handle and must stay visible."""
+    return f"{str(slot or '')}-{str(speaker or '')}.wav"
+
+
+def starter_manifest_path(root: "str | Path | None" = None) -> str:
+    return os.path.join(starter_dir(root), STARTER_MANIFEST)
+
+
+def read_starter_manifest(root: "str | Path | None" = None) -> dict:
+    """{clip name → {text, speaker, slot, accent, region, sex}}. Never raises."""
+    try:
+        with open(starter_manifest_path(root), "r", encoding="utf-8",
+                  errors="replace") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_starter_manifest(data: dict, root: "str | Path | None" = None) -> None:
+    """Atomic, like every other registry write here — a half-written manifest would
+    make a clip pin with a TRUNCATED transcript, which is worse than none at all."""
+    d = starter_dir(root)
+    os.makedirs(d, exist_ok=True)
+    path = starter_manifest_path(root)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def starter_entries(root: "str | Path | None" = None) -> list:
+    """The starter clips present on disk, as library-shaped entries."""
+    d = starter_dir(root)
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    man = read_starter_manifest(root)
+    out = []
+    for n in names:
+        p = os.path.join(d, n)
+        try:
+            if not os.path.isfile(p) or normalize_ref_suffix(n) is None:
+                continue
+            meta = man.get(n) if isinstance(man.get(n), dict) else {}
+            out.append({"name": n, "stem": os.path.splitext(n)[0], "path": p,
+                        "size": os.path.getsize(p), "starter": True,
+                        "ref_text": str(meta.get("text") or "")[:REF_TEXT_MAX],
+                        "speaker": meta.get("speaker") or "",
+                        "accent": meta.get("accent") or ""})
+        except OSError:
+            continue
+    return out
+
+
+def starter_ref_text(clip_path: object, root: "str | Path | None" = None) -> str:
+    """The GROUND-TRUTH transcript for a starter clip, or ''. PURE-ish (one file read).
+
+    This is the whole point of shipping transcripts: without a ref_text, mlx-audio
+    loads whisper-large-v3-turbo (~1.6GB) to transcribe the reference clip on EVERY
+    render (generate.py:274-292). A corpus utterance comes WITH its text, so a starter
+    clip costs zero transcription — not at pin time, not at render time.
+    """
+    p = str(clip_path or "")
+    if not p:
+        return ""
+    base = os.path.basename(p)
+    try:
+        same = os.path.realpath(os.path.dirname(p)) == os.path.realpath(starter_dir(root))
+    except OSError:
+        same = False
+    if not same:
+        return ""
+    meta = read_starter_manifest(root).get(base)
+    if not isinstance(meta, dict):
+        return ""
+    return str(meta.get("text") or "").strip()[:REF_TEXT_MAX]
+
+
+def vctk_speaker_bounds(speaker: object, probe, total: int = VCTK_ROWS_TOTAL,
+                        lo: int = 0) -> "int | None":
+    """PURE-ish: the offset of `speaker`'s FIRST row, by binary search.
+
+    The dataset is speaker-ordered and every id is `p` + three digits, so a plain
+    string compare is a correct ordering. `probe(offset) -> speaker_id | None` is
+    INJECTED, which is what makes this testable without a network: the whole search
+    is exercised against a synthetic list in bridge/tests/test_starter_voices.py.
+
+    Why a search at all: the canonical VCTK download is a 10.94 GB zip with no
+    per-speaker path, and the datasets-server's `/filter?where=` returned an empty
+    body for this dataset in repeated tests (research §6.3) — so paging `/rows` by
+    offset is the only route that works, and finding the offset is the cost.
+    Returns None when the speaker is not found (a mirror that reshuffled), which is a
+    per-clip failure, never a whole-run one.
+    """
+    want = str(speaker or "")
+    if not want or total <= 0:
+        return None
+    hi = int(total)
+    lo = max(0, int(lo))
+    while lo < hi:                       # textbook lower_bound on a sorted column
+        mid = (lo + hi) // 2
+        got = probe(mid)
+        if got is None:
+            return None
+        if str(got) >= want:
+            hi = mid
+        else:
+            lo = mid + 1
+    if lo >= int(total):
+        return None
+    got = probe(lo)                      # lower_bound lands on >= want; require ==
+    return lo if (got is not None and str(got) == want) else None
+
+
+def vctk_pick_utterances(rows: object, speaker: object,
+                         want: int = STARTER_UTTERANCES) -> list:
+    """PURE: from one page of `/rows` rows, the first `want` mic1 utterances of
+    `speaker`, each as {src, text, file}. Third-party JSON — every shape is defended,
+    because a surprise field must degrade to "this slot failed", never to a 500."""
+    out = []
+    for r in (rows if isinstance(rows, (list, tuple)) else []):
+        row = r.get("row") if isinstance(r, dict) else None
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("speaker_id") or "") != str(speaker or ""):
+            continue
+        f = str(row.get("file") or "")
+        if VCTK_MIC not in f:
+            continue
+        aud = row.get("audio")
+        src = ""
+        if isinstance(aud, (list, tuple)) and aud and isinstance(aud[0], dict):
+            src = str(aud[0].get("src") or "")
+        text = str(row.get("text") or "").strip()
+        if not src or not text:
+            continue
+        out.append({"src": src, "text": text, "file": os.path.basename(f)})
+        if len(out) >= max(1, int(want)):
+            break
+    return out
+
+
+def ffmpeg_concat_argv(ff_bin: str, srcs: list, dst: str) -> list:
+    """PURE: N inputs → ONE mono 24 kHz wav. The `concat` filter (not the demuxer)
+    because it needs no side-car list file and re-encodes anyway."""
+    n = len(srcs)
+    argv = [str(ff_bin), "-nostdin", "-y"]
+    for s in srcs:
+        argv += ["-i", str(s)]
+    argv += ["-filter_complex", f"concat=n={n}:v=0:a=1",
+             "-ac", "1", "-ar", str(STARTER_SAMPLE_RATE), "-f", "wav", str(dst)]
+    return argv
 
 
 def validate_ref_audio(path: object) -> "str | None":
@@ -598,7 +861,7 @@ _RENDER_LOCK = threading.Lock()
 
 def render_lock() -> threading.Lock:
     """Exposed so tests can reason about the same lock. Guards the ONE-SHOT engines
-    (tts-gguf, stt-mlx) only — see the comment above."""
+    (tts-gguf and BOTH stt formats) only — see the comment above."""
     return _RENDER_LOCK
 
 
@@ -620,6 +883,20 @@ def mlx_whisper_bin(root: "str | Path | None" = None) -> str:
     Preferred over `-m mlx_whisper` because the package exposes NO runnable __main__:
     the CLI lives in mlx_whisper.cli, and the console script is its only stable name."""
     return str(Path(root or ROOT) / "data" / "mlx-venv" / "bin" / "mlx_whisper")
+
+
+def mlx_audio_stt_bin(root: "str | Path | None" = None) -> str:
+    """The `mlx_audio.stt.generate` console script — mlx-audio's own STT CLI, already
+    installed by the pinned `build.mlx_audio_pin` (0.4.7) that the TTS half rides. No
+    new dependency, no new venv, no new pin: verified present in data/mlx-venv/bin."""
+    return str(Path(root or ROOT) / "data" / "mlx-venv" / "bin" / "mlx_audio.stt.generate")
+
+
+def stt_bin_for(fmt: object, root: "str | Path | None" = None) -> str:
+    """The console script that runs this STT format. PURE (path arithmetic only)."""
+    if str(fmt or "") == "stt-mlx-audio":
+        return mlx_audio_stt_bin(root)
+    return mlx_whisper_bin(root)
 
 
 # Where a user's own ffmpeg actually lives on a Mac. The bridge inherits a
@@ -716,6 +993,7 @@ def audio_download_entry(base: dict, voice_format: str) -> dict:
         tts-gguf : path = backbone .gguf, mmproj = projector .gguf   (llama-tts -m/-mm)
         tts-mlx  : path = model dir                                  (mlx-audio --model)
         stt-mlx  : path = model dir                                  (mlx-whisper)
+        stt-mlx-audio : path = model dir                     (mlx_audio.stt.generate)
 
     `vision` and `ctx` are dropped: they are chat-model concepts and an audio entry
     carrying vision:true would light up a "vision" pill on a voice model.
@@ -750,7 +1028,10 @@ def audio_entry_view(m: dict) -> dict:
         "kind": "audio",
         "format": fmt,
         "role": "stt" if fmt in STT_FORMATS else "tts",
-        "engine": ("mlx" if fmt.endswith("-mlx") else "llamacpp"),
+        # `stt-mlx-audio` does NOT end in "-mlx" — a suffix test alone would have
+        # labelled a Parakeet entry "llamacpp" in the Audio tab's engine pill.
+        "engine": ("mlx" if (fmt.endswith("-mlx") or fmt == "stt-mlx-audio")
+                   else "llamacpp"),
         "size_bytes": m.get("size_bytes"),
         "path": m.get("path"),
         "mmproj": m.get("mmproj"),
@@ -861,12 +1142,32 @@ def stt_argv(entry: dict, audio_path: str, out_dir: str,
 
     `--verbose False` in the script form: mlx_whisper's CLI prints every segment to
     stdout as it decodes, which would fill our log tail with the transcript itself.
+
+    ── stt-mlx-audio (Parakeet / the mlx-audio STT family) ──────────────────────
+    A near-twin, read from `mlx_audio/stt/generate.py::parse_args` in our OWN venv:
+        mlx_audio.stt.generate --model <dir> --audio <file>
+                               --output-path <out_dir>/<stem> --format json
+    `--output-path` is a PREFIX, not a directory: `save_as_json` writes
+    `f"{output_path}.json"`, so passing `<out_dir>/<stem>` lands exactly on the path
+    `stt_read_output(out_dir, stem)` already looks for — and its payload's top-level
+    `text` key is what `stt_text_from_payload` already reads first. Both readers are
+    therefore UNCHANGED for the second engine; the whole swap is this branch.
+    The fallback form is `-m mlx_audio.stt.generate` (the package DOES expose a
+    runnable module, unlike mlx_whisper) with byte-identical flags.
     """
     fmt = entry_format(entry)
     if fmt not in STT_FORMATS:
         raise ValueError(f"unsupported STT format {fmt!r} "
                          f"(expected one of {', '.join(STT_FORMATS)})")
     model = str(entry.get("path") or "")
+    if fmt == "stt-mlx-audio":
+        stem = os.path.splitext(os.path.basename(str(audio_path)))[0]
+        head = ([str(mlx_bin)] if use_script
+                else [str(mlx_py or ""), "-m", "mlx_audio.stt.generate"])
+        return head + ["--model", model,
+                       "--audio", str(audio_path),
+                       "--output-path", os.path.join(str(out_dir), stem),
+                       "--format", "json"]
     if use_script:
         return [str(mlx_bin), str(audio_path),
                 "--model", model,
@@ -992,7 +1293,9 @@ def stt_transcribe(entry: dict, audio_bytes: bytes, suffix: str,
         raise VoiceError(err)
     sfx = normalize_audio_suffix(suffix)
 
-    mb = mlx_bin or mlx_whisper_bin(root)
+    # DISPATCH BY FORMAT: the whisper path is byte-for-byte what it was; a
+    # stt-mlx-audio entry resolves mlx-audio's own console script instead.
+    mb = mlx_bin or stt_bin_for(entry_format(entry), root)
     mp = mlx_py or mlx_python(root)
     use_script = os.path.isfile(mb) and os.access(mb, os.X_OK)
     if not use_script and not os.path.isfile(mp):
@@ -1041,6 +1344,11 @@ def stt_transcribe(entry: dict, audio_bytes: bytes, suffix: str,
                 _tail(getattr(e, "stdout", ""), getattr(e, "stderr", "")))
         log = _tail(p.stdout, p.stderr)
         # p.returncode deliberately NOT checked — same invariant as render_ok().
+        # ⚠️ UNVERIFIED for stt-mlx-audio: whether `mlx_audio.stt.generate` also exits 0
+        # on failure could not be tested in-sandbox (mlx is Apple-only). Carrying the
+        # invariant DEFENSIVELY is the safe direction in both worlds: an empty
+        # transcript is a failure whatever the exit code was, and the code is printed
+        # in the error text so a nonzero one is still visible.
         text = stt_read_output(tmp_dir, stem, p.stdout)
         if not text:
             raise VoiceError(

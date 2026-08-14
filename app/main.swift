@@ -17,6 +17,10 @@ let hermesURL = URL(string: "http://127.0.0.1:9119")!
 let voiceStudioURL = URL(string: "http://127.0.0.1:3900")!
 let voiceboxURL = URL(string: "http://127.0.0.1:17493")!
 
+// ONE source for the tab strings: the main strip and the split view's right-hand mini
+// strip are built from this array, so the two can never drift apart.
+let tabTitles = ["Mission Control", "Odysseus", "Hermes", "VoiceStudio", "Voicebox"]
+
 // PROVEN by /tmp/harness-drag.log: macOS never delivers drag events to the WKWebView
 // at all (registrations correct, draggingEntered never called). So a transparent
 // sibling ABOVE the panel is the drag destination: invisible to clicks (hitTest nil),
@@ -126,26 +130,35 @@ final class DropWebView: WKWebView {
         dragLog("perform: url=\(url?.path ?? "nil")")
         guard let url = url else { return super.performDragOperation(sender) }
         let mimes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"]
+        // PHASE 2 — a dropped audio file is a VOICE CLIP, not an attachment. Same
+        // suffix set as the bridge's REF_AUDIO_SUFFIXES and the same 15 MB cap, so a
+        // file the shell accepts is a file /api/voice/library/save will accept.
+        let audioMimes = ["wav": "audio/wav", "mp3": "audio/mpeg",
+                          "flac": "audio/flac", "m4a": "audio/mp4"]
         let note = { (msg: String) in
             self.evaluateJavaScript("typeof attachNote==='function'&&attachNote('\(msg)');", completionHandler: nil)
         }
-        guard let mime = mimes[url.pathExtension.lowercased()] else {
+        let ext = url.pathExtension.lowercased()
+        let isAudio = audioMimes[ext] != nil
+        guard let mime = mimes[ext] ?? audioMimes[ext] else {
             dragLog("perform: rejected ext=\(url.pathExtension)")
-            note("only png / jpeg / webp images"); return true
+            note("only png / jpeg / webp images or wav / mp3 / flac / m4a audio"); return true
         }
         guard let data = try? Data(contentsOf: url) else {
             dragLog("perform: unreadable file")
-            note("could not read that image"); return true
+            note(isAudio ? "could not read that audio file" : "could not read that image"); return true
         }
-        guard data.count <= 8 * 1024 * 1024 else {
+        let cap = isAudio ? 15 * 1024 * 1024 : 8 * 1024 * 1024
+        guard data.count <= cap else {
             dragLog("perform: too large (\(data.count) bytes)")
-            note("image too large (max 8 MB)"); return true
+            note(isAudio ? "audio too large (max 15 MB)" : "image too large (max 8 MB)"); return true
         }
         let name = url.lastPathComponent
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let js = "window.harnessNativeDrop && harnessNativeDrop(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
-        dragLog("perform: injecting \(data.count) bytes as \(mime)")
+        let hook = isAudio ? "harnessNativeAudioDrop" : "harnessNativeDrop"
+        let js = "window.\(hook) && \(hook)(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
+        dragLog("perform: injecting \(data.count) bytes as \(mime) via \(hook)")
         evaluateJavaScript(js) { _, err in
             self.dragLog(err == nil ? "perform: js ok" : "perform: js ERROR \(err!)")
         }
@@ -214,7 +227,8 @@ final class DownloadHandler: NSObject, WKDownloadDelegate {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate,
+                         NSSplitViewDelegate {
     // retained handler for every tab's downloads (see DownloadHandler); AnyObject so the
     // stored property itself carries no availability requirement.
     var downloadHandler: AnyObject?
@@ -238,6 +252,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // backgrounded long enough for the teardown to have happened. Odysseus is
     // deliberately NOT reloaded (it can hold unsent in-page draft state).
     var currentTab = 0
+    // ── split view (Phase 1) ──
+    // Mental model: ONE tab strip, one or two PANES. Every webview still exists exactly
+    // once (the properties above are unchanged) — a pane BORROWS one by reparenting it.
+    // A webview nobody is borrowing is parked in a hidden holder view, which is exactly
+    // the old `isHidden = true` state with a different owner.
+    var splitView: NSSplitView!
+    var leftPane: NSView!            // hosts the webview the MAIN tab strip selects
+    var rightPane: NSView!           // mini strip + rightHost
+    var rightHost: NSView!           // the right pane's content area (below its mini strip)
+    var rightSeg: NSSegmentedControl!
+    var rightPlaceholder: NSView!    // "Already open in the left pane."
+    var park: NSView!                // hidden holder for un-borrowed webviews
+    var splitButton: NSButton!
+    var splitOn = false
+    var rightTab = 1
+    var focusedPane = 0              // 0 = left, 1 = right — the ⌘R target
+    var clickMonitor: Any?
     var hermesLastActive: Date?
     let staleAfter: TimeInterval = 600   // 10 minutes backgrounded → reload on re-select
     var bridgeProcess: Process?
@@ -268,12 +299,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         container.addSubview(tabBar)
 
         let seg = NSSegmentedControl(
-            labels: ["Mission Control", "Odysseus", "Hermes", "VoiceStudio", "Voicebox"],
+            labels: tabTitles,
             trackingMode: .selectOne,
             target: self, action: #selector(tabChanged(_:)))
         seg.selectedSegment = 0
         seg.translatesAutoresizingMaskIntoConstraints = false
         tabBar.addSubview(seg)
+
+        // ⫽ — the split toggle, at the right end of the strip.
+        splitButton = NSButton(title: "⫽", target: self, action: #selector(toggleSplit(_:)))
+        splitButton.setButtonType(.pushOnPushOff)
+        splitButton.bezelStyle = .texturedRounded
+        splitButton.toolTip = "Split view"
+        splitButton.translatesAutoresizingMaskIntoConstraints = false
+        tabBar.addSubview(splitButton)
 
         // ── web views ──
         // DropWebView: native drag-destination so Finder image drops reach the chat.
@@ -303,18 +342,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if #available(macOS 12.0, *) {
                 wv.underPageBackgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
             }
-            container.addSubview(wv)
+            // NOT added to the container here any more: applyPanes() owns every
+            // webview's parent from now on (a pane, or the hidden park view).
         }
-        odyWV.isHidden = true
-        hermesWV.isHidden = true
-        vsWV.isHidden = true
-        vbWV.isHidden = true
 
-        // drop-catcher above everything; only active on the Mission Control tab
+        // drop-catcher above the panel's webview; applyPanes() moves it to whichever
+        // pane Mission Control currently lives in (it is the only drop target).
         let ov = DropOverlay(webView: panelWV as! DropWebView)
         ov.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(ov)
         dropOverlay = ov
+
+        // ── panes ──
+        splitView = NSSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.autosaveName = "harness-split"
+        splitView.delegate = self
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(splitView)
+
+        leftPane = NSView()
+        leftPane.translatesAutoresizingMaskIntoConstraints = false
+        splitView.addArrangedSubview(leftPane)   // the right pane is added only when split is ON
+
+        rightPane = NSView()
+        rightPane.translatesAutoresizingMaskIntoConstraints = false
+        let rightBar = NSView()
+        rightBar.translatesAutoresizingMaskIntoConstraints = false
+        rightBar.wantsLayer = true
+        rightBar.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
+        rightPane.addSubview(rightBar)
+        rightSeg = NSSegmentedControl(labels: tabTitles, trackingMode: .selectOne,
+                                      target: self, action: #selector(rightTabChanged(_:)))
+        rightSeg.controlSize = .small
+        rightSeg.font = NSFont.systemFont(ofSize: 10)
+        rightSeg.translatesAutoresizingMaskIntoConstraints = false
+        rightBar.addSubview(rightSeg)
+        rightHost = NSView()
+        rightHost.translatesAutoresizingMaskIntoConstraints = false
+        rightPane.addSubview(rightHost)
+
+        rightPlaceholder = makeRightPlaceholder()
+
+        // parked webviews stay full-size (so a re-borrow needs no relayout) but never draw.
+        park = NSView()
+        park.translatesAutoresizingMaskIntoConstraints = false
+        park.isHidden = true
+        container.addSubview(park)
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -323,31 +397,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             tabBar.heightAnchor.constraint(equalToConstant: 44),
             seg.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
             seg.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-            panelWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            panelWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            panelWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            panelWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            odyWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            odyWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            odyWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            odyWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            hermesWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            hermesWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            hermesWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            hermesWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            vsWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            vsWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            vsWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            vsWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            vbWV.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            vbWV.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            vbWV.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            vbWV.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ov.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            ov.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            ov.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            ov.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            splitButton.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -12),
+            splitButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
+            splitView.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            splitView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // min pane width, the layout half of the rule the divider-drag delegate
+            // enforces. Feasible by construction: window.minSize.width (900) > 2×420 + divider.
+            leftPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
+            rightPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
+            park.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            park.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            park.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            park.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            rightBar.topAnchor.constraint(equalTo: rightPane.topAnchor),
+            rightBar.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
+            rightBar.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
+            rightBar.heightAnchor.constraint(equalToConstant: 28),
+            rightSeg.centerXAnchor.constraint(equalTo: rightBar.centerXAnchor),
+            rightSeg.centerYAnchor.constraint(equalTo: rightBar.centerYAnchor),
+            rightHost.topAnchor.constraint(equalTo: rightBar.bottomAnchor),
+            rightHost.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
+            rightHost.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
+            rightHost.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor),
         ])
+
+        // restore the persisted split state (right tab first, so applyPanes sees it)
+        let ud = UserDefaults.standard
+        rightTab = ud.object(forKey: "harness.split.right") as? Int ?? 1
+        if rightTab < 0 || rightTab >= tabTitles.count { rightTab = 1 }
+        rightSeg.selectedSegment = rightTab
+        setSplit(ud.bool(forKey: "harness.split.on"), persist: false)
+
+        // "focused pane" = the pane you last clicked in; ⌘R targets it. Deliberately a
+        // coarse hit-test rather than chasing first responder through WKWebView.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] ev in
+            guard let s = self, s.splitOn, s.rightPane.superview != nil else { return ev }
+            let pt = s.rightPane.convert(ev.locationInWindow, from: nil)
+            s.focusedPane = s.rightPane.bounds.contains(pt) ? 1 : 0
+            return ev
+        }
 
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -523,56 +613,182 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let idx = sender.selectedSegment
         let prevTab = currentTab
         currentTab = idx
+        focusedPane = 0
         // The Hermes tab was selected right up to this switch — stamp when it stopped.
+        // ⚠️ still keyed on the LEFT strip only: with split on, Hermes may still be
+        // visible in the right pane, in which case this stamp is pessimistic (worst
+        // case: one extra reload). Left as-is rather than tracking two visibilities.
         if prevTab == 2 { hermesLastActive = Date() }
-        panelWV.isHidden = (idx != 0)
-        odyWV.isHidden = (idx != 1)
-        hermesWV.isHidden = (idx != 2)
-        vsWV.isHidden = (idx != 3)
-        vbWV.isHidden = (idx != 4)
-        dropOverlay?.isHidden = (idx != 0)   // file drops belong to Mission Control only
-        if idx == 1 && !odyLoaded {
-            odyLoaded = true
-            odyWV.load(URLRequest(url: odysseusURL))
-        }
-        // Voice tabs: components are OPTIONAL and usually stopped → the first load
-        // normally fails into the "Not reachable yet" placeholder, and re-select /
-        // ⌘R retries via the shared failedLoads path below. No staleness reload
-        // (that exists for Hermes's WS dashboard only).
-        if idx == 3 && !vsLoaded {
-            vsLoaded = true
-            vsWV.load(URLRequest(url: voiceStudioURL))
-        }
-        if idx == 4 && !vbLoaded {
-            vbLoaded = true
-            vbWV.load(URLRequest(url: voiceboxURL))
-        }
-        if idx == 2 && !hermesLoaded {
-            hermesLoaded = true
-            hermesWV.load(URLRequest(url: hermesURL))
-        } else if idx == 2, let since = hermesLastActive,
-                  Date().timeIntervalSince(since) > staleAfter,
-                  !failedLoads.contains(ObjectIdentifier(hermesWV)),
-                  hermesWV.url?.scheme == "http" {
-            // Backgrounded long enough that WebKit will have dropped its sockets →
-            // reload so the dashboard reconnects instead of showing "session ended".
-            hermesLastActive = nil
-            hermesWV.reload()
-        }
+        ensureLoaded(idx)
+        maybeReloadStaleHermes(idx)
+        applyPanes()
         // A previously failed tab retries automatically on re-select (component may be up now).
-        if let wv = visibleWebView(), failedLoads.contains(ObjectIdentifier(wv)) {
-            failedLoads.remove(ObjectIdentifier(wv))
-            wv.load(URLRequest(url: urlFor(wv)))
+        retryIfFailed(webViewFor(idx))
+    }
+
+    // The right pane's own mini strip. Same semantics as the main strip, but the LEFT
+    // ALWAYS WINS: if it asks for the tab the left is showing, applyPanes() gives it
+    // the placeholder instead of fighting over the one webview.
+    @objc func rightTabChanged(_ sender: NSSegmentedControl) {
+        rightTab = sender.selectedSegment
+        focusedPane = 1
+        UserDefaults.standard.set(rightTab, forKey: "harness.split.right")
+        if rightTab != currentTab {
+            ensureLoaded(rightTab)
+            applyPanes()
+            retryIfFailed(webViewFor(rightTab))
+        } else {
+            applyPanes()
         }
     }
 
+    @objc func toggleSplit(_ sender: Any?) {
+        // Opening onto a placeholder would be a useless first impression, so a fresh
+        // split that collides with the left tab steps the right pane to the next tab.
+        if !splitOn && rightTab == currentTab { rightTab = (currentTab + 1) % tabTitles.count }
+        rightSeg.selectedSegment = rightTab
+        setSplit(!splitOn, persist: true)
+    }
+
+    func setSplit(_ on: Bool, persist: Bool) {
+        splitOn = on
+        if on {
+            if rightPane.superview !== splitView { splitView.addArrangedSubview(rightPane) }
+        } else {
+            if rightPane.superview === splitView {
+                splitView.removeArrangedSubview(rightPane)
+                rightPane.removeFromSuperview()   // removeArrangedSubview alone keeps it a subview
+            }
+            focusedPane = 0
+        }
+        splitButton.state = on ? .on : .off
+        if persist { UserDefaults.standard.set(on, forKey: "harness.split.on") }
+        UserDefaults.standard.set(rightTab, forKey: "harness.split.right")
+        if on && rightTab != currentTab { ensureLoaded(rightTab) }
+        applyPanes()
+    }
+
+    func webViewFor(_ idx: Int) -> WKWebView {
+        switch idx {
+        case 1: return odyWV
+        case 2: return hermesWV
+        case 3: return vsWV
+        case 4: return vbWV
+        default: return panelWV
+        }
+    }
+    func allWebViews() -> [WKWebView] { return [panelWV, odyWV, hermesWV, vsWV, vbWV] }
+
+    // Lazy-load rule unchanged: a webview loads on FIRST borrow, by either pane.
+    // Mission Control (0) is loaded by ensureBridgeThenLoad, never here.
+    func ensureLoaded(_ idx: Int) {
+        switch idx {
+        case 1: if !odyLoaded { odyLoaded = true; odyWV.load(URLRequest(url: odysseusURL)) }
+        case 2: if !hermesLoaded { hermesLoaded = true; hermesWV.load(URLRequest(url: hermesURL)) }
+        // Voice tabs: components are OPTIONAL and usually stopped → the first load
+        // normally fails into the "Not reachable yet" placeholder, and re-select /
+        // ⌘R retries via the shared failedLoads path. No staleness reload (that
+        // exists for Hermes's WS dashboard only).
+        case 3: if !vsLoaded { vsLoaded = true; vsWV.load(URLRequest(url: voiceStudioURL)) }
+        case 4: if !vbLoaded { vbLoaded = true; vbWV.load(URLRequest(url: voiceboxURL)) }
+        default: break
+        }
+    }
+
+    func maybeReloadStaleHermes(_ idx: Int) {
+        guard idx == 2, hermesLoaded, let since = hermesLastActive,
+              Date().timeIntervalSince(since) > staleAfter,
+              !failedLoads.contains(ObjectIdentifier(hermesWV)),
+              hermesWV.url?.scheme == "http" else { return }
+        // Backgrounded long enough that WebKit will have dropped its sockets →
+        // reload so the dashboard reconnects instead of showing "session ended".
+        hermesLastActive = nil
+        hermesWV.reload()
+    }
+
+    func retryIfFailed(_ wv: WKWebView) {
+        guard failedLoads.contains(ObjectIdentifier(wv)) else { return }
+        failedLoads.remove(ObjectIdentifier(wv))
+        wv.load(URLRequest(url: urlFor(wv)))
+    }
+
+    // Reparent a view into a pane. Constraints against the OLD superview die with the
+    // removal, so this is the only place pane membership is expressed.
+    func attach(_ v: NSView, to host: NSView) {
+        if v.superview === host { return }
+        v.removeFromSuperview()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: host.topAnchor),
+            v.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+    }
+
+    // THE one rule: left wins. The right pane borrows a webview only when it is asking
+    // for a different tab; otherwise it shows the "already open" placeholder and the
+    // webview stays with the left pane.
+    func applyPanes() {
+        let leftIdx = currentTab
+        let rightBorrows = splitOn && rightTab != leftIdx
+
+        for (i, wv) in allWebViews().enumerated() {
+            if i == leftIdx { continue }
+            if rightBorrows && i == rightTab { continue }
+            attach(wv, to: park)     // park is hidden → same effect as the old isHidden
+        }
+        attach(webViewFor(leftIdx), to: leftPane)
+        if rightBorrows {
+            rightPlaceholder.removeFromSuperview()
+            attach(webViewFor(rightTab), to: rightHost)
+        } else if splitOn {
+            attach(rightPlaceholder, to: rightHost)
+        }
+
+        // The DropOverlay follows Mission Control's pane — file drops belong to it only.
+        // Re-added last so it stays ABOVE the webview it guards.
+        if let ov = dropOverlay {
+            ov.removeFromSuperview()
+            if leftIdx == 0 { attach(ov, to: leftPane) }
+            else if rightBorrows && rightTab == 0 { attach(ov, to: rightHost) }
+        }
+    }
+
+    func makeRightPlaceholder() -> NSView {
+        // Same words/palette as showUnreachable, but it cannot BE showUnreachable: that
+        // mechanism loads HTML into a webview, and the whole point here is that the
+        // webview is busy in the other pane.
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
+        let l = NSTextField(labelWithString: "Already open in the left pane.")
+        l.font = NSFont.systemFont(ofSize: 13)
+        l.textColor = NSColor(red: 0.435, green: 0.416, blue: 0.502, alpha: 1)
+        l.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(l)
+        NSLayoutConstraint.activate([
+            l.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            l.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+        ])
+        return v
+    }
+
+    // Min pane width 420, enforced on the divider drag.
+    func splitView(_ sv: NSSplitView, constrainMinCoordinate proposedMin: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        return max(proposedMin, 420)
+    }
+    func splitView(_ sv: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        return min(proposedMax, sv.bounds.width - 420)
+    }
+
+    // The pane ⌘R acts on: the last one clicked (left when split is off).
     func visibleWebView() -> WKWebView? {
-        if !panelWV.isHidden { return panelWV }
-        if !odyWV.isHidden { return odyWV }
-        if !hermesWV.isHidden { return hermesWV }
-        if !vsWV.isHidden { return vsWV }
-        if !vbWV.isHidden { return vbWV }
-        return nil
+        if focusedPane == 1 && splitOn && rightTab != currentTab { return webViewFor(rightTab) }
+        return webViewFor(currentTab)
     }
 
     func urlFor(_ wv: WKWebView) -> URL {

@@ -2436,6 +2436,9 @@ def aux_stop() -> JSONResponse:
 
 # ── Slice 2: HuggingFace model browser (Bridge runs on the Mac → real internet) ──
 _HF = httpx.AsyncClient(base_url="https://huggingface.co", timeout=httpx.Timeout(20, read=30))
+# No base_url: the starter-voice fetch talks to datasets-server.huggingface.co AND to
+# whatever signed CDN host it hands back, so this one takes absolute URLs only.
+_HF_ANY = httpx.AsyncClient(timeout=httpx.Timeout(20, read=60), follow_redirects=True)
 
 
 @app.get("/api/models/hf")
@@ -2617,6 +2620,36 @@ def is_mlx_whisper_cfg(cfg: object) -> bool:
     return all(k in cfg for k in AUDIO_WHISPER_REQUIRED)
 
 
+# Replicated the same way, for the SECOND STT engine (mlx-audio / Parakeet). See
+# scripts/seed_registry.py::is_parakeet_config for the reasoning; the test asserts
+# these four are byte-identical to the seed copy too, so the pair cannot drift.
+AUDIO_PARAKEET_SHAPE_KEYS = ("preprocessor", "encoder", "decoder")
+AUDIO_PARAKEET_TARGET_PREFIX = "nemo."
+AUDIO_PARAKEET_MIN_NEMO_BLOCKS = 2
+AUDIO_PARAKEET_MODEL_TYPES = ("parakeet",)
+
+
+def is_parakeet_cfg(cfg: object) -> bool:
+    """PURE: True only for a NeMo/Parakeet config mlx-audio's STT loader can drive.
+    The transformers veto is NOT applied to the shape rule — a positive `nemo.`
+    fingerprint is stronger evidence than the absence of transformers keys."""
+    if not isinstance(cfg, dict):
+        return False
+    n = 0
+    for k in AUDIO_PARAKEET_SHAPE_KEYS:
+        blk = cfg.get(k)
+        if isinstance(blk, dict):
+            tgt = blk.get("_target_")
+            if isinstance(tgt, str) and tgt.startswith(AUDIO_PARAKEET_TARGET_PREFIX):
+                n += 1
+    if n >= AUDIO_PARAKEET_MIN_NEMO_BLOCKS:
+        return True
+    mt = cfg.get("model_type")
+    if isinstance(mt, str) and mt.strip().lower() in AUDIO_PARAKEET_MODEL_TYPES:
+        return not any(k in cfg for k in AUDIO_WHISPER_VETO)
+    return False
+
+
 _TTS_TOKENS = ("tts", "text-to-speech", "speech", "voice", "kokoro", "outetts")
 
 
@@ -2683,7 +2716,7 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
         # An MLX verdict with no weights/config in the tree would send the Get into
         # whole-repo mode, which 400s ("not an MLX model"). Better to say we do not
         # know than to hand the user a button that cannot work.
-        if fmt in ("tts-mlx", "stt-mlx") and not (has_weights and has_cfg):
+        if fmt in ("tts-mlx", "stt-mlx", "stt-mlx-audio") and not (has_weights and has_cfg):
             fmt, warn = "unknown", ("looks like a voice model but ships no "
                                     "safetensors/npz weights + config.json")
         blocked = {"transformers": "transformers checkpoint — not an MLX conversion; "
@@ -2704,6 +2737,12 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
     # 3/4. The whisper lane — shape decides, name never does.
     if is_mlx_whisper_cfg(cfgd):
         return _out("stt-mlx")
+    # 3b. The OTHER ASR lane: mlx-audio's NeMo/Parakeet family. Checked BEFORE the
+    #     transformers veto, because a NeMo config legitimately carries
+    #     `model_defaults`/`target` keys and the veto would condemn every real
+    #     Parakeet repo — the positive `nemo._target_` fingerprint decides instead.
+    if is_parakeet_cfg(cfgd):
+        return _out("stt-mlx-audio")
     if asr_lane and cfgd and any(k in cfgd for k in AUDIO_WHISPER_VETO):
         return _out("transformers")
     # 5. GGUF TTS pair (backbone + projector). A TTS token is required: every
@@ -2728,7 +2767,7 @@ def audio_probe_size(fmt: object, files: object, back=None, proj=None) -> int:
     if fmt == "tts-gguf":
         want = {back, proj}
         return sum(s for p, s in pairs if p in want)
-    if fmt in ("tts-mlx", "stt-mlx"):
+    if fmt in ("tts-mlx", "stt-mlx", "stt-mlx-audio"):
         return sum(s for _, s in _mlx_repo_files(
             [{"path": p, "size": s, "type": "file"} for p, s in pairs]))
     return 0
@@ -5146,6 +5185,15 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
     ref_text = ref_text.strip()
     if path and not ref_text:
+        # A STARTER clip comes WITH its ground-truth transcript (the corpus utterance
+        # text), so it never pays a transcription — not the whisper-per-render one
+        # below, and not even the one-off pin-time one. Checked BEFORE the STT call
+        # because it is free and it is more accurate than any ASR result would be.
+        ref_text = _voice.starter_ref_text(path, ROOT)
+        if ref_text:
+            print(f"[voice] entry-ref starter transcript used (no STT): "
+                  f"{ref_text[:60]!r}", flush=True)
+    if path and not ref_text:
         # AUTO-TRANSCRIBE ONCE AT PIN TIME (Fable fix 2026-08-13, root-caused from
         # Debi's 30s-per-render report): mlx-audio's generate_audio, handed a clip
         # with NO ref_text, loads whisper-large-v3-turbo (~1.6GB) to transcribe the
@@ -5197,7 +5245,187 @@ def voice_library(folder: str = "") -> JSONResponse:
                              "clips": clips, "folder": True,
                              "capped": len(clips) >= _voice.FOLDER_CLIPS_CAP})
     clips = _voice.library_entries(ROOT)
-    return JSONResponse({"ok": True, "dir": _voice.voices_dir(ROOT), "clips": clips})
+    return JSONResponse({"ok": True, "dir": _voice.voices_dir(ROOT), "clips": clips,
+                         # The starter set's own metadata travels with the listing so
+                         # the picker can render the CC BY attribution without a
+                         # second round-trip — an attribution nobody fetched is an
+                         # attribution nobody sees, and CC BY requires it be visible.
+                         "starter_dir": _voice.starter_dir(ROOT),
+                         "starter_total": len(_voice.STARTER_VOICES),
+                         "starter_license": _voice.VCTK_LICENSE,
+                         "starter_attribution": _voice.VCTK_ATTRIBUTION,
+                         "voice_notice": _voice.VOICE_AI_NOTICE})
+
+
+async def _vctk_rows(offset: int, length: int) -> "list | None":
+    """One page of the VCTK datasets-server listing, or None. Never raises."""
+    try:
+        r = await _HF_ANY.get(_voice.VCTK_ROWS_URL, params={
+            "dataset": _voice.VCTK_DATASET, "config": "default", "split": "train",
+            "offset": int(offset), "length": int(length)})
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        rows = j.get("rows") if isinstance(j, dict) else None
+        return rows if isinstance(rows, list) else None
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+@app.post("/api/voice/library/starter")
+async def voice_library_starter() -> JSONResponse:
+    """Fetch the 13-clip VCTK starter voice set into data/voices/starter/.
+
+    WHY a bespoke endpoint and not the download manager: the download manager is built
+    around whole-HF-REPO model downloads that end in a registry entry. Thirteen loose
+    wavs totalling ~3 MB are not a model, would never get a registry row, and would
+    have to be taught to skip every step that makes that machine worth having.
+
+    FETCH PLAN (research §6.3, followed exactly): the canonical VCTK release is a
+    10.94 GB zip with no per-speaker path, so clips come from the HF datasets-server
+    `/rows` endpoint against the `sanchit-gandhi/vctk` parquet mirror. Rows are
+    speaker-ordered, so each speaker's first offset is found by BINARY SEARCH (pure,
+    unit-tested with an injected probe) and then one page is read from there. Signed
+    asset URLs EXPIRE, so metadata and audio are fetched in one pass and nothing is
+    cached. `/filter?where=` is deliberately not used — it returned an empty body for
+    this dataset in repeated testing.
+
+    PARTIAL SUCCESS IS THE DESIGN: each slot lands independently and a failure is
+    reported per-slot with its reason. Re-running only fetches what is missing.
+
+    ⚠️ NONE of the network path could be exercised in the sandbox. It is code-reasoned
+    against a live probe of the endpoint's real response shape (verified: rows carry
+    speaker_id / file / text and audio[0].src), and it fails LOUDLY per clip.
+    """
+    if _voice is None:
+        return _voice_unavailable()
+    ff = _voice.ffmpeg_bin(ROOT)
+    d = _voice.starter_dir(ROOT)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"could not create {d}: {e}"},
+                            status_code=500)
+    man = _voice.read_starter_manifest(ROOT)
+    saved, failed, skipped = [], [], []
+
+    # One shared probe cache: the thirteen searches overlap heavily (the speakers are
+    # in ascending order and so are their offsets), so a probed offset is worth
+    # remembering — it turns ~13 independent 17-step searches into far fewer requests.
+    probes: dict = {}
+
+    async def probe_async(off: int) -> "str | None":
+        if off in probes:
+            return probes[off]
+        rows = await _vctk_rows(off, 1)
+        sid = None
+        if rows and isinstance(rows[0], dict):
+            row = rows[0].get("row")
+            if isinstance(row, dict):
+                sid = str(row.get("speaker_id") or "") or None
+        probes[off] = sid
+        return sid
+
+    lo = 0
+    for spec in _voice.STARTER_VOICES:
+        slot, spk = spec["slot"], spec["speaker"]
+        name = _voice.starter_clip_name(slot, spk)
+        dst = os.path.join(d, name)
+        if os.path.isfile(dst) and os.path.getsize(dst) > 0 and man.get(name):
+            skipped.append(name)
+            continue
+        try:
+            # The binary search is PURE and takes a SYNC probe, so the async fetches
+            # are pumped through a small trampoline: run the pure search against a
+            # cache, and when it asks for an offset we have not seen, fetch it and
+            # start the search over. Bounded by the search depth (~17 rounds).
+            offset = None
+            for _round in range(40):
+                missing = []
+
+                def sync_probe(o, _m=missing):
+                    if o in probes:
+                        return probes[o]
+                    _m.append(o)
+                    return None            # aborts the search; we fetch and retry
+                offset = _voice.vctk_speaker_bounds(spk, sync_probe,
+                                                    _voice.VCTK_ROWS_TOTAL, lo)
+                if not missing:
+                    break
+                await probe_async(missing[0])
+            if offset is None:
+                failed.append({"slot": slot, "speaker": spk,
+                               "reason": "speaker not found in the dataset mirror"})
+                continue
+            lo = offset                       # the next speaker is never earlier
+            rows = await _vctk_rows(offset, _voice.STARTER_PAGE)
+            picks = _voice.vctk_pick_utterances(rows, spk)
+            if not picks:
+                failed.append({"slot": slot, "speaker": spk,
+                               "reason": "no mic1 utterances returned for this speaker"})
+                continue
+            parts = []
+            for i, p in enumerate(picks):
+                try:
+                    r = await _HF_ANY.get(p["src"])
+                    if r.status_code != 200 or not r.content:
+                        raise RuntimeError(f"HTTP {r.status_code}")
+                except Exception as e:                       # noqa: BLE001
+                    failed.append({"slot": slot, "speaker": spk,
+                                   "reason": f"clip download failed: {e}"})
+                    parts = []
+                    break
+                src = os.path.join(d, f".{slot}-{i}.flac")
+                with open(src, "wb") as f:
+                    f.write(r.content)
+                parts.append(src)
+            if not parts:
+                continue
+            try:
+                if ff and len(parts) >= 1:
+                    argv = _voice.ffmpeg_concat_argv(ff, parts, dst)
+                    c = subprocess.run(argv, capture_output=True, text=True,
+                                       cwd=str(ROOT), timeout=120)
+                    ok = os.path.isfile(dst) and os.path.getsize(dst) > 0
+                    if not ok:
+                        raise RuntimeError((c.stderr or "")[-300:] or "ffmpeg produced no wav")
+                    text = " ".join(p["text"] for p in picks)
+                else:
+                    # ⚠️ NO ffmpeg: keep the SINGLE longest utterance as flac rather
+                    # than fail. flac is in REF_AUDIO_SUFFIXES and mlx-audio reads it
+                    # with miniaudio — no external tool — so the clip still works; it
+                    # is just ~3.6s instead of ~10s. Honest degrade, not a silent one.
+                    best = max(range(len(parts)), key=lambda i: os.path.getsize(parts[i]))
+                    dst = os.path.join(d, os.path.splitext(name)[0] + ".flac")
+                    os.replace(parts[best], dst)      # same dir ⇒ same filesystem
+                    parts = [p for i, p in enumerate(parts) if i != best]
+                    text = picks[best]["text"]
+            except Exception as e:                           # noqa: BLE001
+                failed.append({"slot": slot, "speaker": spk,
+                               "reason": f"could not assemble the clip: {e}"})
+                continue
+            finally:
+                for p in parts:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+            key = os.path.basename(dst)
+            man[key] = {"text": text[:_voice.REF_TEXT_MAX], "slot": slot,
+                        "speaker": spk, "sex": spec.get("sex", ""),
+                        "accent": spec.get("accent", ""),
+                        "region": spec.get("region", ""),
+                        "source": "VCTK 0.92 (CC BY 4.0)"}
+            _voice.write_starter_manifest(man, ROOT)
+            saved.append(key)
+        except Exception as e:                               # noqa: BLE001
+            failed.append({"slot": slot, "speaker": spk, "reason": str(e)})
+    print(f"[voice] starter voices: {len(saved)} saved, {len(skipped)} already there, "
+          f"{len(failed)} failed", flush=True)
+    return JSONResponse({"ok": bool(saved or skipped) or not failed,
+                         "saved": saved, "skipped": skipped, "failed": failed,
+                         "ffmpeg": bool(ff),
+                         "attribution": _voice.VCTK_ATTRIBUTION})
 
 
 @app.get("/api/voice/library/folders")

@@ -135,7 +135,11 @@ def scan_local(local_dir):
 # ⚠️ PENDING FABLE QA: the token lists are the whole safety margin. Adding a generic
 # word here (e.g. "audio", "voice", "speech") would start catching chat models.
 AUDIO_TTS_TOKENS = ("tts", "kokoro", "outetts")
-AUDIO_STT_TOKENS = ("whisper",)
+# "parakeet" joins "whisper" as an STT family token. It is a BIRD, not a generic
+# speech word — it cannot start eating chat models the way "audio"/"voice"/"speech"
+# would. Which of the two STT engines a folder actually is stays a CONFIG decision
+# (audio_format_probed below); this list only says "look at it at all".
+AUDIO_STT_TOKENS = ("whisper", "parakeet")
 AUDIO_HF_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/hub")
 
 
@@ -215,6 +219,66 @@ def is_mlx_whisper_config(cfg):
     return all(k in cfg for k in MLX_WHISPER_REQUIRED)
 
 
+# ── the parakeet / NeMo config probe (the second STT engine) ─────────────────
+# A NeMo checkpoint shares NOTHING with the whisper ModelDimensions shape — it has
+# none of the six required keys and usually no `model_type` at all — so the whisper
+# probe correctly rejects it, and without a second rule a downloaded Parakeet would
+# silently vanish from the Audio tab.
+#
+# The fingerprint is NOT a name guess. NeMo serialises its module graph with hydra
+# `_target_` strings, so a real parakeet config carries e.g.
+#   preprocessor._target_ = "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor"
+#   encoder._target_      = "nemo.collections.asr.modules.ConformerEncoder"
+#   decoder._target_      = "nemo.collections.asr.modules.RNNTDecoder"
+# (read from the real mlx-community/parakeet-tdt-0.6b-v3 config.json). Requiring TWO
+# of those blocks to name `nemo.` is what separates it from a transformers checkpoint
+# such as `nvidia/parakeet-tdt-0.6b-v3` itself, which is a torch/transformers repo
+# mlx-audio cannot load — the exact whisper-medium class of false positive.
+#
+# ⚠️ The whisper transformers VETO is deliberately NOT applied here. It is an
+# ASR-lane rule written for whisper; a NeMo config may legitimately carry keys that
+# look transformers-ish, and applying the veto would condemn every Parakeet repo.
+# The nemo `_target_` requirement is a POSITIVE fingerprint and does that job better.
+PARAKEET_SHAPE_KEYS = ("preprocessor", "encoder", "decoder")
+PARAKEET_TARGET_PREFIX = "nemo."
+PARAKEET_MIN_NEMO_BLOCKS = 2
+PARAKEET_MODEL_TYPES = ("parakeet",)
+
+
+def _nemo_block_count(cfg):
+    """How many of the three shape blocks are dicts naming a `nemo.` _target_."""
+    n = 0
+    for k in PARAKEET_SHAPE_KEYS:
+        blk = cfg.get(k)
+        if not isinstance(blk, dict):
+            continue
+        tgt = blk.get("_target_")
+        if isinstance(tgt, str) and tgt.startswith(PARAKEET_TARGET_PREFIX):
+            n += 1
+    return n
+
+
+def is_parakeet_config(cfg):
+    """PURE: True only for a config.json mlx-audio's parakeet loader can drive."""
+    if not isinstance(cfg, dict):
+        return False
+    if _nemo_block_count(cfg) >= PARAKEET_MIN_NEMO_BLOCKS:
+        return True
+    # A conversion that declares itself outright still counts — but only when it is
+    # NOT also waving the transformers flags (mlx-audio injects "parakeet" itself, so
+    # a checkpoint carrying it AND `architectures` is somebody else's repackaging).
+    mt = cfg.get("model_type")
+    if isinstance(mt, str) and mt.strip().lower() in PARAKEET_MODEL_TYPES:
+        return not any(k in cfg for k in MLX_WHISPER_VETO)
+    return False
+
+
+def stt_format_by_name(dir_name):
+    """PURE: the lenient last-resort verdict, mirroring what mlx-audio's own loader
+    does (dash-split name-part matching against its stt/models/ directory)."""
+    return "stt-mlx-audio" if _has_token(dir_name, ("parakeet",)) else "stt-mlx"
+
+
 def _read_json(path):
     """A dict, or None when absent/unreadable/not an object. Never raises."""
     try:
@@ -226,7 +290,13 @@ def _read_json(path):
 
 
 def audio_format_probed(dir_name, filenames, folder, strict=True):
-    """audio_format_for + the config probe for the stt-mlx verdict only.
+    """audio_format_for + the config probe for the STT verdicts only.
+
+    The name-based classifier can only say "this looks like an STT folder"; WHICH
+    engine it is (stt-mlx = mlx-whisper, stt-mlx-audio = mlx-audio/Parakeet) is
+    decided by config.json, never by the folder name — except in the lenient
+    last-resort branch below.
+
 
     `strict=True` (the HF cache) FAILS CLOSED: an unreadable config means we do not
     know, and "do not know" must not become "hand this to mlx_whisper" — the cache is
@@ -244,8 +314,15 @@ def audio_format_probed(dir_name, filenames, folder, strict=True):
         return fmt
     cfg = _read_json(os.path.join(folder, "config.json"))
     if cfg is None:
-        return None if strict else fmt
-    return "stt-mlx" if is_mlx_whisper_config(cfg) else None
+        return None if strict else stt_format_by_name(dir_name)
+    # Strongest evidence first, and the two probes are DISJOINT by construction (a
+    # ModelDimensions config has no nemo `_target_` blocks and vice versa), so the
+    # order below is documentation rather than a tie-break.
+    if is_mlx_whisper_config(cfg):
+        return "stt-mlx"
+    if is_parakeet_config(cfg):
+        return "stt-mlx-audio"
+    return None
 
 
 def _audio_entry(model_id, fmt, folder, filenames, source):
@@ -335,7 +412,7 @@ def scan_audio_hf_cache(hub_dir):
         except OSError:
             continue
         fmt = audio_format_probed(leaf, files, folder, strict=True)
-        if fmt in ("tts-mlx", "stt-mlx"):
+        if fmt in ("tts-mlx", "stt-mlx", "stt-mlx-audio"):
             entries.append(_audio_entry(leaf, fmt, folder, files, "audio-hf-cache"))
     return entries
 

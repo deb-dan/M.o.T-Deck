@@ -62,9 +62,14 @@ check('a tts-mlx probe reads engine · size · voices',
 check('one voice is singular',
       audioProbeSummary({ format: 'tts-mlx', size_bytes: 0, voice_count: 1 })
       === 'TTS · MLX · 1 named voice');
+// The two STT labels now NAME their engine: there are two selectable ASR engines and
+// "Speech-to-text · MLX" alone would no longer say which one a row is.
 check('no voices ⇒ no voice clause (never claim 0 voices as a feature)',
       audioProbeSummary({ format: 'stt-mlx', size_bytes: 1073741824, voice_count: 0 })
-      === 'Speech-to-text · MLX · 1.0 GB');
+      === 'Speech-to-text · MLX (whisper) · 1.0 GB');
+check('the second STT engine is labelled distinctly from whisper',
+      audioProbeSummary({ format: 'stt-mlx-audio', size_bytes: 2508288736 })
+      === 'Speech-to-text · MLX (mlx-audio / Parakeet) · 2.3 GB');
 check('an unmeasured size is omitted, not printed as 0 GB',
       audioProbeSummary({ format: 'unknown', size_bytes: 0 }) === 'unrecognised');
 check('a transformers verdict is labelled in plain words',

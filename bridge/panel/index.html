@@ -3085,6 +3085,40 @@ window.harnessNativeDrop = function(name, dataUrl){
   showAttachedImage(dataUrl, name || 'image');
 };
 
+/* native-app AUDIO drop: a dropped wav/mp3/flac/m4a is a VOICE CLIP, not a chat
+   attachment — it goes straight into the voice library through the SAME endpoint the
+   🎙 recorder uses. Deliberately NOT auto-pinned: a drop is an import, not a choice
+   about which voice a model should speak in. */
+window.harnessNativeAudioDrop = async function(name, dataUrl){
+  const raw = String(name || 'clip');
+  const dot = raw.lastIndexOf('.');
+  const ext = (dot > 0 ? raw.slice(dot + 1) : '').toLowerCase();
+  const stem = (dot > 0 ? raw.slice(0, dot) : raw) || 'clip';
+  if (['wav','mp3','flac','m4a'].indexOf(ext) < 0){
+    feed('voice', 'that file type is not a voice clip (wav / mp3 / flac / m4a)'); return; }
+  const b64 = String(dataUrl || '').split(',')[1] || '';
+  if (!b64){ feed('voice', 'could not read that audio file'); return; }
+  let body;
+  try {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    body = arr;
+  } catch (e){ feed('voice', 'could not decode that audio file'); return; }
+  try {
+    const res = await fetch('/api/voice/library/save?name=' + encodeURIComponent(stem)
+                            + '&fmt=' + encodeURIComponent(ext),
+                            { method: 'POST', headers: { 'Content-Type': 'audio/' + ext },
+                              body: body });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok){
+      feed('voice', esc((j && j.error) || ('the bridge refused (' + res.status + ')'))); return; }
+    feed('voice', 'clip ' + esc(j.name || stem) + ' added to the voice library');
+    // refresh the library so an open clip picker shows the new chip (no pin change)
+    await loadVoiceLib(true);
+  } catch (e){ feed('voice', 'could not reach the bridge'); }
+};
+
 /* ---------- drag-and-drop an image onto the Chat view ----------
    WKWebView footgun: an unhandled file drop NAVIGATES the panel to the file —
    so the document-level guard swallows drops everywhere, and the chat column
@@ -3916,7 +3950,8 @@ function appendTranscript(text, focus){
 
 const VAD_BLOCK = 512;            // samples per posted block (~10.7ms @48k)
 const VAD_OPEN_FRAMES = 3;        // consecutive above-threshold blocks to open an utterance
-const VAD_HANGOVER_MS = 800;      // below-threshold time that closes one
+const VAD_HANGOVER_MS = 800;      // below-threshold time that closes one (whisper)
+const VAD_HANGOVER_FAST_MS = 575; // … and for an engine that does not hallucinate
 const VAD_PREROLL_MS = 300;       // audio kept from BEFORE the trigger (saves the first word)
 const VAD_TAIL_MS = 200;          // audio kept after the last speech block
 const VAD_MIN_MS = 400;           // shorter than this is a cough, not an utterance
@@ -3947,16 +3982,47 @@ function vadNoiseFloor(list){
   return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
 }
 
+/* PURE: how long a pause must be before it CLOSES an utterance, per STT engine.
+   800ms was never tuned for latency — it was tuned around whisper: trailing silence
+   is exactly what makes a seq2seq decoder invent "Thank you." out of room tone, so
+   the segmenter deliberately keeps a long hangover and only a 200ms tail. Parakeet's
+   RNNT/TDT decoder has no text prior and emits nothing on silence, so it can close
+   ~225ms sooner — which is 225ms straight off every conversational turn.
+   ⚠️ 575ms is a research-ranked value, not a measured one: it needs an EAR TEST.
+   Too short splits an utterance at a natural pause, and in conv mode a split SENDS
+   TWO MESSAGES. Do not take it below ~500ms. */
+function hangoverFor(fmt){
+  return String(fmt || '') === 'stt-mlx-audio' ? VAD_HANGOVER_FAST_MS : VAD_HANGOVER_MS;
+}
+
+/* The format of the model that is currently the STT default ('' when none). */
+function sttFormat(){
+  const id = (voiceCfg && voiceCfg.stt_model) || '';
+  const list = (voiceCfg && voiceCfg.available) || [];
+  for (const a of list){ if (a && a.id === id) return a.format || ''; }
+  return '';
+}
+
 /* PURE: the segmenter's initial state. frameMs is derived from the REAL sample rate
    at capture time, so every ms constant above converts to a block count correctly
-   whether the webview gives us 48k (observed) or 44.1k. */
-function vadInit(frameMs){
+   whether the webview gives us 48k (observed) or 44.1k.
+
+   `opts` (all optional) is what makes a RE-ARM cheap — see vadRearm:
+     hangoverMs  the engine-aware close time (default: whisper's 800)
+     noise/thr   a learned noise floor CARRIED FORWARD from a previous window. The
+                 warm-up gate is `noise.length < warm`, so carrying a full window
+                 makes the new window listen immediately — no separate flag, and a
+                 SHORT carried window correctly just continues warming up. */
+function vadInit(frameMs, opts){
   const ms = Number(frameMs) > 0 ? Number(frameMs) : 1;
   const fr = (x) => Math.max(1, Math.round(x / ms));
+  const o = opts || {};
+  const hang = Number(o.hangoverMs) > 0 ? Number(o.hangoverMs) : VAD_HANGOVER_MS;
+  const thr = Number(o.thr);
   return {
     frameMs: ms,
     open: VAD_OPEN_FRAMES,                   // a block count already, not a duration
-    hangover: fr(VAD_HANGOVER_MS),
+    hangover: fr(hang),
     preroll: fr(VAD_PREROLL_MS),
     tail: fr(VAD_TAIL_MS),
     minFrames: fr(VAD_MIN_MS),
@@ -3969,9 +4035,23 @@ function vadInit(frameMs){
     silence: 0,     // consecutive below-threshold blocks while speaking
     start: 0,       // absolute index the CUT starts at (pre-roll applied)
     vstart: 0,      // absolute index the SPEECH starts at (no pre-roll) — the length gate
-    noise: [],      // rolling non-speech RMS window
-    thr: VAD_FLOOR
+    noise: Array.isArray(o.noise) ? o.noise.slice(0) : [],   // rolling non-speech RMS
+    thr: (isFinite(thr) && thr > 0) ? thr : VAD_FLOOR
   };
+}
+
+/* PURE: the state for the NEXT listening window of the SAME session.
+   The old re-arm was `vadInit(frameMs)`, which threw away two different things at
+   once. Only ONE of them was load-bearing: clearing the frame buffer and the
+   speaking/run/silence counters is what makes it impossible to resume mid-utterance
+   from before the feedback gate. Discarding the learned NOISE FLOOR was collateral —
+   and it cost a fresh 600ms warm-up after every single reply, in a room the
+   segmenter had already spent the whole conversation learning.
+   So: reset the machine, carry the floor. The room does not change between turns. */
+function vadRearm(st){
+  const s = vadInit(st.frameMs, { noise: st.noise, thr: st.thr });
+  s.hangover = st.hangover;      // whatever this session's engine was tuned to
+  return s;
 }
 
 /* PURE: feed ONE block's RMS. Returns { st, emit } with a NEW state object — no
@@ -4164,7 +4244,10 @@ async function startAuto(mode){
     const frameMs = (VAD_BLOCK / ctx.sampleRate) * 1000;
     autoVad = { ctx: ctx, stream: stream, node: node, rate: ctx.sampleRate,
                 mode: (mode === 'conv' ? 'conv' : 'auto'), frameMs: frameMs,
-                st: vadInit(frameMs), frames: [], base: 0,
+                // The engine is read ONCE, at capture time: switching the STT default
+                // mid-session must not retune a segmenter that is already listening.
+                st: vadInit(frameMs, { hangoverMs: hangoverFor(sttFormat()) }),
+                frames: [], base: 0,
                 queue: [], busy: false, errors: 0, stopping: false };
     node.port.onmessage = (ev) => autoFrame(ev.data);
     ctx.createMediaStreamSource(stream).connect(node);   // never connect to output
@@ -4499,11 +4582,13 @@ function convEvent(ev, detail){
   // job is to drain the utterance that just arrived.)
   if (autoVad && autoVad.mode === 'conv'
       && (convSt.phase === 'waiting' || convSt.phase === 'speaking')) autoVad.queue = [];
-  // Re-arming the segmenter resets it, so each listening window re-learns the room
-  // (and can never resume mid-utterance from before the gate).
+  // Re-arming RESETS the machine (so it can never resume mid-utterance from before
+  // the gate) but CARRIES the learned noise floor forward — the room is the same
+  // room it was one reply ago, and re-learning it cost a 600ms deaf window after
+  // every single turn.
   if (autoVad && autoVad.mode === 'conv'
       && prev.phase !== 'listening' && convSt.phase === 'listening'){
-    autoVad.st = vadInit(autoVad.frameMs);
+    autoVad.st = vadRearm(autoVad.st);
     autoVad.frames = []; autoVad.base = 0;
   }
   switch (r.action){
@@ -5190,9 +5275,104 @@ async function loadVoiceLib(force){
   try {
     const res = await fetch('/api/voice/library');
     const j = await res.json().catch(() => ({}));
-    if (j && j.ok){ voiceLib = j.clips || []; voiceLibDir = j.dir || ''; }
+    if (j && j.ok){
+      voiceLib = j.clips || []; voiceLibDir = j.dir || '';
+      voiceStarterInfo = { total: j.starter_total || 0, dir: j.starter_dir || '',
+                           license: j.starter_license || '',
+                           attribution: j.starter_attribution || '',
+                           notice: j.voice_notice || '' };
+    }
   } catch (e) {}
   renderAudioDetail();
+}
+
+/* ---------- the VCTK starter voice set ----------
+   Thirteen accent-diverse reference clips, fetched by the bridge. NOT routed through
+   the download manager: that machine is built around whole-HF-repo model downloads
+   that end in a registry entry, and ~3 MB of loose wavs is not a model. Progress is
+   therefore just a busy state plus activity-feed lines — for three megabytes, a
+   progress bar would be more chrome than information. */
+let voiceStarterInfo = { total: 0, dir: '', license: '', attribution: '', notice: '' };
+let starterBusy = false;
+let starterMsg = '';
+let starterAttrOpen = false;
+
+function starterHave(){
+  let n = 0;
+  for (const c of voiceLib) if (c && c.starter) n++;
+  return n;
+}
+
+async function getStarterVoices(){
+  if (starterBusy) return;
+  starterBusy = true; starterMsg = 'fetching…'; renderAudioDetail();
+  feed('voice', 'fetching the VCTK starter voice set (13 clips)');
+  try {
+    const res = await fetch('/api/voice/library/starter', { method: 'POST' });
+    const j = await res.json().catch(() => ({}));
+    const saved = (j && j.saved) || [], failed = (j && j.failed) || [],
+          skipped = (j && j.skipped) || [];
+    // Per-clip honesty: a partial run says exactly how partial it was, and why.
+    for (const f of failed) feed('voice', 'starter voice ' + f.slot + ' (' + f.speaker
+                                 + ') failed: ' + f.reason);
+    starterMsg = saved.length + ' added'
+      + (skipped.length ? ', ' + skipped.length + ' already there' : '')
+      + (failed.length ? ' — ' + failed.length + ' failed (see the activity feed)' : '');
+    if (j && j.ffmpeg === false){
+      starterMsg += ' · no ffmpeg — clips are single ~4s utterances, not ~10s';
+    }
+    feed('voice', 'starter voices: ' + starterMsg);
+  } catch (e){
+    starterMsg = 'failed: ' + ((e && e.message) || e);
+  } finally {
+    starterBusy = false;
+    await loadVoiceLib(true);          // re-render with whatever actually landed
+  }
+}
+
+function renderStarterVoices(box){
+  const info = voiceStarterInfo;
+  const have = starterHave(), total = info.total || 0;
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '10px';
+  box.appendChild(wrap);
+  const row = document.createElement('div');
+  row.className = 'md-actions';
+  wrap.appendChild(row);
+  const b = document.createElement('button');
+  b.className = 'mp-act';
+  b.disabled = starterBusy;
+  b.textContent = starterBusy ? 'fetching…'
+                 : (have >= total && total ? '✓ starter voices (' + have + ')'
+                                           : '⊕ get starter voices');
+  b.title = 'Download ' + (total || 13) + ' accent-diverse reference clips from the '
+    + 'VCTK corpus (~3 MB). Each arrives with its ground-truth transcript, so pinning '
+    + 'one costs no transcription at all.';
+  b.onclick = getStarterVoices;
+  row.appendChild(b);
+  const st = document.createElement('span');
+  st.style.cssText = 'color:var(--faint);font:10px var(--mono);letter-spacing:.06em;'
+    + 'margin-left:10px';
+  st.textContent = starterMsg || (have ? have + ' of ' + total + ' present' : '');
+  row.appendChild(st);
+  // ATTRIBUTION IS NOT OPTIONAL — CC BY is only satisfied when the credit is visible.
+  // The one-line credit always shows; the full block is one click away.
+  const cred = document.createElement('div');
+  cred.className = 'md-imnote';
+  cred.style.marginTop = '8px'; cred.style.maxWidth = '100%';
+  cred.style.cursor = 'pointer';
+  cred.textContent = 'VCTK corpus, ' + (info.license || 'CC BY 4.0')
+    + ', University of Edinburgh (CSTR) — Yamagishi, Veaux, MacDonald 2019 · '
+    + (starterAttrOpen ? 'hide full attribution ⌃' : 'full attribution ⌄');
+  cred.onclick = () => { starterAttrOpen = !starterAttrOpen; renderAudioDetail(); };
+  wrap.appendChild(cred);
+  if (starterAttrOpen){
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'color:var(--faint);font:10px var(--mono);white-space:pre-wrap;'
+      + 'margin-top:8px;max-width:100%';
+    pre.textContent = (info.attribution || '') + '\n\n' + (info.notice || '');
+    wrap.appendChild(pre);
+  }
 }
 function audioEngineLabel(a){ return a.engine === 'mlx' ? 'mlx' : 'llama.cpp'; }
 function audioDefaultId(r, role){
@@ -5499,6 +5679,19 @@ function renderVoiceClips(a, box){
        () => setEntryRef(a.id, ''));
   for (const c of voiceLib){
     const on = c.name === cur;
+    // A STARTER clip pins by ABSOLUTE PATH (it lives one level down, and the by-name
+    // route is basename-flat by design) and carries its own ground-truth transcript,
+    // so the pin sets ref_text with no transcription anywhere. It also gets NO ✕:
+    // the whole set is one button away from being re-fetched, and offering a delete
+    // that the containment check would refuse is worse than offering none.
+    if (c.starter){
+      chip(c.stem, on,
+           'VCTK ' + (c.speaker || '') + (c.accent ? ' · ' + c.accent : '')
+             + ' — starter clip, transcript included'
+             + (c.ref_text ? '\n“' + c.ref_text.slice(0, 120) + '”' : ''),
+           () => setEntryRef(a.id, c.path, c.ref_text || ''));
+      continue;
+    }
     const b = chip(c.stem, on, 'Always speak with the voice in ' + c.name,
                    () => setEntryRef(a.id, c.name));
     // Two-step delete, INSIDE the chip: the library is a folder of files and a
@@ -5550,6 +5743,11 @@ function renderVoiceClips(a, box){
          'Pick an audio file — it is copied into the voice library and pinned',
          () => pickClipFile(a.id));
   }
+  // ⚠️ PLACEMENT CALL: the starter set lives in the CLIP PICKER, not beside GET VOICE
+  // MODELS. It is only meaningful for a cloning model — which is exactly when this
+  // picker renders — and it sits next to the chips it will add. The Audio tab's Get
+  // list is for MODELS; thirteen wavs there would read as a fourteenth model.
+  renderStarterVoices(box);
   renderClipFolders(a, box, cur);
   // ref_text: optional, and worth offering — without it the engine transcribes the
   // clip with whisper on EVERY render (a second model load each time).
@@ -5910,6 +6108,15 @@ const VOICE_STARTERS = [
     warn: 'Needs the misaki package; its “en” extra pulls PyTorch, so it is installed '
         + 'WITHOUT extras to keep the MLX venv torch-free — Kokoro support is best-effort.',
     lic: 'Apache-2.0' },
+  { title: 'Parakeet TDT 0.6B v3 · MLX (speech-to-text)',
+    repo: 'mlx-community/parakeet-tdt-0.6b-v3',
+    file: '', fmt: 'stt-mlx-audio', size: '~2.51 GB',
+    desc: 'The accuracy-and-correctness pick. Runs on mlx-audio — the SAME package the '
+        + 'MLX voice models already use, so it needs no new dependency. Unlike Whisper it '
+        + 'emits NOTHING on silence instead of hallucinating a phrase, which is what stops '
+        + 'conversation mode sending phantom messages. English + 24 other European '
+        + 'languages (Whisper covers ~99 — keep large-v3-turbo if you need those).',
+    lic: 'CC BY 4.0 — © NVIDIA · huggingface.co/nvidia/parakeet-tdt-0.6b-v3' },
   { title: 'Whisper base · MLX (speech-to-text)', repo: 'mlx-community/whisper-base-mlx',
     file: '', fmt: 'stt-mlx', size: '~137 MB',
     desc: 'Small, fast transcription. Listening is not wired into the UI yet (Phase D) — '
@@ -5981,7 +6188,8 @@ function audioProbeSummary(p){
   // One line that says what this repo IS. Never invents a size we did not measure.
   if (!p) return '';
   const bits = [];
-  const label = {'tts-mlx':'TTS · MLX', 'stt-mlx':'Speech-to-text · MLX',
+  const label = {'tts-mlx':'TTS · MLX', 'stt-mlx':'Speech-to-text · MLX (whisper)',
+                 'stt-mlx-audio':'Speech-to-text · MLX (mlx-audio / Parakeet)',
                  'tts-gguf':'TTS · llama.cpp',
                  'transformers':'transformers checkpoint',
                  'unknown':'unrecognised'}[p.format] || p.format;

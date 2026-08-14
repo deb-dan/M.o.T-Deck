@@ -374,9 +374,19 @@ check('…and it is applied before the frame is pushed or stepped', (() => {
   return m.indexOf('convGated(convSt)') < m.indexOf('a.frames.push')
       && m.indexOf('convGated(convSt)') < m.indexOf('vadStep(');
 })());
+// UPDATED HONESTLY 2026-08-14: the re-arm still RESETS the segmenter — that half is
+// what makes resuming mid-utterance from before the gate impossible, and it is
+// unchanged. What it no longer does is throw away the learned NOISE FLOOR, which was
+// costing a fresh ~600ms warm-up after every reply. vadRearm() is the reset-and-carry
+// split; its own table lives in test_vad_segmenter.js.
 check('the segmenter is RESET when the mic re-arms (it can never resume mid-utterance '
-    + 'from before the gate, and each window re-learns the room)',
-  /convSt\.phase === 'listening'\)\{\s*autoVad\.st = vadInit\(autoVad\.frameMs\)/.test(html));
+    + 'from before the gate) — via vadRearm, which carries the room\'s noise floor',
+  /convSt\.phase === 'listening'\)\{\s*autoVad\.st = vadRearm\(autoVad\.st\)/.test(html)
+  && /function vadRearm\(st\)\{[\s\S]{0,400}?noise: st\.noise, thr: st\.thr/.test(html));
+check('the frame buffer is still cleared with it (a carried FLOOR is fine, carried '
+    + 'AUDIO would be the assistant\'s own voice)',
+  /autoVad\.st = vadRearm\(autoVad\.st\);\s*autoVad\.frames = \[\]; autoVad\.base = 0;/
+    .test(html));
 check('the queue is dropped when a turn starts (an utterance captured a moment '
     + 'before the gate closed belongs to the turn in flight)',
   /convSt\.phase === 'waiting' \|\| convSt\.phase === 'speaking'\)\) autoVad\.queue = \[\]/.test(html));
