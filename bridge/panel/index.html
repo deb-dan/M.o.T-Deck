@@ -367,7 +367,11 @@
   #chat-inputrow { display:flex; gap:10px; align-items:flex-end; }
   #chat-input { flex:1; resize:none; background:var(--card); color:var(--cream);
                 border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
-                font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none; }
+                font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none;
+                /* AUTO-GROW: growInput() sets an explicit height up to 3x the rows=2
+                   base; past that the box scrolls internally rather than eating the
+                   transcript. (The ONE css change this slice makes.) */
+                overflow-y:auto; }
   #chat-input:focus { border-color:var(--gold); }
   #chat-send:hover, #chat-talk:hover, #chat-auto:hover, #chat-conv:hover { border-color:var(--gold); }
   /* PHASE D: Send + ● talk share ONE reduced size (Fable: ~30% off the base button's
@@ -996,6 +1000,7 @@
             <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp"
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
+              oninput="growInput(this)"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
             <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg).
@@ -3908,6 +3913,31 @@ async function finishTalk(chunks, fmt){
   renderTalkBtn();
 }
 
+/* ---------- composer auto-grow (LM Studio behaviour) ----------
+   The box ships at rows=2 and used to stay there, so a dictated paragraph scrolled out
+   of sight while you were still writing it. growInput() gives it an explicit height that
+   tracks the content up to GROW_MAX times its natural rows=2 height, then lets the CSS
+   overflow scroll. PURE-ish: reads/writes only the element it is handed.
+   The base height is measured ONCE, lazily — the chat view can be display:none at load
+   (offsetHeight 0), in which case nothing is cached and the next call measures again. */
+const GROW_MAX = 3;
+function growInput(el){
+  const box = el || document.getElementById('chat-input');
+  if (!box) return;
+  if (!box._growBase){
+    box.style.height = '';                       // back to the CSS/rows=2 height
+    const bh = box.offsetHeight;
+    if (!bh) return;                             // hidden — measure later
+    box._growBase = bh;
+    // border-box: style.height includes the border, scrollHeight does not.
+    box._growBorder = Math.max(0, bh - box.clientHeight);
+  }
+  const base = box._growBase, bd = box._growBorder || 0;
+  box.style.height = 'auto';
+  const need = box.scrollHeight + bd;
+  box.style.height = Math.max(base, Math.min(need, base * GROW_MAX)) + 'px';
+}
+
 /* The ONE place a transcript reaches the composer — manual dictation and auto mode
    share it, so "appended, never auto-sent" is a single fact rather than two copies
    that could drift. Returns false when there is no box to write into. */
@@ -3917,6 +3947,7 @@ function appendTranscript(text, focus){
   if (!box || !t) return false;
   const cur = box.value || '';
   box.value = cur ? (cur.replace(/\s+$/, '') + ' ' + t) : t;
+  growInput(box);            // a programmatic write grows the box exactly like typing
   if (focus !== false){
     box.focus();
     try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) {}
@@ -4624,6 +4655,7 @@ function convSend(text){
   // thrown away — losing typed words to a stray noise would be unforgivable.
   const cur = (box.value || '').trim();
   box.value = cur ? (cur + ' ' + t) : t;
+  growInput(box);
   try { sendChat(); } catch (e){
     console.warn('[conv] send failed', e);
     convEvent('send_fail', String((e && e.message) || e));
@@ -7311,6 +7343,7 @@ async function sendChat() {
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
+  growInput(inp);             // cleared → shrink back to the two-row base
   chatBusy = true;
   // CONVERSATION MODE: a turn is starting — gate the mic. Fired for OUR sends (a
   // no-op, already waiting) and for a message the user types by hand mid-conv,

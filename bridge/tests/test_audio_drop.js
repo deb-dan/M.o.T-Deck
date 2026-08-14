@@ -68,26 +68,75 @@ check('the bridge cap really is 15 MB',
       /REF_AUDIO_MAX_BYTES = 15 \* 1024 \* 1024/
         .test(fs.readFileSync(path.join(ROOT, 'bridge', 'voice.py'), 'utf8')));
 
-// ── Phase 1 shell wiring ──
-check('one titles array feeds both tab strips',
+// ── split-view shell (v2) ──
+// v1 had TWO strips and a "left always wins" collision rule. v2 deletes the right
+// pane's mini strip and routes the ONE strip to the focused pane, swapping on collision.
+// These greps were updated with that redesign — the facts they pinned genuinely changed.
+check('exactly ONE tab strip is built from the titles array',
       /let tabTitles = \[/.test(swift) &&
-      (swift.match(/labels: tabTitles/g) || []).length === 2);
-check('the split state is persisted under the spec\'s keys',
-      /"harness\.split\.on"/.test(swift) && /"harness\.split\.right"/.test(swift));
+      (swift.match(/labels: tabTitles/g) || []).length === 1);
+check('the right pane\'s mini strip is gone',
+      !/rightSeg/.test(swift) && !/rightTabChanged/.test(swift));
+check('the split state is persisted under all four v2 keys',
+      /"harness\.split\.on"/.test(swift) && /"harness\.split\.right"/.test(swift) &&
+      /"harness\.split\.left"/.test(swift) && /"harness\.split\.focus"/.test(swift));
 check('the split view autosaves its divider',
       /autosaveName = "harness-split"/.test(swift));
 check('min pane width 420 is enforced on the divider drag',
       /constrainMinCoordinate[\s\S]{0,200}420/.test(swift) &&
       /constrainMaxCoordinate[\s\S]{0,200}420/.test(swift));
-check('left wins: the right pane borrows only a DIFFERENT tab',
+check('the strip routes to the FOCUSED pane and swaps on collision',
+      /func tabChanged[\s\S]{0,700}if splitOn && focusedPane == 1 \{[\s\S]{0,120}if idx == currentTab \{ currentTab = rightTab \}/.test(swift) &&
+      /if splitOn && idx == rightTab \{ rightTab = currentTab \}/.test(swift));
+check('the strip mirrors the focused pane\'s tab',
+      /func focusedTab\(\)[\s\S]{0,160}focusedPane == 1\) \? rightTab : currentTab/.test(swift) &&
+      /func syncStrip\(\)[\s\S]{0,200}seg\.selectedSegment = t/.test(swift));
+check('a click in either pane sets focus by hit-test',
+      /rightPane\.bounds\.contains[\s\S]{0,80}setFocus\(1\)/.test(swift) &&
+      /leftPane\.bounds\.contains[\s\S]{0,80}setFocus\(0\)/.test(swift));
+check('the focused pane is marked with a 2px gold top strip',
+      /let paneGold = NSColor\(red: 0\.788, green: 0\.643, blue: 0\.302/.test(swift) &&
+      /focusedPane == 0\) \? paneGold : NSColor\.clear/.test(swift) &&
+      /strip\.heightAnchor\.constraint\(equalToConstant: 2\)/.test(swift));
+check('each pane has its own ✕ that closes THAT pane',
+      /func closeLeft\(/.test(swift) && /func closeRight\(/.test(swift) &&
+      /func closePane\(_ p: Int\)[\s\S]{0,300}if p == 0 \{ currentTab = rightTab \}[\s\S]{0,120}setSplit\(false, persist: true\)/.test(swift));
+check('⫽ OFF goes through the same close path as the right pane\'s ✕',
+      /func toggleSplit[\s\S]{0,200}if splitOn \{ closePane\(1\); return \}/.test(swift));
+check('⫽ ON opens the right pane on the NEXT tab',
+      /func toggleSplit[\s\S]{0,300}rightTab = \(currentTab \+ 1\) % tabTitles\.count/.test(swift));
+check('holding priorities are set on BOTH panes, left lower',
+      /setHoldingPriority\(NSLayoutConstraint\.Priority\(250\), forSubviewAt: 0\)/.test(swift) &&
+      /setHoldingPriority\(NSLayoutConstraint\.Priority\(251\), forSubviewAt: 1\)/.test(swift));
+check('the placeholder survives as a safety net',
+      /Already open in the left pane\./.test(swift) &&
       /let rightBorrows = splitOn && rightTab != leftIdx/.test(swift));
-check('the collision case shows the placeholder text the spec names',
-      /Already open in the left pane\./.test(swift));
-check('the DropOverlay follows Mission Control\'s pane',
-      /if leftIdx == 0 \{ attach\(ov, to: leftPane\) \}/.test(swift) &&
-      /rightBorrows && rightTab == 0 \{ attach\(ov, to: rightHost\) \}/.test(swift));
+check('applyPanes does not thrash reparents when nothing changed',
+      /func attach\([\s\S]{0,120}if v\.superview === host \{ return \}/.test(swift) &&
+      /if ov\.superview !== t \{ attach\(ov, to: t\) \}/.test(swift));
+check('the DropOverlay follows Mission Control\'s pane host',
+      /let target: NSView\? = \(leftIdx == 0\) \? leftHost/.test(swift) &&
+      /rightBorrows && rightTab == 0\) \? rightHost : nil/.test(swift));
 check('⌘R targets the focused pane',
       /func visibleWebView\(\)[\s\S]{0,300}focusedPane == 1/.test(swift));
+check('the split diagnostics name focus and both tabs',
+      /slog\("applyPanes left=[\s\S]{0,80}focus=/.test(swift));
+
+// ── composer auto-grow ──
+check('growInput caps the box at 3x its measured base height',
+      /const GROW_MAX = 3;/.test(html) &&
+      /function growInput\(el\)\{/.test(html) &&
+      /Math\.max\(base, Math\.min\(need, base \* GROW_MAX\)\)/.test(html));
+check('growInput measures the base height lazily (hidden view = no cache)',
+      /if \(!bh\) return;/.test(html) && /box\._growBase = bh;/.test(html));
+check('the textarea grows on typing and pasting (oninput covers both)',
+      /oninput="growInput\(this\)"/.test(html));
+check('a programmatic transcript write grows the box too',
+      /function appendTranscript\([\s\S]{0,400}growInput\(box\);/.test(html) &&
+      /function convSend\([\s\S]{0,700}growInput\(box\);/.test(html));
+check('sending shrinks the box back to its base',
+      /inp\.value = '';\s*\n\s*growInput\(inp\);/.test(html));
+check('the box scrolls internally past the cap', /overflow-y:auto; \}/.test(html));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

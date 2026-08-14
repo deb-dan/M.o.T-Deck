@@ -17,9 +17,40 @@ let hermesURL = URL(string: "http://127.0.0.1:9119")!
 let voiceStudioURL = URL(string: "http://127.0.0.1:3900")!
 let voiceboxURL = URL(string: "http://127.0.0.1:17493")!
 
-// ONE source for the tab strings: the main strip and the split view's right-hand mini
-// strip are built from this array, so the two can never drift apart.
+// ONE source for the tab strings. v2 has exactly ONE tab strip (the right pane's mini
+// strip is gone — see the split-view v2 note on AppDelegate), so this array feeds the
+// single NSSegmentedControl and nothing else can drift from it.
 let tabTitles = ["Mission Control", "Odysseus", "Hermes", "VoiceStudio", "Voicebox"]
+
+// The panel's gold, as the focused-pane indicator. The unfocused pane gets a strip of
+// the SAME height in clear, so switching focus never moves a single pixel of content.
+let paneGold = NSColor(red: 0.788, green: 0.643, blue: 0.302, alpha: 1)
+let paneInk = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
+let paneFaint = NSColor(red: 0.435, green: 0.416, blue: 0.502, alpha: 1)
+let paneCream = NSColor(red: 0.937, green: 0.906, blue: 0.843, alpha: 1)
+
+// The per-pane ✕. A plain NSButton has no hover state, and this control floats over
+// page content, so it must be quiet at rest and legible under the pointer.
+final class PaneCloseButton: NSButton {
+    private var ta: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = ta { removeTrackingArea(t) }
+        let t = NSTrackingArea(rect: bounds,
+                               options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t)
+        ta = t
+    }
+    func tint(_ c: NSColor) {
+        attributedTitle = NSAttributedString(string: "✕", attributes: [
+            .foregroundColor: c,
+            .font: NSFont.systemFont(ofSize: 11),
+        ])
+    }
+    override func mouseEntered(with event: NSEvent) { tint(paneCream) }
+    override func mouseExited(with event: NSEvent) { tint(paneFaint) }
+}
 
 // PROVEN by /tmp/harness-drag.log: macOS never delivers drag events to the WKWebView
 // at all (registrations correct, draggingEntered never called). So a transparent
@@ -252,22 +283,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // backgrounded long enough for the teardown to have happened. Odysseus is
     // deliberately NOT reloaded (it can hold unsent in-page draft state).
     var currentTab = 0
-    // ── split view (Phase 1) ──
-    // Mental model: ONE tab strip, one or two PANES. Every webview still exists exactly
-    // once (the properties above are unchanged) — a pane BORROWS one by reparenting it.
-    // A webview nobody is borrowing is parked in a hidden holder view, which is exactly
-    // the old `isHidden = true` state with a different owner.
+    // ── split view (v2) ──
+    // Mental model: ONE tab strip, one or two PANES, and exactly one FOCUSED pane.
+    // Every webview still exists exactly once (the properties above are unchanged) —
+    // a pane BORROWS one by reparenting it, and a webview nobody borrows is parked in
+    // a hidden holder view (the old `isHidden = true` state with a different owner).
+    //
+    // v1's control model was "the right pane has its own mini strip and the LEFT ALWAYS
+    // WINS a collision". Debi's verdict after Mac-testing: the mini strip felt
+    // unresponsive, the right pane felt stuck, and "left wins" was invisible logic that
+    // produced a placeholder out of nowhere. v2 replaces it wholesale:
+    //   • the mini strip is DELETED — one strip, which routes to the FOCUSED pane;
+    //   • clicking in a pane focuses it (2px gold top border says which);
+    //   • asking the focused pane for the tab the OTHER pane holds SWAPS them, so the
+    //     collision has a predictable, visible outcome instead of a placeholder;
+    //   • each pane has its own ✕ (close THIS pane; the survivor becomes the one tab).
+    // The placeholder survives only as a safety net for a state applyPanes should
+    // never be asked for.
     var splitView: NSSplitView!
-    var leftPane: NSView!            // hosts the webview the MAIN tab strip selects
-    var rightPane: NSView!           // mini strip + rightHost
-    var rightHost: NSView!           // the right pane's content area (below its mini strip)
-    var rightSeg: NSSegmentedControl!
-    var rightPlaceholder: NSView!    // "Already open in the left pane."
+    var seg: NSSegmentedControl!     // THE tab strip — mirrors the focused pane's tab
+    var leftPane: NSView!            // focus strip + leftHost + ✕
+    var leftHost: NSView!            // the left pane's content area
+    var rightPane: NSView!           // focus strip + rightHost + ✕
+    var rightHost: NSView!           // the right pane's content area
+    var focusStripL: NSView!         // 2px: gold when focused, clear when not
+    var focusStripR: NSView!
+    var closeL: PaneCloseButton!
+    var closeR: PaneCloseButton!
+    var rightPlaceholder: NSView!    // safety net only (see applyPanes)
     var park: NSView!                // hidden holder for un-borrowed webviews
     var splitButton: NSButton!
     var splitOn = false
     var rightTab = 1
-    var focusedPane = 0              // 0 = left, 1 = right — the ⌘R target
+    var focusedPane = 0              // 0 = left, 1 = right — the tab strip's + ⌘R's target
     var clickMonitor: Any?
     var hermesLastActive: Date?
     let staleAfter: TimeInterval = 600   // 10 minutes backgrounded → reload on re-select
@@ -295,10 +343,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let tabBar = NSView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         tabBar.wantsLayer = true
-        tabBar.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
+        tabBar.layer?.backgroundColor = paneInk.cgColor
         container.addSubview(tabBar)
 
-        let seg = NSSegmentedControl(
+        seg = NSSegmentedControl(
             labels: tabTitles,
             trackingMode: .selectOne,
             target: self, action: #selector(tabChanged(_:)))
@@ -367,30 +415,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // its CURRENT frame — which for a runtime-inserted `NSView()` is .zero, i.e.
         // strictly worse than the bug we are fixing. The children inside each pane keep
         // their own TAMIC=false constraints either way.
+        // Both panes are built by the same function, so the two can only differ where
+        // they are DELIBERATELY made to differ (which pane a ✕ closes).
         leftPane = NSView()
         leftPane.translatesAutoresizingMaskIntoConstraints = false
+        focusStripL = NSView()
+        leftHost = NSView()
+        closeL = PaneCloseButton(title: "✕", target: self, action: #selector(closeLeft(_:)))
+        buildPane(leftPane, strip: focusStripL, host: leftHost, close: closeL,
+                  tip: "Close this pane")
         splitView.addArrangedSubview(leftPane)   // the right pane is added only when split is ON
-        // Lower holding priority than the right pane (default 250) → when the WINDOW
-        // resizes, the left pane is the one that gives way, which is the sane default
-        // for "the right pane is the thing I just opened".
-        splitView.setHoldingPriority(NSLayoutConstraint.Priority(249), forSubviewAt: 0)
+        // Holding priority: the subview with the LOWER value is the first to absorb a
+        // change, so a WINDOW resize moves the left pane's edge and leaves the pane you
+        // just opened alone. ⚠️ 250/251 are arbitrary-but-adjacent: any pair with
+        // left < right gives the same deterministic behaviour.
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(250), forSubviewAt: 0)
 
         rightPane = NSView()
         rightPane.translatesAutoresizingMaskIntoConstraints = false
-        let rightBar = NSView()
-        rightBar.translatesAutoresizingMaskIntoConstraints = false
-        rightBar.wantsLayer = true
-        rightBar.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
-        rightPane.addSubview(rightBar)
-        rightSeg = NSSegmentedControl(labels: tabTitles, trackingMode: .selectOne,
-                                      target: self, action: #selector(rightTabChanged(_:)))
-        rightSeg.controlSize = .small
-        rightSeg.font = NSFont.systemFont(ofSize: 10)
-        rightSeg.translatesAutoresizingMaskIntoConstraints = false
-        rightBar.addSubview(rightSeg)
+        focusStripR = NSView()
         rightHost = NSView()
-        rightHost.translatesAutoresizingMaskIntoConstraints = false
-        rightPane.addSubview(rightHost)
+        closeR = PaneCloseButton(title: "✕", target: self, action: #selector(closeRight(_:)))
+        buildPane(rightPane, strip: focusStripR, host: rightHost, close: closeR,
+                  tip: "Close this pane")
 
         rightPlaceholder = makeRightPlaceholder()
 
@@ -432,31 +479,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             park.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             park.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             park.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            rightBar.topAnchor.constraint(equalTo: rightPane.topAnchor),
-            rightBar.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
-            rightBar.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
-            rightBar.heightAnchor.constraint(equalToConstant: 28),
-            rightSeg.centerXAnchor.constraint(equalTo: rightBar.centerXAnchor),
-            rightSeg.centerYAnchor.constraint(equalTo: rightBar.centerYAnchor),
-            rightHost.topAnchor.constraint(equalTo: rightBar.bottomAnchor),
-            rightHost.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
-            rightHost.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
-            rightHost.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor),
         ])
 
-        // restore the persisted split state (right tab first, so applyPanes sees it)
+        // Restore the persisted arrangement. ⚠️ The LEFT tab is restored only when the
+        // split was on: reopening the whole arrangement is what the user asked for, but
+        // a single-pane launch landing on a stopped Voicebox would be a worse first
+        // impression than today's Mission Control.
         let ud = UserDefaults.standard
+        let wasSplit = ud.bool(forKey: "harness.split.on")
         rightTab = ud.object(forKey: "harness.split.right") as? Int ?? 1
         if rightTab < 0 || rightTab >= tabTitles.count { rightTab = 1 }
-        rightSeg.selectedSegment = rightTab
-        setSplit(ud.bool(forKey: "harness.split.on"), persist: false)
+        if wasSplit {
+            currentTab = ud.object(forKey: "harness.split.left") as? Int ?? 0
+            if currentTab < 0 || currentTab >= tabTitles.count { currentTab = 0 }
+            // The two panes can never hold the same tab (that is what the swap rule
+            // guarantees); repair a defaults file that somehow says otherwise.
+            if rightTab == currentTab { rightTab = (currentTab + 1) % tabTitles.count }
+            ensureLoaded(currentTab)
+        }
+        seg.selectedSegment = currentTab
+        setSplit(wasSplit, persist: false)
+        if wasSplit {
+            let f = ud.object(forKey: "harness.split.focus") as? Int ?? 0
+            setFocus(f == 1 ? 1 : 0)
+        }
 
-        // "focused pane" = the pane you last clicked in; ⌘R targets it. Deliberately a
-        // coarse hit-test rather than chasing first responder through WKWebView.
+        // "focused pane" = the pane you last clicked in. It drives BOTH the tab strip
+        // and ⌘R. Deliberately a coarse hit-test over each pane's frame rather than
+        // chasing first responder through WKWebView's internals — a click anywhere in
+        // a pane, including inside the page, focuses that pane.
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] ev in
             guard let s = self, s.splitOn, s.rightPane.superview != nil else { return ev }
-            let pt = s.rightPane.convert(ev.locationInWindow, from: nil)
-            s.focusedPane = s.rightPane.bounds.contains(pt) ? 1 : 0
+            guard ev.window === s.window else { return ev }
+            if s.rightPane.bounds.contains(s.rightPane.convert(ev.locationInWindow, from: nil)) {
+                s.setFocus(1)
+            } else if s.leftPane.bounds.contains(s.leftPane.convert(ev.locationInWindow, from: nil)) {
+                s.setFocus(0)
+            }
+            // A click on the tab strip or the ⫽ button is in NEITHER pane → focus is
+            // left exactly where it was, which is what makes the strip route correctly.
             return ev
         }
 
@@ -630,37 +691,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
-    @objc func tabChanged(_ sender: NSSegmentedControl) {
-        let idx = sender.selectedSegment
-        let prevTab = currentTab
-        currentTab = idx
-        focusedPane = 0
-        // The Hermes tab was selected right up to this switch — stamp when it stopped.
-        // ⚠️ still keyed on the LEFT strip only: with split on, Hermes may still be
-        // visible in the right pane, in which case this stamp is pessimistic (worst
-        // case: one extra reload). Left as-is rather than tracking two visibilities.
-        if prevTab == 2 { hermesLastActive = Date() }
-        ensureLoaded(idx)
-        maybeReloadStaleHermes(idx)
-        applyPanes()
-        // A previously failed tab retries automatically on re-select (component may be up now).
-        retryIfFailed(webViewFor(idx))
+    // ── v2 pane plumbing ──
+
+    // One builder for both panes: focus strip on top, content host below it, ✕ floating
+    // over the host's top-right. Z-ORDER MATTERS — the host is added before the ✕, so a
+    // webview reparented INTO the host can never cover the button.
+    func buildPane(_ pane: NSView, strip: NSView, host: NSView, close: PaneCloseButton, tip: String) {
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        strip.wantsLayer = true
+        strip.layer?.backgroundColor = NSColor.clear.cgColor
+        pane.addSubview(strip)
+
+        host.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(host)
+
+        // No bezelStyle: the NSBezelStyle case names were renamed in the macOS 14 SDK,
+        // and a borderless button does not use one anyway.
+        close.isBordered = false
+        close.toolTip = tip
+        close.translatesAutoresizingMaskIntoConstraints = false
+        close.tint(paneFaint)
+        pane.addSubview(close)
+
+        NSLayoutConstraint.activate([
+            strip.topAnchor.constraint(equalTo: pane.topAnchor),
+            strip.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+            strip.heightAnchor.constraint(equalToConstant: 2),
+            host.topAnchor.constraint(equalTo: strip.bottomAnchor),
+            host.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+            host.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
+            close.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+            close.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+            close.widthAnchor.constraint(equalToConstant: 16),
+            close.heightAnchor.constraint(equalToConstant: 16),
+        ])
     }
 
-    // The right pane's own mini strip. Same semantics as the main strip, but the LEFT
-    // ALWAYS WINS: if it asks for the tab the left is showing, applyPanes() gives it
-    // the placeholder instead of fighting over the one webview.
-    @objc func rightTabChanged(_ sender: NSSegmentedControl) {
-        rightTab = sender.selectedSegment
-        focusedPane = 1
-        UserDefaults.standard.set(rightTab, forKey: "harness.split.right")
-        if rightTab != currentTab {
-            ensureLoaded(rightTab)
-            applyPanes()
-            retryIfFailed(webViewFor(rightTab))
+    // The tab the strip is currently speaking for.
+    func focusedTab() -> Int {
+        return (splitOn && focusedPane == 1) ? rightTab : currentTab
+    }
+    // Hermes is visible if EITHER pane holds it — v1's staleness stamp was keyed on the
+    // left strip alone and could therefore be pessimistic. With one strip that mistake
+    // is avoidable, so this asks the real question.
+    func hermesVisible() -> Bool { return currentTab == 2 || (splitOn && rightTab == 2) }
+
+    // The strip always MIRRORS the focused pane. Setting selectedSegment
+    // programmatically does not fire the control's action, so this cannot recurse.
+    func syncStrip() {
+        let t = focusedTab()
+        if seg.selectedSegment != t { seg.selectedSegment = t }
+    }
+
+    func updateFocusStrips() {
+        // Single-pane mode gets no gold line: with nothing to distinguish, a permanent
+        // accent bar would be noise. ⚠️ deliberate (the spec only defines the two-pane
+        // case); the strip stays in the hierarchy either way so nothing shifts.
+        let l = (splitOn && focusedPane == 0) ? paneGold : NSColor.clear
+        let r = (splitOn && focusedPane == 1) ? paneGold : NSColor.clear
+        focusStripL.layer?.backgroundColor = l.cgColor
+        focusStripR.layer?.backgroundColor = r.cgColor
+        closeL.isHidden = !splitOn
+        closeR.isHidden = !splitOn
+    }
+
+    func setFocus(_ p: Int) {
+        let np = (splitOn && rightPane.superview === splitView) ? p : 0
+        if np != focusedPane { slog("focus -> \(np)") }
+        focusedPane = np
+        UserDefaults.standard.set(np, forKey: "harness.split.focus")
+        updateFocusStrips()
+        syncStrip()
+    }
+
+    func persistTabs() {
+        let ud = UserDefaults.standard
+        ud.set(currentTab, forKey: "harness.split.left")
+        ud.set(rightTab, forKey: "harness.split.right")
+    }
+
+    // THE v2 routing rule. The strip drives the FOCUSED pane. If the OTHER pane already
+    // holds the requested tab, the two panes SWAP — one webview, two panes, and a
+    // predictable visible outcome instead of v1's out-of-nowhere placeholder.
+    @objc func tabChanged(_ sender: NSSegmentedControl) {
+        let idx = sender.selectedSegment
+        guard idx >= 0 && idx < tabTitles.count else { return }
+        let wasHermes = hermesVisible()
+        if splitOn && focusedPane == 1 {
+            if idx == currentTab { currentTab = rightTab }   // swap
+            rightTab = idx
         } else {
-            applyPanes()
+            if splitOn && idx == rightTab { rightTab = currentTab }   // swap
+            currentTab = idx
         }
+        if wasHermes && !hermesVisible() { hermesLastActive = Date() }
+        persistTabs()
+        ensureLoaded(currentTab)
+        if splitOn { ensureLoaded(rightTab) }
+        maybeReloadStaleHermes(idx)
+        applyPanes()
+        updateFocusStrips()
+        // A previously failed tab retries automatically on re-select (component may be up now).
+        retryIfFailed(webViewFor(idx))
+        slog("tab -> \(idx) focus=\(focusedPane) left=\(currentTab) right=\(rightTab)")
+    }
+
+    // ✕ closes THAT pane: split turns off, the SURVIVOR's tab becomes the one tab, and
+    // focus lands on the survivor (setSplit(false) forces focus 0, which is the only
+    // pane left).
+    @objc func closeLeft(_ sender: Any?) { closePane(0) }
+    @objc func closeRight(_ sender: Any?) { closePane(1) }
+    func closePane(_ p: Int) {
+        guard splitOn else { return }
+        slog("close pane \(p) (left=\(currentTab) right=\(rightTab))")
+        let wasHermes = hermesVisible()
+        if p == 0 { currentTab = rightTab }   // the right pane survives → it becomes THE tab
+        setSplit(false, persist: true)
+        // Closing a pane can be the moment Hermes stops being visible — same staleness
+        // rule as a tab switch, so a backgrounded dashboard still gets its reload.
+        if wasHermes && !hermesVisible() { hermesLastActive = Date() }
+        seg.selectedSegment = currentTab
     }
 
     // Permanent split diagnostics. Visible with
@@ -669,13 +821,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // NSString cast, not a bare String, so the %@ CVarArg is unambiguous.
     func slog(_ s: String) { NSLog("%@", ("[split] " + s) as NSString) }
 
+    // ⫽ ON opens the right pane on the NEXT tab and leaves focus on the left; ⫽ OFF is
+    // literally "close the right pane" (one code path, so the two gestures cannot drift).
+    // Always stepping to (currentTab + 1) is deliberate: v1 reopened onto the remembered
+    // right tab, which is what made the right pane feel stuck on Odysseus.
     @objc func toggleSplit(_ sender: Any?) {
-        // Opening onto a placeholder would be a useless first impression, so a fresh
-        // split that collides with the left tab steps the right pane to the next tab.
-        if !splitOn && rightTab == currentTab { rightTab = (currentTab + 1) % tabTitles.count }
-        rightSeg.selectedSegment = rightTab
-        slog("toggle -> \(!splitOn) (rightTab \(rightTab), currentTab \(currentTab))")
-        setSplit(!splitOn, persist: true)
+        if splitOn { closePane(1); return }
+        rightTab = (currentTab + 1) % tabTitles.count
+        slog("toggle -> on (left=\(currentTab) right=\(rightTab))")
+        persistTabs()
+        ensureLoaded(rightTab)
+        setSplit(true, persist: true)
+        setFocus(0)
     }
 
     // THE FIX for "clicking ⫽ does nothing visible". `addArrangedSubview` alone never
@@ -703,19 +860,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func setSplit(_ on: Bool, persist: Bool) {
         splitOn = on
         if on {
-            if rightPane.superview !== splitView { splitView.addArrangedSubview(rightPane) }
+            if rightPane.superview !== splitView {
+                splitView.addArrangedSubview(rightPane)
+                // Only settable once the subview exists. Higher than the left pane's
+                // 250 → the left edge is the one a window resize moves. ⚠️ see the
+                // comment where the left value is set.
+                splitView.setHoldingPriority(NSLayoutConstraint.Priority(251), forSubviewAt: 1)
+            }
         } else {
             if rightPane.superview === splitView {
                 splitView.removeArrangedSubview(rightPane)
                 rightPane.removeFromSuperview()   // removeArrangedSubview alone keeps it a subview
             }
             focusedPane = 0
+            UserDefaults.standard.set(0, forKey: "harness.split.focus")
         }
         splitButton.state = on ? .on : .off
         if persist { UserDefaults.standard.set(on, forKey: "harness.split.on") }
-        UserDefaults.standard.set(rightTab, forKey: "harness.split.right")
+        persistTabs()
         if on && rightTab != currentTab { ensureLoaded(rightTab) }
         applyPanes()
+        updateFocusStrips()
+        syncStrip()
         let attached = (rightPane.superview === splitView)
         slog("setSplit(\(on)) rightAttached=\(attached) arranged=\(splitView.arrangedSubviews.count)")
         if on {
@@ -786,9 +952,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         ])
     }
 
-    // THE one rule: left wins. The right pane borrows a webview only when it is asking
-    // for a different tab; otherwise it shows the "already open" placeholder and the
-    // webview stays with the left pane.
+    // Place every webview. The swap rule keeps currentTab != rightTab whenever split is
+    // on, so `rightBorrows` is true in every normal state; the placeholder branch is a
+    // SAFETY NET for a state we should never be asked for, not a routine outcome.
+    //
+    // attach() early-returns when a view is already in the right host, so calling this
+    // when nothing changed reparents nothing — no relayout, no page reload, no thrash.
     func applyPanes() {
         let leftIdx = currentTab
         let rightBorrows = splitOn && rightTab != leftIdx
@@ -798,38 +967,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if rightBorrows && i == rightTab { continue }
             attach(wv, to: park)     // park is hidden → same effect as the old isHidden
         }
-        attach(webViewFor(leftIdx), to: leftPane)
+        attach(webViewFor(leftIdx), to: leftHost)
         if rightBorrows {
-            rightPlaceholder.removeFromSuperview()
+            if rightPlaceholder.superview != nil { rightPlaceholder.removeFromSuperview() }
             attach(webViewFor(rightTab), to: rightHost)
         } else if splitOn {
             attach(rightPlaceholder, to: rightHost)
         }
 
         // The DropOverlay follows Mission Control's pane — file drops belong to it only.
-        // Re-added last so it stays ABOVE the webview it guards.
+        // It must stay ABOVE the webview it guards, so it is re-added when (and only
+        // when) its host changed or a webview landed on top of it.
         if let ov = dropOverlay {
-            ov.removeFromSuperview()
-            if leftIdx == 0 { attach(ov, to: leftPane) }
-            else if rightBorrows && rightTab == 0 { attach(ov, to: rightHost) }
+            let target: NSView? = (leftIdx == 0) ? leftHost
+                                : ((rightBorrows && rightTab == 0) ? rightHost : nil)
+            if let t = target {
+                if ov.superview !== t { attach(ov, to: t) }
+                else if t.subviews.last !== ov { ov.removeFromSuperview(); attach(ov, to: t) }
+            } else if ov.superview != nil {
+                ov.removeFromSuperview()
+            }
         }
 
         // Permanent diagnostics: `log stream --predicate 'process == "Harness"'`, or just
-        // run the binary from a terminal, and one click on ⫽ tells you exactly what fired
-        // and what widths came out of it. Cheap; keeps this class of bug one paste away.
-        slog("applyPanes left=\(leftIdx) right=\(rightTab) borrows=\(rightBorrows) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
+        // run the binary from a terminal, and one click tells you exactly what fired and
+        // what widths came out of it. Cheap; keeps this class of bug one paste away.
+        slog("applyPanes left=\(leftIdx) right=\(rightTab) focus=\(focusedPane) borrows=\(rightBorrows) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
     }
 
     func makeRightPlaceholder() -> NSView {
-        // Same words/palette as showUnreachable, but it cannot BE showUnreachable: that
-        // mechanism loads HTML into a webview, and the whole point here is that the
-        // webview is busy in the other pane.
+        // v2 SAFETY NET only. The swap rule means the two panes can never ask for the
+        // same tab, so this should be unreachable — it exists so that an impossible
+        // state renders something honest instead of an empty pane. It cannot BE
+        // showUnreachable: that mechanism loads HTML into a webview, and the premise
+        // here is that the webview is busy in the other pane.
         let v = NSView()
         v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1).cgColor
+        v.layer?.backgroundColor = paneInk.cgColor
         let l = NSTextField(labelWithString: "Already open in the left pane.")
         l.font = NSFont.systemFont(ofSize: 13)
-        l.textColor = NSColor(red: 0.435, green: 0.416, blue: 0.502, alpha: 1)
+        l.textColor = paneFaint
         l.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(l)
         NSLayoutConstraint.activate([
