@@ -4214,6 +4214,14 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                         yield f"data: {_json.dumps({'delta': chr(10) + '· interrupted'})}\n\n"
                         break
                     silent += timeout
+                    # HEARTBEAT (2026-08-14): one tiny frame per ~20s tick, in
+                    # EVERY waiting branch (including a pending approval card,
+                    # which can legitimately wait minutes). The panel does not
+                    # render it — it exists so the panel's own last-resort stall
+                    # watchdog can tell "the model is slow" from "the relay is
+                    # gone". Without it the panel could only wait out the 600s
+                    # hard guard, which is what "stuck forever" felt like.
+                    yield 'data: {"type":"hermes_ping"}\n\n'
                     if not got_any and silent >= 60.0:
                         yield ('data: {"type":"proxy_error","error":'
                                '"no response from Hermes within 60s of submit — '

@@ -1901,8 +1901,13 @@ function sesResizeUp(e){
   try { localStorage.setItem('harness-sessions-width', String(_sesW)); } catch (_) {}
 }
 
-function setMode(m) {
+async function setMode(m) {
   const prev = chatMode;
+  // 2026-08-14: a lane switch during a live turn used to leave the turn running
+  // AND make Send-becomes-Stop unreachable (the busy branch keyed off the NEW
+  // chip). Stop the turn FIRST — before chatMode flips — so the stop routes on
+  // the lane that is actually streaming.
+  if (chatBusy && m !== prev) await stopTurnNow('lane switch');
   chatMode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
@@ -4801,7 +4806,8 @@ async function selectHermesSession(storedId){
   // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
-  if (chatBusy) return;
+  // 2026-08-14: a running turn is STOPPED, not a reason to silently do nothing.
+  if (chatBusy) await stopTurnNow('session switch');
   if (chatMode !== 'hermes') return;   // Phase-3 fix: lane guard — never open a
                                        // Hermes session while the rail is Odysseus.
   hermesStoredSid = storedId;
@@ -4839,7 +4845,7 @@ async function selectHermesSession(storedId){
 
 async function selectSession(sid){
   maybeCloseArtifact();   // artifact follows its conversation unless pinned
-  if (chatBusy) return;
+  if (chatBusy) await stopTurnNow('session switch');   // never a silent no-op
   if (chatMode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
                                        // Odysseus row clicked under the Hermes
                                        // chip must NOT bind chatSid / wedge Send.
@@ -4875,7 +4881,7 @@ async function selectSession(sid){
 }
 
 async function duplicateSession(sid){
-  if (chatBusy) return;
+  if (chatBusy) await stopTurnNow('session duplicate');
   const s = chatSessions.find(x => x.id === sid);
   const name = ((s && s.name) || 'Chat') + ' (copy)';
   try {
@@ -4889,7 +4895,11 @@ async function duplicateSession(sid){
 
 async function newSession(){
   maybeCloseArtifact();   // new chat = new context; unpinned artifacts close
-  if (chatBusy) return;
+  // 2026-08-14: +NEW used to be a SILENT NO-OP while a turn was in flight — and
+  // a wedged turn never ended, so the button was simply dead until an app
+  // restart. A new chat now STOPS the running turn first (Fable design: stop
+  // then proceed) and says so in the activity feed.
+  if (chatBusy) await stopTurnNow('new chat');
   if (chatMode === 'hermes'){
     // Hermes lane: fresh gateway session + clear the pane + refresh the rail
     // (Phase 3). NOTE: the gateway defers the DB row to the first prompt
@@ -7388,11 +7398,104 @@ function expireApprovals(holder){
     if (!card._done) expireApprovalCard(card);
 }
 
+/* ============================================================================
+   TURN LIFECYCLE — THE PANEL OWNS THE END OF ITS OWN TURN (2026-08-14)
+   ----------------------------------------------------------------------------
+   THE WEDGE THIS FIXES (Debi, Hermes lane, local 4B): a turn stuck in prefill
+   never produced a terminal frame, and EVERY escape hatch was slaved to the
+   stream. `chatBusy` is cleared only in sendChat's finally, which only runs when
+   `reader.read()` returns or throws — so a bridge/gateway that neither answers
+   nor closes left chatBusy pinned TRUE forever, and:
+     • newSession()          → `if (chatBusy) return;`  (+NEW silently dead)
+     • selectSession()       → same                     (rail rows dead)
+     • selectHermesSession() → same
+     • setMode()             flipped chatMode to 'agent'/'chat', after which
+       sendChat's busy branch (`if (chatMode === 'hermes') hermesStop()`) no
+       longer offered Stop AT ALL — the button still READ "Stop" and did nothing.
+       That is the dead end that needed an app restart.
+   The fix is ownership: every turn gets an AbortController + a stage label, and
+   ANY of Stop / +NEW / a lane switch / a session click force-ends it locally,
+   regardless of what the bridge or Hermes do. Aborting the fetch is what unblocks
+   the reader, so sendChat's existing finally does the real cleanup; the hard
+   release below is the belt-and-braces for the case where even that fails.
+   ⚠ PENDING FABLE QA: the three timeouts are BUILDER numbers.                */
+const TURN_FORCE_MS     = 3000;    // Stop → force-end if no clean end lands
+const TURN_FIRSTBYTE_MS = 90000;   // Hermes lane only: nothing at all → give up
+const TURN_STALL_MS     = 75000;   // …and >3 missed 20s bridge pings mid-turn
+let curTurn = null;   // {lane, stage, ctl, holder, ended, timer, stopArmed}
+
+function turnStage(s){ if (curTurn && !curTurn.ended) curTurn.stage = s; }
+
+function turnArm(ms){
+  // Panel-side last resort. Armed for the HERMES lane only: that lane's bridge
+  // relay emits a {"type":"hermes_ping"} heartbeat every ~20s, so a silence
+  // longer than this means the relay itself is gone. The direct/agent lanes have
+  // no heartbeat and a legitimately long local prefill emits nothing, so arming
+  // there could kill a healthy turn — they rely on the escape hatches instead.
+  // ⚠ PENDING FABLE QA: lane asymmetry + the values.
+  if (!curTurn || curTurn.ended || curTurn.done) return;
+  clearTimeout(curTurn.timer);
+  curTurn.timer = setTimeout(
+    () => forceEndTurn('no data from the bridge for ' + Math.round(ms / 1000) + 's'), ms);
+}
+
+function turnHardRelease(t){
+  // The abort did not unblock the reader (should not happen) → release the
+  // composer directly so the UI can never be held hostage by a stream.
+  if (curTurn !== t) return;
+  curTurn = null;
+  chatBusy = false;
+  const sb = document.getElementById('chat-send');
+  if (sb){ sb.disabled = false; sb.textContent = 'Send';
+    sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message'); }
+  const th = document.getElementById('thinking'); if (th) th.remove();
+}
+
+function forceEndTurn(reason){
+  const t = curTurn;
+  if (!t || t.ended || t.done) return false;   // never "force-end" a completed turn
+  t.ended = true;
+  clearTimeout(t.timer);
+  const where = t.stage || 'unknown';
+  const why = reason || 'stopped';
+  // DIAGNOSTIC: name the stage the turn died in — console for a log capture,
+  // feed for Debi. Without this, "it just hung" is undiagnosable from a report.
+  try { console.warn('[turn] force-end · lane=' + t.lane + ' · stage=' + where + ' · ' + why); } catch (_) {}
+  try { feed('chat', 'turn force-ended at ' + esc(where) + ' — ' + esc(why)); } catch (_) {}
+  if (t.holder){ try { chatStatus(t.holder, '✓', 'interrupted (forced) · ' + where); } catch (_) {} }
+  try { t.ctl.abort(); } catch (_) {}
+  setTimeout(() => turnHardRelease(t), 400);
+  return true;
+}
+
+async function stopTurnNow(reason){
+  // ONE path out of a running turn, reached by Stop, +NEW, a lane switch and a
+  // session click. The gateway interrupt is best-effort and deliberately NOT
+  // awaited (session.interrupt can itself stall for its 10s RPC timeout) — the
+  // local force-end is the guarantee.
+  if (!curTurn && !chatBusy) return false;
+  const t = curTurn;
+  if (t && t.lane === 'hermes') hermesStop(reason);
+  forceEndTurn(reason);
+  if (!curTurn && !chatBusy) return true;
+  await new Promise(r => setTimeout(r, 80));   // let sendChat's finally run
+  return true;
+}
+
 let hermesStopping = false;
-async function hermesStop(){
-  // Phase 1.1: interrupt the running Hermes turn. The SSE turn itself is ended
-  // by the bridge (mapped message.complete(interrupted), or its 3s fallback) —
-  // this only fires the interrupt; the stream teardown restores the button.
+async function hermesStop(reason){
+  // Phase 1.1 + 2026-08-14: interrupt the running Hermes turn. The bridge's
+  // mapped message.complete(interrupted) — or its 3s relay fallback — is the
+  // CLEAN end; the client-side force-end armed here is what makes Stop win even
+  // when the bridge relay, the gateway WS, or the fetch itself is wedged.
+  const t = curTurn;
+  if (t && !t.ended && !t.stopArmed){
+    t.stopArmed = true;
+    setTimeout(() => forceEndTurn((reason || 'stop') + ' — no clean end within 3s'), TURN_FORCE_MS);
+  }
+  // No sid yet = the bridge has not announced hermes_session, i.e. we are in the
+  // pre-first-event phase. Nothing to interrupt upstream — the force-end above is
+  // the whole answer there (that phase used to make Stop a silent no-op).
   if (!hermesSid || hermesStopping) return;
   hermesStopping = true;
   try {
@@ -7410,7 +7513,10 @@ async function sendChat() {
     // enabled — a click (or Enter) here interrupts the turn instead of sending.
     // ⚠ PENDING FABLE QA: no inline stop affordance exists in the other lanes
     // (their Send just disables), so Send-becomes-Stop is the chosen pattern.
-    if (chatMode === 'hermes') hermesStop();
+    // 2026-08-14: route on the TURN's lane, not the CURRENT chip — a lane switch
+    // during a wedged Hermes turn used to make this branch a silent no-op while
+    // the button still read "Stop" (the dead end that needed an app restart).
+    if (chatMode === 'hermes' || (curTurn && curTurn.lane === 'hermes')) hermesStop('panel stop');
     return;
   }
   if (chatMode !== 'hermes' && !chatSid) return;
@@ -7454,6 +7560,13 @@ async function sendChat() {
   holder.insertBefore(think, body);
   scrollChat();
 
+  // The panel now OWNS this turn: an AbortController is the kill switch every
+  // escape hatch pulls, and `stage` is what the diagnostic prints.
+  const turn = {lane: chatMode, stage: 'connecting', ctl: new AbortController(),
+                holder: holder, ended: false, timer: null, stopArmed: false};
+  curTurn = turn;
+  if (turn.lane === 'hermes') turnArm(TURN_FIRSTBYTE_MS);
+
   try {
     // Chat mode = direct lane to the runner (no Odysseus per-turn overhead / aux-call
     // queueing); Agent mode = via Odysseus (tools, search); Hermes mode = the Hermes
@@ -7471,13 +7584,16 @@ async function sendChat() {
          ...(img ? {image: img.data, image_name: img.name} : {})};
     const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(reqBody)});
+      body: JSON.stringify(reqBody), signal: turn.ctl.signal});
+    turnStage('waiting for the first frame');
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
     while (true) {
       const {done, value} = await reader.read();
       if (done) break;
+      // Any byte at all = the relay is alive → re-arm the last-resort watchdog.
+      if (turn.lane === 'hermes') turnArm(TURN_STALL_MS);
       buf += dec.decode(value, {stream:true});
       const parts = buf.split('\n\n'); buf = parts.pop();
       for (const part of parts) {
@@ -7485,6 +7601,10 @@ async function sendChat() {
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6);
           if (payload === '[DONE]') {
+            // The turn is COMPLETE. Marking it here means a +NEW / lane switch
+            // clicked in the sliver between [DONE] and the socket closing cannot
+            // stamp a finished reply "interrupted (forced)".
+            turn.done = true; turnStage('done'); clearTimeout(turn.timer);
             think.remove(); chatBusy = false;
             chatSummary(holder);                          // §B: finalize step summary
             const od = holder.querySelector('details.think'); if (od) od.open = false;
@@ -7493,8 +7613,13 @@ async function sendChat() {
             break;
           }
           let j; try { j = JSON.parse(payload); } catch { continue; }
+          // Bridge heartbeat (Hermes relay, ~20s while it is alive and waiting):
+          // its ONLY job is to have reset the watchdog above. Not rendered, not
+          // logged — an inspect line every 20s would drown the real events.
+          if (j.type === 'hermes_ping') continue;
           if (j.delta === undefined) chatInspect(holder, j);   // §B: raw-event log (skip token deltas)
           if (j.delta !== undefined) {
+            turnStage(j.thinking ? 'thinking' : 'answering');
             if (j.thinking) {
               // Live thought stream: disclosure appears ONLY if the model actually thinks,
               // stays OPEN while reasoning streams, auto-collapses when the answer begins.
@@ -7532,11 +7657,13 @@ async function sendChat() {
             // Phase 3: the stored id keys the rail's active row.
             if (j.stored_id){ hermesStoredSid = j.stored_id; localStorage.setItem('harness-hermes-stored', j.stored_id); }
           } else if (j.type === 'hermes_status') {
+            turnStage('prefill (bridge says hermes is working)');
             // Bridge liveness note (20s of mid-turn silence): visible reassurance
             // that a long local-model prefill is slow, not dead.
             chatStatus(holder, '▸', j.text || 'hermes is working…');
           } else if (j.type === 'approval') {
             // Hermes Phase 2: interactive approval card at stream position.
+            turnStage('awaiting approval');
             chatApproval(holder, j.request || {});
           } else if (j.type === 'file_card') {
             // §F auto-trigger (Hermes lane): the bridge saw a successful
@@ -7569,6 +7696,7 @@ async function sendChat() {
               holder.appendChild(g);
             }
           } else if (j.type === 'tool_start') {
+            turnStage('running a tool');
             const raw = j.tool || 'tool';
             const isWeb = /search|web|fetch|browse|url|http/i.test(raw);
             (holder._steps = holder._steps || []).push({tool: raw});
@@ -7597,8 +7725,13 @@ async function sendChat() {
       scrollChat();
     }
   } catch (e) {
-    body.textContent += `\n[stream error: ${e}]`;
+    // A force-end aborts the fetch on purpose — reporting that as a stream error
+    // would blame the transport for a deliberate stop.
+    if (turn.ended) body.textContent += '\n· interrupted';
+    else body.textContent += `\n[stream error: ${e}]`;
   } finally {
+    clearTimeout(turn.timer);
+    if (curTurn === turn) curTurn = null;
     think.remove?.();
     chatBusy = false;
     expireApprovals(holder);   // Phase 2: freeze any still-open approval cards
