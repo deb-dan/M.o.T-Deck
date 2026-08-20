@@ -1142,6 +1142,7 @@
     <a id="nav-mc" class="on" onclick="showView('mc')" title="Mission Control" aria-label="Mission Control"><span class="ico">◫</span> Mission Control</a>
     <a id="nav-chat" onclick="showView('chat')" title="Chat" aria-label="Chat"><span class="ico">✳</span> Chat</a>
     <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
+    <a id="nav-music" onclick="showView('music')" title="Music" aria-label="Music"><span class="ico">♫</span> Music</a>
     <a id="nav-caps" onclick="showView('caps')" title="Capabilities" aria-label="Capabilities"><span class="ico">⚙</span> Capabilities</a>
     <a onclick="alert('Policies UI lands in M2')" title="Policies" aria-label="Policies"><span class="ico">§</span> Policies</a>
     <a onclick="showLogs()" title="Logs" aria-label="Logs"><span class="ico">≣</span> Logs</a>
@@ -1404,9 +1405,41 @@
     <div id="models-aux"></div>
   </div>
 
+  <!-- MUSIC lane (FABLE-MUSIC-LANE-SPEC). Existing grammar only — .caps-group /
+       .cap-card / .cap-row / .cap-pill / .cap-inp / .cap-btn / .cap-range / .mpill.
+       The one new element type is the native <audio controls> player, styled
+       INLINE so this whole view adds ZERO css rules. -->
+  <div id="view-music" hidden>
+    <div class="kicker"><span class="num">IV.</span><span class="rule"></span>
+      <span class="lbl">Music</span></div>
+    <div class="models-head">
+      <div>
+        <h1>Music</h1>
+        <div class="sub">Songs generated locally — nothing leaves this machine. A render is a
+          one-shot subprocess: no server, no port, no model held in memory afterwards.</div>
+      </div>
+    </div>
+    <div class="stamp" id="music-stamp">—</div>
+
+    <div class="caps-group">
+      <div class="cap-h">Engines</div>
+      <div class="cap-card" id="music-engines"><div class="cs-empty">Loading…</div></div>
+    </div>
+
+    <div class="caps-group" id="music-create-wrap" hidden>
+      <div class="cap-h">Create</div>
+      <div class="cap-card" id="music-create"></div>
+    </div>
+
+    <div class="caps-group">
+      <div class="cap-h">Library<span class="cap-count" id="music-libcount"></span></div>
+      <div class="cap-card" id="music-library"><div class="cs-empty">Loading…</div></div>
+    </div>
+  </div>
+
   <!-- FABLE: style pass — Capabilities view (Phase 1: features + settings) -->
   <div id="view-caps" hidden>
-    <div class="kicker"><span class="num">IV.</span><span class="rule"></span>
+    <div class="kicker"><span class="num">V.</span><span class="rule"></span>
       <span class="lbl">Capabilities</span></div>
     <div class="models-head">
       <div>
@@ -1738,6 +1771,7 @@ const LOG_SOURCES = [
   {n:'voicestudio', label:'voicestudio'}, {n:'voicebox', label:'voicebox'},
   {n:'voicebox-install', label:'voicebox install'},
   {n:'voice-worker', label:'voice worker'},
+  {n:'music-install', label:'music install'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -2036,9 +2070,11 @@ function showView(v) {
   document.getElementById('view-chat').hidden = (v !== 'chat');
   document.getElementById('view-models').hidden = (v !== 'models');
   document.getElementById('view-caps').hidden = (v !== 'caps');
+  document.getElementById('view-music').hidden = (v !== 'music');
   document.getElementById('nav-mc').classList.toggle('on', v === 'mc');
   document.getElementById('nav-chat').classList.toggle('on', v === 'chat');
   document.getElementById('nav-models').classList.toggle('on', v === 'models');
+  document.getElementById('nav-music').classList.toggle('on', v === 'music');
   document.getElementById('nav-caps').classList.toggle('on', v === 'caps');
   // PHASE 1: scope the slim-rail collapse to the Chat view ONLY. Other views must
   // render exactly as before, so the class is removed whenever we leave Chat.
@@ -2057,6 +2093,9 @@ function showView(v) {
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
   if (v === 'caps') initCaps();
+  // MUSIC: the status poll is armed on entry and RETIRED on exit — it must never
+  // keep polling behind another view (and it only ticks while a render runs).
+  if (v === 'music') initMusic(); else stopMusicPoll();
 }
 
 /* ---------- PHASE 1: roomier Chat workspace (rail + sessions collapse) ----------
@@ -10208,6 +10247,382 @@ function openArtifactSample(kind){
   openArtifact({ filename:s.filename, content:s.content });
 }
 
+/* ══════════════════ MUSIC LANE (FABLE-MUSIC-LANE-SPEC) ══════════════════════
+   A native lane, not a component: no card, no port, no daemon. The panel does three
+   things — offer the two engines, take one render request at a time, and list what
+   came out. Everything here uses the EXISTING grammar (.cap-* / .mpill / chips); the
+   one new element type is <audio controls>, styled inline so this view adds no CSS.
+
+   POLLING RULE: the status poll is armed only while something is actually happening
+   (a render in flight, or an engine installing) and retired the moment it is not —
+   and stopMusicPoll() also runs on every view change, so it can never tick behind
+   another view. An idle Music page makes no requests at all.                       */
+let musicSnap = null;      // last /api/music/status
+let musicLib = [];         // last /api/music/library
+let musicEngine = null;    // the engine the Create form is aimed at
+let musicPollT = null;
+let musicTick = 0;
+let musicPlay = '';        // the ONE track that currently has an <audio> element
+let musicErr = '';         // inline error under Generate (the bridge's own words)
+
+function musicEngines(){ return ((musicSnap || {}).engines) || []; }
+function musicInstalled(){ return musicEngines().filter(e => e.installed).map(e => e.engine); }
+function musicJob(){ return (musicSnap || {}).job || null; }
+function musicRunning(){ const j = musicJob(); return !!(j && (j.state === 'running' || j.state === 'queued')); }
+function musicNeedsPoll(){ return musicRunning() || musicEngines().some(e => e.installing); }
+
+function stopMusicPoll(){ if (musicPollT){ clearInterval(musicPollT); musicPollT = null; } }
+function armMusicPoll(){
+  if (musicPollT || !musicNeedsPoll()) return;
+  musicTick = 0;
+  musicPollT = setInterval(async () => {
+    musicTick++;
+    if (document.getElementById('view-music').hidden){ stopMusicPoll(); return; }
+    if (musicTick % 2 === 0){          // status every 2s; the odd ticks just move the clock
+      const was = musicRunning();
+      await loadMusicStatus();
+      if (was && !musicRunning()) await loadMusicLibrary();   // a finished render appears
+      if (!musicNeedsPoll()) stopMusicPoll();
+    }
+    renderMusicCreate();
+  }, 1000);
+}
+
+async function initMusic(){
+  await loadMusicStatus();
+  await loadMusicLibrary();
+}
+
+async function loadMusicStatus(){
+  try {
+    const r = await fetch('/api/music/status');
+    const j = await r.json();
+    if (j && j.ok) musicSnap = j;
+  } catch (e) { /* a transient bridge blip must not blank the page */ }
+  // auto-pick: with exactly one engine installed there is no choice to make
+  const inst = musicInstalled();
+  if (!musicEngine || inst.indexOf(musicEngine) < 0) musicEngine = inst[0] || null;
+  renderMusic();
+  armMusicPoll();
+}
+
+async function loadMusicLibrary(){
+  try {
+    const r = await fetch('/api/music/library');
+    const j = await r.json();
+    if (j && j.ok) musicLib = j.tracks || [];
+  } catch (e) {}
+  renderMusicLibrary();
+}
+
+function renderMusic(){
+  renderMusicEngines();
+  renderMusicCreate();
+  const st = document.getElementById('music-stamp');
+  if (st){
+    const inst = musicInstalled();
+    st.textContent = inst.length
+      ? `${inst.length} of ${musicEngines().length} engines installed · ${musicLib.length} track(s)`
+      : 'no engine installed yet';
+  }
+}
+
+function musicLicPill(e){
+  const l = e.license || {};
+  if (!l.license) return '';
+  const cls = (l.badge === 'ok') ? 'on' : 'off';
+  return `<span class="cap-pill ${cls}" title="${escAttr(l.reason || '')}">${esc(l.license)}</span>`;
+}
+
+function renderMusicEngines(){
+  const box = document.getElementById('music-engines');
+  if (!box) return;
+  const rows = musicEngines();
+  if (!rows.length){ box.innerHTML = '<div class="cs-empty">No engines reported.</div>'; return; }
+  box.innerHTML = rows.map(e => {
+    const size = `${e.size_gb} GB${e.size_estimated ? ' download' : ''}`;
+    const state = e.installed
+      ? '<span class="cap-pill on">installed</span>'
+      : (e.installing ? '<span class="cap-pill">installing…</span>'
+                      : '<span class="cap-pill off">not installed</span>');
+    const ctl = e.installed
+      ? `<span class="cap-count">${esc(size)}</span>`
+      : (e.installing
+          ? `<button class="cap-btn" onclick="showLogs('music-install')">View log</button>`
+          : `<button class="cap-btn go" id="mus-get-${esc(e.engine)}"
+                     onclick="musicInstall('${esc(e.engine)}', this)">Get</button>`);
+    const err = e.install_error
+      ? `<div class="cap-err">${esc(String(e.install_error).slice(-400))}</div>` : '';
+    return `<div class="cap-row">
+      <div class="cap-txt">
+        <div class="cap-name">${esc(e.label)} ${state} ${musicLicPill(e)}</div>
+        <div class="cap-desc">${esc(e.note)} · needs about ${esc(String(e.ram_gb))} GB of
+          the model-RAM budget while it renders · ${esc(size)}</div>
+        ${e.installed ? '' : `<div class="cap-desc">${esc(e.reason || '')}</div>`}
+        ${err}
+      </div>
+      <div class="cap-ctl">${ctl}</div>
+    </div>`;
+  }).join('');
+}
+
+async function musicInstall(engine, btn){
+  // ARMED, like every other irreversible-ish action in the panel: the first click
+  // states the cost (this is several GB and, for acestep, a source build), the
+  // second one actually spends it.
+  if (btn && !btn._armed){
+    const e = musicEngines().find(x => x.engine === engine) || {};
+    btn._armed = true; btn.classList.add('arm');
+    btn.textContent = `Download ${e.size_gb} GB?`;
+    setTimeout(() => { if (btn._armed){ btn._armed = false; btn.classList.remove('arm');
+      btn.classList.add('go'); btn.textContent = 'Get'; } }, 5000);
+    return;
+  }
+  if (btn){ btn._armed = false; btn.classList.remove('arm');
+            btn.disabled = true; btn.textContent = 'Starting…'; }
+  let res = null;
+  try {
+    const r = await fetch('/api/music/install', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({engine})});
+    res = await r.json();
+  } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
+  if (!res || !res.ok){
+    // the button must TELL THE TRUTH — a refusal (missing cmake, already running)
+    // goes ON the row, never into a status line nobody is looking at.
+    if (btn){ btn.disabled = false; btn.textContent = 'Get'; }
+    const row = btn && btn.closest('.cap-row');
+    if (row){ let e2 = row.querySelector('.cap-err');
+      if (!e2){ e2 = document.createElement('div'); e2.className = 'cap-err';
+                row.querySelector('.cap-txt').appendChild(e2); }
+      e2.textContent = (res && res.error) || 'install failed'; }
+    return;
+  }
+  feed(`music: installing ${engine} — this downloads several GB (View log to watch)`);
+  await loadMusicStatus();
+}
+
+function musicSecs(){
+  const el = document.getElementById('mus-secs');
+  const v = parseInt((el && el.value) || '', 10);
+  return isNaN(v) ? ((musicSnap || {}).seconds_default || 60) : v;
+}
+function musicSyncSecs(v){
+  const a = document.getElementById('mus-secs'), b = document.getElementById('mus-secs-rng');
+  if (a) a.value = v; if (b) b.value = v;
+}
+
+function renderMusicCreate(){
+  const wrap = document.getElementById('music-create-wrap');
+  const box = document.getElementById('music-create');
+  if (!wrap || !box) return;
+  const inst = musicInstalled();
+  wrap.hidden = false;
+  if (!inst.length){
+    box.innerHTML = `<div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">No engine yet</div>
+      <div class="cap-desc">Install one above (Get) — acestep is the fast one,
+        MiniMax-Music3 is the high-quality one. Nothing here works until then.</div>
+    </div></div>`;
+    return;
+  }
+  const job = musicJob();
+  const running = musicRunning();
+  const eng = musicEngines().find(e => e.engine === musicEngine) || {};
+  // THE FORM IS REBUILT ONLY WHEN ITS STRUCTURE CHANGES. The elapsed-time ticker
+  // runs once a second while a render is in flight, and an unconditional rebuild
+  // there would wipe a half-written prompt every second — the Sampling-group
+  // lesson, in a place where the poll is guaranteed to be running. A signature of
+  // everything the markup depends on is the whole test; state goes through
+  // musicPaintState, which touches only the button, the clock and the error line.
+  const sig = [inst.join(','), musicEngine, eng.default_steps, eng.max_steps,
+               (musicSnap || {}).seconds_min, (musicSnap || {}).seconds_max].join('|');
+  const typing = box.contains(document.activeElement) &&
+    /^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || '');
+  if (box.querySelector('#mus-prompt') && (box._sig === sig || typing)){
+    musicPaintState(job, running); return;
+  }
+  box._sig = sig;
+  const chips = inst.length > 1
+    ? `<div class="cap-row"><div class="cap-txt">
+         <div class="cap-name">Engine</div>
+         <div class="cap-desc">Both are installed — pick the trade-off you want.</div>
+       </div><div class="cap-ctl">${inst.map(id => {
+         const e = musicEngines().find(x => x.engine === id) || {};
+         return `<button class="chip${id === musicEngine ? ' on' : ''}"
+                   onclick="musicPick('${esc(id)}')" title="${escAttr(e.note || '')}"
+                   >${esc(e.label || id)}</button>`; }).join(' ')}</div></div>`
+    : '';
+  const smin = (musicSnap || {}).seconds_min || 10, smax = (musicSnap || {}).seconds_max || 300;
+  const secs = musicSecs();
+  box.innerHTML = chips + `
+    <div class="cap-row" style="display:block">
+      <div class="cap-name">Prompt</div>
+      <div class="cap-desc">Describe the music — genre, instruments, mood, tempo.</div>
+      <textarea id="mus-prompt" class="cap-inp" style="width:100%;height:62px;margin-top:8px"
+        placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+    </div>
+    <div class="cap-row" style="display:block">
+      <div class="cap-name">Lyrics</div>
+      <div class="cap-desc">Optional — leave empty for an instrumental. Section tags
+        like [Verse] / [Chorus] shape the arrangement.</div>
+      <textarea id="mus-lyrics" class="cap-inp" style="width:100%;height:82px;margin-top:8px"
+        placeholder="(empty = instrumental)"></textarea>
+    </div>
+    <div class="cap-row">
+      <div class="cap-txt"><div class="cap-name">Length</div>
+        <div class="cap-desc">${smin}–${smax} seconds.</div></div>
+      <div class="cap-ctl">
+        <input class="cap-range" type="range" id="mus-secs-rng" min="${smin}" max="${smax}"
+               step="5" value="${secs}" oninput="musicSyncSecs(this.value)">
+        <input class="cap-inp" type="number" id="mus-secs" style="width:74px"
+               min="${smin}" max="${smax}" value="${secs}" oninput="musicSyncSecs(this.value)">
+      </div>
+    </div>
+    <div class="cap-row">
+      <div class="cap-txt"><div class="cap-name">Steps</div>
+        <div class="cap-desc">More steps = more compute. This engine's default is
+          ${esc(String(eng.default_steps || ''))} (max ${esc(String(eng.max_steps || ''))}) —
+          leave empty to use it.</div></div>
+      <div class="cap-ctl"><input class="cap-inp" type="number" id="mus-steps"
+        style="width:74px" min="1" max="${esc(String(eng.max_steps || 30))}"
+        placeholder="${esc(String(eng.default_steps || ''))}"></div>
+    </div>
+    <div class="cap-row">
+      <div class="cap-txt"><div class="cap-name">Seed</div>
+        <div class="cap-desc">Optional — the same seed with the same settings gives the
+          same song. Left empty the harness picks one and records it with the track.</div></div>
+      <div class="cap-ctl"><input class="cap-inp" type="number" id="mus-seed"
+        style="width:126px" min="0" placeholder="random"></div>
+    </div>
+    <div class="cap-row">
+      <div class="cap-txt">
+        <div class="cap-desc" id="mus-state"></div>
+        <div class="cap-desc">A render cannot be stopped once it starts — there is no
+          Cancel, because killing a Metal render mid-flight is untested.</div>
+        <div class="cap-err" id="mus-err"></div>
+      </div>
+      <div class="cap-ctl"><button class="primary" id="mus-go" onclick="musicGenerate()">Generate</button></div>
+    </div>`;
+  musicPaintState(job, running);
+}
+
+function musicPaintState(job, running){
+  const btn = document.getElementById('mus-go');
+  const st = document.getElementById('mus-state');
+  const er = document.getElementById('mus-err');
+  if (er) er.textContent = musicErr || '';
+  if (btn){ btn.disabled = !!running; btn.textContent = running ? 'Rendering…' : 'Generate'; }
+  if (!st) return;
+  if (running && job){
+    const el = Math.max(0, Math.round(Date.now()/1000 - (job.started || 0)));
+    st.textContent = `${job.engine} · ${job.seconds}s song · ${job.steps} steps · `
+      + `seed ${job.seed} — ${Math.floor(el/60)}m ${String(el%60).padStart(2,'0')}s elapsed`;
+  } else if (job && job.state === 'failed'){
+    st.textContent = `last render failed after ${job.wall}s`;
+    if (er && !musicErr) er.textContent = String(job.error || '').slice(-500);
+  } else if (job && job.state === 'done'){
+    st.textContent = `last render: ${job.out} in ${job.wall}s`;
+  } else {
+    st.textContent = '';
+  }
+}
+
+function musicPick(id){ musicEngine = id; musicErr = ''; renderMusicCreate(); }
+
+async function musicGenerate(){
+  const btn = document.getElementById('mus-go');
+  musicErr = '';
+  const body = {
+    engine: musicEngine,
+    prompt: (document.getElementById('mus-prompt') || {}).value || '',
+    lyrics: (document.getElementById('mus-lyrics') || {}).value || '',
+    seconds: musicSecs(),
+    steps: (document.getElementById('mus-steps') || {}).value || '',
+    seed: (document.getElementById('mus-seed') || {}).value || '',
+  };
+  if (btn){ btn.disabled = true; btn.textContent = 'Starting…'; }
+  let res = null;
+  try {
+    const r = await fetch('/api/music/generate', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    res = await r.json();
+  } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
+  if (!res || !res.ok){
+    // ledger refusals and validation errors surface INLINE, in the bridge's own words
+    musicErr = (res && res.error) || 'the render could not start';
+    if (btn){ btn.disabled = false; btn.textContent = 'Generate'; }
+    musicPaintState(musicJob(), false);
+    return;
+  }
+  feed(`music: rendering a ${body.seconds}s track with ${musicEngine}`);
+  await loadMusicStatus();
+}
+
+function renderMusicLibrary(){
+  const box = document.getElementById('music-library');
+  const cnt = document.getElementById('music-libcount');
+  if (!box) return;
+  if (cnt) cnt.textContent = musicLib.length ? `${musicLib.length}` : '';
+  box.innerHTML = '';
+  if (!musicLib.length){
+    box.innerHTML = '<div class="cs-empty">No tracks yet — generate one above. '
+      + 'Finished songs are .wav files in data/music.</div>';
+    return;
+  }
+  // Only ONE row carries an <audio> element (the selected, else the newest): a page
+  // of players would each hold a decoded buffer for a file nobody asked to hear.
+  const playing = musicPlay || musicLib[0].name;
+  for (const t of musicLib){
+    const row = document.createElement('div'); row.className = 'cap-row';
+    const txt = document.createElement('div'); txt.className = 'cap-txt';
+    const secs = (t.seconds == null) ? '' : ` · ${t.seconds}s`;
+    const wall = (t.wall == null) ? '' : ` · rendered in ${t.wall}s`;
+    txt.innerHTML = `<div class="cap-name">${esc(t.name)}`
+      + (t.engine ? ` <span class="cap-pill">${esc(t.engine)}</span>` : '') + `</div>`
+      + `<div class="cap-desc">${esc(relTimeLong(new Date(t.created * 1000).toISOString()))}`
+      + `${esc(secs)}${esc(wall)}${t.seed != null ? ' · seed ' + esc(String(t.seed)) : ''}`
+      + ` · ${esc(fmtBytes(t.size_bytes))}</div>`
+      + (t.prompt ? `<div class="cap-desc" style="white-space:normal">${esc(t.prompt)}</div>` : '');
+    if (t.name === playing){
+      const a = document.createElement('audio');
+      a.controls = true; a.preload = 'none';
+      a.style.width = '100%'; a.style.marginTop = '8px';
+      a.src = '/api/music/file/' + encodeURIComponent(t.name);
+      txt.appendChild(a);
+    } else {
+      const p = document.createElement('button'); p.className = 'cap-btn';
+      p.textContent = 'Play'; p.onclick = () => { musicPlay = t.name; renderMusicLibrary(); };
+      txt.appendChild(p);
+    }
+    const ctl = document.createElement('div'); ctl.className = 'cap-ctl';
+    const rev = document.createElement('button'); rev.className = 'cap-btn';
+    rev.textContent = 'Reveal'; rev.title = 'Show this file in Finder';
+    rev.onclick = () => fetch('/api/open', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path: t.path, action: 'reveal'})});
+    const del = document.createElement('button'); del.className = 'cap-btn';
+    del.textContent = '✕';
+    del.onclick = async () => {
+      if (!del._armed){        // two-step: a generated track cannot be re-made
+        del._armed = true; del.classList.add('arm'); del.textContent = 'sure?';
+        setTimeout(() => { if (del._armed){ del._armed = false;
+          del.classList.remove('arm'); del.textContent = '✕'; } }, 3000);
+        return;
+      }
+      del.disabled = true;
+      try {
+        await fetch('/api/music/delete', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: t.name})});
+      } catch (e) {}
+      if (musicPlay === t.name) musicPlay = '';
+      await loadMusicLibrary();
+    };
+    ctl.appendChild(rev); ctl.appendChild(del);
+    row.appendChild(txt); row.appendChild(ctl);
+    box.appendChild(row);
+  }
+}
+
 /* ---------- command palette ----------
    The artifact previews are dev affordances, not everyday commands — eight flat
    rows drowned the real list, so they live behind one submode row. `palSub` is the
@@ -10231,6 +10646,9 @@ const commands = () => {
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
     {t:'Mission Control', k:'◫', f:()=>showView('mc')},
+    {t:'Music', k:'♫', f:()=>showView('music')},
+    {t:'Generate music', k:'♫', f:()=>{ showView('music'); setTimeout(()=>{
+        const el = document.getElementById('mus-prompt'); if (el) el.focus(); }, 120); }},
     {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},

@@ -241,6 +241,26 @@ build:
   # satisfy voicebox/voicestudio's ffmpeg need with no `brew install ffmpeg`.
   # ⚠️ bundles ffmpeg only, NOT ffprobe.
   imageio_ffmpeg_pin: "0.6.0"
+  # ── MUSIC LANE (FABLE-MUSIC-LANE-SPEC, 2026-08-20) ──────────────────────────
+  # Both engines were MEASURED on Debi's Mac before adoption (numbers in
+  # docs/handoff/MUSIC-MEASUREMENT-RUNBOOK.md) and both passed the ear test, so both
+  # ship. Read by scripts/install_music.sh (awk, same pattern as the mlx pins) and by
+  # bridge/music.py's install DETECTION — the minimax pin is half of the HF cache path
+  # a snapshot lands at, so changing it here really does mean "a different install".
+  #
+  # MiniMax-Music3, pure-MLX port. The "pin" is an HF REVISION SHA, not a git tag:
+  # code and weights ship together in one HF repo (~11.9GB int8). Read live from the
+  # HF API 2026-08-20. ⚠️ the port pins mlx==0.30.6 in its own requirements.txt, which
+  # is WHY it gets data/music-venv — data/mlx-venv ships mlx 0.32.0 and must never be
+  # downgraded under the runner. Weights: MiniMax-Music3 Community License (amber, see
+  # LICENSE_OVERRIDES in bridge/app.py — several repacks mistag it apache-2.0).
+  music_minimax_pin: "0505e3f04ddfb883e0a2fbd8ad1a34c2f313e514"
+  # acestep.cpp (GGML/Metal, MIT) — a git COMMIT sha, recorded from the clone that
+  # produced the measured number. Built with a direct `cmake`, NOT upstream's
+  # buildcpu.sh (that script calls `nproc`, which does not exist on macOS, and forces
+  # -DGGML_BLAS=ON which upstream only asks for on Linux). ⚠️ NEVER run its server.sh:
+  # it binds 0.0.0.0. We only ever exec ./build/ace-lm and ./build/ace-synth.
+  acestep_pin: "9761469d95fc204b5468623c68a1a2203e50b1f9"
   # uv: the venv/installer the PORTABLE first-run bootstraps with (scripts/firstrun.sh).
   # It used to curl|sh the UNPINNED astral.sh installer — i.e. a fresh Mac provisioned
   # against whatever uv shipped that day. Pinned = the same idiom as bun_pin: the URL

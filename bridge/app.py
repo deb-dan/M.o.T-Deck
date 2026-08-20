@@ -39,6 +39,19 @@ except Exception:                            # noqa: BLE001
         _voice, _VOICE_ERR = None, str(_e)[:200]
         print(f"[voice] module unavailable — TTS disabled ({_VOICE_ERR})", flush=True)
 
+# Harness-native MUSIC lane (FABLE-MUSIC-LANE-SPEC). Same defensive import as voice,
+# for the same reason: a snapshot missing this file must still boot a bridge that
+# works, minus /api/music/*.
+_MUSIC_ERR = ""
+try:
+    from . import music as _music
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import music as _music
+    except Exception as _e:                      # noqa: BLE001
+        _music, _MUSIC_ERR = None, str(_e)[:200]
+        print(f"[music] module unavailable — music lane disabled ({_MUSIC_ERR})", flush=True)
+
 app = FastAPI(title="AI Harness Bridge")
 
 # Serve the panel's self-hosted assets (Phase 2 artifact renderer: babel/react/prism/
@@ -410,7 +423,11 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               "voicebox-install",
               # the resident TTS worker's stderr — the ONLY place the engine's own
               # traceback lands now that stdout is protocol-only
-              "voice-worker")
+              "voice-worker",
+              # music-engine install (multi-GB downloads + a cmake build) — same
+              # rule as voicebox-install: an install log for a slow, fragile step
+              # must be readable in-panel, not only from a terminal
+              "music-install")
 
 
 @app.post("/api/logs/{name}/clear")
@@ -8074,3 +8091,174 @@ def voice_unload() -> JSONResponse:
     return JSONResponse({"ok": True, "stopped": bool(stopped),
                          "was": (before or {}).get("model"),
                          "resident": _voice.worker_resident()})
+
+
+# ══ MUSIC LANE (FABLE-MUSIC-LANE-SPEC, 2026-08-20) ═══════════════════════════
+# A native bridge lane like voice: no component card, no port, no daemon. Renders
+# are one-shot subprocesses run as background JOBS, one at a time, gated by the same
+# model-RAM ledger every other loader answers to.
+
+_MUSIC_INSTALLING: dict = {}          # engine -> {"since": ts, "error": str|None}
+_MUSIC_INSTALL_LOCK = threading.Lock()
+_MUSIC_INSTALL_TIMEOUT = 7200         # 2h: ~12GB of weights + a cmake build
+
+
+def _music_unavailable() -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": f"the music module failed to load: {_MUSIC_ERR}"},
+        status_code=503)
+
+
+def _music_pin(key: str) -> str:
+    return str((cfg().get("build", {}) or {}).get(key) or "")
+
+
+def _music_engine_state(engine: str) -> dict:
+    """One engine's row for /api/music/status. `installed` is read FROM DISK every
+    time — never a stored flag, so a deleted HF cache or a wiped build tells the
+    truth immediately."""
+    rev = _music_pin("music_minimax_pin") if engine == "minimax" else ""
+    ok, snap, reason = _music.engine_installed(ROOT, engine, rev)
+    gb, est = _music.engine_size_gb(ROOT, engine, ok, snap)
+    with _MUSIC_INSTALL_LOCK:
+        inst = dict(_MUSIC_INSTALLING.get(engine) or {})
+    row = {"engine": engine, "label": _music.ENGINE_LABEL.get(engine, engine),
+           "note": _music.ENGINE_NOTE.get(engine, ""), "installed": bool(ok),
+           "reason": "" if ok else reason, "size_gb": gb, "size_estimated": bool(est),
+           "ram_gb": _music.MUSIC_RAM_GB.get(engine, 0),
+           "default_steps": _music.DEFAULT_STEPS.get(engine),
+           "max_steps": _music.MAX_STEPS.get(engine),
+           "installing": bool(inst.get("since") and not inst.get("done")),
+           "install_error": inst.get("error") or ""}
+    # The licence line comes from the SAME table the HF search rows read, so a known
+    # mistag can never be honest on one surface and wrong on another.
+    row["license"] = (license_override("MiniMaxAI/MiniMax-Music3") if engine == "minimax"
+                      else dict(_music.ENGINE_LICENSE.get(engine) or {}))
+    return row
+
+
+@app.get("/api/music/status")
+def music_status() -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    engines = [_music_engine_state(e) for e in _music.ENGINES]
+    return JSONResponse({"ok": True, "engines": engines,
+                         "busy": _music.job_busy(), "job": _music.current_job(),
+                         "dir": _music.music_dir(ROOT),
+                         "seconds_min": _music.SECONDS_MIN,
+                         "seconds_max": _music.SECONDS_MAX,
+                         "seconds_default": _music.SECONDS_DEFAULT,
+                         "prompt_max": _music.PROMPT_MAX})
+
+
+def _music_install_thread(engine: str) -> None:
+    try:
+        r = _script("install_music.sh", engine, timeout=_MUSIC_INSTALL_TIMEOUT)
+        err = "" if r.returncode == 0 else (r.stdout + r.stderr)[-1200:]
+    except subprocess.TimeoutExpired:
+        err = (f"install timed out after {_MUSIC_INSTALL_TIMEOUT // 3600}h — "
+               f"run it in a terminal: ./scripts/install_music.sh {engine}")
+    except Exception as e:                                       # noqa: BLE001
+        err = f"install crashed: {e}"[:1200]
+    with _MUSIC_INSTALL_LOCK:
+        _MUSIC_INSTALLING[engine] = {"since": None, "done": True, "error": err}
+    print(f"[music] install {engine}: {'ok' if not err else 'FAILED'}", flush=True)
+
+
+@app.post("/api/music/install")
+async def music_install(req: Request) -> JSONResponse:
+    """Install a music engine in the background (multi-GB; the panel polls status).
+
+    The cmake precondition is checked HERE, before anything is spawned: a missing
+    toolchain must cost zero bytes and say exactly what to type."""
+    if _music is None:
+        return _music_unavailable()
+    engine = ((await req.json()).get("engine") or "").strip()
+    if engine not in _music.ENGINES:
+        return JSONResponse({"ok": False, "error": "unknown engine"}, status_code=400)
+    if engine == "acestep" and not _music.cmake_bin():
+        return JSONResponse(
+            {"ok": False, "error": "acestep is built from source and needs cmake — "
+                                   "run: brew install cmake"}, status_code=400)
+    with _MUSIC_INSTALL_LOCK:
+        cur = _MUSIC_INSTALLING.get(engine) or {}
+        if cur.get("since") and not cur.get("done"):
+            return JSONResponse({"ok": False, "error": "that engine is already installing"},
+                                status_code=409)
+        _MUSIC_INSTALLING[engine] = {"since": time.time(), "done": False, "error": None}
+    threading.Thread(target=_music_install_thread, args=(engine,), daemon=True).start()
+    print(f"[music] install {engine} started", flush=True)
+    return JSONResponse({"ok": True, "installing": True, "engine": engine})
+
+
+@app.post("/api/music/generate")
+async def music_generate(req: Request) -> JSONResponse:
+    """Start ONE render. Validates, then answers to the model-RAM ledger, then claims
+    the single job slot. Never queues: a second Metal render would fight the first."""
+    if _music is None:
+        return _music_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = None
+    installed = [e for e in _music.ENGINES
+                 if _music.engine_installed(
+                     ROOT, e, _music_pin("music_minimax_pin") if e == "minimax" else "")[0]]
+    params, err = _music.validate_generate(body, installed)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    refusal = _music.ram_gate(params["engine"], _loaded_models_bytes(), _budget_bytes())
+    if refusal:
+        print(f"[music] refused {params['engine']}: {refusal}", flush=True)
+        return JSONResponse({"ok": False, "error": refusal}, status_code=409)
+    snap = ""
+    if params["engine"] == "minimax":
+        _ok, snap, _r = _music.minimax_installed(ROOT, _music_pin("music_minimax_pin"))
+    job, err = _music.start_job(ROOT, params, snapshot=snap)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=409)
+    print(f"[music] render {params['engine']} start — {params['seconds']}s, "
+          f"{params['steps']} steps, seed {params['seed']}", flush=True)
+    return JSONResponse({"ok": True, "job": job})
+
+
+@app.get("/api/music/jobs")
+def music_jobs() -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    return JSONResponse({"ok": True, "job": _music.current_job(),
+                         "busy": _music.job_busy()})
+
+
+@app.get("/api/music/library")
+def music_library() -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    return JSONResponse({"ok": True, "dir": _music.music_dir(ROOT),
+                         "tracks": _music.library_entries(ROOT)})
+
+
+@app.get("/api/music/file/{name}")
+def music_file(name: str) -> Response:
+    """Serve one finished track for the panel's <audio> player. Same containment as
+    delete — the name comes from a request, so it is a basename under data/music or
+    it is nothing."""
+    if _music is None:
+        return _music_unavailable()
+    target, reason = _music.library_target(ROOT, name)
+    if not target:
+        raise HTTPException(404, reason)
+    return FileResponse(target, media_type="audio/wav")
+
+
+@app.post("/api/music/delete")
+async def music_delete(req: Request) -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    name = ((await req.json()).get("name") or "").strip()
+    ok, reason = _music.delete_track(ROOT, name)
+    if not ok:
+        print(f"[music] delete reject {name!r}: {reason}", flush=True)
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    print(f"[music] deleted {name}", flush=True)
+    return JSONResponse({"ok": True})

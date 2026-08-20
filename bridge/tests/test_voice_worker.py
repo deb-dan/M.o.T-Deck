@@ -442,7 +442,12 @@ check("a budget refusal is a 409, like the runner's",
 check("clearing/changing the TTS default kills the worker",
       'if key == "tts_model" and mid != v_before["tts_model"]' in APP)
 check("deleting a model kills it if resident", "worker_stop_if_model(mid" in APP)
-check("the worker log is viewable in-panel", '"voice-worker")' in APP)
+# (2026-08-20) this used to pin the literal `"voice-worker")` — i.e. the CLOSING
+# PAREN of the _LOG_NAMES tuple, which broke the moment another log name was added
+# after it. The invariant was never "voice-worker is last"; it is "voice-worker is
+# in _LOG_NAMES", so that is what is asserted now.
+check("the worker log is viewable in-panel",
+      '"voice-worker"' in APP.split("_LOG_NAMES = (")[1].split("\n\n")[0])
 SH = (ROOT / "scripts" / "ship.sh").read_text()
 check("ship.sh copies every bridge/*.py (voice_worker.py must reach the snapshot)",
       "bridge/*.py" in SH or 'bridge"/*.py' in SH)
