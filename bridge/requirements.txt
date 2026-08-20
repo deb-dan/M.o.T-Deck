@@ -11,3 +11,11 @@ websockets>=12
 # build_app.sh 4b carries it into the fat wheelhouse for free. Option C (ship.sh/
 # verify.sh REFUSES loudly when the gate cannot run) is queued as its own ops slice.
 pytest>=8.0
+# openpyxl (MIT, pure python, no compiled deps) is the OFFICE lane's .xlsx round-trip
+# — the half Univer does not give away for free (its own import/export needs Univer
+# Pro: a Docker server plus a commercial licence). bridge/office.py imports it
+# defensively, so a snapshot provisioned before this line still boots a working
+# bridge; the Office page then says openpyxl is missing instead of failing at save
+# time. Declared here so bootstrap installs it everywhere and build_app.sh 4b carries
+# it into the fat wheelhouse for free — the same reasoning as the pytest line above.
+openpyxl>=3.1

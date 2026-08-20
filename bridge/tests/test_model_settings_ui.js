@@ -123,12 +123,15 @@ check('a junk range never returns NaN', P.sliderPos(5, 'a', 'b') === 0);
 check('NaN input parks at the minimum', P.sliderPos(NaN, 1, 32) === 1);
 
 // ── 4. wiring: the label helper is what the byline actually uses ────────────────
+// 2026-08-21 (chat-split Phase 0): the sticky model echo moved from the bare
+// `chatModel` global onto the ONE chatPane state object. Same value, same helper,
+// same byline — only the name of the thing holding it changed.
 check('addMsg attributes replies through the live-model helper',
-      /const who = role === 'user' \? 'You' : \(liveModelLabel\(chatModel\)/.test(html));
+      /const who = role === 'user' \? 'You' : \(liveModelLabel\(chatPane\.model\)/.test(html));
 check('the model_info/model_actual frame no longer writes the echo straight in',
-      html.indexOf("holder.querySelector('.who').textContent = chatModel;") < 0);
+      html.indexOf("holder.querySelector('.who').textContent = chatPane.model;") < 0);
 check('...and routes through the same helper instead',
-      html.indexOf("liveModelLabel(chatModel) || 'Assistant'") > 0);
+      html.indexOf("liveModelLabel(chatPane.model) || 'Assistant'") > 0);
 check('liveModelLabel reads the live runner off the status poll',
       /function liveModelLabel[\s\S]{0,240}components\.runner/.test(html));
 check('...and passes BOTH the pin and its running gate (a stopped pin lies)',

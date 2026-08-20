@@ -17,12 +17,61 @@
 # checklist starts them (fat first-run installs; §E starts — no duplication).
 set -euo pipefail
 
+say()  { printf "\033[1;36m[firstrun-fat]\033[0m %s\n" "$*"; }
+fail() { printf "\033[1;31m[firstrun-fat]\033[0m %s\n" "$*" >&2; exit 1; }
+
+# ── BACKWARDS-SEEDING GUARD ───────────────────────────────────────────────────
+# The provisioner used to seed from whatever bundle happened to be in /Applications,
+# with NO check that its seed was at least as new as the install it was replacing.
+# On 2026-08-20 an early-August bundle therefore restored a pre-voice, 3-component
+# manifest over a live 6-component install (nothing was lost — the snapshot was moved
+# aside by hand — but two components vanished from Mission Control and their tabs
+# served bare API JSON). Now: refuse, and say exactly why.
+_seed_components() {   # <harness.yaml> -> count of top-level entries under components:
+  [[ -f "${1:-}" ]] || { echo ""; return 0; }
+  awk '/^components:/{f=1;next} f && /^[^ ]/{exit} f && /^  [A-Za-z0-9_-]+:/{n++} END{print n+0}' "$1" 2>/dev/null
+}
+_seed_date() {         # <stamp file> -> the ISO-8601 build date, or empty
+  [[ -f "${1:-}" ]] || { echo ""; return 0; }
+  awk -F= '/^date=/{print $2; exit}' "$1" 2>/dev/null
+}
+# seed_guard <existing_yaml> <existing_stamp> <seed_yaml> <seed_stamp>
+#   0 = safe to provision   3 = REFUSE (message already printed)
+# A missing/unreadable input is treated as "no claim" — the guard only ever fires on
+# POSITIVE evidence that the installer is older/smaller than what is already there.
+seed_guard() {
+  local have_y="${1:-}" have_s="${2:-}" seed_y="${3:-}" seed_s="${4:-}"
+  local have_n seed_n have_d seed_d why=""
+  have_n="$(_seed_components "$have_y")"; seed_n="$(_seed_components "$seed_y")"
+  have_d="$(_seed_date "$have_s")";       seed_d="$(_seed_date "$seed_s")"
+  if [[ -n "$have_n" && -n "$seed_n" && "$have_n" -gt "$seed_n" ]]; then
+    why="the existing install declares ${have_n} components but this installer's seed declares only ${seed_n}"
+  elif [[ -n "$have_d" && -n "$seed_d" && "$have_d" > "$seed_d" ]]; then
+    why="the existing install was provisioned from a NEWER build (${have_d}) than this installer (${seed_d})"
+  fi
+  [[ -z "$why" ]] && return 0
+  printf "\033[1;31m[firstrun-fat]\033[0m %s\n" \
+    "REFUSING to provision over the existing install: ${why}." >&2
+  {
+    echo "  existing : components=${have_n:-unknown}  build=${have_d:-unknown}"
+    echo "  installer: components=${seed_n:-unknown}  build=${seed_d:-unknown}"
+    echo "  This looks like an OLD Harness.app seeding over a NEWER install, which would"
+    echo "  roll your components and manifest backwards. Nothing has been changed."
+    echo "  If that is really what you want, move the existing install aside DELIBERATELY:"
+    echo "    mv ~/Library/Application\\ Support/Harness ~/Library/Application\\ Support/Harness.saved"
+    echo "  then reopen Harness. (Otherwise: install a newer Harness.app.)"
+  } >&2
+  return 3
+}
+# Testable entry point (bridge/tests/test_ops_hardening.py) — pure comparison, no side
+# effects, never touches a real install. Must stay above the argument validation.
+if [[ "${1:-}" == "--seed-guard" ]]; then
+  shift; seed_guard "${1:-}" "${2:-}" "${3:-}" "${4:-}"; exit $?
+fi
+
 RES="${1:-}"; DEST="${2:-}"
 [[ -n "$RES"  && -d "$RES"  ]] || { echo "[firstrun-fat] ERROR: resources dir missing: '$RES'"  >&2; exit 1; }
 [[ -n "$DEST" ]]               || { echo "[firstrun-fat] ERROR: destination root not given"       >&2; exit 1; }
-
-say()  { printf "\033[1;36m[firstrun-fat]\033[0m %s\n" "$*"; }
-fail() { printf "\033[1;31m[firstrun-fat]\033[0m %s\n" "$*" >&2; exit 1; }
 
 SEED="$RES/harness-seed-fat.tar.gz"
 PYTAR="$RES/python-standalone.tar.gz"
@@ -31,10 +80,27 @@ WHEELS="$RES/wheelhouse"
 [[ -f "$PYTAR" ]] || fail "bundled standalone python missing: $PYTAR"
 [[ -d "$WHEELS" ]] || fail "bundled wheelhouse missing: $WHEELS"
 
+# ---------- 0. do not seed backwards over an existing install ----------
+# Only meaningful when something is already provisioned there; a fresh (absent) root
+# provisions exactly as before.
+if [[ -f "$DEST/harness.yaml" ]]; then
+  PRE="$(mktemp -d)"
+  # peek at just the two members we need to compare (both spellings; tar member names
+  # depend on how the archive was created).
+  tar xzf "$SEED" -C "$PRE" ./harness.yaml ./SEED_STAMP 2>/dev/null \
+    || tar xzf "$SEED" -C "$PRE" harness.yaml SEED_STAMP 2>/dev/null || true
+  if ! seed_guard "$DEST/harness.yaml" "$DEST/.seed_stamp" "$PRE/harness.yaml" "$PRE/SEED_STAMP"; then
+    rm -rf "$PRE"; exit 1
+  fi
+  rm -rf "$PRE"
+fi
+
 # ---------- 1. extract the seed → runtime root ----------
 say "Provisioning Harness into: $DEST"
 mkdir -p "$DEST"
 tar xzf "$SEED" -C "$DEST" || fail "could not extract the seed into $DEST"
+# record which bundle this install came from, so the NEXT installer can compare.
+[[ -f "$DEST/SEED_STAMP" ]] && cp "$DEST/SEED_STAMP" "$DEST/.seed_stamp"
 cd "$DEST"
 
 LOGDIR="$DEST/data/logs"; mkdir -p "$LOGDIR"

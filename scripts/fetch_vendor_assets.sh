@@ -33,6 +33,36 @@ PURIFY_V="3.2.4"       # DOMPurify — sanitize md/HTML before it touches the ho
 TAILWIND_V="3.4.16"    # Tailwind Play CDN (versioned build)
 MERMAID_V="11.4.1"     # mermaid (MIT) — diagram artifacts; UMD/IIFE dist build for <script src> use
 CM_V="5.65.18"         # CodeMirror 5 (MIT) — canvas editor (Fable decision: v5 UMD, not v6 ESM)
+# xterm.js (MIT) — the terminal widget the AIDER tab renders into (bridge/panel/aider.html).
+# Same versions Hermes itself ships (vendor/hermes/web/package.json), i.e. a pair already
+# proven against a raw-bytes PTY websocket. UMD `lib/` builds, loaded with <script src>.
+XTERM_V="6.0.0"
+XTERM_FIT_V="0.11.0"   # @xterm/addon-fit — cols/rows from the element size
+
+# ── Univer (Apache-2.0) — the OFFICE lane's spreadsheet surface ───────────────
+# Univer ships UMD builds explicitly so they can be "downloaded for distribution via
+# your own server" (docs.univer.ai → Import Univer via CDN); that is exactly the
+# fetch-once-serve-ourselves shape everything above already uses, and is why the
+# office lane needs no new process, port or component.
+#
+# THE PIN LIVES IN harness.yaml (`build.univer_pin`) — read below with the same awk
+# one-liner install_llamacpp.sh uses, so a bump is one edit in the manifest. The value
+# here is only the fallback when the manifest cannot be read.
+# ⚠️ Do NOT move to React 19: the UMD bundle carries a react-polyfill prelude and the
+# vendor docs warn React 19 needs shims. react/react-dom 18.3.1 (already fetched above)
+# and rxjs are PEER dependencies — Univer's UMD expects the globals React, ReactDOM
+# and rxjs to exist before it loads.
+UNIVER_V_DEFAULT="0.25.1"
+RXJS_V="7.8.2"         # rxjs UMD — Univer peer dep (>=7.0.0)
+
+UNIVER_V="$(awk '/^build:/{b=1;next} b&&/^[a-z]/{b=0} b&&/^[[:space:]]*univer_pin:/{
+  gsub(/.*univer_pin:[[:space:]]*"?/,""); gsub(/".*/,""); gsub(/[[:space:]]*#.*/,"");
+  gsub(/[[:space:]]+$/,""); print; exit}' harness.yaml 2>/dev/null || true)"
+if [[ -z "${UNIVER_V:-}" ]]; then
+  echo "[vendor] WARN: build.univer_pin not readable from harness.yaml — using ${UNIVER_V_DEFAULT}"
+  UNIVER_V="$UNIVER_V_DEFAULT"
+fi
+echo "[vendor] univer pin: ${UNIVER_V}"
 
 CDN="https://cdn.jsdelivr.net/npm"
 
@@ -88,10 +118,26 @@ ASSETS=(
   "codemirror.min.css|${CDN}/codemirror@${CM_V}/lib/codemirror.min.css"
   "codemirror.min.js|${CDN}/codemirror@${CM_V}/lib/codemirror.min.js"
   "codemirror-modes.min.js|${CM_MODES_COMBINE}"
+  "xterm.css|${CDN}/@xterm/xterm@${XTERM_V}/css/xterm.css"
+  "xterm.js|${CDN}/@xterm/xterm@${XTERM_V}/lib/xterm.js"
+  "xterm-addon-fit.js|${CDN}/@xterm/addon-fit@${XTERM_FIT_V}/lib/addon-fit.js"
+  # Univer — load order matters and is fixed in bridge/panel/office.html:
+  #   react, react-dom (above), rxjs, presets, preset-sheets-core, the locale.
+  # Globals, verified by reading the pinned bundles rather than the docs:
+  #   presets            → UniverPresets.createUniver / LocaleType / defaultTheme
+  #   preset-sheets-core → UniverPresetSheetsCore.UniverSheetsCorePreset
+  #   locales/en-US      → UniverPresetSheetsCoreEnUS
+  "univer/rxjs.umd.min.js|${CDN}/rxjs@${RXJS_V}/dist/bundles/rxjs.umd.min.js"
+  "univer/presets.umd.js|${CDN}/@univerjs/presets@${UNIVER_V}/lib/umd/index.js"
+  "univer/preset-sheets-core.umd.js|${CDN}/@univerjs/preset-sheets-core@${UNIVER_V}/lib/umd/index.js"
+  "univer/preset-sheets-core.css|${CDN}/@univerjs/preset-sheets-core@${UNIVER_V}/lib/index.css"
+  "univer/preset-sheets-core.en-US.js|${CDN}/@univerjs/preset-sheets-core@${UNIVER_V}/lib/umd/locales/en-US.js"
 )
 
 fetch() {
   local name="$1" url="$2" out="$DEST/$1"
+  # A name may carry one subdirectory (univer/…) — make it before writing.
+  mkdir -p "$(dirname "$out")"
   if [[ $FORCE -eq 0 && -s "$out" ]]; then
     echo "[vendor] have $name — skip"
     return 0

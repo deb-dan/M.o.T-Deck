@@ -17,6 +17,16 @@
  *   • the send path's cleanup is in a finally that also clears the turn;
  *   • the bridge relay emits the heartbeat the panel's watchdog depends on.
  *
+ * 2026-08-21 (chat-split PHASE 0): the per-column globals this file pinned by
+ * name — chatBusy / chatMode / chatSid / hermesSid / hermesStoredSid / curTurn —
+ * now live on the ONE `chatPane` state object. Every assertion below was
+ * re-expressed against `chatPane.X`; the FACTS pinned are identical. Three
+ * ordering checks were also HARDENED: they compared indexOf() results, so a
+ * renamed needle silently became `-1 < positive` = vacuously true. `before()`
+ * now demands both needles exist. §8 adds the new invariants: the pane's key set,
+ * a negative that none of the old bare globals came back, and I4 — an approval /
+ * ask card answers the session it was RENDERED for, never the pane's current one.
+ *
  * Run: node bridge/tests/test_turn_lifecycle.js   (from repo root)
  */
 const fs = require('fs');
@@ -32,19 +42,48 @@ function check(name, cond) {
   if (!cond) fails.push(name);
 }
 
+/* LATENT DEFECT FIXED 2026-08-21: the old extractor treated an apostrophe in a
+ * COMMENT as a string delimiter, so `grab('approveHermes')` — whose comments say
+ * "the card raced upstream's own approval timeout" — ran past the closing brace
+ * and returned 33 kB of unrelated panel. Every assertion over it was therefore
+ * being made against the wrong text (and a NEGATIVE assertion over it would have
+ * failed for the wrong reason, which is exactly what surfaced this). Same
+ * comment/template-aware walker test_hermes_toolsets.js already carries. */
 function grab(name) {
   const at = html.indexOf('function ' + name + '(');
   if (at < 0) throw new Error('function ' + name + ' not found in the panel');
-  let i = html.indexOf('{', at), depth = 0, inStr = null, prev = '';
-  for (let j = i; j < html.length; j++) {
-    const c = html[j];
-    if (inStr) { if (c === inStr && prev !== '\\') inStr = null; }
-    else if (c === '"' || c === "'" || c === '`') inStr = c;
-    else if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return html.slice(at, j + 1); }
-    prev = c;
+  const stack = [];        // {t:'sq'|'dq'|'tpl'} or {t:'itp', d:<depth at ${>}
+  let depth = 0, prev = '';
+  for (let j = html.indexOf('{', at); j < html.length; j++) {
+    const c = html[j], top = stack[stack.length - 1], bs = prev === '\\';
+    const t = top && top.t;
+    if (t === 'sq' || t === 'dq') {
+      if (!bs && c === (t === 'sq' ? "'" : '"')) stack.pop();
+    } else if (t === 'tpl') {
+      if (!bs && c === '`') stack.pop();
+      else if (!bs && c === '$' && html[j + 1] === '{') { stack.push({t: 'itp', d: depth}); j++; }
+    } else {
+      if (c === '/' && html[j + 1] === '/') { j = html.indexOf('\n', j); if (j < 0) break; prev = '\n'; continue; }
+      if (c === '/' && html[j + 1] === '*') { j = html.indexOf('*/', j) + 1; if (j < 1) break; prev = '/'; continue; }
+      if (c === "'") stack.push({t: 'sq'});
+      else if (c === '"') stack.push({t: 'dq'});
+      else if (c === '`') stack.push({t: 'tpl'});
+      else if (c === '{') depth++;
+      else if (c === '}') {
+        if (t === 'itp' && depth === top.d) stack.pop();
+        else if (--depth === 0) return html.slice(at, j + 1);
+      }
+    }
+    prev = bs ? '' : c;
   }
   throw new Error('unbalanced braces extracting ' + name);
+}
+
+/* Ordering assertions used to be raw indexOf comparisons, which pass VACUOUSLY
+ * when a needle is missing (-1 < anything). Both needles must exist. */
+function before(hay, a, b, label){
+  const i = hay.indexOf(a), j = hay.indexOf(b);
+  check(label, i >= 0 && j >= 0 && i < j);
 }
 
 /* Constants read OUT of the panel — a value changed there must change the
@@ -76,17 +115,17 @@ const hard = grab('turnHardRelease');
 // icon and a text child, so every label site funnels through sendPaint() instead of
 // writing textContent wholesale (which would have deleted the icon). The invariant is
 // unchanged — the composer is released with the resting Send label.
-check('turnHardRelease clears chatBusy and restores the Send button',
-  /chatBusy = false;/.test(hard) && /sendPaint\('Send'\)/.test(hard));
+check('turnHardRelease clears the pane\'s busy flag and restores the Send button',
+  /chatPane\.busy = false;/.test(hard) && /sendPaint\('Send'\)/.test(hard));
 check('turnHardRelease only ever releases the turn it was armed for (a late timer '
-    + 'must not kill the NEXT turn)', /if \(curTurn !== t\) return;/.test(hard));
+    + 'must not kill the NEXT turn)', /if \(chatPane\.curTurn !== t\) return;/.test(hard));
 
 /* ── 2. the diagnostic (which stage did it die in?) ──────────────────────── */
 check('the force-end names the stage on the console AND in the activity feed',
   /console\.warn\('\[turn\] force-end/.test(force) && /feed\('chat', 'turn force-ended at/.test(force));
 check('stages are recorded through ONE setter, so a stage cannot be written to a '
     + 'turn that already ended',
-  /function turnStage\(s\)\{ if \(curTurn && !curTurn\.ended\) curTurn\.stage = s; \}/.test(html));
+  /function turnStage\(s\)\{ if \(chatPane\.curTurn && !chatPane\.curTurn\.ended\) chatPane\.curTurn\.stage = s; \}/.test(html));
 check('every phase of a turn labels itself',
   ['connecting', 'waiting for the first frame', 'thinking', 'answering',
    'running a tool', 'awaiting approval', 'prefill (bridge says hermes is working)']
@@ -96,14 +135,15 @@ check('every phase of a turn labels itself',
 const stop = grab('hermesStop');
 check('Stop arms a client-side force-end BEFORE it touches the network',
   /t\.stopArmed = true;[\s\S]{0,200}setTimeout\(\(\) => forceEndTurn\([\s\S]{0,120}TURN_FORCE_MS\)/.test(stop));
-check('the force-end is armed even with NO session id yet — the pre-first-event '
-    + 'phase used to make Stop a silent no-op',
-  stop.indexOf('t.stopArmed = true;') < stop.indexOf('if (!hermesSid || hermesStopping) return;'));
+before(stop, 't.stopArmed = true;',
+  'if (!chatPane.hermesSid || chatPane.hermesStopping) return;',
+  'the force-end is armed even with NO session id yet — the pre-first-event '
+  + 'phase used to make Stop a silent no-op');
 check('Stop still issues the gateway interrupt when there IS a sid',
   /fetch\('\/api\/hermes\/stop'/.test(stop));
 check('the busy branch routes on the TURN\'s lane, not the current chip — so a '
     + 'lane switch can never make Stop unreachable',
-  /if \(chatMode === 'hermes' \|\| \(curTurn && curTurn\.lane === 'hermes'\)\) hermesStop\('panel stop'\)/.test(html));
+  /if \(chatPane\.mode === 'hermes' \|\| \(chatPane\.curTurn && chatPane\.curTurn\.lane === 'hermes'\)\) hermesStop\('panel stop'\)/.test(html));
 
 const stopNow = grab('stopTurnNow');
 check('stopTurnNow does NOT await the gateway interrupt (session.interrupt can '
@@ -118,7 +158,8 @@ for (const [fn, label] of [['newSession', '+NEW'], ['selectSession', 'a rail row
                            ['duplicateSession', 'duplicate']]) {
   const src = grab(fn);
   check(label + ' STOPS a running turn instead of returning silently',
-    /if \(chatBusy\) await stopTurnNow\(/.test(src) && !/^\s*if \(chatBusy\) return;/m.test(src));
+    /if \(chatPane\.busy\) await stopTurnNow\(/.test(src)
+    && !/^\s*if \(chatPane\.busy\) return;/m.test(src));
 }
 
 /* ── 4b. …but an INCIDENTAL re-open must never kill a healthy turn ────────
@@ -132,25 +173,26 @@ for (const [fn, label] of [['newSession', '+NEW'], ['selectSession', 'a rail row
  * session.interrupt. These four checks are the fence. */
 const selH = grab('selectHermesSession'), selO = grab('selectSession');
 check('re-opening the Hermes session you are ALREADY in leaves a running turn alone',
-  /if \(chatBusy && storedId && storedId === hermesStoredSid\) return;/.test(selH));
+  /if \(chatPane\.busy && storedId && storedId === chatPane\.hermesStoredSid\) return;/.test(selH));
 check('re-opening the Odysseus session you are ALREADY in leaves a running turn alone',
-  /if \(chatBusy && sid && sid === chatSid\) return;/.test(selO));
-check('the Hermes lane guard runs BEFORE the stop — a cross-lane call that does '
-    + 'nothing must not interrupt the live turn',
-  selH.indexOf("if (chatMode !== 'hermes') return;") < selH.indexOf('await stopTurnNow('));
-check('the Odysseus lane guard runs BEFORE the stop (same rule, other lane)',
-  selO.indexOf("if (chatMode === 'hermes') return;") < selO.indexOf('await stopTurnNow('));
+  /if \(chatPane\.busy && sid && sid === chatPane\.sid\) return;/.test(selO));
+before(selH, "if (chatPane.mode !== 'hermes') return;", 'await stopTurnNow(',
+  'the Hermes lane guard runs BEFORE the stop — a cross-lane call that does '
+  + 'nothing must not interrupt the live turn');
+before(selO, "if (chatPane.mode === 'hermes') return;", 'await stopTurnNow(',
+  'the Odysseus lane guard runs BEFORE the stop (same rule, other lane)');
 const initc = grab('initChat');
 check('re-entering the Chat view NEVER touches a live turn (initChat is the path '
     + 'that made simply leaving and coming back interrupt a Hermes turn)',
-  /if \(chatBusy\) return;/.test(initc)
-  && initc.indexOf('if (chatBusy) return;') < initc.indexOf('selectHermesSession('));
-check('…and it is the FIRST thing initChat does, before any session load',
-  initc.indexOf('if (chatBusy) return;') < initc.indexOf('loadSessions('));
+  /if \(chatPane\.busy\) return;/.test(initc)
+  && initc.indexOf('if (chatPane.busy) return;') < initc.indexOf('selectHermesSession('));
+before(initc, 'if (chatPane.busy) return;', 'loadSessions(',
+  '…and it is the FIRST thing initChat does, before any session load');
 const mode = grab('setMode');
-check('a lane switch stops the running turn FIRST, before chatMode flips',
-  /if \(chatBusy && m !== prev\) await stopTurnNow\('lane switch'\)/.test(mode)
-  && mode.indexOf("await stopTurnNow('lane switch')") < mode.indexOf('chatMode = m;'));
+check('a lane switch stops the running turn FIRST, before the lane flips',
+  /if \(chatPane\.busy && m !== prev\) await stopTurnNow\('lane switch'\)/.test(mode));
+before(mode, "await stopTurnNow('lane switch')", 'chatPane.mode = m;',
+  '…and the stop is ordered before the write');
 check('setMode is async so the stop can be awaited', /async function setMode\(m\)/.test(html));
 
 /* ── 5. the send path owns + releases the turn ───────────────────────────── */
@@ -163,14 +205,14 @@ if (sendAt < 0) throw new Error('sendChat not found in the panel');
 const sendEnd = html.indexOf('/* ====', sendAt);
 const send = html.slice(sendAt, sendEnd > 0 ? sendEnd : sendAt + 20000);
 check('sendChat creates the turn (lane + AbortController + stage) before fetching',
-  /const turn = \{lane: chatMode, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
+  /const turn = \{lane: chatPane\.mode, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
 check('the fetch carries the abort signal — without it nothing can cancel a read',
   /signal: turn\.ctl\.signal/.test(send));
 check('the finally clears the timer AND the turn handle (a stale curTurn would '
     + 'let the next Stop abort nothing)',
-  /finally \{\s*clearTimeout\(turn\.timer\);\s*if \(curTurn === turn\) curTurn = null;/.test(send));
-check('the finally still clears chatBusy and restores the button (unchanged)',
-  /chatBusy = false;[\s\S]{0,400}sendPaint\('Send'\)/.test(send));
+  /finally \{\s*clearTimeout\(turn\.timer\);\s*if \(chatPane\.curTurn === turn\) chatPane\.curTurn = null;/.test(send));
+check('the finally still clears the busy flag and restores the button (unchanged)',
+  /chatPane\.busy = false;[\s\S]{0,400}sendPaint\('Send'\)/.test(send));
 check('a deliberate abort is not reported as a stream error',
   /if \(turn\.ended\) body\.textContent \+= '\\n· interrupted';/.test(send));
 check('conv-mode turn hooks are still inside the send path\'s try/finally, so a '
@@ -194,12 +236,12 @@ check('a watchdog that fires SAYS which timer it was and how long the relay was 
   && /since the last chunk/.test(arm)
   && /chatInspect\(t\.holder, \{type: 'turn_watchdog'/.test(arm));
 check('a watchdog belonging to a superseded turn can never fire late',
-  /if \(curTurn !== t\) return;/.test(arm));
+  /if \(chatPane\.curTurn !== t\) return;/.test(arm));
 check('the watchdog is HERMES-lane only (the other lanes have no heartbeat and a '
     + 'long local prefill emits nothing — arming there would kill healthy turns)',
   /HERMES lane only/.test(arm) || /hermes/i.test(arm));
 check('a watchdog armed on an already-ended (or completed) turn is a no-op',
-  /if \(!curTurn \|\| curTurn\.ended \|\| curTurn\.done\) return;/.test(arm));
+  /if \(!chatPane\.curTurn \|\| chatPane\.curTurn\.ended \|\| chatPane\.curTurn\.done\) return;/.test(arm));
 
 const FIRST = constant('TURN_FIRSTBYTE_MS'), STALL = constant('TURN_STALL_MS'),
       FORCE = constant('TURN_FORCE_MS');
@@ -226,6 +268,108 @@ check('the active_list probe still fails SAFE (a probe failure never kills a liv
     + 'stream)', /except Exception:\s*\n\s*return True/.test(appy));
 check('no new CSS rule was needed for the forced-interrupt stamp (it reuses the '
     + 'statusline)', /chatStatus\(t\.holder, '✓', 'interrupted \(forced\)/.test(force));
+
+/* ── 8. CHAT-SPLIT PHASE 0 — ONE pane object, and cards that answer THEIR own
+ *     session (docs/handoff/DRAFT-CHAT-SPLIT-ISOLATION.md §1.1, §4.3 I4, §6.1).
+ *
+ * Nothing here makes a second column exist. What it pins is that a second column
+ * would be POSSIBLE: every piece of per-column state is on one object, none of it
+ * survives as a bare module global, and the one coupling with a security
+ * consequence — an approval card posting whatever session the global last pointed
+ * at — is fixed for real rather than deferred. */
+
+/* The pane object exists, is a const (a second pane is a second object, never a
+ * reassignment of this one), and is declared exactly once. */
+check('there is exactly ONE chatPane declaration and it is a const',
+  (html.match(/^const chatPane = \{/mg) || []).length === 1
+  && !/\blet chatPane\b/.test(html));
+
+/* The key set. A field missing here means a second column would silently share
+ * it with the first — which is the entire failure mode this phase exists to make
+ * impossible. Read out of the DECLARATION, so adding a field elsewhere at runtime
+ * (which would be invisible to a reader of the object) does not satisfy it. */
+const paneAt = html.indexOf('const chatPane = {');
+const paneDecl = html.slice(paneAt, html.indexOf('\n};', paneAt));
+for (const k of ['id', 'sid', 'mode', 'busy', 'model', 'stampModel', 'hermesSid',
+                 'hermesStoredSid', 'hermesStopping', 'sessions', 'hermesSessions',
+                 'reqSeq', 'curTurn', 'attachedImage', 'pendingAttachDrop',
+                 'delArm', 'msgDelArm']) {
+  check('chatPane owns per-column state: ' + k,
+    new RegExp('^\\s*' + k + ':', 'm').test(paneDecl));
+}
+
+/* NEGATIVE — no orphan remnants. The draft forbids compatibility shims by name:
+ * "a shim is exactly how a missed call site stays silently wrong". A surviving
+ * `let chatBusy` (aliased or not) would let a rethread miss go unnoticed. */
+for (const g of ['chatSid', 'chatMode', 'chatBusy', 'chatModel', 'hermesSid',
+                 'hermesStoredSid', 'hermesStopping', 'hermesSessions',
+                 'chatSessions', 'sessionsReqSeq', 'curTurn', 'attachedImage',
+                 'pendingAttachDrop', '_delArm', '_msgDelArm',
+                 '_stampSessionModel']) {
+  check('no bare global remnant of ' + g + ' (no shim, no alias)',
+    !new RegExp('^\\s*(let|var|const)\\s+[^\\n;]*\\b' + g + '\\b\\s*=', 'm').test(html));
+}
+
+/* Things that must NOT have moved onto the pane: draft §3 singletons. One mic,
+ * one clip, one conv machine — enforced by there being one of each in the
+ * document, which a per-pane copy would destroy. */
+for (const g of ['autoVad', 'currentAudio', 'talkRec', 'convSt', 'liveVision']) {
+  check(g + ' stays a document singleton (draft §3), NOT pane state',
+    new RegExp('^\\s*let\\s+' + g + '\\b', 'm').test(html)
+    && !new RegExp('^\\s*' + g + ':', 'm').test(paneDecl));
+}
+
+/* I4 — an approval / ask card answers ITS OWN session.
+ * Approvals carry no request id on the wire (the gateway resolves them FIFO per
+ * session), so session_id IS the address. Reading the pane's CURRENT hermesSid at
+ * CLICK time meant a session switch — or, later, a second column — while a card
+ * sat open could send "Always" for a dangerous command to the wrong session, and
+ * the panel would stamp `✓ approved`. */
+const approval = grab('chatApproval'), ask = grab('chatAsk');
+check('the approval card captures its session at RENDER time',
+  /function chatApproval\(holder, req, sid\)/.test(approval)
+  && /card\._sid = String\(sid \|\| ''\);/.test(approval));
+check('the ask card captures its session at RENDER time',
+  /function chatAsk\(holder, req, sid\)/.test(ask)
+  && /card\._sid = String\(sid \|\| ''\);/.test(ask));
+
+const approve = grab('approveHermes'), answer = grab('answerHermes');
+check('approveHermes posts the CARD\'s session id',
+  /session_id: card\._sid/.test(approve));
+check('answerHermes posts the CARD\'s session id',
+  /session_id: card\._sid/.test(answer));
+/* The teeth: not "it uses the card" but "it CANNOT reach the pane". A switch
+ * between render and click is then structurally unable to retarget the answer. */
+check('…and NEITHER handler can read the pane\'s current session (this is the fix)',
+  approve.indexOf('chatPane') < 0 && answer.indexOf('chatPane') < 0);
+
+/* Where the captured sid comes from: the TURN, which is the only thing that knows
+ * which gateway session this stream is on. Seeded from the pane at turn creation
+ * (a continuation turn) and overwritten by the bridge's hermes_session frame (a
+ * new or stale-sid-retried one), which the bridge always yields BEFORE
+ * prompt.submit — so a card can never be rendered without a session. */
+check('the turn record carries the gateway session it is streaming on',
+  /holder: holder, hermesSid: chatPane\.hermesSid \|\| '',/.test(send));
+check('a hermes_session frame updates the TURN as well as the pane (a stale-sid '
+    + 'retry re-mints mid-stream, and the card must follow the new session)',
+  /chatPane\.hermesSid = j\.id; turn\.hermesSid = j\.id;/.test(send));
+check('both cards are rendered with the TURN\'s session, not the pane\'s',
+  /chatApproval\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(send)
+  && /chatAsk\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(send));
+/* The scenario in one assertion: nothing between render and POST re-reads a
+ * session id, so "switch sessions while a card is open, then answer it" lands on
+ * the session the card was born in. */
+check('SCENARIO — switch sessions with a card open, then answer: the card still '
+    + 'addresses its ORIGINAL session (no session id is re-read at click time)',
+  !/session_id: chatPane\.hermesSid/.test(approve + answer)
+  && !/session_id: chatPane\.hermesSid/.test(approval + ask)
+  && (html.match(/card\._sid/g) || []).length >= 4);
+
+/* The pane-scoped race token: two independent rail loaders must never invalidate
+ * each other (draft §6 "honourable mentions"). */
+check('the rail race token is PANE state, not a shared module counter',
+  /^\s*reqSeq: 0,/m.test(paneDecl) && /\+\+chatPane\.reqSeq/.test(html));
+
 
 console.log('');
 console.log((fails.length ? 'FAIL' : 'OK') + ' — ' + fails.length + ' failure(s)');

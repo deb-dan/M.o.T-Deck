@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aider — Harness</title>
+<!-- The Aider tab is its OWN document, deliberately not the panel: it is a terminal,
+     it loads xterm.js, and it must not carry the panel's poll loops. The palette
+     values below are the panel's tokens, copied (a separate document cannot inherit
+     :root) — keep them in step by eye if the panel's palette ever moves. -->
+<link rel="stylesheet" href="/assets/vendor/xterm.css">
+<style>
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream)}
+  .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
+        border-radius:6px;color:var(--dim);white-space:nowrap}
+  .pill.on{color:var(--gold);border-color:var(--gold)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  button{font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2);border-radius:8px;
+         padding:6px 13px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--cream);color:#171420;border-color:var(--cream)}
+  .grow{flex:1 1 auto}
+  #note{flex:none;padding:8px 16px;color:var(--faint);font-size:11.5px;
+        border-bottom:1px solid var(--line);background:var(--bg2)}
+  #note b{color:var(--dim);font-weight:600}
+  #wrap{flex:1 1 auto;min-height:0;padding:8px 10px 10px;background:var(--bg)}
+  #term{width:100%;height:100%}
+  #msg{flex:none;padding:10px 16px;color:var(--bad);font-size:12px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <span class="name">Aider</span>
+  <span class="pill" id="p-install">checking…</span>
+  <span class="pill" id="p-model">model —</span>
+  <span class="pill" id="p-ws">not connected</span>
+  <span class="grow"></span>
+  <button id="btn-install" style="display:none">Install aider</button>
+  <button id="btn-start" class="primary" style="display:none">Start</button>
+  <button id="btn-stop" style="display:none">End session</button>
+</header>
+<div id="note">
+  aider edits files in <b id="ws-dir">data/aider-workspace</b> — it asks before every
+  change, and git is its undo (<b>/undo</b>, <b>/diff</b>). Nothing is auto-committed.
+  A dropped connection ends the session; there is no replay.
+</div>
+<div id="msg"></div>
+<div id="wrap"><div id="term"></div></div>
+
+<script src="/assets/vendor/xterm.js"></script>
+<script src="/assets/vendor/xterm-addon-fit.js"></script>
+<script>
+'use strict';
+// The two UMD bundles expose either the class directly or a module namespace holding
+// it, depending on the build. Ask for both rather than betting on one.
+const TermCtor = (window.Terminal && window.Terminal.Terminal) || window.Terminal;
+const FitCtor  = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+
+const el = id => document.getElementById(id);
+let term = null, fit = null, sock = null, state = null;
+
+function say(text, bad) {
+  const m = el('msg');
+  m.textContent = text || '';
+  m.style.display = text ? '' : 'none';
+  m.style.color = bad === false ? 'var(--faint)' : 'var(--bad)';
+}
+
+function ensureTerm() {
+  if (term) return term;
+  if (!TermCtor) { say('xterm.js is missing — run ./scripts/fetch_vendor_assets.sh'); return null; }
+  term = new TermCtor({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 12.5, cursorBlink: true, scrollback: 5000,
+    theme: { background: '#0b0910', foreground: '#efe9dc', cursor: '#c9a44d',
+             selectionBackground: '#2f2946' }
+  });
+  if (FitCtor) { fit = new FitCtor(); term.loadAddon(fit); }
+  term.open(el('term'));
+  refit();
+  term.onData(d => { if (sock && sock.readyState === 1) sock.send(new TextEncoder().encode(d)); });
+  return term;
+}
+
+// FitAddon proposes cols/rows from the element size; the SERVER owns the real winsize,
+// so every fit is followed by the one control message the wire carries.
+let refitPending = 0;
+function refit() {
+  if (!term) return;
+  cancelAnimationFrame(refitPending);
+  refitPending = requestAnimationFrame(() => {
+    try { if (fit) fit.fit(); } catch (e) { /* element not laid out yet */ }
+    sendResize();
+  });
+}
+function sendResize() {
+  if (!term || !sock || sock.readyState !== 1) return;
+  const c = Math.max(2, term.cols | 0), r = Math.max(1, term.rows | 0);
+  sock.send(new TextEncoder().encode('\x1b[RESIZE:' + c + ';' + r + ']'));
+}
+window.addEventListener('resize', refit);
+
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/aider/status', { cache: 'no-store' });
+    state = await r.json();
+  } catch (e) { state = { ok: false, error: String(e) }; }
+  paint();
+  return state;
+}
+
+function paint() {
+  const s = state || {};
+  const connected = sock && sock.readyState === 1;
+  el('p-install').textContent = s.installing ? 'installing…'
+    : (s.installed ? 'installed' : 'not installed');
+  el('p-install').className = 'pill' + (s.installed ? ' on' : '');
+  el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
+  el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
+  el('p-ws').textContent = connected ? 'session live' : 'not connected';
+  el('p-ws').className = 'pill' + (connected ? ' on' : '');
+  if (s.workspace) el('ws-dir').textContent = s.workspace;
+  el('btn-install').style.display = (!s.installed && !s.installing) ? '' : 'none';
+  el('btn-install').disabled = !!s.installing;
+  el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
+  el('btn-start').disabled = !s.model_ready;
+  el('btn-stop').style.display = connected ? '' : 'none';
+  if (s.install_error) say('install failed — see the "aider install" log in Mission Control');
+}
+
+el('btn-install').onclick = async () => {
+  say('');
+  el('btn-install').disabled = true;
+  try { await fetch('/api/aider/install', { method: 'POST' }); }
+  catch (e) { say('could not start the install: ' + e); }
+  await loadStatus();
+  // Poll while it runs — a clone + an online pip resolve takes minutes.
+  const tick = setInterval(async () => {
+    const s = await loadStatus();
+    if (!s.installing) clearInterval(tick);
+  }, 4000);
+};
+
+el('btn-start').onclick = () => start();
+el('btn-stop').onclick = () => { if (sock) sock.close(); };
+
+function start() {
+  if (sock && sock.readyState <= 1) return;
+  const t = ensureTerm();
+  if (!t) return;
+  say('');
+  t.reset();
+  const q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
+  sock = new WebSocket('ws://' + location.host + '/api/pty/aider' + q);
+  sock.binaryType = 'arraybuffer';
+  sock.onopen = () => { paint(); sendResize(); t.focus(); };
+  sock.onmessage = ev => {
+    const d = ev.data;
+    if (typeof d === 'string') t.write(d);
+    else t.write(new Uint8Array(d));
+  };
+  sock.onclose = ev => {
+    sock = null;
+    paint();
+    if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
+    else if (ev.code === 4409) say('aider is already running in another window.');
+    else if (ev.code === 4412) say('');            // the message came through the terminal
+    else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
+    loadStatus();
+  };
+  sock.onerror = () => say('the terminal connection failed.');
+  paint();
+}
+
+(async function boot() {
+  ensureTerm();
+  const s = await loadStatus();
+  if (s.installed && s.model_ready) start();       // the tab IS the session
+})();
+</script>
+</body>
+</html>

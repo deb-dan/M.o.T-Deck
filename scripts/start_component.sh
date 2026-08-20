@@ -4,6 +4,73 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 NAME="${1:-}"
 mkdir -p data/logs
+ROOT_ABS="$(pwd)"
+
+# ── PORT OWNERSHIP ────────────────────────────────────────────────────────────
+# A LISTENER-scoped kill is still a kill of SOMEBODY ELSE'S process when the port
+# collides: Debi's STANDALONE Unsloth app listens on :8888 and our own start was
+# killing it every time. So establish ownership BEFORE killing.
+# Owned iff  (a) the pid is the one in data/<component>.pid, OR
+#            (b) the command line names a path inside OUR tree (data/ or vendor/), OR
+#            (c) it matches a narrow per-component signature (only where our own
+#                launch legitimately runs a binary from outside the tree).
+# NOT owned → refuse loudly and exit non-zero rather than kill a stranger.
+# HARNESS_PORT_TAKEOVER=1 restores the old unconditional behaviour.
+_proc_cmd() { ps -o command= -p "$1" 2>/dev/null | tr '\n' ' '; }
+
+# Pure string logic, exposed for tests via `start_component.sh --owner-check <comp> <cmd>`.
+_cmd_looks_like_ours() {   # <component> <command line>
+  local comp="$1" cmd="$2"
+  # A process that vanished between the probe and the check has nothing to protect.
+  [[ -z "$cmd" ]] && return 0
+  case "$cmd" in
+    *"${ROOT_ABS}/data/"*|*"${ROOT_ABS}/vendor/"*) return 0 ;;
+  esac
+  case "$comp" in
+    # runner.binary may legitimately point at a backend OUTSIDE the tree (the
+    # LM Studio fallback), so the engine name is the honest signature here. These
+    # are exactly the processes the pkill lines below already target by pattern.
+    runner|aux)
+      case "$cmd" in *llama-server*|*mlx_lm.server*|*mlx_vlm.server*) return 0 ;; esac ;;
+    # hermes may already be running from a DIFFERENT root (repo vs snapshot).
+    hermes)
+      case "$cmd" in *"hermes dashboard"*|*"hermes serve"*) return 0 ;; esac ;;
+    # Deliberately NO name signature for unsloth/comfyui/voicebox/voicestudio: a
+    # standalone install of any of them would match its own name, which is the very
+    # process this guard exists to protect. Our launches all run
+    # "$ROOT/data/<comp>-venv/bin/..." so the path rule above already covers them.
+  esac
+  return 1
+}
+
+if [[ "$NAME" == "--owner-check" ]]; then
+  shift
+  _cmd_looks_like_ours "${1:-}" "${2:-}"; exit $?
+fi
+
+_clear_port() {   # <port> <component> [force]
+  local port="$1" comp="$2" force="${3:-}" pid cmd pf sig="-TERM"
+  [[ "$force" == "force" ]] && sig="-KILL"
+  pf="data/${comp}.pid"
+  for pid in $(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null); do
+    if [[ "${HARNESS_PORT_TAKEOVER:-0}" == "1" ]]; then
+      kill "$sig" "$pid" 2>/dev/null || true
+      continue
+    fi
+    if [[ -f "$pf" ]] && [[ "$(cat "$pf" 2>/dev/null)" == "$pid" ]]; then
+      kill "$sig" "$pid" 2>/dev/null || true
+      continue
+    fi
+    cmd="$(_proc_cmd "$pid")"
+    if _cmd_looks_like_ours "$comp" "$cmd"; then
+      kill "$sig" "$pid" 2>/dev/null || true
+    else
+      echo "ERROR: port ${port} is held by pid ${pid} (${cmd}) which does not look like ours — refusing to kill it."
+      echo "       Stop that app or set HARNESS_PORT_TAKEOVER=1 to override."
+      exit 1
+    fi
+  done
+}
 
 case "$NAME" in
   runner)
@@ -263,7 +330,7 @@ PYRESOLVE
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
-    lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+    _clear_port "$R_PORT" runner force
     sleep 1
     # Launch + wait for readiness. Factored so a bad speculative-decoding guess can
     # be retried WITHOUT those flags instead of leaving the runner dead (spec flags
@@ -286,7 +353,7 @@ PYRESOLVE
       echo "[harness]   this model likely has no usable MTP heads. Retrying without them."
       echo "--- runner.log tail (failed spec attempt) ---"; tail -12 data/logs/runner.log 2>/dev/null
       pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
-      lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+      _clear_port "$R_PORT" runner force
       sleep 1
       SPEC_ARGS=()
       if _launch_llama "${ARGS[@]}"; then up=1; fi
@@ -344,7 +411,7 @@ PYRESOLVE
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
-    lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+    _clear_port "$R_PORT" runner force
     sleep 1
     nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
       ${MLX_FLOOR[@]+"${MLX_FLOOR[@]}"} >> data/logs/runner.log 2>&1 &
@@ -371,7 +438,7 @@ PYRESOLVE
     # shellcheck disable=SC1091
     source data/odysseus-venv/bin/activate
     # Clear any stale server on the port so a restart can bind cleanly.
-    lsof -ti tcp:7860 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port 7860 odysseus
     sleep 1
     # Connect (idempotent): (re)wire Odysseus to the harness RUNNER endpoint (:6767 + key)
     # as default model. Runs before the server boots.
@@ -395,7 +462,7 @@ PYRESOLVE
   searxng)
     [[ -d data/searxng-venv ]] || { echo "ERROR: searxng venv missing — run scripts/install_searxng.sh"; exit 1; }
     ROOT="$(pwd)"
-    lsof -ti tcp:8080 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port 8080 searxng
     sleep 1
     nohup env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
       "$ROOT/data/searxng-venv/bin/python" -m searx.webapp \
@@ -425,7 +492,7 @@ PYRESOLVE
     [[ "$VS_PORT" =~ ^[0-9]+$ ]] || VS_PORT=3900
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
-    lsof -ti tcp:"$VS_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port "$VS_PORT" voicestudio
     sleep 1
     # uvicorn is the documented entrypoint; fall back to the module's own __main__
     # if this build's deps somehow lack the uvicorn CLI module.
@@ -529,7 +596,7 @@ PYWIRE
     [[ "$VB_PORT" =~ ^[0-9]+$ ]] || VB_PORT=17493
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
-    lsof -ti tcp:"$VB_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port "$VB_PORT" voicebox
     sleep 1
     # `python -m backend.main` (NOT plain uvicorn): that entry point calls
     # config.set_data_dir() + database.init_db() before serving.
@@ -593,7 +660,7 @@ PYWIRE
     [[ "$CU_PORT" =~ ^[0-9]+$ ]] || CU_PORT=8188
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
-    lsof -ti tcp:"$CU_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port "$CU_PORT" comfyui
     sleep 1
     # --base-directory is MANDATORY: without it ComfyUI creates models/ output/ input/
     # user/ NEXT TO main.py, i.e. inside vendor/. Same trap class as voicebox's --data-dir.
@@ -678,7 +745,7 @@ PYWIRE
       echo "        data/logs/unsloth-install.log)"
       exit 1; }
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule).
-    lsof -ti tcp:"$US_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    _clear_port "$US_PORT" unsloth
     sleep 1
     # `unsloth studio` (the Typer group's invoke_without_command callback) is the PLAIN
     # server launch. Deliberately NOT `unsloth studio run`: at this pin that variant
@@ -917,7 +984,7 @@ PYGUARD
     # (API only), so a missing build never blocks startup.
     hermes dashboard --stop >/dev/null 2>&1 || true      # clean stop of any web server
     pkill -f "hermes (dashboard|serve)" 2>/dev/null || true
-    lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+    _clear_port "$PORT" hermes force
     sleep 1
     : > data/logs/hermes.log
     # Deterministic dashboard session token (Hermes chat lane): the dashboard seeds

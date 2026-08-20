@@ -6,20 +6,50 @@
 # outlive the app (quit app ≠ restart bridge). Both traps have burned sessions.
 # This script is THE way to ship: run it after any code change, done.
 #
-#   ./scripts/ship.sh          ship + restart
+#   ./scripts/ship.sh                       ship + restart
+#   ./scripts/ship.sh --restart hermes      ... and restart that COMPONENT afterwards
+#   ./scripts/ship.sh --restart a,b         ... comma list, or repeat the flag
+#   SHIP_SKIP_GATE=1 ./scripts/ship.sh      ship WITHOUT the contract gate (loud)
 #
 # What it does, in order:
+#   0. run the contract gate (scripts/verify.sh) and REFUSE to ship when it fails or
+#      cannot run — a vendored pin bump once shipped with the gate silently skipped
 #   1. repo bridge/panel + bridge/*.py + scripts/ + guards/ + policies/ → snapshot
 #      (NEVER harness.yaml or data/ — those hold live state)
 #   2. if app/main.swift is newer than the installed app binary → recompile the
 #      Swift shell in place + ad-hoc re-sign (no full fat rebuild)
 #   3. quit the app, kill the :8700 bridge LISTENER (components stay up),
 #      relaunch, wait for the bridge, print a sanity check
+#   4. optionally restart named COMPONENTS from the snapshot (--restart)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DST="$HOME/Library/Application Support/Harness"
 APP="/Applications/Harness.app"
+
+# ── args ──────────────────────────────────────────────────────────────────────
+# --restart <name> is the sanctioned answer to the standing rule "shipping is NOT
+# restarting a component": ship.sh deliberately leaves components up, so after a
+# VENDORED upgrade the old process keeps serving and every verification against it
+# is invalid (Hermes 0.20.1 shipped, 0.19.1 tested — a whole session lost).
+RESTART=()
+_add_restart() {   # accepts "a" or "a,b,c"
+  local _p _old_ifs="$IFS"
+  IFS=','
+  for _p in $1; do [[ -n "$_p" ]] && RESTART+=("$_p"); done
+  IFS="$_old_ifs"
+}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --restart)
+      shift
+      [[ $# -gt 0 ]] || { echo "[ship] ERROR: --restart needs a component name"; exit 1; }
+      _add_restart "$1"; shift ;;
+    --restart=*) _add_restart "${1#--restart=}"; shift ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    *) echo "[ship] ERROR: unknown argument '$1' (see ./scripts/ship.sh --help)"; exit 1 ;;
+  esac
+done
 
 # The cowork sandbox cannot unlink files under this mount, so an interrupted git
 # operation there leaves .git/HEAD.lock / .git/index.lock behind and every later
@@ -31,6 +61,29 @@ rm -f "$ROOT/.git/HEAD.lock" "$ROOT/.git/index.lock" 2>/dev/null || true
 
 [[ -d "$DST" ]] || { echo "[ship] ERROR: no snapshot at $DST (fat app not provisioned?)"; exit 1; }
 [[ -d "$APP" ]] || { echo "[ship] ERROR: $APP not found"; exit 1; }
+
+# ── contract gate (runs BEFORE anything is copied) ────────────────────────────
+# The gate used to be a manual step, which means it was a step that could be — and
+# was — skipped. Now the ONLY way past a red gate is to say so out loud.
+if [[ "${SHIP_SKIP_GATE:-0}" == "1" ]]; then
+  echo "[ship] WARNING: SHIP_SKIP_GATE=1 — THE CONTRACT GATE WAS SKIPPED."
+  echo "[ship]          You are shipping code whose upstream contracts are unverified."
+else
+  echo "[ship] contract gate: scripts/verify.sh"
+  GATE_RC=0
+  bash "$ROOT/scripts/verify.sh" || GATE_RC=$?
+  if [[ "$GATE_RC" -eq 1 ]]; then
+    echo "[ship] REFUSING TO SHIP - the contract gate FAILED (output above)."
+    echo "[ship]   NOTHING was copied and the app was not touched."
+    echo "[ship]   Fix the failures, or ship anyway with:  SHIP_SKIP_GATE=1 ./scripts/ship.sh"
+    exit 1
+  elif [[ "$GATE_RC" -ne 0 ]]; then
+    echo "[ship] REFUSING TO SHIP - the contract gate COULD NOT RUN (reason above)."
+    echo "[ship]   NOTHING was copied and the app was not touched."
+    echo "[ship]   Fix that, or ship anyway with:  SHIP_SKIP_GATE=1 ./scripts/ship.sh"
+    exit 1
+  fi
+fi
 
 echo "[ship] repo → snapshot (panel, bridge, scripts, guards, policies)"
 cp -R "$ROOT/bridge/panel/." "$DST/bridge/panel/"
@@ -166,4 +219,21 @@ else
   MARK="$(printf '%s' "$API_JSON" | python3 -c 'import sys,hashlib; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])' 2>/dev/null || echo none)"
   echo "[ship] bridge is up (api fingerprint $MARK, snapshot app.py $SNAP)"
 fi
+# ── optional component restarts, RUN FROM THE SNAPSHOT ────────────────────────
+# From the snapshot, not the repo: the app's venv is the upgraded one and the repo's
+# is a different install. start_component.sh is a full restart by construction (stop
+# → listener-scoped port clear → re-seed guards → relaunch), so it does strictly more
+# than the panel's Stop/Start buttons.
+if [[ ${#RESTART[@]} -gt 0 ]]; then
+  for _c in ${RESTART[@]+"${RESTART[@]}"}; do
+    echo "[ship] restarting component '${_c}' FROM THE SNAPSHOT (${DST})"
+    if bash "$DST/scripts/start_component.sh" "$_c"; then
+      echo "[ship] restarted: ${_c}"
+    else
+      echo "[ship] WARN: restart of '${_c}' FAILED (output above) — check ${DST}/data/logs/${_c}.log"
+    fi
+  done
+fi
+
+echo "[ship] REMINDER: components stay up - a vendored upgrade needs: ./scripts/ship.sh --restart <name>"
 echo "[ship] done — the served code now matches the repo. ⌘R open tabs if the panel looks stale."

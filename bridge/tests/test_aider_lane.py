@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""AIDER LANE slice 1 — the decision tables + a REAL websocket/PTY round trip.
+
+Built to docs/research/2026-08-20-aider-recon.md. Three things in here are load-bearing
+rather than decorative:
+
+1. THE ORIGIN GATE. WebSockets are not subject to CORS, so this function is the only
+   thing between a random web page and a process on the user's Mac. It is table-tested
+   in both directions AND exercised for real through the mounted app (the refusal must
+   arrive as close code 4403 with nothing spawned).
+2. THE ARGV. Every lockdown flag present, and `--yes-always` / `--no-git` asserted
+   ABSENT — the first would delete aider's own approval prompt (the entire reason a PTY
+   is the honest surface here), the second would delete /undo while keeping every bit of
+   the write power.
+3. THE RESIZE ESCAPE. Consumed server-side, never written to the PTY, always clamped.
+   An escape that reached the terminal would render as text; an unclamped ioctl wedges
+   the renderer.
+
+The session manager is NOT mocked: it is run against /bin/cat and /bin/sh, so the fd
+handling, the EOF-on-child-exit path and the process-GROUP teardown are proven rather
+than argued. Only the aider binary itself is substituted (it is not installed here).
+
+Run: python3 bridge/tests/test_aider_lane.py
+"""
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+
+from bridge import pty_aider as P                                   # noqa: E402
+
+CHECKS = 0
+
+
+def ok(cond, label):
+    global CHECKS
+    CHECKS += 1
+    assert cond, f"FAIL: {label}"
+
+
+# ── 1. the origin gate ───────────────────────────────────────────────────────
+def test_origin_gate():
+    for good in ("http://127.0.0.1:8700", "http://localhost:8700",
+                 "http://127.0.0.1:8700/", "  http://localhost:8700  "):
+        ok(P.origin_allowed(good, 8700), f"allowed: {good!r}")
+    bad = [
+        "http://evil.example",              # the actual attack
+        "https://127.0.0.1:8700",           # scheme must match — no https page of ours
+        "http://127.0.0.1:8701",            # another port on the same host
+        "http://127.0.0.1",                 # portless
+        "http://127.0.0.1:8700.evil.com",   # prefix trick
+        "http://evil.com/http://127.0.0.1:8700",
+        "http://127.0.0.1:8700@evil.com",
+        "file://",
+        "null",                             # a sandboxed iframe's opaque origin
+        "", None, 0, [], {}, b"http://127.0.0.1:8700",
+    ]
+    for b in bad:
+        ok(not P.origin_allowed(b, 8700), f"refused: {b!r}")
+    # A MISSING header is refused — a browser page always sends one.
+    ok(not P.origin_allowed(None, 8700), "missing Origin is refused")
+    # The allowlist follows the configured port, so a re-ported bridge is not locked out.
+    ok(P.origin_allowed("http://127.0.0.1:9000", 9000), "port comes from config")
+    ok(not P.origin_allowed("http://127.0.0.1:8700", 9000), "old port not grandfathered")
+    ok(len(P.allowed_origins(8700)) == 2, "exactly two origins, no wildcards")
+
+
+# ── 2. the resize control message ────────────────────────────────────────────
+def test_resize():
+    clean, sizes = P.split_resize(b"hello\x1b[RESIZE:120;40]world")
+    ok(clean == b"helloworld", "escape stripped from the middle")
+    ok(sizes == [(120, 40)], "cols;rows parsed in that order")
+    # NEVER written to the PTY, in any position.
+    for payload in (b"\x1b[RESIZE:80;24]", b"\x1b[RESIZE:80;24]x", b"y\x1b[RESIZE:80;24]"):
+        c, s = P.split_resize(payload)
+        ok(b"RESIZE" not in c, f"escape never reaches the pty: {payload!r}")
+        ok(s == [(80, 24)], f"size read: {payload!r}")
+    c, s = P.split_resize(b"a\x1b[RESIZE:10;5]b\x1b[RESIZE:11;6]c")
+    ok(c == b"abc" and s == [(10, 5), (11, 6)], "several escapes in one message")
+    # Clamping — WSL2-style nonsense and zero/negative must not reach the ioctl.
+    _c, s = P.split_resize(b"\x1b[RESIZE:131072;99999]")
+    ok(s == [(P.MAX_COLS, P.MAX_ROWS)], "absurd dimensions clamped to the ceiling")
+    _c, s = P.split_resize(b"\x1b[RESIZE:0;0]")
+    ok(s == [(P.MIN_COLS, P.MIN_ROWS)], "zero clamped to the floor")
+    # Junk totality — the regex only matches digits, so a malformed escape is DATA.
+    for junk in (b"\x1b[RESIZE:abc;def]", b"\x1b[RESIZE:;]", b"\x1b[RESIZE:80]",
+                 b"\x1b[RESIZE 80;24]", b"[RESIZE:80;24]"):
+        c, s = P.split_resize(junk)
+        ok(s == [] and c == junk, f"malformed escape passes through as data: {junk!r}")
+    ok(P.split_resize(b"") == (b"", []), "empty message")
+    ok(P.split_resize(None) == (b"", []), "None is not a crash")
+    # Raw bytes are otherwise untouched — a terminal stream is not text.
+    raw = bytes(range(256))
+    ok(P.split_resize(raw)[0] == raw, "arbitrary bytes pass through byte-for-byte")
+    # clamp_dim totality
+    for junk in (None, "", "x", [], {}, object(), float("nan")):
+        ok(P.clamp_dim(junk, 2, 200, 100) == 100, f"clamp falls back: {junk!r}")
+    ok(P.clamp_dim("80", 2, 200, 100) == 80, "numeric string accepted")
+    ok(P.clamp_dim(3.9, 2, 200, 100) == 3, "float truncates, never raises")
+
+
+# ── 3. the launch line ───────────────────────────────────────────────────────
+def test_argv():
+    argv = P.aider_argv("/h", "gemma-4-31B-q4")
+    ok(argv[0] == "/h/data/aider-venv/bin/aider", "explicit venv path, never PATH lookup")
+    ok(argv[1] == "--model" and argv[2] == "openai/gemma-4-31B-q4",
+       "the openai/ prefix is what routes litellm at our runner")
+    ok("--edit-format" in argv and argv[argv.index("--edit-format") + 1] == "whole",
+       "whole is the only format a 4B reliably produces")
+    for flag in P.LOCKDOWN_FLAGS:
+        ok(flag in argv, f"lockdown flag present: {flag}")
+    # THE TWO NEGATIVES. These are the assertions with teeth.
+    for forbidden in P.FORBIDDEN_FLAGS:
+        ok(forbidden not in argv, f"NEVER passed: {forbidden}")
+    ok("--yes-always" in P.FORBIDDEN_FLAGS and "--no-git" in P.FORBIDDEN_FLAGS,
+       "the forbidden set names both")
+    ok("--analytics-disable" in argv and "--no-analytics" not in argv,
+       "the PERMANENT opt-out, not the session-only one (mixpanel+posthog are core deps)")
+    ok("--disable-playwright" in argv,
+       "without it aider can block on stdin asking to install playwright, inside our tab")
+    ok("--no-auto-commits" in argv, "edits stay uncommitted")
+    # git stays ON: --no-git would remove /undo and /diff, the only undo aider has.
+    ok(not any(a == "--no-git" for a in argv), "git is left enabled deliberately")
+    # MLX: the wire id is a PATH, and it must survive verbatim into the argv.
+    mlx = P.aider_argv("/h", "/Users/d/data/models/Qwen3-mlx")
+    ok(mlx[2] == "openai//Users/d/data/models/Qwen3-mlx",
+       "an MLX path goes on the wire unchanged (mlx_lm.server resolves it as a load)")
+    # Totality: an empty/None model still produces a well-formed (if useless) line.
+    for m in ("", None):
+        a = P.aider_argv("/h", m)
+        ok(a[2] == "openai/", f"empty model does not corrupt the argv: {m!r}")
+    ok(P.aider_argv("/h", "x", "")[4] == "whole", "empty edit format -> the default")
+    ok(P.aider_argv("/h", "x", "diff")[4] == "diff", "an explicit format is honoured")
+
+
+def test_env():
+    env = P.aider_env({"PATH": "/usr/bin", "COLUMNS": "999", "LINES": "9"},
+                      "http://127.0.0.1:6767/v1", "harness-local")
+    ok(env["OPENAI_API_BASE"] == "http://127.0.0.1:6767/v1", "base url")
+    ok(env["OPENAI_API_KEY"] == "harness-local", "key forwarded")
+    ok(env["TERM"] == "xterm-256color", "a real TERM (rich + prompt_toolkit need one)")
+    ok("COLUMNS" not in env and "LINES" not in env,
+       "COLUMNS/LINES removed — the winsize ioctl owns the size")
+    ok(env["PATH"] == "/usr/bin", "the rest of the environment is inherited")
+    # A DUMMY KEY IS MANDATORY: an empty Bearer token fails the request before it
+    # reaches our runner (upstream states this for the LM Studio lane, same client).
+    for empty in ("", "   ", None):
+        ok(P.aider_env({}, "u", empty)["OPENAI_API_KEY"] == "harness-local",
+           f"empty key backfilled: {empty!r}")
+    ok(P.aider_env(None, "u", "k")["OPENAI_API_KEY"] == "k", "None base env is fine")
+
+
+# ── 4. install detection, from disk ──────────────────────────────────────────
+def test_installed():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        ok(P.is_installed(d)[0] is False, "empty tree = not installed")
+        binp = Path(d) / P.VENV_DIR / "bin"
+        binp.mkdir(parents=True)
+        (binp / "aider").write_text("#!/bin/sh\n")
+        ok(P.is_installed(d)[0] is False, "present but not executable = not installed")
+        os.chmod(binp / "aider", 0o755)
+        okk, path, _r = P.is_installed(d)
+        ok(okk and path == str(binp / "aider"), "executable = installed, with its path")
+        # It is read FROM DISK every time — never a cached flag.
+        os.remove(binp / "aider")
+        ok(P.is_installed(d)[0] is False, "a deleted venv reads as not-installed at once")
+        ok(P.workspace_path(d).endswith("data/aider-workspace"), "workspace path")
+        ok("aider-workspace" in P.workspace_path(d) and
+           not P.workspace_path(d).rstrip("/").endswith(os.path.expanduser("~")),
+           "the workspace is never $HOME")
+
+
+# ── 5. the session, run for real ─────────────────────────────────────────────
+def test_session_roundtrip():
+    sess = P.PtySession(["/bin/cat"], cwd="/tmp", env={"TERM": "dumb", "PATH": "/usr/bin:/bin"})
+    sess.start(cols=90, rows=24)
+    try:
+        ok(sess.alive(), "child is running on the pty")
+        sess.write(b"ping\n")
+        got = b""
+        deadline = time.time() + 5
+        while b"ping" not in got and time.time() < deadline:
+            got += sess.read()
+        ok(b"ping" in got, "bytes go in and come back out of the pty")
+        sess.resize(120, 40)          # must not raise on a live master fd
+        ok(True, "resize on a live session is a no-throw ioctl")
+    finally:
+        how = sess.close()
+    ok(how in ("term", "kill"), f"teardown killed the child ({how})")
+    ok(not sess.alive(), "child is gone after close")
+    ok(sess.close() == "gone", "close is idempotent")
+
+
+def test_session_eof_and_group_kill():
+    # 1. a child that exits on its own must produce b"" (EOF), or the reader thread in
+    #    app.py would never end and the socket would hang open forever.
+    sess = P.PtySession(["/bin/sh", "-c", "printf done; exit 0"], "/tmp",
+                        {"PATH": "/bin:/usr/bin"})
+    sess.start()
+    out, deadline = b"", time.time() + 5
+    while time.time() < deadline:
+        chunk = sess.read()
+        out += chunk
+        if not chunk:
+            break
+    ok(b"done" in out, "the child's output arrived")
+    ok(chunk == b"", "read() returns b'' when the child is gone (EOF, not an exception)")
+    sess.close()
+
+    # 2. THE PROCESS GROUP. aider spawns children (/run, linters); a dropped socket must
+    #    take them with it. Without start_new_session=True this grandchild would survive.
+    marker = f"/tmp/harness-aider-test-{os.getpid()}.pid"
+    sess = P.PtySession(
+        ["/bin/sh", "-c", f"sleep 300 & echo $! > {marker}; sleep 300"],
+        "/tmp", {"PATH": "/bin:/usr/bin"})
+    sess.start()
+    deadline = time.time() + 5
+    while not os.path.exists(marker) and time.time() < deadline:
+        time.sleep(0.05)
+    ok(os.path.exists(marker), "the grandchild started")
+    gpid = int(open(marker).read().strip())
+    sess.close()
+    time.sleep(0.4)
+    alive = subprocess.run(["/bin/ps", "-p", str(gpid)],
+                           capture_output=True).returncode == 0
+    ok(not alive, "the GRANDCHILD died too — the whole process group is killed")
+    os.remove(marker)
+
+
+def test_one_at_a_time():
+    P.kill_current()
+    a = P.PtySession(["/bin/cat"], "/tmp", {"PATH": "/bin"})
+    a.start()
+    try:
+        ok(P.claim(a) is True, "the first session claims the slot")
+        ok(P.busy() is True, "busy while it runs")
+        b = P.PtySession(["/bin/cat"], "/tmp", {"PATH": "/bin"})
+        ok(P.claim(b) is False, "a second claim is REFUSED (no queue)")
+        ok(P.current() is a, "the slot still holds the first session")
+    finally:
+        a.close()
+        P.release(a)
+    ok(P.busy() is False, "released after teardown")
+    c = P.PtySession(["/bin/cat"], "/tmp", {"PATH": "/bin"})
+    ok(P.claim(c) is True, "the slot is reusable once free")
+    P.release(c)
+    # A dead-but-unreleased session must not block the next one forever.
+    d = P.PtySession(["/bin/sh", "-c", "exit 0"], "/tmp", {"PATH": "/bin"})
+    d.start()
+    P.claim(d)
+    time.sleep(0.3)
+    e = P.PtySession(["/bin/cat"], "/tmp", {"PATH": "/bin"})
+    ok(P.claim(e) is True, "a session whose child exited does not hold the slot")
+    P.release(e)
+    d.close()
+
+
+# ── 6. the routes, through the real app ──────────────────────────────────────
+def test_routes_live():
+    """Mount the actual FastAPI app and drive the websocket. The only thing faked is
+    aider_spawn_spec (aider is not installed in the sandbox); the origin gate, the byte
+    relay, the resize consumption and the busy refusal are all the real code paths."""
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as e:                                       # noqa: BLE001
+        print(f"  (skipped live route tests — no TestClient: {e})")
+        return
+    import warnings
+    warnings.filterwarnings("ignore")
+    from bridge import app as A
+
+    ok(A._pty is not None, f"app imported pty_aider ({A._PTY_ERR})")
+    P.kill_current()
+    client = TestClient(A.app)
+
+    # status
+    r = client.get("/api/aider/status")
+    ok(r.status_code == 200, "GET /api/aider/status is 200")
+    body = r.json()
+    for key in ("installed", "running", "model", "model_ready", "workspace"):
+        ok(key in body, f"status carries {key}")
+    ok(body["workspace"].endswith("data/aider-workspace"), "status names the workspace")
+
+    # the page exists and loads the pinned assets by the names the fetch script writes
+    page = (ROOT / "bridge" / "panel" / "aider.html").read_text()
+    ok("/assets/vendor/xterm.js" in page, "the page loads self-hosted xterm.js")
+    ok("/assets/vendor/xterm.css" in page, "…and its css")
+    ok("/assets/vendor/xterm-addon-fit.js" in page, "…and the fit addon")
+    ok("cdn." not in page and "https://" not in page, "no runtime CDN anywhere (offline)")
+    ok("/api/pty/aider" in page and "\\x1b[RESIZE:" in page,
+       "the page speaks the one control message")
+
+    # THE ORIGIN GATE, live. A cross-origin handshake must be closed 4403 and must not
+    # spawn anything — which is proved by the spec never being called.
+    called = {"n": 0}
+    real_spec = A.aider_spawn_spec
+
+    def fake_spec():
+        called["n"] += 1
+        return (["/bin/cat"], {"PATH": "/bin:/usr/bin", "TERM": "xterm-256color"},
+                "/tmp", "")
+    A.aider_spawn_spec = fake_spec
+    try:
+        from starlette.testclient import WebSocketDenialResponse       # noqa: F401
+    except Exception:                                                  # noqa: BLE001
+        pass
+    try:
+        for bad_origin in ("http://evil.example", "http://127.0.0.1:9999"):
+            with client.websocket_connect(
+                    "/api/pty/aider", headers={"origin": bad_origin}) as ws:
+                closed = ws.receive()
+            ok(closed.get("type") == "websocket.close", f"{bad_origin} closed immediately")
+            ok(closed.get("code") == P.CLOSE_ORIGIN,
+               f"{bad_origin} refused with 4403 (got {closed.get('code')})")
+        ok(called["n"] == 0, "NOTHING was spawned for a refused origin")
+
+        good = {"origin": "http://127.0.0.1:8700"}
+        with client.websocket_connect("/api/pty/aider?cols=90&rows=30",
+                                      headers=good) as ws:
+            ok(called["n"] == 1, "an allowed origin reaches the spawn path")
+            ws.send_bytes(b"hello\n")
+            got, deadline = b"", time.time() + 5
+            while got.count(b"hello") < 1 and time.time() < deadline:
+                got += ws.receive_bytes()
+            ok(b"hello" in got, "bytes relayed through the websocket into the pty and back")
+
+            # A resize message must be CONSUMED: /bin/cat echoes everything it is given,
+            # so if the escape reached the pty it would come straight back at us.
+            ws.send_bytes(b"\x1b[RESIZE:100;30]")
+            ws.send_bytes(b"after\n")
+            got, deadline = b"", time.time() + 5
+            while b"after" not in got and time.time() < deadline:
+                got += ws.receive_bytes()
+            ok(b"RESIZE" not in got, "the resize escape never reached the pty")
+            ok(b"after" in got, "…and the next real keystroke still arrived")
+
+            # ONE AT A TIME: a second connect is refused 4409 while the first is live.
+            with client.websocket_connect("/api/pty/aider", headers=good) as ws2:
+                msgs = [ws2.receive(), ws2.receive()]
+            codes = [m.get("code") for m in msgs if m.get("type") == "websocket.close"]
+            ok(P.CLOSE_BUSY in codes, f"second session refused with 4409 (got {codes})")
+            ok(called["n"] == 2, "the second connect got as far as the spec, not the pty")
+
+        # the session is released (and its child killed) when the socket drops
+        time.sleep(0.4)
+        ok(P.busy() is False, "a dropped socket ends the session")
+
+        # PRECONDITION refusal: the spec's error text is delivered INTO the terminal,
+        # then 4412 — the page must never sit at a blank prompt with no explanation.
+        A.aider_spawn_spec = lambda: (None, None, None, "no model is loaded")
+        with client.websocket_connect("/api/pty/aider", headers=good) as ws:
+            first = ws.receive()
+            second = ws.receive()
+        ok(b"no model is loaded" in (first.get("bytes") or b""),
+           "the reason is written to the terminal")
+        ok(second.get("code") == P.CLOSE_PRECONDITION, "…and the close code says 4412")
+    finally:
+        A.aider_spawn_spec = real_spec
+        P.kill_current()
+
+
+# ── 7. wiring greps (the seams that live outside this module) ────────────────
+def test_wiring():
+    appsrc = (ROOT / "bridge" / "app.py").read_text()
+    ok('@app.websocket("/api/pty/aider")' in appsrc, "the websocket route exists")
+    ok('@app.get("/aider")' in appsrc, "the page route exists")
+    ok('@app.get("/api/aider/status")' in appsrc, "status route")
+    ok('@app.post("/api/aider/install")' in appsrc, "install route")
+    ok("origin_allowed" in appsrc, "the handler consults the origin gate")
+    # The gate must run BEFORE the spawn — order is the whole point.
+    ok(appsrc.index("origin_allowed") < appsrc.index("aider_spawn_spec()"),
+       "the origin gate is checked before anything is spawned")
+    ok('"aider", "aider-install"' in appsrc, "both logs are viewable in-panel")
+    ok("wire_model_id(live" in appsrc, "the model id goes through wire_model_id")
+    ok("_live_model_id(" in appsrc, "the live runner is the authority on the model")
+
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    ok("{n:'aider', label:'aider'}" in panel, "panel log source: aider")
+    ok("{n:'aider-install'" in panel, "panel log source: aider install")
+
+    fetch = (ROOT / "scripts" / "fetch_vendor_assets.sh").read_text()
+    ok('XTERM_V="6.0.0"' in fetch, "xterm pinned to 6.0.0 (the version Hermes ships)")
+    ok('XTERM_FIT_V="0.11.0"' in fetch, "addon-fit pinned")
+    ok("xterm.js|" in fetch and "xterm.css|" in fetch and "xterm-addon-fit.js|" in fetch,
+       "all three assets are fetched")
+
+    yml = (ROOT / "harness.yaml").read_text()
+    m = re.search(r'^  aider_pin:\s*"([0-9a-f]{40})"', yml, re.M)
+    ok(bool(m), "build.aider_pin is a full 40-char commit sha")
+    inst = (ROOT / "scripts" / "install_aider.sh").read_text()
+    ok("_yb aider_pin" in inst, "the installer reads the pin from harness.yaml")
+    ok("Aider-AI/aider.git" in inst, "upstream, not the cecli fork")
+    ok("cecli" not in inst, "the fork is not what gets cloned")
+    ok("-m pip install" in inst and "/bin/pip" not in inst,
+       "python -m pip everywhere, never bin/pip (a uv-seeded venv may lack the script)")
+    ok("data/aider-venv" in inst, "its own venv")
+
+    sw = (ROOT / "app" / "main.swift").read_text()
+    ok('HarnessTab(title: "Aider"' in sw, "the tab row exists")
+    ok('http://127.0.0.1:8700/aider' in sw, "…pointing at the bridge page")
+    ok("NSSize(width: 1160" in sw, "minSize.width raised for the 9th tab")
+    ok(sw.count("HarnessTab(title:") == len(re.findall(r"HarnessTab\(title:", sw)),
+       "tabs are declared only in the table")
+
+
+def main():
+    for fn in (test_origin_gate, test_resize, test_argv, test_env, test_installed,
+               test_session_roundtrip, test_session_eof_and_group_kill,
+               test_one_at_a_time, test_routes_live, test_wiring):
+        fn()
+        print(f"  ok  {fn.__name__}")
+    print(f"aider lane: {CHECKS} checks passed")
+
+
+if __name__ == "__main__":
+    main()

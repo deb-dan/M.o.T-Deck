@@ -219,6 +219,16 @@ if [[ $FAT -eq 1 ]]; then
   # the pinned llama-server binary + its dylibs
   mkdir -p "$STAGE/data/llamacpp/build"
   cp -R data/llamacpp/build/bin "$STAGE/data/llamacpp/build/"
+  # BUILD STAMP — identifies WHICH bundle a snapshot was provisioned from.
+  # firstrun_fat.sh compares it against an existing snapshot's .seed_stamp and refuses
+  # to seed BACKWARDS (2026-08-20 incident: an early-August /Applications bundle rolled
+  # a live 6-component install back to a 3-component, pre-voice manifest).
+  {
+    echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "git_sha=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "components=$(awk '/^components:/{f=1;next} f && /^[^ ]/{exit} f && /^  [A-Za-z0-9_-]+:/{n++} END{print n+0}' harness.yaml)"
+  } > "$STAGE/SEED_STAMP"
+  echo "[harness] seed stamp: $(tr '\n' ' ' < "$STAGE/SEED_STAMP")"
   # sanity: web_dist made it into the seed
   [[ -f "$STAGE/vendor/hermes/hermes_cli/web_dist/index.html" ]] \
     || { echo "ERROR (fat): Hermes web_dist not present in the staged seed."; exit 1; }

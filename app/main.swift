@@ -41,6 +41,15 @@ let tabs: [HarnessTab] = [
     // a second load of the panel document, deliberately — a native tab that is always
     // reachable, while the in-panel Music view keeps working exactly as before.
     HarnessTab(title: "Music", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
+    // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
+    // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
+    // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
+    HarnessTab(title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
+    // Office — spreadsheets over vendored Univer, served from OUR bridge (/office).
+    // Ours, bridge origin, its own document for the same reason Aider is: it loads
+    // ~10MB of Univer UMD and must not carry the panel's poll loops. Debi suggested
+    // "Office Lane"; the tab-strip width budget below rules a two-word title out.
+    HarnessTab(title: "Office", url: URL(string: "http://127.0.0.1:8700/office")!),
 ]
 let tabTitles: [String] = tabs.map { $0.title }
 
@@ -410,7 +419,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Harness"
-        window.minSize = NSSize(width: 900, height: 620)
+        // 1160, raised from 900 when the 9th tab (Aider) landed: the tab strip is
+        // centred and the ⫽ button is pinned trailing, so at 900pt the nine titles
+        // could touch it (see the WIDTH BUDGET note on setSegmentWidths). Two panes at
+        // the 420pt minimum plus the divider still fit comfortably inside 1160.
+        window.minSize = NSSize(width: 1160, height: 620)
         // Dark editorial chrome: makes the titlebar + segmented control render dark,
         // matching the near-black panel instead of the default white strip.
         window.appearance = NSAppearance(named: .darkAqua)
@@ -1017,16 +1030,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Explicit per-segment widths — the whole reason the geometry below is knowable.
     //
-    // WIDTH BUDGET (re-checked when the 8th tab, Music, was added, 2026-08-21). The strip
-    // is centred in `tabBar` and the ⫽ button is pinned trailing at -12, so at the
-    // window's minSize.width of 900 the strip may occupy roughly 830pt before the two
-    // could touch. The eight current titles total 75 characters; at 13pt SF that is
-    // ~7.0-8.0pt per character plus the fixed 26pt padding per segment, i.e. a total of
-    // ~733pt (7.0/char) to ~808pt (8.0/char) — still inside the budget but no longer
-    // comfortably, so the NEXT tab almost certainly needs a shorter title. No
-    // label shortening was needed. If a future tab pushes the estimate past ~830, shorten
-    // the LONGEST titles (e.g. "Mission Control" → "Control") rather than removing the
-    // padding: `segmentAt` reads exactly these numbers back to hit-test a drag.
+    // WIDTH BUDGET (re-checked when the 9th tab, Aider, was added, 2026-08-21). The strip
+    // is centred in `tabBar` and the ⫽ button is pinned trailing at -12, so the strip may
+    // occupy roughly minSize.width - 70 before the two could touch. The eight-tab estimate
+    // (~733-808pt) had already used up the old 900pt window's ~830pt budget, so THIS tab
+    // raised minSize.width to 1160 — budget ~1090pt — rather than shrinking a label.
+    // The ten current titles (Office landed 2026-08-21, +6 characters and +1 segment)
+    // total 78 characters; at 13pt SF that is ~7.0-8.0pt per character plus the fixed
+    // 26pt padding per segment, i.e. ~806pt to ~884pt: inside
+    // 1090 with room for one or two more tabs. If a future tab pushes the estimate past
+    // the budget, shorten the LONGEST titles (e.g. "Mission Control" → "Control") rather
+    // than removing the padding: `segmentAt` reads exactly these numbers back to hit-test
+    // a drag.
     func setSegmentWidths() {
         let f = seg.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         for (i, t) in tabTitles.enumerated() {

@@ -313,6 +313,37 @@ build:
   # -DGGML_BLAS=ON which upstream only asks for on Linux). ⚠️ NEVER run its server.sh:
   # it binds 0.0.0.0. We only ever exec ./build/ace-lm and ./build/ace-synth.
   acestep_pin: "9761469d95fc204b5468623c68a1a2203e50b1f9"
+  # ── AIDER coding agent (docs/research/2026-08-20-aider-recon.md, slice 1) ────
+  # A git COMMIT on `main`, deliberately NOT the v0.86.0 tag: that tag is ~1 year old
+  # and predates the Feb-2026 dependency refresh (openai 2.x / litellm 1.82) that a
+  # current OpenAI-compatible endpoint wants. A bare-commit pin is native here —
+  # components.odysseus is pinned the same way, on a non-default branch.
+  # Verified LIVE 2026-08-21: this sha is a real merge commit on Aider-AI/aider
+  # ("Merge pull request #5173 …", authored by paul-gauthier) — i.e. upstream is slow,
+  # not dead. The fork cecli-dev/cecli was REJECTED: it re-introduces agent-mode
+  # tool-calling, which is exactly the property aider was chosen for NOT having
+  # (a 4B cannot tool-call reliably; aider's edit formats are plain text).
+  # Plan B, documented not adopted: if main goes >6 months without a commit, move to
+  # cecli-dev/cecli at a release tag (Apache-2.0 verified) keeping --edit-format whole.
+  # Read by scripts/install_aider.sh (awk, same pattern as the other pins).
+  aider_pin: "5dc9490bb35f9729ef2c95d00a19ccd30c26339c"
+  # ── OFFICE lane (docs/research/2026-08-20-office-lane-recon.md, slice 1: SHEETS) ──
+  # Univer, Apache-2.0, vendored as UMD assets our OWN bridge serves — no new process,
+  # no port, no component card. Read by scripts/fetch_vendor_assets.sh (awk, same
+  # pattern as the other pins) which fetches five files into
+  # bridge/panel/assets/vendor/univer/ (~10.5MB: presets 7.1MB + preset-sheets-core
+  # 3.2MB + 82KB css + the en-US locale + the rxjs peer bundle).
+  # Pin = the npm `latest` of @univerjs/presets and @univerjs/preset-sheets-core,
+  # read LIVE from registry.npmjs.org 2026-08-21 (a 1.0.0-beta.1 exists and is
+  # deliberately NOT taken). BOTH packages must move together — they are one release
+  # train and the preset is loaded into the presets runtime.
+  # ⚠️ Univer's own .xlsx import/export is Univer Pro (a Docker server + a commercial
+  # licence) and we do not use it: bridge/office.py owns the round-trip via openpyxl,
+  # which is the escape hatch Univer's own docs name. A bump here is a UI-surface
+  # bump only — but re-check IWorkbookData/IStyleData key names and the CellValueType
+  # / HorizontalAlign / VerticalAlign enums bridge/office.py mirrors, because a
+  # renumbered enum is a silently wrong cell, not an error.
+  univer_pin: "0.25.1"
   # uv: the venv/installer the PORTABLE first-run bootstraps with (scripts/firstrun.sh).
   # It used to curl|sh the UNPINNED astral.sh installer — i.e. a fresh Mac provisioned
   # against whatever uv shipped that day. Pinned = the same idiom as bun_pin: the URL

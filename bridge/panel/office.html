@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Office — Harness</title>
+<!-- The Office tab is its OWN document, deliberately not the panel (the /aider
+     precedent): it loads ~10MB of Univer UMD, mounts a canvas grid, and must not
+     carry the panel's poll loops. The palette values below are the panel's tokens,
+     copied — a separate document cannot inherit :root. Keep them in step by eye.
+
+     SLICE 1 IS SHEETS ONLY (.xlsx). Documents come later; nothing here assumes a
+     single format beyond that, but nothing here handles one either. -->
+<link rel="stylesheet" href="/assets/vendor/univer/preset-sheets-core.css">
+<style>
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream)}
+  .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
+        border-radius:6px;color:var(--dim);white-space:nowrap}
+  .pill.on{color:var(--gold);border-color:var(--gold)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  button{font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2);border-radius:8px;
+         padding:6px 13px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--cream);color:#171420;border-color:var(--cream)}
+  .grow{flex:1 1 auto}
+  #msg{flex:none;padding:9px 16px;font-size:12px;display:none;color:var(--bad);
+       border-bottom:1px solid var(--line);background:var(--bg2)}
+  #body{flex:1 1 auto;min-height:0;display:flex}
+  /* left: the file list */
+  #files{flex:none;width:236px;border-right:1px solid var(--line);background:var(--bg2);
+         display:flex;flex-direction:column;min-height:0}
+  #files .hd{flex:none;display:flex;gap:6px;align-items:center;padding:10px 12px;
+             border-bottom:1px solid var(--line)}
+  #flist{flex:1 1 auto;overflow:auto;min-height:0;padding:6px}
+  .frow{padding:7px 9px;border:1px solid transparent;border-radius:8px;cursor:pointer;
+        display:flex;flex-direction:column;gap:2px}
+  .frow:hover{background:var(--card)}
+  .frow.on{background:var(--card);border-color:var(--gold)}
+  .frow .fn{color:var(--cream);font-size:12.5px;word-break:break-all}
+  .frow .fm{color:var(--faint);font-size:10.5px}
+  .frow .acts{display:none;gap:8px;margin-top:3px}
+  .frow:hover .acts,.frow.on .acts{display:flex}
+  .lnk{color:var(--faint);font-size:10.5px;cursor:pointer;background:none;border:0;
+       padding:0}
+  .lnk:hover{color:var(--gold)}
+  .lnk.arm{color:var(--bad)}
+  #fnote{flex:none;padding:9px 12px;border-top:1px solid var(--line);
+         color:var(--faint);font-size:10.5px;line-height:1.45}
+  #newrow{display:none;padding:8px 12px;border-bottom:1px solid var(--line);gap:6px}
+  #newrow input{flex:1 1 auto;min-width:0;background:var(--card);color:var(--fg);
+                border:1px solid var(--line2);border-radius:6px;padding:5px 7px;
+                font:12px -apple-system,sans-serif}
+  /* middle: the grid. Univer renders a LIGHT surface by design — a spreadsheet is a
+     white page — so the dark chrome frames it rather than fighting it. */
+  #mid{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+  #sheet{flex:1 1 auto;min-height:0;background:#fff}
+  #empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+         color:var(--faint);font-size:12.5px;text-align:center;padding:24px}
+  /* right: the slice-2 stub. A collapsed rail with a label and NO controls — a dead
+     button would be worse than an honest placeholder. */
+  #ai{flex:none;width:34px;border-left:1px solid var(--line);background:var(--bg2);
+      display:flex;align-items:center;justify-content:center}
+  #ai span{writing-mode:vertical-rl;transform:rotate(180deg);color:var(--faint);
+           font:10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;
+           text-transform:uppercase;white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <span class="name">Office</span>
+  <span class="pill" id="p-file">no workbook open</span>
+  <span class="pill" id="p-state">—</span>
+  <span class="grow"></span>
+  <button id="btn-save" class="primary" disabled>Save</button>
+</header>
+<div id="msg"></div>
+<div id="body">
+  <aside id="files">
+    <div class="hd">
+      <span class="pill">Spreadsheets</span>
+      <span class="grow"></span>
+      <button id="btn-new">New</button>
+    </div>
+    <div id="newrow">
+      <input id="new-name" placeholder="name" maxlength="80" autocomplete="off">
+      <button id="btn-create">Create</button>
+    </div>
+    <div id="flist"></div>
+    <div id="fnote">
+      <span id="fidelity"></span>
+      <div style="margin-top:6px" id="fdir"></div>
+    </div>
+  </aside>
+  <main id="mid">
+    <div id="empty">Pick a spreadsheet on the left, or make a new one.</div>
+    <div id="sheet" style="display:none"></div>
+  </main>
+  <aside id="ai" title="An AI side-panel lands in slice 2">
+    <span>Ask the model — coming in slice 2</span>
+  </aside>
+</div>
+
+<!-- Load order is fixed and matters: React and rxjs are Univer's PEER globals, the
+     presets bundle carries a React-18 polyfill prelude and defines createUniver, the
+     sheets preset registers onto it, the locale is read by name. All self-hosted —
+     no runtime CDN, exactly like the artifact renderer. -->
+<script src="/assets/vendor/react.production.min.js"></script>
+<script src="/assets/vendor/react-dom.production.min.js"></script>
+<script src="/assets/vendor/univer/rxjs.umd.min.js"></script>
+<script src="/assets/vendor/univer/presets.umd.js"></script>
+<script src="/assets/vendor/univer/preset-sheets-core.umd.js"></script>
+<script src="/assets/vendor/univer/preset-sheets-core.en-US.js"></script>
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const UP = window.UniverPresets, USC = window.UniverPresetSheetsCore;
+const ULOC = window.UniverPresetSheetsCoreEnUS;
+
+let files = [], current = null, dirty = false, busy = false;
+let univer = null, api = null, armed = null;
+
+function say(text, kind) {
+  const m = el('msg');
+  m.textContent = text || '';
+  m.style.display = text ? '' : 'none';
+  m.style.color = kind === 'ok' ? 'var(--ok)' : (kind === 'dim' ? 'var(--faint)' : 'var(--bad)');
+}
+
+function fmtSize(n) {
+  n = Number(n) || 0;
+  return n < 1024 ? n + ' B' : (n < 1048576 ? (n / 1024).toFixed(0) + ' KB'
+                                             : (n / 1048576).toFixed(1) + ' MB');
+}
+function fmtWhen(ts) {
+  const d = new Date((Number(ts) || 0) * 1000);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString();
+}
+
+function paint() {
+  el('p-file').textContent = current || 'no workbook open';
+  el('p-file').className = 'pill' + (current ? ' on' : '');
+  el('p-state').textContent = busy ? 'working…' : (dirty ? 'unsaved changes' : (current ? 'saved' : '—'));
+  el('p-state').className = 'pill' + (dirty ? ' bad' : '');
+  el('btn-save').disabled = !current || busy || !api;
+  el('empty').style.display = current ? 'none' : '';
+  el('sheet').style.display = current ? '' : 'none';
+}
+
+function renderFiles() {
+  const box = el('flist');
+  box.innerHTML = '';
+  if (!files.length) {
+    const d = document.createElement('div');
+    d.className = 'fm';
+    d.style.padding = '10px 9px';
+    d.textContent = 'No spreadsheets yet.';
+    box.appendChild(d);
+    return;
+  }
+  files.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'frow' + (f.name === current ? ' on' : '');
+    const n = document.createElement('div');
+    n.className = 'fn';
+    n.textContent = f.name;
+    const m = document.createElement('div');
+    m.className = 'fm';
+    m.textContent = fmtSize(f.size_bytes) + ' · ' + fmtWhen(f.modified)
+                  + (f.has_backup ? ' · backup kept' : '');
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    const dl = document.createElement('button');
+    dl.className = 'lnk';
+    dl.textContent = 'download';
+    dl.onclick = ev => { ev.stopPropagation();
+                         window.location.href = '/api/office/download/' + encodeURIComponent(f.name); };
+    const del = document.createElement('button');
+    del.className = 'lnk' + (armed === f.name ? ' arm' : '');
+    del.textContent = armed === f.name ? 'sure?' : 'delete';
+    del.onclick = ev => {
+      ev.stopPropagation();
+      if (armed !== f.name) { armed = f.name; renderFiles();
+                              setTimeout(() => { if (armed === f.name) { armed = null; renderFiles(); } }, 3000);
+                              return; }
+      armed = null;
+      remove(f.name);
+    };
+    acts.appendChild(dl); acts.appendChild(del);
+    row.appendChild(n); row.appendChild(m); row.appendChild(acts);
+    row.onclick = () => open(f.name);
+    box.appendChild(row);
+  });
+}
+
+async function loadFiles() {
+  try {
+    const r = await fetch('/api/office/files', { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'could not list spreadsheets'); return; }
+    files = j.files || [];
+    el('fidelity').textContent = j.fidelity || '';
+    el('fdir').textContent = j.dir || '';
+    // The one thing worth shouting about: no openpyxl means no round-trip at all.
+    if (j.roundtrip === false) {
+      say('Spreadsheets cannot be read or written on this bridge: ' + (j.roundtrip_error
+          || 'openpyxl is missing') + ' — reinstall the bridge venv (./scripts/bootstrap.sh).');
+    }
+    renderFiles();
+  } catch (e) { say('the bridge did not answer: ' + e); }
+}
+
+// ── the Univer instance ──────────────────────────────────────────────────────
+// One workbook at a time. Opening another DISPOSES the whole instance and builds a
+// fresh one: cheaper to reason about than unit lifecycle juggling, and it guarantees
+// no state of the previous file can survive into the next one.
+function mount(data) {
+  if (!UP || !USC) {
+    say('Univer is missing — run ./scripts/fetch_vendor_assets.sh, then reload.');
+    return false;
+  }
+  if (univer) { try { univer.dispose(); } catch (e) { /* already gone */ } }
+  univer = null; api = null;
+  el('sheet').innerHTML = '';
+  const locale = (UP.LocaleType && UP.LocaleType.EN_US) || 'enUS';
+  const locales = {}; locales[locale] = ULOC;
+  const made = UP.createUniver({
+    locale: locale,
+    locales: locales,
+    theme: UP.defaultTheme,
+    presets: [USC.UniverSheetsCorePreset({ container: 'sheet' })],
+  });
+  univer = made.univer; api = made.univerAPI;
+  api.createUniverSheet(data);
+  // Any executed command is an edit. Univer has no "is dirty" flag, and treating
+  // every command as one is the safe direction: a false "unsaved changes" costs a
+  // click, a missed one costs the work.
+  try { api.onCommandExecuted(() => { if (!dirty) { dirty = true; paint(); } }); }
+  catch (e) { /* older facade — the Save button still works, it just always shows saved */ }
+  return true;
+}
+
+async function open(name) {
+  if (busy) return;
+  if (!confirmDiscard(name)) return;
+  busy = true; say(''); paint();
+  try {
+    const r = await fetch('/api/office/open/' + encodeURIComponent(name), { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'could not open that spreadsheet'); return; }
+    if (!mount(j.snapshot)) return;
+    current = name; dirty = false;
+    const t = truncatedSheets(j.snapshot);
+    if (t) say('This workbook is very large — ' + t + ' was only read up to the first '
+               + '200,000 cells. Saving would write back only what you can see, so this '
+               + 'copy is best treated as read-only.', 'dim');
+  } catch (e) { say('could not open that spreadsheet: ' + e); }
+  finally { busy = false; renderFiles(); paint(); }
+}
+
+function truncatedSheets(snap) {
+  try {
+    const names = Object.keys(snap.sheets || {})
+      .filter(k => snap.sheets[k] && snap.sheets[k].truncated)
+      .map(k => snap.sheets[k].name);
+    return names.length ? names.join(', ') : '';
+  } catch (e) { return ''; }
+}
+
+// Switching away from unsaved work asks IN THE PAGE, never with window.confirm:
+// WKWebView shows no JS confirm() unless the host implements the JS-panel delegate,
+// and a missing delegate makes confirm() return FALSE — i.e. the native tab would
+// silently refuse to open any other file once a sheet was touched. Same recorded
+// class as the ⊕-attach file picker. So: the first click warns, the second discards.
+let discardArmed = null;
+function confirmDiscard(name) {
+  if (!dirty) return true;
+  if (discardArmed === name) { discardArmed = null; return true; }
+  discardArmed = name;
+  say('“' + current + '” has unsaved changes. Save it first, or click ' + name
+      + ' again to discard them.');
+  setTimeout(() => { if (discardArmed === name) discardArmed = null; }, 6000);
+  return false;
+}
+
+async function save() {
+  if (!current || !api || busy) return;
+  let snapshot = null;
+  try {
+    const wb = api.getActiveWorkbook();
+    // `save()` is the current facade name; `getSnapshot()` is its deprecated alias.
+    snapshot = wb && (wb.save ? wb.save() : wb.getSnapshot());
+  } catch (e) { say('could not read the workbook back: ' + e); return; }
+  if (!snapshot) { say('there is nothing to save'); return; }
+  busy = true; say(''); paint();
+  try {
+    const r = await fetch('/api/office/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: current, snapshot: snapshot }),
+    });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'save failed'); return; }
+    dirty = false;
+    say('Saved ' + j.name + ' — ' + j.cells + ' cells'
+        + (j.backup ? ' (a copy of the previous file is kept as ' + j.backup + ')' : ''), 'ok');
+    await loadFiles();
+  } catch (e) { say('save failed: ' + e); }
+  finally { busy = false; paint(); }
+}
+
+async function remove(name) {
+  if (busy) return;
+  busy = true; paint();
+  try {
+    const r = await fetch('/api/office/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'could not delete that spreadsheet'); return; }
+    if (name === current) {
+      current = null; dirty = false;
+      if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
+      univer = null; api = null; el('sheet').innerHTML = '';
+    }
+    await loadFiles();
+  } catch (e) { say('could not delete that spreadsheet: ' + e); }
+  finally { busy = false; paint(); }
+}
+
+async function create() {
+  const name = (el('new-name').value || '').trim();
+  if (!name || busy) return;
+  busy = true; say(''); paint();
+  try {
+    const r = await fetch('/api/office/new', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'could not create that spreadsheet'); return; }
+    el('new-name').value = '';
+    el('newrow').style.display = 'none';
+    await loadFiles();
+    busy = false;
+    await open(j.name);
+    return;
+  } catch (e) { say('could not create that spreadsheet: ' + e); }
+  finally { busy = false; paint(); }
+}
+
+el('btn-save').onclick = save;
+el('btn-new').onclick = () => {
+  const row = el('newrow');
+  row.style.display = row.style.display === 'flex' ? 'none' : 'flex';
+  if (row.style.display === 'flex') el('new-name').focus();
+};
+el('btn-create').onclick = create;
+el('new-name').onkeydown = ev => { if (ev.key === 'Enter') create();
+                                   if (ev.key === 'Escape') el('newrow').style.display = 'none'; };
+window.addEventListener('keydown', ev => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); save(); }
+});
+window.addEventListener('beforeunload', ev => {
+  if (dirty) { ev.preventDefault(); ev.returnValue = ''; }
+});
+
+(async function boot() {
+  paint();
+  await loadFiles();
+})();
+</script>
+</body>
+</html>

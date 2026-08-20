@@ -1940,6 +1940,7 @@ const LOG_SOURCES = [
   {n:'music-install', label:'music install'},
   {n:'comfyui', label:'comfyui'}, {n:'comfyui-install', label:'comfyui install'},
   {n:'unsloth', label:'unsloth'}, {n:'unsloth-install', label:'unsloth install'},
+  {n:'aider', label:'aider'}, {n:'aider-install', label:'aider install'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -2055,23 +2056,66 @@ async function clearLog(btn) {
   showLogs(_logSrc);
 }
 
-/* ---------- chat pane (Rung D, native) ---------- */
-let chatSid = null, chatMode = 'agent', chatBusy = false, chatModel = '';
-// Hermes lane (Phase 1): its own gateway session id, independent of the Odysseus
-// rail — persisted so the conversation survives panel reloads (dashboard restarts
-// invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
-let hermesSid = localStorage.getItem('harness-hermes-sid') || null;
-// Phase 3: the rail lists STORED sessions (state.db rows); the live gateway sid
-// above is what prompt.submit addresses. Selection is keyed by the stored id
-// (survives dashboard restarts, unlike hermesSid).
-let hermesStoredSid = localStorage.getItem('harness-hermes-stored') || null;
-let hermesSessions = [];
-// Phase-3 fix: monotonic token shared by BOTH rail loaders (Odysseus + Hermes).
-// Every loadSessions/loadHermesSessions call bumps it and records the lane it
-// started in; a response that resolves after a newer load OR after the lane has
-// changed is DROPPED (no state write, no render) — kills the cross-lane late-
-// response race during rapid Agent↔Hermes switching. ⚠️ PENDING FABLE QA.
-let sessionsReqSeq = 0;
+/* ---------- chat pane (Rung D, native) ------------------------------------
+   ONE ChatPane — today, and only one. Everything a SECOND chat column would need
+   its own copy of lives on this object and NOWHERE else; everything a second
+   column would have to SHARE is deliberately left as a document singleton and
+   listed below. That split is the whole point of this refactor
+   (docs/handoff/DRAFT-CHAT-SPLIT-ISOLATION.md §1.1 + §4 "Phase 1 — state object,
+   still ONE instance"): behaviour is byte-identical to the scattered globals it
+   replaces, and every reader was rethreaded rather than shimmed — a
+   `let chatSid` alias onto the pane is FORBIDDEN by the draft, because a shim is
+   exactly how a missed call site stays silently wrong on column B.
+
+   DELIBERATELY NOT ON THIS OBJECT (draft §3 — singletons owned by the document):
+   the microphone (`autoVad`, `talkRec`), conversation mode (`convSt`,
+   `convGraceTimer`, `convWrap`), the one playing clip (`currentAudio`),
+   `liveVision` (a property of the RUNNER, not of a column), the artifact viewer,
+   the `voiceCfg` / `modelEntries` / `capsSnap` read-caches, and the activity
+   feed. With two columns each of those gains an OWNER pointer instead of a
+   second copy — a Phase-4 decision, so no owner field is invented here.
+   ⚠ PENDING FABLE QA.
+
+   NOTE FOR ARCHAEOLOGY: comments were renamed WITH the code, so passages that
+   narrate a past bug now name the field rather than the global it used to be
+   (`chatPane.busy` where the 2026-08-14 report says `chatBusy`, `chatPane.sid`
+   for `chatSid`, and so on). One name to grep, one place to change. */
+const chatPane = {
+  id: 'main',                  // the one instance; a second column would be 'b'
+  sid: null,                   // Odysseus session id (what the rail selects)
+  mode: 'agent',               // lane: 'agent' | 'chat' | 'hermes'
+  busy: false,                 // a turn is in flight and owns this composer
+  model: '',                   // last model echo seen on THIS pane's stream
+  stampModel: '',              // last session model handed to stampFor()
+  // Hermes lane (Phase 1): its own gateway session id, independent of the Odysseus
+  // rail — persisted so the conversation survives panel reloads (dashboard restarts
+  // invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
+  hermesSid: localStorage.getItem('harness-hermes-sid') || null,
+  // Phase 3: the rail lists STORED sessions (state.db rows); the live gateway sid
+  // above is what prompt.submit addresses. Selection is keyed by the stored id
+  // (survives dashboard restarts, unlike hermesSid).
+  hermesStoredSid: localStorage.getItem('harness-hermes-stored') || null,
+  // A /api/hermes/stop POST is in flight for THIS pane's turn (re-entrancy guard).
+  hermesStopping: false,
+  sessions: [],                // Odysseus rail rows
+  hermesSessions: [],          // Hermes rail rows
+  // Phase-3 fix: monotonic token shared by BOTH of this pane's rail loaders
+  // (Odysseus + Hermes). Every loadSessions/loadHermesSessions call bumps it and
+  // records the lane it started in; a response that resolves after a newer load
+  // OR after the lane has changed is DROPPED (no state write, no render) — kills
+  // the cross-lane late-response race during rapid Agent↔Hermes switching.
+  // PER PANE, never shared: a shared counter would make two independent loaders
+  // invalidate each other (draft §6 "honourable mentions"). ⚠️ PENDING FABLE QA.
+  reqSeq: 0,
+  // {lane, stage, ctl, holder, hermesSid, ended, timer, stopArmed} — the turn
+  // record carries its own holder node and watchdog timer, so those are per-pane
+  // by construction once this field is.
+  curTurn: null,
+  attachedImage: null,         // {data: dataURL, name} staged for the next send
+  pendingAttachDrop: null,     // {wrap, text} — a live ✕ fired during its turn
+  delArm: null,                // session-rail ✕ two-step confirm
+  msgDelArm: null,             // per-message delete two-step confirm
+};
 
 // ── §E — first-launch setup checklist + walkthrough (non-intrusive: auto-shows
 //    only when something needs setup / never seen; also launchable from ⌘K) ──
@@ -2274,7 +2318,7 @@ function showView(v) {
   // AUTO-DICTATION: the mic must never stay live behind another view.
   if (v !== 'chat' && typeof stopConv === 'function') stopConv('left the Chat view');
   if (v !== 'chat' && typeof stopAuto === 'function') stopAuto('left the Chat view');
-  if (v === 'chat' && !chatSid) initChat();
+  if (v === 'chat' && !chatPane.sid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
   if (v === 'caps') initCaps();
@@ -2420,13 +2464,13 @@ function sesResizeUp(e){
 }
 
 async function setMode(m) {
-  const prev = chatMode;
+  const prev = chatPane.mode;
   // 2026-08-14: a lane switch during a live turn used to leave the turn running
   // AND make Send-becomes-Stop unreachable (the busy branch keyed off the NEW
-  // chip). Stop the turn FIRST — before chatMode flips — so the stop routes on
+  // chip). Stop the turn FIRST — before chatPane.mode flips — so the stop routes on
   // the lane that is actually streaming.
-  if (chatBusy && m !== prev) await stopTurnNow('lane switch');
-  chatMode = m;
+  if (chatPane.busy && m !== prev) await stopTurnNow('lane switch');
+  chatPane.mode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
@@ -2449,7 +2493,7 @@ async function setMode(m) {
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
   // restore the Odysseus rail + previously selected Odysseus session.
   // Phase-3 fix: SYNCHRONOUSLY re-render the rail to the new lane BEFORE the
-  // async load fires. renderSessions() branches on chatMode (already flipped
+  // async load fires. renderSessions() branches on chatPane.mode (already flipped
   // above), so this instantly drops the other lane's rows AND their click
   // handlers — no stale Odysseus row can linger under the Hermes chip (even if
   // the /api/hermes/sessions fetch is slow or fails), and none can be clicked
@@ -2457,11 +2501,11 @@ async function setMode(m) {
   renderSessions();
   if (m === 'hermes'){
     loadSessions();
-    if (hermesStoredSid) selectHermesSession(hermesStoredSid);
+    if (chatPane.hermesStoredSid) selectHermesSession(chatPane.hermesStoredSid);
     else document.getElementById('chat-msgs').innerHTML = '';
   } else if (prev === 'hermes'){
     loadSessions();
-    if (chatSid) selectSession(chatSid);
+    if (chatPane.sid) selectSession(chatPane.sid);
     else document.getElementById('chat-msgs').innerHTML = '';
   }
 }
@@ -3997,7 +4041,6 @@ function fileCard(el, f){
   el.appendChild(card);
 }
 
-let chatSessions = [];
 
 function relTime(iso){
   if (!iso) return '';
@@ -4019,10 +4062,9 @@ function relTimeLong(iso){
   return Math.round(s/2592000) + ' months ago';
 }
 
-let _stampSessionModel = '';   // last session model handed to stampFor (see refresh())
 function stampFor(model){
-  if (model !== undefined) _stampSessionModel = model || '';
-  else model = _stampSessionModel;
+  if (model !== undefined) chatPane.stampModel = model || '';
+  else model = chatPane.stampModel;
   // The argument is the SESSION's stored model — which is NOT what will answer the next
   // turn once the runner has been switched. Showing it made a working model switch look
   // broken (2026-08-06: header said Qwen while the runner argv proved gemma was loaded).
@@ -4049,13 +4091,13 @@ async function initChat() {
   // calls were no-ops while busy; after it they stopped the turn, so simply
   // leaving Chat and coming back mid-turn interrupted a healthy Hermes turn and
   // rebuilt the pane from the stored (by then interrupted) Hermes transcript.
-  if (chatBusy) return;   // a live turn owns the pane; nothing here may touch it
+  if (chatPane.busy) return;   // a live turn owns the pane; nothing here may touch it
   const stamp = document.getElementById('chat-stamp');
-  if (chatMode === 'hermes'){
+  if (chatPane.mode === 'hermes'){
     // Phase 3: re-entering the Chat view while in Hermes mode must NOT clobber
     // the pane with the Odysseus rail/session.
     await loadSessions();
-    if (hermesStoredSid) await selectHermesSession(hermesStoredSid);
+    if (chatPane.hermesStoredSid) await selectHermesSession(chatPane.hermesStoredSid);
     refreshBrowse();
     loadChatModels();
     return;
@@ -4075,7 +4117,7 @@ async function initChat() {
 /* ---------- vision capability + image attach (direct lane) ----------
    liveVision is refreshed from the SAME /api/models fetch that fills the model
    picker (live_id + the entry's capabilities) — no extra poll. */
-let liveVision = false, attachedImage = null;   // {data: dataURL, name}
+let liveVision = false;   // a RUNNER property (does the live model accept images?)
 
 function applyVisionUi(){
   const pill = document.getElementById('cap-vision');
@@ -4083,7 +4125,7 @@ function applyVisionUi(){
     pill.hidden = !liveVision;
     // The model can see, but only the direct lane carries images — say so instead of
     // leaving a bare "vision" pill next to a hidden ⊕ in Agent/Hermes mode.
-    if (liveVision && chatMode !== 'chat'){
+    if (liveVision && chatPane.mode !== 'chat'){
       pill.textContent = 'vision · chat mode';
       pill.title = 'Images attach in Chat mode — click CHAT';
     } else {
@@ -4093,14 +4135,14 @@ function applyVisionUi(){
   }
   const btn = document.getElementById('chat-attach');
   // Attach is direct-lane only: the Odysseus and Hermes lanes have no image path.
-  if (btn) btn.hidden = !(liveVision && chatMode === 'chat');
-  if (!(liveVision && chatMode === 'chat')) clearImage();
+  if (btn) btn.hidden = !(liveVision && chatPane.mode === 'chat');
+  if (!(liveVision && chatPane.mode === 'chat')) clearImage();
 }
 
 function pickImage(){ const f = document.getElementById('chat-file'); if (f) f.click(); }
 
 function clearImage(){
-  attachedImage = null;
+  chatPane.attachedImage = null;
   const f = document.getElementById('chat-file'); if (f) f.value = '';
   const strip = document.getElementById('chat-attachstrip');
   if (strip){ strip.innerHTML = ''; strip.hidden = true; }
@@ -4124,11 +4166,11 @@ function onImagePicked(ev){
 function acceptImageFile(file){
   if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')){
     attachNote('only png / jpeg / webp images'); return; }
-  if (file.size > 8 * 1024 * 1024){ attachedImage = null;
+  if (file.size > 8 * 1024 * 1024){ chatPane.attachedImage = null;
     const f = document.getElementById('chat-file'); if (f) f.value = '';
     attachNote('image too large (max 8 MB)'); return; }
   const fr = new FileReader();
-  fr.onerror = () => { attachedImage = null; attachNote('could not read that image'); };
+  fr.onerror = () => { chatPane.attachedImage = null; attachNote('could not read that image'); };
   fr.onload = () => showAttachedImage(String(fr.result || ''), file.name);
   fr.readAsDataURL(file);
 }
@@ -4153,13 +4195,13 @@ function showImageLightbox(src, name){
 
 /* set + render the one attached image (shared by picker, drop, paste, native drop) */
 function showAttachedImage(dataUrl, name){
-  attachedImage = {data: dataUrl, name: name};
+  chatPane.attachedImage = {data: dataUrl, name: name};
   const strip = document.getElementById('chat-attachstrip');
   strip.innerHTML = '';
   const img = document.createElement('img');
-  img.src = attachedImage.data; img.alt = '';
+  img.src = chatPane.attachedImage.data; img.alt = '';
   const nm = document.createElement('span');
-  nm.className = 'afile'; nm.textContent = attachedImage.name;   // textContent: never markup
+  nm.className = 'afile'; nm.textContent = chatPane.attachedImage.name;   // textContent: never markup
   const x = document.createElement('button');
   x.className = 'aclear'; x.textContent = '✕';
   x.title = 'Remove this image'; x.setAttribute('aria-label', 'Remove this image');
@@ -4172,7 +4214,7 @@ function showAttachedImage(dataUrl, name){
    WKWebView never forwards to the DOM, reads the file, and calls this directly. */
 window.harnessNativeDrop = function(name, dataUrl){
   if (!liveVision){ attachNote("this model can't see images"); return; }
-  if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+  if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
   const b64 = String(dataUrl || '').split(',')[1] || '';
   if (b64.length * 0.75 > 8 * 1024 * 1024){ attachNote('image too large (max 8 MB)'); return; }
   showAttachedImage(dataUrl, name || 'image');
@@ -4250,7 +4292,7 @@ document.addEventListener('drop',     (e) => e.preventDefault());
                       .find(f => (f.type || '').startsWith('image/'));
     if (!file) return;
     if (!liveVision){ attachNote("this model can't see images"); return; }
-    if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
     acceptImageFile(file);
   });
   // ⌘V an image (e.g. a screenshot) straight into the composer — same gate as drop.
@@ -4261,7 +4303,7 @@ document.addEventListener('drop',     (e) => e.preventDefault());
     if (!item) return;                       // plain text pastes stay untouched
     e.preventDefault();
     if (!liveVision){ attachNote("this model can't see images"); return; }
-    if (chatMode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
     const f = item.getAsFile();
     if (f) acceptImageFile(f);
   });
@@ -5792,7 +5834,7 @@ function convSend(text){
   const box = document.getElementById('chat-input');
   const t = String(text || '').trim();
   if (!box || !t){ convEvent('send_fail', 'nothing to send'); return; }
-  if (chatBusy){ convEvent('send_fail', 'a turn was already in flight'); return; }
+  if (chatPane.busy){ convEvent('send_fail', 'a turn was already in flight'); return; }
   // Anything the user had half-typed is kept in front of the transcript rather than
   // thrown away — losing typed words to a stray noise would be unforgivable.
   const cur = (box.value || '').trim();
@@ -5860,53 +5902,53 @@ async function toggleBrowse(){
     chip.classList.toggle('on', !!r.on);
     const note = document.getElementById('chat-note');
     if (r.on) note.textContent = 'browser ON (Hermes + Odysseus) · install the Browser MCP extension + connect a tab';
-    else note.textContent = (chatMode === 'agent' ? 'web search on · shell off' : 'plain model — no tools');
+    else note.textContent = (chatPane.mode === 'agent' ? 'web search on · shell off' : 'plain model — no tools');
   } catch {} finally { chip.style.opacity = ''; }
 }
 
 async function loadSessions(){
   // Phase 3: the rail follows the active lane — Hermes mode lists the Hermes
   // gateway's STORED sessions; Agent/Chat keep the Odysseus list (unchanged).
-  if (chatMode === 'hermes') return loadHermesSessions();
-  const seq = ++sessionsReqSeq, lane = chatMode;   // Phase-3 fix: race token
+  if (chatPane.mode === 'hermes') return loadHermesSessions();
+  const seq = ++chatPane.reqSeq, lane = chatPane.mode;   // Phase-3 fix: race token
   try {
     const r = await fetch('/api/ody/sessions');
     // Drop a stale/late Odysseus response: superseded by a newer load, or the
     // lane changed while in flight (e.g. switched to Hermes). Never write
     // Odysseus rows into a Hermes rail.
-    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
+    if (seq !== chatPane.reqSeq || chatPane.mode !== lane) return null;
     if (!r.ok) return null;
     const list = await r.json();
-    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
-    chatSessions = Array.isArray(list) ? list : [];
+    if (seq !== chatPane.reqSeq || chatPane.mode !== lane) return null;
+    chatPane.sessions = Array.isArray(list) ? list : [];
     renderSessions();
-    return chatSessions;
+    return chatPane.sessions;
   } catch { return null; }
 }
 
 async function loadHermesSessions(){
-  const seq = ++sessionsReqSeq, lane = chatMode;   // Phase-3 fix: race token
+  const seq = ++chatPane.reqSeq, lane = chatPane.mode;   // Phase-3 fix: race token
   try {
     const r = await fetch('/api/hermes/sessions');
-    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
+    if (seq !== chatPane.reqSeq || chatPane.mode !== lane) return null;
     if (!r.ok) return null;
     const list = await r.json();
-    if (seq !== sessionsReqSeq || chatMode !== lane) return null;
-    hermesSessions = Array.isArray(list) ? list : [];
+    if (seq !== chatPane.reqSeq || chatPane.mode !== lane) return null;
+    chatPane.hermesSessions = Array.isArray(list) ? list : [];
     renderSessions();
-    return hermesSessions;
+    return chatPane.hermesSessions;
   } catch { return null; }
 }
 
 function renderSessions(){
   const el = document.getElementById('cs-list'); el.innerHTML = '';
-  if (chatMode === 'hermes'){
+  if (chatPane.mode === 'hermes'){
     // Hermes rail (Phase 3): same .cs-item primitives; rows are STORED session
     // ids. No Duplicate (no gateway fork RPC). <!-- FABLE: style pass — .cs-tag -->
-    if (!hermesSessions.length){ el.innerHTML = '<div class="cs-empty">No Hermes chats yet.</div>'; return; }
-    for (const s of hermesSessions){
+    if (!chatPane.hermesSessions.length){ el.innerHTML = '<div class="cs-empty">No Hermes chats yet.</div>'; return; }
+    for (const s of chatPane.hermesSessions){
       const it = document.createElement('div');
-      it.className = 'cs-item' + (s.id === hermesStoredSid ? ' on' : '');
+      it.className = 'cs-item' + (s.id === chatPane.hermesStoredSid ? ' on' : '');
       it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectHermesSession(s.id); };
       it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
         <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''} <span class="cs-tag">hermes</span></div>
@@ -5918,10 +5960,10 @@ function renderSessions(){
     }
     return;
   }
-  if (!chatSessions.length){ el.innerHTML = '<div class="cs-empty">No chats yet.</div>'; return; }
-  for (const s of chatSessions){
+  if (!chatPane.sessions.length){ el.innerHTML = '<div class="cs-empty">No chats yet.</div>'; return; }
+  for (const s of chatPane.sessions){
     const it = document.createElement('div');
-    it.className = 'cs-item' + (s.id === chatSid ? ' on' : '');
+    it.className = 'cs-item' + (s.id === chatPane.sid ? ' on' : '');
     it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectSession(s.id); };
     it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
       <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}</div>
@@ -5939,7 +5981,7 @@ async function selectHermesSession(storedId){
   // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
-  if (chatMode !== 'hermes') return;   // Phase-3 fix: lane guard — never open a
+  if (chatPane.mode !== 'hermes') return;   // Phase-3 fix: lane guard — never open a
                                        // Hermes session while the rail is Odysseus.
                                        // 2026-08-14b: this guard now runs BEFORE
                                        // the stop below — a call that is about to
@@ -5947,15 +5989,15 @@ async function selectHermesSession(storedId){
   // 2026-08-14b REGRESSION FIX: re-opening the session you are ALREADY in is not
   // a switch. initChat() calls exactly this on every re-entry to the Chat view,
   // and the rail's active row is the easiest thing in the panel to click while
-  // waiting — before 2026-08-14 both were `if (chatBusy) return;` no-ops, and on
+  // waiting — before 2026-08-14 both were `if (chatPane.busy) return;` no-ops, and on
   // 2026-08-14 they became `session.interrupt` + a pane rebuild, which is how a
   // healthy-but-slow Hermes turn came back as Hermes's own "Operation
   // interrupted." reply. Same session + live turn ⇒ leave the turn alone.
-  if (chatBusy && storedId && storedId === hermesStoredSid) return;
+  if (chatPane.busy && storedId && storedId === chatPane.hermesStoredSid) return;
   // A genuine switch to a DIFFERENT session still stops the turn first (Fable:
   // stop-then-proceed) — you cannot stream turn A into session B's pane.
-  if (chatBusy) await stopTurnNow('session switch');
-  hermesStoredSid = storedId;
+  if (chatPane.busy) await stopTurnNow('session switch');
+  chatPane.hermesStoredSid = storedId;
   localStorage.setItem('harness-hermes-stored', storedId);
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
@@ -5963,11 +6005,11 @@ async function selectHermesSession(storedId){
     const r = await (await fetch('/api/hermes/session/resume', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: storedId})})).json();
     if (r && r.id){
-      hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id);
+      chatPane.hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id);
       if (r.stored_id && r.stored_id !== storedId){
         // Compression chains: resume follows the lineage to the live tip
         // (methods_session.py:351-369) — track the id it actually opened.
-        hermesStoredSid = r.stored_id;
+        chatPane.hermesStoredSid = r.stored_id;
         localStorage.setItem('harness-hermes-stored', r.stored_id);
       }
       for (const m of (r.history || []).slice(-30)){
@@ -5990,21 +6032,21 @@ async function selectHermesSession(storedId){
 
 async function selectSession(sid){
   maybeCloseArtifact();   // artifact follows its conversation unless pinned
-  if (chatMode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
+  if (chatPane.mode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
                                        // Odysseus row clicked under the Hermes
-                                       // chip must NOT bind chatSid / wedge Send.
+                                       // chip must NOT bind chatPane.sid / wedge Send.
                                        // 2026-08-14b: BEFORE the stop — a stale
                                        // cross-lane click used to interrupt the
                                        // running HERMES turn and then return.
-  if (chatBusy && sid && sid === chatSid) return;      // re-opening the session
+  if (chatPane.busy && sid && sid === chatPane.sid) return;      // re-opening the session
                                        // you are already in is not a switch
-  if (chatBusy) await stopTurnNow('session switch');   // never a silent no-op
-  chatSid = sid;
-  const s = chatSessions.find(x => x.id === sid);
+  if (chatPane.busy) await stopTurnNow('session switch');   // never a silent no-op
+  chatPane.sid = sid;
+  const s = chatPane.sessions.find(x => x.id === sid);
   // Keep the session's stored model VERBATIM as the fallback echo — laneModelLabel
   // shortens it (a wire path becomes its basename). The old `split('-').slice(0,2)`
   // was written for registry ids and turned an MLX path into nonsense.
-  chatModel = (s && s.model) || '';
+  chatPane.model = (s && s.model) || '';
   stampFor((s && s.model) || '');   // never pass undefined — that means "re-stamp, keep session model"
   localStorage.setItem('harness-chat-sid', sid);
   renderSessions();
@@ -6034,8 +6076,8 @@ async function selectSession(sid){
 }
 
 async function duplicateSession(sid){
-  if (chatBusy) await stopTurnNow('session duplicate');
-  const s = chatSessions.find(x => x.id === sid);
+  if (chatPane.busy) await stopTurnNow('session duplicate');
+  const s = chatPane.sessions.find(x => x.id === sid);
   const name = ((s && s.name) || 'Chat') + ' (copy)';
   try {
     const r = await (await fetch(`/api/ody/session/${sid}/duplicate`, {method:'POST',
@@ -6052,17 +6094,17 @@ async function newSession(){
   // a wedged turn never ended, so the button was simply dead until an app
   // restart. A new chat now STOPS the running turn first (Fable design: stop
   // then proceed) and says so in the activity feed.
-  if (chatBusy) await stopTurnNow('new chat');
-  if (chatMode === 'hermes'){
+  if (chatPane.busy) await stopTurnNow('new chat');
+  if (chatPane.mode === 'hermes'){
     // Hermes lane: fresh gateway session + clear the pane + refresh the rail
     // (Phase 3). NOTE: the gateway defers the DB row to the first prompt
     // (empty drafts don't litter the picker), so the new row only appears in
     // the rail after the first message. ⚠ PENDING FABLE QA.
     try {
       const r = await (await fetch('/api/hermes/session/new', {method:'POST'})).json();
-      if (r && r.id){ hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id); }
-      hermesStoredSid = (r && r.stored_id) || null;
-      if (hermesStoredSid) localStorage.setItem('harness-hermes-stored', hermesStoredSid);
+      if (r && r.id){ chatPane.hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id); }
+      chatPane.hermesStoredSid = (r && r.stored_id) || null;
+      if (chatPane.hermesStoredSid) localStorage.setItem('harness-hermes-stored', chatPane.hermesStoredSid);
       else localStorage.removeItem('harness-hermes-stored');
       document.getElementById('chat-msgs').innerHTML = '';
       document.getElementById('chat-input').focus();
@@ -6083,8 +6125,8 @@ async function newSession(){
 function beginRename(sid, btn){
   const item = btn.closest('.cs-item');
   const nm = item.querySelector('.nm');
-  const hermes = chatMode === 'hermes';   // Phase 3: rename routes per lane
-  const cur = (hermes ? hermesSessions : chatSessions).find(x => x.id === sid);
+  const hermes = chatPane.mode === 'hermes';   // Phase 3: rename routes per lane
+  const cur = (hermes ? chatPane.hermesSessions : chatPane.sessions).find(x => x.id === sid);
   const input = document.createElement('input');
   input.className = 'cs-rename'; input.value = (cur && cur.name) || '';
   nm.replaceWith(input); input.focus(); input.select();
@@ -6106,24 +6148,23 @@ function beginRename(sid, btn){
 
 // Two-step inline delete (no OS dialog — WKWebView can't show confirm()): first
 // click arms the button (✓? for 3s), second click within the window deletes.
-let _delArm = null;
 function armDelete(sid, btn){
-  if (_delArm && _delArm.sid === sid){ clearTimeout(_delArm.t); doDelete(sid); return; }
-  if (_delArm){ _delArm.btn.classList.remove('armed'); _delArm.btn.textContent = '✕'; clearTimeout(_delArm.t); }
+  if (chatPane.delArm && chatPane.delArm.sid === sid){ clearTimeout(chatPane.delArm.t); doDelete(sid); return; }
+  if (chatPane.delArm){ chatPane.delArm.btn.classList.remove('armed'); chatPane.delArm.btn.textContent = '✕'; clearTimeout(chatPane.delArm.t); }
   btn.classList.add('armed'); btn.textContent = '✓?';
-  _delArm = { sid, btn, t: setTimeout(() => { btn.classList.remove('armed'); btn.textContent = '✕'; _delArm = null; }, 3000) };
+  chatPane.delArm = { sid, btn, t: setTimeout(() => { btn.classList.remove('armed'); btn.textContent = '✕'; chatPane.delArm = null; }, 3000) };
 }
 async function doDelete(sid){
-  _delArm = null;
-  if (chatMode === 'hermes'){
+  chatPane.delArm = null;
+  if (chatPane.mode === 'hermes'){
     // Phase 3: WS session.delete (refuses live rows) — deleting the currently
     // open session passes the live sid so the bridge session.close's it first.
-    const isCurrent = sid === hermesStoredSid;
+    const isCurrent = sid === chatPane.hermesStoredSid;
     await fetch(`/api/hermes/session/${sid}/delete`, {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({live_id: isCurrent ? (hermesSid || '') : ''})});
+      body: JSON.stringify({live_id: isCurrent ? (chatPane.hermesSid || '') : ''})});
     if (isCurrent){
-      hermesStoredSid = null; hermesSid = null;
+      chatPane.hermesStoredSid = null; chatPane.hermesSid = null;
       localStorage.removeItem('harness-hermes-stored');
       localStorage.removeItem('harness-hermes-sid');
       document.getElementById('chat-msgs').innerHTML = '';
@@ -6134,9 +6175,9 @@ async function doDelete(sid){
   }
   await fetch(`/api/ody/session/${sid}/delete`, {method:'POST'});
   await loadSessions();
-  if (sid === chatSid){
-    if (chatSessions.length) await selectSession(chatSessions[0].id);
-    else { chatSid = null; document.getElementById('chat-msgs').innerHTML = ''; await newSession(); }
+  if (sid === chatPane.sid){
+    if (chatPane.sessions.length) await selectSession(chatPane.sessions[0].id);
+    else { chatPane.sid = null; document.getElementById('chat-msgs').innerHTML = ''; await newSession(); }
   }
 }
 
@@ -8395,7 +8436,8 @@ function dlDismiss(id){ dlDismissed.add(id); refreshDownloads(); }
    read the OLD model — as an ugly absolute path, `/USERS/…/MUSE-GLIMMER-…-MLX`.
 
    Two causes, both client-side, neither of them a broken fan-out:
-     (a) `chatModel` is a STICKY GLOBAL. The Hermes mapper emits no model frame at
+     (a) `chatPane.model` is STICKY (it was a bare `chatModel` global then, and is
+         pane state now — same stickiness). The Hermes mapper emits no model frame at
          all (bridge/app.py hermes_event_to_frames has no model event), so in that
          lane the byline kept whatever the last Agent turn or session-open had left
          behind — it was never updated by a switch.
@@ -8428,7 +8470,7 @@ function liveModelLabel(echo){
 function addMsg(role, text) {
   const wrap = document.createElement('div');
   wrap.className = 'cmsg ' + role;
-  const who = role === 'user' ? 'You' : (liveModelLabel(chatModel) || 'Assistant');
+  const who = role === 'user' ? 'You' : (liveModelLabel(chatPane.model) || 'Assistant');
   wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
   if (role === 'assistant' && text) renderChatBody(wrap.querySelector('.body'), text);  // PHASE 3: card fenced blocks
   else wrap.querySelector('.body').textContent = text;
@@ -8437,7 +8479,7 @@ function addMsg(role, text) {
   wrap._raw = text || '';
   // Lane stamp: the Hermes lane has its own store (no delete/edit/fork there),
   // so its rows only ever get Copy.
-  if (chatMode === 'hermes') wrap.dataset.lane = 'hermes';
+  if (chatPane.mode === 'hermes') wrap.dataset.lane = 'hermes';
   document.getElementById('chat-msgs').appendChild(wrap);
   msgActs(wrap);
   return wrap;
@@ -8539,22 +8581,21 @@ async function msgCopy(wrap, btn){
   }
 }
 
-let _msgDelArm = null;   // two-step delete, same grammar as the session rail's ✕
 function msgDelete(wrap, btn){
-  if (_msgDelArm && _msgDelArm.btn === btn){
-    clearTimeout(_msgDelArm.t); _msgDelArm = null; doMsgDelete(wrap, btn); return;
+  if (chatPane.msgDelArm && chatPane.msgDelArm.btn === btn){
+    clearTimeout(chatPane.msgDelArm.t); chatPane.msgDelArm = null; doMsgDelete(wrap, btn); return;
   }
-  if (_msgDelArm){ clearTimeout(_msgDelArm.t); _msgDelArm.btn.textContent = 'delete'; }
+  if (chatPane.msgDelArm){ clearTimeout(chatPane.msgDelArm.t); chatPane.msgDelArm.btn.textContent = 'delete'; }
   btn.textContent = 'sure?';
-  _msgDelArm = { btn, t: setTimeout(() => { btn.textContent = 'delete'; _msgDelArm = null; }, 3000) };
+  chatPane.msgDelArm = { btn, t: setTimeout(() => { btn.textContent = 'delete'; chatPane.msgDelArm = null; }, 3000) };
 }
 
 async function doMsgDelete(wrap, btn){
   const id = wrap.dataset.dbId;
-  if (!id || !chatSid) return;
+  if (!id || !chatPane.sid) return;
   btn.disabled = true; btn.textContent = 'deleting…';
   try {
-    const r = await (await fetch(`/api/ody/session/${chatSid}/msg-delete`, {method:'POST',
+    const r = await (await fetch(`/api/ody/session/${chatPane.sid}/msg-delete`, {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg_id: id})})).json();
     if (r && r.ok){ wrap.remove(); loadSessions(); return; }   // rail message counts
     btn.disabled = false; btn.textContent = 'failed';
@@ -8564,7 +8605,7 @@ async function doMsgDelete(wrap, btn){
 function msgEdit(wrap){
   if (!wrap || wrap._editing) return;
   const body = wrap.querySelector('.body');
-  if (!body || !chatSid || !wrap.dataset.dbId) return;
+  if (!body || !chatPane.sid || !wrap.dataset.dbId) return;
   wrap._editing = true;
   const orig = msgRaw(wrap);
   const ta = document.createElement('textarea');
@@ -8598,7 +8639,7 @@ function msgEdit(wrap){
     const text = ta.value;
     b.disabled = true; b.textContent = 'saving…';
     try {
-      const r = await (await fetch(`/api/ody/session/${chatSid}/msg-edit`, {method:'POST',
+      const r = await (await fetch(`/api/ody/session/${chatPane.sid}/msg-edit`, {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({msg_id: wrap.dataset.dbId, content: text})})).json();
       if (r && r.ok){ finish(text); loadSessions(); return; }
@@ -8622,10 +8663,10 @@ function msgEdit(wrap){
 
 async function msgFork(wrap, btn){
   const id = wrap.dataset.dbId;
-  if (!id || !chatSid || chatBusy) return;
+  if (!id || !chatPane.sid || chatPane.busy) return;
   btn.disabled = true; btn.textContent = 'forking…';
   try {
-    const r = await (await fetch(`/api/ody/session/${chatSid}/fork-from`, {method:'POST',
+    const r = await (await fetch(`/api/ody/session/${chatPane.sid}/fork-from`, {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg_id: id})})).json();
     if (r && r.ok && r.id){
       await loadSessions();
@@ -8642,8 +8683,8 @@ async function stampLiveTurn(userWrap, holder, userText){
   // LAST matching history rows so their actions + stats light up without a reload.
   // Wrapped end-to-end: this must NEVER throw into the send path.
   try {
-    if (chatMode === 'hermes' || !chatSid) return;
-    const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
+    if (chatPane.mode === 'hermes' || !chatPane.sid) return;
+    const h = await (await fetch(`/api/ody/history/${chatPane.sid}`)).json();
     const hist = (h && h.history) || [];
     // The direct lane appends an "[image attached]" marker to the stored user
     // text — normalise it away so the DOM text still matches. Single-sourced
@@ -8730,10 +8771,9 @@ function attachLineEl(src, name, onRemove){
    from the SAME history refetch stampLiveTurn uses and call the EXISTING
    POST /api/attachment/{id}/delete — which touches the sidecar row only, never
    the user's file on disk. The restored-line ✕ is unchanged. */
-let pendingAttachDrop = null;   // {wrap, text} — a live ✕ fired during its turn
 
 function liveAttachDrop(wrap, text){
-  if (chatBusy){ pendingAttachDrop = {wrap: wrap, text: text}; return; }
+  if (chatPane.busy){ chatPane.pendingAttachDrop = {wrap: wrap, text: text}; return; }
   dropSidecarAttachment(text);
 }
 
@@ -8741,10 +8781,10 @@ async function dropSidecarAttachment(userText){
   // Two attempts: at [DONE] the inject + sidecar write have normally landed, but
   // the refetch can still beat them. Never throws into the send path.
   try {
-    if (!chatSid) return;
+    if (!chatPane.sid) return;
     for (let attempt = 0; attempt < 2; attempt++){
       if (attempt) await new Promise(r => setTimeout(r, 900));
-      const h = await (await fetch(`/api/ody/history/${chatSid}`)).json();
+      const h = await (await fetch(`/api/ody/history/${chatPane.sid}`)).json();
       const id = lastAttachmentId((h && h.history) || [], userText);
       if (id === null || id === undefined) continue;
       await fetch('/api/attachment/' + encodeURIComponent(id) + '/delete', {method:'POST'});
@@ -8843,8 +8883,16 @@ function chatSummary(holder){
 const AP_LABELS = {once:'Once', session:'This session', always:'Always', deny:'Deny'};
 const AP_TRUNC = 400;   // chars of command shown before the expand toggle
 
-function chatApproval(holder, req){
+function chatApproval(holder, req, sid){
   const card = document.createElement('div'); card.className = 'approval';
+  // I4 (draft §4.3 / §6.1) — THE CARD OWNS ITS SESSION. Approvals carry no
+  // request id on the wire; the gateway resolves them FIFO *per session*, so the
+  // session id IS the whole address. Reading the pane's CURRENT hermesSid at
+  // click time meant that switching sessions (or, later, a second column) while
+  // a card sat open would send "Always" for a dangerous shell command to a
+  // DIFFERENT session — and the panel would cheerfully stamp `✓ approved`.
+  // Captured here, at render time, from the turn that produced it.
+  card._sid = String(sid || '');
   const cmd = String((req && req.command) || '');
   const choices = (Array.isArray(req && req.choices) && req.choices.length)
     ? req.choices : ['once','deny'];
@@ -8901,7 +8949,7 @@ async function approveHermes(card, choice){
   try {
     const r = await fetch('/api/hermes/approve', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({session_id: hermesSid, choice})});
+      body: JSON.stringify({session_id: card._sid, choice})});
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
     if (!j.resolved){
@@ -8942,8 +8990,9 @@ async function approveHermes(card, choice){
 // answer)", and a choice-less clarify is open-ended by construction.
 const ASK_Q_TRUNC = 600;   // chars of question shown before the expand toggle
 
-function chatAsk(holder, req){
+function chatAsk(holder, req, sid){
   const card = document.createElement('div'); card.className = 'approval ask';
+  card._sid = String(sid || '');   // I4: answer THIS card's session (see chatApproval)
   const q = String((req && req.question) || '');
   const opts = Array.isArray(req && req.options) ? req.options.map(String) : [];
   card._rid = String((req && req.request_id) || '');
@@ -9072,7 +9121,7 @@ async function answerHermes(card, answer, opts){
   try {
     const r = await fetch('/api/hermes/answer', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({session_id: hermesSid, request_id: card._rid,
+      body: JSON.stringify({session_id: card._sid, request_id: card._rid,
                             answer: cancel ? '' : String(answer), cancel})});
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
@@ -9128,14 +9177,15 @@ function expireApprovals(holder){
    ----------------------------------------------------------------------------
    THE WEDGE THIS FIXES (Debi, Hermes lane, local 4B): a turn stuck in prefill
    never produced a terminal frame, and EVERY escape hatch was slaved to the
-   stream. `chatBusy` is cleared only in sendChat's finally, which only runs when
-   `reader.read()` returns or throws — so a bridge/gateway that neither answers
-   nor closes left chatBusy pinned TRUE forever, and:
-     • newSession()          → `if (chatBusy) return;`  (+NEW silently dead)
-     • selectSession()       → same                     (rail rows dead)
+   stream. `chatPane.busy` (then a bare `chatBusy` global) is cleared only in
+   sendChat's finally, which only runs when `reader.read()` returns or throws —
+   so a bridge/gateway that neither answers nor closes left it pinned TRUE
+   forever, and:
+     • newSession()          → `if (busy) return;`  (+NEW silently dead)
+     • selectSession()       → same                 (rail rows dead)
      • selectHermesSession() → same
-     • setMode()             flipped chatMode to 'agent'/'chat', after which
-       sendChat's busy branch (`if (chatMode === 'hermes') hermesStop()`) no
+     • setMode()             flipped chatPane.mode to 'agent'/'chat', after which
+       sendChat's busy branch (`if (chatPane.mode === 'hermes') hermesStop()`) no
        longer offered Stop AT ALL — the button still READ "Stop" and did nothing.
        That is the dead end that needed an app restart.
    The fix is ownership: every turn gets an AbortController + a stage label, and
@@ -9147,9 +9197,8 @@ function expireApprovals(holder){
 const TURN_FORCE_MS     = 3000;    // Stop → force-end if no clean end lands
 const TURN_FIRSTBYTE_MS = 90000;   // Hermes lane only: nothing at all → give up
 const TURN_STALL_MS     = 75000;   // …and >3 missed 20s bridge pings mid-turn
-let curTurn = null;   // {lane, stage, ctl, holder, ended, timer, stopArmed}
 
-function turnStage(s){ if (curTurn && !curTurn.ended) curTurn.stage = s; }
+function turnStage(s){ if (chatPane.curTurn && !chatPane.curTurn.ended) chatPane.curTurn.stage = s; }
 
 function turnArm(ms, label){
   // Panel-side last resort. Armed for the HERMES lane only: that lane's bridge
@@ -9158,12 +9207,12 @@ function turnArm(ms, label){
   // no heartbeat and a legitimately long local prefill emits nothing, so arming
   // there could kill a healthy turn — they rely on the escape hatches instead.
   // ⚠ PENDING FABLE QA: lane asymmetry + the values.
-  if (!curTurn || curTurn.ended || curTurn.done) return;
-  const t = curTurn;
+  if (!chatPane.curTurn || chatPane.curTurn.ended || chatPane.curTurn.done) return;
+  const t = chatPane.curTurn;
   clearTimeout(t.timer);
   t.timerLabel = label || 'stall';
   t.timer = setTimeout(() => {
-    if (curTurn !== t) return;   // a later turn owns the panel now — never fire late
+    if (chatPane.curTurn !== t) return;   // a later turn owns the panel now — never fire late
     // DIAGNOSTIC (2026-08-14b): a watchdog that fires must SAY which one it was
     // and how long the relay had actually been silent. The 2026-08-14 regression
     // report ("it just got interrupted") was undiagnosable precisely because a
@@ -9185,9 +9234,9 @@ function turnArm(ms, label){
 function turnHardRelease(t){
   // The abort did not unblock the reader (should not happen) → release the
   // composer directly so the UI can never be held hostage by a stream.
-  if (curTurn !== t) return;
-  curTurn = null;
-  chatBusy = false;
+  if (chatPane.curTurn !== t) return;
+  chatPane.curTurn = null;
+  chatPane.busy = false;
   const sb = document.getElementById('chat-send');
   if (sb){ sb.disabled = false; sendPaint('Send');
     sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message'); }
@@ -9195,7 +9244,7 @@ function turnHardRelease(t){
 }
 
 function forceEndTurn(reason){
-  const t = curTurn;
+  const t = chatPane.curTurn;
   if (!t || t.ended || t.done) return false;   // never "force-end" a completed turn
   t.ended = true;
   clearTimeout(t.timer);
@@ -9216,22 +9265,21 @@ async function stopTurnNow(reason){
   // session click. The gateway interrupt is best-effort and deliberately NOT
   // awaited (session.interrupt can itself stall for its 10s RPC timeout) — the
   // local force-end is the guarantee.
-  if (!curTurn && !chatBusy) return false;
-  const t = curTurn;
+  if (!chatPane.curTurn && !chatPane.busy) return false;
+  const t = chatPane.curTurn;
   if (t && t.lane === 'hermes') hermesStop(reason);
   forceEndTurn(reason);
-  if (!curTurn && !chatBusy) return true;
+  if (!chatPane.curTurn && !chatPane.busy) return true;
   await new Promise(r => setTimeout(r, 80));   // let sendChat's finally run
   return true;
 }
 
-let hermesStopping = false;
 async function hermesStop(reason){
   // Phase 1.1 + 2026-08-14: interrupt the running Hermes turn. The bridge's
   // mapped message.complete(interrupted) — or its 3s relay fallback — is the
   // CLEAN end; the client-side force-end armed here is what makes Stop win even
   // when the bridge relay, the gateway WS, or the fetch itself is wedged.
-  const t = curTurn;
+  const t = chatPane.curTurn;
   if (t && !t.ended && !t.stopArmed){
     t.stopArmed = true;
     setTimeout(() => forceEndTurn((reason || 'stop') + ' — no clean end within 3s'), TURN_FORCE_MS);
@@ -9239,19 +9287,19 @@ async function hermesStop(reason){
   // No sid yet = the bridge has not announced hermes_session, i.e. we are in the
   // pre-first-event phase. Nothing to interrupt upstream — the force-end above is
   // the whole answer there (that phase used to make Stop a silent no-op).
-  if (!hermesSid || hermesStopping) return;
-  hermesStopping = true;
+  if (!chatPane.hermesSid || chatPane.hermesStopping) return;
+  chatPane.hermesStopping = true;
   try {
     await fetch('/api/hermes/stop', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({session_id: hermesSid})});
-  } catch {} finally { hermesStopping = false; }
+      body: JSON.stringify({session_id: chatPane.hermesSid})});
+  } catch {} finally { chatPane.hermesStopping = false; }
 }
 
 async function sendChat() {
   // Hermes mode needs no Odysseus session (works with Odysseus down) — the bridge
   // creates a gateway session on first send and announces it via hermes_session.
-  if (chatBusy){
+  if (chatPane.busy){
     // Phase 1.1: during a Hermes turn the Send button reads "Stop" and stays
     // enabled — a click (or Enter) here interrupts the turn instead of sending.
     // ⚠ PENDING FABLE QA: no inline stop affordance exists in the other lanes
@@ -9259,29 +9307,29 @@ async function sendChat() {
     // 2026-08-14: route on the TURN's lane, not the CURRENT chip — a lane switch
     // during a wedged Hermes turn used to make this branch a silent no-op while
     // the button still read "Stop" (the dead end that needed an app restart).
-    if (chatMode === 'hermes' || (curTurn && curTurn.lane === 'hermes')) hermesStop('panel stop');
+    if (chatPane.mode === 'hermes' || (chatPane.curTurn && chatPane.curTurn.lane === 'hermes')) hermesStop('panel stop');
     return;
   }
-  if (chatMode !== 'hermes' && !chatSid) return;
+  if (chatPane.mode !== 'hermes' && !chatPane.sid) return;
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
   growInput(inp);             // cleared → shrink back to the two-row base
-  chatBusy = true;
+  chatPane.busy = true;
   // CONVERSATION MODE: a turn is starting — gate the mic. Fired for OUR sends (a
   // no-op, already waiting) and for a message the user types by hand mid-conv,
   // which is treated as a normal turn: spoken back, then listening resumes.
   if (typeof convOn === 'function' && convOn()) convEvent('turn_start');
   const sendBtn = document.getElementById('chat-send');
-  if (chatMode === 'hermes'){
+  if (chatPane.mode === 'hermes'){
     sendPaint('Stop');
     sendBtn.title = 'Stop this Hermes turn'; sendBtn.setAttribute('aria-label', 'Stop this Hermes turn');
   } else {
     sendBtn.disabled = true;
   }
   // one image per message, direct lane only; taken (and cleared) at send time
-  const img = (chatMode === 'chat' && attachedImage) ? attachedImage : null;
+  const img = (chatPane.mode === 'chat' && chatPane.attachedImage) ? chatPane.attachedImage : null;
   const userWrap = addMsg('user', text);
   if (img){
     // clickable thumbnail for the live turn; the bytes are ALSO persisted by the
@@ -9305,9 +9353,15 @@ async function sendChat() {
 
   // The panel now OWNS this turn: an AbortController is the kill switch every
   // escape hatch pulls, and `stage` is what the diagnostic prints.
-  const turn = {lane: chatMode, stage: 'connecting', ctl: new AbortController(),
-                holder: holder, ended: false, timer: null, stopArmed: false};
-  curTurn = turn;
+  // `hermesSid` on the TURN is what an approval/ask card born in this stream
+  // answers (see chatApproval/chatAsk). Seeded from the pane for a continuation
+  // turn and overwritten by the bridge's `hermes_session` frame for a new (or
+  // stale-sid-retried) one — which the bridge always yields BEFORE prompt.submit
+  // (bridge/app.py:5046/5062), so a card can never arrive without it.
+  const turn = {lane: chatPane.mode, stage: 'connecting', ctl: new AbortController(),
+                holder: holder, hermesSid: chatPane.hermesSid || '',
+                ended: false, timer: null, stopArmed: false};
+  chatPane.curTurn = turn;
   if (turn.lane === 'hermes') turnArm(TURN_FIRSTBYTE_MS, 'first-byte');
 
   try {
@@ -9315,12 +9369,12 @@ async function sendChat() {
     // queueing); Agent mode = via Odysseus (tools, search); Hermes mode = the Hermes
     // gateway via the bridge WS adapter. Same SSE protocol all three ways — the
     // stream renderer below is shared unchanged.
-    const url = chatMode === 'hermes' ? '/api/hermes/chat'
-              : chatMode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
-    const reqBody = chatMode === 'hermes'
-      ? {session_id: hermesSid || '', message: text,
-         stored_sid: hermesStoredSid || ''}   // durable id → guard audit's "Chat" jump
-      : {session:chatSid, message:text, mode:chatMode,
+    const url = chatPane.mode === 'hermes' ? '/api/hermes/chat'
+              : chatPane.mode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
+    const reqBody = chatPane.mode === 'hermes'
+      ? {session_id: chatPane.hermesSid || '', message: text,
+         stored_sid: chatPane.hermesStoredSid || ''}   // durable id → guard audit's "Chat" jump
+      : {session:chatPane.sid, message:text, mode:chatPane.mode,
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset(),
          // direct lane reads `image` (dataURL); `image_name` labels the sidecar row
@@ -9352,7 +9406,7 @@ async function sendChat() {
             // clicked in the sliver between [DONE] and the socket closing cannot
             // stamp a finished reply "interrupted (forced)".
             turn.done = true; turnStage('done'); clearTimeout(turn.timer);
-            think.remove(); chatBusy = false;
+            think.remove(); chatPane.busy = false;
             chatSummary(holder);                          // §B: finalize step summary
             const od = holder.querySelector('details.think'); if (od) od.open = false;
             holder._raw = body.textContent;   // keep the raw answer BEFORE it becomes cards (Copy reads this)
@@ -9398,15 +9452,16 @@ async function sendChat() {
             // The lane's echo is only a FALLBACK now (see laneModelLabel): Odysseus
             // reports the session's stored wire id, which survives a runner switch
             // and — for MLX — is an absolute path. The live runner wins.
-            chatModel = j.model || chatModel;
+            chatPane.model = j.model || chatPane.model;
             holder.querySelector('.who').textContent =
-              liveModelLabel(chatModel) || 'Assistant';
+              liveModelLabel(chatPane.model) || 'Assistant';
           } else if (j.type === 'hermes_session') {
             // Hermes lane: the bridge minted (or re-minted after a stale sid) a
             // gateway session — persist it so follow-up turns continue it.
-            if (j.id){ hermesSid = j.id; localStorage.setItem('harness-hermes-sid', j.id); }
+            if (j.id){ chatPane.hermesSid = j.id; turn.hermesSid = j.id;
+                       localStorage.setItem('harness-hermes-sid', j.id); }
             // Phase 3: the stored id keys the rail's active row.
-            if (j.stored_id){ hermesStoredSid = j.stored_id; localStorage.setItem('harness-hermes-stored', j.stored_id); }
+            if (j.stored_id){ chatPane.hermesStoredSid = j.stored_id; localStorage.setItem('harness-hermes-stored', j.stored_id); }
           } else if (j.type === 'hermes_status') {
             turnStage('prefill (bridge says hermes is working)');
             // Bridge liveness note (20s of mid-turn silence): visible reassurance
@@ -9415,13 +9470,13 @@ async function sendChat() {
           } else if (j.type === 'approval') {
             // Hermes Phase 2: interactive approval card at stream position.
             turnStage('awaiting approval');
-            chatApproval(holder, j.request || {});
+            chatApproval(holder, j.request || {}, turn.hermesSid);
           } else if (j.type === 'ask') {
             // Hermes `clarify` tool: an interactive question at stream position.
             // NOT auto-answered anywhere — including conversation mode, where the
             // mic stays gated because the turn never ends (no turn_end fires).
             turnStage('awaiting an answer');
-            chatAsk(holder, j.request || {});
+            chatAsk(holder, j.request || {}, turn.hermesSid);
           } else if (j.type === 'ask_expire') {
             expireAskCard(holder, String(j.request_id || ''));
           } else if (j.type === 'file_card') {
@@ -9490,9 +9545,9 @@ async function sendChat() {
     else body.textContent += `\n[stream error: ${e}]`;
   } finally {
     clearTimeout(turn.timer);
-    if (curTurn === turn) curTurn = null;
+    if (chatPane.curTurn === turn) chatPane.curTurn = null;
     think.remove?.();
-    chatBusy = false;
+    chatPane.busy = false;
     expireApprovals(holder);   // Phase 2: freeze any still-open approval cards
     const sb = document.getElementById('chat-send');
     sb.disabled = false; sendPaint('Send');
@@ -9508,8 +9563,8 @@ async function sendChat() {
     stampLiveTurn(userWrap, holder, text);
     // …and honour a ✕ that was clicked on this turn's image while it streamed:
     // the sidecar row only exists now, so the delete is issued here (once).
-    if (pendingAttachDrop && pendingAttachDrop.wrap === userWrap){
-      const p = pendingAttachDrop; pendingAttachDrop = null;
+    if (chatPane.pendingAttachDrop && chatPane.pendingAttachDrop.wrap === userWrap){
+      const p = chatPane.pendingAttachDrop; chatPane.pendingAttachDrop = null;
       dropSidecarAttachment(p.text);
     }
     // CONVERSATION MODE: THE turn ended — any lane, any outcome, including a

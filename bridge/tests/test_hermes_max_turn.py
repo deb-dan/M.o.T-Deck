@@ -264,6 +264,9 @@ except ImportError:
     print("  --  pyyaml absent: skipping the live harness.yaml read")
 
 # ── WIRING: ship.sh hardening (task 2) ───────────────────────────────────────
+# NOTE (2026-08-21 ops slice): ship.sh also gained a contract gate, --restart and a
+# reminder line. Those are pinned in bridge/tests/test_ops_hardening.py, not here —
+# the checks below stay scoped to the wait-loop/fingerprint hardening this file added.
 check("ship waits 90s", "SHIP_WAIT_S=90" in SHIP)
 check("ship no longer waits only 30", "seq 1 30" not in SHIP)
 check("ship tracks whether the bridge actually came up", 'UP=1; break' in SHIP)
