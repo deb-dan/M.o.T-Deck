@@ -316,7 +316,7 @@ do_acestep() {
       say "have $f"
       continue
     fi
-    say "downloading $f…"
+    say "downloading ${f}…"
     local p
     p=$("$VENV/bin/python" - <<PY
 from huggingface_hub import hf_hub_download
