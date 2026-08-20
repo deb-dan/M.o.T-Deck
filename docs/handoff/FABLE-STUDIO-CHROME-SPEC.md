@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE SPEC — STUDIO CHROME (the "deep theme", v1)
 2026-08-20 · Fable 5 · decision-free build spec for an Opus builder.
 Reference: Debi's Unsloth screenshots + docs/research/2026-08-20-unsloth-recon.md (§2)

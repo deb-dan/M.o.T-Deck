@@ -1,7 +1,7 @@
 # Music engine measurement runbook
 
 **Date:** 2026-08-20 · **For:** Debi (runs it) → Fable (decides) · **Status:** prepared, NOT run
-**Source of the shortlist:** `docs/research/2026-08-20-music-video-gen.md`
+**Source of the shortlist:** `docs/research/(done) 2026-08-20-music-video-gen.md`
 **Script:** `scripts/measure_music.sh`
 
 ---

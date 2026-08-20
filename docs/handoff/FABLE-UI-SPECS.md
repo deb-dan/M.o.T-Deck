@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE 5 — UI SPECS (decision-free, for Opus 4.8 implementation) · 2026-07-23
 
 Authority: this file transfers Fable's design lane to Opus for implementation. Every aesthetic decision is made HERE; builders implement without inventing. All work in `bridge/panel/index.html` unless noted; existing `:root` tokens are law; validate (node --check, CSS braces) before ship; each section = its own slice, Mac-verified. Fable QAs everything at project end against the ODDITIES LOG.

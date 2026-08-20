@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE SPEC — Voice components as first-class tabs (VoiceStudio + Voicebox)
 
 Fable 5, 2026-08-07. For Opus 5 (or Opus 4.8) builder sessions. Identity protocol

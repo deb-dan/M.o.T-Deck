@@ -897,6 +897,97 @@
   .cm-s-default .cm-def, .cm-s-default .cm-variable-2 { color:var(--cream); }
   .cm-s-default .cm-property { color:var(--fg); }
 
+  /* ============ MUSIC STUDIO DECK — #view-music[data-mview="studio"] ============
+     Fable design (2026-08-20, FABLE-MUSIC-DECK-SPEC.md), from Debi's VoiceStudio
+     Launchpad reference. A PER-PAGE alternate layout, not a third global theme:
+       · Every selector below is prefixed #view-music[data-mview="studio"] — with the
+         attribute absent (the default, 'classic') the Music page is byte-for-byte the
+         editorial page it was.
+       · Tokens are namespaced --mv-*; no palette token is redefined.
+       · It must COMPOSE with light/dark AND with the global ▣ studio chrome, so this
+         block deliberately sets NO background / border-color / font-family on any
+         button — control chrome stays ▣'s to own. The one exception is the Generate
+         button's SIZE (a deck primary is bigger), which is a layout decision.
+       · The light-theme override uses :where(html[data-theme="light"] *), which carries
+         ZERO specificity and still lets the selector START with the prefix.
+     ------------------------------------------------------------------------------- */
+  #view-music[data-mview="studio"] {
+    --mv-g1:#d9b36c; --mv-g2:#c96c8e; --mv-line:rgba(255,255,255,.09);
+    --mv-lift:rgba(255,255,255,.05); }
+  #view-music[data-mview="studio"]:where(html[data-theme="light"] *) {
+    --mv-g1:#9c7327; --mv-g2:#a04e6b; --mv-line:rgba(0,0,0,.10);
+    --mv-lift:rgba(0,0,0,.04); }
+  #view-music[data-mview="studio"] #music-hero {
+    padding:22px 0 26px; border-bottom:1px solid var(--mv-line); margin-bottom:22px; }
+  #view-music[data-mview="studio"] .mv-kick {
+    font:10px var(--mono); letter-spacing:.22em; text-transform:uppercase;
+    color:var(--faint); display:block; margin-bottom:12px; }
+  #view-music[data-mview="studio"] .mv-title {
+    font:400 34px/1.15 var(--serif); color:var(--cream); margin:0 0 10px; }
+  #view-music[data-mview="studio"] .mv-grad {
+    background:linear-gradient(90deg, var(--mv-g1), var(--mv-g2));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  #view-music[data-mview="studio"] .mv-sub {
+    font-size:13px; color:var(--dim); margin-bottom:14px; }
+  #view-music[data-mview="studio"] .mv-pills { display:flex; gap:8px; flex-wrap:wrap; }
+  #view-music[data-mview="studio"] .mv-pill {
+    font:10px var(--mono); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--ok); border:1px solid var(--mv-line); border-radius:999px;
+    padding:4px 11px; }
+  #view-music[data-mview="studio"] .mv-pill.off { color:var(--faint); }
+  #view-music[data-mview="studio"] .mv-grid {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));
+    gap:14px; padding:2px; }
+  #view-music[data-mview="studio"] .mv-card {
+    border:1px solid var(--mv-line); border-radius:14px; padding:15px 16px 14px;
+    display:flex; flex-direction:column; gap:9px; cursor:pointer;
+    transition:transform .12s ease, border-color .12s ease; }
+  #view-music[data-mview="studio"] .mv-card:hover {
+    transform:translateY(-1px); border-color:var(--mv-accent, var(--gold));
+    background:var(--mv-lift); }
+  #view-music[data-mview="studio"] .mv-top {
+    display:flex; align-items:center; gap:11px; }
+  #view-music[data-mview="studio"] .mv-tile {
+    width:34px; height:34px; border-radius:10px; flex:none; display:flex;
+    align-items:center; justify-content:center; font-size:16px;
+    background:var(--mv-tint, var(--card2)); color:var(--mv-accent, var(--gold)); }
+  #view-music[data-mview="studio"] .mv-name {
+    font:10.5px var(--mono); letter-spacing:.15em; text-transform:uppercase;
+    color:var(--cream); }
+  #view-music[data-mview="studio"] .mv-tag {
+    font:9.5px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--faint); display:block; margin-top:3px; }
+  #view-music[data-mview="studio"] .mv-gist {
+    font-size:12px; line-height:1.5; color:var(--dim); overflow:hidden;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  #view-music[data-mview="studio"] .mv-wave {
+    display:flex; align-items:flex-end; gap:3px; height:16px; opacity:.75; }
+  #view-music[data-mview="studio"] .mv-bar {
+    width:3px; border-radius:2px; background:var(--mv-accent, var(--gold)); }
+  #view-music[data-mview="studio"] .mv-acts {
+    display:flex; gap:7px; align-items:center; margin-top:1px; }
+  #view-music[data-mview="studio"] .mv-engs {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));
+    gap:12px; width:100%; }
+  #view-music[data-mview="studio"] .mv-eng {
+    border:1px solid var(--mv-line); border-radius:12px; padding:13px 14px;
+    cursor:pointer; }
+  #view-music[data-mview="studio"] .mv-eng.on {
+    border-color:var(--gold); background:var(--mv-lift); }
+  #view-music[data-mview="studio"] .mv-en {
+    font:10.5px var(--mono); letter-spacing:.15em; text-transform:uppercase;
+    color:var(--cream); }
+  #view-music[data-mview="studio"] .mv-ed {
+    font-size:11.5px; color:var(--dim); margin-top:5px; line-height:1.45; }
+  #view-music[data-mview="studio"] .mv-3 {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));
+    gap:14px; align-items:start; }
+  #view-music[data-mview="studio"] .cap-h {
+    font-size:10px; letter-spacing:.24em; color:var(--faint); }
+  #view-music[data-mview="studio"] #mus-go {
+    height:34px; padding:0 26px; font-size:13px; }
+  /* ============================ end music deck ================================== */
+
   /* ============ OPTIONAL "STUDIO" CHROME — html[data-chrome="studio"] ============
      Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from Debi's Unsloth
      screenshots. This REPLACES the parked "compact" axis wholesale: compact was three
@@ -1144,7 +1235,10 @@
     <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
     <a id="nav-music" onclick="showView('music')" title="Music" aria-label="Music"><span class="ico">♫</span> Music</a>
     <a id="nav-caps" onclick="showView('caps')" title="Capabilities" aria-label="Capabilities"><span class="ico">⚙</span> Capabilities</a>
-    <a onclick="alert('Policies UI lands in M2')" title="Policies" aria-label="Policies"><span class="ico">§</span> Policies</a>
+    <!-- Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): its onclick was an
+         alert(), which is a SILENT no-op in WKWebView — a nav entry that does nothing
+         at all is worse than no entry. A real Policies view (path-guard policy
+         display) is recorded as future work in the roadmap. -->
     <a onclick="showLogs()" title="Logs" aria-label="Logs"><span class="ico">≣</span> Logs</a>
   </nav>
   <div class="navlbl">Components</div>
@@ -1418,16 +1512,27 @@
         <div class="sub">Songs generated locally — nothing leaves this machine. A render is a
           one-shot subprocess: no server, no port, no model held in memory afterwards.</div>
       </div>
+      <div><span class="chip" id="music-view-chip" onclick="toggleMusicView()"
+                 title="Switch this page between the editorial layout and the Studio deck"
+                 >✦ Studio view</span></div>
     </div>
     <div class="stamp" id="music-stamp">—</div>
+
+    <!-- STUDIO DECK hero. Rendered ONLY in studio view (the renderer empties it in
+         classic) so the classic page is byte-for-byte what it was. -->
+    <div id="music-hero" hidden></div>
 
     <div class="caps-group">
       <div class="cap-h">Engines</div>
       <div class="cap-card" id="music-engines"><div class="cs-empty">Loading…</div></div>
     </div>
 
+    <!-- Templates is a DISCLOSURE (v1.2 C2): once a track exists, a six-card gallery
+         between Engines and Create is what pushed Generate below the fold. It opens by
+         default only on a fresh install, where it IS the teaching material. -->
     <div class="caps-group" id="music-templates-wrap" hidden>
-      <div class="cap-h">Templates<span class="cap-count" id="music-tplcount"></span></div>
+      <div class="cap-h" id="music-tplhead" onclick="toggleMusicTpls()"
+           style="cursor:pointer">▸ Templates<span class="cap-count" id="music-tplcount"></span></div>
       <div class="cap-card" id="music-templates"></div>
     </div>
 
@@ -1778,6 +1883,8 @@ const LOG_SOURCES = [
   {n:'voicebox-install', label:'voicebox install'},
   {n:'voice-worker', label:'voice worker'},
   {n:'music-install', label:'music install'},
+  {n:'comfyui', label:'comfyui'}, {n:'comfyui-install', label:'comfyui install'},
+  {n:'unsloth', label:'unsloth'}, {n:'unsloth-install', label:'unsloth install'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -3069,7 +3176,7 @@ async function hermesToolsAdopt(btn) {
   hermesToolsIntent = {};
   const ok = await refreshHermesTools();
   if (!ok) { if (btn) btn.disabled = false; return; }
-  feed('hermes toolsets: adopted Hermes’s reported state (nothing written)');
+  feed('hermes', 'toolsets: adopted Hermes’s reported state (nothing written)');
 }
 
 /* The verify affordance. A FRESH read at the bridge, never the panel snapshot. */
@@ -3115,7 +3222,7 @@ async function hermesToolsWrite(payload, errId, el) {
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error(j.error || (j.note || ('HTTP ' + r.status)));
-    feed('hermes toolsets: ' + j.enabled_count + '/' + j.total + ' on · '
+    feed('hermes', 'toolsets: ' + j.enabled_count + '/' + j.total + ' on · '
          + j.tool_count_enabled + ' tools in the prompt — applies to the next chat');
     // A verify card computed BEFORE this write would now be quietly wrong; drop it
     // rather than leave a confident stale number on screen (Check re-reads).
@@ -3341,7 +3448,7 @@ async function hermesSkillsWrite(payload, errId, el) {
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error(j.error || (j.note || ('HTTP ' + r.status)));
-    feed('hermes skills: ' + j.in_prompt + '/' + j.total
+    feed('hermes', 'skills: ' + j.in_prompt + '/' + j.total
          + ' in the prompt — applies to the next chat');
     // Re-READ rather than patch our copy: the switch must show Hermes's answer,
     // never our last write. (Hermes's own page does the opposite and that is
@@ -4890,9 +4997,10 @@ async function finishTalk(chunks, fmt){
    The base height is measured ONCE, lazily — the chat view can be display:none at load
    (offsetHeight 0), in which case nothing is cached and the next call measures again. */
 const GROW_MAX = 3;
-function growInput(el){
+function growInput(el, maxMul){
   const box = el || document.getElementById('chat-input');
   if (!box) return;
+  const mul = (typeof maxMul === 'number' && maxMul > 1) ? maxMul : GROW_MAX;
   if (!box._growBase){
     box.style.height = '';                       // back to the CSS/rows=2 height
     const bh = box.offsetHeight;
@@ -4904,7 +5012,7 @@ function growInput(el){
   const base = box._growBase, bd = box._growBorder || 0;
   box.style.height = 'auto';
   const need = box.scrollHeight + bd;
-  box.style.height = Math.max(base, Math.min(need, base * GROW_MAX)) + 'px';
+  box.style.height = Math.max(base, Math.min(need, base * mul)) + 'px';
 }
 
 /* The ONE place a transcript reaches the composer — manual dictation and auto mode
@@ -10272,6 +10380,78 @@ let musicPlay = '';        // the ONE track that currently has an <audio> elemen
 let musicErr = '';         // inline error under Generate (the bridge's own words)
 let musicWarn = '';        // the RAM warning, waiting for an explicit override
 let musicSaveTpl = false;  // the inline "save as template" name box is open
+let musicView = 'classic'; // 'classic' | 'studio' — the per-page deck (Fable deck spec)
+let musicTplOpen = null;   // templates disclosure; null = decide from the library
+const musicPromptOpen = new Set();   // library rows whose prompt panel is expanded
+
+/* ---------- the per-page STUDIO DECK ----------
+   Debi's ask, verbatim: "a new button just for the Music page that totally revamps
+   everything when clicked". This is a VIEW toggle, not a third global theme — it sets
+   one attribute on #view-music and the one sanctioned CSS block does the rest. It is
+   independent of ◐ (theme) and ▣ (chrome) and composes with both. */
+function musicStudio(){ return musicView === 'studio'; }
+
+function applyMusicView(){
+  const v = document.getElementById('view-music');
+  if (v){
+    if (musicStudio()) v.dataset.mview = 'studio'; else delete v.dataset.mview;
+  }
+  const chip = document.getElementById('music-view-chip');
+  if (chip) chip.textContent = musicStudio() ? '▤ Classic' : '✦ Studio view';
+}
+
+function toggleMusicView(){
+  musicView = musicStudio() ? 'classic' : 'studio';
+  try { localStorage.setItem('harness-music-view', musicView); } catch (e) {}
+  applyMusicView();
+  renderMusic();
+  renderMusicLibrary();
+  feed('music', musicStudio() ? 'studio deck on' : 'classic layout');
+}
+
+function loadMusicView(){
+  try {
+    if (localStorage.getItem('harness-music-view') === 'studio') musicView = 'studio';
+  } catch (e) {}
+  applyMusicView();
+}
+
+/* Accents are FIXED per built-in so a template always looks like itself; user
+   templates cycle the same six rather than inventing colour. */
+const MUSIC_ACCENTS = {'neo-soul':'#c96c8e', 'rock':'#e06565', 'lofi':'#8b93f8',
+                       'cinematic':'#46c99a', 'edm':'#d9b36c', 'folk':'#e0a458'};
+const MUSIC_ACCENT_CYCLE = ['#c96c8e', '#e06565', '#8b93f8', '#46c99a', '#d9b36c', '#e0a458'];
+const MUSIC_GLYPHS = {'neo-soul':'♪', 'rock':'⚡', 'lofi':'☾',
+                      'cinematic':'▦', 'edm':'◆', 'folk':'❋'};
+
+/* PURE: a stable small integer for any template id (accent + waveform shape). */
+function musicHash(id){
+  let h = 0;
+  for (const ch of String(id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+function musicAccent(t){
+  if (t && MUSIC_ACCENTS[t.id]) return MUSIC_ACCENTS[t.id];
+  return MUSIC_ACCENT_CYCLE[musicHash(t && t.id) % MUSIC_ACCENT_CYCLE.length];
+}
+function musicGlyph(t){
+  if (t && MUSIC_GLYPHS[t.id]) return MUSIC_GLYPHS[t.id];
+  return '♫';
+}
+/* PURE: #rrggbb → rgba(...) at the card-tile alpha. Computed here rather than with
+   color-mix() so the tile works on every WebKit build the app has ever run on. */
+function musicTint(hex, a){
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return 'var(--card2)';
+  const n = parseInt(h, 16);
+  if (isNaN(n)) return 'var(--card2)';
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+/* PURE: five bar heights (px) that differ per template but never change for one. */
+function musicWaveBars(id){
+  const h = musicHash(id);
+  return [0, 1, 2, 3, 4].map(i => 5 + ((h >> (i * 3)) & 7) * 1.5);
+}
 
 function musicEngines(){ return ((musicSnap || {}).engines) || []; }
 function musicInstalled(){ return musicEngines().filter(e => e.installed).map(e => e.engine); }
@@ -10297,6 +10477,7 @@ function armMusicPoll(){
 }
 
 async function initMusic(){
+  applyMusicView();
   await loadMusicStatus();
   await loadMusicLibrary();
 }
@@ -10321,9 +10502,13 @@ async function loadMusicLibrary(){
     if (j && j.ok) musicLib = j.tracks || [];
   } catch (e) {}
   renderMusicLibrary();
+  renderMusicHero();        // the hero counts tracks
+  renderMusicTemplates();   // the disclosure defaults open only on an empty library
 }
 
 function renderMusic(){
+  applyMusicView();
+  renderMusicHero();
   renderMusicEngines();
   renderMusicTemplates();
   renderMusicCreate();
@@ -10335,6 +10520,23 @@ function renderMusic(){
       ? `${inst.length} of ${musicEngines().length} engines installed · ${musicLib.length} track(s)`
       : 'no engine installed yet';
   }
+}
+
+/* The deck hero. Emptied (and hidden) in classic view, so the classic page carries no
+   trace of it and nothing has to be un-styled. */
+function renderMusicHero(){
+  const box = document.getElementById('music-hero');
+  if (!box) return;
+  if (!musicStudio()){ box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  const pills = musicEngines().map(e =>
+    `<span class="mv-pill${e.installed ? '' : ' off'}">${esc(e.label)} · ${
+      e.installed ? 'ready' : (e.installing ? 'installing…' : 'not installed')}</span>`).join('');
+  box.innerHTML = `<span class="mv-kick">♫ Music studio</span>
+    <div class="mv-title">Make music that <span class="mv-grad">moves you</span>.</div>
+    <div class="mv-sub">Two local engines · ${musicLib.length} track${
+      musicLib.length === 1 ? '' : 's'} · describe it, get a song.</div>
+    <div class="mv-pills">${pills}</div>`;
 }
 
 function musicLicPill(e){
@@ -10407,7 +10609,7 @@ async function musicInstall(engine, btn){
       e2.textContent = (res && res.error) || 'install failed'; }
     return;
   }
-  feed(`music: installing ${engine} — this downloads several GB (View log to watch)`);
+  feed('music', `installing ${engine} — this downloads several GB (View log to watch)`);
   await loadMusicStatus();
 }
 
@@ -10428,35 +10630,88 @@ function musicSyncSecs(v){
    generate` is the deliberate one-click path for someone who wants exactly this. */
 function musicTpls(){ return ((musicSnap || {}).templates) || []; }
 
+/* The disclosure defaults OPEN only on a fresh install: with no tracks the gallery IS
+   the page's teaching material, and with tracks it is six cards between the user and
+   the Generate button they came for (v1.2 C2 — Debi had to scroll to reach Generate). */
+function musicTplsOpen(){
+  return musicTplOpen === null ? !musicLib.length : !!musicTplOpen;
+}
+function toggleMusicTpls(){
+  musicTplOpen = !musicTplsOpen();
+  renderMusicTemplates();
+}
+
 function renderMusicTemplates(){
   const wrap = document.getElementById('music-templates-wrap');
   const box = document.getElementById('music-templates');
   const cnt = document.getElementById('music-tplcount');
+  const head = document.getElementById('music-tplhead');
   if (!wrap || !box) return;
   const tpls = musicTpls();
   // Nothing to prefill INTO until an engine exists, so the strip stays out of the way.
   wrap.hidden = !musicInstalled().length || !tpls.length;
   if (wrap.hidden) return;
+  const open = musicTplsOpen();
   if (cnt) cnt.textContent = String(tpls.length);
-  box.innerHTML = tpls.map(t => {
-    const gist = String(t.prompt || '').slice(0, 90).replace(/\s+/g, ' ');
-    const del = t.builtin ? ''
-      : `<button class="cap-btn" onclick="musicDelTemplate('${escAttr(t.id)}', this)"
-                 title="Forget this template">✕</button>`;
-    return `<div class="cap-row">
-      <div class="cap-txt">
-        <div class="cap-name">${esc(t.name)}
-          <span class="cap-pill">${esc(t.tag || '')}</span>
-          ${t.builtin ? '' : '<span class="cap-pill">yours</span>'}</div>
-        <div class="cap-desc" style="white-space:normal">${esc(gist)}…</div>
-      </div>
-      <div class="cap-ctl">
-        <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', false)">Use</button>
-        <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', true)"
-                title="Prefill and start rendering">use &amp; generate</button>
-        ${del}
-      </div></div>`;
-  }).join('');
+  if (head) head.firstChild.nodeValue = (open ? '▾ ' : '▸ ') + 'Templates';
+  box.hidden = !open;
+  if (!open){ box.innerHTML = ''; return; }
+  box.className = musicStudio() ? 'mv-grid' : 'cap-card';
+  box.innerHTML = tpls.map(t => musicStudio() ? musicTplCard(t) : musicTplRow(t)).join('');
+}
+
+function musicTplRow(t){
+  const gist = String(t.prompt || '').slice(0, 90).replace(/\s+/g, ' ');
+  const del = t.builtin ? ''
+    : `<button class="cap-btn" onclick="musicDelTemplate('${escAttr(t.id)}', this)"
+               title="Forget this template">✕</button>`;
+  return `<div class="cap-row">
+    <div class="cap-txt">
+      <div class="cap-name">${esc(t.name)}
+        <span class="cap-pill">${esc(t.tag || '')}</span>
+        ${t.builtin ? '' : '<span class="cap-pill">yours</span>'}</div>
+      <div class="cap-desc" style="white-space:normal">${esc(gist)}…</div>
+    </div>
+    <div class="cap-ctl">
+      <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', false)">Use</button>
+      <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', true)"
+              title="Prefill and start rendering">use &amp; generate</button>
+      ${del}
+    </div></div>`;
+}
+
+/* The deck card. The whole card is the Use affordance (click = prefill + scroll); the
+   two small chips inside stopPropagation so they cannot double-fire it. */
+function musicTplCard(t){
+  const acc = musicAccent(t);
+  const gist = String(t.prompt || '').replace(/\s+/g, ' ');
+  const bars = musicWaveBars(t.id)
+    .map(h => `<span class="mv-bar" style="height:${h}px"></span>`).join('');
+  const del = t.builtin ? ''
+    : `<button class="cap-btn" onclick="event.stopPropagation();musicDelTemplate('${
+         escAttr(t.id)}', this)" title="Forget this template">✕</button>`;
+  return `<div class="mv-card" style="--mv-accent:${escAttr(acc)};--mv-tint:${
+      escAttr(musicTint(acc, 0.18))}"
+      onclick="musicUseTemplate('${escAttr(t.id)}', false)">
+    <div class="mv-top">
+      <span class="mv-tile">${esc(musicGlyph(t))}</span>
+      <span><span class="mv-name">${esc(t.name)}</span>
+        <span class="mv-tag">${esc(t.tag || '')}${t.builtin ? '' : ' · yours'}</span></span>
+    </div>
+    <div class="mv-gist">${esc(gist)}</div>
+    <div class="mv-wave">${bars}</div>
+    <div class="mv-acts">
+      <button class="cap-btn" onclick="event.stopPropagation();musicUseTemplate('${
+        escAttr(t.id)}', true)" title="Prefill and start rendering">use &amp; generate</button>
+      ${del}
+    </div></div>`;
+}
+
+/* One place the page moves the user to the form — a prefill that happens 900px below
+   the fold reads as "the button did nothing" (Debi's report, classic view included). */
+function musicScrollToCreate(){
+  const el = document.getElementById('music-create-wrap');
+  if (el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function musicUseTemplate(id, andGo){
@@ -10467,13 +10722,25 @@ function musicUseTemplate(id, andGo){
   }
   musicErr = ''; musicWarn = '';
   renderMusicCreate();                       // make sure the fields exist
-  const set = (elId, v) => { const e = document.getElementById(elId); if (e) e.value = v; };
-  set('mus-prompt', t.prompt || '');
-  set('mus-lyrics', t.lyrics || '');
-  if (t.seconds) musicSyncSecs(t.seconds);
-  set('mus-steps', t.steps == null ? '' : t.steps);
-  feed(`music: loaded the "${esc(t.name)}" template`);
-  if (andGo) musicGenerate();
+  musicFill({prompt: t.prompt || '', lyrics: t.lyrics || '', seconds: t.seconds,
+             steps: t.steps});
+  feed('music', `loaded the "${esc(t.name)}" template`);
+  if (andGo) musicGenerate(); else musicScrollToCreate();
+}
+
+/* THE ONE prefill path — templates and library re-use share it, so "what a prefill
+   actually sets" is a single fact rather than two that could drift. Every field is
+   optional; an absent key is left exactly as the user had it. */
+function musicFill(v){
+  const set = (elId, val) => {
+    const e = document.getElementById(elId);
+    if (e && val !== undefined && val !== null){ e.value = val; growMusicInput(e); }
+  };
+  set('mus-prompt', v.prompt);
+  set('mus-lyrics', v.lyrics);
+  if (v.seconds) musicSyncSecs(v.seconds);
+  if ('steps' in v) set('mus-steps', v.steps == null ? '' : v.steps);
+  if ('seed' in v) set('mus-seed', v.seed == null ? '' : v.seed);
 }
 
 async function musicSaveTemplate(){
@@ -10497,7 +10764,7 @@ async function musicSaveTemplate(){
                         musicPaintState(musicJob(), musicRunning()); return; }
   if (musicSnap) musicSnap.templates = res.templates || musicTpls();
   musicSaveTpl = false;
-  feed(`music: saved the "${esc(name)}" template`);
+  feed('music', `saved the "${esc(name)}" template`);
   renderMusicTemplates(); renderMusicCreate();
 }
 
@@ -10559,7 +10826,7 @@ async function musicSetOutDir(){
     if (e2) e2.textContent = (res && res.error) || 'could not set that folder';
     return;
   }
-  feed(`music: saving tracks to ${esc(res.output_dir || '')}`);
+  feed('music', `saving tracks to ${esc(res.output_dir || '')}`);
   await loadMusicStatus();
   await loadMusicLibrary();
 }
@@ -10596,64 +10863,93 @@ function renderMusicCreate(){
   const fmts = (((musicSnap || {}).formats) || {})[musicEngine] || [];
   const sig = [inst.join(','), musicEngine, eng.default_steps, eng.max_steps,
                (musicSnap || {}).seconds_min, (musicSnap || {}).seconds_max,
-               fmts.join(','), musicSaveTpl ? 'tpl' : ''].join('|');
+               fmts.join(','), musicSaveTpl ? 'tpl' : '', musicView].join('|');
   const typing = box.contains(document.activeElement) &&
     /^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || '');
   if (box.querySelector('#mus-prompt') && (box._sig === sig || typing)){
     musicPaintState(job, running); return;
   }
   box._sig = sig;
+  // ENGINE CHOICE. Classic keeps the chip row; the deck draws two mini-cards, because
+  // the choice is a real trade-off (quality vs minutes vs RAM) and a chip has nowhere
+  // to say so. Both write the SAME musicEngine through musicPick.
+  const engCard = (id) => {
+    const e = musicEngines().find(x => x.engine === id) || {};
+    return `<div class="mv-eng${id === musicEngine ? ' on' : ''}"
+       onclick="musicPick('${esc(id)}')">
+      <div class="mv-en">${esc(e.label || id)}${id === musicEngine ? ' ✓' : ''}</div>
+      <div class="mv-ed">${esc(e.note || '')}<br>needs about ${
+        esc(String(e.ram_gb || ''))} GB of the model-RAM budget while it renders</div>
+    </div>`;
+  };
   const chips = inst.length > 1
-    ? `<div class="cap-row"><div class="cap-txt">
-         <div class="cap-name">Engine</div>
-         <div class="cap-desc">Both are installed — pick the trade-off you want.</div>
-       </div><div class="cap-ctl">${inst.map(id => {
-         const e = musicEngines().find(x => x.engine === id) || {};
-         return `<button class="chip${id === musicEngine ? ' on' : ''}"
-                   onclick="musicPick('${esc(id)}')" title="${escAttr(e.note || '')}"
-                   >${esc(e.label || id)}</button>`; }).join(' ')}</div></div>`
+    ? (musicStudio()
+        ? `<div class="cap-row" style="display:block">
+             <div class="cap-name" style="margin-bottom:10px">Engine</div>
+             <div class="mv-engs">${inst.map(engCard).join('')}</div></div>`
+        : `<div class="cap-row"><div class="cap-txt">
+             <div class="cap-name">Engine</div>
+             <div class="cap-desc">Both are installed — pick the trade-off you want.</div>
+           </div><div class="cap-ctl">${inst.map(id => {
+             const e = musicEngines().find(x => x.engine === id) || {};
+             return `<button class="chip${id === musicEngine ? ' on' : ''}"
+                       onclick="musicPick('${esc(id)}')" title="${escAttr(e.note || '')}"
+                       >${esc(e.label || id)}</button>`; }).join(' ')}</div></div>`)
     : '';
   const smin = (musicSnap || {}).seconds_min || 10, smax = (musicSnap || {}).seconds_max || 300;
   const secs = musicSecs();
+  const seedHelp = (musicSnap || {}).seed_help
+    || 'Any whole number. The same seed with the same settings gives the same song.';
+  const seedMax = (musicSnap || {}).seed_max || 2147483647;
+  // The three short numeric fields sit on ONE row in the deck (spec B3) and stack on a
+  // narrow window; classic keeps one row each.
+  const three = musicStudio() ? ' mv-3' : '';
   box.innerHTML = chips + `
     <div class="cap-row" style="display:block">
       <div class="cap-name">Prompt</div>
       <div class="cap-desc">Describe the music — genre, instruments, mood, tempo.</div>
-      <textarea id="mus-prompt" class="cap-inp" style="width:100%;height:62px;margin-top:8px"
+      <textarea id="mus-prompt" class="cap-inp" rows="3"
+        style="width:100%;height:${MUSIC_TA_BASE}px;margin-top:8px;overflow-y:auto"
+        oninput="growMusicInput(this)"
         placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
     </div>
     <div class="cap-row" style="display:block">
       <div class="cap-name">Lyrics</div>
       <div class="cap-desc">Optional — leave empty for an instrumental. Section tags
         like [Verse] / [Chorus] shape the arrangement.</div>
-      <textarea id="mus-lyrics" class="cap-inp" style="width:100%;height:82px;margin-top:8px"
+      <textarea id="mus-lyrics" class="cap-inp" rows="3"
+        style="width:100%;height:${MUSIC_TA_BASE}px;margin-top:8px;overflow-y:auto"
+        oninput="growMusicInput(this)"
         placeholder="(empty = instrumental)"></textarea>
     </div>
-    <div class="cap-row">
-      <div class="cap-txt"><div class="cap-name">Length</div>
-        <div class="cap-desc">${smin}–${smax} seconds.</div></div>
-      <div class="cap-ctl">
-        <input class="cap-range" type="range" id="mus-secs-rng" min="${smin}" max="${smax}"
-               step="5" value="${secs}" oninput="musicSyncSecs(this.value)">
-        <input class="cap-inp" type="number" id="mus-secs" style="width:74px"
-               min="${smin}" max="${smax}" value="${secs}" oninput="musicSyncSecs(this.value)">
+    <div class="cap-row${three}" style="display:${musicStudio() ? 'grid' : 'block'}">
+      <div style="margin-bottom:${musicStudio() ? 0 : 14}px">
+        <div class="cap-name">Length</div>
+        <div class="cap-desc">${smin}–${smax} seconds.</div>
+        <div class="cap-ctl" style="margin-top:6px">
+          <input class="cap-range" type="range" id="mus-secs-rng" min="${smin}" max="${smax}"
+                 step="5" value="${secs}" oninput="musicSyncSecs(this.value)">
+          <input class="cap-inp" type="number" id="mus-secs" style="width:74px"
+                 min="${smin}" max="${smax}" value="${secs}" oninput="musicSyncSecs(this.value)">
+        </div>
       </div>
-    </div>
-    <div class="cap-row">
-      <div class="cap-txt"><div class="cap-name">Steps</div>
+      <div style="margin-bottom:${musicStudio() ? 0 : 14}px">
+        <div class="cap-name">Steps</div>
         <div class="cap-desc">More steps = more compute. This engine's default is
           ${esc(String(eng.default_steps || ''))} (max ${esc(String(eng.max_steps || ''))}) —
-          leave empty to use it.</div></div>
-      <div class="cap-ctl"><input class="cap-inp" type="number" id="mus-steps"
-        style="width:74px" min="1" max="${esc(String(eng.max_steps || 30))}"
-        placeholder="${esc(String(eng.default_steps || ''))}"></div>
-    </div>
-    <div class="cap-row">
-      <div class="cap-txt"><div class="cap-name">Seed</div>
-        <div class="cap-desc">Optional — the same seed with the same settings gives the
-          same song. Left empty the harness picks one and records it with the track.</div></div>
-      <div class="cap-ctl"><input class="cap-inp" type="number" id="mus-seed"
-        style="width:126px" min="0" placeholder="random"></div>
+          leave empty to use it.</div>
+        <div class="cap-ctl" style="margin-top:6px"><input class="cap-inp" type="number"
+          id="mus-steps" style="width:74px" min="1"
+          max="${esc(String(eng.max_steps || 30))}"
+          placeholder="${esc(String(eng.default_steps || ''))}"></div>
+      </div>
+      <div>
+        <div class="cap-name" title="${escAttr(seedHelp)}">Seed</div>
+        <div class="cap-desc" title="${escAttr(seedHelp)}">${esc(seedHelp)}</div>
+        <div class="cap-ctl" style="margin-top:6px"><input class="cap-inp" type="number"
+          id="mus-seed" style="width:140px" min="0" max="${escAttr(String(seedMax))}"
+          title="${escAttr(seedHelp)}" placeholder="random"></div>
+      </div>
     </div>
     ${fmts.length > 1 ? `
     <div class="cap-row">
@@ -10669,17 +10965,16 @@ function renderMusicCreate(){
     <div class="cap-row" style="display:block">
       <div class="cap-desc" id="mus-state"></div>
       <!-- progress reuses the DOWNLOAD bar's classes (.dlrow/.dlbar/.dlfill) with the
-           row chrome turned off inline — same visual language as a model download,
-           and the Music view still adds zero CSS rules. -->
+           row chrome turned off inline — same visual language as a model download. -->
       <div class="dlrow" id="mus-prog" style="border:none;padding:0;margin:0" hidden>
         <div class="dlbar"><div class="dlfill" id="mus-fill" style="width:0%"></div></div>
       </div>
-      <div class="cap-desc">A render cannot be stopped once it starts — there is no
-        Cancel, because killing a Metal render mid-flight is untested.</div>
       <div class="cap-err" id="mus-err"></div>
       <div id="mus-confirm" style="margin-top:6px" hidden></div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
         <button class="primary" id="mus-go" onclick="musicGenerate()">Generate</button>
+        <button class="cap-btn" id="mus-cancel" onclick="musicCancel(this)"
+                title="Stop this render" hidden>Cancel</button>
         ${musicSaveTpl
           ? `<input class="cap-inp" id="mus-tplname" style="width:180px"
                     placeholder="template name"
@@ -10691,8 +10986,18 @@ function renderMusicCreate(){
                >Save as template</button>`}
       </div>
     </div>`;
+  for (const id of ['mus-prompt', 'mus-lyrics']){
+    const t = document.getElementById(id); if (t) growMusicInput(t);
+  }
   musicPaintState(job, running);
 }
+
+/* Three rows at ~12px mono, growing to about twice that before it scrolls internally.
+   ⚠️ builder numbers. The IMPLEMENTATION is the chat composer's growInput — shared,
+   not copied, so the border-box/lazy-measure subtleties exist in exactly one place. */
+const MUSIC_TA_BASE = 62;
+const MUSIC_GROW_MAX = 2.4;
+function growMusicInput(el){ growInput(el, MUSIC_GROW_MAX); }
 
 function musicPaintState(job, running){
   const btn = document.getElementById('mus-go');
@@ -10716,19 +11021,31 @@ function musicPaintState(job, running){
     } else { conf.innerHTML = ''; }
   }
   if (prog) prog.hidden = !running;
+  const can = document.getElementById('mus-cancel');
+  if (can){
+    can.hidden = !running;
+    if (!running && can._armed){ can._armed = false; can.classList.remove('arm');
+                                 can.textContent = 'Cancel'; }
+  }
   if (!st) return;
   if (running && job){
     const el = Math.max(0, Math.round(Date.now()/1000 - (job.started || 0)));
     const pv = job.progress_view || {};
-    // Two honest sources: the engine's own counters when it prints any, else the
-    // elapsed/estimate ratio. Either way the bar is capped short of 100% by the
-    // bridge — the decode-and-write tail is not covered by the counters.
+    // THE BAR IS PHASE-AWARE (v1.2). The bridge maps setup to the first 15% by elapsed
+    // and the render's own counters to the rest, so it can no longer pin at 60% with
+    // "Loading … DAV decoder" frozen underneath it for twenty minutes.
     if (fill) fill.style.width = ((pv.progress == null ? 0 : pv.progress) * 100).toFixed(1) + '%';
-    const left = (pv.eta_s != null && pv.eta_s > el)
-      ? ` · ~${musicClock(pv.eta_s - el)} left (estimated)` : '';
-    const phase = pv.phase ? ` · ${pv.phase}` : '';
+    // remaining_s is the bridge's blended figure and is DELIBERATELY absent when it
+    // cannot be said honestly — better than "1m 32s left" at twelve minutes elapsed.
+    const left = (pv.remaining_s != null)
+      ? ` · ~${musicClock(pv.remaining_s)} left (estimated)`
+      : ' · taking longer than estimated';
+    const phase = pv.phase ? ` · ${pv.phase}`
+      : (pv.phase_kind === 'setup' ? ' · loading the model' : '');
     st.textContent = `${job.engine} · ${job.seconds}s song · ${job.steps} steps · `
       + `seed ${job.seed} — ${musicClock(el)} elapsed${left}${phase}`;
+  } else if (job && job.state === 'cancelled'){
+    st.textContent = `last render cancelled after ${job.wall}s — nothing was saved`;
   } else if (job && job.state === 'failed'){
     st.textContent = `last render failed after ${job.wall}s`;
     if (er && !musicErr) er.textContent = String(job.error || '').slice(-500);
@@ -10741,6 +11058,33 @@ function musicPaintState(job, running){
 
 function musicPick(id){ musicEngine = id; musicErr = ''; musicWarn = ''; renderMusicCreate(); }
 function musicCancelWarn(){ musicWarn = ''; musicPaintState(musicJob(), musicRunning()); }
+
+/* CANCEL, for real (v1.2 C5). Two-step armed like every other irreversible action:
+   the render is minutes of GPU time and a mis-click would throw it away. */
+async function musicCancel(btn){
+  if (btn && !btn._armed){
+    btn._armed = true; btn.classList.add('arm'); btn.textContent = 'sure?';
+    setTimeout(() => { if (btn._armed){ btn._armed = false;
+      btn.classList.remove('arm'); btn.textContent = 'Cancel'; } }, 3000);
+    return;
+  }
+  if (btn){ btn._armed = false; btn.classList.remove('arm');
+            btn.disabled = true; btn.textContent = 'stopping…'; }
+  let res = null;
+  try {
+    const r = await fetch('/api/music/cancel', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: '{}'});
+    res = await r.json();
+  } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
+  if (btn) btn.disabled = false;
+  if (!res || !res.ok){
+    musicErr = (res && res.error) || 'could not stop the render';
+    if (btn) btn.textContent = 'Cancel';
+  } else {
+    feed('music', 'render cancelled');
+  }
+  await loadMusicStatus();
+}
 
 async function musicGenerate(confirm){
   const btn = document.getElementById('mus-go');
@@ -10773,8 +11117,41 @@ async function musicGenerate(confirm){
     return;
   }
   musicWarn = '';
-  feed(`music: rendering a ${body.seconds}s track with ${musicEngine}`);
+  feed('music', `rendering a ${body.seconds}s track with ${musicEngine}`);
   await loadMusicStatus();
+}
+
+/* PURE: line 2 of a library row. `steps` has been in the sidecar since v1 but was
+   never shown; a track with no sidecar simply shows less rather than showing gaps. */
+function musicTrackMeta(t){
+  const parts = [relTimeLong(new Date((t.created || 0) * 1000).toISOString())];
+  if (t.seconds != null) parts.push(`${t.seconds}s`);
+  if (t.wall != null) parts.push(`rendered in ${t.wall}s`);
+  if (t.seed != null) parts.push(`seed ${t.seed}`);
+  if (t.steps != null) parts.push(`${t.steps} steps`);
+  parts.push(fmtBytes(t.size_bytes));
+  return parts.join(' · ');
+}
+
+function musicTogglePrompt(name){
+  if (musicPromptOpen.has(name)) musicPromptOpen.delete(name);
+  else musicPromptOpen.add(name);
+  renderMusicLibrary();
+}
+
+/* THE REPLICATION AFFORDANCE. Everything that made this song is in its sidecar, so
+   "make another one like that" is one click plus an edit — the whole reason seeds and
+   steps are recorded at all. */
+function musicReuse(name){
+  const t = musicLib.find(x => x.name === name);
+  if (!t) return;
+  if (t.engine && musicInstalled().indexOf(t.engine) >= 0) musicEngine = t.engine;
+  musicErr = ''; musicWarn = '';
+  renderMusicCreate();
+  musicFill({prompt: t.prompt || '', lyrics: t.lyrics || '', seconds: t.seconds,
+             steps: t.steps, seed: t.seed});
+  feed('music', `re-using the settings from ${esc(name)}`);
+  musicScrollToCreate();
 }
 
 function renderMusicLibrary(){
@@ -10794,16 +11171,28 @@ function renderMusicLibrary(){
   for (const t of musicLib){
     const row = document.createElement('div'); row.className = 'cap-row';
     const txt = document.createElement('div'); txt.className = 'cap-txt';
-    const secs = (t.seconds == null) ? '' : ` · ${t.seconds}s`;
-    const wall = (t.wall == null) ? '' : ` · rendered in ${t.wall}s`;
+    // THREE LINES, always (v1.2 C3): name+pills, one meta line, the player. The prompt
+    // used to be printed in full on every row, so eight tracks buried the page —
+    // Debi's report. It now lives behind a faint chip, with re-use beside it.
+    const open = musicPromptOpen.has(t.name);
     txt.innerHTML = `<div class="cap-name">${esc(t.name)}`
       + (t.engine ? ` <span class="cap-pill">${esc(t.engine)}</span>` : '')
       + (t.ext ? ` <span class="cap-pill">${esc(String(t.ext).toUpperCase())}</span>` : '')
       + `</div>`
-      + `<div class="cap-desc">${esc(relTimeLong(new Date(t.created * 1000).toISOString()))}`
-      + `${esc(secs)}${esc(wall)}${t.seed != null ? ' · seed ' + esc(String(t.seed)) : ''}`
-      + ` · ${esc(fmtBytes(t.size_bytes))}</div>`
-      + (t.prompt ? `<div class="cap-desc" style="white-space:normal">${esc(t.prompt)}</div>` : '');
+      + `<div class="cap-desc">${esc(musicTrackMeta(t))}`
+      + (t.prompt || t.lyrics
+          ? ` <span class="cap-btn" style="cursor:pointer" onclick="musicTogglePrompt('${
+              escAttr(t.name)}')">${open ? '▾ prompt' : '▸ prompt'}</span>` : '')
+      + `</div>`
+      + (open
+          ? `<div class="cap-desc" style="white-space:pre-wrap;margin-top:6px;max-height:220px;overflow:auto">${
+               esc(t.prompt || '(no prompt recorded)')}${
+               t.lyrics ? '\n\n' + esc(t.lyrics) : ''}</div>
+             <div style="margin-top:6px"><button class="cap-btn go"
+               onclick="musicReuse('${escAttr(t.name)}')"
+               title="Load this track's prompt, lyrics, length, steps, seed and engine into the form"
+               >re-use these settings</button></div>`
+          : '');
     if (t.name === playing){
       const a = document.createElement('audio');
       a.controls = true; a.preload = 'none';
@@ -10837,8 +11226,8 @@ function renderMusicLibrary(){
         } catch (e) {}
         if (!j || !j.ok){ cb.disabled = false; cb.textContent = f;
                           cb.title = (j && j.error) || 'the conversion failed';
-                          feed(`music: ${(j && j.error) || 'conversion failed'}`); return; }
-        feed(`music: wrote ${esc(j.name || '')}`);
+                          feed('music', esc((j && j.error) || 'conversion failed')); return; }
+        feed('music', `wrote ${esc(j.name || '')}`);
         await loadMusicLibrary();
       };
       ctl.appendChild(cb);
@@ -10967,6 +11356,7 @@ loadArtifactSplit();   // TASK A: restore persisted artifact split (default half
 loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
 loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configured voice
+loadMusicView();       // MUSIC DECK: restore the persisted per-page view (classic default)
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>

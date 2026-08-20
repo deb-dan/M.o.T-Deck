@@ -454,6 +454,32 @@ ok(delta({ tag: 'button', id: null, cls: [], anc: DLROW },
 ok(delta({ tag: 'button', id: null, cls: ['cs-del'], anc: CSACT },
          ['background', 'height', 'font-size', 'font-family', 'border-radius']).length >= 3,
    'a session-rail row action visibly changes when studio is on');
+// (g') THE MUSIC PAGE (deck spec C7). Debi reported ▣ "not restyling the music page";
+// the audit says the BUTTONS there always did and the FORM FIELDS never did, because
+// this axis covers controls-that-are-buttons and the Music page is form-dominated.
+// These pin the half that is genuinely ours, so a regression there trips here.
+const MCARD = [{ tag: 'div', id: 'view-music', cls: [] },
+               { tag: 'div', id: null, cls: ['cap-card'] },
+               { tag: 'div', id: null, cls: ['cap-row'] }];
+ok(delta({ tag: 'button', id: null, cls: ['cap-btn', 'go'], anc: MCARD },
+         ['background', 'border-radius', 'font-size', 'height', 'text-transform']).length >= 4,
+   'the Music page Get / Reveal / convert buttons restyle under studio chrome');
+ok(delta({ tag: 'button', id: 'mus-go', cls: ['primary'], anc: MCARD },
+         ['border-radius', 'font-family', 'text-transform', 'height']).length >= 3,
+   'the Music Generate button restyles under studio chrome');
+ok(delta({ tag: 'button', id: 'mus-cancel', cls: ['cap-btn'], anc: MCARD },
+         ['background', 'height', 'font-size']).length >= 3,
+   'the Music Cancel chip restyles under studio chrome');
+ok(delta({ tag: 'button', id: null, cls: ['chip'], anc: MCARD },
+         ['background', 'height', 'font-size', 'text-transform']).length >= 3,
+   'the Music engine chips restyle under studio chrome');
+// HONEST NEGATIVE, recorded rather than hidden: the axis does NOT reach form fields —
+// on the Music page (two textareas, three number boxes, a slider, a select) that is
+// most of the visual mass, which is why the toggle READ as a no-op there.
+ok(delta({ tag: 'textarea', id: 'mus-prompt', cls: ['cap-inp'], anc: MCARD },
+         ['background', 'font-size', 'border-color', 'height']).length === 0,
+   'studio chrome leaves .cap-inp form fields alone (a global gap, not a music one)');
+
 // (g) the composer chips + the icon buttons
 ok(delta({ tag: 'span', id: 'mode-agent', cls: ['mode-chip', 'on'] },
          ['font-size', 'padding', 'text-transform', 'letter-spacing', 'height']).length >= 4,

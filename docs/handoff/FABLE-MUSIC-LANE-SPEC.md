@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE SPEC — MUSIC LANE v1 (dual-engine)
 2026-08-20 · Fable 5 · decision-free build spec. Debi's ruling: BOTH engines pass the
 ear test — keep both, selectable when both are installed, auto-selected when only one
@@ -5,7 +7,7 @@ is. Build for speed where free, but 2min/song is acceptable.
 Ground truth for every engine invocation: `scripts/measure_music.sh` (the working
 prototype — lift its logic, incl. the HF symlink-farm fix and the cmake line) +
 `docs/handoff/MUSIC-MEASUREMENT-RUNBOOK.md` (measured numbers) +
-`docs/research/2026-08-20-music-video-gen.md` (licenses).
+`docs/research/(done) 2026-08-20-music-video-gen.md` (licenses).
 
 ## Shape
 Music is a NATIVE bridge lane like voice — no new component daemon, no new port, no

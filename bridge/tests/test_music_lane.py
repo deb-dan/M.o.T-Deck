@@ -29,8 +29,10 @@ Run: python3 bridge/tests/test_music_lane.py
 """
 import json
 import os
+import signal
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -435,7 +437,8 @@ PP = music.parse_progress
 check("tqdm percentage is read", PP("  45%|####      | 9/20")[0] == 0.45)
 check("a bare N/M counter is read", PP("[3/5] Loading DAV decoder")[0] == 0.6)
 check("the PHASE text comes back with it", "Loading" in PP("[3/5] Loading DAV decoder")[1])
-check("MINIMAX'S NON-MONOTONIC STAGES: the max wins, so the bar never goes backwards",
+check("MINIMAX'S RESTARTING STAGES: only the LAST segment is read, and within it the "
+      "max wins so a bar never goes backwards",
       PP("[1/5] a\n[2/5] b\n[3/5] c\n[1/5] d\n[2/5] e\n[4/5] f")[0] == 0.8)
 check("step counters partway through a run read partway through",
       PP("step 4/8 done")[0] == 0.5)
@@ -472,18 +475,23 @@ pv = music.progress_view({"engine": "acestep", "seconds": 60, "state": "running"
                           "started": time.time()}, "[3/5] x")
 check("THE 95% CAP: a running job never displays a completed bar",
       pv["progress"] <= music.PROGRESS_DISPLAY_CAP and music.PROGRESS_DISPLAY_CAP == 0.95)
-check("a 100% engine line is capped to 95% while the job is still running",
+check("a 100% RENDER line is capped to 95% while the job is still running",
       music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
-                           "started": time.time()}, "100%|#| 8/8")["progress"] == 0.95)
+                           "steps": 8, "started": time.time()},
+                          "100%|#| 8/8")["progress"] == 0.95)
 check("the view carries an ETA even when the engine says nothing",
       music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
                            "started": time.time()}, "")["eta_s"] == 24.5)
 check("with no engine output the bar falls back to elapsed/estimate",
       music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
                            "started": time.time() - 12}, "")["source"] == "estimate")
-check("an engine line WINS over the estimate",
+check("a RENDER line WINS over the estimate",
       music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
-                           "started": time.time()}, "[1/5] x")["source"] == "engine")
+                           "started": time.time()}, "[1/5] Sampling")["source"] == "engine")
+check("a SETUP line does NOT claim to be engine progress",
+      music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                           "started": time.time()},
+                          "[3/5] Loading the decoder")["source"] == "estimate")
 check("a DONE job reads as complete", music.progress_view(
     {"engine": "acestep", "seconds": 60, "state": "done"})["progress"] == 1.0)
 check("a FAILED job has no progress to show", music.progress_view(
@@ -737,10 +745,11 @@ check("the engine picker auto-picks when only one is installed",
 check("a running render disables Generate and shows an elapsed clock",
       "elapsed" in PANEL.split("function musicPaintState")[1][:2600]
       and "btn.disabled = !!running" in PANEL)
-check("the UI says outright that a render cannot be stopped",
-      "cannot be stopped" in PANEL)
-check("there is deliberately NO cancel endpoint or button",
-      "/api/music/cancel" not in PANEL and "/api/music/cancel" not in APP)
+# v1 promised "a render cannot be stopped". That was over-caution, not a finding, and
+# v1.2 built the cancel — so the promise must be GONE from every surface, not merely
+# contradicted by a new button.
+check("the 'cannot be stopped' copy is gone from the panel",
+      "cannot be stopped" not in PANEL)
 check("ledger refusals surface inline in the bridge's own words",
       "musicErr = (res && res.error)" in PANEL)
 check("Get is ARMED — the first click states the download size, the second spends it",
@@ -814,7 +823,257 @@ check("library rows offer only the conversions this ffmpeg can do",
       "convert_formats" in PANEL and "/api/music/convert" in PANEL)
 check("a conversion that already exists is not offered again",
       "haveExts.indexOf(f) >= 0" in PANEL)
-check("there is still no cancel anywhere", "/api/music/cancel" not in PANEL)
+# ══ 10. v1.2 — the deck, the phase-aware bar, the power-law ETA, and CANCEL ══════
+# THE LIVE BUG, root-caused from the pinned sources and reproduced here as the exact
+# log minimax writes: generate.py routes EVERY stage through one `progress()` helper
+# ("[N/5] message"), the pipeline constructor emits 1,2,3 and .generate() RESTARTS at
+# 1. A global maximum therefore pinned the bar at 3/5 = 0.60 with the phase text frozen
+# on "Loading … DAV decoder into MLX…" for the whole render — Debi's screenshot.
+MINIMAX_LOG = (
+    "[1/5] Loading MiniMax-Music3 autoregressive model into MLX…\n"
+    "[2/5] Loading MiniMax-Music3 flow transformer into MLX…\n"
+    "[3/5] Loading MiniMax-Music3 DAV decoder into MLX…\n"
+    "[1/5] Generating MiniMax-Music3 acoustic tokens with MLX…\n"
+    "[2/5] Sampling MiniMax-Music3 flow transformer (30 steps)…\n"
+)
+S = music.progress_scan
+sc = S(MINIMAX_LOG, 30)
+check("PHASE MODEL: minimax's restarted counter is read as the RENDER phase",
+      sc["kind"] == "render")
+check("the phase text is the RENDER line, not the frozen loader line",
+      "Sampling" in sc["phase"] and "Loading" not in sc["phase"])
+check("the render fraction comes from the render segment only", sc["frac"] == 0.4)
+loader_only = S("\n".join(MINIMAX_LOG.splitlines()[:3]), 30)
+check("while only the loader has spoken the phase is SETUP", loader_only["kind"] == "setup")
+check("the loader's own counter never drives the bar — setup rides ELAPSED",
+      music.overall_progress(loader_only, 0.0) == 0.0
+      and music.overall_progress(loader_only, 30.0) == 0.075
+      and music.overall_progress(loader_only, 600.0) == music.SETUP_SHARE)
+check("SETUP IS CAPPED at its share, however long the load takes",
+      music.overall_progress(loader_only, 99999.0) <= music.SETUP_SHARE)
+check("the render phase maps onto the REST of the bar",
+      abs(music.overall_progress(sc, 300.0) - (0.15 + 0.85 * 0.4)) < 1e-9)
+check("THE REGRESSION IS GONE: the full minimax log no longer reads 0.60-and-stuck",
+      abs(music.overall_progress(sc, 300.0) - 0.60) > 0.05)
+# the loader line contains the word "decoder" — setup must be tested BEFORE render
+check("'Loading … DAV decoder' is SETUP despite containing 'decod'",
+      music.counter_kind(5, "Loading MiniMax-Music3 DAV decoder into MLX…", 30, "") == "setup")
+check("a tqdm total equal to the requested step count is RENDER whatever it says",
+      music.counter_kind(30, "", 30, "setup") == "render")
+check("an unrecognised counter INHERITS the phase rather than inventing one",
+      music.counter_kind(7, "", None, "render") == "render"
+      and music.counter_kind(7, "", None, "") == "setup")
+check("a loader bar counting FILES never moves the render fraction",
+      S("Fetching 3/7 shards\nFetching 6/7 shards", 30)["kind"] == "setup")
+check("a two-stage engine's second sweep starts a new segment (no stuck 100%)",
+      S("step 8/8 sampling\nstep 1/8 sampling", 8)["frac"] == 0.125)
+for junk in ("", None, 7, "no numbers", "[9/5] impossible", "999%|"):
+    r = S(junk, 30)
+    check(f"progress_scan is total over {junk!r}",
+          isinstance(r, dict) and (r["frac"] is None or 0.0 <= r["frac"] <= 1.0))
+check("overall_progress is total over a junk scan",
+      music.overall_progress(None, 10) is not None
+      and music.overall_progress({"kind": "render", "frac": "x"}, 10) is not None)
+
+# THE POWER-LAW ETA. minimax is superlinear (b ≈ 2), so proportional scaling
+# under-promised badly — Debi was shown "1m 32s left" twelve minutes into a 220s song.
+fit = music.power_fit([(60, 115.5), (145, 675.6)])
+check("two points give a real power-law fit", fit is not None and 1.8 < fit[1] < 2.2)
+e220 = music.estimate_wall("minimax", 220)
+check(f"the fit predicts a 220s minimax render in a sane band (got {e220})",
+      e220 is not None and 1100.0 < e220 < 2400.0)
+check("…and it is far above the old proportional answer (which is what lied)",
+      e220 > 675.6 * 220 / 145)
+check("a 220s render at 13 minutes elapsed is NEVER reported as nearly done",
+      music.remaining_secs(780.0, 0.35, e220) > 300.0)
+check("the estimate still honours an exact measured point", music.estimate_wall("minimax", 145) == 675.6)
+check("one point only stays proportional (no curve to fit)", music.estimate_wall("acestep", 120) == 49.0)
+check("a wild library cannot produce a wild exponent",
+      music.POWER_B_MIN <= (music.power_fit([(10, 1.0), (20, 5000.0)]) or (0, 0))[1]
+      <= music.POWER_B_MAX)
+check("power_fit refuses a single distinct length", music.power_fit([(60, 1.0), (60, 2.0)]) is None)
+check("power_fit is total over junk rows",
+      music.power_fit([("x", 1), (60, 0), (0, 5), (60, 100.0), (120, 400.0)]) is not None)
+R = music.remaining_secs
+check("with no progress at all the estimate is simply the estimate", R(10, 0, 100) == 90.0)
+check("a SPENT estimate with no engine progress says nothing rather than lying",
+      R(500, 0, 100) is None)
+check("once the render is measurable the observed rate leads",
+      abs(R(100, 0.5, 100) - 100.0) < 1e-6)
+check("remaining is never negative", R(100, 0.99, 10) >= 0)
+for junk in ((None, None, None), ("x", "y", "z"), (10, None, None)):
+    check(f"remaining_secs is total over {junk}", R(*junk) is None or R(*junk) >= 0)
+
+# CANCEL — the state machine, driven with a fake renderer so no GPU is needed.
+music.clear_job()
+check("cancel refuses when nothing is rendering", music.cancel_job(log=lambda *a, **k: None)[0] is False)
+with tempfile.TemporaryDirectory() as td:
+    CP = dict(P); CP["engine"] = "acestep"
+    job, err = music.claim_job(CP)
+    check("a fresh job is not cancelled", job["cancel"] is False)
+
+    def _cancelling_render(root, params, workdir, out_path):
+        # the engine "started", wrote a partial file, then the user hit Cancel
+        with open(out_path, "w") as fh:
+            fh.write("partial")
+        music.cancel_job(log=lambda *a, **k: None)
+        raise music.MusicCancelled("cancelled")
+
+    music.run_job(td, CP, job, render=_cancelling_render, log=lambda *a, **k: None)
+    j = music.current_job()
+    check("a cancelled render ends in the CANCELLED state", j["state"] == "cancelled")
+    check("a cancelled render is not reported as a failure", not j.get("error"))
+    check("a cancelled render names no output track", not j.get("out"))
+    left = os.listdir(music.music_dir(td))
+    check("the PARTIAL audio file is deleted", not any(x.endswith(".wav") for x in left))
+    check("no sidecar survives, so a cancelled render can never enter the ETA history",
+          not any(x.endswith(".json") for x in left))
+    check("a cancelled render leaves an empty library", music.library_entries(td) == [])
+music.clear_job()
+check("MusicCancelled is a MusicError (one except-path for the caller)",
+      issubclass(music.MusicCancelled, music.MusicError))
+check("the engines start in their OWN PROCESS GROUP so a cancel reaches the whole tree",
+      "start_new_session=True" in MUS)
+check("cancel SIGTERMs the group first and escalates to SIGKILL",
+      "SIGTERM" in MUS and "SIGKILL" in MUS and "killpg" in MUS
+      and "CANCEL_GRACE_S = 5" in MUS)
+
+
+class _FakeProc:
+    def __init__(self, dies_after=0):
+        self.pid, self.n, self.dies = 4242, 0, dies_after
+        self.sent = []
+
+    def poll(self):
+        self.n += 1
+        return 0 if self.n > self.dies else None
+
+
+_orig_killpg, _orig_getpgid = os.killpg, os.getpgid
+try:
+    sent = []
+    os.killpg = lambda g, s: sent.append(s)                      # noqa: E731
+    os.getpgid = lambda p: 999                                   # noqa: E731
+    how = music.kill_process_group(_FakeProc(dies_after=1), grace=1.0, sleep=lambda s: None)
+    check("a child that dies on SIGTERM is never SIGKILLed",
+          how == "term" and sent == [signal.SIGTERM])
+    sent2 = []
+    os.killpg = lambda g, s: sent2.append(s)                     # noqa: E731
+    how2 = music.kill_process_group(_FakeProc(dies_after=99), grace=0.4, sleep=lambda s: None)
+    check("a child that ignores SIGTERM is SIGKILLed after the grace period",
+          how2 == "kill" and sent2 == [signal.SIGTERM, signal.SIGKILL])
+    check("the whole process GROUP is signalled, never just the direct child",
+          all(isinstance(s, int) for s in sent2))
+finally:
+    os.killpg, os.getpgid = _orig_killpg, _orig_getpgid
+check("an already-dead child is a no-op, not an error",
+      music.kill_process_group(None) == "gone")
+
+# THE CANCEL PATH, RUN FOR REAL against actual subprocesses — no GPU needed, and the
+# only way to know that start_new_session + killpg + communicate() actually compose.
+with tempfile.TemporaryDirectory() as td:
+    tail = music._run([sys.executable, "-c", 'print("[2/5] Sampling 30 steps")'],
+                      log_path=os.path.join(td, "e.log"))
+    check("_run streams a child's output to the job log and reads the tail back",
+          "Sampling" in tail)
+    check("_run also works without a log file (the piped branch)",
+          "hi" in music._run([sys.executable, "-c", 'print("hi")']))
+    try:
+        music._run([sys.executable, "-c", "import sys;sys.exit(3)"])
+        check("a non-zero exit raises", False)
+    except music.MusicError as e:
+        check("a non-zero exit raises with the code in it", "exited 3" in str(e))
+    music.clear_job()
+    music.claim_job(dict(P, engine="acestep"))
+    outcome = {}
+
+    def _body():
+        try:
+            music._run([sys.executable, "-c", "import time;time.sleep(30)"],
+                       log_path=os.path.join(td, "c.log"))
+            outcome["r"] = "finished"
+        except music.MusicCancelled:
+            outcome["r"] = "cancelled"
+        except Exception as e:                                   # noqa: BLE001
+            outcome["r"] = "error: " + str(e)[:60]
+
+    th = threading.Thread(target=_body)
+    th.start()
+    time.sleep(0.8)
+    ok_, _reason = music.cancel_job(log=lambda *a, **k: None)
+    th.join(20)
+    check("cancel_job reports success while a render is live", ok_ is True)
+    check("A LIVE CHILD IS ACTUALLY KILLED and the run raises MusicCancelled "
+          f"(got {outcome.get('r')!r})", outcome.get("r") == "cancelled")
+    check("the render thread did not have to wait out the 30-minute timeout",
+          not th.is_alive())
+music.clear_job()
+
+# THE SEED RANGE — verified against generate.py at the pin, NOT taken from the spec.
+check("the seed ceiling is the ENGINE's own bounded_int(0, 2**31 - 1)",
+      music.SEED_MAX == 2 ** 31 - 1)
+check("the seed help states that exact range (single-sourced from the constant)",
+      str(music.SEED_MAX) in music.SEED_HELP and "4294967295" not in music.SEED_HELP)
+check("the help explains reproducibility and the empty case",
+      "same song" in music.SEED_HELP and "empty" in music.SEED_HELP)
+check("a seed one past the engine's ceiling is refused before any subprocess",
+      V({"engine": "minimax", "prompt": "x", "seed": 2 ** 31}, INST)[1] is not None)
+
+# WIRING — bridge + panel
+check("the cancel endpoint exists", '@app.post("/api/music/cancel")' in APP)
+check("the cancel endpoint answers 409 when nothing is rendering",
+      "status_code=409" in APP.split("def music_cancel")[1][:600])
+check("the seed range travels to the panel rather than being retyped there",
+      '"seed_max"' in APP and '"seed_help"' in APP)
+check("the panel renders the seed help it was given, not a hardcoded range",
+      "seed_help" in PANEL and "4294967295" not in PANEL)
+check("the panel has a Cancel control and it is two-step armed",
+      'id="mus-cancel"' in PANEL and "function musicCancel(" in PANEL
+      and "/api/music/cancel" in PANEL)
+check("Cancel is only shown while a render is running",
+      "can.hidden = !running" in PANEL)
+check("the progress line reads the bridge's blended remaining time",
+      "pv.remaining_s" in PANEL)
+check("when the remaining time cannot be said honestly the panel says THAT",
+      "taking longer than estimated" in PANEL)
+
+check("the per-page studio deck is one attribute on #view-music",
+      'data-mview="studio"' in PANEL and "function toggleMusicView(" in PANEL
+      and "v.dataset.mview = 'studio'" in PANEL)
+check("the deck choice is persisted and classic is the default",
+      "harness-music-view" in PANEL and "let musicView = 'classic'" in PANEL)
+check("the deck toggle is independent of the theme and the global chrome axes",
+      "harness-theme" not in PANEL.split("function toggleMusicView")[1][:500]
+      and "harness-chrome" not in PANEL.split("function toggleMusicView")[1][:500])
+check("the hero is EMPTIED in classic view, so classic carries no trace of the deck",
+      "if (!musicStudio()){ box.hidden = true; box.innerHTML = ''; return; }" in PANEL)
+check("the gallery cards exist and prefill on click",
+      "function musicTplCard(" in PANEL and "musicUseTemplate(" in PANEL)
+check("the card's inner chips cannot double-fire the card's own click",
+      "event.stopPropagation()" in PANEL.split("function musicTplCard")[1][:1400])
+check("a prefill SCROLLS to the form in BOTH views",
+      "function musicScrollToCreate(" in PANEL
+      and "else musicScrollToCreate();" in PANEL)
+check("templates are a disclosure that opens by default only on an empty library",
+      "function musicTplsOpen(" in PANEL and "!musicLib.length" in PANEL
+      and "function toggleMusicTpls(" in PANEL)
+check("both textareas auto-grow through the CHAT composer's growInput (shared, not copied)",
+      "function growMusicInput(el){ growInput(el, MUSIC_GROW_MAX); }" in PANEL
+      and PANEL.count("function growInput(") == 1
+      and 'oninput="growMusicInput(this)"' in PANEL)
+check("library rows show the recorded step count (it was stored but never displayed)",
+      "steps` : ''" in PANEL or "steps`)" in PANEL)
+check("the prompt moved behind a chip instead of being printed on every row",
+      "function musicTogglePrompt(" in PANEL and "▸ prompt" in PANEL)
+check("a row can re-use ALL of its settings in one click",
+      "function musicReuse(" in PANEL and "seed: t.seed" in PANEL
+      and "musicEngine = t.engine" in PANEL)
+check("templates and library re-use share ONE prefill implementation",
+      "function musicFill(" in PANEL and PANEL.count("function musicFill(") == 1)
+check("the Policies nav stub is gone (its alert was a silent no-op in WKWebView)",
+      "Policies UI lands in M2" not in PANEL)
+check("every music activity-feed line passes a TAG and a MESSAGE (the `undefined` bug)",
+      "feed('music'," in PANEL and "feed(`music:" not in PANEL)
 
 print()
 print(f"{'FAIL' if FAILS else 'OK'} — {len(FAILS)} failure(s)")

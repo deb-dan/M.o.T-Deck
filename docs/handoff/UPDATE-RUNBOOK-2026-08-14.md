@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # Update runbook — 2026-08-14 (Fable-QA'd, run each pass on a separate sitting)
 
 Repo edits are already done (pins bumped in the repo's harness.yaml, contract tests

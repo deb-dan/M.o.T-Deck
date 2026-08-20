@@ -1,26 +1,48 @@
-// Harness.app — native macOS shell. One window, tabbed:
-//   • Mission Control (the Bridge control panel, :8700)
-//   • Odysseus (the workspace UI, :7860)
-//   • Hermes (the agent dashboard, :9119)
-//   • VoiceStudio (voice component SPA, :3900)   — optional, often not running
-//   • Voicebox (voice component SPA, :17493)     — optional, often not running
+// Harness.app — native macOS shell. One window, tabbed (see `tabs` below for the list).
 // Each tab is its own top-level WKWebView load — sidesteps Odysseus's X-Frame-Options/
 // frame-ancestors (which block iframing) entirely. Auto-starts the bridge on launch.
 // Built by scripts/build_app.sh (which generates Config.swift with harnessRoot).
+//
+// ⚠️ STANDING RULE (Debi, 2026-08-20): every tab inherits EVERY tab behaviour by
+// construction — split view, tab-drag, ghosts, ⌘R reload, lazy load and the
+// "Not reachable yet" placeholder. NOTHING in this file may hardcode a tab COUNT, and
+// the only tab INDICES that may be written down are the named constants derived from
+// `tabs` immediately below. Adding a tab is adding one row to `tabs`.
 
 import Cocoa
 import WebKit
 
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
-let odysseusURL = URL(string: "http://127.0.0.1:7860")!
-let hermesURL = URL(string: "http://127.0.0.1:9119")!
-let voiceStudioURL = URL(string: "http://127.0.0.1:3900")!
-let voiceboxURL = URL(string: "http://127.0.0.1:17493")!
 
-// ONE source for the tab strings. v2 has exactly ONE tab strip (the right pane's mini
-// strip is gone — see the split-view v2 note on AppDelegate), so this array feeds the
-// single NSSegmentedControl and nothing else can drift from it.
-let tabTitles = ["Mission Control", "Odysseus", "Hermes", "VoiceStudio", "Voicebox"]
+// ONE table: the tab strip's labels AND the URL each tab loads. It feeds the single
+// NSSegmentedControl (v2 deleted the right pane's mini strip), `urlForTab`, the
+// primaries array and the ghost table — so none of them can drift from each other.
+struct HarnessTab {
+    let title: String
+    let url: URL
+}
+let tabs: [HarnessTab] = [
+    // Mission Control — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
+    // app's home, the page the bridge-wait screen writes into, and the only file-drop
+    // target (DropOverlay). Keep it first.
+    HarnessTab(title: "Mission Control", url: bridgeURL),
+    HarnessTab(title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
+    HarnessTab(title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
+    // Optional components — usually NOT running, so their first load normally fails into
+    // the shared "Not reachable yet" placeholder and retries on re-select / ⌘R.
+    HarnessTab(title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
+    HarnessTab(title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
+    HarnessTab(title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
+    HarnessTab(title: "Unsloth", url: URL(string: "http://127.0.0.1:8888")!),
+]
+let tabTitles: [String] = tabs.map { $0.title }
+
+// Named indices, looked up BY TITLE so reordering `tabs` can never silently repoint a
+// behaviour at the wrong tab. `-1` when a tab is absent, which every use site reads as
+// "never matches" rather than accidentally matching tab 0.
+let panelTab = 0                                              // by construction (above)
+let odysseusTab = tabTitles.firstIndex(of: "Odysseus") ?? -1   // the only skinned webview
+let hermesTab = tabTitles.firstIndex(of: "Hermes") ?? -1       // the only staleness-reloaded one
 
 // The panel's gold, as the focused-pane indicator. The unfocused pane gets a strip of
 // the SAME height in clear, so switching focus never moves a single pixel of content.
@@ -265,15 +287,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var downloadHandler: AnyObject?
     var window: NSWindow!
     var dropOverlay: NSView?
-    var panelWV: WKWebView!      // Mission Control (:8700)
-    var odyWV: WKWebView!        // Odysseus (:7860), lazy-loaded on first select
-    var odyLoaded = false
-    var hermesWV: WKWebView!     // Hermes dashboard (:9119), lazy-loaded on first select
-    var hermesLoaded = false
-    var vsWV: WKWebView!         // VoiceStudio (:3900), lazy-loaded on first select
-    var vsLoaded = false
-    var vbWV: WKWebView!         // Voicebox (:17493), lazy-loaded on first select
-    var vbLoaded = false
+    // THE primaries, index-aligned with `tabs`. One webview per tab, exactly once —
+    // a pane BORROWS one by reparenting; a ghost is a second instance (secondInstances).
+    // Three of them are also held by name because they have behaviour of their own
+    // (the panel is the drop target + the bridge-wait surface; Odysseus is the only
+    // skinned one; Hermes is the only staleness/config-generation reloaded one). Every
+    // other tab is a plain webview created generically from the table.
+    var primaries: [WKWebView] = []
+    var panelWV: WKWebView!      // == primaries[panelTab]
+    var odyWV: WKWebView!        // == primaries[odysseusTab]
+    var hermesWV: WKWebView!     // == primaries[hermesTab]
+    // Lazy-load bookkeeping, one Set instead of a flag per tab (a flag per tab is
+    // exactly the hardcoded-count shape the standing rule forbids).
+    var loadedTabs = Set<Int>()
+    var hermesLoaded: Bool { return loadedTabs.contains(hermesTab) }
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
@@ -434,11 +461,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Hermes runs its own polished dark UI — no skin injection (unlike Odysseus).
         hermesWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
-        // Voice components ship their own SPAs — plain webviews, no skin, no drag handling.
-        vsWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        vbWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        // Build the index-aligned primaries FROM THE TABLE. Every tab that is not one of
+        // the three named above (the optional component SPAs — VoiceStudio, Voicebox,
+        // ComfyUI, Unsloth) is a plain webview: no skin, no drag handling. Adding a row
+        // to `tabs` therefore adds a fully-working tab with no edit here.
+        primaries = tabs.indices.map { i -> WKWebView in
+            // explicit `!` on the three named ones: they are stored as implicitly
+            // unwrapped optionals, and being explicit here keeps the closure's return
+            // type unambiguous.
+            if i == panelTab { return panelWV! }
+            if i == odysseusTab { return odyWV! }
+            if i == hermesTab { return hermesWV! }
+            return WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        }
 
-        for wv in [panelWV!, odyWV!, hermesWV!, vsWV!, vbWV!] {
+        for wv in primaries {
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.uiDelegate = self          // route target=_blank links to the default browser
             wv.navigationDelegate = self  // detect failed loads → placeholder + retry
@@ -806,7 +843,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Hermes is visible if EITHER pane holds it — v1's staleness stamp was keyed on the
     // left strip alone and could therefore be pessimistic. With one strip that mistake
     // is avoidable, so this asks the real question.
-    func hermesVisible() -> Bool { return currentTab == 2 || (splitOn && rightTab == 2) }
+    func hermesVisible() -> Bool { return currentTab == hermesTab || (splitOn && rightTab == hermesTab) }
 
     // Every Hermes surface currently ON SCREEN — the question the config-generation
     // reload actually needs answered. Usually just the primary; when a pane holds a
@@ -821,14 +858,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // loaded has nothing to reload; a ghost loads itself on creation, so it needs no flag.
     func visibleHermesWebViews() -> [WKWebView] {
         var out: [WKWebView] = []
-        let leftShowsHermes = currentTab == 2
-        let rightShowsHermes = splitOn && rightTab == 2
+        let leftShowsHermes = currentTab == hermesTab
+        let rightShowsHermes = splitOn && rightTab == hermesTab
         if hermesLoaded,
            (leftShowsHermes && !leftIsGhost) || (rightShowsHermes && !rightIsGhost) {
             out.append(hermesWV)
         }
         if (leftShowsHermes && leftIsGhost) || (rightShowsHermes && rightIsGhost),
-           let g = secondInstances[2] {
+           let g = secondInstances[hermesTab] {
             out.append(g)
         }
         return out
@@ -935,6 +972,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // ── drag a tab onto a pane ──
 
     // Explicit per-segment widths — the whole reason the geometry below is knowable.
+    //
+    // WIDTH BUDGET (checked when the 6th and 7th tabs were added, 2026-08-20). The strip
+    // is centred in `tabBar` and the ⫽ button is pinned trailing at -12, so at the
+    // window's minSize.width of 900 the strip may occupy roughly 830pt before the two
+    // could touch. The seven current titles total 70 characters; at 13pt SF that is
+    // ~7.0-8.0pt per character plus the fixed 26pt padding per segment, i.e. a total of
+    // ~620pt (7.0/char) to ~745pt (8.0/char) — comfortably inside the budget, so no
+    // label shortening was needed. If a future tab pushes the estimate past ~830, shorten
+    // the LONGEST titles (e.g. "Mission Control" → "Control") rather than removing the
+    // padding: `segmentAt` reads exactly these numbers back to hit-test a drag.
     func setSegmentWidths() {
         let f = seg.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         for (i, t) in tabTitles.enumerated() {
@@ -1184,13 +1231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Tab → URL, independent of any webview identity. urlFor(_:) resolves by IDENTITY and
     // therefore cannot answer for a ghost, so both now go through this one table.
     func urlForTab(_ idx: Int) -> URL {
-        switch idx {
-        case 1: return odysseusURL
-        case 2: return hermesURL
-        case 3: return voiceStudioURL
-        case 4: return voiceboxURL
-        default: return bridgeURL
-        }
+        guard idx >= 0 && idx < tabs.count else { return bridgeURL }
+        return tabs[idx].url
     }
 
     // Create-on-first-need. The configuration is COPIED FROM THE PRIMARY (WKWebView's
@@ -1359,37 +1401,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    // Index → primary. Out-of-range degrades to the panel rather than trapping: an
+    // index can only come from the strip, a drag or a restored default, and a crash on a
+    // corrupt UserDefaults value would be a far worse failure than showing the panel.
     func webViewFor(_ idx: Int) -> WKWebView {
-        switch idx {
-        case 1: return odyWV
-        case 2: return hermesWV
-        case 3: return vsWV
-        case 4: return vbWV
-        default: return panelWV
-        }
+        guard idx >= 0 && idx < primaries.count else { return panelWV }
+        return primaries[idx]
     }
-    func allWebViews() -> [WKWebView] { return [panelWV, odyWV, hermesWV, vsWV, vbWV] }
+    func allWebViews() -> [WKWebView] { return primaries }
 
-    // Lazy-load rule unchanged: a webview loads on FIRST borrow, by either pane.
-    // Mission Control (0) is loaded by ensureBridgeThenLoad, never here.
+    // Lazy-load rule unchanged: a webview loads on FIRST borrow, by either pane, and
+    // exactly once. Mission Control (panelTab) is loaded by ensureBridgeThenLoad, never
+    // here. Every OTHER tab is handled identically — an optional component that is not
+    // running simply fails into the shared "Not reachable yet" placeholder and retries
+    // on re-select / ⌘R via failedLoads. No per-tab special cases except Hermes's
+    // config-generation bookkeeping.
     func ensureLoaded(_ idx: Int) {
-        switch idx {
-        case 1: if !odyLoaded { odyLoaded = true; odyWV.load(URLRequest(url: odysseusURL)) }
+        guard idx != panelTab, idx >= 0, idx < primaries.count else { return }
+        guard !loadedTabs.contains(idx) else { return }
+        loadedTabs.insert(idx)
+        primaries[idx].load(URLRequest(url: urlForTab(idx)))
         // The first Hermes load records the generation it is loading against, so the
         // first tab switch back compares like with like instead of making no claim.
-        case 2: if !hermesLoaded {
-            hermesLoaded = true
-            hermesWV.load(URLRequest(url: hermesURL))
-            syncHermesGen(reloadIfNewer: false)
-        }
-        // Voice tabs: components are OPTIONAL and usually stopped → the first load
-        // normally fails into the "Not reachable yet" placeholder, and re-select /
-        // ⌘R retries via the shared failedLoads path. No staleness reload (that
-        // exists for Hermes's WS dashboard only).
-        case 3: if !vsLoaded { vsLoaded = true; vsWV.load(URLRequest(url: voiceStudioURL)) }
-        case 4: if !vbLoaded { vbLoaded = true; vbWV.load(URLRequest(url: voiceboxURL)) }
-        default: break
-        }
+        if idx == hermesTab { syncHermesGen(reloadIfNewer: false) }
     }
 
     // Called from every path that makes the Hermes tab visible (routeTab + the
@@ -1408,7 +1442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // pane that was already on screen (split view — it never "becomes" visible). This
     // call site stays so that a tab switch checks IMMEDIATELY instead of waiting a tick.
     func maybeReloadStaleHermes(_ idx: Int) {
-        guard idx == 2, hermesLoaded,
+        guard idx == hermesTab, hermesLoaded,
               !failedLoads.contains(ObjectIdentifier(hermesWV)),
               hermesWV.url?.scheme == "http" else { return }
         if let since = hermesLastActive, Date().timeIntervalSince(since) > staleAfter {
@@ -1602,13 +1636,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func urlFor(_ wv: WKWebView) -> URL {
-        // A second instance is not one of the five primaries, so ask the ghost table first
-        // — otherwise a ⌘R / retry on a ghost would send it to the bridge's URL.
+        // A second instance is not one of the primaries, so ask the ghost table FIRST —
+        // otherwise a ⌘R / retry on a ghost would send it to the bridge's URL.
         if let hit = secondInstances.first(where: { $0.value === wv }) { return urlForTab(hit.key) }
-        if wv === odyWV { return odysseusURL }
-        if wv === hermesWV { return hermesURL }
-        if wv === vsWV { return voiceStudioURL }
-        if wv === vbWV { return voiceboxURL }
+        if let i = primaries.firstIndex(where: { $0 === wv }) { return urlForTab(i) }
         return bridgeURL
     }
 

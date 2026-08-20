@@ -226,7 +226,10 @@ check('a failed toggle also drops the recorded intent (a write that never landed
   /delete hermesToolsIntent\[name\];/.test(html));
 check('stuck names are surfaced, not swallowed',
   html.indexOf('agent.disabled_toolsets in ~/.hermes/config.yaml') >= 0);
-check('a successful write logs to the activity feed', /feed\('hermes toolsets: /.test(html));
+// feed(tag, msg) takes TWO arguments; the one-argument calls here rendered the whole
+// sentence as the TAG column and a literal "undefined" as the message (2026-08-20).
+check('a successful write logs to the activity feed, with a real tag AND a message',
+  /feed\('hermes', 'toolsets: /.test(html));
 const writeFn = grab('hermesToolsWrite');
 check('the panel NEVER sends a bare empty list (the preset/name forms are the only '
   + 'two callers, and both are non-empty by construction)',

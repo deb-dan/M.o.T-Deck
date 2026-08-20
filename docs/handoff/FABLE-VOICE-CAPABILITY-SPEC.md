@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE SPEC — Harness-native voice capability (MIT stack: llama.cpp · MLX · Whisper)
 
 Fable 5, 2026-08-07. Successor to the voice-tabs item. Builders: Opus 5 / Opus 4.8,

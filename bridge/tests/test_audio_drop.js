@@ -73,8 +73,46 @@ check('the bridge cap really is 15 MB',
 // pane's mini strip and routes the ONE strip to the focused pane, swapping on collision.
 // These greps were updated with that redesign — the facts they pinned genuinely changed.
 check('exactly ONE tab strip is built from the titles array',
-      /let tabTitles = \[/.test(swift) &&
+      // 2026-08-20: tabTitles is now DERIVED from the single `tabs` table (title + url
+      // per row) rather than being a literal array — the fact this pinned genuinely
+      // changed. Still exactly one strip, still fed from one source.
+      /let tabTitles: \[String\] = tabs\.map \{ \$0\.title \}/.test(swift) &&
       (swift.match(/labels: tabTitles/g) || []).length === 1);
+
+// ── tab-count generalization (standing rule, Debi 2026-08-20) ──
+// Every tab must inherit every tab behaviour BY CONSTRUCTION. These pin the absence of
+// hardcoded counts, not the presence of any particular tab.
+check('one table declares every tab (title + url together)',
+      /struct HarnessTab \{[\s\S]{0,120}let title: String[\s\S]{0,120}let url: URL/.test(swift) &&
+      /let tabs: \[HarnessTab\] = \[/.test(swift));
+check('the two new optional tabs are rows in that table',
+      /HarnessTab\(title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
+      /HarnessTab\(title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8888"\)!\)/.test(swift));
+check('special tabs are looked up BY TITLE, never written as a literal index',
+      /let odysseusTab = tabTitles\.firstIndex\(of: "Odysseus"\) \?\? -1/.test(swift) &&
+      /let hermesTab = tabTitles\.firstIndex\(of: "Hermes"\) \?\? -1/.test(swift));
+check('...and an absent named tab degrades to -1 (never matches) rather than to tab 0',
+      !/firstIndex\(of: "(Odysseus|Hermes)"\) \?\? 0/.test(swift));
+check('the primaries are built FROM the table, so a new row needs no code here',
+      /primaries = tabs\.indices\.map \{ i -> WKWebView in/.test(swift) &&
+      /return WKWebView\(frame: \.zero, configuration: WKWebViewConfiguration\(\)\)/.test(swift));
+check('webViewFor / allWebViews / urlForTab are table lookups, not switch tables',
+      /func webViewFor\(_ idx: Int\) -> WKWebView \{[\s\S]{0,300}return primaries\[idx\]/.test(swift) &&
+      /func allWebViews\(\) -> \[WKWebView\] \{ return primaries \}/.test(swift) &&
+      /func urlForTab\(_ idx: Int\) -> URL \{[\s\S]{0,200}return tabs\[idx\]\.url/.test(swift));
+check('lazy load is ONE generic path keyed by a Set, not a flag per tab',
+      /var loadedTabs = Set<Int>\(\)/.test(swift) &&
+      /guard !loadedTabs\.contains\(idx\) else \{ return \}/.test(swift) &&
+      !/var (odyLoaded|vsLoaded|vbLoaded) /.test(swift));
+check('no per-tab webview properties survive for the optional SPAs',
+      !/\bvsWV\b/.test(swift) && !/\bvbWV\b/.test(swift));
+check('urlFor resolves a primary by INDEX, so a new tab needs no identity branch',
+      /if let i = primaries\.firstIndex\(where: \{ \$0 === wv \}\) \{ return urlForTab\(i\) \}/.test(swift));
+check('Mission Control stays tab 0 by construction and keeps the sole drop overlay',
+      /let panelTab = 0/.test(swift) &&
+      /\(leftWV === panelWV\) \? leftHost/.test(swift));
+check('no hardcoded tab count anywhere (the old `% 5` class of bug)',
+      !/% 5\b/.test(swift) && !/< 5\b/.test(swift));
 check('the right pane\'s mini strip is gone',
       !/rightSeg/.test(swift) && !/rightTabChanged/.test(swift));
 check('the split state is persisted under all four v2 keys',
@@ -252,10 +290,16 @@ check('the second-instance path has its own [split] diagnostics',
       /slog\("applyPanes left=[\s\S]{0,140}ghosts=/.test(swift));
 
 // ── composer auto-grow ──
-check('growInput caps the box at 3x its measured base height',
+// The cap is now a PARAMETER (the Music page shares this one implementation with its
+// own multiplier), so the invariant is: the composer still defaults to GROW_MAX = 3,
+// and the cap is still applied — one growInput, not two.
+check('growInput caps the box at its caller\'s multiple of the measured base height',
       /const GROW_MAX = 3;/.test(html) &&
-      /function growInput\(el\)\{/.test(html) &&
-      /Math\.max\(base, Math\.min\(need, base \* GROW_MAX\)\)/.test(html));
+      /function growInput\(el, maxMul\)\{/.test(html) &&
+      /\(typeof maxMul === 'number' && maxMul > 1\) \? maxMul : GROW_MAX/.test(html) &&
+      /Math\.max\(base, Math\.min\(need, base \* mul\)\)/.test(html));
+check('there is exactly ONE growInput implementation in the panel',
+      (html.match(/function growInput\(/g) || []).length === 1);
 check('growInput measures the base height lazily (hidden view = no cache)',
       /if \(!bh\) return;/.test(html) && /box\._growBase = bh;/.test(html));
 check('the textarea grows on typing and pasting (oninput covers both)',
@@ -314,7 +358,9 @@ check('visibility and health are re-checked on the main thread after the fetch',
       /let targets = self\.visibleHermesWebViews\(\)\.filter \{[\s\S]{0,220}failedLoads\.contains\(ObjectIdentifier\(\$0\)\)[\s\S]{0,120}scheme == "http"[\s\S]{0,80}\}\s*\n\s*guard !targets\.isEmpty else \{ return \}/
         .test(swift));
 check('every OTHER Hermes load path records the generation too (first load, ⌘R, retry)',
-      /hermesLoaded = true[\s\S]{0,160}syncHermesGen\(reloadIfNewer: false\)/.test(swift) &&
+      // the first-load site moved into the ONE generic ensureLoaded when the per-tab
+      // `hermesLoaded = true` flag became a Set — same fact, pinned at the new site
+      /loadedTabs\.insert\(idx\)[\s\S]{0,300}if idx == hermesTab \{ syncHermesGen\(reloadIfNewer: false\) \}/.test(swift) &&
       /func retryIfFailed[\s\S]{0,240}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
         .test(swift) &&
       /func reloadTab[\s\S]{0,700}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
@@ -373,12 +419,13 @@ check('the 600s staleness rule stayed independent of all of this',
 const vis = swift.slice(swift.indexOf('func visibleHermesWebViews'),
                         swift.indexOf('func updateHermesGenTimer'));
 check('the visible set covers a Hermes ghost as well as the primary',
-      /secondInstances\[2\]/.test(vis) && /out\.append\(hermesWV\)/.test(vis));
+      // the literal index became the named constant when the tab list grew — same fact
+      /secondInstances\[hermesTab\]/.test(vis) && /out\.append\(hermesWV\)/.test(vis));
 check('...the primary is still gated on hermesLoaded',
       /if hermesLoaded,/.test(vis));
 check('...both panes are asked, so split view is genuinely covered',
-      /let leftShowsHermes = currentTab == 2/.test(vis)
-      && /let rightShowsHermes = splitOn && rightTab == 2/.test(vis));
+      /let leftShowsHermes = currentTab == hermesTab/.test(vis)
+      && /let rightShowsHermes = splitOn && rightTab == hermesTab/.test(vis));
 check('...and every visible Hermes surface is reloaded, not only the first',
       /for wv in targets \{ wv\.reload\(\) \}/.test(swift));
 

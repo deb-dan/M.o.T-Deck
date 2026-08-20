@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE 5 → OPUS 4.8 EXECUTION HANDOFF (2026-07-23)
 
 **Read order for a fresh session:** `CLAUDE.md` (canonical working memory — state, archaeology, protocols) → THIS file (execution plan) → `09_Ideas_StealList_and_Gaps.md` + `10_Modalities_Voice_and_Vision.md` (new roadmap inputs from Debi). Repo = github.com/Debkbas/new-harness (private); local clone `./harness/`; **sync rule and push flow are in CLAUDE.md — PAT is supplied by Debi per session in chat, never written to any file.**

@@ -12,12 +12,89 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_harness_yaml_parses():
     c = yaml.safe_load((ROOT / "harness.yaml").read_text())
-    # voicestudio + voicebox (2026-08-07) are OPTIONAL — present in the manifest,
-    # installed:false by default and depended on by nothing.
+    # voicestudio + voicebox (2026-08-07) and comfyui + unsloth (2026-08-20) are
+    # OPTIONAL — present in the manifest, installed:false by default, depended on by
+    # nothing, and never cloned by bootstrap (install_component.sh shallow-clones them
+    # itself, the searxng precedent).
     assert set(c["components"]) == {
-        "hermes", "odysseus", "searxng", "voicestudio", "voicebox"}
+        "hermes", "odysseus", "searxng", "voicestudio", "voicebox",
+        "comfyui", "unsloth"}
     for comp in c["components"].values():
         assert comp["pin"], "every component must be pinned"
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth"):
+        comp = c["components"][name]
+        assert comp["installed"] is False, f"{name} is OPTIONAL — it must ship installed:false"
+        assert comp["depends_on"] == [], f"{name} must not be a dependency edge"
+        assert isinstance(comp["port"], int), f"{name} needs a port the start script can read"
+    # Ports are single-sourced here and read by start_component.sh's awk; a collision
+    # would make two components fight over one listener.
+    ports = [comp["port"] for comp in c["components"].values() if comp.get("port")]
+    assert len(ports) == len(set(ports)), f"duplicate component port in harness.yaml: {ports}"
+
+
+def test_optional_components_are_not_submodules():
+    """The four optional components must NEVER be in .gitmodules: bootstrap clones its
+    submodule list unconditionally, so a multi-GB optional dep listed there would be
+    dragged into every fresh clone (the searxng precedent, restated as a gate)."""
+    gm = ROOT / ".gitmodules"
+    if not gm.exists():
+        return
+    src = gm.read_text(errors="replace")
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth"):
+        assert f"vendor/{name}" not in src, (
+            f"{name} became a submodule — it must stay a shallow clone made by "
+            "install_component.sh, or bootstrap will pull it for everyone")
+
+
+def test_comfyui_entrypoint_and_flags_contract():
+    """Pins what scripts/start_component.sh's comfyui branch depends on. Skips cleanly
+    until the optional component is installed."""
+    vendor = ROOT / "vendor" / "comfyui"
+    if not (vendor / "main.py").exists():
+        return
+    args = (vendor / "comfy" / "cli_args.py").read_text(errors="replace")
+    for flag in ('"--listen"', '"--port"', '"--disable-auto-launch"'):
+        assert flag in args, f"ComfyUI no longer accepts {flag} — the start script passes it"
+    assert '"--base-directory"' in args, (
+        "ComfyUI dropped --base-directory: without it models/output/input/user are "
+        "created next to main.py, i.e. INSIDE vendor/ (the voicebox --data-dir trap)")
+    server = (vendor / "server.py").read_text(errors="replace")
+    assert '"/system_stats"' in server, (
+        "the /system_stats route is gone — it is the start script's health probe")
+
+
+def test_unsloth_studio_entrypoint_contract():
+    """Pins what scripts/start_component.sh's unsloth branch depends on. Skips cleanly
+    until the optional component is installed."""
+    vendor = ROOT / "vendor" / "unsloth"
+    run = vendor / "studio" / "backend" / "run.py"
+    if not run.exists():
+        return
+    pyproject = (vendor / "pyproject.toml").read_text(errors="replace")
+    assert 'unsloth = "unsloth_cli:app"' in pyproject, (
+        "the `unsloth` console script moved — the start script runs `unsloth studio` "
+        "and falls back to `python -m unsloth_cli`")
+    assert "studio = [" in pyproject, (
+        "the [studio] optional-dependency extra is gone — install_component.sh installs "
+        "exactly `vendor/unsloth[studio]` and nothing heavier")
+    studio_cli = (vendor / "unsloth_cli" / "commands" / "studio.py").read_text(errors="replace")
+    assert "@studio_app.callback(invoke_without_command = True)" in studio_cli, (
+        "`unsloth studio` with no subcommand no longer starts the server — that plain "
+        "form is chosen deliberately over `unsloth studio run`, which installs a "
+        "process-global tools-ON policy")
+    src = run.read_text(errors="replace")
+    assert "def _missing_frontend_is_fatal" in src, (
+        "the fatal-missing-frontend rule moved; start_component.sh refuses up front "
+        "when studio/frontend/dist/index.html is absent because of it")
+    assert '@app.get("/api/health")' in (
+        vendor / "studio" / "backend" / "main.py").read_text(errors="replace"), (
+        "/api/health is gone — it is the start script's health probe")
+    # The password gate / bootstrap auto-shutdown must stay scoped to a PUBLISHED launch:
+    # our loopback launch has no terminal, and if that ever became a hard gate the tab
+    # would silently never come up.
+    assert "if not tunnel_will_start:" in src, (
+        "the terminal password gate is no longer scoped to a tunnelled launch — a "
+        "headless loopback start may now block on a prompt")
 
 
 def test_hermes_mcp_entrypoint_exists():

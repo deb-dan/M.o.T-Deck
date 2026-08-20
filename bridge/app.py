@@ -427,7 +427,12 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               # music-engine install (multi-GB downloads + a cmake build) — same
               # rule as voicebox-install: an install log for a slow, fragile step
               # must be readable in-panel, not only from a terminal
-              "music-install")
+              "music-install",
+              # the two optional creative/training tabs (2026-08-20). Both are
+              # multi-GB online-only installs, so their install logs follow the
+              # voicebox-install rule and must be viewable in-panel too.
+              "comfyui", "comfyui-install",
+              "unsloth", "unsloth-install")
 
 
 @app.post("/api/logs/{name}/clear")
@@ -526,6 +531,51 @@ def install_plan(name: str) -> dict:
             "Serve on 127.0.0.1:17493 when started — NO AUTHENTICATION: /speak, "
             "/transcribe and /mcp are open to anything reaching the port, loopback only",
         ],
+        "comfyui": [
+            "OPTIONAL image/video component — license GPL-3.0. Composed at ARM'S LENGTH "
+            "ONLY: a separate process reached over HTTP, never modified, never lifted "
+            "from (the same posture the harness takes with SearXNG's AGPL)",
+            "Shallow-clone vendor/comfyui at the pinned tag (not a submodule)",
+            "Create venv data/comfyui-venv + install its deps: torch, torchvision, "
+            "torchaudio, transformers, safetensors and its SPA (which ships as a pip "
+            "package — no npm/bun build) — roughly 4-6GB of wheels, ONLINE ONLY",
+            "On Apple Silicon, install a PyTorch NIGHTLY build first because upstream's "
+            "own README says to; falls back to stable PyPI torch if that index is "
+            "unreachable. A nightly is a FLOATING build, not a pin we control",
+            "Create data/comfyui/ as its base directory (models, output, input, user) so "
+            "it never writes into vendor/",
+            "Serve on 127.0.0.1:8188 when started (UI + API on one port, loopback only, "
+            "no authentication)",
+            "Its models load in ITS process, so their RAM is OUTSIDE the harness "
+            "model-RAM ledger (memory.budget_gb) — the same known limit the voice "
+            "components have",
+            "Image/video models are NOT downloaded here; you add them later, on first use",
+        ],
+        "unsloth": [
+            "OPTIONAL training/serving studio — Unsloth Studio is AGPL-3.0-only (the "
+            "training library is Apache-2.0). Composed at ARM'S LENGTH ONLY: a separate "
+            "process reached over HTTP, never modified",
+            "Shallow-clone vendor/unsloth at the pinned tag (not a submodule)",
+            "Create venv data/unsloth-venv and pip install -e vendor/unsloth[studio] — "
+            "upstream's own declared server stack (fastapi, uvicorn, datasets, pandas, "
+            "matplotlib, pymupdf, fastmcp …), a few hundred MB. The heavy training "
+            "extras are NOT installed: the tab only needs the Studio server",
+            "Build its React SPA with bun: reuse a bun already on your PATH, else "
+            "download the pinned bun release (~35MB) into data/bun/ — never Homebrew, "
+            "never sudo, nothing written outside this project folder",
+            "UNLIKE the voice components a missing SPA build is FATAL — Unsloth refuses "
+            "a web-UI launch without it. The install still finishes, but Start says so "
+            "and points at data/logs/unsloth-install.log",
+            "We deliberately do NOT run upstream's install.sh (it builds its own install "
+            "root, writes shell shims and downloads a forked, floating-tag llama.cpp plus "
+            "its own Node) and never run 'unsloth start' — that is its agent-wiring path "
+            "and it would relocate HERMES_HOME; your ~/.hermes is never touched",
+            "Serve on 127.0.0.1:8888 when started. Studio has its OWN bearer login, "
+            "handled inside its own UI; on a loopback launch its page auto-fills the "
+            "bootstrap credential",
+            "It can download its own llama.cpp and models into its own dirs — contained, "
+            "but those weights are invisible to the harness model-RAM ledger",
+        ],
     }
     if name not in plans:
         raise HTTPException(404, "unknown component")
@@ -536,7 +586,8 @@ def install_plan(name: str) -> dict:
 @app.post("/api/components/{name}/install")
 def install(name: str) -> JSONResponse:
     """Execute the install after the panel's approve step."""
-    if name not in ("hermes", "odysseus", "searxng", "voicestudio", "voicebox"):
+    if name not in ("hermes", "odysseus", "searxng", "voicestudio", "voicebox",
+                    "comfyui", "unsloth"):
         raise HTTPException(404, "unknown component")
     script = "install_searxng.sh" if name == "searxng" else "install_component.sh"
     args = () if name == "searxng" else (name, "--yes")
@@ -544,7 +595,9 @@ def install(name: str) -> JSONResponse:
     # can outrun the default 30-minute budget on a slow link — give it 2h and surface a
     # timeout as a readable message instead of an unhandled 500. voicebox is the same
     # class (torch + kokoro + git-sourced engines, several GB) plus a bun build.
-    timeout = 7200 if name in ("voicestudio", "voicebox") else 1800
+    # comfyui (torch + diffusion stack) and unsloth (its studio extra + a bun SPA build)
+    # are the same class again.
+    timeout = 7200 if name in ("voicestudio", "voicebox", "comfyui", "unsloth") else 1800
     try:
         r = _script(script, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -566,6 +619,10 @@ _NOTES = {
     # OPTIONAL, MIT. JSON API + /mcp (+ the SPA when built) on one loopback port.
     # NO AUTH of any kind, and upstream has been stale since 2026-04-26.
     "voicebox": "voicebox on :17493 — no auth, loopback only; first boot loads models (minutes)",
+    # OPTIONAL, GPL-3.0. UI + API on one loopback port, no auth. Torch import is slow.
+    "comfyui": "comfyui on :8188 — loopback only, no auth; first boot imports torch (slow)",
+    # OPTIONAL, AGPL-3.0-only (Studio). Its own bearer login lives in its own UI.
+    "unsloth": "unsloth studio on :8888 — loopback only; it has its own login screen",
 }
 
 
@@ -8173,6 +8230,8 @@ def music_status() -> JSONResponse:
                          "seconds_max": _music.SECONDS_MAX,
                          "seconds_default": _music.SECONDS_DEFAULT,
                          "prompt_max": _music.PROMPT_MAX,
+                         "seed_max": _music.SEED_MAX,
+                         "seed_help": _music.SEED_HELP,
                          "formats": {e: list(f) for e, f in _music.ENGINE_FORMATS.items()},
                          "format_default": dict(_music.DEFAULT_FORMAT),
                          "format_label": dict(_music.FORMAT_LABEL),
@@ -8256,6 +8315,20 @@ async def music_generate(req: Request) -> JSONResponse:
     print(f"[music] render {params['engine']} start — {params['seconds']}s, "
           f"{params['steps']} steps, seed {params['seed']}", flush=True)
     return JSONResponse({"ok": True, "job": job})
+
+
+@app.post("/api/music/cancel")
+async def music_cancel() -> JSONResponse:
+    """Stop the render in flight. v1 claimed this could not be done; that was
+    over-caution, not a finding — the engines are ordinary one-shot children, they are
+    started in their own process group, and killing that group is the correct
+    mechanism. The job then cleans up its own partial output."""
+    if _music is None:
+        return _music_unavailable()
+    ok, reason = await asyncio.to_thread(_music.cancel_job)
+    if not ok:
+        return JSONResponse({"ok": False, "error": reason}, status_code=409)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/music/jobs")

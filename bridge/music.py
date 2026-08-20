@@ -39,9 +39,11 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import random
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -71,7 +73,16 @@ SECONDS_DEFAULT = 60
 # rejects a prompt over 5,000 TOKENS itself, so this is a sanity bound, not the limit.
 PROMPT_MAX = 8000
 LYRICS_MAX = 20000            # generous: a full lyric sheet, still bounded
+# VERIFIED at the pin (2026-08-20, generate.py read from the HF raw endpoint):
+#   parser.add_argument("--seed", type=bounded_int(0, 2**31 - 1), default=7)
+# so 2**31-1 is the ENGINE's own ceiling, not ours. The deck spec proposed telling the
+# user "0 to 4294967295" (2**32-1); that would have been a number generate.py REFUSES
+# at argparse time, minutes before any GPU work. The stated range is therefore the real
+# one, and SEED_HELP is single-sourced from this constant so the two can never drift.
 SEED_MAX = 2 ** 31 - 1
+SEED_HELP = (f"Any whole number from 0 to {SEED_MAX}. The same seed + the same settings "
+             f"+ the same engine = the same song again. Leave it empty to roll a new "
+             f"one (it is recorded with the track).")
 
 # ── output formats ───────────────────────────────────────────────────────────
 # VERIFIED at the pins (2026-08-20), not assumed:
@@ -111,6 +122,18 @@ MUSIC_CALIBRATION = {
 # is decode + write, which the progress lines do not cover.
 PROGRESS_DISPLAY_CAP = 0.95
 
+# THE PHASE MODEL (v1.2). A render has two phases with completely different shapes:
+#   SETUP   — weights off disk into MLX/Metal. Its own counters count FILES, which say
+#             nothing about time, so the bar rides ELAPSED against a fixed allowance.
+#   RENDER  — the actual generation. Here the engine's counters ARE time-proportional
+#             enough to drive a bar.
+# Setup owns the first SETUP_SHARE of the bar and render the rest.
+SETUP_ALLOWANCE_S = 60.0
+SETUP_SHARE = 0.15
+# The blend point for the measured ETA: below this the estimate still leads, above it
+# the render's own observed rate does.
+ETA_TRUST_AT = 0.5
+
 SETTINGS_FILE = "music_settings.json"      # data/music_settings.json
 TEMPLATES_FILE = "templates.json"          # data/music/templates.json (fixed home)
 
@@ -144,6 +167,12 @@ ENGINE_LICENSE = {"acestep": {"license": "MIT", "badge": "ok", "reason": "",
 
 class MusicError(Exception):
     """A render (or its setup) failed, with a message fit to show the user."""
+
+
+class MusicCancelled(MusicError):
+    """The user stopped the render. A separate type because a cancellation is NOT a
+    failure: it writes no track, keeps no sidecar, and must never reach the ETA
+    history as if it were a measurement of how long a render costs."""
 
 
 # ── paths ────────────────────────────────────────────────────────────────────
@@ -930,14 +959,22 @@ def delete_template(root, tid) -> tuple:
 # machine. (a) is used when it exists, (b) always drives the "time left" figure.
 #
 # What the engines actually print, read at the pins rather than guessed:
-#   minimax  generate.py's `progress(stage, msg)` prints "[N/5] message" — and the
-#            numbers are NOT monotonic (the loader prints 1,2,3 and then the render
-#            prints 1,2,4,5), which is exactly why the parser takes the MAXIMUM
-#            fraction seen instead of the last one. A bar that goes backwards is
-#            worse than no bar.
+#   minimax  generate.py's `progress(stage, msg)` prints "[N/5] message" for BOTH
+#            phases: the pipeline constructor emits 1,2,3 ("Loading … into MLX…") and
+#            then .generate() RESTARTS at 1 and emits 1,2,4,5 ("Generating…",
+#            "Sampling…", "Decoding…", "Writing…"). There is NO step-count bar at all —
+#            the flow loop prints nothing per step. Taking a global maximum across
+#            those two runs is what froze the bar at 0.60; see progress_scan.
 #   acestep  ace-lm / ace-synth print their own step counters; the generic "N/M" and
 #            tqdm "NN%|" forms below cover both without pinning either engine's
 #            exact wording (which we do not own).
+#
+# The phase vocabulary. SETUP is tested FIRST in counter_kind because minimax's third
+# loader line literally contains the word "decoder".
+SETUP_WORDS = ("load", "download", "fetch", "resolv", "shard", "weight",
+               "warm", "init", "compil", "prepar")
+RENDER_WORDS = ("generat", "sampl", "decod", "denois", "step", "diffus",
+                "synth", "writ", "render", "infer")
 _PCT_RE = None
 _FRAC_RE = None
 
@@ -951,24 +988,20 @@ def _progress_res():
     return _PCT_RE, _FRAC_RE
 
 
-def parse_progress(text) -> tuple:
-    """PURE: (fraction 0..1 or None, phase text). Total over junk — this reads a log
-    file written by two third-party engines, so anything at all can be in it."""
-    if not isinstance(text, str) or not text.strip():
-        return None, ""
-    pct_re, frac_re = _progress_res()
-    best, phase = None, ""
-    for raw in text.splitlines():
+def _counters(text, pct_re, frac_re):
+    """PURE: every progress counter in the log, in order — (frac, total, message)."""
+    out = []
+    for raw in str(text).splitlines():
         line = raw.strip()
         if not line:
             continue
-        f = None
+        f, total, m = None, None, None
         m = pct_re.search(line)
         if m:
             try:
                 f = min(1.0, max(0.0, int(m.group(1)) / 100.0))
             except ValueError:
-                f = None
+                f, m = None, None
         if f is None:
             m = frac_re.search(line + " ")
             if m:
@@ -977,14 +1010,146 @@ def parse_progress(text) -> tuple:
                 except ValueError:
                     a, b = 0, 0
                 if b > 0 and 0 <= a <= b:
-                    f = a / b
+                    f, total = a / b, b
+                else:
+                    m = None
         if f is None:
             continue
-        # the message after the counter is the phase the user actually cares about
-        tail = line[m.end():].strip(" :|\t") if m else ""
-        if best is None or f >= best:
-            best, phase = f, (tail or phase)
-    return best, phase[:120]
+        # a tqdm bar often carries "9/20" AFTER the percentage — that total is the one
+        # the step-count rule needs, so look for it on the same line
+        if total is None:
+            fm = frac_re.search(line + " ")
+            if fm:
+                try:
+                    b = int(fm.group(2))
+                    if b > 0:
+                        total = b
+                except ValueError:
+                    pass
+        out.append((f, total, line[m.end():].strip(" :|\t") if m else ""))
+    return out
+
+
+def counter_kind(total, message, steps, previous) -> str:
+    """PURE: is this counter the SETUP phase or the RENDER phase?
+
+    THE NUMERIC RULE FIRST (Fable's): a bar whose total is the requested step count is
+    the render, whatever it calls itself. Then the vocabulary, and **setup is tested
+    before render on purpose** — minimax's loader line is "Loading MiniMax-Music3 DAV
+    *decoder* into MLX…", which contains "decod" and would otherwise read as render.
+    An unrecognised counter INHERITS the previous kind rather than inventing one.
+    """
+    try:
+        want = int(steps) if steps not in (None, "") else None
+    except (TypeError, ValueError):
+        want = None
+    if want and total and int(total) == want:
+        return "render"
+    msg = str(message or "").lower()
+    if any(w in msg for w in SETUP_WORDS):
+        return "setup"
+    if any(w in msg for w in RENDER_WORDS):
+        return "render"
+    return previous or "setup"
+
+
+def progress_scan(text, steps=None) -> dict:
+    """PURE: {kind, frac, phase} — the phase-aware read of a live engine log.
+
+    ⚠️ THE BUG THIS REPLACES, root-caused from the pinned sources rather than guessed.
+    `generate.py` prints EVERY stage as "[N/5] message" through one `progress()`
+    helper, and `MiniMaxMusic3MlxPipeline.__init__` uses it for the three weight loads
+    (1,2,3) while `.generate()` RESTARTS at 1 (1,2,4,5). v1 took a global MAXIMUM, so
+    the moment "[3/5] Loading … DAV decoder into MLX…" printed, the bar pinned at 0.60
+    and the phase text froze on that line for the whole render — exactly what Debi saw
+    ("shoots to about half and sticks", "stuck on Loading … decoder").
+
+    The fix is to segment: a counter that goes BACKWARDS starts a new segment, and only
+    the LAST segment of the dominant phase is read. Within a segment the maximum still
+    wins, so a bar never travels backwards inside one phase.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return {"kind": "", "frac": None, "phase": ""}
+    pct_re, frac_re = _progress_res()
+    kind, segs = "", {"setup": None, "render": None}
+    saw_render = False
+    for f, total, msg in _counters(text, pct_re, frac_re):
+        kind = counter_kind(total, msg, steps, kind)
+        if kind == "render":
+            saw_render = True
+        seg = segs.get(kind)
+        if seg is None or f < seg["last"]:
+            seg = {"max": f, "last": f, "phase": msg}
+        else:
+            seg = {"max": max(seg["max"], f), "last": f,
+                   "phase": msg or seg["phase"]}
+        segs[kind] = seg
+    want = "render" if saw_render else "setup"
+    seg = segs.get(want)
+    if seg is None:
+        return {"kind": "", "frac": None, "phase": ""}
+    return {"kind": want, "frac": seg["max"], "phase": str(seg["phase"])[:120]}
+
+
+def parse_progress(text, steps=None) -> tuple:
+    """PURE: (fraction 0..1 or None, phase text) — the phase-local reading, kept as the
+    small surface the older callers and tests use. Total over junk: this reads a file
+    written by two third-party engines, so anything at all can be in it."""
+    s = progress_scan(text, steps)
+    return s["frac"], s["phase"]
+
+
+def overall_progress(scan, elapsed) -> "float | None":
+    """PURE: one 0..1 number for the whole job, from the phase-aware scan.
+
+    SETUP DELIBERATELY IGNORES ITS OWN COUNTER. "3 of 5 files loaded" says nothing
+    about seconds — a 12 GB int8 checkpoint is three loads of wildly different cost —
+    so the first SETUP_SHARE of the bar rides elapsed against a fixed allowance and
+    simply stops there until the render actually starts.
+    """
+    try:
+        el = max(0.0, float(elapsed or 0.0))
+    except (TypeError, ValueError):
+        el = 0.0
+    kind = (scan or {}).get("kind") if isinstance(scan, dict) else None
+    frac = (scan or {}).get("frac") if isinstance(scan, dict) else None
+    if kind == "render" and isinstance(frac, (int, float)):
+        f = min(1.0, max(0.0, float(frac)))
+        return SETUP_SHARE + (1.0 - SETUP_SHARE) * f
+    ramp = SETUP_SHARE * (el / SETUP_ALLOWANCE_S) if SETUP_ALLOWANCE_S > 0 else SETUP_SHARE
+    return min(SETUP_SHARE, max(0.0, ramp))
+
+
+def remaining_secs(elapsed, progress, estimate) -> "float | None":
+    """PURE: seconds still to go, or None when we cannot honestly say.
+
+    None is a real answer and the panel prints it as "taking longer than estimated".
+    The alternative is what Debi was shown: "~1m 32s left" on a render that had already
+    been going for twelve minutes, because the total estimate was simply wrong and the
+    panel subtracted elapsed from it anyway.
+    """
+    try:
+        el = max(0.0, float(elapsed or 0.0))
+    except (TypeError, ValueError):
+        el = 0.0
+    try:
+        est = float(estimate) if estimate else None
+    except (TypeError, ValueError):
+        est = None
+    r_est = (est - el) if est is not None else None
+    if r_est is not None and r_est < 0:
+        r_est = None                      # the estimate is spent; it can claim nothing
+    try:
+        p = float(progress) if progress else 0.0
+    except (TypeError, ValueError):
+        p = 0.0
+    r_meas = (el * (1.0 - p) / p) if (p > 0.02 and el > 0) else None
+    if r_meas is None:
+        return None if r_est is None else round(r_est, 1)
+    if r_est is None:
+        return round(max(0.0, r_meas), 1)
+    w = min(1.0, p / ETA_TRUST_AT) if ETA_TRUST_AT > 0 else 1.0
+    return round(max(0.0, w * r_meas + (1.0 - w) * r_est), 1)
 
 
 def estimate_wall(engine, seconds, history=None):
@@ -1020,41 +1185,88 @@ def estimate_wall(engine, seconds, history=None):
     if exact:
         return round(sum(exact) / len(exact), 1)
     pts.sort()
+    fit = power_fit(pts)
+    if fit is not None:
+        a, b = fit
+        try:
+            return round(a * (want ** b), 1)
+        except (OverflowError, ValueError):
+            pass
+    # ONE point only: proportional is all the evidence supports.
     below = [p for p in pts if p[0] < want]
     above = [p for p in pts if p[0] > want]
-    if below and above:
-        s0, w0 = below[-1]
-        s1, w1 = above[0]
-        return round(w0 + (w1 - w0) * (want - s0) / (s1 - s0), 1)
     s, w = (below[-1] if below else above[0])
     return round(w * want / s, 1)
 
 
-def progress_view(job, log_text="", history=None) -> dict:
-    """The read side of a running render: {progress, phase, eta_s, source}.
+# Exponents outside this band are a noisy library, not a real curve — a 220s render
+# must not be predicted at four hours because two odd rows sat next to each other.
+POWER_B_MIN, POWER_B_MAX = 0.6, 3.0
+
+
+def power_fit(points) -> "tuple | None":
+    """PURE: least squares in LOG-LOG space → (a, b) for wall = a·seconds^b, or None.
+
+    ⚠️ WHY NOT PROPORTIONAL (the v1.1 bug): minimax is markedly superlinear — 60s of
+    song cost 115.5s and 145s cost 675.6s, an exponent of ~2.0 — so scaling the nearest
+    point by length under-promises badly at the long end. On Debi's 220s render the old
+    rule predicted ~17 minutes and the render was still going at 13; the fit predicts
+    ~26. Two points give an exact fit; more give a real regression.
+    """
+    pts = [(float(s), float(w)) for s, w in (points or ())
+           if isinstance(s, (int, float)) and isinstance(w, (int, float))
+           and s > 0 and w > 0]
+    xs = sorted({s for s, _ in pts})
+    if len(xs) < 2:
+        return None
+    n = len(pts)
+    lx = [math.log(s) for s, _ in pts]
+    ly = [math.log(w) for _, w in pts]
+    mx_, my = sum(lx) / n, sum(ly) / n
+    den = sum((x - mx_) ** 2 for x in lx)
+    if den <= 0:
+        return None
+    b = sum((lx[i] - mx_) * (ly[i] - my) for i in range(n)) / den
+    b = max(POWER_B_MIN, min(POWER_B_MAX, b))
+    try:
+        a = math.exp(my - b * mx_)
+    except OverflowError:
+        return None
+    if not (a > 0) or not math.isfinite(a):
+        return None
+    return a, b
+
+
+def progress_view(job, log_text="", history=None, now=None) -> dict:
+    """The read side of a running render:
+    {progress, phase, phase_kind, elapsed_s, eta_s, remaining_s, source}.
 
     `progress` is CAPPED at 0.95 while the job runs — both engines finish with a
     decode-and-write phase their own counters never mention, and a bar that sits at
     100% while the user waits is worse than one that sits at 95%."""
+    blank = {"progress": None, "phase": "", "phase_kind": "", "elapsed_s": 0.0,
+             "eta_s": None, "remaining_s": None, "source": ""}
     if not isinstance(job, dict):
-        return {"progress": None, "phase": "", "eta_s": None, "source": ""}
+        return dict(blank)
     eta = estimate_wall(job.get("engine"), job.get("seconds"), history)
     running = job.get("state") in ("queued", "running")
     if not running:
-        return {"progress": 1.0 if job.get("state") == "done" else None,
-                "phase": "", "eta_s": eta, "source": ""}
-    frac, phase = parse_progress(log_text)
-    source = "engine"
-    if frac is None and eta:
-        try:
-            el = max(0.0, time.time() - float(job.get("started") or 0))
-        except (TypeError, ValueError):
-            el = 0.0
-        frac, source = min(1.0, el / eta) if eta > 0 else None, "estimate"
-    if frac is None:
-        return {"progress": None, "phase": phase, "eta_s": eta, "source": ""}
-    return {"progress": round(min(frac, PROGRESS_DISPLAY_CAP), 4),
-            "phase": phase, "eta_s": eta, "source": source}
+        out = dict(blank)
+        out["progress"] = 1.0 if job.get("state") == "done" else None
+        out["eta_s"] = eta
+        return out
+    try:
+        el = max(0.0, (now if now is not None else time.time())
+                 - float(job.get("started") or 0))
+    except (TypeError, ValueError):
+        el = 0.0
+    scan = progress_scan(log_text, job.get("steps"))
+    raw = overall_progress(scan, el)
+    source = "engine" if scan.get("kind") == "render" else "estimate"
+    return {"progress": None if raw is None else round(min(raw, PROGRESS_DISPLAY_CAP), 4),
+            "phase": scan.get("phase") or "", "phase_kind": scan.get("kind") or "",
+            "elapsed_s": round(el, 1), "eta_s": eta,
+            "remaining_s": remaining_secs(el, raw, eta), "source": source}
 
 
 # ── library ──────────────────────────────────────────────────────────────────
@@ -1266,6 +1478,76 @@ def _rm(path) -> None:
 _JOB_LOCK = threading.Lock()
 _JOB: dict | None = None
 
+# The live engine child, so a cancel has something to signal. One render at a time is
+# what makes a single slot correct here.
+_PROC_LOCK = threading.Lock()
+_PROC = None
+CANCEL_GRACE_S = 5.0
+
+
+def _register_proc(proc) -> None:
+    global _PROC
+    with _PROC_LOCK:
+        _PROC = proc
+
+
+def kill_process_group(proc, grace=CANCEL_GRACE_S, sleep=time.sleep) -> str:
+    """SIGTERM the child's process GROUP, escalate to SIGKILL after `grace`.
+
+    Returns what actually ended it ('term' | 'kill' | 'gone' | 'error') so the log can
+    say. ⚠️ PLATFORM: `os.killpg`/`os.getpgid` are POSIX. macOS is the only platform
+    this harness runs on, but the fallback to proc.terminate()/kill() is kept so a
+    hypothetical Windows host degrades to killing the direct child rather than raising.
+    """
+    if proc is None or proc.poll() is not None:
+        return "gone"
+    grp = None
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            grp = os.getpgid(proc.pid)
+        except OSError:
+            grp = None
+    def _signal(sig):
+        try:
+            if grp is not None:
+                os.killpg(grp, sig)
+            elif sig == signal.SIGKILL:
+                proc.kill()
+            else:
+                proc.terminate()
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+    if not _signal(signal.SIGTERM):
+        return "gone" if proc.poll() is not None else "error"
+    waited = 0.0
+    while waited < grace:
+        if proc.poll() is not None:
+            return "term"
+        sleep(0.2)
+        waited += 0.2
+    _signal(signal.SIGKILL)
+    return "kill"
+
+
+def job_cancel_requested() -> bool:
+    with _JOB_LOCK:
+        return bool(_JOB and _JOB.get("cancel"))
+
+
+def cancel_job(log=print) -> tuple:
+    """(ok, reason). Marks the single job cancelled and kills the engine's whole
+    process group. Idempotent: a second click on an already-cancelling job is fine."""
+    with _JOB_LOCK:
+        if not (_JOB and _JOB.get("state") in ("queued", "running")):
+            return False, "nothing is rendering"
+        _JOB["cancel"] = True
+    with _PROC_LOCK:
+        proc = _PROC
+    how = kill_process_group(proc)
+    log(f"[music] render cancelled by the user ({how})", flush=True)
+    return True, ""
+
 
 def current_job():
     with _JOB_LOCK:
@@ -1302,6 +1584,7 @@ def claim_job(params: dict):
             "seed": params["seed"],
             "prompt": params["prompt"],
             "format": params.get("format") or "",
+            "cancel": False,
             "log": None,
             "wall": None, "error": None, "out": None,
         }
@@ -1336,12 +1619,17 @@ def _set(**kw):
 
 def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S, log_path=None) -> str:
     """One engine invocation. Returns the combined output tail; raises MusicError on
-    a non-zero exit or a timeout, with that tail in the message.
+    a non-zero exit or a timeout, MusicCancelled when the user stopped it.
 
     When `log_path` is given the child writes STRAIGHT INTO that file (line-buffered
     by the child, not by us) instead of into a pipe we only read at the end — that
     file is what makes live progress possible at all. The error tail is then read
     back off the same file, so nothing is lost by not piping.
+
+    ⚠️ `start_new_session=True` is LOAD-BEARING, not hygiene: it puts the child in its
+    own process group so a cancel can signal the WHOLE tree. minimax runs a python that
+    spawns Metal work and acestep's binaries fork; terminating only the direct child
+    would leave the GPU busy while the panel said "cancelled".
     """
     env = dict(os.environ)
     for k, v in (env_extra or {}).items():
@@ -1349,22 +1637,44 @@ def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S, log_path=None)
     # Both engines print progress with flush=True; PYTHONUNBUFFERED is belt and
     # braces for anything in the chain that does not.
     env.setdefault("PYTHONUNBUFFERED", "1")
+    fh = None
     try:
         if log_path:
-            with open(log_path, "a", encoding="utf-8", errors="replace") as fh:
-                r = subprocess.run(argv, cwd=cwd, env=env, stdout=fh,
-                                   stderr=subprocess.STDOUT, timeout=timeout)
-            tail = _tail_file(log_path, STDERR_TAIL)
+            fh = open(log_path, "a", encoding="utf-8", errors="replace")
+            proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=fh,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
         else:
-            r = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
-                               timeout=timeout)
-            tail = ((r.stdout or "") + (r.stderr or ""))[-STDERR_TAIL:]
-    except subprocess.TimeoutExpired:
-        raise MusicError(f"the render timed out after {timeout // 60} minutes")
+            proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True,
+                                    start_new_session=True)
     except OSError as e:
+        if fh:
+            fh.close()
         raise MusicError(f"could not start the engine: {e}")
-    if r.returncode != 0:
-        raise MusicError(f"engine exited {r.returncode}\n{tail}".strip())
+    _register_proc(proc)
+    piped = ""
+    try:
+        try:
+            # communicate() is what WAITS, in both branches — with log_path the child
+            # writes to the file and there is nothing to read, but the timeout still
+            # has to be armed or a wedged engine would never be reaped.
+            piped = proc.communicate(timeout=timeout)[0] or ""
+        except subprocess.TimeoutExpired:
+            kill_process_group(proc)
+            try:
+                proc.communicate(timeout=10)
+            except Exception:                                    # noqa: BLE001
+                pass
+            raise MusicError(f"the render timed out after {timeout // 60} minutes")
+    finally:
+        _register_proc(None)
+        if fh:
+            fh.close()
+    tail = (_tail_file(log_path, STDERR_TAIL) if log_path else piped[-STDERR_TAIL:])
+    if job_cancel_requested():
+        raise MusicCancelled("cancelled")
+    if proc.returncode != 0:
+        raise MusicError(f"engine exited {proc.returncode}\n{tail}".strip())
     return tail
 
 
@@ -1453,6 +1763,16 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
         log(f"[music] render {params['engine']} ok — {name} "
             f"({params['seconds']}s song, {params['steps']} steps, seed {params['seed']}) "
             f"in {wall}s", flush=True)
+    except MusicCancelled:
+        # A cancelled render leaves NOTHING behind: a half-written wav would look like
+        # a track in the library and, worse, its sidecar would enter the ETA history as
+        # a measurement of a render that never finished.
+        wall = round(time.time() - started, 1)
+        _rm(out_path)
+        _rm(sidecar_path(out_path))
+        _set(state="cancelled", wall=wall, error=None, out=None)
+        log(f"[music] render {params['engine']} cancelled after {wall}s "
+            f"— partial output removed", flush=True)
     except MusicError as e:
         wall = round(time.time() - started, 1)
         _set(state="failed", wall=wall, error=str(e)[:STDERR_TAIL])

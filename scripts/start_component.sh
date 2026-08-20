@@ -580,6 +580,124 @@ PYWIRE
       exit 1
     fi
     ;;
+  comfyui)
+    # OPTIONAL image/video component (GPL-3.0, arm's length: separate process, HTTP only).
+    # One aiohttp process serves the SPA and the API on the SAME port; the SPA arrives as a
+    # pip package (comfyui-frontend-package), so there is no npm/bun build to go missing.
+    [[ -d data/comfyui-venv ]] || { echo "ERROR: comfyui venv missing — click Install first"; exit 1; }
+    [[ -f vendor/comfyui/main.py ]] || { echo "ERROR: vendor/comfyui missing — click Install first"; exit 1; }
+    ROOT="$(pwd)"
+    CUPY="$ROOT/data/comfyui-venv/bin/python"
+    [[ -x "$CUPY" ]] || { echo "ERROR: $CUPY not executable — reinstall comfyui"; exit 1; }
+    CU_PORT=$(awk '/^  comfyui:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    [[ "$CU_PORT" =~ ^[0-9]+$ ]] || CU_PORT=8188
+    # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
+    # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
+    lsof -ti tcp:"$CU_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
+    # --base-directory is MANDATORY: without it ComfyUI creates models/ output/ input/
+    # user/ NEXT TO main.py, i.e. inside vendor/. Same trap class as voicebox's --data-dir.
+    # --disable-auto-launch stops it opening a browser window behind the native tab.
+    mkdir -p "$ROOT/data/comfyui"
+    CU_CMD=(main.py --listen 127.0.0.1 --port "$CU_PORT"
+            --base-directory "$ROOT/data/comfyui" --disable-auto-launch)
+    # cd applies to the whole subshell (main.py resolves its package imports from the repo
+    # root); pid + log use ABSOLUTE paths so they can never land outside the project.
+    (
+      cd vendor/comfyui
+      nohup "$CUPY" "${CU_CMD[@]}" >>"$ROOT/data/logs/comfyui.log" 2>&1 &
+      echo $! > "$ROOT/data/comfyui.pid"
+    )
+    up=0
+    # GENEROUS wait: importing torch alone takes tens of seconds on a cold page cache.
+    TRIES=150
+    for i in $(seq 1 "$TRIES"); do
+      # /system_stats is a JSON API route that exists at this pin (server.py) — a cheaper,
+      # less ambiguous health signal than the SPA's index page.
+      if curl -sf -m 2 "http://127.0.0.1:${CU_PORT}/system_stats" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/comfyui.pid")" 2>/dev/null || {
+        echo "ERROR: comfyui exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/comfyui.log"
+        exit 1; }
+      if (( i % 15 == 0 )); then echo "[harness] comfyui still starting… (~$((i * 2))s; torch import is slow)"; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] comfyui up on http://127.0.0.1:${CU_PORT} (UI + API, loopback only, NO auth)"
+      echo "[harness] base dir: $ROOT/data/comfyui — put checkpoints in models/checkpoints/"
+    else
+      echo "ERROR: comfyui did not answer /system_stats on :${CU_PORT} in ~5min:"
+      tail -20 "$ROOT/data/logs/comfyui.log"
+      exit 1
+    fi
+    ;;
+  unsloth)
+    # OPTIONAL studio component (Studio is AGPL-3.0-only; arm's length: separate process,
+    # HTTP only). One FastAPI process serves the API and the React SPA on the SAME port.
+    [[ -d data/unsloth-venv ]] || { echo "ERROR: unsloth venv missing — click Install first"; exit 1; }
+    [[ -f vendor/unsloth/studio/backend/run.py ]] || { echo "ERROR: vendor/unsloth missing — click Install first"; exit 1; }
+    ROOT="$(pwd)"
+    USPY="$ROOT/data/unsloth-venv/bin/python"
+    [[ -x "$USPY" ]] || { echo "ERROR: $USPY not executable — reinstall unsloth"; exit 1; }
+    US_PORT=$(awk '/^  unsloth:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    [[ "$US_PORT" =~ ^[0-9]+$ ]] || US_PORT=8888
+    US_DIST="$ROOT/vendor/unsloth/studio/frontend/dist"
+    # REFUSE UP FRONT rather than let it die inside uvicorn: at this pin
+    # studio/backend/run.py's _missing_frontend_is_fatal() aborts any launch that is not
+    # --api-only when it cannot resolve a frontend/dist containing index.html.
+    [[ -f "$US_DIST/index.html" ]] || {
+      echo "ERROR: the Unsloth Studio SPA is not built ($US_DIST/index.html is missing)."
+      echo "       Unsloth REFUSES to start a web-UI launch without it, so there is"
+      echo "       nothing to serve in the tab. Rebuild it by re-running the install:"
+      echo "         ./scripts/install_component.sh unsloth --yes"
+      echo "       (that step needs bun; the reason any previous attempt failed is in"
+      echo "        data/logs/unsloth-install.log)"
+      exit 1; }
+    # Clear the port FIRST — LISTENER-scoped only (standing ops rule).
+    lsof -ti tcp:"$US_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+    sleep 1
+    # `unsloth studio` (the Typer group's invoke_without_command callback) is the PLAIN
+    # server launch. Deliberately NOT `unsloth studio run`: at this pin that variant
+    # installs a tools-ON process-global policy, and NOT `unsloth start`, which is the
+    # agent-wiring path that relocates HERMES_HOME — our Hermes is never touched.
+    # Prefer the venv's console script; fall back to the module (a uv-seeded venv can
+    # lack bin/ scripts — the same failure mode as bin/pip).
+    if [[ -x "$ROOT/data/unsloth-venv/bin/unsloth" ]]; then
+      US_BIN=("$ROOT/data/unsloth-venv/bin/unsloth")
+    else
+      US_BIN=("$USPY" -m unsloth_cli)
+    fi
+    US_CMD=(studio --host 127.0.0.1 --port "$US_PORT" --frontend "$US_DIST")
+    # cd into the repo so run.py's own relative resolution matches an editable install;
+    # pid + log use ABSOLUTE paths so they can never land outside the project.
+    (
+      cd vendor/unsloth
+      nohup "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
+      echo $! > "$ROOT/data/unsloth.pid"
+    )
+    up=0
+    TRIES=150
+    for i in $(seq 1 "$TRIES"); do
+      # /api/health at this pin answers unauthenticated with a reduced payload — the
+      # version/device fields need a bearer, but reachability does not.
+      if curl -sf -m 2 "http://127.0.0.1:${US_PORT}/api/health" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/unsloth.pid")" 2>/dev/null || {
+        echo "ERROR: unsloth exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/unsloth.log"
+        exit 1; }
+      if (( i % 15 == 0 )); then echo "[harness] unsloth still starting… (~$((i * 2))s)"; fi
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] unsloth up on http://127.0.0.1:${US_PORT} (Studio API + SPA, loopback only)"
+      echo "[harness] Studio has its OWN login; on a loopback launch its page auto-fills the"
+      echo "[harness]   bootstrap credential. Change the password inside its UI."
+    else
+      echo "ERROR: unsloth did not answer /api/health on :${US_PORT} in ~5min:"
+      tail -20 "$ROOT/data/logs/unsloth.log"
+      exit 1
+    fi
+    ;;
   hermes)
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
@@ -816,5 +934,5 @@ PYGUARD
       exit 1
     fi
     ;;
-  *) echo "usage: $0 runner|hermes|odysseus|searxng|voicestudio|voicebox"; exit 1 ;;
+  *) echo "usage: $0 runner|hermes|odysseus|searxng|voicestudio|voicebox|comfyui|unsloth"; exit 1 ;;
 esac

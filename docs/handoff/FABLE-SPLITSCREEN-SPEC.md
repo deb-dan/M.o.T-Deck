@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE SPEC — Split-screen + cross-app voice drop (v1, 2026-08-14)
 
 Author: Fable 5. Builder: Opus 5. Decision-free; deviations get ⚠️ PENDING FABLE QA tags.

@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Install a component natively: ./scripts/install_component.sh hermes|odysseus|voicestudio|voicebox [--yes]
+# Install a component natively:
+#   ./scripts/install_component.sh hermes|odysseus|voicestudio|voicebox|comfyui|unsloth [--yes]
 # Shows the plan first; --yes skips the prompt (used by the panel after UI approval).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 NAME="${1:-}"; YES="${2:-}"
 case "$NAME" in
-  hermes|odysseus|voicestudio|voicebox) ;;
-  *) echo "usage: $0 hermes|odysseus|voicestudio|voicebox [--yes]"; exit 1 ;;
+  hermes|odysseus|voicestudio|voicebox|comfyui|unsloth) ;;
+  *) echo "usage: $0 hermes|odysseus|voicestudio|voicebox|comfyui|unsloth [--yes]"; exit 1 ;;
 esac
-# hermes/odysseus are pinned SUBMODULES created by bootstrap.sh. voicestudio and
-# voicebox are OPTIONAL components and — like searxng — are plain shallow clones this
-# script makes itself, so a default bootstrap never drags in a multi-GB optional dep.
-if [[ "$NAME" != "voicestudio" && "$NAME" != "voicebox" ]]; then
+# hermes/odysseus are pinned SUBMODULES created by bootstrap.sh. voicestudio, voicebox,
+# comfyui and unsloth are OPTIONAL components and — like searxng — are plain shallow
+# clones this script makes itself, so a default bootstrap never drags in a multi-GB
+# optional dep. The skip list is NAME-SCOPED, never a blanket "skip the precheck".
+case "$NAME" in voicestudio|voicebox|comfyui|unsloth) _SKIP_GIT_PRECHECK=1 ;; *) _SKIP_GIT_PRECHECK=0 ;; esac
+if [[ "$_SKIP_GIT_PRECHECK" != "1" ]]; then
   [[ -e "vendor/$NAME/.git" ]] || {
     echo "vendor/$NAME missing — run bootstrap.sh first:"
     echo "  cd \"$ROOT\" && ./scripts/bootstrap.sh --yes"
@@ -67,6 +70,49 @@ plan_voicebox="PLAN (voicebox) — OPTIONAL, license MIT:
     pin conflict, not a harness bug (upstream last shipped 2026-04-26).
   - ⚠️ NO AUTH: serves 127.0.0.1:17493 with /speak, /transcribe and /mcp wide open"
 
+plan_comfyui="PLAN (comfyui) — OPTIONAL, license GPL-3.0:
+  - shallow-clone vendor/comfyui at the pinned tag from harness.yaml (not a submodule)
+  - create venv data/comfyui-venv and install its Python deps
+    (torch + torchvision + torchaudio + transformers + safetensors + the SPA, which
+     ships as a PIP package — no npm/bun build needed; roughly 4-6GB of wheels)
+  - on Apple Silicon, upstream's own README says to install a PyTorch NIGHTLY build
+    first; that is what this does (falling back to stable PyPI torch if the nightly
+    index is unreachable). ⚠ a nightly is a FLOATING build — it is upstream's
+    instruction, not a pin we control.
+  - create data/comfyui/ as its base directory (models, output, input, user) so it
+    never writes into vendor/
+  - serve on 127.0.0.1:8188 when started (UI + API on one port, loopback, no auth)
+  - ⚠ GPL-3.0: composed at ARM'S LENGTH ONLY — a separate process reached over HTTP,
+    never modified, never lifted from (same posture as SearXNG's AGPL)
+  - ⚠ its diffusion models load in ITS process, so their RAM is invisible to the
+    harness model-RAM ledger (memory.budget_gb) — the same known limit the voice
+    components already have
+  - image/video models are NOT downloaded here; you add them later, on first use"
+
+plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apache-2.0 (library):
+  - shallow-clone vendor/unsloth at the pinned tag from harness.yaml (not a submodule)
+  - create venv data/unsloth-venv and 'pip install -e vendor/unsloth[studio]' — the
+    studio extra is upstream's own declared server stack (fastapi/uvicorn/datasets/
+    pandas/matplotlib/pymupdf/fastmcp …), a few hundred MB. Training extras (torch et
+    al.) are NOT installed here; the tab only needs the Studio server.
+  - build its React SPA with bun: reuse a bun already on your PATH, otherwise download
+    the pinned bun release (~35MB) into data/bun/ — never Homebrew, never sudo, nothing
+    written outside this project folder
+  - ⚠ UNLIKE the voice components, a missing SPA build is FATAL: at this pin
+    studio/backend/run.py aborts the launch when it cannot resolve frontend/dist for a
+    web-UI launch. If the bun build fails, the install still finishes but Start will
+    refuse with that reason — re-run this install to retry.
+  - we deliberately do NOT run upstream's install.sh (it builds its own install root,
+    writes shell shims and downloads a FORKED, floating-tag llama.cpp + its own Node),
+    and we never invoke 'unsloth start' (that is its agent-wiring path and it would
+    relocate HERMES_HOME — our Hermes is not touched)
+  - serve on 127.0.0.1:8888 when started; Studio has its OWN bearer login, which is its
+    UI's business — on a loopback launch it auto-fills its bootstrap credential
+  - ⚠ AGPL-3.0-only for Studio: composed at ARM'S LENGTH ONLY — separate process over
+    HTTP, never modified
+  - ⚠ it can download its own llama.cpp and models into its own dirs; contained, but
+    those weights are invisible to the harness model-RAM ledger"
+
 var="plan_$NAME"; echo "${!var}"
 if [[ "$YES" != "--yes" ]]; then
   read -r -p "Proceed? [y/N] " reply
@@ -74,6 +120,93 @@ if [[ "$YES" != "--yes" ]]; then
 fi
 
 PY=$(command -v python3.12 || command -v python3.11 || command -v python3)
+
+# ── shared helpers for the OPTIONAL shallow-clone components (comfyui / unsloth) ──
+# Deliberately small and explicit rather than clever: they encode the three lessons the
+# voice pair taught us (pin single-sourced from harness.yaml, the bundled-CPython-first
+# interpreter ladder, and `python -m pip` never `bin/pip`).
+
+# _pin_of <component> <key>  — key ∈ repo|pin|port. Block-scoped so a later component's
+# key can never be read for an earlier one.
+_pin_of() {
+  awk "/^  $1:/{f=1; next} f && /^  [a-z]/{exit} f && /^    $2:/{print \$2; exit}" harness.yaml
+}
+
+# _clone_pinned <component>  — shallow clone / re-pin, searxng precedent (never a submodule).
+_clone_pinned() {
+  local n="$1" repo pin
+  repo="$(_pin_of "$n" repo)"; pin="$(_pin_of "$n" pin)"
+  [[ -n "$repo" && -n "$pin" ]] || { echo "ERROR: components.$n repo/pin missing from harness.yaml"; exit 1; }
+  if [[ ! -e "vendor/$n/.git" ]]; then
+    echo "[harness] cloning ${n} @ ${pin} (shallow)…"
+    git clone --depth 1 --branch "$pin" "$repo" "vendor/$n"
+  else
+    git -C "vendor/$n" fetch --depth 1 --quiet origin "$pin"
+    git -C "vendor/$n" checkout --quiet FETCH_HEAD
+  fi
+  echo "[harness] vendor/${n} pinned to ${pin}"
+}
+
+# _pick_py  — PREFER the harness's own bundled standalone CPython (3.12.x, known-good
+# ensurepip) over a possibly-relinked Homebrew python. Exactly the voicebox ladder.
+_pick_py() {
+  local p
+  for p in "$ROOT/data/python-standalone/bin/python3" \
+           "$(command -v python3.12 || true)" \
+           "$(command -v python3.13 || true)" \
+           "$(command -v python3.11 || true)" \
+           "$(command -v python3 || true)"; do
+    [[ -n "$p" && -x "$p" ]] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+# _find_uv  — EXPLICIT path list. The bridge spawns this script from a Finder-launched
+# app with a MINIMAL PATH, so `command -v uv` alone misses ~/.local/bin/uv (standing rule).
+_find_uv() {
+  local u
+  for u in "$(command -v uv || true)" "$HOME/.local/bin/uv" /opt/homebrew/bin/uv \
+           /usr/local/bin/uv "$HOME/.cargo/bin/uv"; do
+    [[ -n "$u" && -x "$u" ]] && { echo "$u"; return 0; }
+  done
+  return 0   # not an error — every caller has a non-uv fallback
+}
+
+# _mk_venv <venv-dir> <python> <logfile>  — uv --seed first (it never calls ensurepip),
+# then plain venv, then --without-pip + a pip bootstrap. Both real failure modes the
+# voicebox install hit are handled here.
+_mk_venv() {
+  local venv="$1" py="$2" log="$3" uv
+  uv="$(_find_uv)"
+  if [[ ! -x "$venv/bin/python" ]]; then
+    if [[ -n "$uv" ]] && "$uv" venv --python "$py" --seed "$venv" >>"$log" 2>&1; then
+      echo "[harness] venv created with uv (--seed)."
+    elif "$py" -m venv "$venv" >>"$log" 2>&1; then
+      echo "[harness] venv created with $py -m venv."
+    elif "$py" -m venv --without-pip "$venv" >>"$log" 2>&1; then
+      echo "[harness] venv created without pip (pip bootstrapped below)."
+    else
+      rm -rf "$venv"
+      echo "ERROR: could not create $venv with $py. See $log"
+      echo "       Repair options: install uv, or brew reinstall python@3.12."
+      exit 1
+    fi
+  fi
+  # A uv-seeded or --without-pip venv can have the pip MODULE without bin/pip — every
+  # call below goes through `python -m pip`, and this guarantees the module exists.
+  if ! "$venv/bin/python" -m pip --version >/dev/null 2>&1; then
+    if "$venv/bin/python" -m ensurepip --upgrade >>"$log" 2>&1; then
+      echo "[harness] pip bootstrapped via ensurepip."
+    elif [[ -n "$uv" ]] && "$uv" pip install --python "$venv/bin/python" pip >>"$log" 2>&1; then
+      echo "[harness] pip bootstrapped via uv."
+    else
+      echo "ERROR: $venv has no usable pip and it could not be bootstrapped. See $log"
+      echo "       Easiest fix: install uv, then re-run the install —"
+      echo "         curl -LsSf https://astral.sh/uv/install.sh | sh"
+      exit 1
+    fi
+  fi
+}
 
 if [[ "$NAME" == "hermes" ]]; then
   uv venv "data/hermes-venv" --python "$PY" 2>/dev/null || true
@@ -424,6 +557,148 @@ elif [[ "$NAME" == "voicebox" ]]; then
   echo "[harness] NOTE: voicebox is MIT, but ships NO AUTHENTICATION — /speak, /transcribe"
   echo "[harness]   and /mcp are open to anything that reaches :17493. Loopback only;"
   echo "[harness]   never expose it (that includes any future Tailscale hop)."
+elif [[ "$NAME" == "comfyui" ]]; then
+  # ── OPTIONAL image/video generation component (GPL-3.0; composed over HTTP, never
+  #    modified, never lifted from — arm's-length only, same posture as SearXNG). ───
+  _clone_pinned comfyui
+  [[ -f vendor/comfyui/main.py ]] || {
+    echo "ERROR: vendor/comfyui/main.py not found at the pin — upstream layout changed;"
+    echo "       scripts/start_component.sh launches 'python main.py'."
+    exit 1; }
+  [[ -f vendor/comfyui/requirements.txt ]] || {
+    echo "ERROR: vendor/comfyui/requirements.txt not found at the pin."; exit 1; }
+
+  CU_VENV="$ROOT/data/comfyui-venv"
+  mkdir -p "$ROOT/data/logs"
+  CU_ILOG="$ROOT/data/logs/comfyui-install.log"
+  : > "$CU_ILOG"
+  CU_PY="$(_pick_py)" || { echo "ERROR: no python3 found — install Python 3.12."; exit 1; }
+  echo "[harness] comfyui interpreter: $CU_PY"
+  # upstream pyproject at the pin declares requires-python >= 3.10
+  CU_MINOR=$("$CU_PY" -c 'import sys; print(sys.version_info[1])')
+  if [[ "$CU_MINOR" -lt 10 ]]; then
+    echo "ERROR: $CU_PY is Python 3.$CU_MINOR — ComfyUI needs >= 3.10 at this pin."; exit 1
+  fi
+  _mk_venv "$CU_VENV" "$CU_PY" "$CU_ILOG"
+
+  cu_pip() {
+    echo "[harness] pip $*"
+    if ! "$CU_VENV/bin/python" -m pip install "$@" 2>&1 | tee -a "$CU_ILOG"; then
+      echo ""
+      echo "ERROR: comfyui dependency install FAILED at: pip install $*"
+      echo "       full log: $CU_ILOG"
+      echo "       This install is ONLINE-ONLY (torch + the SPA package are several GB)."
+      echo "       Re-run in a terminal with: ./scripts/install_component.sh comfyui --yes"
+      exit 1
+    fi
+  }
+  cu_pip --upgrade pip
+  # Apple Silicon: upstream's OWN README (### Apple Mac silicon, at this pin) says
+  #   "1. Install pytorch nightly … make sure to install the latest pytorch nightly."
+  # so that is what we do, and it is cited rather than invented. ⚠ a nightly is a
+  # FLOATING build — not reproducible across time, and not something we pin. If the
+  # nightly index is unreachable we fall back to stable PyPI torch (which does have MPS)
+  # and say so, rather than failing an otherwise fine install.
+  if [[ "$(uname -m)" == "arm64" && "$(uname)" == "Darwin" ]]; then
+    echo "[harness] Apple Silicon — installing the PyTorch NIGHTLY build (upstream README's instruction)…"
+    if "$CU_VENV/bin/python" -m pip install --pre torch torchvision torchaudio \
+         --index-url https://download.pytorch.org/whl/nightly/cpu 2>&1 | tee -a "$CU_ILOG"; then
+      echo "[harness] torch nightly installed."
+    else
+      echo "[harness] WARN: the PyTorch nightly index was unreachable — falling back to"
+      echo "[harness]   stable torch from PyPI (MPS works there too; upstream simply"
+      echo "[harness]   recommends nightly for the newest Metal fixes)."
+    fi
+  fi
+  cu_pip -r vendor/comfyui/requirements.txt
+  [[ -x "$CU_VENV/bin/python" ]] || { echo "ERROR: data/comfyui-venv was not created."; exit 1; }
+
+  # Base directory. ⚠ MANDATORY: ComfyUI's default writes models/ output/ input/ user/
+  # NEXT TO main.py, i.e. straight into vendor/. start_component.sh always passes
+  # --base-directory; create it here so the first Start has somewhere to write.
+  mkdir -p "$ROOT/data/comfyui"
+  echo "[harness] comfyui base directory → $ROOT/data/comfyui (models/output/input/user)"
+  echo "[harness] NOTE: comfyui is GPL-3.0. The harness composes it at ARM'S LENGTH —"
+  echo "[harness]   a separate process reached over HTTP on 127.0.0.1:8188, never edited."
+  echo "[harness]   It binds loopback with NO authentication; never expose that port."
+  echo "[harness]   Its models load in ITS process, so they are invisible to the harness"
+  echo "[harness]   model-RAM ledger (memory.budget_gb) — a known, accepted limit."
+elif [[ "$NAME" == "unsloth" ]]; then
+  # ── OPTIONAL training/serving studio (AGPL-3.0-only for studio/, Apache-2.0 for the
+  #    training library; composed over HTTP, never modified). ─────────────────────────
+  _clone_pinned unsloth
+  [[ -f vendor/unsloth/studio/backend/run.py ]] || {
+    echo "ERROR: vendor/unsloth/studio/backend/run.py not found at the pin — upstream"
+    echo "       layout changed; scripts/start_component.sh launches 'unsloth studio'."
+    exit 1; }
+  [[ -f vendor/unsloth/pyproject.toml ]] || {
+    echo "ERROR: vendor/unsloth/pyproject.toml not found at the pin."; exit 1; }
+
+  US_VENV="$ROOT/data/unsloth-venv"
+  mkdir -p "$ROOT/data/logs"
+  US_ILOG="$ROOT/data/logs/unsloth-install.log"
+  : > "$US_ILOG"
+  US_PY="$(_pick_py)" || { echo "ERROR: no python3 found — install Python 3.12."; exit 1; }
+  echo "[harness] unsloth interpreter: $US_PY"
+  # upstream pyproject at the pin declares requires-python >=3.9,<3.15
+  US_MINOR=$("$US_PY" -c 'import sys; print(sys.version_info[1])')
+  if [[ "$US_MINOR" -lt 9 || "$US_MINOR" -ge 15 ]]; then
+    echo "ERROR: $US_PY is Python 3.$US_MINOR — unsloth declares >=3.9,<3.15 at this pin."; exit 1
+  fi
+  _mk_venv "$US_VENV" "$US_PY" "$US_ILOG"
+
+  us_pip() {
+    echo "[harness] pip $*"
+    if ! "$US_VENV/bin/python" -m pip install "$@" 2>&1 | tee -a "$US_ILOG"; then
+      echo ""
+      echo "ERROR: unsloth dependency install FAILED at: pip install $*"
+      echo "       full log: $US_ILOG"
+      echo "       This install is ONLINE-ONLY. Re-run in a terminal with:"
+      echo "         ./scripts/install_component.sh unsloth --yes"
+      exit 1
+    fi
+  }
+  us_pip --upgrade pip
+  # The [studio] extra is upstream's OWN declared server stack (pyproject.toml
+  # [project.optional-dependencies].studio at the pin). We deliberately install ONLY
+  # that — the training extras (torch/triton/…) are a separate, much heavier ask and the
+  # tab does not need them. Editable so the SPA we build below is found in place.
+  us_pip -e "vendor/unsloth[studio]"
+  [[ -x "$US_VENV/bin/unsloth" ]] || {
+    echo "[harness] WARN: the 'unsloth' console script is not in data/unsloth-venv/bin —"
+    echo "[harness]   start_component.sh falls back to 'python -m unsloth_cli'."; }
+
+  # SPA. ⚠ UNLIKE voicestudio/voicebox this is NOT optional: at this pin
+  # studio/backend/run.py's _missing_frontend_is_fatal() returns True for any launch that
+  # is not --api-only, so a web-UI launch with no frontend/dist ABORTS. We still only
+  # WARN here (an install that got the venv right should not be thrown away), and
+  # start_component.sh refuses up front with the same reason.
+  BUN="$(bash scripts/ensure_bun.sh || true)"
+  if [[ -n "$BUN" ]]; then
+    echo "[harness] building the unsloth Studio SPA (bun)…"
+    ( cd vendor/unsloth/studio/frontend \
+      && PATH="$(cd "$(dirname "$BUN")" && pwd):$PATH" \
+         BUN_INSTALL="$ROOT/data/bun" \
+         BUN_INSTALL_CACHE_DIR="$ROOT/data/bun/cache" \
+         bash -c 'bun install && bun run build' ) \
+      || echo "[harness] WARN: the bun build failed — see above."
+  else
+    echo "[harness] WARN: bun could not be provisioned (reason printed above)."
+  fi
+  if [[ -f vendor/unsloth/studio/frontend/dist/index.html ]]; then
+    echo "[harness] unsloth Studio SPA built → studio/frontend/dist/"
+  else
+    echo "[harness] WARN: studio/frontend/dist/index.html is MISSING."
+    echo "[harness]   Unsloth Studio REFUSES to start a web-UI launch without it, so the"
+    echo "[harness]   tab will not work until this build succeeds. Re-run the install:"
+    echo "[harness]   ./scripts/install_component.sh unsloth --yes"
+  fi
+  echo "[harness] NOTE: Unsloth Studio is AGPL-3.0-only (the training library is Apache-2.0)."
+  echo "[harness]   The harness composes it at ARM'S LENGTH — a separate process on"
+  echo "[harness]   127.0.0.1:8888, never edited. It has its OWN login, handled in its own UI."
+  echo "[harness]   We never run 'unsloth start' and never set HERMES_HOME: that is its"
+  echo "[harness]   agent-wiring path and it must not touch your ~/.hermes."
+  echo "[harness]   Models it loads live in ITS process — invisible to memory.budget_gb."
 else
   uv venv "data/odysseus-venv" --python "$PY" 2>/dev/null || true
   # shellcheck disable=SC1091

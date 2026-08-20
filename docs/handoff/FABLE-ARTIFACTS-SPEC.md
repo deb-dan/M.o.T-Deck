@@ -1,3 +1,5 @@
+> **DONE — implemented and shipped (marked 2026-08-20).**
+
 # FABLE 5 — ARTIFACTS + ROOMIER CHAT (§F and chat-workspace) — decision-free spec for Opus 4.8
 Date 2026-07-31. Authority: Fable orchestrator (this is UI + a security surface — design decisions here are Fable's; Opus implements them). Build FUNCTION in the EXISTING dark editorial system — reuse `:root` tokens (serif/mono/cream/gold), no new colors or type scales. Leave `<!-- FABLE: style pass -->` markers where aesthetics need a later Fable touch. Never edit vendor/. Do NOT commit/push. Validate each phase. Everything MUST work fully OFFLINE — self-host every asset, no runtime CDN.
 

@@ -99,6 +99,54 @@ components:
                               # start script ALWAYS passes --port explicitly
     depends_on: []            # standalone — core TTS/ASR needs no model runner
 
+  # ── OPTIONAL creative / training components (2026-08-20) ─────────────────────────
+  # Same delivery shape as the voice pair: plain shallow clones made by
+  # install_component.sh (searxng precedent), never submodules, so a default
+  # bootstrap never drags in a multi-GB optional dependency.
+  comfyui:
+    repo: https://github.com/comfyanonymous/ComfyUI.git
+    pin: v0.33.3              # release tag — never track a branch.
+                              # 2026-08-20: newest tag, verified LIVE with `git ls-remote --tags`
+                              # (sha 4da9e2dbead52fc1e68beae33fe3d7ad63b63241, committed 2026-08-20).
+                              # requirements.txt at this tag ships the SPA as a PIP package
+                              # (comfyui-frontend-package==1.49.6) — there is NO npm/bun build
+                              # step here, unlike voicestudio/voicebox.
+    installed: false          # OPTIONAL — nothing depends on it; bootstrap never clones it
+    enabled: false
+    port: 8188                # main.py's own argparse default; passed explicitly anyway
+    depends_on: []            # standalone — its own diffusion models, not our runner
+    # ⚠️ LICENSE: GPL-3.0. Composed at ARM'S LENGTH ONLY — a separate process we talk to over
+    # HTTP, never edited, never lifted from. Same posture as SearXNG's AGPL.
+    # ⚠️ Its models and their RAM are OUTSIDE the harness ledger (memory.budget_gb): diffusion
+    # weights live in its own process, exactly like the voice components' do.
+    # ⚠️ --base-directory is MANDATORY at start (see start_component.sh): the default writes
+    # models/ output/ input/ user/ into the repo dir, i.e. into vendor/. Same class of trap as
+    # voicebox's --data-dir.
+
+  unsloth:
+    repo: https://github.com/unslothai/unsloth.git
+    pin: v0.1.801-beta        # release tag — never track a branch.
+                              # 2026-08-20: newest tag, verified LIVE with `git ls-remote --tags`
+                              # (sha f3a66cd1844f82feea21bd1b8454a1ff60719c9f, committed
+                              # 2026-08-20 09:55 -0700). Upstream's other tag family is
+                              # month-named (March-2026 …) and older; the v0.1.8xx-beta line is
+                              # the Studio one. MONOREPO: unsloth/ (Apache-2.0 training library)
+                              # + studio/ (AGPL-3.0-only FastAPI server + React SPA).
+    installed: false          # OPTIONAL
+    enabled: false
+    port: 8888                # `unsloth studio`'s own default; passed explicitly anyway
+    depends_on: []            # standalone — it serves its OWN models, never our runner
+    # ⚠️ LICENSE: Studio is AGPL-3.0-only (studio/LICENSE.AGPL-3.0); the training library is
+    # Apache-2.0. Arm's length only — separate process, HTTP, never modified.
+    # ⚠️ Its bearer auth is ITS OWN UI's business. Read at the pin (studio/backend/run.py
+    # _terminal_password_gate): the password gate and the 1h bootstrap auto-shutdown BOTH only
+    # apply to an exposed/tunnelled launch, so a loopback launch with no terminal is fine and
+    # the served HTML auto-fills the bootstrap credential.
+    # ⚠️ We deliberately never export HERMES_HOME and never invoke `unsloth start` — that is
+    # the CLI's agent-wiring path and it must not touch ~/.hermes.
+    # ⚠️ It can download its own (forked, floating-tag) llama.cpp into its own dirs. Contained,
+    # but those weights are invisible to the harness RAM ledger.
+
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
