@@ -129,3 +129,16 @@ Two tiebreakers if the numbers land close:
 - **Nothing about this is adoption.** No component entry, no port, no manifest key, no
   registry row. If both engines disappoint, deleting three directories removes every
   trace.
+
+## MEASURED (Debi's Mac, 2026-08-20 — both engines PASS feasibility)
+| engine | song | wall | max RSS | notes |
+|---|---|---|---|---|
+| MiniMax-Music3-MLX int8, 30 steps (0505e3f) | 60s | **115.55s** | 2.2GB* | ~2× realtime |
+| acestep.cpp GGUF Q8_0 turbo, 8 steps (9761469d95fc) | 60s | **24.45s** (lm 15.69 + synth 8.76) | 8.4GB | ~0.4× realtime |
+
+*The MiniMax RSS is almost certainly UNDERSTATED — MLX's Metal buffers are wired GPU
+allocations that /usr/bin/time -l's maxRSS does not fully capture. The practical fact
+stands: the render completed in under 2 minutes with no swap storm on a 64GB machine
+with the chat model ejected. The 32–48GB upstream guidance stays the planning number.
+
+Ear verdict (Debi): PENDING — listen to both wavs before the engine ruling.
