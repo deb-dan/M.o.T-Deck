@@ -50,6 +50,42 @@ print(m.get("ctx") if m.get("ctx") not in (None, "") else "")
 print(fmt)
 print("true" if m.get("vision") else "false")
 print(m.get("repo") or "")   # source HF repo (download entries) — MTP marker often lives here
+# v2 (2026-08-20): the model's SAVED sampling + load overrides, as `key=value` tokens.
+# Only EXPLICIT user values travel — an unset field keeps the engine's own default on
+# the Agent/Hermes lanes, exactly as before. Junk is dropped here (values are numbers
+# or one-word tokens, so a token can never contain a space and split the shell loop).
+# The bridge owns the meaning of these keys: bridge/app.py SAMPLING_* / LOAD_*.
+# Ranges mirror bridge/app.py SAMPLING_RANGES / LOAD_RANGES; a hand-edited registry
+# carrying nonsense must never reach the launch line and fail the load.
+_NUM = {"temperature": (0.0, 2.0), "top_p": (0.0, 1.0), "top_k": (0, 500),
+        "min_p": (0.0, 1.0), "repeat_penalty": (1.0, 2.0), "repeat_last_n": (-1, 8192),
+        "max_tokens": (1, 1048576), "seed": (-1, 2147483647),
+        "ctx": (1024, 262144), "gpu_layers": (-1, 999)}
+_ENUM = {"kv_quant": ("off", "q8_0", "q4_0")}
+def _kv(d, keys):
+    out = []
+    for k in keys:
+        if k not in (d or {}):
+            continue
+        v = (d or {})[k]
+        if k == "flash_attn":
+            if isinstance(v, bool):
+                out.append(f"{k}={'on' if v else 'off'}")
+            elif isinstance(v, str) and v.strip().lower() in ("on", "off"):
+                out.append(f"{k}={v.strip().lower()}")
+        elif k in _ENUM:
+            if isinstance(v, str) and v.strip().lower() in _ENUM[k]:
+                out.append(f"{k}={v.strip().lower()}")
+        elif k in _NUM and isinstance(v, (int, float)) and not isinstance(v, bool):
+            lo, hi = _NUM[k]
+            if v == v and lo <= v <= hi:
+                out.append(f"{k}={v}")
+    return " ".join(out)
+_s = (m or {}).get("settings"); _s = _s if isinstance(_s, dict) else {}
+_l = (m or {}).get("load");     _l = _l if isinstance(_l, dict) else {}
+print(_kv(_s, ("temperature", "top_p", "top_k", "min_p",
+               "repeat_penalty", "repeat_last_n", "max_tokens", "seed")))
+print(_kv(_l, ("ctx", "gpu_layers", "flash_attn", "kv_quant")))
 PYRESOLVE
 ) || { echo "ERROR: $(R_MODEL="$R_MODEL" python3 -c 'import os,json,sys;print("model \x27%s\x27 not in registry — run scripts/seed_registry.py or pick another model"%os.environ["R_MODEL"])')"; exit 1; }
     MODEL_PATH=$(sed -n '1p' <<<"$RESOLVED")
@@ -58,6 +94,16 @@ PYRESOLVE
     MODEL_FORMAT=$(sed -n '4p' <<<"$RESOLVED")
     MODEL_VISION=$(sed -n '5p' <<<"$RESOLVED")
     MODEL_REPO=$(sed -n '6p' <<<"$RESOLVED")
+    SAMP_KV=$(sed -n '7p' <<<"$RESOLVED")
+    LOAD_KV=$(sed -n '8p' <<<"$RESOLVED")
+    # Read one saved value, or empty. Deliberately EMPTY-means-unset: a caller that
+    # gets nothing back emits nothing, which is what keeps engine defaults intact.
+    _sv() { local k="$1" tok; for tok in $SAMP_KV; do
+              [[ "${tok%%=*}" == "$k" ]] && { printf '%s' "${tok#*=}"; return 0; }
+            done; return 0; }
+    _lv() { local k="$1" tok; for tok in $LOAD_KV; do
+              [[ "${tok%%=*}" == "$k" ]] && { printf '%s' "${tok#*=}"; return 0; }
+            done; return 0; }
     # Pick the effective engine.
     case "$R_ADAPTER" in
       auto)
@@ -86,8 +132,12 @@ PYRESOLVE
       BIN="$R_BIN"
       [[ -x "$BIN" ]] || { echo "ERROR: runner.binary is not executable: $BIN"; exit 1; }
     fi
-    # CTX preference: registry ctx, else harness.yaml ctx_size, else 65536.
-    if [[ "$REG_CTX" =~ ^[0-9]+$ ]]; then CTX="$REG_CTX"; else CTX="$R_CTX"; fi
+    # CTX preference: the model's SAVED load.ctx (Models → Load, v2) wins, then the
+    # registry ctx, then harness.yaml ctx_size, then 65536.
+    L_CTX=$(_lv ctx)
+    if [[ "$L_CTX" =~ ^[0-9]+$ ]]; then CTX="$L_CTX"
+    elif [[ "$REG_CTX" =~ ^[0-9]+$ ]]; then CTX="$REG_CTX"
+    else CTX="$R_CTX"; fi
     [[ "$CTX" =~ ^[0-9]+$ ]] || CTX=65536
     # Capture the binary's flags to decide whether --api-key is supported (cheap; every start ok).
     "$BIN" --help > data/llama-server.help.txt 2>&1 || true
@@ -110,8 +160,50 @@ PYRESOLVE
     # (Odysseus) and Hermes lanes build their own request bodies and never send a
     # penalty. The direct lane always sends one, and a request body WINS over argv.
     # Rationale + full engine surface: docs/research/2026-08-20-model-settings.md.
+    #
+    # v2 (2026-08-20, Debi ruling): the two numbers below are now the FALLBACK — a
+    # value saved in Models → Sampling wins, and is emitted ONCE here (never twice).
+    S_RP=$(_sv repeat_penalty); S_RL=$(_sv repeat_last_n)
     if grep -q -- "--repeat-penalty" data/llama-server.help.txt; then
-      ARGS+=(--repeat-penalty 1.1 --repeat-last-n 256)
+      ARGS+=(--repeat-penalty "${S_RP:-1.1}" --repeat-last-n "${S_RL:-256}")
+    fi
+    # SAMPLING FLOORS (v2). Every OTHER saved sampling value also becomes a launch
+    # default, so the Agent (Odysseus) and Hermes lanes — which build their own
+    # request bodies and send no sampling at all — inherit the user's choice. Only
+    # EXPLICIT values travel: nothing saved ⇒ nothing emitted ⇒ engine defaults,
+    # byte-identical to the pre-v2 launch line. The direct lane is unaffected: a
+    # request body still WINS over argv (Fable D2). Flag names + support are gated
+    # against this binary's own --help, exactly like --api-key above.
+    #   help refs: --temp :240, --top-p :243, --top-k :241, --min-p :244, --seed :234
+    _floor() {  # $1 = flag, $2 = saved value (empty ⇒ emit nothing)
+      [[ -n "$2" ]] || return 0
+      grep -q -- "$1" data/llama-server.help.txt || return 0
+      ARGS+=("$1" "$2")
+    }
+    _floor --temp  "$(_sv temperature)"
+    _floor --top-p "$(_sv top_p)"
+    _floor --top-k "$(_sv top_k)"
+    _floor --min-p "$(_sv min_p)"
+    # seed: -1 means "random" and is already the engine default — never pin it.
+    S_SEED=$(_sv seed)
+    if [[ "$S_SEED" =~ ^[0-9]+$ ]]; then _floor --seed "$S_SEED"; fi
+    # LOAD settings (v2) — llama.cpp only; the MLX servers have no equivalent flags.
+    #   -ngl :117 (number | 'auto' | 'all'), -fa :39 (on|off|auto), -ctk/-ctv :75-82
+    L_NGL=$(_lv gpu_layers)
+    if [[ -n "$L_NGL" ]] && grep -q -- "--n-gpu-layers" data/llama-server.help.txt; then
+      # -1 is the conventional "all layers" value; translate to the engine's own token.
+      [[ "$L_NGL" == "-1" ]] && L_NGL=all
+      ARGS+=(--n-gpu-layers "$L_NGL")
+    fi
+    L_FA=$(_lv flash_attn)
+    if [[ "$L_FA" == "on" || "$L_FA" == "off" ]] \
+       && grep -q -- "--flash-attn" data/llama-server.help.txt; then
+      ARGS+=(--flash-attn "$L_FA")
+    fi
+    L_KV=$(_lv kv_quant)
+    if [[ -n "$L_KV" && "$L_KV" != "off" ]] \
+       && grep -q -- "--cache-type-k" data/llama-server.help.txt; then
+      ARGS+=(--cache-type-k "$L_KV" --cache-type-v "$L_KV")
     fi
     # MTP-variant GGUFs need speculative-decoding flags to actually GET the MTP
     # speedup (values mirror LM Studio's proven invocation on this machine).
@@ -190,17 +282,46 @@ PYRESOLVE
     if [[ "$ENGINE" == "mlxlm" ]]; then
       SRV="$MLXV/bin/mlx_lm.server"
       if [[ -x "$SRV" ]]; then CMD=("$SRV"); else CMD=("$MLXV/bin/python" "-m" "mlx_lm.server"); fi
+      MLX_ARGSRC=$(ls "$MLXV"/lib/python*/site-packages/mlx_lm/server.py 2>/dev/null | head -1)
     else
       SRV="$MLXV/bin/mlx_vlm.server"
       if [[ -x "$SRV" ]]; then CMD=("$SRV"); else CMD=("$MLXV/bin/python" "-m" "mlx_vlm.server"); fi
+      MLX_ARGSRC=$(ls "$MLXV"/lib/python*/site-packages/mlx_vlm/server/cli.py 2>/dev/null | head -1)
     fi
+    # SAMPLING FLOORS (v2) — the MLX servers accept a SUBSET of the sampling fields on
+    # their launch line and use them as the request default, which is how the Agent
+    # and Hermes lanes (which send none) inherit the user's saved values. Only
+    # EXPLICIT values travel. There is no --help capture here (importing mlx to print
+    # it costs seconds), so each flag is gated against the installed server SOURCE —
+    # the same evidence discipline, one grep of one file.
+    #   mlx_lm/server.py:1818-1848 = --temp/--top-p/--top-k/--min-p/--max-tokens
+    #   mlx_vlm/server/cli.py:105  = --max-tokens ONLY (no sampler flags at all)
+    #   NEITHER takes a seed or a repetition flag on the launch line.
+    MLX_FLOOR=()
+    _mfloor() {   # $1 = flag, $2 = saved value
+      [[ -n "$2" ]] || return 0
+      [[ -n "$MLX_ARGSRC" ]] && grep -q -- "\"$1\"" "$MLX_ARGSRC" || return 0
+      MLX_FLOOR+=("$1" "$2")
+    }
+    if [[ "$ENGINE" == "mlxlm" ]]; then
+      _mfloor --temp  "$(_sv temperature)"
+      _mfloor --top-p "$(_sv top_p)"
+      _mfloor --top-k "$(_sv top_k)"
+      _mfloor --min-p "$(_sv min_p)"
+    fi
+    # ⚠️ max_tokens is the one field where an OMITTED value genuinely hurts on these
+    # servers (mlx-lm defaults to 512, mlx-vlm to 2048 — the v1 truncation bug), and
+    # the Agent/Hermes lanes cannot send it. A saved value therefore rides the launch
+    # line for BOTH MLX engines. Still explicit-only: nothing saved ⇒ nothing emitted.
+    _mfloor --max-tokens "$(_sv max_tokens)"
     # Cleanup: kill both MLX servers AND any llama-server on this port (format switch).
     pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
     pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
     lsof -ti tcp:"$R_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
-    nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" >> data/logs/runner.log 2>&1 &
+    nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
+      ${MLX_FLOOR[@]+"${MLX_FLOOR[@]}"} >> data/logs/runner.log 2>&1 &
     echo $! > data/runner.pid
     up=0
     TRIES=150

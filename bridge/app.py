@@ -167,6 +167,8 @@ def _provision(target: str) -> None:
         PROV[n] = {"state": "starting", "detail": _NOTES.get(n, "starting…")}
         r = _script("start_component.sh", n)
         if r.returncode == 0:
+            if n == "runner":
+                _record_load_launch((c.get("runner", {}) or {}).get("model") or "")
             PROV[n] = {"state": "on", "detail": "started"}
             _mark_expected(n)   # expected-up now; if it later dies → degraded
         else:
@@ -2074,7 +2076,10 @@ def api_models() -> JSONResponse:
                 # fields + harness defaults + overrides); `settings` is the raw pin.
                 "settings": (m.get("settings") if isinstance(m.get("settings"), dict)
                              else None),
-                "sampling": sampling_view(m)})
+                "sampling": sampling_view(m),
+                # Same pattern for the LOAD group (v2): raw pin + rendered view.
+                "load": (m.get("load") if isinstance(m.get("load"), dict) else None),
+                "loadview": load_view(m, _LOAD_AT_LAUNCH.get(m.get("id")))})
     except Exception as e:
         err = str(e)[:200]
         hidden = []
@@ -2139,6 +2144,9 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
             tail = (r.stdout + r.stderr)[-400:]
             _SWITCH["log"] = f"FAILED to load {new_id} — reverted to {old_id}. {tail}"
             return
+        # The runner is now running with whatever `load` was saved at this moment —
+        # record it so the panel can say "not applied yet" only when it is TRUE.
+        _record_load_launch(new_id)
         if restart_hermes:
             _SWITCH["log"] = "re-wiring Hermes…"
             if _script("start_component.sh", "hermes").returncode != 0:
@@ -3580,9 +3588,30 @@ SAMPLING_RANGES = {
     "seed": (-1, 2147483647, int),
 }
 SAMPLING_STOP_MAX = 4          # stop strings, storage/merge only — no UI row in v1
-SAMPLING_LANE_NOTE = ("Applies to CHAT (direct) turns — the Agent and Hermes lanes "
-                      "build their own requests and use their own engines' settings. "
-                      "Values apply on your next message; no model reload.")
+# v2 (2026-08-20, Debi ruling): the same saved values ALSO become the engine's launch
+# defaults (scripts/start_component.sh, SAMPLING_FLOOR_WIRE below), so the Agent and
+# Hermes lanes — which build their own bodies and send no sampling at all — inherit
+# them. Only EXPLICIT overrides travel: a model with nothing saved keeps the engine's
+# own defaults on those lanes, exactly as before.
+SAMPLING_LANE_NOTE = ("Applies to CHAT immediately. Values you set here also become "
+                      "the model's launch defaults for the Agent and Hermes lanes — "
+                      "those pick them up the next time the model loads.")
+# Which canonical sampling keys the engine accepts on its LAUNCH LINE (a different
+# question from the request body: SAMPLING_WIRE). Evidence, re-read this session:
+#   llama.cpp b10427 data/llama-server.help.txt:234,240,241,243,244,249,251
+#   mlx_lm.server  data/mlx-venv/.../mlx_lm/server.py:1818-1848 (--temp/--top-p/
+#                  --top-k/--min-p/--max-tokens; NO seed, NO repeat flags)
+#   mlx_vlm.server mlx_vlm/server/cli.py:105 — --max-tokens ONLY of this set.
+# Documentation of the seam; start_component.sh does the emitting (it owns the
+# per-flag support gate). A flag that cannot be evidenced is never emitted.
+SAMPLING_FLOOR_WIRE = {
+    "llamacpp": {"temperature": "--temp", "top_p": "--top-p", "top_k": "--top-k",
+                 "min_p": "--min-p", "repeat_penalty": "--repeat-penalty",
+                 "repeat_last_n": "--repeat-last-n", "seed": "--seed"},
+    "mlxlm": {"temperature": "--temp", "top_p": "--top-p", "top_k": "--top-k",
+              "min_p": "--min-p", "max_tokens": "--max-tokens"},
+    "mlxvlm": {"max_tokens": "--max-tokens"},
+}
 
 
 def sampling_engine(entry: dict) -> str:
@@ -3765,6 +3794,202 @@ async def api_model_settings(req: Request) -> JSONResponse:
     upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
     return JSONResponse({"ok": True, "id": mid, "settings": new,
                          "sampling": sampling_view(upd)})
+
+
+# ── Model LOAD settings (per-model, LAUNCH LINE) ──────────────────────────────
+# Sampling v1 was deliberately request-body only (Fable D3) because every field here
+# costs a 60-90s model reload. That is the whole difference: these are written the
+# same way (an optional `load` dict on the registry entry, through _registry_update,
+# None removes the key, carried across a RESCAN via seed_registry.USER_KEYS), but
+# they only take effect when the runner relaunches — which is what the panel's
+# "Apply & reload" chip does, via the EXISTING /api/models/switch on the same id.
+#
+# ENGINE HONESTY: all four are llama.cpp launch flags. `mlx_lm.server` has no
+# context, gpu-layer, flash-attn or KV-quant flag at all (research §1.3: "Confirmed
+# absent: --api-key and any --ctx-size"), and `mlx_vlm.server`'s KV suite is a
+# BIT-COUNT/scheme API (--kv-bits/--kv-quant-scheme), not llama.cpp's `q8_0` type
+# names — mapping one onto the other would be inventing a translation, so an MLX
+# model's Load group is simply ABSENT rather than drawn with dead controls.
+LOAD_ORDER = ("ctx", "gpu_layers", "flash_attn", "kv_quant")
+# canonical key -> the LAUNCH FLAG that engine reads. Empty dict = no Load group.
+LOAD_WIRE = {
+    "llamacpp": {"ctx": "--ctx-size", "gpu_layers": "--n-gpu-layers",
+                 "flash_attn": "--flash-attn", "kv_quant": "--cache-type-k/v"},
+    "mlxlm": {},
+    "mlxvlm": {},
+}
+# Displayed as the "default" beside each row. These are what the runner does TODAY
+# with nothing saved, not a harness opinion: ctx falls back to the registry entry's
+# own ctx (start_component.sh:89-91), and the other three are llama.cpp's documented
+# defaults (help :117 auto, :39 auto, :75-82 f16).
+LOAD_DEFAULTS = {"ctx": "registry / 65536", "gpu_layers": "auto",
+                 "flash_attn": "auto", "kv_quant": "f16"}
+LOAD_RANGES = {"ctx": (1024, 262144, int), "gpu_layers": (-1, 999, int)}
+# ⚠️ -1 is the conventional "all layers" value users type; start_component.sh
+# translates it to llama.cpp's own documented `all` token at the argv seam.
+LOAD_KV_TYPES = ("off", "q8_0", "q4_0")   # a SUBSET of the 9 the engine accepts —
+# the three that are actually useful decisions (off = leave the f16 default alone).
+LOAD_NOTE = ("These change how the model is LOADED — Apply & reload restarts the "
+             "runner (60–90s). Your sampling values are applied on the same reload.")
+
+
+def _load_val(key: str, raw):
+    """PURE. Coerce one load value, or None when it is junk / out of range. Total:
+    any input type is safe. Mirrors _sampling_num, plus the two non-numeric kinds."""
+    if raw is None:
+        return None
+    if key == "flash_attn":
+        if isinstance(raw, bool):
+            return raw
+        s = str(raw).strip().lower()
+        if s in ("on", "true", "1", "yes"):
+            return True
+        if s in ("off", "false", "0", "no"):
+            return False
+        return None
+    if key == "kv_quant":
+        s = str(raw).strip().lower() if not isinstance(raw, bool) else ""
+        return s if s in LOAD_KV_TYPES else None
+    spec = LOAD_RANGES.get(key)
+    if spec is None or isinstance(raw, bool):
+        return None
+    lo, hi, cast = spec
+    try:
+        v = cast(raw)                       # OverflowError: int(inf); ValueError: int(nan)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if v != v:
+        return None
+    return None if (v < lo or v > hi) else v
+
+
+def load_saved(entry: dict) -> dict:
+    """PURE. The per-model load overrides, cleaned. Junk keys and junk values are
+    dropped rather than surfaced — a hand-edited registry can never fail a launch."""
+    e = entry if isinstance(entry, dict) else {}
+    raw = e.get("load")
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k in LOAD_ORDER:
+        if k not in raw:
+            continue
+        v = _load_val(k, raw.get(k))
+        if v is not None:
+            out[k] = v
+    return out
+
+
+def load_view(entry: dict, launched=None) -> dict:
+    """PURE. One row per field THIS engine can honour — absent, never greyed out.
+
+    `applied` is a three-state claim, and the third state matters: None means the
+    bridge never launched this model itself and therefore has NO opinion (it must
+    not tell the user their change is unapplied when it cannot know). False = the
+    saved set differs from what the runner was actually launched with."""
+    eng = sampling_engine(entry)
+    wire = LOAD_WIRE.get(eng, {})
+    saved = load_saved(entry)
+    fields = []
+    for canon in LOAD_ORDER:
+        if canon not in wire:
+            continue
+        row = {"key": canon, "label": wire[canon],
+               "default": LOAD_DEFAULTS.get(canon), "value": saved.get(canon)}
+        if canon in LOAD_RANGES:
+            row["min"], row["max"], _c = LOAD_RANGES[canon]
+            row["kind"] = "int"
+        elif canon == "flash_attn":
+            row["kind"] = "bool"
+        else:
+            row["kind"] = "enum"
+            row["choices"] = list(LOAD_KV_TYPES)
+        fields.append(row)
+    return {"engine": eng, "fields": fields,
+            "changed": sum(1 for f in fields if f["value"] is not None),
+            "applied": (None if not isinstance(launched, dict)
+                        else saved == {k: v for k, v in launched.items()
+                                       if k in LOAD_ORDER}),
+            "note": LOAD_NOTE}
+
+
+# Process-lifetime record of the load set the runner was ACTUALLY launched with,
+# written only where WE launch it (_do_switch / the runner start path). A model the
+# bridge never started has no entry — and therefore load_view makes no claim.
+_LOAD_AT_LAUNCH: dict = {}
+
+
+def _record_load_launch(model_id: str) -> None:
+    """Best-effort: never raises into a start path."""
+    try:
+        if not model_id:
+            return
+        e = next((m for m in _registry_models() if m.get("id") == model_id), None)
+        _LOAD_AT_LAUNCH[model_id] = load_saved(e or {})
+    except Exception:
+        pass
+
+
+@app.post("/api/models/load-settings")
+async def api_model_load_settings(req: Request) -> JSONResponse:
+    """{id, load:{key: value|null}} → per-model LOAD overrides (+ {id, reset:true}).
+
+    Same seam choice as sampling: no GET — `/api/models` already carries `load`
+    (the raw pin) and `loadview` (the rendered, engine-filtered view)."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    mid = str(body.get("id") or "").strip()
+    if not mid:
+        return JSONResponse({"ok": False, "error": "no model id given"}, status_code=400)
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if entry is None:
+        return JSONResponse({"ok": False, "error": f"'{mid}' is not in the registry"},
+                            status_code=400)
+    if _voice is not None and _voice.is_audio_entry(entry):
+        return JSONResponse({"ok": False, "error": f"'{mid}' is a voice model — "
+                                                   f"load settings are for chat models"},
+                            status_code=400)
+    if body.get("reset"):
+        _registry_update(mid, {"load": None})
+        print(f"[models] load reset {mid}", flush=True)
+        upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
+        return JSONResponse({"ok": True, "id": mid, "load": {},
+                             "loadview": load_view(upd, _LOAD_AT_LAUNCH.get(mid))})
+    patch = body.get("load")
+    if not isinstance(patch, dict) or not patch:
+        return JSONResponse({"ok": False, "error": "load must be a non-empty object"},
+                            status_code=400)
+    eng = sampling_engine(entry)
+    wire = LOAD_WIRE.get(eng, {})
+    new = load_saved(entry)
+    for k, v in patch.items():
+        if k not in LOAD_ORDER or k not in wire:
+            return JSONResponse(
+                {"ok": False, "error": f"'{k}' is not a load setting this engine "
+                                       f"({eng}) can honour"}, status_code=400)
+        if v is None or v == "":
+            new.pop(k, None)
+            continue
+        val = _load_val(k, v)
+        if val is None:
+            if k == "kv_quant":
+                msg = f"kv_quant must be one of {', '.join(LOAD_KV_TYPES)}"
+            elif k == "flash_attn":
+                msg = "flash_attn must be on or off"
+            else:
+                lo, hi, _c = LOAD_RANGES[k]
+                msg = f"{k} must be a whole number between {lo} and {hi}"
+            return JSONResponse({"ok": False, "error": msg}, status_code=400)
+        new[k] = val
+    _registry_update(mid, {"load": new or None})
+    print(f"[models] load {mid} -> {new or 'engine defaults'}", flush=True)
+    upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
+    return JSONResponse({"ok": True, "id": mid, "load": new,
+                         "loadview": load_view(upd, _LOAD_AT_LAUNCH.get(mid))})
 
 
 @app.post("/api/chat/direct")

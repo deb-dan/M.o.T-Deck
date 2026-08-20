@@ -235,7 +235,13 @@ ok("every field carries its range", all(("min" in f and "max" in f) for f in vg[
 ok("the lane note names the CHAT lane", "CHAT" in vg["note"])
 ok("the lane note names the other two lanes",
    "Agent" in vg["note"] and "Hermes" in vg["note"])
-ok("the lane note says no reload", "reload" in vg["note"].lower())
+# v2 (2026-08-20): the note said "no model reload" because the direct lane was the
+# ONLY lane. It still needs no reload for CHAT — but the same values now also become
+# the engine's launch defaults, so the honest sentence names the reload for the OTHER
+# two lanes. Assertion updated to the new truth rather than deleted.
+ok("the lane note says CHAT is immediate", "immediately" in vg["note"].lower())
+ok("the lane note says the other lanes pick it up on the next model load",
+   "next time the model loads" in vg["note"])
 vm = view(dict(MLX, settings={"temperature": 0.2, "repeat_penalty": 1.2}))
 check("view engine mlx", vm["engine"], "mlxlm")
 check("view changed count", vm["changed"], 2)
@@ -311,7 +317,12 @@ ok("endpoint returns the refreshed view", "sampling_view(upd)" in ep)
 
 # the argv floor is untouched, and now explains itself
 sc = open(os.path.join(ROOT, "scripts", "start_component.sh")).read()
-ok("argv repetition floor still present", "--repeat-penalty 1.1 --repeat-last-n 256" in sc)
+# v2 (2026-08-20): the two numbers are still the floor, but a SAVED value now wins —
+# so the assertion changed honestly from a literal pair to "the fallback is those two
+# numbers, emitted from ONE site". The no-double-emit rule is pinned in
+# test_model_load.py, which owns the floors.
+ok("argv repetition floor still present, now as the fallback",
+   '--repeat-penalty "${S_RP:-1.1}" --repeat-last-n "${S_RL:-256}"' in sc)
 ok("argv floor points at the research doc", "2026-08-20-model-settings.md" in sc)
 ok("argv floor names the lanes it is for", "Hermes lanes build their own" in sc)
 

@@ -848,6 +848,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 // Belt and braces: if the layout ever changed without applyPanes running,
                 // the timer retires itself instead of polling forever.
                 if s.visibleHermesWebViews().isEmpty { s.updateHermesGenTimer(); return }
+                // Pause while the app is not frontmost (queued Fable refinement): the
+                // generation only ever moves because of something the user did HERE, so
+                // a background app has nothing to learn. The timer stays armed — the
+                // next tick after the user comes back does the check — rather than
+                // adding resign/become observers for a saving of one loopback GET.
+                if !NSApp.isActive { return }
                 s.syncHermesGen(reloadIfNewer: true, why: "poll")
             }
             NSLog("%@", "[hermes] gen poll -> on (every \(Int(hermesGenPoll))s)" as NSString)

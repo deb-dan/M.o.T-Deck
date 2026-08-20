@@ -7314,12 +7314,156 @@ async function samplingPost(body, el){
                                             : 'harness defaults'));
 }
 
-/* True while the user is typing in a sampling box. Used ONLY by the refresh path
-   (renderModels) so a background re-render can't wipe a half-typed value; an
+/* True while the user is typing in a sampling OR load box. Used ONLY by the refresh
+   path (renderModels) so a background re-render can't wipe a half-typed value; an
    explicit selection still re-renders unconditionally. */
 function samplingTyping(){
   const f = document.activeElement;
-  return !!(f && f.closest && f.closest('#md-sampling'));
+  return !!(f && f.closest && (f.closest('#md-sampling') || f.closest('#md-load')));
+}
+
+/* ── Models → detail → Load (v2) ───────────────────────────────────────────────
+   The same shape as Sampling, with ONE difference that drives everything: these
+   only take effect when the runner relaunches. So the group carries an explicit
+   "Apply & reload" chip (the existing switch path, on the SAME model id — a
+   same-id switch really does relaunch, it is not a no-op), and a faint pill when
+   the bridge knows the saved set differs from what the runner was launched with.
+   Fields come from the BRIDGE (load_view) — an MLX model has none of these flags,
+   so its group is absent rather than drawn with controls the engine ignores.
+   ZERO new CSS: .cap-card/.cap-row/.cap-name/.cap-desc/.cap-ctl/.cap-inp/.cap-btn/
+   .cap-count/.cap-pill, all from the Capabilities grammar. */
+let loadOpen = false;
+
+function renderLoad(m){
+  const lv = m && m.loadview;
+  if (!lv || !(lv.fields || []).length) return '';
+  const chg = lv.changed ? (' · ' + lv.changed + ' changed') : '';
+  const dirty = lv.applied === false;
+  const rows = (lv.fields || []).map(f => {
+    const ov = f.value !== null && f.value !== undefined;
+    let ctl;
+    if (f.kind === 'int'){
+      ctl = `<input class="cap-inp" type="text" inputmode="numeric"
+          style="width:96px;text-align:right"
+          value="${ov ? escAttr(String(f.value)) : ''}"
+          placeholder="${escAttr(String(f.default))}"
+          title="${escAttr(f.key + ' — ' + f.min + ' to ' + f.max
+                           + '. Leave empty for the engine default.')}"
+          onchange="loadSet('${escAttr(f.key)}', this.value, this)">`;
+    } else {
+      const opts = (f.kind === 'bool' ? ['on', 'off'] : (f.choices || []));
+      const cur = ov ? (f.kind === 'bool' ? (f.value ? 'on' : 'off') : String(f.value)) : '';
+      ctl = `<select class="cap-inp" style="width:96px"
+          title="${escAttr(f.key + ' — empty leaves the engine default ('
+                           + f.default + ')')}"
+          onchange="loadSet('${escAttr(f.key)}', this.value, this)">
+          <option value=""${cur ? '' : ' selected'}>default</option>
+          ${opts.map(o => `<option value="${escAttr(o)}"${
+              cur === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+        </select>`;
+    }
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(f.label)}</div>
+        <div class="cap-desc">default ${esc(String(f.default))}${
+          ov ? '' : ' — running the default'}</div>
+      </div><div class="cap-ctl">${ctl}
+        ${ov ? `<button class="cap-btn" style="margin-left:6px"
+             title="Reset to the engine default (${escAttr(String(f.default))})"
+             onclick="loadSet('${escAttr(f.key)}', '', this)">↺</button>` : ''}
+      </div></div>`;
+  }).join('');
+  return `<button onclick="toggleLoad(this)" aria-expanded="${loadOpen ? 'true' : 'false'}"
+      style="background:none;border:none;padding:0;cursor:pointer;text-align:left">
+      <span class="cap-desc" style="margin:0">${loadOpen ? '▾' : '▸'} Load${esc(chg)}</span></button>
+    <div id="md-load-body"${loadOpen ? '' : ' hidden'}>
+      <div class="cap-desc" style="margin:8px 0 10px">${esc(lv.note)}</div>
+      <div class="cap-card">${rows}</div>
+      <div style="margin-top:10px">
+        <button class="cap-btn" onclick="loadApply(this)"
+          title="Restart the runner on this model so the load settings (and your sampling floors) take effect."
+          >Apply &amp; reload</button>
+        <button class="cap-btn" style="margin-left:6px" onclick="loadResetAll(this)"${
+          lv.changed ? '' : ' disabled'}
+          title="Forget every load override on this model — it goes back to the engine defaults shown above."
+          >Reset all</button>
+        ${dirty ? '<span class="cap-pill off">not applied yet — reload to take effect</span>'
+                : `<span class="cap-count">${esc(lv.engine)} launch flags</span>`}
+      </div>
+      <div id="md-load-err" hidden
+        style="font:10.5px var(--mono);color:var(--bad);margin-top:6px"></div></div>`;
+}
+
+function toggleLoad(btn){
+  loadOpen = !loadOpen;
+  const el = document.getElementById('md-load-body');
+  if (el) el.hidden = !loadOpen;
+  if (btn){
+    btn.setAttribute('aria-expanded', loadOpen ? 'true' : 'false');
+    const lbl = btn.querySelector('.cap-desc');
+    if (lbl) lbl.textContent = lbl.textContent.replace(/^[▸▾]/, loadOpen ? '▾' : '▸');
+  }
+}
+
+function loadErr(msg){
+  const e = document.getElementById('md-load-err');
+  if (!e) return;
+  e.textContent = msg || ''; e.hidden = !msg;
+}
+
+/* An empty box (or the "default" option) means "reset this field" — absence, not a
+   stored null. Numbers are checked here only for shape; the BRIDGE owns the range. */
+async function loadSet(key, raw, el){
+  const s = String(raw == null ? '' : raw).trim();
+  let val = null;
+  if (s !== ''){
+    if (key === 'flash_attn' || key === 'kv_quant'){ val = s; }
+    else {
+      val = Number(s);
+      if (!isFinite(val)){ loadErr(key + ' must be a whole number'); return; }
+    }
+  }
+  const patch = {}; patch[key] = val;
+  await loadPost({ load: patch }, el);
+}
+
+async function loadResetAll(btn){ await loadPost({ reset: true }, btn); }
+
+/* Apply = the EXISTING model-switch path on the same id. start_component.sh kills
+   whatever holds the port and relaunches, so a same-id switch is a real reload. */
+function loadApply(btn){
+  const id = (mSel && mSel.kind === 'installed') ? mSel.id : '';
+  if (!id || modelsBusy) return;
+  const m = ((lastModels || {}).installed || []).find(x => x.id === id);
+  feed('models', 'load · reloading ' + esc(id) + ' to apply load settings');
+  switchModel(id, (m && (m.name || m.id)) || id);
+}
+
+async function loadPost(body, el){
+  const id = (mSel && mSel.kind === 'installed') ? mSel.id : '';
+  if (!id) return;
+  loadErr('');
+  if (el) el.disabled = true;
+  let r = null;
+  try {
+    r = await (await fetch('/api/models/load-settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ id }, body)) })).json();
+  } catch { r = null; }
+  if (!r || !r.ok){
+    if (el) el.disabled = false;
+    loadErr((r && r.error) || 'could not reach the bridge');
+    return;
+  }
+  const m = ((lastModels || {}).installed || []).find(x => x.id === r.id);
+  if (m){
+    m.load = (r.load && Object.keys(r.load).length) ? r.load : null;
+    m.loadview = r.loadview;
+    const host = document.getElementById('md-load');
+    if (host) host.innerHTML = renderLoad(m);
+  }
+  feed('models', 'load · ' + esc(r.id) + ' → '
+       + ((r.loadview && r.loadview.changed) ? (r.loadview.changed + ' overridden')
+                                             : 'engine defaults'));
 }
 
 function renderDetail(){
@@ -7338,10 +7482,12 @@ function renderDetail(){
     // Empty when the bridge sent no `sampling` (older bridge) — then the wrapper is
     // omitted entirely rather than leaving an empty section's margin behind.
     const samp = renderSampling(m);
+    const ld = renderLoad(m);
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       <div class="md-actions" id="md-actions"></div>
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
+      ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
       <div class="md-div"></div>
       <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
     const acts = d.querySelector('#md-actions');

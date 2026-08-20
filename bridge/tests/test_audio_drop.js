@@ -350,6 +350,14 @@ check('...and is never restacked by a repeat arm',
       /if hermesGenTimer != nil \{ return \}/.test(tim));
 check('the tick re-checks visibility and retires itself rather than polling forever',
       /if s\.visibleHermesWebViews\(\)\.isEmpty \{ s\.updateHermesGenTimer\(\); return \}/.test(tim));
+// v2: the queued refinement — an inactive app has nothing to learn from the poll.
+check('the tick early-returns while the app is not frontmost',
+      /if !NSApp\.isActive \{ return \}/.test(tim));
+check('...by early-return only — the timer is NOT torn down and re-armed by observers',
+      !/NSApplication\.didBecomeActiveNotification/.test(swift)
+      && !/NSApplication\.didResignActiveNotification/.test(swift));
+check('...and the visibility gate still runs BEFORE the activity gate',
+      tim.indexOf('visibleHermesWebViews().isEmpty') < tim.indexOf('!NSApp.isActive'));
 check('the closure does not retain the delegate strongly',
       /\{ \[weak self\] _ in/.test(tim));
 check('arming happens from applyPanes — the one place that settles what is visible',

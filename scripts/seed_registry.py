@@ -516,7 +516,9 @@ RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
 # reads FILES, so without it one RESCAN click silently resets every tuned model back
 # to the harness defaults. Carried WHOLESALE (see _keep_user) — the nested dict is
 # preserved atomically, which is right while nothing on disk can teach a sampling key.
-USER_KEYS = ("voice", "ref_audio", "ref_text", "hidden", "settings")
+# `load` (per-model LOAD overrides — ctx / gpu_layers / flash_attn / kv_quant,
+# 2026-08-20 v2) is the same class as `settings` and carried the same way.
+USER_KEYS = ("voice", "ref_audio", "ref_text", "hidden", "settings", "load")
 
 
 def _keep_voice(entry, existing_voice):
