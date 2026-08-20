@@ -50,7 +50,8 @@ src = open(APP).read()
 tree = ast.parse(src)
 WANT_FN = ("sampling_engine", "_sampling_num", "_sampling_stop", "sampling_saved",
            "sampling_merge", "sampling_view")
-WANT_CONST = ("SAMPLING_DEFAULTS", "SAMPLING_ORDER", "_S_MLX", "SAMPLING_WIRE",
+WANT_CONST = ("SAMPLING_HELP",
+              "SAMPLING_DEFAULTS", "SAMPLING_ORDER", "_S_MLX", "SAMPLING_WIRE",
               "SAMPLING_RANGES", "SAMPLING_STOP_MAX", "SAMPLING_LANE_NOTE")
 ns = {}
 for node in tree.body:
@@ -232,6 +233,25 @@ check("view nothing changed", vg["changed"], 0)
 ok("view value is None when running the default",
    all(f["value"] is None for f in vg["fields"]))
 ok("every field carries its range", all(("min" in f and "max" in f) for f in vg["fields"]))
+# v2.1 (Debi ask): every drawn row must explain itself. Pinned as a TOTALITY over
+# the rendered field list, not over the table — a field added without a help string
+# would fail here, which is the whole point of single-sourcing the prose.
+HELP = ns["SAMPLING_HELP"]
+for _e, _lbl in ((GGUF, "gguf"), (MLX, "mlx-lm"), (MLXV, "mlx-vlm")):
+    _f = view(_e)["fields"]
+    ok(f"{_lbl}: every rendered field carries a non-empty help",
+       all(isinstance(f.get("help"), str) and f["help"].strip() for f in _f),
+       repr([f["key"] for f in _f if not f.get("help")]))
+ok("help is prose, not a repeat of the key",
+   all(len(v) > 30 for v in HELP.values()))
+ok("the help table covers exactly the canonical sampling keys",
+   sorted(HELP) == sorted(ORDER))
+ok("max_tokens' help says what it is NOT (the recurring confusion)",
+   "context window" in HELP["max_tokens"])
+ok("seed's help explains that -1 sends nothing", "-1" in HELP["seed"])
+# v2.1: the ceiling moved (1..262144); the DEFAULT deliberately did not.
+check("max_tokens ceiling widened", RANGES["max_tokens"], (1, 262144, int))
+check("max_tokens default is still the MLX truncation fix", DEF["max_tokens"], 4096)
 ok("the lane note names the CHAT lane", "CHAT" in vg["note"])
 ok("the lane note names the other two lanes",
    "Agent" in vg["note"] and "Hermes" in vg["note"])

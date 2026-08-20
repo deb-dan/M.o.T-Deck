@@ -2079,7 +2079,10 @@ def api_models() -> JSONResponse:
                 "sampling": sampling_view(m),
                 # Same pattern for the LOAD group (v2): raw pin + rendered view.
                 "load": (m.get("load") if isinstance(m.get("load"), dict) else None),
-                "loadview": load_view(m, _LOAD_AT_LAUNCH.get(m.get("id")))})
+                "loadview": load_view(m),
+                # v2.1: the shared Apply & reload row — sampling floors + load, in
+                # one claim, so an MLX model (no Load fields) still gets the chip.
+                "launch": launch_view(m, _LOAD_AT_LAUNCH.get(m.get("id")))})
     except Exception as e:
         err = str(e)[:200]
         hidden = []
@@ -3584,8 +3587,28 @@ SAMPLING_RANGES = {
     "min_p": (0.0, 1.0, float),      # 0 = off
     "repeat_penalty": (1.0, 2.0, float),   # 1.0 = off on BOTH scales
     "repeat_last_n": (-1, 8192, int),      # llama.cpp: -1 = whole ctx, 0 = off
-    "max_tokens": (1, 1048576, int),
-    "seed": (-1, 2147483647, int),
+    "max_tokens": (1, 262144, int),        # v2.1: no default change (4096 IS the MLX
+    "seed": (-1, 2147483647, int),         # truncation fix) — only the ceiling moved.
+}
+# v2.1 (Debi ask, LM Studio reference): every row explains itself on hover. ONE source
+# — the bridge computes the string, the panel only prints it — so a field can never be
+# drawn without an explanation, and the explanation can never disagree with the range.
+SAMPLING_HELP = {
+    "temperature": ("Randomness. Lower is more predictable and repetitive, higher is "
+                    "more varied. Near 0 is almost deterministic."),
+    "top_p": ("Nucleus sampling — only consider the most likely tokens whose "
+              "probabilities add up to this. 1.0 considers everything."),
+    "top_k": "Only consider this many candidates per token. 0 = no limit.",
+    "min_p": ("Drop candidates less likely than this fraction of the best one — "
+              "a gentler filter than top_p."),
+    "repeat_penalty": ("Divides the score of tokens already used, to break loops. "
+                       "1.0 = off. 1.1 is the value that fixed the 'C-C-C…' loop here."),
+    "repeat_last_n": ("How many recent tokens the repeat penalty looks back over. "
+                      "-1 = the whole context."),
+    "max_tokens": ("Longest single reply, in tokens — NOT the context window. The cap "
+                   "exists because MLX otherwise silently stops replies at 512."),
+    "seed": ("Fixes the random draw so the same prompt gives the same reply. "
+             "-1 = random every time (nothing is sent to the engine)."),
 }
 SAMPLING_STOP_MAX = 4          # stop strings, storage/merge only — no UI row in v1
 # v2 (2026-08-20, Debi ruling): the same saved values ALSO become the engine's launch
@@ -3717,7 +3740,9 @@ def sampling_view(entry: dict) -> dict:
         lo, hi, _c = SAMPLING_RANGES[canon]
         fields.append({"key": canon, "label": wire[canon],
                        "default": SAMPLING_DEFAULTS.get(canon),
-                       "value": saved.get(canon), "min": lo, "max": hi})
+                       "value": saved.get(canon), "min": lo, "max": hi,
+                       # v2.1: plain-language tooltip, single-sourced here.
+                       "help": SAMPLING_HELP.get(canon, "")})
     return {"engine": eng, "fields": fields,
             "changed": sum(1 for f in fields if f["value"] is not None),
             "note": SAMPLING_LANE_NOTE}
@@ -3756,7 +3781,8 @@ async def api_model_settings(req: Request) -> JSONResponse:
         print(f"[models] sampling reset {mid}", flush=True)
         upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
         return JSONResponse({"ok": True, "id": mid, "settings": {},
-                             "sampling": sampling_view(upd)})
+                             "sampling": sampling_view(upd),
+                             "launch": launch_view(upd, _LOAD_AT_LAUNCH.get(mid))})
     patch = body.get("settings")
     if not isinstance(patch, dict) or not patch:
         return JSONResponse({"ok": False, "error": "settings must be a non-empty object"},
@@ -3793,7 +3819,9 @@ async def api_model_settings(req: Request) -> JSONResponse:
     print(f"[models] sampling {mid} -> {new or 'defaults'}", flush=True)
     upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
     return JSONResponse({"ok": True, "id": mid, "settings": new,
-                         "sampling": sampling_view(upd)})
+                         "sampling": sampling_view(upd),
+                         # A sampling change can move the LAUNCH claim too (floors).
+                         "launch": launch_view(upd, _LOAD_AT_LAUNCH.get(mid))})
 
 
 # ── Model LOAD settings (per-model, LAUNCH LINE) ──────────────────────────────
@@ -3810,27 +3838,81 @@ async def api_model_settings(req: Request) -> JSONResponse:
 # BIT-COUNT/scheme API (--kv-bits/--kv-quant-scheme), not llama.cpp's `q8_0` type
 # names — mapping one onto the other would be inventing a translation, so an MLX
 # model's Load group is simply ABSENT rather than drawn with dead controls.
-LOAD_ORDER = ("ctx", "gpu_layers", "flash_attn", "kv_quant")
+#
+# v2.1 (2026-08-20, Debi ask): the group is filled out with the rest of llama.cpp's
+# load-time surface. EVERY new flag was read out of this pinned binary's own
+# `data/llama-server.help.txt` before it was added (line refs on each row below) —
+# the same evidence discipline as the MTP flags. Nothing was added for MLX, because
+# nothing exists there to add.
+LOAD_ORDER = ("ctx", "gpu_layers", "flash_attn", "kv_quant", "threads",
+              "batch", "ubatch", "mlock", "mmap",
+              "rope_freq_base", "rope_freq_scale")
 # canonical key -> the LAUNCH FLAG that engine reads. Empty dict = no Load group.
+#   help refs: --ctx-size :23, -ngl/--n-gpu-layers :117, -fa/--flash-attn :39,
+#   -ctk/-ctv :75-82, -t/--threads :7, -b/--batch-size :29, -ub/--ubatch-size :31,
+#   --mlock :87, --mmap/--no-mmap :89, --rope-freq-base :51, --rope-freq-scale :54.
 LOAD_WIRE = {
     "llamacpp": {"ctx": "--ctx-size", "gpu_layers": "--n-gpu-layers",
-                 "flash_attn": "--flash-attn", "kv_quant": "--cache-type-k/v"},
+                 "flash_attn": "--flash-attn", "kv_quant": "--cache-type-k/v",
+                 "threads": "--threads", "batch": "--batch-size",
+                 "ubatch": "--ubatch-size", "mlock": "--mlock",
+                 "mmap": "--mmap/--no-mmap",
+                 "rope_freq_base": "--rope-freq-base",
+                 "rope_freq_scale": "--rope-freq-scale"},
     "mlxlm": {},
     "mlxvlm": {},
 }
 # Displayed as the "default" beside each row. These are what the runner does TODAY
 # with nothing saved, not a harness opinion: ctx falls back to the registry entry's
-# own ctx (start_component.sh:89-91), and the other three are llama.cpp's documented
-# defaults (help :117 auto, :39 auto, :75-82 f16).
+# own ctx (start_component.sh:89-91), and the rest are llama.cpp's own documented
+# defaults (help :117 auto, :39 auto, :75-82 f16, :7 -1/auto, :29 2048, :31 512,
+# :87 off, :89 enabled, :51/:54 loaded from the model).
 LOAD_DEFAULTS = {"ctx": "registry / 65536", "gpu_layers": "auto",
-                 "flash_attn": "auto", "kv_quant": "f16"}
-LOAD_RANGES = {"ctx": (1024, 262144, int), "gpu_layers": (-1, 999, int)}
+                 "flash_attn": "auto", "kv_quant": "f16", "threads": "auto",
+                 "batch": "2048", "ubatch": "512", "mlock": "off", "mmap": "on",
+                 "rope_freq_base": "from the model",
+                 "rope_freq_scale": "from the model"}
+LOAD_RANGES = {"ctx": (1024, 262144, int), "gpu_layers": (-1, 999, int),
+               "threads": (1, 32, int), "batch": (1, 32768, int),
+               "ubatch": (1, 32768, int),
+               "rope_freq_base": (0.0, 10000000.0, float),
+               "rope_freq_scale": (0.0, 100.0, float)}
 # ⚠️ -1 is the conventional "all layers" value users type; start_component.sh
 # translates it to llama.cpp's own documented `all` token at the argv seam.
+LOAD_BOOLS = ("flash_attn", "mlock", "mmap")
+# Which int rows deserve an LM-Studio-style slider beside the box (step, in the
+# field's own unit). Only the three a user genuinely drags; the rest stay numbers.
+LOAD_SLIDER_STEP = {"ctx": 1024, "gpu_layers": 1, "threads": 1}
 LOAD_KV_TYPES = ("off", "q8_0", "q4_0")   # a SUBSET of the 9 the engine accepts —
 # the three that are actually useful decisions (off = leave the f16 default alone).
 LOAD_NOTE = ("These change how the model is LOADED — Apply & reload restarts the "
              "runner (60–90s). Your sampling values are applied on the same reload.")
+LOAD_HELP = {
+    "ctx": ("How much conversation the model can see at once, in tokens. "
+            "Bigger = more RAM, and a slower first reply on a long chat."),
+    "gpu_layers": ("How many layers run on the GPU. -1 = all of them — on Apple "
+                   "unified memory that is almost always what you want."),
+    "flash_attn": ("Faster, lower-memory attention. 'auto' lets the engine decide; "
+                   "turn it off only if a model misbehaves with it on."),
+    "kv_quant": ("Compresses the attention cache — much less RAM at long context, "
+                 "for a slight quality cost. q8_0 is the safe one, q4_0 the small one."),
+    "threads": ("CPU threads used for generation. The engine picks a sensible number "
+                "on its own; set this only to leave cores free for other work."),
+    "batch": ("How many prompt tokens are queued for processing at a time. Bigger can "
+              "prefill a long prompt faster and uses more memory."),
+    "ubatch": ("How many tokens are actually computed in one pass. Lower it if a very "
+               "long prompt runs the machine out of memory."),
+    "mlock": ("Keep the whole model pinned in RAM so macOS can never swap it out. "
+              "Costs the model's full size in RAM the entire time it is loaded."),
+    "mmap": ("Memory-map the weights instead of reading them in. On = faster start "
+             "(the default); off = slower load but fewer page-outs."),
+    "rope_freq_base": ("Advanced: RoPE base frequency, used to stretch a model past "
+                       "the context it was trained on. Leave empty unless the model "
+                       "card gives you a number."),
+    "rope_freq_scale": ("Advanced: RoPE frequency scale — 0.5 doubles the usable "
+                        "context. Leave empty unless the model card gives you a "
+                        "number."),
+}
 
 
 def _load_val(key: str, raw):
@@ -3838,7 +3920,7 @@ def _load_val(key: str, raw):
     any input type is safe. Mirrors _sampling_num, plus the two non-numeric kinds."""
     if raw is None:
         return None
-    if key == "flash_attn":
+    if key in LOAD_BOOLS:
         if isinstance(raw, bool):
             return raw
         s = str(raw).strip().lower()
@@ -3880,13 +3962,13 @@ def load_saved(entry: dict) -> dict:
     return out
 
 
-def load_view(entry: dict, launched=None) -> dict:
+def load_view(entry: dict) -> dict:
     """PURE. One row per field THIS engine can honour — absent, never greyed out.
 
-    `applied` is a three-state claim, and the third state matters: None means the
-    bridge never launched this model itself and therefore has NO opinion (it must
-    not tell the user their change is unapplied when it cannot know). False = the
-    saved set differs from what the runner was actually launched with."""
+    ⚠️ v2.1: the `applied` claim MOVED OUT of here to `launch_view`. It never
+    belonged to the Load group alone: an MLX model has no load fields at all, yet
+    its saved sampling values DO ride its launch line, so it had pending-launch
+    changes with no group to host the Apply chip. See launch_saved/launch_view."""
     eng = sampling_engine(entry)
     wire = LOAD_WIRE.get(eng, {})
     saved = load_saved(entry)
@@ -3895,11 +3977,14 @@ def load_view(entry: dict, launched=None) -> dict:
         if canon not in wire:
             continue
         row = {"key": canon, "label": wire[canon],
-               "default": LOAD_DEFAULTS.get(canon), "value": saved.get(canon)}
+               "default": LOAD_DEFAULTS.get(canon), "value": saved.get(canon),
+               "help": LOAD_HELP.get(canon, "")}
         if canon in LOAD_RANGES:
-            row["min"], row["max"], _c = LOAD_RANGES[canon]
-            row["kind"] = "int"
-        elif canon == "flash_attn":
+            row["min"], row["max"], cast = LOAD_RANGES[canon]
+            row["kind"] = "int" if cast is int else "float"
+            if canon in LOAD_SLIDER_STEP:
+                row["slider"] = LOAD_SLIDER_STEP[canon]
+        elif canon in LOAD_BOOLS:
             row["kind"] = "bool"
         else:
             row["kind"] = "enum"
@@ -3907,15 +3992,60 @@ def load_view(entry: dict, launched=None) -> dict:
         fields.append(row)
     return {"engine": eng, "fields": fields,
             "changed": sum(1 for f in fields if f["value"] is not None),
-            "applied": (None if not isinstance(launched, dict)
-                        else saved == {k: v for k, v in launched.items()
-                                       if k in LOAD_ORDER}),
             "note": LOAD_NOTE}
 
 
-# Process-lifetime record of the load set the runner was ACTUALLY launched with,
+# ── The UNIFIED launch snapshot (v2.1) ───────────────────────────────────────
+# What a relaunch would change is NOT only the Load group: the sampling FLOORS ride
+# the same launch line (SAMPLING_FLOOR_WIRE), and on an MLX model they are the ONLY
+# thing that does. So the record of "what the runner was actually started with" is
+# both halves together, and the Apply & reload affordance hangs off THAT — which is
+# what makes it appear for an MLX model, whose Load group is empty by construction.
+LAUNCH_NOTE = ("Sampling applies to CHAT on your next message. Apply & reload "
+               "restarts the runner (60–90s) so these also become the launch "
+               "defaults the Agent and Hermes lanes inherit.")
+
+
+def floor_saved(entry: dict) -> dict:
+    """PURE. The saved sampling values that actually reach THIS engine's launch
+    line — the rest cannot change a relaunch and must not make it look pending."""
+    wire = SAMPLING_FLOOR_WIRE.get(sampling_engine(entry), {})
+    return {k: v for k, v in sampling_saved(entry).items() if k in wire}
+
+
+def launch_saved(entry: dict) -> dict:
+    """PURE. Everything a relaunch would carry, in one comparable record."""
+    return {"load": load_saved(entry), "floors": floor_saved(entry)}
+
+
+def launch_view(entry: dict, launched=None) -> dict:
+    """PURE. The shared Apply & reload row.
+
+    `applied` is a three-state claim, and the third state matters: None means the
+    bridge never launched this model itself and therefore has NO opinion (it must
+    not tell the user their change is unapplied when it cannot know). False = the
+    saved set differs from what the runner was actually launched with."""
+    saved = launch_saved(entry)
+    eng = sampling_engine(entry)
+    applied = None
+    if isinstance(launched, dict):
+        prev = {"load": launched.get("load") if isinstance(launched.get("load"), dict) else {},
+                "floors": launched.get("floors") if isinstance(launched.get("floors"), dict) else {}}
+        applied = (saved == prev)
+    return {"engine": eng, "applied": applied, "note": LAUNCH_NOTE,
+            # How many saved values a relaunch would actually carry — the honest
+            # count for "there is something to apply here".
+            "changed": len(saved["load"]) + len(saved["floors"]),
+            # Whether this engine has ANY launch-line surface at all. True for all
+            # three today (mlx-vlm still takes --max-tokens), but the panel asks
+            # rather than assumes, so a future engine with none draws no chip.
+            "appliable": bool(LOAD_WIRE.get(eng, {})
+                              or SAMPLING_FLOOR_WIRE.get(eng, {}))}
+
+
+# Process-lifetime record of the launch set the runner was ACTUALLY launched with,
 # written only where WE launch it (_do_switch / the runner start path). A model the
-# bridge never started has no entry — and therefore load_view makes no claim.
+# bridge never started has no entry — and therefore launch_view makes no claim.
 _LOAD_AT_LAUNCH: dict = {}
 
 
@@ -3925,7 +4055,7 @@ def _record_load_launch(model_id: str) -> None:
         if not model_id:
             return
         e = next((m for m in _registry_models() if m.get("id") == model_id), None)
-        _LOAD_AT_LAUNCH[model_id] = load_saved(e or {})
+        _LOAD_AT_LAUNCH[model_id] = launch_saved(e or {})
     except Exception:
         pass
 
@@ -3958,7 +4088,8 @@ async def api_model_load_settings(req: Request) -> JSONResponse:
         print(f"[models] load reset {mid}", flush=True)
         upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
         return JSONResponse({"ok": True, "id": mid, "load": {},
-                             "loadview": load_view(upd, _LOAD_AT_LAUNCH.get(mid))})
+                             "loadview": load_view(upd),
+                             "launch": launch_view(upd, _LOAD_AT_LAUNCH.get(mid))})
     patch = body.get("load")
     if not isinstance(patch, dict) or not patch:
         return JSONResponse({"ok": False, "error": "load must be a non-empty object"},
@@ -3978,18 +4109,20 @@ async def api_model_load_settings(req: Request) -> JSONResponse:
         if val is None:
             if k == "kv_quant":
                 msg = f"kv_quant must be one of {', '.join(LOAD_KV_TYPES)}"
-            elif k == "flash_attn":
-                msg = "flash_attn must be on or off"
+            elif k in LOAD_BOOLS:
+                msg = f"{k} must be on or off"
             else:
-                lo, hi, _c = LOAD_RANGES[k]
-                msg = f"{k} must be a whole number between {lo} and {hi}"
+                lo, hi, cast = LOAD_RANGES[k]
+                kind = "a whole number" if cast is int else "a number"
+                msg = f"{k} must be {kind} between {lo} and {hi}"
             return JSONResponse({"ok": False, "error": msg}, status_code=400)
         new[k] = val
     _registry_update(mid, {"load": new or None})
     print(f"[models] load {mid} -> {new or 'engine defaults'}", flush=True)
     upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
     return JSONResponse({"ok": True, "id": mid, "load": new,
-                         "loadview": load_view(upd, _LOAD_AT_LAUNCH.get(mid))})
+                         "loadview": load_view(upd),
+                         "launch": launch_view(upd, _LOAD_AT_LAUNCH.get(mid))})
 
 
 @app.post("/api/chat/direct")

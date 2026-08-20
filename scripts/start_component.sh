@@ -59,16 +59,19 @@ print(m.get("repo") or "")   # source HF repo (download entries) — MTP marker 
 # carrying nonsense must never reach the launch line and fail the load.
 _NUM = {"temperature": (0.0, 2.0), "top_p": (0.0, 1.0), "top_k": (0, 500),
         "min_p": (0.0, 1.0), "repeat_penalty": (1.0, 2.0), "repeat_last_n": (-1, 8192),
-        "max_tokens": (1, 1048576), "seed": (-1, 2147483647),
-        "ctx": (1024, 262144), "gpu_layers": (-1, 999)}
+        "max_tokens": (1, 262144), "seed": (-1, 2147483647),
+        "ctx": (1024, 262144), "gpu_layers": (-1, 999), "threads": (1, 32),
+        "batch": (1, 32768), "ubatch": (1, 32768),
+        "rope_freq_base": (0.0, 10000000.0), "rope_freq_scale": (0.0, 100.0)}
 _ENUM = {"kv_quant": ("off", "q8_0", "q4_0")}
+_BOOL = ("flash_attn", "mlock", "mmap")
 def _kv(d, keys):
     out = []
     for k in keys:
         if k not in (d or {}):
             continue
         v = (d or {})[k]
-        if k == "flash_attn":
+        if k in _BOOL:
             if isinstance(v, bool):
                 out.append(f"{k}={'on' if v else 'off'}")
             elif isinstance(v, str) and v.strip().lower() in ("on", "off"):
@@ -85,7 +88,9 @@ _s = (m or {}).get("settings"); _s = _s if isinstance(_s, dict) else {}
 _l = (m or {}).get("load");     _l = _l if isinstance(_l, dict) else {}
 print(_kv(_s, ("temperature", "top_p", "top_k", "min_p",
                "repeat_penalty", "repeat_last_n", "max_tokens", "seed")))
-print(_kv(_l, ("ctx", "gpu_layers", "flash_attn", "kv_quant")))
+print(_kv(_l, ("ctx", "gpu_layers", "flash_attn", "kv_quant", "threads",
+               "batch", "ubatch", "mlock", "mmap",
+               "rope_freq_base", "rope_freq_scale")))
 PYRESOLVE
 ) || { echo "ERROR: $(R_MODEL="$R_MODEL" python3 -c 'import os,json,sys;print("model \x27%s\x27 not in registry — run scripts/seed_registry.py or pick another model"%os.environ["R_MODEL"])')"; exit 1; }
     MODEL_PATH=$(sed -n '1p' <<<"$RESOLVED")
@@ -204,6 +209,27 @@ PYRESOLVE
     if [[ -n "$L_KV" && "$L_KV" != "off" ]] \
        && grep -q -- "--cache-type-k" data/llama-server.help.txt; then
       ARGS+=(--cache-type-k "$L_KV" --cache-type-v "$L_KV")
+    fi
+    # v2.1 — the rest of the load surface. Same two rules as everything above:
+    # EXPLICIT-ONLY (nothing saved ⇒ nothing emitted ⇒ engine defaults intact) and
+    # EVIDENCE-GATED against this binary's own --help. `_floor` is reused verbatim
+    # for the value-taking flags; the two boolean flags are their own shape.
+    #   -t :7, -b :29, -ub :31, --rope-freq-base :51, --rope-freq-scale :54
+    _floor --threads      "$(_lv threads)"
+    _floor --batch-size   "$(_lv batch)"
+    _floor --ubatch-size  "$(_lv ubatch)"
+    _floor --rope-freq-base  "$(_lv rope_freq_base)"
+    _floor --rope-freq-scale "$(_lv rope_freq_scale)"
+    # --mlock takes no value and has NO --no-mlock counterpart (help :87), so an
+    # explicit "off" correctly emits nothing: off IS the engine default.
+    if [[ "$(_lv mlock)" == "on" ]] && grep -q -- "--mlock" data/llama-server.help.txt; then
+      ARGS+=(--mlock)
+    fi
+    # --mmap / --no-mmap are BOTH documented (help :89), so both directions are
+    # emitted explicitly rather than one being an unspoken default.
+    L_MMAP=$(_lv mmap)
+    if [[ -n "$L_MMAP" ]] && grep -q -- "--no-mmap" data/llama-server.help.txt; then
+      if [[ "$L_MMAP" == "on" ]]; then ARGS+=(--mmap); else ARGS+=(--no-mmap); fi
     fi
     # MTP-variant GGUFs need speculative-decoding flags to actually GET the MTP
     # speedup (values mirror LM Studio's proven invocation on this machine).

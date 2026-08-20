@@ -121,6 +121,14 @@
   /* MCP add form + small caps buttons (FABLE: style pass) */
   .cap-inp { font:12px var(--mono); color:var(--cream); background:var(--card2);
              border:1px solid var(--line2); border-radius:8px; padding:6px 10px; min-width:0; }
+  /* v2.1 — the ONE sanctioned new rule (Fable exception to zero-new-CSS): a range
+     slider beside the number box on ctx / gpu_layers / threads. Thin --line2 track,
+     gold thumb; -webkit-appearance:none is required or WebKit ignores every rule. */
+  .cap-range { -webkit-appearance:none; appearance:none; width:120px; height:3px;
+               background:var(--line2); border-radius:2px; margin-right:8px;
+               flex:none; cursor:pointer; }
+  .cap-range::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+               width:12px; height:12px; border-radius:50%; background:var(--gold); }
   .cap-addform { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .cap-addform .cap-inp { flex:1 1 130px; }
   .cap-addform .cap-sel { flex:none; }
@@ -5622,7 +5630,10 @@ async function selectSession(sid){
   if (chatBusy) await stopTurnNow('session switch');   // never a silent no-op
   chatSid = sid;
   const s = chatSessions.find(x => x.id === sid);
-  chatModel = ((s && s.model) || '').split('-').slice(0,2).join('-') || 'model';
+  // Keep the session's stored model VERBATIM as the fallback echo — laneModelLabel
+  // shortens it (a wire path becomes its basename). The old `split('-').slice(0,2)`
+  // was written for registry ids and turned an MLX path into nonsense.
+  chatModel = (s && s.model) || '';
   stampFor((s && s.model) || '');   // never pass undefined — that means "re-stamp, keep session model"
   localStorage.setItem('harness-chat-sid', sid);
   renderSessions();
@@ -7213,13 +7224,43 @@ function markSelRows(){
    .cap-count, all from the Capabilities grammar. */
 let samplingOpen = false;
 
+/* PURE (v2.1, Debi ask — LM Studio reference). One tooltip per settings row.
+   The prose comes from the BRIDGE (`f.help`, SAMPLING_HELP / LOAD_HELP) so a field
+   can never be drawn without an explanation and the wording lives in one place;
+   the panel only appends the range and the reset convention. Unit-tested. */
+function fieldTip(f, defaultWord){
+  const o = (f && typeof f === 'object') ? f : {};
+  const parts = [];
+  if (o.help) parts.push(String(o.help));
+  if (o.min !== undefined && o.max !== undefined && o.min !== null && o.max !== null)
+    parts.push('Range ' + o.min + ' to ' + o.max + '.');
+  parts.push('Leave empty for the ' + (defaultWord || 'engine') + ' default'
+             + ((o.default === undefined || o.default === null)
+                ? '.' : ' (' + o.default + ').'));
+  return parts.join(' ');
+}
+
+/* PURE. Where a slider's knob sits for a given box value. A half-typed / empty /
+   junk box must never throw the knob to NaN — it falls back to the field's own
+   default position (its minimum), and anything outside the range is clamped. */
+function sliderPos(raw, min, max){
+  const lo = Number(min), hi = Number(max);
+  if (!isFinite(lo) || !isFinite(hi)) return 0;
+  const n = Number(String(raw == null ? '' : raw).trim());
+  if (String(raw == null ? '' : raw).trim() === '' || !isFinite(n)) return lo;
+  return Math.min(hi, Math.max(lo, n));
+}
+
 function renderSampling(m){
   const sv = m && m.sampling;
   if (!sv || !(sv.fields || []).length) return '';
   const chg = sv.changed ? (' · ' + sv.changed + ' changed') : '';
   const rows = (sv.fields || []).map(f => {
     const ov = f.value !== null && f.value !== undefined;
-    return `<div class="cap-row"><div class="cap-txt">
+    // v2.1: the tooltip is the BRIDGE's `help` string (one source for both surfaces)
+    // with the range appended, so hover always explains the field AND its limits.
+    const tip = fieldTip(f, 'harness');
+    return `<div class="cap-row"><div class="cap-txt" title="${escAttr(tip)}">
         <div class="cap-name">${esc(f.label)}</div>
         <div class="cap-desc">default ${esc(String(f.default))}${
           ov ? '' : ' — running the default'}</div>
@@ -7227,8 +7268,7 @@ function renderSampling(m){
         <input class="cap-inp" type="text" inputmode="decimal" style="width:84px;text-align:right"
           value="${ov ? escAttr(String(f.value)) : ''}"
           placeholder="${escAttr(String(f.default))}"
-          title="${escAttr(f.key + ' — ' + f.min + ' to ' + f.max
-                           + '. Leave empty for the harness default.')}"
+          title="${escAttr(tip)}"
           onchange="samplingSet('${escAttr(f.key)}', this.value, this)">
         ${ov ? `<button class="cap-btn" style="margin-left:6px"
              title="Reset to the harness default (${escAttr(String(f.default))})"
@@ -7306,8 +7346,11 @@ async function samplingPost(body, el){
   if (m){
     m.settings = (r.settings && Object.keys(r.settings).length) ? r.settings : null;
     m.sampling = r.sampling;
+    if (r.launch) m.launch = r.launch;   // a floor change can move the launch claim
     const host = document.getElementById('md-sampling');
     if (host) host.innerHTML = renderSampling(m);
+    const lhost = document.getElementById('md-launch');
+    if (lhost) lhost.innerHTML = renderLaunch(m);
   }
   feed('models', 'sampling · ' + esc(r.id) + ' → '
        + ((r.sampling && r.sampling.changed) ? (r.sampling.changed + ' overridden')
@@ -7338,31 +7381,44 @@ function renderLoad(m){
   const lv = m && m.loadview;
   if (!lv || !(lv.fields || []).length) return '';
   const chg = lv.changed ? (' · ' + lv.changed + ' changed') : '';
-  const dirty = lv.applied === false;
   const rows = (lv.fields || []).map(f => {
     const ov = f.value !== null && f.value !== undefined;
+    const tip = fieldTip(f, 'engine');
     let ctl;
-    if (f.kind === 'int'){
-      ctl = `<input class="cap-inp" type="text" inputmode="numeric"
+    if (f.kind === 'int' || f.kind === 'float'){
+      const box = `<input class="cap-inp" type="text" inputmode="${
+            f.kind === 'int' ? 'numeric' : 'decimal'}"
+          id="ld-box-${escAttr(f.key)}"
           style="width:96px;text-align:right"
           value="${ov ? escAttr(String(f.value)) : ''}"
           placeholder="${escAttr(String(f.default))}"
-          title="${escAttr(f.key + ' — ' + f.min + ' to ' + f.max
-                           + '. Leave empty for the engine default.')}"
+          title="${escAttr(tip)}"
+          oninput="loadSyncSlider('${escAttr(f.key)}')"
           onchange="loadSet('${escAttr(f.key)}', this.value, this)">`;
+      // FABLE-SANCTIONED CSS EXCEPTION: .cap-range is the one new rule in v2.1.
+      // The slider is an ADDITION beside the box, never a replacement — the box
+      // stays the thing that posts, so an exact value is always typeable.
+      ctl = f.slider
+        ? `<input class="cap-range" type="range" id="ld-rng-${escAttr(f.key)}"
+             min="${escAttr(String(f.min))}" max="${escAttr(String(f.max))}"
+             step="${escAttr(String(f.slider))}"
+             value="${escAttr(String(sliderPos(ov ? f.value : '', f.min, f.max)))}"
+             title="${escAttr(tip)}"
+             oninput="loadSyncBox('${escAttr(f.key)}')"
+             onchange="loadSet('${escAttr(f.key)}', this.value, this)">${box}`
+        : box;
     } else {
       const opts = (f.kind === 'bool' ? ['on', 'off'] : (f.choices || []));
       const cur = ov ? (f.kind === 'bool' ? (f.value ? 'on' : 'off') : String(f.value)) : '';
       ctl = `<select class="cap-inp" style="width:96px"
-          title="${escAttr(f.key + ' — empty leaves the engine default ('
-                           + f.default + ')')}"
+          title="${escAttr(tip)}"
           onchange="loadSet('${escAttr(f.key)}', this.value, this)">
           <option value=""${cur ? '' : ' selected'}>default</option>
           ${opts.map(o => `<option value="${escAttr(o)}"${
               cur === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}
         </select>`;
     }
-    return `<div class="cap-row"><div class="cap-txt">
+    return `<div class="cap-row"><div class="cap-txt" title="${escAttr(tip)}">
         <div class="cap-name">${esc(f.label)}</div>
         <div class="cap-desc">default ${esc(String(f.default))}${
           ov ? '' : ' — running the default'}</div>
@@ -7379,18 +7435,37 @@ function renderLoad(m){
       <div class="cap-desc" style="margin:8px 0 10px">${esc(lv.note)}</div>
       <div class="cap-card">${rows}</div>
       <div style="margin-top:10px">
-        <button class="cap-btn" onclick="loadApply(this)"
-          title="Restart the runner on this model so the load settings (and your sampling floors) take effect."
-          >Apply &amp; reload</button>
-        <button class="cap-btn" style="margin-left:6px" onclick="loadResetAll(this)"${
+        <button class="cap-btn" onclick="loadResetAll(this)"${
           lv.changed ? '' : ' disabled'}
           title="Forget every load override on this model — it goes back to the engine defaults shown above."
           >Reset all</button>
-        ${dirty ? '<span class="cap-pill off">not applied yet — reload to take effect</span>'
-                : `<span class="cap-count">${esc(lv.engine)} launch flags</span>`}
+        <span class="cap-count">${esc(lv.engine)} launch flags</span>
       </div>
       <div id="md-load-err" hidden
         style="font:10.5px var(--mono);color:var(--bad);margin-top:6px"></div></div>`;
+}
+
+/* ── Models → detail → the SHARED "Apply & reload" row (v2.1) ─────────────────
+   Debi: "sometimes there's no button to click apply." Correct, and it was a real
+   hole: the chip lived INSIDE the Load group, which an MLX model does not have —
+   yet an MLX model's saved sampling values DO ride its launch line (--temp/--top-p/
+   --top-k/--min-p/--max-tokens), so it could have pending launch changes with no
+   way to apply them. The claim is now the BRIDGE's unified launch snapshot
+   (launch_view: load + sampling floors, one comparison), and the row renders under
+   whichever groups exist — under Sampling alone on MLX. The three-state no-claim
+   rule is unchanged: `applied === null` (the bridge never launched this model) draws
+   no pill at all rather than asserting something it cannot know. */
+function renderLaunch(m){
+  const av = m && m.launch;
+  if (!av || !av.appliable) return '';
+  const dirty = av.applied === false;
+  return `<div class="cap-desc" style="margin:0 0 8px">${esc(av.note || '')}</div>
+    <button class="cap-btn" onclick="loadApply(this)"
+      title="Restart the runner on this model so your load settings and sampling floors take effect."
+      >Apply &amp; reload</button>
+    ${dirty ? '<span class="cap-pill off">not applied yet — reload to take effect</span>'
+            : `<span class="cap-count">${esc(av.changed || 0)} launch value${
+                 av.changed === 1 ? '' : 's'}</span>`}`;
 }
 
 function toggleLoad(btn){
@@ -7428,6 +7503,20 @@ async function loadSet(key, raw, el){
 
 async function loadResetAll(btn){ await loadPost({ reset: true }, btn); }
 
+/* Slider ⇄ box, both directions, DOM glue only (the arithmetic is sliderPos).
+   Neither of these posts — the `onchange` on each control does that — so dragging
+   is free and only the release (or a typed value leaving the box) writes. */
+function loadSyncSlider(key){
+  const b = document.getElementById('ld-box-' + key);
+  const r = document.getElementById('ld-rng-' + key);
+  if (b && r) r.value = String(sliderPos(b.value, r.min, r.max));
+}
+function loadSyncBox(key){
+  const b = document.getElementById('ld-box-' + key);
+  const r = document.getElementById('ld-rng-' + key);
+  if (b && r) b.value = r.value;
+}
+
 /* Apply = the EXISTING model-switch path on the same id. start_component.sh kills
    whatever holds the port and relaunches, so a same-id switch is a real reload. */
 function loadApply(btn){
@@ -7458,8 +7547,11 @@ async function loadPost(body, el){
   if (m){
     m.load = (r.load && Object.keys(r.load).length) ? r.load : null;
     m.loadview = r.loadview;
+    if (r.launch) m.launch = r.launch;
     const host = document.getElementById('md-load');
     if (host) host.innerHTML = renderLoad(m);
+    const lhost = document.getElementById('md-launch');
+    if (lhost) lhost.innerHTML = renderLaunch(m);
   }
   feed('models', 'load · ' + esc(r.id) + ' → '
        + ((r.loadview && r.loadview.changed) ? (r.loadview.changed + ' overridden')
@@ -7483,11 +7575,15 @@ function renderDetail(){
     // omitted entirely rather than leaving an empty section's margin behind.
     const samp = renderSampling(m);
     const ld = renderLoad(m);
+    // v2.1: the Apply row is shared and sits under whichever groups exist — so an
+    // MLX model (Sampling only, no Load flags) still has somewhere to apply from.
+    const lau = (samp || ld) ? renderLaunch(m) : '';
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       <div class="md-actions" id="md-actions"></div>
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
+      ${lau ? `<div class="md-sec" id="md-launch">${lau}</div>` : ''}
       <div class="md-div"></div>
       <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
     const acts = d.querySelector('#md-actions');
@@ -7920,10 +8016,48 @@ async function refreshDownloads(){
 
 function dlDismiss(id){ dlDismissed.add(id); refreshDownloads(); }
 
+/* PURE (v2.1 bug fix). What the byline over an assistant reply should say.
+
+   THE BUG Debi hit: she switched from an MLX model to a gguf one; Models said the
+   gguf was LIVE and the chat header agreed (stampFor already prefers the live
+   runner), but the per-message byline on NEW Hermes- and Agent-lane replies still
+   read the OLD model — as an ugly absolute path, `/USERS/…/MUSE-GLIMMER-…-MLX`.
+
+   Two causes, both client-side, neither of them a broken fan-out:
+     (a) `chatModel` is a STICKY GLOBAL. The Hermes mapper emits no model frame at
+         all (bridge/app.py hermes_event_to_frames has no model event), so in that
+         lane the byline kept whatever the last Agent turn or session-open had left
+         behind — it was never updated by a switch.
+     (b) in the Agent lane the value came from Odysseus's own `model_actual`, i.e.
+         the WIRE id of the model that SESSION was created under. For MLX that wire
+         id is the model PATH (wire_model_id), and an existing Odysseus session
+         keeps its stored model string across a runner switch — llama-server/mlx
+         serve whatever is actually loaded and ignore the requested name, so the
+         reply really did come from the new model while the label named the old one.
+
+   The fix is to stop trusting the echo: the LIVE runner identity is the truth, and
+   the bridge already publishes it, display-mapped, at status.components.runner.pin
+   (= _live_model_id → display_model_id, so never a path). The echo survives only as
+   a fallback for when nothing is loaded, and is basename-shortened so a wire path
+   can never be printed in full again. */
+function laneModelLabel(live, running, echo){
+  const clean = v => String(v == null ? '' : v).trim();
+  if (running && clean(live)) return clean(live);
+  const e = clean(echo).replace(/\/+$/, '');
+  if (!e) return '';
+  return e.indexOf('/') >= 0 ? (e.split('/').pop() || e) : e;
+}
+
+/* The live half of the above, read off the poll the panel already runs. */
+function liveModelLabel(echo){
+  const r = lastStatus && lastStatus.components && lastStatus.components.runner;
+  return laneModelLabel(r && r.pin, !!(r && r.running), echo);
+}
+
 function addMsg(role, text) {
   const wrap = document.createElement('div');
   wrap.className = 'cmsg ' + role;
-  const who = role === 'user' ? 'You' : (chatModel || 'Assistant');
+  const who = role === 'user' ? 'You' : (liveModelLabel(chatModel) || 'Assistant');
   wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="body"></div>`;
   if (role === 'assistant' && text) renderChatBody(wrap.querySelector('.body'), text);  // PHASE 3: card fenced blocks
   else wrap.querySelector('.body').textContent = text;
@@ -8890,8 +9024,12 @@ async function sendChat() {
               body.textContent += j.delta;
             }
           } else if (j.type === 'model_info' || j.type === 'model_actual') {
+            // The lane's echo is only a FALLBACK now (see laneModelLabel): Odysseus
+            // reports the session's stored wire id, which survives a runner switch
+            // and — for MLX — is an absolute path. The live runner wins.
             chatModel = j.model || chatModel;
-            holder.querySelector('.who').textContent = chatModel;
+            holder.querySelector('.who').textContent =
+              liveModelLabel(chatModel) || 'Assistant';
           } else if (j.type === 'hermes_session') {
             // Hermes lane: the bridge minted (or re-minted after a stale sid) a
             // gateway session — persist it so follow-up turns continue it.

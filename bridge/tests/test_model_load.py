@@ -52,9 +52,15 @@ def ok(name, cond, why=""):
 APP = os.path.join(ROOT, "bridge", "app.py")
 src = open(APP).read()
 tree = ast.parse(src)
-WANT_FN = ("sampling_engine", "_load_val", "load_saved", "load_view")
+WANT_FN = ("sampling_engine", "_load_val", "load_saved", "load_view",
+           # v2.1: the unified launch snapshot (floors + load) — and its two inputs,
+           # which live in the sampling half of the module.
+           "_sampling_num", "_sampling_stop", "sampling_saved",
+           "floor_saved", "launch_saved", "launch_view")
 WANT_CONST = ("LOAD_ORDER", "LOAD_WIRE", "LOAD_DEFAULTS", "LOAD_RANGES",
-              "LOAD_KV_TYPES", "LOAD_NOTE", "SAMPLING_FLOOR_WIRE")
+              "LOAD_KV_TYPES", "LOAD_NOTE", "SAMPLING_FLOOR_WIRE",
+              "LOAD_BOOLS", "LOAD_HELP", "LOAD_SLIDER_STEP",
+              "SAMPLING_RANGES", "LAUNCH_NOTE")
 ns = {}
 for node in tree.body:
     take = False
@@ -75,6 +81,10 @@ lval, saved, view = ns["_load_val"], ns["load_saved"], ns["load_view"]
 LOAD_ORDER, LOAD_WIRE = ns["LOAD_ORDER"], ns["LOAD_WIRE"]
 LOAD_KV_TYPES, LOAD_RANGES = ns["LOAD_KV_TYPES"], ns["LOAD_RANGES"]
 FLOOR_WIRE = ns["SAMPLING_FLOOR_WIRE"]
+LOAD_BOOLS, LOAD_HELP = ns["LOAD_BOOLS"], ns["LOAD_HELP"]
+LOAD_SLIDER_STEP = ns["LOAD_SLIDER_STEP"]
+floor_saved, launch_saved = ns["floor_saved"], ns["launch_saved"]
+launch_view = ns["launch_view"]
 
 GGUF = {"id": "g", "format": "gguf"}
 MLXLM = {"id": "m", "format": "mlx"}
@@ -121,21 +131,101 @@ check("entry itself is junk", saved("nope"), {})
 check("a good key survives beside a bad one",
       saved(dict(GGUF, load={"ctx": 4096, "gpu_layers": "lots"})), {"ctx": 4096})
 check("unknown keys are dropped",
-      saved(dict(GGUF, load={"ctx": 4096, "mlock": True})), {"ctx": 4096})
+      # (`mlock` was this test's example of an unknown key until v2.1 made it real —
+      # a genuinely unknown name is used now so the assertion still means something.)
+      saved(dict(GGUF, load={"ctx": 4096, "turbo": True})), {"ctx": 4096})
 check("flash_attn False is KEPT (it is a real choice, not an absence)",
       saved(dict(GGUF, load={"flash_attn": False})), {"flash_attn": False})
 check("full set", saved(dict(GGUF, load={"ctx": 8192, "gpu_layers": 40,
                                          "flash_attn": True, "kv_quant": "q8_0"})),
       {"ctx": 8192, "gpu_layers": 40, "flash_attn": True, "kv_quant": "q8_0"})
 
-# ── 3. load_view: engine-conditional fields, three-state `applied` ───────────
+# ── 2b. v2.1 new fields: the load surface filled out (evidence-gated) ────────
+NEW_FIELDS = ("threads", "batch", "ubatch", "mlock", "mmap",
+              "rope_freq_base", "rope_freq_scale")
+for k in NEW_FIELDS:
+    ok(f"{k} is in LOAD_ORDER", k in LOAD_ORDER)
+    ok(f"{k} has a llama.cpp launch flag", k in LOAD_WIRE["llamacpp"])
+    ok(f"{k} has a documented default to show", k in ns["LOAD_DEFAULTS"])
+    ok(f"{k} is NOT offered on either MLX engine",
+       k not in LOAD_WIRE["mlxlm"] and k not in LOAD_WIRE["mlxvlm"])
+ok("every load flag we emit is a real flag name",
+   all(f.startswith("--") for f in LOAD_WIRE["llamacpp"].values()))
+# Evidence gate: every flag must appear in the PINNED binary's captured --help.
+HELPTXT = os.path.join(ROOT, "data", "llama-server.help.txt")
+if os.path.exists(HELPTXT):
+    ht = open(HELPTXT, errors="replace").read()
+    for k, flag in LOAD_WIRE["llamacpp"].items():
+        for one in flag.split("/"):
+            one = one if one.startswith("--") else ("--" + one)
+            ok(f"{k}: {one} exists in the pinned binary's --help", one in ht)
+else:                                    # a checkout without a captured help file
+    ok("help capture present (skipped)", True)
+check("threads range", LOAD_RANGES["threads"], (1, 32, int))
+check("batch range", LOAD_RANGES["batch"], (1, 32768, int))
+check("ubatch range", LOAD_RANGES["ubatch"], (1, 32768, int))
+check("threads 0 refused (a thread count of zero is not a choice)",
+      lval("threads", 0), None)
+check("threads 33 refused", lval("threads", 33), None)
+check("batch coerces a string", lval("batch", "512"), 512)
+check("ubatch 0 refused", lval("ubatch", 0), None)
+check("rope_freq_base is a FLOAT, not an int", lval("rope_freq_base", 1000000.5),
+      1000000.5)
+check("rope_freq_scale accepts 0.5 (the classic context doubler)",
+      lval("rope_freq_scale", 0.5), 0.5)
+check("rope_freq_scale out of range", lval("rope_freq_scale", 101), None)
+check("rope_freq_base negative refused", lval("rope_freq_base", -1), None)
+for b in ("mlock", "mmap"):
+    check(f"{b} on", lval(b, "on"), True)
+    check(f"{b} off is KEPT as False, not dropped", lval(b, "off"), False)
+    check(f"{b} True", lval(b, True), True)
+    check(f"{b} junk", lval(b, 3), None)
+    ok(f"{b} is declared a bool", b in LOAD_BOOLS)
+check("all three bools are the bools", sorted(LOAD_BOOLS),
+      ["flash_attn", "mlock", "mmap"])
+check("the new keys survive load_saved together",
+      saved(dict(GGUF, load={"threads": 8, "batch": 1024, "ubatch": 256,
+                             "mlock": True, "mmap": False,
+                             "rope_freq_base": 500000.0, "rope_freq_scale": 0.5})),
+      {"threads": 8, "batch": 1024, "ubatch": 256, "mlock": True, "mmap": False,
+       "rope_freq_base": 500000.0, "rope_freq_scale": 0.5})
+check("junk in the new keys is dropped, good ones survive",
+      saved(dict(GGUF, load={"threads": "many", "batch": 1024,
+                             "mmap": [1], "rope_freq_scale": float("nan")})),
+      {"batch": 1024})
+ok("no speculative-decoding flag was smuggled into the load group",
+   not any("spec" in f for f in LOAD_WIRE["llamacpp"].values()))
+
+# ── 3. load_view: engine-conditional fields, help, sliders ───────────────────
 v = view(GGUF)
-check("gguf gets all four rows", [f["key"] for f in v["fields"]], list(LOAD_ORDER))
+check("gguf gets every row", [f["key"] for f in v["fields"]], list(LOAD_ORDER))
 check("gguf engine", v["engine"], "llamacpp")
 check("nothing saved ⇒ nothing changed", v["changed"], 0)
-check("no launch record ⇒ NO claim", v["applied"], None)
+ok("`applied` MOVED to launch_view — the Load group no longer claims it",
+   "applied" not in v)
 ok("every row carries a kind the panel can render",
-   all(f["kind"] in ("int", "bool", "enum") for f in v["fields"]))
+   all(f["kind"] in ("int", "float", "bool", "enum") for f in v["fields"]))
+# v2.1 tooltips: pinned as a totality over the RENDERED rows.
+ok("every rendered load row carries a non-empty help",
+   all(isinstance(f.get("help"), str) and f["help"].strip() for f in v["fields"]),
+   repr([f["key"] for f in v["fields"] if not f.get("help")]))
+ok("the help table covers exactly the canonical load keys",
+   sorted(LOAD_HELP) == sorted(LOAD_ORDER))
+ok("load help is prose", all(len(x) > 30 for x in LOAD_HELP.values()))
+ok("gpu_layers' help explains the -1 convention", "-1" in LOAD_HELP["gpu_layers"])
+ok("ctx's help warns about RAM", "RAM" in LOAD_HELP["ctx"])
+# sliders: only the three a user drags, and each one is a real int row with a range
+SLIDERS = {f["key"] for f in v["fields"] if f.get("slider")}
+check("exactly the three slider rows", sorted(SLIDERS),
+      ["ctx", "gpu_layers", "threads"])
+ok("every slider row is numeric and carries min/max/step",
+   all(f["kind"] in ("int", "float") and "min" in f and "max" in f and f["slider"] > 0
+       for f in v["fields"] if f.get("slider")))
+check("ctx steps in whole thousands, not ones", LOAD_SLIDER_STEP["ctx"], 1024)
+ok("no bool or enum row pretends to have a slider",
+   not any(f.get("slider") for f in v["fields"] if f["kind"] in ("bool", "enum")))
+ok("the float rows are NOT sliders (they are model-card values, not dials)",
+   not any(f.get("slider") for f in v["fields"] if f["kind"] == "float"))
 ok("the enum row carries its choices",
    [f for f in v["fields"] if f["key"] == "kv_quant"][0]["choices"] == list(LOAD_KV_TYPES))
 ok("the int rows carry their range",
@@ -149,15 +239,72 @@ e = dict(GGUF, load={"ctx": 8192})
 check("a saved value shows as changed", view(e)["changed"], 1)
 check("...and is carried on the row",
       [f["value"] for f in view(e)["fields"] if f["key"] == "ctx"], [8192])
-check("applied True when the launch record matches",
-      view(e, {"ctx": 8192})["applied"], True)
-check("applied False when it differs", view(e, {"ctx": 4096})["applied"], False)
-check("applied False when the user added a field since launch",
-      view(e, {})["applied"], False)
-check("a launch record with foreign keys is filtered before comparing",
-      view(e, {"ctx": 8192, "junk": 1})["applied"], True)
-check("a junk launch record makes NO claim", view(e, "nope")["applied"], None)
 ok("the view always carries the reload warning", "Apply & reload" in view(GGUF)["note"])
+
+# ── 3b. THE UNIFIED LAUNCH SNAPSHOT (v2.1) ───────────────────────────────────
+# Debi: "sometimes there's no button to click apply." The Apply chip used to live
+# inside the Load group, which MLX models do not have — yet their saved sampling
+# values DO ride their launch line, so they had pending changes and no chip. The
+# snapshot is now BOTH halves, and the claim hangs off it.
+check("floors: only the keys THIS engine takes on its launch line",
+      floor_saved(dict(GGUF, settings={"temperature": 0.2, "max_tokens": 900})),
+      {"temperature": 0.2})   # llama.cpp has no launch-line max_tokens
+check("...and on mlx-lm the same settings give a different floor set",
+      floor_saved(dict(MLXLM, settings={"temperature": 0.2, "max_tokens": 900})),
+      {"temperature": 0.2, "max_tokens": 900})
+check("mlx-vlm takes ONLY max_tokens",
+      floor_saved(dict(MLXVLM, settings={"temperature": 0.2, "max_tokens": 900})),
+      {"max_tokens": 900})
+check("a seed rides llama.cpp's floor but never MLX's",
+      (floor_saved(dict(GGUF, settings={"seed": 7})),
+       floor_saved(dict(MLXLM, settings={"seed": 7}))),
+      ({"seed": 7}, {}))
+check("junk settings never reach a floor",
+      floor_saved(dict(GGUF, settings={"temperature": "hot"})), {})
+check("junk entry is safe", floor_saved("nope"), {})
+check("the snapshot is both halves",
+      launch_saved(dict(GGUF, settings={"temperature": 0.2}, load={"ctx": 8192})),
+      {"load": {"ctx": 8192}, "floors": {"temperature": 0.2}})
+
+lv = launch_view(GGUF)
+check("no launch record ⇒ NO claim", lv["applied"], None)
+ok("llama.cpp can be applied to", lv["appliable"])
+check("nothing saved ⇒ nothing to apply", lv["changed"], 0)
+ok("the shared note names CHAT as immediate", "CHAT" in lv["note"])
+ok("...and names the two lanes that need the reload",
+   "Agent" in lv["note"] and "Hermes" in lv["note"])
+# THE MLX CASE — the whole reason this exists.
+mx = dict(MLXLM, settings={"temperature": 0.3})
+check("an MLX model has NO load fields", view(mx)["fields"], [])
+ok("...but IS appliable (its sampling floors ride the launch line)",
+   launch_view(mx)["appliable"])
+check("...and its pending change is counted", launch_view(mx)["changed"], 1)
+check("...and reads NOT APPLIED against a launch that had no floors",
+      launch_view(mx, {"load": {}, "floors": {}})["applied"], False)
+check("...and APPLIED once the runner was launched with it",
+      launch_view(mx, {"load": {}, "floors": {"temperature": 0.3}})["applied"], True)
+check("mlx-vlm is appliable too (--max-tokens)",
+      launch_view(MLXVLM)["appliable"], True)
+# the decision table on the gguf side
+g = dict(GGUF, settings={"temperature": 0.2}, load={"ctx": 8192})
+snap = launch_saved(g)
+check("applied True when the record matches exactly",
+      launch_view(g, snap)["applied"], True)
+check("a LOAD change alone flips it",
+      launch_view(g, {"load": {"ctx": 4096}, "floors": {"temperature": 0.2}})["applied"],
+      False)
+check("a FLOOR change alone flips it too (the v2.1 gap)",
+      launch_view(g, {"load": {"ctx": 8192}, "floors": {"temperature": 0.9}})["applied"],
+      False)
+check("a change to a NON-floor sampling field does NOT claim pending",
+      launch_view(dict(g, settings={"temperature": 0.2, "max_tokens": 900}),
+                  snap)["applied"], True)
+check("a half-shaped record still compares (missing half = empty)",
+      launch_view(g, {"load": {"ctx": 8192}})["applied"], False)
+check("a junk record makes NO claim", launch_view(g, "nope")["applied"], None)
+check("a record whose halves are junk is read as empty, not crashed",
+      launch_view(GGUF, {"load": "x", "floors": 3})["applied"], True)
+check("changed counts BOTH halves", launch_view(g)["changed"], 2)
 
 # ── 4. FLOOR wire table — evidence-gated, never a flag an engine lacks ───────
 check("llama.cpp floors cover every sampler it documents",
@@ -217,6 +364,17 @@ check("load values travel as one-word tokens",
       lines[7], "ctx=32768 gpu_layers=-1 flash_attn=on kv_quant=q8_0")
 lines = resolve(dict(base, load={"kv_quant": "bogus", "ctx": 10, "flash_attn": "maybe"}))
 check("junk load values are dropped too", lines[7], "")
+# v2.1 fields through the REAL resolver
+lines = resolve(dict(base, load={"threads": 8, "batch": 1024, "ubatch": 256,
+                                 "mlock": True, "mmap": False,
+                                 "rope_freq_base": 500000.0,
+                                 "rope_freq_scale": 0.5}))
+check("the v2.1 load values travel in canonical order", lines[7],
+      "threads=8 batch=1024 ubatch=256 mlock=on mmap=off "
+      "rope_freq_base=500000.0 rope_freq_scale=0.5")
+lines = resolve(dict(base, load={"threads": 0, "batch": "lots", "mlock": "maybe",
+                                 "mmap": True, "rope_freq_scale": 999}))
+check("junk v2.1 values are dropped before the launch line", lines[7], "mmap=on")
 lines = resolve(dict(base, load="not a dict", settings=None))
 check("a non-dict load is safe", lines[7], "")
 ok("no emitted token can ever contain a space (it would split the shell loop)",
@@ -247,6 +405,23 @@ ok("kv_quant 'off' means: leave the engine default alone",
 ok("kv_quant sets BOTH halves of the cache",
    "--cache-type-k \"$L_KV\" --cache-type-v \"$L_KV\"" in sc)
 ok("flash_attn only ever emits on|off", '"$L_FA" == "on" || "$L_FA" == "off"' in sc)
+# v2.1 flags: reuse the SAME explicit-only + evidence-gated helper, no second path
+for flag, key in (("--threads", "threads"), ("--batch-size", "batch"),
+                  ("--ubatch-size", "ubatch"),
+                  ("--rope-freq-base", "rope_freq_base"),
+                  ("--rope-freq-scale", "rope_freq_scale")):
+    ok(f"{key} rides the shared _floor helper (explicit-only + gated)",
+       f'_floor {flag} ' in sc.replace("  ", " ").replace("  ", " ")
+       and f'_lv {key}' in sc)
+ok("mlock emits the bare flag only when ON (there is no --no-mlock)",
+   '"$(_lv mlock)" == "on"' in sc and "ARGS+=(--mlock)" in sc)
+ok("...and is gated on the binary documenting it",
+   'grep -q -- "--mlock" data/llama-server.help.txt' in sc)
+ok("mmap emits BOTH directions explicitly (both are documented)",
+   "ARGS+=(--mmap)" in sc and "ARGS+=(--no-mmap)" in sc)
+ok("...and emits nothing at all when unset", 'if [[ -n "$L_MMAP" ]]' in sc)
+ok("no speculative flag was added to the load group",
+   sc.count("--spec-type") == 4)   # unchanged: comment + grep + SPEC_ARGS + the warn
 ok("saved ctx wins over the registry preset",
    'L_CTX" =~ ^[0-9]+$ ]]; then CTX="$L_CTX"' in sc)
 ok("...but the registry/yaml/65536 chain is still behind it",
@@ -300,12 +475,22 @@ ok("endpoint supports a full reset", '{"load": None}' in ep)
 ok("endpoint refuses an unknown model", "is not in the registry" in ep)
 ok("endpoint refuses a voice model", "is_audio_entry" in ep)
 ok("endpoint refuses a field this engine cannot honour", "can honour" in ep)
-ok("endpoint refuses an out-of-range int", "whole number between" in ep)
+ok("endpoint refuses an out-of-range int", 'must be {kind} between {lo} and {hi}' in ep)
+ok("...and names the FLOAT kind for the rope fields",
+   'kind = "a whole number" if cast is int else "a number"' in ep)
 ok("endpoint refuses a bad enum", "kv_quant must be one of" in ep)
 ok("endpoint returns the refreshed view", "load_view(upd" in ep)
-ok("endpoint reports the launch record with the view", "_LOAD_AT_LAUNCH.get(mid)" in ep)
+ok("endpoint reports the launch claim with the view",
+   'launch_view(upd, _LOAD_AT_LAUNCH.get(mid))' in ep)
+# v2.1: a SAMPLING write can move the launch claim too (floors) — it must say so.
+sep = src[src.index('@app.post("/api/models/settings")'):
+          src.index("# ── Model LOAD settings")]
+ok("the sampling endpoint also returns the launch claim",
+   'launch_view(upd, _LOAD_AT_LAUNCH.get(mid))' in sep)
+ok("...on the reset path too", sep.count("launch_view(upd") == 2)
 models_h = src[src.index("def api_models("):src.index("def api_models(") + 6000]
 ok("/api/models carries the rendered view", '"loadview": load_view(' in models_h)
+ok("/api/models carries the shared launch claim", '"launch": launch_view(' in models_h)
 ok("/api/models carries the raw pin", '"load": (m.get("load")' in models_h)
 ok("the launch record is written where WE launch the runner",
    src.count("_record_load_launch(") == 3)   # def + switch + start closure
@@ -313,7 +498,9 @@ _sw = src[src.index("def _do_switch"):src.index('@app.post("/api/models/switch")
 ok("...on the SWITCH path only after a successful load",
    _sw.index("_record_load_launch(new_id)") > _sw.index("reverted to"))
 ok("...and never claims anything it did not launch",
-   "if not isinstance(launched, dict)" in src)
+   "if isinstance(launched, dict)" in src and "applied = None" in src)
+ok("the launch record stores the UNIFIED snapshot, not just the load half",
+   "_LOAD_AT_LAUNCH[model_id] = launch_saved(" in src)
 
 # ── 9. panel: the group renders the BRIDGE's field list ──────────────────────
 panel = open(os.path.join(ROOT, "bridge", "panel", "index.html")).read()
@@ -335,8 +522,42 @@ ok("Apply goes through the EXISTING switch path on the same id",
    "switchModel(id," in panel.split("function loadApply")[1][:400])
 ok("...and is a no-op while another load is in flight",
    "if (!id || modelsBusy) return;" in panel.split("function loadApply")[1][:300])
-ok("panel shows the not-applied-yet pill only when the bridge says so",
-   "lv.applied === false" in panel and "not applied yet" in panel)
+# v2.1: the Apply chip + pill MOVED to the shared launch row (renderLaunch), so an
+# MLX model — which has no Load group at all — still has somewhere to apply from.
+lau = panel.split("function renderLaunch")[1].split("\nfunction ")[0]
+ok("the shared launch row exists", "function renderLaunch" in panel)
+ok("...and owns the Apply chip", "Apply &amp; reload" in lau)
+ok("...and the not-applied-yet pill", "av.applied === false" in lau
+   and "not applied yet" in lau)
+ok("...and draws nothing when the engine has no launch surface",
+   "!av.appliable" in lau)
+ok("...and makes NO claim when the bridge has none (three-state kept)",
+   "=== false" in lau and "!== " not in lau.split("const dirty")[1][:60])
+ok("the Load group no longer owns the Apply chip",
+   "Apply &amp; reload" not in panel.split("function renderLoad")[1]
+                                   .split("function renderLaunch")[0])
+ok("the launch row renders whenever EITHER group does",
+   "(samp || ld) ? renderLaunch(m)" in panel)
+ok("...into its own section host", 'id="md-launch"' in panel)
+ok("a sampling write refreshes the launch row (a floor change moves the claim)",
+   "renderLaunch(m)" in panel.split("async function samplingPost")[1][:1400])
+ok("...and so does a load write",
+   "renderLaunch(m)" in panel.split("async function loadPost")[1][:1400])
+# v2.1 tooltips + sliders
+ok("panel single-sources tooltips from the bridge's help string",
+   "function fieldTip" in panel and "o.help" in panel)
+ok("...and both groups use it", panel.count("fieldTip(f,") >= 2)
+ok("panel no longer builds its own tooltip prose",
+   "'. Leave empty for the harness default.'" not in panel)
+ok("panel has a range slider class", "cap-range" in panel)
+ok("...used only where the BRIDGE says the field has one", "f.slider" in panel)
+ok("slider ⇄ box sync exists in both directions",
+   "function loadSyncSlider" in panel and "function loadSyncBox" in panel)
+ok("the sync arithmetic is a pure function", "function sliderPos" in panel)
+ok("dragging does not POST (only the change event does)",
+   "loadPost" not in panel.split("function loadSyncBox")[1][:300])
+ok("the number box is still what posts",
+   'onchange="loadSet(' in panel.split("id=\"ld-box-")[1][:600])
 ok("panel prints the reload warning", "esc(lv.note)" in panel)
 ok("panel group is collapsed by default", "let loadOpen = false;" in panel)
 ok("a background re-render cannot wipe a half-typed load value",
