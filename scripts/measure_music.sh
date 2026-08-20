@@ -204,6 +204,10 @@ print(snapshot_download("$MINIMAX_REPO", revision="$MINIMAX_REV"))
 PY
   ) || die "snapshot_download failed (network? disk?)"
   [[ -f "$snap/generate.py" ]] || die "no generate.py in $snap — the repo layout changed."
+  # generate.py imports this by bare name; a filtered download would leave the
+  # entry point present and the module missing, which is a confusing failure.
+  [[ -f "$snap/minimax_mlx_model.py" ]] \
+    || die "no minimax_mlx_model.py in $snap — the snapshot is incomplete."
   say "snapshot: $snap"
 
   say "installing the port's own pins (mlx==0.30.6 — this is WHY the venv is separate:"
@@ -214,14 +218,31 @@ PY
   rm -f "$wav"
   # 30 flow steps is the port's own acceptance setting and the top of its
   # supported range (1-30); anything lower is a different measurement.
+  #
+  # ⚠️ THE SNAPSHOT IS A SYMLINK FARM, and that broke this twice. Every file in
+  # an HF snapshots/ dir is a symlink into ../../blobs/<sha>, so:
+  #   1. CPython sets sys.path[0] to the RESOLVED directory of the script, i.e.
+  #      the flat blobs dir — where minimax_mlx_model.py has no name at all.
+  #      generate.py imports that sibling by bare name, so it died with
+  #      "ModuleNotFoundError: No module named 'minimax_mlx_model'". A `cd` does
+  #      NOT fix this: the cwd is not on sys.path when running a script file.
+  #      Exporting PYTHONPATH is what puts the real snapshot dir on the path.
+  #   2. generate.py's --model-dir DEFAULTS to Path(__file__).resolve().parent —
+  #      the blobs dir again — and model_manifest.json addresses its weights by
+  #      RELATIVE path (diffusion_models/…), none of which exist there. So the
+  #      model dir is passed explicitly too.
+  # Both are belt-and-braces: on a layout with real files they are simply the
+  # values Python would have computed anyway.
   (
     cd "$snap"
+    export PYTHONPATH="$snap${PYTHONPATH:+:$PYTHONPATH}"
     run_timed "minimax" "$VENV/bin/python" generate.py \
       --prompt "$PROMPT" \
       --lyrics-file "$OUT/lyrics.txt" \
       --seconds "$SECS" \
       --steps 30 \
       --seed "$SEED" \
+      --model-dir "$snap" \
       --output "$wav"
   ) || exit 1
   # run_timed's globals do not survive the subshell, so re-read them from the log.
