@@ -51,10 +51,12 @@ from pathlib import Path
 # ── constants ────────────────────────────────────────────────────────────────
 ENGINES = ("minimax", "acestep")
 
-# Planning numbers for the RAM ledger, NOT measured RSS. minimax's measured 2.2GB
-# max-RSS is known-understated: MLX/Metal wired memory does not show up there, and
-# the research put a real render at 32-48GB. The ledger must plan for the truth.
-MUSIC_RAM_GB = {"minimax": 32, "acestep": 9}
+# Planning numbers for the RAM ledger. v1 planned minimax at 32GB on a pre-measurement
+# reading of the research; the honest number is the weights (11.9GB int8) plus working
+# set — 14GB. It is also no longer a REFUSAL: exceeding it is a WARNING the user can
+# override (Debi's ruling), because the cost of being wrong is swap, not corruption,
+# and only the person at the machine knows what else it is doing.
+MUSIC_RAM_GB = {"minimax": 14, "acestep": 9}
 
 # Steps mean DIFFERENT things per engine (flow steps vs DiT inference steps) — the
 # defaults are each engine's own design point, not a shared knob.
@@ -63,14 +65,61 @@ MAX_STEPS = {"minimax": 30, "acestep": 20}
 
 SECONDS_MIN, SECONDS_MAX = 10, 300
 SECONDS_DEFAULT = 60
-PROMPT_MAX = 2000
+# 8000, not 2000: MiniMax's own demo captions run to ~4,500 characters of structured
+# direction (bpm, key, section-by-section arrangement) and the engine accepts them —
+# the old cap refused a caption the model was designed to read. The AR front end
+# rejects a prompt over 5,000 TOKENS itself, so this is a sanity bound, not the limit.
+PROMPT_MAX = 8000
 LYRICS_MAX = 20000            # generous: a full lyric sheet, still bounded
 SEED_MAX = 2 ** 31 - 1
+
+# ── output formats ───────────────────────────────────────────────────────────
+# VERIFIED at the pins (2026-08-20), not assumed:
+#   acestep  docs/ARCHITECTURE.md @ 9761469d95fc: `output_format` "picks the audio
+#            encoder: "mp3", "wav16", "wav24", "wav32"" — a JSON field, no CLI flag.
+#   minimax  generate.py @ 0505e3f writes with `wave` directly (write_wav, 2ch/16-bit/
+#            44.1kHz) and has NO format argument at all. wav is the only truth there.
+MINIMAX_FORMATS = ("wav",)
+ACESTEP_FORMATS = ("wav24", "wav32", "wav16", "mp3")
+ENGINE_FORMATS = {"minimax": MINIMAX_FORMATS, "acestep": ACESTEP_FORMATS}
+DEFAULT_FORMAT = {"minimax": "wav", "acestep": "wav24"}
+FORMAT_EXT = {"wav": ".wav", "wav16": ".wav", "wav24": ".wav", "wav32": ".wav",
+              "mp3": ".mp3"}
+FORMAT_LABEL = {"wav": "WAV", "wav16": "WAV 16-bit", "wav24": "WAV 24-bit",
+                "wav32": "WAV 32-bit float", "mp3": "MP3"}
+
+# Convert-after-the-fact. Each entry names the ffmpeg ENCODER it needs, and the
+# format is offered only when a probe of the resolved ffmpeg lists it — our
+# provisioned imageio-ffmpeg build is not guaranteed to carry libmp3lame, and a
+# control that cannot work must not be drawn (the LM-Studio hide-not-grey rule).
+CONVERT_FORMATS = {
+    "mp3": {"ext": ".mp3", "encoder": "libmp3lame", "bitrate": "192k"},
+    "m4a": {"ext": ".m4a", "encoder": "aac", "bitrate": "192k"},
+}
+LIBRARY_EXTS = (".wav", ".mp3", ".m4a")
+CONVERT_TIMEOUT_S = 300
+
+# Wall-clock calibration, measured on Debi's Mac (MUSIC-MEASUREMENT-RUNBOOK.md +
+# her first real session). minimax is clearly SUPERLINEAR in song length — 60s of
+# song cost 115.5s, 145s cost 675.6s — which is exactly why an ETA has to come from
+# points rather than a rate. These are the fallback until the library has history.
+MUSIC_CALIBRATION = {
+    "minimax": ((60, 115.5), (145, 675.6)),
+    "acestep": ((60, 24.5),),
+}
+# A running job never displays a completed bar: the last few percent of both engines
+# is decode + write, which the progress lines do not cover.
+PROGRESS_DISPLAY_CAP = 0.95
+
+SETTINGS_FILE = "music_settings.json"      # data/music_settings.json
+TEMPLATES_FILE = "templates.json"          # data/music/templates.json (fixed home)
 
 MUSIC_TIMEOUT_S = 1800        # 30 minutes per render (spec)
 STDERR_TAIL = 2000            # bytes of engine output carried into a failure
 
 MINIMAX_REPO = "PocketAiHub/MiniMax-Music3-MLX"
+# generate.py's own help text: "--lyrics  Lyrics text; use [Instrumental] for no vocals".
+MINIMAX_INSTRUMENTAL = "[Instrumental]"
 ACESTEP_GGUFS = (
     "vae-BF16.gguf",
     "Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -98,11 +147,92 @@ class MusicError(Exception):
 
 
 # ── paths ────────────────────────────────────────────────────────────────────
-def music_dir(root) -> str:
-    """Where finished songs live. Created on demand (gitignored: it is under data/)."""
+def music_base_dir(root) -> str:
+    """The FIXED home under data/ — templates and the default output folder.
+
+    Deliberately not the configurable output dir: a user who points renders at an
+    external drive must not lose their templates when that drive is unplugged."""
     d = os.path.join(str(root), "data", "music")
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def settings_path(root) -> str:
+    return os.path.join(str(root), "data", SETTINGS_FILE)
+
+
+def read_settings(root) -> dict:
+    """The music settings bag. Any surprise on disk degrades to defaults rather than
+    breaking the page — this file is hand-editable."""
+    try:
+        with open(settings_path(root), encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:                                            # noqa: BLE001
+        return {}
+
+
+def write_settings(root, data: dict) -> None:
+    """Atomic: a half-written settings file would silently relocate the library."""
+    p = settings_path(root)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp, p)
+
+
+def validate_output_dir(root, path) -> tuple:
+    """(abspath, None) | (None, reason). PURE-ish: the only filesystem calls are the
+    mkdir and the writability probe, which ARE the question being asked.
+
+    The boundary is deliberately wide (anywhere under $HOME or under the repo) —
+    this is the user's own machine and they typed the path — but never inside
+    vendor/ (our never-edit rule) and never a file.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return None, "give a folder path"
+    p = os.path.expanduser(path.strip())
+    if not os.path.isabs(p):
+        p = os.path.join(str(root), p)
+    p = os.path.realpath(p)
+    vendor = os.path.realpath(os.path.join(str(root), "vendor"))
+    if p == vendor or p.startswith(vendor + os.sep):
+        return None, "refused: vendor/ is upstream code and is never written to"
+    home = os.path.realpath(os.path.expanduser("~"))
+    rroot = os.path.realpath(str(root))
+    inside = (p == home or p.startswith(home + os.sep)
+              or p == rroot or p.startswith(rroot + os.sep))
+    if not inside:
+        return None, "refused: pick a folder inside your home folder or the harness"
+    if os.path.exists(p) and not os.path.isdir(p):
+        return None, "that path is a file, not a folder"
+    try:
+        os.makedirs(p, exist_ok=True)
+    except OSError as e:
+        return None, f"could not create that folder: {e}"
+    if not os.access(p, os.W_OK):
+        return None, "that folder is not writable"
+    return p, None
+
+
+def music_dir(root) -> str:
+    """Where finished songs live — data/music unless the user pointed it elsewhere.
+
+    A configured folder that has since gone away (an unplugged drive) falls back to
+    the default rather than raising: the page must still load and say where it is."""
+    want = read_settings(root).get("output_dir")
+    if isinstance(want, str) and want.strip():
+        p = os.path.expanduser(want.strip())
+        if not os.path.isabs(p):
+            p = os.path.join(str(root), p)
+        try:
+            os.makedirs(p, exist_ok=True)
+            if os.path.isdir(p):
+                return os.path.realpath(p)
+        except OSError:
+            pass
+    return music_base_dir(root)
 
 
 def venv_python(root) -> str:
@@ -241,8 +371,14 @@ def music_need_bytes(engine: str) -> int:
 
 
 def ram_gate(engine: str, other_bytes: int, budget_bytes: int):
-    """None = allowed, else the refusal text. Boundary INCLUSIVE (fitting exactly
-    is allowed), same predicate shape as the runner/aux/voice gates."""
+    """None = comfortable, else the WARNING text. Boundary INCLUSIVE (fitting exactly
+    is fine), same predicate shape as the runner/aux/voice gates.
+
+    ⚠️ This is no longer a refusal (Debi's ruling). The budget is a planning figure,
+    not a measurement of what macOS will actually do, and the failure mode of being
+    wrong is swap — slow, not destructive. So the bridge states the numbers and lets
+    the person at the machine decide; see `wants_confirm`.
+    """
     need = music_need_bytes(engine)
     try:
         other = int(other_bytes or 0)
@@ -250,10 +386,27 @@ def ram_gate(engine: str, other_bytes: int, budget_bytes: int):
     except (TypeError, ValueError):
         other, budget = 0, 0
     if need and (need + other) > budget:
-        return (f"a {engine} render needs about {need / 1024**3:.0f} GB and "
-                f"{other / 1024**3:.1f} GB of models are loaded — that exceeds the "
-                f"{budget / 1024**3:.0f} GB model-RAM budget; eject the chat model first")
+        return (f"a {engine} render wants about {need / 1024**3:.0f} GB and "
+                f"{other / 1024**3:.1f} GB of models are already loaded — that is over "
+                f"the {budget / 1024**3:.0f} GB model-RAM budget and may push the "
+                f"machine into swap. Eject the chat model first, or generate anyway.")
     return None
+
+
+def wants_confirm(body) -> bool:
+    """PURE: did the caller explicitly accept the RAM warning?
+
+    Total and STRICT — only an unambiguous yes counts, because this is the flag that
+    turns a warning into a spend. Anything else (missing, junk, "maybe", 0) is no.
+    """
+    if not isinstance(body, dict):
+        return False
+    v = body.get("confirm")
+    if v is True:
+        return True
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes")
+    return False
 
 
 # ── request validation (PURE, total over junk) ───────────────────────────────
@@ -328,9 +481,18 @@ def validate_generate(body, installed_engines) -> tuple:
             return None, f"seed must be a whole number between 0 and {SEED_MAX}"
         seed_given = True
 
+    fmt = body.get("format")
+    allowed = ENGINE_FORMATS.get(engine, ("wav",))
+    if fmt in (None, ""):
+        fmt = DEFAULT_FORMAT.get(engine, "wav")
+    elif not isinstance(fmt, str) or fmt.strip() not in allowed:
+        return None, (f"{engine} can write: {', '.join(allowed)}")
+    else:
+        fmt = fmt.strip()
+
     return {"engine": engine, "prompt": prompt, "lyrics": lyrics,
             "seconds": int(seconds), "steps": int(steps), "seed": int(seed),
-            "seed_given": bool(seed_given)}, None
+            "seed_given": bool(seed_given), "format": fmt}, None
 
 
 # ── engine command builders (PURE) ───────────────────────────────────────────
@@ -349,9 +511,14 @@ def minimax_cmd(py: str, snapshot: str, params: dict, lyrics_file: str, out: str
             "--model-dir", str(snapshot),
             "--output", str(out)]
     if params.get("lyrics", "").strip():
-        # No lyrics ⇒ no flag: an instrumental must not be asked for with an empty
-        # file, whose meaning to the port is not documented.
         argv[2:2] = ["--lyrics-file", str(lyrics_file)]
+    else:
+        # ⚠️ BUG FIXED 2026-08-20, found by reading generate.py at the pin: the lyrics
+        # arguments are an argparse mutually-exclusive group with required=True, so
+        # passing NEITHER is an immediate usage error — every instrumental minimax
+        # render would have failed before touching the GPU. The port's own help text
+        # names the answer: "use [Instrumental] for no vocals".
+        argv[2:2] = ["--lyrics", MINIMAX_INSTRUMENTAL]
     return {"argv": argv, "cwd": str(snapshot),
             "env": {"PYTHONPATH": str(snapshot)}}
 
@@ -360,13 +527,16 @@ def acestep_request(params: dict) -> dict:
     """PURE: the AceRequest JSON (docs/ARCHITECTURE.md shapes, as the measurement
     prototype used them). `duration` is float SECONDS; `lyrics` is the single source
     of truth for vocals; `output_format` is a JSON field with no CLI flag."""
+    fmt = params.get("format") or DEFAULT_FORMAT["acestep"]
+    if fmt not in ACESTEP_FORMATS:
+        fmt = DEFAULT_FORMAT["acestep"]
     return {
         "caption": params["prompt"],
         "lyrics": params.get("lyrics", "") or "",
         "duration": float(params["seconds"]),
         "seed": int(params["seed"]),
         "inference_steps": int(params["steps"]),
-        "output_format": "wav24",
+        "output_format": fmt,
     }
 
 
@@ -392,9 +562,499 @@ def render_ok(path) -> bool:
         return False
 
 
-def track_name(engine: str, when=None) -> str:
+def track_name(engine: str, when=None, fmt: str = "") -> str:
     t = time.localtime(when if when is not None else time.time())
-    return f"{engine}-{time.strftime('%Y%m%d-%H%M%S', t)}.wav"
+    ext = FORMAT_EXT.get(fmt or "", ".wav")
+    return f"{engine}-{time.strftime('%Y%m%d-%H%M%S', t)}{ext}"
+
+
+# ── templates ────────────────────────────────────────────────────────────────
+# Six starters. They exist because the single biggest quality lever on both engines
+# is the CAPTION, and a blank textarea teaches nobody what a good one looks like:
+# these are written in the structured style the models were trained to read (genre,
+# tempo, key, instrumentation, vocal character, section-by-section arrangement, mix),
+# long enough to be worth reading and short enough to edit. Clicking one PREFILLS the
+# form — it never generates by itself.
+#
+# Every built-in is asserted (in the tests) to pass `validate_generate` unchanged, so
+# a starter can never be a request the bridge would refuse.
+MUSIC_TEMPLATES = (
+    {
+        "id": "neo-soul",
+        "name": "Neo-soul / R&B ballad",
+        "tag": "vocal · 72 BPM",
+        "seconds": 90,
+        "prompt": (
+            "Warm modern neo-soul R&B ballad at 72 BPM in D minor, swung sixteenths, "
+            "intimate and unhurried. Foundation is a soft Rhodes electric piano with a "
+            "slow tremolo and long sustain, played in loose extended voicings — ninths, "
+            "elevenths, the occasional passing diminished. Underneath it a round, "
+            "fretless-feeling electric bass sits deep in the pocket, sliding into the "
+            "root a fraction behind the beat. Drums are brushed and dry: a soft rimshot "
+            "backbeat, ghost notes on the snare, a closed hi-hat with real human drift, "
+            "no click-track stiffness. Lead vocal is a smooth female alto, breathy in "
+            "the low register and opening into a controlled belt at the top, with light "
+            "vocal fry on phrase ends and a small amount of plate reverb. Stacked "
+            "three-part background harmonies answer the lead in the chorus. "
+            "Arrangement: the intro is Rhodes and voice alone for four bars; the first "
+            "verse adds bass and brushes; the pre-chorus lifts with a sustained analog "
+            "string pad and a rising bass fill; the chorus opens fully with harmonies, "
+            "a tambourine on the offbeats and a muted trumpet doubling the melody an "
+            "octave down; the bridge drops back to Rhodes and one voice before the last "
+            "chorus returns with an improvised ad-lib line over the top. Ending is a "
+            "ritardando into a single held chord. Mix is warm and analog — gentle tape "
+            "saturation, rolled-off highs, wide stereo keys, vocal centred and forward."
+        ),
+        "lyrics": (
+            "[Verse]\n"
+            "Streetlight on the kitchen floor\n"
+            "I stopped counting hours ago\n"
+            "You said stay, I said maybe more\n"
+            "and the coffee went cold and slow\n\n"
+            "[Chorus]\n"
+            "Hold it, hold it, don't let the morning in\n"
+            "we're still somewhere the night has never been\n"
+            "hold it, hold it, I'll take the quiet part\n"
+            "as long as you keep the light on in your heart\n\n"
+            "[Verse]\n"
+            "Every song I never sent\n"
+            "still knows the way back to your door\n"
+            "and I'd spend it all again\n"
+            "just to hear you laugh once more\n\n"
+            "[Bridge]\n"
+            "Nothing gold ever asked to stay\n"
+            "but it never asked to leave\n\n"
+            "[Chorus]\n"
+            "Hold it, hold it, don't let the morning in\n"
+            "we're still somewhere the night has never been"
+        ),
+    },
+    {
+        "id": "rock",
+        "name": "Driving rock",
+        "tag": "vocal · 148 BPM",
+        "seconds": 90,
+        "prompt": (
+            "High-energy modern rock at 148 BPM in E minor, straight eighths, loud and "
+            "forward-leaning. Two electric guitars: a crunchy rhythm part playing "
+            "palm-muted power chords hard left, and a brighter, slightly overdriven "
+            "second guitar hard right playing an open ringing riff built on the root and "
+            "the flat seventh. Bass is a picked P-bass with a light distortion, locked to "
+            "the kick and driving eighth notes. Drums are live and roomy — a punchy kick, "
+            "a cracking snare with real room ambience, ride bell accents in the chorus, "
+            "a full tom fill into each section change. Lead vocal is a gritty male tenor "
+            "with a strained, honest edge at the top of his range, doubled in the chorus "
+            "and shouted gang vocals on the hook. "
+            "Arrangement: a four-bar guitar riff intro with no drums, then a full-band "
+            "hit into verse one; the verse is sparse — muted guitar, bass and hats — so "
+            "the chorus can explode; the pre-chorus builds with a snare roll and a "
+            "sustained feedback note; the chorus is wide, loud and anthemic; after the "
+            "second chorus a short half-time breakdown drops to bass and a single "
+            "delayed guitar before a lead guitar solo over the chorus changes; the final "
+            "chorus repeats twice with an extra harmony guitar line and ends on a hard "
+            "stop. Mix is aggressive and modern — tight low end, mid-forward guitars, "
+            "vocal sitting on top, real dynamics between sections."
+        ),
+        "lyrics": (
+            "[Verse]\n"
+            "Kick the door, the engine's already running\n"
+            "I've got nothing left to leave behind\n"
+            "half a map and a radio humming\n"
+            "and a head that won't make up its mind\n\n"
+            "[Pre-Chorus]\n"
+            "One more mile, one more mile\n\n"
+            "[Chorus]\n"
+            "Burn it down, burn it down, I'm not turning around\n"
+            "every road I ever hated brought me here\n"
+            "burn it down, burn it down, let 'em hear the sound\n"
+            "of a heart that finally got out of gear\n\n"
+            "[Verse]\n"
+            "Rearview full of everything I promised\n"
+            "and the horizon doesn't care what I said\n\n"
+            "[Chorus]\n"
+            "Burn it down, burn it down, I'm not turning around\n"
+            "every road I ever hated brought me here"
+        ),
+    },
+    {
+        "id": "lofi",
+        "name": "Lo-fi study beat",
+        "tag": "instrumental · 82 BPM",
+        "seconds": 120,
+        "prompt": (
+            "Instrumental lo-fi hip-hop study beat at 82 BPM in F major, no vocals at "
+            "all, endlessly loopable and deliberately undramatic. A dusty sampled jazz "
+            "piano plays a four-chord loop — major seventh, minor ninth, dominant "
+            "thirteenth, back home — slightly detuned and wowing as if from an old tape. "
+            "Drums are a soft boom-bap kit: a rounded kick, a dry rimshot on two and "
+            "four, lazy shuffled hi-hats behind the beat, occasional vinyl-crackle "
+            "sixteenth ghost notes. An upright double bass walks quietly underneath with "
+            "finger noise audible. A muted trumpet plays a short, sleepy motif every "
+            "eight bars and then leaves. Continuous background texture: vinyl surface "
+            "noise, faint rain against a window, and a low tape hiss that never resolves. "
+            "Arrangement: eight bars of piano and crackle alone, then drums enter; the "
+            "trumpet motif appears at bar sixteen; a filtered break at the halfway point "
+            "removes the drums for four bars and brings them back with a soft filter "
+            "sweep; the last section strips back to piano and rain. Mix is warm, dark "
+            "and quiet — high frequencies rolled off, everything gently compressed and "
+            "glued, nothing sharp or attention-grabbing anywhere."
+        ),
+        "lyrics": "",
+    },
+    {
+        "id": "cinematic",
+        "name": "Cinematic orchestral",
+        "tag": "instrumental · builds",
+        "seconds": 120,
+        "prompt": (
+            "Instrumental cinematic orchestral cue in C minor, no vocals, starting at a "
+            "slow 68 BPM and pushing to about 96 BPM by the climax. Opens with a single "
+            "solo cello playing a plain, mournful four-note theme with plenty of air "
+            "around it in a large hall. A sustained low string bed fades in underneath, "
+            "then a delicate celesta doubling the theme two octaves up. Strings build in "
+            "layers — violas, then second violins, then firsts — each entry adding one "
+            "more voice to the harmony rather than more volume. A soft ostinato of "
+            "pizzicato strings and staccato piano establishes forward motion. French "
+            "horns state the theme in unison at the two-thirds point, answered by "
+            "trumpets a fourth above. Percussion arrives late and deliberately: a taiko "
+            "pulse on the downbeats, then a rolling timpani crescendo, then cymbal swells "
+            "on each section change. "
+            "Arrangement: quiet, lonely statement of the theme; a patient two-minute "
+            "build where every eight bars adds one instrument family; a sudden full stop "
+            "of everything but the solo cello; then the full orchestral climax with brass "
+            "carrying the melody, strings running countermelody sixteenths and a choir-"
+            "like wordless string pad behind; a long decay back to the solo cello and "
+            "silence. Mix is wide, deep and natural — real hall reverb, generous dynamic "
+            "range, no modern loudness compression."
+        ),
+        "lyrics": "",
+    },
+    {
+        "id": "edm",
+        "name": "EDM / dance",
+        "tag": "vocal hook · 126 BPM",
+        "seconds": 90,
+        "prompt": (
+            "Bright melodic house / dance track at 126 BPM in A minor, four-on-the-floor, "
+            "made for a big room and a late summer night. Punchy sidechained kick with a "
+            "short click transient, clap layered with a bright snare on two and four, "
+            "open hi-hat on every offbeat, shaker sixteenths riding through. Bass is a "
+            "round analog sine with a small amount of saturation, pumping hard against "
+            "the kick. Lead is a plucked, delayed synth arpeggio in sixteenths with a "
+            "long ping-pong delay and a filter that opens slowly across each eight-bar "
+            "phrase. A wide supersaw chord stack carries the harmony in the drop, with a "
+            "warm analog pad underneath. Female vocal hook, processed and airy, heavily "
+            "reverbed, chopped and repeated as a rhythmic element rather than a lead. "
+            "Arrangement: filtered intro with just the arp and a rising white-noise "
+            "sweep; the beat drops in at bar nine; the verse keeps the kick and bass "
+            "minimal so the vocal has room; the build strips the kick, adds a snare roll "
+            "doubling in speed, a rising riser and a one-bar silence; the drop is the "
+            "full supersaw stack with the vocal hook chopped over it; a second breakdown "
+            "goes almost ambient — pad and reversed vocal only — before the final drop. "
+            "Mix is loud, clean and modern: tight low end, glossy top, huge stereo width "
+            "on the synths, everything mono-safe at the bottom."
+        ),
+        "lyrics": (
+            "[Chorus]\n"
+            "Hold on, we're never coming down\n"
+            "hold on, we're never coming down\n"
+            "hold on\n\n"
+            "[Verse]\n"
+            "Neon on the water, half past two\n"
+            "nothing in the morning I have to do\n\n"
+            "[Chorus]\n"
+            "Hold on, we're never coming down\n"
+            "hold on, we're never coming down"
+        ),
+    },
+    {
+        "id": "folk",
+        "name": "Acoustic folk ballad",
+        "tag": "vocal · 88 BPM",
+        "seconds": 90,
+        "prompt": (
+            "Intimate acoustic folk ballad at 88 BPM in G major, 6/8 feel, recorded to "
+            "sound like four people in one small room. Main instrument is a "
+            "steel-string acoustic guitar fingerpicked in a rolling pattern, capo "
+            "audible, string squeaks and fret noise left in. A second acoustic strums "
+            "quietly an octave up on the choruses. Upright bass plays simple root-fifth "
+            "movement with a woody, unamplified tone. Percussion is minimal and organic: "
+            "a brushed snare, a stomp on the downbeat, and a shaker that enters only in "
+            "the second half. A fiddle plays a plaintive countermelody between vocal "
+            "lines and takes a short solo before the last verse; a pedal steel adds long "
+            "swells underneath the chorus. Lead vocal is a warm male baritone singing "
+            "close to the microphone, conversational rather than performed, with a "
+            "natural crack on the held notes; a female harmony joins a third above from "
+            "the second chorus onward. "
+            "Arrangement: solo guitar and voice for the first verse; bass and brushes "
+            "join the first chorus; fiddle enters in verse two; the bridge drops to two "
+            "voices and one guitar with no rhythm at all; the last chorus has everyone "
+            "in, ending on a single strummed chord left to ring out. Mix is dry, close "
+            "and honest — very little reverb, no compression pumping, real room tone "
+            "audible between phrases."
+        ),
+        "lyrics": (
+            "[Verse]\n"
+            "My father built this table out of pine\n"
+            "and swore it would outlast us all\n"
+            "there's a knot in it that looks like nineteen-ninety-nine\n"
+            "and a scar from a autumn I don't recall\n\n"
+            "[Chorus]\n"
+            "So carry me home the long way\n"
+            "past the field and the flooded lane\n"
+            "I'll take the miles if you'll take the songs\n"
+            "and we'll call it even again\n\n"
+            "[Verse]\n"
+            "My mother kept the letters in a tin\n"
+            "every one of them addressed but never sent\n\n"
+            "[Bridge]\n"
+            "Nothing here was built to last\n"
+            "and everything here still stands\n\n"
+            "[Chorus]\n"
+            "So carry me home the long way\n"
+            "past the field and the flooded lane"
+        ),
+    },
+)
+
+TEMPLATE_NAME_MAX = 60
+
+
+def builtin_templates() -> list:
+    """Copies, always: a caller must never be able to mutate the table."""
+    return [dict(t, builtin=True) for t in MUSIC_TEMPLATES]
+
+
+def templates_path(root) -> str:
+    return os.path.join(music_base_dir(root), TEMPLATES_FILE)
+
+
+def validate_template(body) -> tuple:
+    """PURE: (template, error). A saved template is just a remembered form."""
+    if not isinstance(body, dict):
+        return None, "bad request body"
+    name = body.get("name")
+    name = name.strip() if isinstance(name, str) else ""
+    if not name:
+        return None, "give the template a name"
+    if len(name) > TEMPLATE_NAME_MAX:
+        return None, f"the name is too long (max {TEMPLATE_NAME_MAX} characters)"
+    prompt = body.get("prompt")
+    prompt = prompt.strip() if isinstance(prompt, str) else ""
+    if not prompt:
+        return None, "a template needs a prompt"
+    if len(prompt) > PROMPT_MAX:
+        return None, f"the prompt is too long (max {PROMPT_MAX} characters)"
+    lyrics = body.get("lyrics") if isinstance(body.get("lyrics"), str) else ""
+    if len(lyrics) > LYRICS_MAX:
+        return None, f"the lyrics are too long (max {LYRICS_MAX} characters)"
+    secs = _as_int(body.get("seconds"), SECONDS_DEFAULT)
+    if secs is None or secs < SECONDS_MIN or secs > SECONDS_MAX:
+        secs = SECONDS_DEFAULT
+    steps = _as_int(body.get("steps"), None)
+    engine = body.get("engine")
+    engine = engine if isinstance(engine, str) and engine in ENGINES else ""
+    t = {"id": "u" + f"{int(time.time() * 1000):x}", "name": name, "tag": "yours",
+         "prompt": prompt, "lyrics": lyrics, "seconds": int(secs), "builtin": False}
+    if steps is not None:
+        t["steps"] = int(steps)
+    if engine:
+        t["engine_hint"] = engine
+    return t, None
+
+
+def user_templates(root) -> list:
+    try:
+        with open(templates_path(root), encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except Exception:                                            # noqa: BLE001
+        return []
+    if not isinstance(loaded, list):
+        return []
+    out = []
+    for t in loaded:
+        if isinstance(t, dict) and isinstance(t.get("id"), str) and t.get("prompt"):
+            out.append(dict(t, builtin=False))
+    return out
+
+
+def _write_user_templates(root, items) -> None:
+    p = templates_path(root)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(items, fh, indent=2)
+    os.replace(tmp, p)
+
+
+def all_templates(root) -> list:
+    """Built-ins first, then the user's own — the starters are the teaching material
+    and should not be pushed off the strip by a growing personal collection."""
+    return builtin_templates() + user_templates(root)
+
+
+def save_template(root, body) -> tuple:
+    t, err = validate_template(body)
+    if err:
+        return None, err
+    items = [dict(x) for x in user_templates(root)]
+    items.append(t)
+    try:
+        _write_user_templates(root, items)
+    except OSError as e:
+        return None, f"could not save: {e}"
+    return t, None
+
+
+def delete_template(root, tid) -> tuple:
+    """(ok, reason). A BUILT-IN can never be deleted — it is code, not data, and a
+    delete that appeared to work and came back on restart would be a lie."""
+    if not isinstance(tid, str) or not tid.strip():
+        return False, "no template given"
+    tid = tid.strip()
+    if any(t["id"] == tid for t in MUSIC_TEMPLATES):
+        return False, "the starter templates cannot be deleted"
+    items = [dict(x) for x in user_templates(root)]
+    keep = [x for x in items if x.get("id") != tid]
+    if len(keep) == len(items):
+        return False, "no such template"
+    try:
+        _write_user_templates(root, keep)
+    except OSError as e:
+        return False, f"could not save: {e}"
+    return True, ""
+
+
+# ── progress + ETA ───────────────────────────────────────────────────────────
+# Two independent, honest sources. (a) the engines' OWN progress lines, tailed out of
+# the job log; (b) an estimate fitted to what renders have actually cost on THIS
+# machine. (a) is used when it exists, (b) always drives the "time left" figure.
+#
+# What the engines actually print, read at the pins rather than guessed:
+#   minimax  generate.py's `progress(stage, msg)` prints "[N/5] message" — and the
+#            numbers are NOT monotonic (the loader prints 1,2,3 and then the render
+#            prints 1,2,4,5), which is exactly why the parser takes the MAXIMUM
+#            fraction seen instead of the last one. A bar that goes backwards is
+#            worse than no bar.
+#   acestep  ace-lm / ace-synth print their own step counters; the generic "N/M" and
+#            tqdm "NN%|" forms below cover both without pinning either engine's
+#            exact wording (which we do not own).
+_PCT_RE = None
+_FRAC_RE = None
+
+
+def _progress_res():
+    global _PCT_RE, _FRAC_RE
+    if _PCT_RE is None:
+        import re
+        _PCT_RE = re.compile(r"(\d{1,3})%\s*\|")
+        _FRAC_RE = re.compile(r"\[?\s*(\d{1,6})\s*/\s*(\d{1,6})\s*[\]\s]")
+    return _PCT_RE, _FRAC_RE
+
+
+def parse_progress(text) -> tuple:
+    """PURE: (fraction 0..1 or None, phase text). Total over junk — this reads a log
+    file written by two third-party engines, so anything at all can be in it."""
+    if not isinstance(text, str) or not text.strip():
+        return None, ""
+    pct_re, frac_re = _progress_res()
+    best, phase = None, ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        f = None
+        m = pct_re.search(line)
+        if m:
+            try:
+                f = min(1.0, max(0.0, int(m.group(1)) / 100.0))
+            except ValueError:
+                f = None
+        if f is None:
+            m = frac_re.search(line + " ")
+            if m:
+                try:
+                    a, b = int(m.group(1)), int(m.group(2))
+                except ValueError:
+                    a, b = 0, 0
+                if b > 0 and 0 <= a <= b:
+                    f = a / b
+        if f is None:
+            continue
+        # the message after the counter is the phase the user actually cares about
+        tail = line[m.end():].strip(" :|\t") if m else ""
+        if best is None or f >= best:
+            best, phase = f, (tail or phase)
+    return best, phase[:120]
+
+
+def estimate_wall(engine, seconds, history=None):
+    """PURE: seconds of wall clock this render is likely to cost, or None.
+
+    Points, not a rate: minimax is markedly SUPERLINEAR (60s of song → 115s, 145s →
+    676s), so dividing by length would under-promise badly at the long end. With two
+    points around the request we interpolate; outside the range, or with one point,
+    we scale that nearest point proportionally and accept that it under-estimates a
+    very long minimax render — the UI says "estimated" for exactly this reason.
+    """
+    try:
+        want = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if want <= 0:
+        return None
+    pts = []
+    for h in (history or ()):
+        if not isinstance(h, dict) or h.get("engine") != engine:
+            continue
+        try:
+            s, w = float(h.get("seconds")), float(h.get("wall"))
+        except (TypeError, ValueError):
+            continue
+        if s > 0 and w > 0:
+            pts.append((s, w))
+    if not pts:
+        pts = [(float(s), float(w)) for s, w in MUSIC_CALIBRATION.get(engine, ())]
+    if not pts:
+        return None
+    exact = [w for s, w in pts if s == want]
+    if exact:
+        return round(sum(exact) / len(exact), 1)
+    pts.sort()
+    below = [p for p in pts if p[0] < want]
+    above = [p for p in pts if p[0] > want]
+    if below and above:
+        s0, w0 = below[-1]
+        s1, w1 = above[0]
+        return round(w0 + (w1 - w0) * (want - s0) / (s1 - s0), 1)
+    s, w = (below[-1] if below else above[0])
+    return round(w * want / s, 1)
+
+
+def progress_view(job, log_text="", history=None) -> dict:
+    """The read side of a running render: {progress, phase, eta_s, source}.
+
+    `progress` is CAPPED at 0.95 while the job runs — both engines finish with a
+    decode-and-write phase their own counters never mention, and a bar that sits at
+    100% while the user waits is worse than one that sits at 95%."""
+    if not isinstance(job, dict):
+        return {"progress": None, "phase": "", "eta_s": None, "source": ""}
+    eta = estimate_wall(job.get("engine"), job.get("seconds"), history)
+    running = job.get("state") in ("queued", "running")
+    if not running:
+        return {"progress": 1.0 if job.get("state") == "done" else None,
+                "phase": "", "eta_s": eta, "source": ""}
+    frac, phase = parse_progress(log_text)
+    source = "engine"
+    if frac is None and eta:
+        try:
+            el = max(0.0, time.time() - float(job.get("started") or 0))
+        except (TypeError, ValueError):
+            el = 0.0
+        frac, source = min(1.0, el / eta) if eta > 0 else None, "estimate"
+    if frac is None:
+        return {"progress": None, "phase": phase, "eta_s": eta, "source": ""}
+    return {"progress": round(min(frac, PROGRESS_DISPLAY_CAP), 4),
+            "phase": phase, "eta_s": eta, "source": source}
 
 
 # ── library ──────────────────────────────────────────────────────────────────
@@ -413,7 +1073,7 @@ def library_entries(root) -> list:
     except OSError:
         return out
     for n in names:
-        if not n.lower().endswith(".wav"):
+        if not n.lower().endswith(LIBRARY_EXTS):
             continue
         p = os.path.join(d, n)
         if not os.path.isfile(p):
@@ -432,6 +1092,7 @@ def library_entries(root) -> list:
             meta = {}
         out.append({
             "name": n,
+            "ext": os.path.splitext(n)[1].lower().lstrip("."),
             "size_bytes": st.st_size,
             "created": st.st_mtime,
             "engine": meta.get("engine") or "",
@@ -461,8 +1122,8 @@ def library_target(root, name):
         return None, "refused: a track is addressed by name, not by path"
     if os.sep in name or "/" in name or "\\" in name or name.startswith("."):
         return None, "refused: a track is addressed by name, not by path"
-    if not name.lower().endswith(".wav"):
-        return None, "refused: only .wav tracks"
+    if not name.lower().endswith(LIBRARY_EXTS):
+        return None, "refused: only audio tracks (" + ", ".join(LIBRARY_EXTS) + ")"
     root_real = os.path.realpath(music_dir(root))
     target = os.path.realpath(os.path.join(root_real, name))
     if not target.startswith(root_real + os.sep):
@@ -473,7 +1134,11 @@ def library_target(root, name):
 
 
 def delete_track(root, name) -> tuple:
-    """Delete a wav AND its sidecar. (ok, reason)."""
+    """Delete a track and, if it was the LAST audio file of its stem, its sidecar.
+
+    The stem test matters since converting arrived: song.wav and song.mp3 SHARE one
+    sidecar, so deleting the mp3 must not strip the wav of its prompt and seed.
+    """
     target, reason = library_target(root, name)
     if not target:
         return False, reason
@@ -481,13 +1146,120 @@ def delete_track(root, name) -> tuple:
         os.remove(target)
     except OSError as e:
         return False, f"could not delete: {e}"
-    try:
-        sc = sidecar_path(target)
-        if os.path.isfile(sc):
-            os.remove(sc)
-    except OSError:
-        pass                       # the audio is gone; a stale sidecar is harmless
+    stem = os.path.splitext(target)[0]
+    siblings = [e for e in LIBRARY_EXTS if os.path.isfile(stem + e)]
+    if not siblings:
+        try:
+            sc = sidecar_path(target)
+            if os.path.isfile(sc):
+                os.remove(sc)
+        except OSError:
+            pass                   # the audio is gone; a stale sidecar is harmless
     return True, ""
+
+
+# ── convert (ffmpeg, resolved by the voice lane's ONE ladder) ────────────────
+_ENCODERS_CACHE: "set | None" = None
+
+
+def _ffmpeg() -> "str | None":
+    """The SAME resolver the voice lane uses (explicit-path ladder, never a second
+    implementation) — imported lazily so music.py stays importable on its own."""
+    try:
+        from . import voice as _voice                            # noqa: PLC0415
+    except ImportError:                                          # pragma: no cover
+        import voice as _voice                                   # type: ignore
+    return _voice.ffmpeg_bin()
+
+
+def ffmpeg_encoders(run=None, ffmpeg=None) -> set:
+    """The encoder names this ffmpeg build carries, probed ONCE per process.
+
+    `run` is injectable so the decision table can be tested without an ffmpeg: our
+    provisioned imageio-ffmpeg build is not guaranteed to ship libmp3lame, and the
+    whole point of the probe is that an unavailable format is never offered.
+    """
+    global _ENCODERS_CACHE
+    if run is None and _ENCODERS_CACHE is not None:
+        return set(_ENCODERS_CACHE)
+    binary = ffmpeg or _ffmpeg()
+    if not binary:
+        if run is None:
+            _ENCODERS_CACHE = set()
+        return set()
+    try:
+        if run is not None:
+            out = run([binary, "-hide_banner", "-encoders"])
+        else:
+            r = subprocess.run([binary, "-hide_banner", "-encoders"],
+                               capture_output=True, text=True, timeout=20)
+            out = (r.stdout or "") + (r.stderr or "")
+    except Exception:                                            # noqa: BLE001
+        out = ""
+    found = set()
+    for line in str(out).splitlines():
+        parts = line.split()
+        # ffmpeg's table is " A....D libmp3lame  MP3 (MPEG audio layer 3)"
+        if len(parts) >= 2 and parts[0][:1] in ("A", "V", "S", "."):
+            found.add(parts[1])
+    if run is None:
+        _ENCODERS_CACHE = set(found)
+    return found
+
+
+def convert_formats(encoders=None) -> list:
+    """Which convert targets are offerable. Absent, not greyed out."""
+    have = ffmpeg_encoders() if encoders is None else set(encoders)
+    return [f for f, spec in CONVERT_FORMATS.items() if spec["encoder"] in have]
+
+
+def convert_argv(ffmpeg: str, src: str, dst: str, fmt: str) -> list:
+    """PURE. `-y` is safe because the caller has already refused an existing target."""
+    spec = CONVERT_FORMATS[fmt]
+    return [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+            "-c:a", spec["encoder"], "-b:a", spec["bitrate"], str(dst)]
+
+
+def convert_track(root, name, fmt, ffmpeg=None, encoders=None) -> tuple:
+    """(new_name, None) | (None, reason). Never clobbers, never leaves a stub."""
+    if fmt not in CONVERT_FORMATS:
+        return None, "unknown format"
+    src, reason = library_target(root, name)
+    if not src:
+        return None, reason
+    binary = ffmpeg or _ffmpeg()
+    if not binary:
+        return None, ("no ffmpeg is available — installing VoiceStudio or Voicebox "
+                      "provisions one")
+    have = set(encoders) if encoders is not None else ffmpeg_encoders()
+    if CONVERT_FORMATS[fmt]["encoder"] not in have:
+        return None, f"this ffmpeg build cannot write {fmt}"
+    dst = os.path.splitext(src)[0] + CONVERT_FORMATS[fmt]["ext"]
+    if os.path.realpath(dst) == os.path.realpath(src):
+        return None, f"that track is already {fmt}"
+    if os.path.exists(dst):
+        return None, f"a {fmt} of that track already exists"
+    try:
+        r = subprocess.run(convert_argv(binary, src, dst, fmt), capture_output=True,
+                           text=True, timeout=CONVERT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        _rm(dst)
+        return None, "the conversion timed out"
+    except OSError as e:
+        return None, f"could not start ffmpeg: {e}"
+    if r.returncode != 0 or not render_ok(dst):
+        _rm(dst)
+        return None, ("the conversion failed\n"
+                      + ((r.stdout or "") + (r.stderr or ""))[-600:]).strip()
+    return os.path.basename(dst), None
+
+
+def _rm(path) -> None:
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
 # ── jobs: ONE render at a time, never a queue ────────────────────────────────
@@ -529,9 +1301,30 @@ def claim_job(params: dict):
             "steps": params["steps"],
             "seed": params["seed"],
             "prompt": params["prompt"],
+            "format": params.get("format") or "",
+            "log": None,
             "wall": None, "error": None, "out": None,
         }
         return dict(_JOB), None
+
+
+def job_log_tail(job, limit: int = 8000) -> str:
+    """The last few KB of the live engine output — the input to `parse_progress`.
+
+    Reading a file the subprocess is still writing is deliberate: it is the ONLY way
+    to see progress from a one-shot engine, and a partial last line is harmless to a
+    parser that is total over junk."""
+    p = (job or {}).get("log")
+    if not p:
+        return ""
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as fh:
+            if size > limit:
+                fh.seek(size - limit)
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
 
 
 def _set(**kw):
@@ -541,26 +1334,52 @@ def _set(**kw):
             _JOB.update(kw)
 
 
-def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S) -> str:
+def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S, log_path=None) -> str:
     """One engine invocation. Returns the combined output tail; raises MusicError on
-    a non-zero exit or a timeout, with that tail in the message."""
+    a non-zero exit or a timeout, with that tail in the message.
+
+    When `log_path` is given the child writes STRAIGHT INTO that file (line-buffered
+    by the child, not by us) instead of into a pipe we only read at the end — that
+    file is what makes live progress possible at all. The error tail is then read
+    back off the same file, so nothing is lost by not piping.
+    """
     env = dict(os.environ)
     for k, v in (env_extra or {}).items():
         env[k] = (v + os.pathsep + env[k]) if (k == "PYTHONPATH" and env.get(k)) else v
+    # Both engines print progress with flush=True; PYTHONUNBUFFERED is belt and
+    # braces for anything in the chain that does not.
+    env.setdefault("PYTHONUNBUFFERED", "1")
     try:
-        r = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
-                           timeout=timeout)
+        if log_path:
+            with open(log_path, "a", encoding="utf-8", errors="replace") as fh:
+                r = subprocess.run(argv, cwd=cwd, env=env, stdout=fh,
+                                   stderr=subprocess.STDOUT, timeout=timeout)
+            tail = _tail_file(log_path, STDERR_TAIL)
+        else:
+            r = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
+                               timeout=timeout)
+            tail = ((r.stdout or "") + (r.stderr or ""))[-STDERR_TAIL:]
     except subprocess.TimeoutExpired:
         raise MusicError(f"the render timed out after {timeout // 60} minutes")
     except OSError as e:
         raise MusicError(f"could not start the engine: {e}")
-    tail = ((r.stdout or "") + (r.stderr or ""))[-STDERR_TAIL:]
     if r.returncode != 0:
         raise MusicError(f"engine exited {r.returncode}\n{tail}".strip())
     return tail
 
 
-def render_minimax(root, params, workdir, out_path, snapshot) -> str:
+def _tail_file(path, limit) -> str:
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size > limit:
+                fh.seek(size - limit)
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def render_minimax(root, params, workdir, out_path, snapshot, log_path=None) -> str:
     py = venv_python(root)
     if not os.path.isfile(py):
         raise MusicError("the music venv is missing — install the engine again")
@@ -568,13 +1387,13 @@ def render_minimax(root, params, workdir, out_path, snapshot) -> str:
     with open(lyr, "w", encoding="utf-8") as fh:
         fh.write(params.get("lyrics", "") or "")
     cmd = minimax_cmd(py, snapshot, params, lyr, out_path)
-    tail = _run(cmd["argv"], cwd=cmd["cwd"], env_extra=cmd["env"])
+    tail = _run(cmd["argv"], cwd=cmd["cwd"], env_extra=cmd["env"], log_path=log_path)
     if not render_ok(out_path):
         raise MusicError("the engine finished but produced no audio\n" + tail)
     return out_path
 
 
-def render_acestep(root, params, workdir, out_path) -> str:
+def render_acestep(root, params, workdir, out_path, log_path=None) -> str:
     models = acestep_models(root)
     lm, synth = acestep_bin(root, "ace-lm"), acestep_bin(root, "ace-synth")
     for b in (lm, synth):
@@ -583,11 +1402,11 @@ def render_acestep(root, params, workdir, out_path) -> str:
     req = os.path.join(workdir, "req.json")
     with open(req, "w", encoding="utf-8") as fh:
         json.dump(acestep_request(params), fh, indent=2)
-    _run(ace_argv(lm, models, req))
+    _run(ace_argv(lm, models, req), log_path=log_path)
     req2 = ace_stage2_request(req)
     if not os.path.isfile(req2):
         raise MusicError("ace-lm produced no stage-2 request — see data/logs/bridge.log")
-    tail = _run(ace_argv(synth, models, req2))
+    tail = _run(ace_argv(synth, models, req2), log_path=log_path)
     # ace-synth names its own output (<stem>00.<ext>); find it rather than assume.
     made = sorted(glob.glob(os.path.join(workdir, "req0*.wav"))
                   + glob.glob(os.path.join(workdir, "req0*.mp3")))
@@ -608,20 +1427,23 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
     except OSError:
         tmp_root = None
     workdir = tempfile.mkdtemp(prefix="harness-music-", dir=tmp_root)
-    name = track_name(params["engine"])
+    name = track_name(params["engine"], fmt=params.get("format", ""))
     out_path = os.path.join(music_dir(root), name)
+    # The engines' own output goes to a per-job file so the panel can watch it move.
+    log_path = os.path.join(workdir, "engine.log")
+    _set(log=log_path)
     try:
         if render is not None:
             render(root, params, workdir, out_path)
         elif params["engine"] == "minimax":
-            render_minimax(root, params, workdir, out_path, snapshot)
+            render_minimax(root, params, workdir, out_path, snapshot, log_path)
         else:
-            render_acestep(root, params, workdir, out_path)
+            render_acestep(root, params, workdir, out_path, log_path)
         wall = round(time.time() - started, 1)
         meta = {"engine": params["engine"], "prompt": params["prompt"],
                 "lyrics": params.get("lyrics", ""), "seconds": params["seconds"],
                 "steps": params["steps"], "seed": params["seed"], "wall": wall,
-                "created": time.time()}
+                "format": params.get("format", ""), "created": time.time()}
         try:
             with open(sidecar_path(out_path), "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=2)

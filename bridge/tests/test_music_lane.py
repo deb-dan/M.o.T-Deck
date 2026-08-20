@@ -70,8 +70,16 @@ for flag, val in (("--seconds", "60"), ("--steps", "30"), ("--seed", "42"),
 check("lyrics travel as a FILE, not an argument",
       "--lyrics-file" in argv and argv[argv.index("--lyrics-file") + 1] == "/w/lyrics.txt")
 inst = dict(P); inst["lyrics"] = "   \n "
-check("an INSTRUMENTAL passes no --lyrics-file at all (an empty file's meaning is undocumented)",
-      "--lyrics-file" not in music.minimax_cmd("p", "/s", inst, "/w/l.txt", "/o.wav")["argv"])
+ia = music.minimax_cmd("p", "/s", inst, "/w/l.txt", "/o.wav")["argv"]
+check("an INSTRUMENTAL passes no --lyrics-file", "--lyrics-file" not in ia)
+# ⚠️ THE BUG THIS PINS (found 2026-08-20 by reading generate.py at the pin): the two
+# lyrics arguments are an argparse mutually-exclusive group with required=True, so
+# passing NEITHER is a usage error — every instrumental minimax render failed before
+# it reached the GPU. The port's own help says to use [Instrumental].
+check("an INSTRUMENTAL still passes --lyrics (the group is argparse-REQUIRED)",
+      "--lyrics" in ia and ia[ia.index("--lyrics") + 1] == "[Instrumental]")
+check("the instrumental token is the one the port documents",
+      music.MINIMAX_INSTRUMENTAL == "[Instrumental]")
 check("every argv element is a string (subprocess would raise otherwise)",
       all(isinstance(a, str) for a in argv))
 check("the engine is never asked to launch a server", not any(
@@ -103,25 +111,30 @@ check("stage-2 naming survives a dotted stem",
       music.ace_stage2_request("/w/my.song.json") == "/w/my.song0.json")
 
 # ══ 3. RAM gate ══════════════════════════════════════════════════════════════
-check("the planning numbers are the spec's, NOT the understated measured RSS",
-      music.MUSIC_RAM_GB == {"minimax": 32, "acestep": 9})
-check("minimax on an empty machine within a 48GB budget: allowed",
+check("the minimax planning number is the honest 14GB, not the pre-measurement 32",
+      music.MUSIC_RAM_GB == {"minimax": 14, "acestep": 9})
+check("minimax on an empty machine within a 48GB budget: no warning",
       music.ram_gate("minimax", 0, 48 * GB) is None)
-check("minimax with a 20GB model loaded: REFUSED",
-      music.ram_gate("minimax", 20 * GB, 48 * GB) is not None)
-check("the refusal names the way out", "eject" in
-      (music.ram_gate("minimax", 20 * GB, 48 * GB) or ""))
-check("acestep with the same 20GB model loaded: allowed (9 + 20 <= 48)",
+check("minimax with a 40GB model loaded: WARNED",
+      music.ram_gate("minimax", 40 * GB, 48 * GB) is not None)
+check("minimax alongside a 20GB chat model now FITS (14 + 20 <= 48)",
+      music.ram_gate("minimax", 20 * GB, 48 * GB) is None)
+check("the warning names both ways out", 
+      all(w in (music.ram_gate("minimax", 40 * GB, 48 * GB) or "")
+          for w in ("Eject", "generate anyway")))
+check("the warning states the numbers rather than just refusing",
+      "48 GB" in (music.ram_gate("minimax", 40 * GB, 48 * GB) or ""))
+check("acestep with the same 20GB model loaded: no warning (9 + 20 <= 48)",
       music.ram_gate("acestep", 20 * GB, 48 * GB) is None)
 check("BOUNDARY IS INCLUSIVE — exactly filling the budget is allowed",
-      music.ram_gate("minimax", 16 * GB, 48 * GB) is None)
-check("one byte over the boundary is refused",
-      music.ram_gate("minimax", 16 * GB + 1, 48 * GB) is not None)
-check("acestep refused when it genuinely cannot fit",
+      music.ram_gate("minimax", 34 * GB, 48 * GB) is None)
+check("one byte over the boundary warns",
+      music.ram_gate("minimax", 34 * GB + 1, 48 * GB) is not None)
+check("acestep warned when it genuinely cannot fit",
       music.ram_gate("acestep", 40 * GB, 48 * GB) is not None)
 check("junk 'other bytes' degrades to zero rather than crashing a request",
       music.ram_gate("acestep", None, 48 * GB) is None)
-check("a junk budget refuses (fail toward the guard, never past it)",
+check("a junk budget warns (fail toward the guard, never past it)",
       music.ram_gate("minimax", 0, "nonsense") is not None)
 check("an unknown engine claims no RAM and is not gated here",
       music.ram_gate("nope", 0, 1) is None)
@@ -147,7 +160,10 @@ for body, why in [
     ({"engine": "acestep"}, "no prompt"),
     ({"engine": "acestep", "prompt": "   "}, "a whitespace prompt"),
     ({"engine": "acestep", "prompt": 5}, "a non-string prompt"),
-    ({"engine": "acestep", "prompt": "x" * 2001}, "an over-long prompt"),
+    ({"engine": "acestep", "prompt": "x" * 8001}, "an over-long prompt"),
+    ({"engine": "acestep", "prompt": "x", "format": "flac"}, "a format the engine cannot write"),
+    ({"engine": "minimax", "prompt": "x", "format": "mp3"}, "mp3 asked of minimax"),
+    ({"engine": "acestep", "prompt": "x", "format": 7}, "a non-string format"),
     ({"engine": "acestep", "prompt": "x", "seconds": 9}, "9 seconds"),
     ({"engine": "acestep", "prompt": "x", "seconds": 301}, "301 seconds"),
     ({"engine": "acestep", "prompt": "x", "seconds": "soon"}, "junk seconds"),
@@ -377,6 +393,273 @@ check("a hung render is bounded by the 30-minute timeout",
 
 check("the render timeout is the spec's 30 minutes", music.MUSIC_TIMEOUT_S == 1800)
 
+# ══ 7b. the RAM warning is an OVERRIDE, not a wall ═══════════════════════════
+# The gate went from refusal to warning-with-confirm on Debi's ruling. The flag that
+# turns a warning into a spend is therefore the most dangerous boolean in the lane:
+# it must be impossible to set by accident, and impossible to skip silently.
+for body, want in [({"confirm": True}, True), ({"confirm": "true"}, True),
+                   ({"confirm": "TRUE"}, True), ({"confirm": "1"}, True),
+                   ({"confirm": "yes"}, True),
+                   ({}, False), (None, False), ({"confirm": False}, False),
+                   ({"confirm": 1}, False), ({"confirm": "maybe"}, False),
+                   ({"confirm": "0"}, False), ({"confirm": None}, False),
+                   ({"confirm": []}, False), ("confirm", False)]:
+    check(f"wants_confirm({body!r}) is {want}", music.wants_confirm(body) is want)
+
+# ══ 7c. output formats (VERIFIED at the pins, not assumed) ═══════════════════
+check("acestep's four encoders are exactly what ARCHITECTURE.md documents",
+      music.ACESTEP_FORMATS == ("wav24", "wav32", "wav16", "mp3"))
+check("minimax writes wav and ONLY wav (generate.py has no format argument at all)",
+      music.MINIMAX_FORMATS == ("wav",))
+check("the default acestep format is unchanged from v1 (wav24)",
+      music.DEFAULT_FORMAT["acestep"] == "wav24")
+check("an mp3 render is named .mp3, a wav render .wav",
+      music.track_name("acestep", 0, "mp3").endswith(".mp3")
+      and music.track_name("acestep", 0, "wav24").endswith(".wav"))
+check("an unknown format still yields a .wav name rather than an extensionless file",
+      music.track_name("acestep", 0, "nonsense").endswith(".wav"))
+check("the format reaches the acestep request",
+      music.acestep_request({**A, "format": "mp3"})["output_format"] == "mp3")
+check("a junk format on the request falls back to the default, never onto the wire",
+      music.acestep_request({**A, "format": "flac"})["output_format"] == "wav24")
+check("the request still has exactly the six documented keys with a format set",
+      set(music.acestep_request({**A, "format": "wav32"}))
+      == {"caption", "lyrics", "duration", "seed", "inference_steps", "output_format"})
+check("a valid acestep format validates through",
+      V({"engine": "acestep", "prompt": "x", "format": "mp3"}, INST)[0]["format"] == "mp3")
+check("an omitted format resolves to the engine's default in validation",
+      V({"engine": "minimax", "prompt": "x"}, INST)[0]["format"] == "wav")
+
+# ══ 7d. progress parsing + ETA ═══════════════════════════════════════════════
+PP = music.parse_progress
+check("tqdm percentage is read", PP("  45%|####      | 9/20")[0] == 0.45)
+check("a bare N/M counter is read", PP("[3/5] Loading DAV decoder")[0] == 0.6)
+check("the PHASE text comes back with it", "Loading" in PP("[3/5] Loading DAV decoder")[1])
+check("MINIMAX'S NON-MONOTONIC STAGES: the max wins, so the bar never goes backwards",
+      PP("[1/5] a\n[2/5] b\n[3/5] c\n[1/5] d\n[2/5] e\n[4/5] f")[0] == 0.8)
+check("step counters partway through a run read partway through",
+      PP("step 4/8 done")[0] == 0.5)
+for junk in ("", None, 7, "no numbers here at all", "\n\n\n", "0/0 nothing",
+             "[9/5] impossible", "999%|", "loading… please wait"):
+    f_, ph = PP(junk)
+    check(f"junk progress {junk!r} yields no false bar",
+          (f_ is None or 0.0 <= f_ <= 1.0) and isinstance(ph, str))
+check("a 100% line is read as complete by the PARSER (the CAP is applied on display)",
+      PP("100%|##########| 20/20")[0] == 1.0)
+
+E = music.estimate_wall
+check("with NO history the measured calibration is used (60s minimax ≈ 115.5s)",
+      E("minimax", 60) == 115.5)
+check("acestep's calibration point", E("acestep", 60) == 24.5)
+check("BETWEEN the two minimax points it interpolates rather than extrapolating a rate",
+      100.0 < E("minimax", 100) < 676.0)
+check("SUPERLINEARITY is honoured: 145s costs far more than 2x the 60s render",
+      E("minimax", 145) == 675.6)
+check("outside the known range it scales the nearest point proportionally",
+      E("acestep", 120) == 49.0)
+hist = [{"engine": "acestep", "seconds": 60, "wall": 30.0},
+        {"engine": "minimax", "seconds": 60, "wall": 999.0}]
+check("REAL history on this machine beats the calibration table",
+      E("acestep", 60, hist) == 30.0)
+check("history for a DIFFERENT engine is ignored", E("acestep", 60, [hist[1]]) == 24.5)
+for junk in (None, "sixty", 0, -5, []):
+    check(f"a junk length {junk!r} yields no estimate", E("minimax", junk) is None)
+check("junk history rows are skipped rather than crashing the estimate",
+      E("acestep", 60, [{"engine": "acestep", "seconds": "x", "wall": None}, "nope"]) == 24.5)
+check("an unknown engine with no history has no estimate", E("nope", 60) is None)
+
+pv = music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                          "started": time.time()}, "[3/5] x")
+check("THE 95% CAP: a running job never displays a completed bar",
+      pv["progress"] <= music.PROGRESS_DISPLAY_CAP and music.PROGRESS_DISPLAY_CAP == 0.95)
+check("a 100% engine line is capped to 95% while the job is still running",
+      music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                           "started": time.time()}, "100%|#| 8/8")["progress"] == 0.95)
+check("the view carries an ETA even when the engine says nothing",
+      music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                           "started": time.time()}, "")["eta_s"] == 24.5)
+check("with no engine output the bar falls back to elapsed/estimate",
+      music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                           "started": time.time() - 12}, "")["source"] == "estimate")
+check("an engine line WINS over the estimate",
+      music.progress_view({"engine": "acestep", "seconds": 60, "state": "running",
+                           "started": time.time()}, "[1/5] x")["source"] == "engine")
+check("a DONE job reads as complete", music.progress_view(
+    {"engine": "acestep", "seconds": 60, "state": "done"})["progress"] == 1.0)
+check("a FAILED job has no progress to show", music.progress_view(
+    {"engine": "acestep", "seconds": 60, "state": "failed"})["progress"] is None)
+check("progress_view is total over a junk job", music.progress_view(None)["progress"] is None)
+
+# ══ 7e. templates ════════════════════════════════════════════════════════════
+B = music.builtin_templates()
+check("there are six starter templates", len(B) == 6)
+check("every starter has a unique id", len({t["id"] for t in B}) == 6)
+check("the starters cover the promised ground", {t["id"] for t in B}
+      == {"neo-soul", "rock", "lofi", "cinematic", "edm", "folk"})
+for t in B:
+    # THE LOAD-BEARING ONE: a starter can never be a request the bridge would refuse.
+    p_, e_ = V({"engine": "acestep", "prompt": t["prompt"], "lyrics": t["lyrics"],
+                "seconds": t["seconds"]}, INST)
+    check(f"starter {t['id']} validates unchanged", e_ is None)
+    check(f"starter {t['id']} has a substantial caption", 700 < len(t["prompt"]) < 2400)
+    check(f"starter {t['id']} declares a name and a tag", t["name"] and t["tag"])
+    check(f"starter {t['id']} is marked builtin", t["builtin"] is True)
+check("the two instrumental starters carry NO lyrics",
+      all(next(t for t in B if t["id"] == i)["lyrics"] == "" for i in ("lofi", "cinematic")))
+check("the vocal starters carry section tags the engines understand",
+      all("[Chorus]" in next(t for t in B if t["id"] == i)["lyrics"]
+          for i in ("neo-soul", "rock", "edm", "folk")))
+B[0]["prompt"] = "MUTATED"
+check("builtin_templates hands out COPIES — the table cannot be edited through it",
+      music.builtin_templates()[0]["prompt"] != "MUTATED")
+
+with tempfile.TemporaryDirectory() as td:
+    check("with nothing saved, all_templates is just the starters",
+          len(music.all_templates(td)) == 6 and music.user_templates(td) == [])
+    t, err = music.save_template(td, {"name": "My thing", "prompt": "warm jazz",
+                                      "lyrics": "", "seconds": 45, "engine": "acestep"})
+    check("a template saves", err is None and t["name"] == "My thing")
+    check("a saved template is NOT builtin and remembers the form",
+          t["builtin"] is False and t["seconds"] == 45 and t["engine_hint"] == "acestep")
+    check("it survives a reload from disk", len(music.user_templates(td)) == 1)
+    check("starters come FIRST so a growing collection cannot bury them",
+          music.all_templates(td)[0]["builtin"] is True
+          and music.all_templates(td)[-1]["builtin"] is False)
+    check("the templates file is written atomically (no .tmp left behind)",
+          not os.path.exists(music.templates_path(td) + ".tmp"))
+    for bad, why in [(None, "a non-dict"), ({}, "no name"),
+                     ({"name": " ", "prompt": "x"}, "a blank name"),
+                     ({"name": "n"}, "no prompt"),
+                     ({"name": "n", "prompt": "  "}, "a blank prompt"),
+                     ({"name": "n" * 61, "prompt": "x"}, "an over-long name"),
+                     ({"name": "n", "prompt": "x" * 8001}, "an over-long prompt"),
+                     ({"name": "n", "prompt": "x", "lyrics": "y" * 20001}, "over-long lyrics")]:
+        r_, e_ = music.save_template(td, bad)
+        check(f"REFUSED template: {why}", r_ is None and e_)
+    check("a junk length degrades to the default rather than refusing the save",
+          music.validate_template({"name": "n", "prompt": "x", "seconds": "soon"})[0]["seconds"]
+          == music.SECONDS_DEFAULT)
+    ok_, why = music.delete_template(td, t["id"])
+    check("a user template deletes", ok_ and music.user_templates(td) == [])
+    check("A BUILT-IN CAN NEVER BE DELETED (it is code — it would come back on restart)",
+          music.delete_template(td, "rock")[0] is False
+          and len(music.builtin_templates()) == 6)
+    check("deleting something that is not there says so",
+          music.delete_template(td, "nope")[0] is False)
+    check("deleting nothing at all is refused", music.delete_template(td, "")[0] is False)
+    open(music.templates_path(td), "w").write("{not a list")
+    check("a CORRUPT templates file degrades to the starters, it does not blank the page",
+          music.user_templates(td) == [] and len(music.all_templates(td)) == 6)
+
+# ══ 7f. output folder ════════════════════════════════════════════════════════
+with tempfile.TemporaryDirectory() as td:
+    check("the default output dir is data/music",
+          music.music_dir(td) == music.music_base_dir(td))
+    out = os.path.join(td, "elsewhere", "songs")
+    p_, why = music.validate_output_dir(td, out)
+    check("a repo-relative folder is accepted and created", p_ and os.path.isdir(p_))
+    music.write_settings(td, {"output_dir": p_})
+    check("the library then follows the setting",
+          os.path.realpath(music.music_dir(td)) == os.path.realpath(p_))
+    open(os.path.join(p_, "acestep-x.wav"), "w").write("a")
+    check("listing follows the configured folder", len(music.library_entries(td)) == 1)
+    check("CONTAINMENT now anchors on the CONFIGURED folder",
+          music.library_target(td, "acestep-x.wav")[0]
+          and music.library_target(td, "../../etc/passwd")[0] is None)
+    music.write_settings(td, {"output_dir": os.path.join(td, "gone", "away")})
+    check("a configured folder that disappeared still resolves (it is recreated)",
+          os.path.isdir(music.music_dir(td)))
+    music.write_settings(td, {})
+    check("clearing the setting returns to the default",
+          music.music_dir(td) == music.music_base_dir(td))
+    check("settings survive a round trip", music.read_settings(td) == {})
+    open(music.settings_path(td), "w").write("[]")
+    check("a junk settings file degrades to defaults",
+          music.read_settings(td) == {} and music.music_dir(td) == music.music_base_dir(td))
+    for bad, why in [("", "an empty path"), (None, "None"), (7, "a number"),
+                     ("/etc", "a folder outside home and the repo"),
+                     ("vendor/hermes", "anything inside vendor/")]:
+        r_, e_ = music.validate_output_dir(td, bad)
+        check(f"OUTPUT DIR refuses {why}", r_ is None and isinstance(e_, str) and e_)
+    f = os.path.join(td, "afile"); open(f, "w").write("x")
+    check("a path that is a FILE is refused", music.validate_output_dir(td, f)[0] is None)
+    check("~ is expanded rather than taken literally",
+          "~" not in (music.validate_output_dir(td, "~")[0] or ""))
+
+# ══ 7g. convert ══════════════════════════════════════════════════════════════
+check("convert targets are mp3 and m4a only (no video in this slice)",
+      set(music.CONVERT_FORMATS) == {"mp3", "m4a"})
+check("mp3 goes through libmp3lame, m4a through aac",
+      music.CONVERT_FORMATS["mp3"]["encoder"] == "libmp3lame"
+      and music.CONVERT_FORMATS["m4a"]["encoder"] == "aac")
+cav = music.convert_argv("/f/ffmpeg", "/d/a.wav", "/d/a.mp3", "mp3")
+check("convert argv names the encoder, the bitrate and both files",
+      cav[0] == "/f/ffmpeg" and "-c:a" in cav
+      and cav[cav.index("-c:a") + 1] == "libmp3lame"
+      and cav[cav.index("-b:a") + 1] == "192k"
+      and cav[cav.index("-i") + 1] == "/d/a.wav" and cav[-1] == "/d/a.mp3")
+check("every convert argv element is a string", all(isinstance(x, str) for x in cav))
+FAKE_ENC = (" V....D libx264              H.264\n"
+            " A....D aac                  AAC (Advanced Audio Coding)\n"
+            " A....D libmp3lame           MP3 (MPEG audio layer 3)\n")
+check("a build WITH both encoders offers both",
+      set(music.convert_formats(music.ffmpeg_encoders(run=lambda a: FAKE_ENC,
+                                                      ffmpeg="/f"))) == {"mp3", "m4a"})
+check("A BUILD WITHOUT libmp3lame SIMPLY DOES NOT OFFER MP3 (absent, not greyed out)",
+      music.convert_formats(music.ffmpeg_encoders(
+          run=lambda a: " A....D aac  AAC\n", ffmpeg="/f")) == ["m4a"])
+check("no ffmpeg at all offers nothing",
+      music.convert_formats(music.ffmpeg_encoders(run=lambda a: "", ffmpeg="/f")) == [])
+check("a probe that throws offers nothing rather than breaking the page",
+      music.convert_formats(music.ffmpeg_encoders(
+          run=lambda a: (_ for _ in ()).throw(OSError("boom")), ffmpeg="/f")) == [])
+
+with tempfile.TemporaryDirectory() as td:
+    d = music.music_dir(td)
+    w = os.path.join(d, "acestep-20260820-120000.wav")
+    open(w, "w").write("RIFF")
+    json.dump({"engine": "acestep", "seconds": 60, "wall": 24.5},
+              open(music.sidecar_path(w), "w"))
+    enc = {"libmp3lame", "aac"}
+    check("converting refuses an unknown format",
+          music.convert_track(td, os.path.basename(w), "ogg", ffmpeg="/f", encoders=enc)[0] is None)
+    check("converting refuses a track that is not there",
+          music.convert_track(td, "nope.wav", "mp3", ffmpeg="/f", encoders=enc)[0] is None)
+    check("converting refuses a traversal name",
+          music.convert_track(td, "../x.wav", "mp3", ffmpeg="/f", encoders=enc)[0] is None)
+    check("converting refuses when this build lacks the encoder",
+          music.convert_track(td, os.path.basename(w), "mp3", ffmpeg="/f",
+                              encoders={"aac"})[0] is None)
+    m = os.path.splitext(w)[0] + ".mp3"
+    open(m, "w").write("ID3")
+    check("NEVER CLOBBERS — an existing conversion is refused, not overwritten",
+          music.convert_track(td, os.path.basename(w), "mp3", ffmpeg="/f",
+                              encoders=enc)[0] is None
+          and open(m).read() == "ID3")
+    check("converting an mp3 TO mp3 is refused as already-that-format",
+          music.convert_track(td, os.path.basename(m), "mp3", ffmpeg="/f",
+                              encoders=enc)[0] is None)
+    lib = music.library_entries(td)
+    check("CONVERTED FILES ARE LISTED beside their source", len(lib) == 2)
+    check("each carries its own extension",
+          {e["ext"] for e in lib} == {"wav", "mp3"})
+    check("THE SIDECAR IS SHARED — both rows know the prompt and the render time",
+          all(e["wall"] == 24.5 for e in lib))
+    a4 = os.path.join(d, "acestep-20260820-130000.m4a")
+    open(a4, "w").write("ftyp")
+    check("an .m4a is addressable and listed too",
+          music.library_target(td, os.path.basename(a4))[0] == a4
+          and len(music.library_entries(td)) == 3)
+    check("a .txt in the same folder is still refused",
+          music.library_target(td, "notes.txt")[0] is None)
+    os.remove(a4)
+    ok_, _r = music.delete_track(td, os.path.basename(m))
+    check("deleting the mp3 leaves the wav AND the shared sidecar alone",
+          ok_ and os.path.isfile(w) and os.path.isfile(music.sidecar_path(w)))
+    ok_, _r = music.delete_track(td, os.path.basename(w))
+    check("deleting the LAST audio of a stem finally removes the sidecar",
+          ok_ and not os.path.exists(music.sidecar_path(w)))
+
 # ══ 8. wiring: bridge endpoints, log name, ledger, script, panel ═════════════
 APP = (ROOT / "bridge" / "app.py").read_text()
 for route in ('@app.get("/api/music/status")', '@app.post("/api/music/install")',
@@ -452,7 +735,7 @@ check("all three sections are rendered",
 check("the engine picker auto-picks when only one is installed",
       "musicEngine = inst[0] || null" in PANEL)
 check("a running render disables Generate and shows an elapsed clock",
-      "elapsed" in PANEL.split("function musicPaintState")[1][:900]
+      "elapsed" in PANEL.split("function musicPaintState")[1][:2600]
       and "btn.disabled = !!running" in PANEL)
 check("the UI says outright that a render cannot be stopped",
       "cannot be stopped" in PANEL)
@@ -476,6 +759,62 @@ check("THE ONCE-A-SECOND TICKER REPAINTS STATE, it does not rebuild the form",
       "box._sig = sig" in PANEL
       and "musicPaintState(job, running); return;" in PANEL
       and "renderMusicCreate();" in PANEL.split("musicPollT = setInterval")[1][:900])
+
+# ══ 9. wiring for v1.1 (warning-with-override, progress, templates, dir, formats) ══
+for route in ('@app.get("/api/music/templates")', '@app.post("/api/music/templates")',
+              '@app.post("/api/music/templates/delete")',
+              '@app.get("/api/music/settings")', '@app.post("/api/music/settings")',
+              '@app.post("/api/music/convert")'):
+    check(f"endpoint exists: {route}", route in APP)
+GEN = APP.split("def music_generate")[1][:3000]
+check("the ledger warning is only skipped when the caller EXPLICITLY confirmed",
+      "wants_confirm(body)" in GEN and "needs_confirm" in GEN)
+check("an unconfirmed over-budget render is still a 409, never a silent start",
+      "status_code=409" in GEN)
+check("an over-budget render that WAS confirmed is recorded in the bridge log",
+      "confirmed by the user" in APP)
+check("progress rides the SAME job dict rather than a second one",
+      "progress_view" in APP and "_music_job_view" in APP)
+check("the ETA is fitted to what renders actually cost on THIS machine",
+      "_music_history" in APP and "library_entries(ROOT)" in APP)
+check("the temp log path is never handed to the panel", 'job.pop("log"' in APP)
+check("converting reuses the voice lane's ONE ffmpeg resolver, never a second one",
+      "from . import voice as _voice" in MUS and "ffmpeg_bin" in MUS
+      and "shutil.which(\"ffmpeg\")" not in MUS)
+check("/file answers with the right MIME per extension",
+      '"audio/mpeg"' in APP and '"audio/mp4"' in APP)
+check("the engines' output is streamed to a FILE so progress can be watched",
+      "log_path" in MUS and "stderr=subprocess.STDOUT" in MUS)
+
+check("the panel renders the templates strip", "function renderMusicTemplates(" in PANEL)
+check("a template PREFILLS and does not generate by itself",
+      "function musicUseTemplate(" in PANEL
+      and "if (andGo) musicGenerate();" in PANEL)
+check("the user can save the current form as a template",
+      "function musicSaveTemplate(" in PANEL and "/api/music/templates" in PANEL)
+check("a user template deletes two-step; a built-in has no delete drawn",
+      "function musicDelTemplate(" in PANEL and "t.builtin ? ''" in PANEL)
+check("the RAM warning offers a way through, in the bridge's own words",
+      "res.needs_confirm" in PANEL and "Generate anyway" in PANEL
+      and "musicGenerate(true)" in PANEL)
+check("a confirmed render sends confirm:true", "body.confirm = true" in PANEL)
+check("the progress bar REUSES the download-bar classes — still zero new CSS",
+      'class="dlbar"' in PANEL.split("function renderMusicCreate")[1][:9000]
+      and "mus-fill" in PANEL)
+check("elapsed and an estimated time-left are both shown",
+      "left (estimated)" in PANEL and "function musicClock(" in PANEL)
+check("the output folder is always visible and changeable",
+      "function renderMusicOutDir(" in PANEL and "saving to:" in PANEL
+      and "function musicSetOutDir(" in PANEL)
+check("the folder is a TYPED path (WKWebView has no folder picker)",
+      'id="mus-dir"' in PANEL and "webkitdirectory" not in PANEL)
+check("a format picker is drawn only when the engine has more than one",
+      "fmts.length > 1" in PANEL and 'id="mus-fmt"' in PANEL)
+check("library rows offer only the conversions this ffmpeg can do",
+      "convert_formats" in PANEL and "/api/music/convert" in PANEL)
+check("a conversion that already exists is not offered again",
+      "haveExts.indexOf(f) >= 0" in PANEL)
+check("there is still no cancel anywhere", "/api/music/cancel" not in PANEL)
 
 print()
 print(f"{'FAIL' if FAILS else 'OK'} — {len(FAILS)} failure(s)")

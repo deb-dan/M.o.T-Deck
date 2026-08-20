@@ -1426,6 +1426,11 @@
       <div class="cap-card" id="music-engines"><div class="cs-empty">Loading…</div></div>
     </div>
 
+    <div class="caps-group" id="music-templates-wrap" hidden>
+      <div class="cap-h">Templates<span class="cap-count" id="music-tplcount"></span></div>
+      <div class="cap-card" id="music-templates"></div>
+    </div>
+
     <div class="caps-group" id="music-create-wrap" hidden>
       <div class="cap-h">Create</div>
       <div class="cap-card" id="music-create"></div>
@@ -1433,6 +1438,7 @@
 
     <div class="caps-group">
       <div class="cap-h">Library<span class="cap-count" id="music-libcount"></span></div>
+      <div class="cap-desc" id="music-outdir" style="margin:2px 0 8px"></div>
       <div class="cap-card" id="music-library"><div class="cs-empty">Loading…</div></div>
     </div>
   </div>
@@ -10264,6 +10270,8 @@ let musicPollT = null;
 let musicTick = 0;
 let musicPlay = '';        // the ONE track that currently has an <audio> element
 let musicErr = '';         // inline error under Generate (the bridge's own words)
+let musicWarn = '';        // the RAM warning, waiting for an explicit override
+let musicSaveTpl = false;  // the inline "save as template" name box is open
 
 function musicEngines(){ return ((musicSnap || {}).engines) || []; }
 function musicInstalled(){ return musicEngines().filter(e => e.installed).map(e => e.engine); }
@@ -10317,7 +10325,9 @@ async function loadMusicLibrary(){
 
 function renderMusic(){
   renderMusicEngines();
+  renderMusicTemplates();
   renderMusicCreate();
+  renderMusicOutDir();
   const st = document.getElementById('music-stamp');
   if (st){
     const inst = musicInstalled();
@@ -10411,6 +10421,155 @@ function musicSyncSecs(v){
   if (a) a.value = v; if (b) b.value = v;
 }
 
+/* ---------- templates ----------
+   Six starters written in the structured caption style both engines were trained to
+   read, plus anything the user saved. A click PREFILLS the form and stops there —
+   spending two minutes of GPU on a mis-click would be the wrong default. `use &
+   generate` is the deliberate one-click path for someone who wants exactly this. */
+function musicTpls(){ return ((musicSnap || {}).templates) || []; }
+
+function renderMusicTemplates(){
+  const wrap = document.getElementById('music-templates-wrap');
+  const box = document.getElementById('music-templates');
+  const cnt = document.getElementById('music-tplcount');
+  if (!wrap || !box) return;
+  const tpls = musicTpls();
+  // Nothing to prefill INTO until an engine exists, so the strip stays out of the way.
+  wrap.hidden = !musicInstalled().length || !tpls.length;
+  if (wrap.hidden) return;
+  if (cnt) cnt.textContent = String(tpls.length);
+  box.innerHTML = tpls.map(t => {
+    const gist = String(t.prompt || '').slice(0, 90).replace(/\s+/g, ' ');
+    const del = t.builtin ? ''
+      : `<button class="cap-btn" onclick="musicDelTemplate('${escAttr(t.id)}', this)"
+                 title="Forget this template">✕</button>`;
+    return `<div class="cap-row">
+      <div class="cap-txt">
+        <div class="cap-name">${esc(t.name)}
+          <span class="cap-pill">${esc(t.tag || '')}</span>
+          ${t.builtin ? '' : '<span class="cap-pill">yours</span>'}</div>
+        <div class="cap-desc" style="white-space:normal">${esc(gist)}…</div>
+      </div>
+      <div class="cap-ctl">
+        <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', false)">Use</button>
+        <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', true)"
+                title="Prefill and start rendering">use &amp; generate</button>
+        ${del}
+      </div></div>`;
+  }).join('');
+}
+
+function musicUseTemplate(id, andGo){
+  const t = musicTpls().find(x => x.id === id);
+  if (!t) return;
+  if (t.engine_hint && musicInstalled().indexOf(t.engine_hint) >= 0){
+    musicEngine = t.engine_hint;
+  }
+  musicErr = ''; musicWarn = '';
+  renderMusicCreate();                       // make sure the fields exist
+  const set = (elId, v) => { const e = document.getElementById(elId); if (e) e.value = v; };
+  set('mus-prompt', t.prompt || '');
+  set('mus-lyrics', t.lyrics || '');
+  if (t.seconds) musicSyncSecs(t.seconds);
+  set('mus-steps', t.steps == null ? '' : t.steps);
+  feed(`music: loaded the "${esc(t.name)}" template`);
+  if (andGo) musicGenerate();
+}
+
+async function musicSaveTemplate(){
+  const nameEl = document.getElementById('mus-tplname');
+  const name = (nameEl && nameEl.value || '').trim();
+  if (!name){ musicSaveTpl = true; renderMusicCreate();
+              const n = document.getElementById('mus-tplname'); if (n) n.focus(); return; }
+  const body = {name,
+    prompt: (document.getElementById('mus-prompt') || {}).value || '',
+    lyrics: (document.getElementById('mus-lyrics') || {}).value || '',
+    seconds: musicSecs(),
+    steps: (document.getElementById('mus-steps') || {}).value || '',
+    engine: musicEngine};
+  let res = null;
+  try {
+    const r = await fetch('/api/music/templates', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    res = await r.json();
+  } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
+  if (!res || !res.ok){ musicErr = (res && res.error) || 'could not save the template';
+                        musicPaintState(musicJob(), musicRunning()); return; }
+  if (musicSnap) musicSnap.templates = res.templates || musicTpls();
+  musicSaveTpl = false;
+  feed(`music: saved the "${esc(name)}" template`);
+  renderMusicTemplates(); renderMusicCreate();
+}
+
+async function musicDelTemplate(id, btn){
+  if (btn && !btn._armed){       // two-step, like every other delete in the panel
+    btn._armed = true; btn.classList.add('arm'); btn.textContent = 'sure?';
+    setTimeout(() => { if (btn._armed){ btn._armed = false;
+      btn.classList.remove('arm'); btn.textContent = '✕'; } }, 3000);
+    return;
+  }
+  try {
+    const r = await fetch('/api/music/templates/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    const j = await r.json();
+    if (j && j.ok && musicSnap) musicSnap.templates = j.templates || [];
+  } catch (e) {}
+  renderMusicTemplates();
+}
+
+/* ---------- where tracks are saved ----------
+   Always visible, because "where did my song go" should never need a support
+   answer. A typed path, not a picker: WKWebView has no folder picker (the recorded
+   ⊕-attach class of silent no-op), which is why the voice lane types paths too. */
+function renderMusicOutDir(){
+  const el = document.getElementById('music-outdir');
+  if (!el) return;
+  const dir = (musicSnap || {}).dir || '';
+  const def = (musicSnap || {}).default_dir || '';
+  el.innerHTML = `saving to: <span style="color:var(--dim)">${esc(dir)}</span>
+    <button class="cap-btn" onclick="musicEditOutDir()">change</button>
+    ${dir && def && dir !== def
+      ? `<span style="opacity:.6"> · only this folder is listed below</span>` : ''}`;
+}
+
+function musicEditOutDir(){
+  const el = document.getElementById('music-outdir');
+  if (!el) return;
+  const dir = (musicSnap || {}).dir || '';
+  el.innerHTML = `<input class="cap-inp" id="mus-dir" style="width:60%"
+      value="${escAttr(dir)}" placeholder="~/Music/Harness">
+    <button class="cap-btn go" onclick="musicSetOutDir()">Set</button>
+    <button class="cap-btn" onclick="renderMusicOutDir()">cancel</button>
+    <div class="cap-desc">Empty = back to the default. Tracks already in the old
+      folder stay there and reappear if you set it back.</div>
+    <div class="cap-err" id="mus-dir-err"></div>`;
+  const i = document.getElementById('mus-dir'); if (i) i.focus();
+}
+
+async function musicSetOutDir(){
+  const v = (document.getElementById('mus-dir') || {}).value || '';
+  let res = null;
+  try {
+    const r = await fetch('/api/music/settings', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({output_dir: v})});
+    res = await r.json();
+  } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
+  if (!res || !res.ok){
+    const e2 = document.getElementById('mus-dir-err');
+    if (e2) e2.textContent = (res && res.error) || 'could not set that folder';
+    return;
+  }
+  feed(`music: saving tracks to ${esc(res.output_dir || '')}`);
+  await loadMusicStatus();
+  await loadMusicLibrary();
+}
+
+/* PURE: seconds → "1m 05s" (the one time format the whole lane uses). */
+function musicClock(s){
+  s = Math.max(0, Math.round(Number(s) || 0));
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
 function renderMusicCreate(){
   const wrap = document.getElementById('music-create-wrap');
   const box = document.getElementById('music-create');
@@ -10434,8 +10593,10 @@ function renderMusicCreate(){
   // lesson, in a place where the poll is guaranteed to be running. A signature of
   // everything the markup depends on is the whole test; state goes through
   // musicPaintState, which touches only the button, the clock and the error line.
+  const fmts = (((musicSnap || {}).formats) || {})[musicEngine] || [];
   const sig = [inst.join(','), musicEngine, eng.default_steps, eng.max_steps,
-               (musicSnap || {}).seconds_min, (musicSnap || {}).seconds_max].join('|');
+               (musicSnap || {}).seconds_min, (musicSnap || {}).seconds_max,
+               fmts.join(','), musicSaveTpl ? 'tpl' : ''].join('|');
   const typing = box.contains(document.activeElement) &&
     /^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || '');
   if (box.querySelector('#mus-prompt') && (box._sig === sig || typing)){
@@ -10494,14 +10655,41 @@ function renderMusicCreate(){
       <div class="cap-ctl"><input class="cap-inp" type="number" id="mus-seed"
         style="width:126px" min="0" placeholder="random"></div>
     </div>
+    ${fmts.length > 1 ? `
     <div class="cap-row">
-      <div class="cap-txt">
-        <div class="cap-desc" id="mus-state"></div>
-        <div class="cap-desc">A render cannot be stopped once it starts — there is no
-          Cancel, because killing a Metal render mid-flight is untested.</div>
-        <div class="cap-err" id="mus-err"></div>
+      <div class="cap-txt"><div class="cap-name">Format</div>
+        <div class="cap-desc">What the engine itself writes. Any track can also be
+          converted afterwards from the library.</div></div>
+      <div class="cap-ctl"><select class="cap-inp" id="mus-fmt" style="width:auto">
+        ${fmts.map(f => `<option value="${escAttr(f)}"${
+          f === (((musicSnap || {}).format_default) || {})[musicEngine] ? ' selected' : ''
+          }>${esc((((musicSnap || {}).format_label) || {})[f] || f)}</option>`).join('')}
+      </select></div>
+    </div>` : ''}
+    <div class="cap-row" style="display:block">
+      <div class="cap-desc" id="mus-state"></div>
+      <!-- progress reuses the DOWNLOAD bar's classes (.dlrow/.dlbar/.dlfill) with the
+           row chrome turned off inline — same visual language as a model download,
+           and the Music view still adds zero CSS rules. -->
+      <div class="dlrow" id="mus-prog" style="border:none;padding:0;margin:0" hidden>
+        <div class="dlbar"><div class="dlfill" id="mus-fill" style="width:0%"></div></div>
       </div>
-      <div class="cap-ctl"><button class="primary" id="mus-go" onclick="musicGenerate()">Generate</button></div>
+      <div class="cap-desc">A render cannot be stopped once it starts — there is no
+        Cancel, because killing a Metal render mid-flight is untested.</div>
+      <div class="cap-err" id="mus-err"></div>
+      <div id="mus-confirm" style="margin-top:6px" hidden></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button class="primary" id="mus-go" onclick="musicGenerate()">Generate</button>
+        ${musicSaveTpl
+          ? `<input class="cap-inp" id="mus-tplname" style="width:180px"
+                    placeholder="template name"
+                    onkeydown="if(event.key==='Enter')musicSaveTemplate()">
+             <button class="cap-btn go" onclick="musicSaveTemplate()">Save</button>
+             <button class="cap-btn" onclick="musicSaveTpl=false;renderMusicCreate()">cancel</button>`
+          : `<button class="cap-btn" onclick="musicSaveTemplate()"
+                     title="Remember this prompt, lyrics and length as a template"
+               >Save as template</button>`}
+      </div>
     </div>`;
   musicPaintState(job, running);
 }
@@ -10510,13 +10698,37 @@ function musicPaintState(job, running){
   const btn = document.getElementById('mus-go');
   const st = document.getElementById('mus-state');
   const er = document.getElementById('mus-err');
+  const prog = document.getElementById('mus-prog');
+  const fill = document.getElementById('mus-fill');
+  const conf = document.getElementById('mus-confirm');
   if (er) er.textContent = musicErr || '';
   if (btn){ btn.disabled = !!running; btn.textContent = running ? 'Rendering…' : 'Generate'; }
+  // THE RAM WARNING IS AN OVERRIDE, NOT A WALL: the bridge stated the numbers, and
+  // the only person who knows what else this machine is doing is looking at them.
+  if (conf){
+    conf.hidden = !musicWarn || !!running;
+    if (musicWarn && !running){
+      conf.innerHTML = `<div class="cap-desc" style="color:var(--gold)">${esc(musicWarn)}</div>
+        <div style="margin-top:6px">
+          <button class="cap-btn" onclick="musicCancelWarn()">Cancel</button>
+          <button class="cap-btn go" onclick="musicGenerate(true)">Generate anyway</button>
+        </div>`;
+    } else { conf.innerHTML = ''; }
+  }
+  if (prog) prog.hidden = !running;
   if (!st) return;
   if (running && job){
     const el = Math.max(0, Math.round(Date.now()/1000 - (job.started || 0)));
+    const pv = job.progress_view || {};
+    // Two honest sources: the engine's own counters when it prints any, else the
+    // elapsed/estimate ratio. Either way the bar is capped short of 100% by the
+    // bridge — the decode-and-write tail is not covered by the counters.
+    if (fill) fill.style.width = ((pv.progress == null ? 0 : pv.progress) * 100).toFixed(1) + '%';
+    const left = (pv.eta_s != null && pv.eta_s > el)
+      ? ` · ~${musicClock(pv.eta_s - el)} left (estimated)` : '';
+    const phase = pv.phase ? ` · ${pv.phase}` : '';
     st.textContent = `${job.engine} · ${job.seconds}s song · ${job.steps} steps · `
-      + `seed ${job.seed} — ${Math.floor(el/60)}m ${String(el%60).padStart(2,'0')}s elapsed`;
+      + `seed ${job.seed} — ${musicClock(el)} elapsed${left}${phase}`;
   } else if (job && job.state === 'failed'){
     st.textContent = `last render failed after ${job.wall}s`;
     if (er && !musicErr) er.textContent = String(job.error || '').slice(-500);
@@ -10527,11 +10739,13 @@ function musicPaintState(job, running){
   }
 }
 
-function musicPick(id){ musicEngine = id; musicErr = ''; renderMusicCreate(); }
+function musicPick(id){ musicEngine = id; musicErr = ''; musicWarn = ''; renderMusicCreate(); }
+function musicCancelWarn(){ musicWarn = ''; musicPaintState(musicJob(), musicRunning()); }
 
-async function musicGenerate(){
+async function musicGenerate(confirm){
   const btn = document.getElementById('mus-go');
   musicErr = '';
+  if (!confirm) musicWarn = '';
   const body = {
     engine: musicEngine,
     prompt: (document.getElementById('mus-prompt') || {}).value || '',
@@ -10539,7 +10753,9 @@ async function musicGenerate(){
     seconds: musicSecs(),
     steps: (document.getElementById('mus-steps') || {}).value || '',
     seed: (document.getElementById('mus-seed') || {}).value || '',
+    format: (document.getElementById('mus-fmt') || {}).value || '',
   };
+  if (confirm) body.confirm = true;
   if (btn){ btn.disabled = true; btn.textContent = 'Starting…'; }
   let res = null;
   try {
@@ -10548,12 +10764,15 @@ async function musicGenerate(){
     res = await r.json();
   } catch (e) { res = {ok:false, error:'the bridge did not answer'}; }
   if (!res || !res.ok){
-    // ledger refusals and validation errors surface INLINE, in the bridge's own words
-    musicErr = (res && res.error) || 'the render could not start';
+    // A RAM warning is not an error: it goes to the confirm row with a way through.
+    // Everything else surfaces inline, in the bridge's own words.
+    if (res && res.needs_confirm){ musicWarn = res.error || 'that render may not fit'; }
+    else { musicErr = (res && res.error) || 'the render could not start'; musicWarn = ''; }
     if (btn){ btn.disabled = false; btn.textContent = 'Generate'; }
     musicPaintState(musicJob(), false);
     return;
   }
+  musicWarn = '';
   feed(`music: rendering a ${body.seconds}s track with ${musicEngine}`);
   await loadMusicStatus();
 }
@@ -10566,7 +10785,7 @@ function renderMusicLibrary(){
   box.innerHTML = '';
   if (!musicLib.length){
     box.innerHTML = '<div class="cs-empty">No tracks yet — generate one above. '
-      + 'Finished songs are .wav files in data/music.</div>';
+      + 'Finished songs land in ' + esc((musicSnap || {}).dir || 'data/music') + '.</div>';
     return;
   }
   // Only ONE row carries an <audio> element (the selected, else the newest): a page
@@ -10578,7 +10797,9 @@ function renderMusicLibrary(){
     const secs = (t.seconds == null) ? '' : ` · ${t.seconds}s`;
     const wall = (t.wall == null) ? '' : ` · rendered in ${t.wall}s`;
     txt.innerHTML = `<div class="cap-name">${esc(t.name)}`
-      + (t.engine ? ` <span class="cap-pill">${esc(t.engine)}</span>` : '') + `</div>`
+      + (t.engine ? ` <span class="cap-pill">${esc(t.engine)}</span>` : '')
+      + (t.ext ? ` <span class="cap-pill">${esc(String(t.ext).toUpperCase())}</span>` : '')
+      + `</div>`
       + `<div class="cap-desc">${esc(relTimeLong(new Date(t.created * 1000).toISOString()))}`
       + `${esc(secs)}${esc(wall)}${t.seed != null ? ' · seed ' + esc(String(t.seed)) : ''}`
       + ` · ${esc(fmtBytes(t.size_bytes))}</div>`
@@ -10595,6 +10816,33 @@ function renderMusicLibrary(){
       txt.appendChild(p);
     }
     const ctl = document.createElement('div'); ctl.className = 'cap-ctl';
+    // CONVERT: only formats this ffmpeg build can actually write are offered (the
+    // bridge probes it once), and only when that sibling does not already exist —
+    // a control that cannot work is absent, never greyed out.
+    const stem = t.name.replace(/\.[^.]+$/, '');
+    const haveExts = musicLib.filter(x => x.name.replace(/\.[^.]+$/, '') === stem)
+                             .map(x => String(x.ext || '').toLowerCase());
+    for (const f of (((musicSnap || {}).convert_formats) || [])){
+      if (haveExts.indexOf(f) >= 0) continue;
+      const cb = document.createElement('button'); cb.className = 'cap-btn';
+      cb.textContent = f; cb.title = `Write an ${f.toUpperCase()} beside this track`;
+      cb.onclick = async () => {
+        cb.disabled = true; cb.textContent = '…';
+        let j = null;
+        try {
+          const r = await fetch('/api/music/convert', {method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name: t.name, fmt: f})});
+          j = await r.json();
+        } catch (e) {}
+        if (!j || !j.ok){ cb.disabled = false; cb.textContent = f;
+                          cb.title = (j && j.error) || 'the conversion failed';
+                          feed(`music: ${(j && j.error) || 'conversion failed'}`); return; }
+        feed(`music: wrote ${esc(j.name || '')}`);
+        await loadMusicLibrary();
+      };
+      ctl.appendChild(cb);
+    }
     const rev = document.createElement('button'); rev.className = 'cap-btn';
     rev.textContent = 'Reveal'; rev.title = 'Show this file in Finder';
     rev.onclick = () => fetch('/api/open', {method:'POST',

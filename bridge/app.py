@@ -8137,18 +8137,47 @@ def _music_engine_state(engine: str) -> dict:
     return row
 
 
+def _music_history(limit: int = 40) -> list:
+    """What renders have ACTUALLY cost on this machine, newest first — the input to
+    the ETA. Best-effort: an unreadable library simply means the calibration numbers
+    are used instead."""
+    try:
+        rows = _music.library_entries(ROOT)[:limit]
+    except Exception:                                            # noqa: BLE001
+        return []
+    return [{"engine": r.get("engine"), "seconds": r.get("seconds"),
+             "wall": r.get("wall")} for r in rows if r.get("wall")]
+
+
+def _music_job_view() -> dict:
+    """The live job with its progress folded in (never a second job dict)."""
+    job = _music.current_job()
+    if not job:
+        return None
+    tail = _music.job_log_tail(job)   # read BEFORE the path is dropped
+    job.pop("log", None)              # a temp path is not the panel's business
+    job["progress_view"] = _music.progress_view(job, tail, _music_history())
+    return job
+
+
 @app.get("/api/music/status")
 def music_status() -> JSONResponse:
     if _music is None:
         return _music_unavailable()
     engines = [_music_engine_state(e) for e in _music.ENGINES]
     return JSONResponse({"ok": True, "engines": engines,
-                         "busy": _music.job_busy(), "job": _music.current_job(),
+                         "busy": _music.job_busy(), "job": _music_job_view(),
                          "dir": _music.music_dir(ROOT),
+                         "default_dir": _music.music_base_dir(ROOT),
                          "seconds_min": _music.SECONDS_MIN,
                          "seconds_max": _music.SECONDS_MAX,
                          "seconds_default": _music.SECONDS_DEFAULT,
-                         "prompt_max": _music.PROMPT_MAX})
+                         "prompt_max": _music.PROMPT_MAX,
+                         "formats": {e: list(f) for e, f in _music.ENGINE_FORMATS.items()},
+                         "format_default": dict(_music.DEFAULT_FORMAT),
+                         "format_label": dict(_music.FORMAT_LABEL),
+                         "convert_formats": _music.convert_formats(),
+                         "templates": _music.all_templates(ROOT)})
 
 
 def _music_install_thread(engine: str) -> None:
@@ -8207,10 +8236,17 @@ async def music_generate(req: Request) -> JSONResponse:
     params, err = _music.validate_generate(body, installed)
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
-    refusal = _music.ram_gate(params["engine"], _loaded_models_bytes(), _budget_bytes())
-    if refusal:
-        print(f"[music] refused {params['engine']}: {refusal}", flush=True)
-        return JSONResponse({"ok": False, "error": refusal}, status_code=409)
+    # THE LEDGER IS A WARNING, NOT A WALL (Debi's ruling). The first POST gets the
+    # numbers and a needs_confirm flag; a second POST carrying confirm:true spends
+    # the memory anyway. The warning is never skipped silently — a caller that does
+    # not send confirm can never start an over-budget render by accident.
+    warning = _music.ram_gate(params["engine"], _loaded_models_bytes(), _budget_bytes())
+    if warning and not _music.wants_confirm(body):
+        print(f"[music] warned {params['engine']}: {warning}", flush=True)
+        return JSONResponse({"ok": False, "needs_confirm": True, "error": warning},
+                            status_code=409)
+    if warning:
+        print(f"[music] over-budget render confirmed by the user: {warning}", flush=True)
     snap = ""
     if params["engine"] == "minimax":
         _ok, snap, _r = _music.minimax_installed(ROOT, _music_pin("music_minimax_pin"))
@@ -8226,8 +8262,100 @@ async def music_generate(req: Request) -> JSONResponse:
 def music_jobs() -> JSONResponse:
     if _music is None:
         return _music_unavailable()
-    return JSONResponse({"ok": True, "job": _music.current_job(),
+    return JSONResponse({"ok": True, "job": _music_job_view(),
                          "busy": _music.job_busy()})
+
+
+@app.get("/api/music/templates")
+def music_templates() -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    return JSONResponse({"ok": True, "templates": _music.all_templates(ROOT)})
+
+
+@app.post("/api/music/templates")
+async def music_template_save(req: Request) -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = None
+    t, err = _music.save_template(ROOT, body)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    print(f"[music] template saved: {t['name']}", flush=True)
+    return JSONResponse({"ok": True, "template": t,
+                         "templates": _music.all_templates(ROOT)})
+
+
+@app.post("/api/music/templates/delete")
+async def music_template_delete(req: Request) -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    tid = ((await req.json()).get("id") or "").strip()
+    ok, reason = _music.delete_template(ROOT, tid)
+    if not ok:
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    return JSONResponse({"ok": True, "templates": _music.all_templates(ROOT)})
+
+
+@app.get("/api/music/settings")
+def music_settings() -> JSONResponse:
+    if _music is None:
+        return _music_unavailable()
+    return JSONResponse({"ok": True, "output_dir": _music.music_dir(ROOT),
+                         "default_dir": _music.music_base_dir(ROOT)})
+
+
+@app.post("/api/music/settings")
+async def music_settings_set(req: Request) -> JSONResponse:
+    """Point the library somewhere else. The library then lists THAT folder only —
+    tracks left behind in the old one are untouched and reappear if it is set back."""
+    if _music is None:
+        return _music_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    want = (body or {}).get("output_dir")
+    if isinstance(want, str) and not want.strip():
+        want = None                       # empty = back to the default
+    if want is None:
+        s = _music.read_settings(ROOT)
+        s.pop("output_dir", None)
+        _music.write_settings(ROOT, s)
+        print("[music] output dir reset to the default", flush=True)
+        return JSONResponse({"ok": True, "output_dir": _music.music_dir(ROOT)})
+    path, reason = _music.validate_output_dir(ROOT, want)
+    if not path:
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    s = _music.read_settings(ROOT)
+    s["output_dir"] = path
+    _music.write_settings(ROOT, s)
+    print(f"[music] output dir -> {path}", flush=True)
+    return JSONResponse({"ok": True, "output_dir": path})
+
+
+@app.post("/api/music/convert")
+async def music_convert(req: Request) -> JSONResponse:
+    """Convert one finished track to mp3/m4a beside itself, with the ffmpeg the voice
+    lane already resolves. A format this build cannot write is never offered, so a
+    refusal here means the library changed under the panel."""
+    if _music is None:
+        return _music_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    name = ((body or {}).get("name") or "").strip()
+    fmt = ((body or {}).get("fmt") or "").strip().lower()
+    made, reason = await asyncio.to_thread(_music.convert_track, ROOT, name, fmt)
+    if not made:
+        print(f"[music] convert {name!r} -> {fmt}: {reason}", flush=True)
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    print(f"[music] converted {name} -> {made}", flush=True)
+    return JSONResponse({"ok": True, "name": made})
 
 
 @app.get("/api/music/library")
@@ -8248,7 +8376,9 @@ def music_file(name: str) -> Response:
     target, reason = _music.library_target(ROOT, name)
     if not target:
         raise HTTPException(404, reason)
-    return FileResponse(target, media_type="audio/wav")
+    mime = {".wav": "audio/wav", ".mp3": "audio/mpeg",
+            ".m4a": "audio/mp4"}.get(os.path.splitext(target)[1].lower(), "audio/wav")
+    return FileResponse(target, media_type=mime)
 
 
 @app.post("/api/music/delete")
