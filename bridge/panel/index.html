@@ -5834,7 +5834,7 @@ function renderModels(r){
     const def = r.active && r.installed.find(m => m.id === r.active);
     mSel = { kind:'installed', id: (def ? def.id : r.installed[0].id) };
   }
-  renderDetail();
+  if (!samplingTyping()) renderDetail();   // don't wipe a half-typed sampling value
   markSelRows();
   // AUDIO sub-tab, from the SAME payload (r.audio + r.voice). Rendered after the
   // pending-selection block above so a just-finished voice download lands selected.
@@ -7201,6 +7201,127 @@ function markSelRows(){
   });
 }
 
+/* ---------- SAMPLING (per-model, DIRECT lane) ----------
+   Renders `m.sampling` — which the BRIDGE computes (bridge/app.py sampling_view):
+   the engine, and one row per field THAT engine can actually honour, carrying its
+   real wire name as the label, the harness default, and the per-model override.
+   The panel invents no field list of its own, so it can never draw a control the
+   engine ignores (the llama.cpp `repeat_penalty` vs MLX `repetition_penalty` split
+   is exactly the case where a shared label would have lied).
+   Group state is module-level so a write re-renders without collapsing the group.
+   ZERO new CSS: .cap-card/.cap-row/.cap-name/.cap-desc/.cap-ctl/.cap-inp/.cap-btn/
+   .cap-count, all from the Capabilities grammar. */
+let samplingOpen = false;
+
+function renderSampling(m){
+  const sv = m && m.sampling;
+  if (!sv || !(sv.fields || []).length) return '';
+  const chg = sv.changed ? (' · ' + sv.changed + ' changed') : '';
+  const rows = (sv.fields || []).map(f => {
+    const ov = f.value !== null && f.value !== undefined;
+    return `<div class="cap-row"><div class="cap-txt">
+        <div class="cap-name">${esc(f.label)}</div>
+        <div class="cap-desc">default ${esc(String(f.default))}${
+          ov ? '' : ' — running the default'}</div>
+      </div><div class="cap-ctl">
+        <input class="cap-inp" type="text" inputmode="decimal" style="width:84px;text-align:right"
+          value="${ov ? escAttr(String(f.value)) : ''}"
+          placeholder="${escAttr(String(f.default))}"
+          title="${escAttr(f.key + ' — ' + f.min + ' to ' + f.max
+                           + '. Leave empty for the harness default.')}"
+          onchange="samplingSet('${escAttr(f.key)}', this.value, this)">
+        ${ov ? `<button class="cap-btn" style="margin-left:6px"
+             title="Reset to the harness default (${escAttr(String(f.default))})"
+             onclick="samplingSet('${escAttr(f.key)}', '', this)">↺</button>` : ''}
+      </div></div>`;
+  }).join('');
+  return `<button onclick="toggleSampling(this)" aria-expanded="${samplingOpen ? 'true' : 'false'}"
+      style="background:none;border:none;padding:0;cursor:pointer;text-align:left">
+      <span class="cap-desc" style="margin:0">${samplingOpen ? '▾' : '▸'} Sampling${esc(chg)}</span></button>
+    <div id="md-sampling-body"${samplingOpen ? '' : ' hidden'}>
+      <div class="cap-desc" style="margin:8px 0 10px">${esc(sv.note)}</div>
+      <div class="cap-card">${rows}</div>
+      <div style="margin-top:10px">
+        <button class="cap-btn" onclick="samplingResetAll(this)"${sv.changed ? '' : ' disabled'}
+          title="Forget every override on this model — it goes back to the harness defaults shown above."
+          >Reset all to harness defaults</button>
+        <span class="cap-count">${esc(sv.engine)} request fields</span>
+      </div>
+      <div id="md-sampling-err" hidden
+        style="font:10.5px var(--mono);color:var(--bad);margin-top:6px"></div></div>`;
+}
+
+function toggleSampling(btn){
+  samplingOpen = !samplingOpen;
+  const el = document.getElementById('md-sampling-body');
+  if (el) el.hidden = !samplingOpen;
+  if (btn){
+    btn.setAttribute('aria-expanded', samplingOpen ? 'true' : 'false');
+    const lbl = btn.querySelector('.cap-desc');
+    if (lbl) lbl.textContent = lbl.textContent.replace(/^[▸▾]/, samplingOpen ? '▾' : '▸');
+  }
+}
+
+function samplingErr(msg){
+  const e = document.getElementById('md-sampling-err');
+  if (!e) return;
+  e.textContent = msg || ''; e.hidden = !msg;
+}
+
+/* An empty box means "reset this field" — absence, not a stored null (the same
+   grammar the voice pins use). The model id is never interpolated into a handler:
+   the section only ever draws the SELECTED model, so the id is read from mSel. */
+async function samplingSet(key, raw, el){
+  const s = String(raw == null ? '' : raw).trim();
+  let val = null;
+  if (s !== ''){
+    val = Number(s);
+    if (!isFinite(val)){ samplingErr(key + ' must be a number'); return; }
+  }
+  const patch = {}; patch[key] = val;
+  await samplingPost({ settings: patch }, el);
+}
+
+async function samplingResetAll(btn){ await samplingPost({ reset: true }, btn); }
+
+async function samplingPost(body, el){
+  const id = (mSel && mSel.kind === 'installed') ? mSel.id : '';
+  if (!id) return;
+  samplingErr('');
+  if (el) el.disabled = true;
+  let r = null;
+  try {
+    r = await (await fetch('/api/models/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ id }, body)) })).json();
+  } catch { r = null; }
+  if (!r || !r.ok){
+    if (el) el.disabled = false;
+    samplingErr((r && r.error) || 'could not reach the bridge');
+    return;
+  }
+  // Patch the cached payload so the section (and the next full render) agree with
+  // what the bridge just stored — no /api/models round trip needed.
+  const m = ((lastModels || {}).installed || []).find(x => x.id === r.id);
+  if (m){
+    m.settings = (r.settings && Object.keys(r.settings).length) ? r.settings : null;
+    m.sampling = r.sampling;
+    const host = document.getElementById('md-sampling');
+    if (host) host.innerHTML = renderSampling(m);
+  }
+  feed('models', 'sampling · ' + esc(r.id) + ' → '
+       + ((r.sampling && r.sampling.changed) ? (r.sampling.changed + ' overridden')
+                                            : 'harness defaults'));
+}
+
+/* True while the user is typing in a sampling box. Used ONLY by the refresh path
+   (renderModels) so a background re-render can't wipe a half-typed value; an
+   explicit selection still re-renders unconditionally. */
+function samplingTyping(){
+  const f = document.activeElement;
+  return !!(f && f.closest && f.closest('#md-sampling'));
+}
+
 function renderDetail(){
   const d = document.getElementById('models-detail');
   if (!mSel){ d.innerHTML = '<div class="cs-empty">Select a model</div>'; return; }
@@ -7214,9 +7335,13 @@ function renderDetail(){
     const meta = [esc(m.id), esc(m.engine || ''), fmtGB(m.size_bytes),
                   (m.ctx ? (m.ctx.toLocaleString() + ' ctx') : ''), esc(m.source || '')]
                  .filter(Boolean).join(' · ');
+    // Empty when the bridge sent no `sampling` (older bridge) — then the wrapper is
+    // omitted entirely rather than leaving an empty section's margin behind.
+    const samp = renderSampling(m);
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       <div class="md-actions" id="md-actions"></div>
+      ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       <div class="md-div"></div>
       <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
     const acts = d.querySelector('#md-actions');

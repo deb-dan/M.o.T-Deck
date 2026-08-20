@@ -512,7 +512,11 @@ RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
 # silently un-pins every voice, un-pins every reference clip, and un-hides everything
 # the user hid. (The `voice` half of this was already a shipped fix; `ref_audio` /
 # `ref_text` / `hidden` are the same bug in the same place.)
-USER_KEYS = ("voice", "ref_audio", "ref_text", "hidden")
+# `settings` (per-model sampling overrides, 2026-08-20) is the same class: a rescan
+# reads FILES, so without it one RESCAN click silently resets every tuned model back
+# to the harness defaults. Carried WHOLESALE (see _keep_user) — the nested dict is
+# preserved atomically, which is right while nothing on disk can teach a sampling key.
+USER_KEYS = ("voice", "ref_audio", "ref_text", "hidden", "settings")
 
 
 def _keep_voice(entry, existing_voice):

@@ -3,3 +3,11 @@ uvicorn>=0.30
 pyyaml>=6.0
 httpx>=0.27
 websockets>=12
+# pytest is an OPERATING-PROCEDURE requirement, not a CI nicety: bridge/contract_tests/
+# is the mandatory gate before every vendored pin bump and must run on the user's own
+# Mac. Without it here the gate silently no-ops ("No module named pytest"), which is
+# exactly how the 2026-08-15 Hermes bump shipped unverified. Fable ruling 2026-08-20
+# (option A of roadmap §1c): one line here means bootstrap installs it everywhere and
+# build_app.sh 4b carries it into the fat wheelhouse for free. Option C (ship.sh/
+# verify.sh REFUSES loudly when the gate cannot run) is queued as its own ops slice.
+pytest>=8.0

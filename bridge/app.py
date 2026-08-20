@@ -2067,7 +2067,14 @@ def api_models() -> JSONResponse:
                 "embedding": False,
                 "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
                 "format": m.get("format", "gguf"),
-                "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path")})
+                "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path"),
+                # Per-model sampling: the READ side of /api/models/settings lives
+                # here (one key on a payload the panel already polls) rather than in
+                # a second route. `sampling` is the rendered view (engine-filtered
+                # fields + harness defaults + overrides); `settings` is the raw pin.
+                "settings": (m.get("settings") if isinstance(m.get("settings"), dict)
+                             else None),
+                "sampling": sampling_view(m)})
     except Exception as e:
         err = str(e)[:200]
         hidden = []
@@ -3515,6 +3522,251 @@ def turn_metadata(model, usage, timings, elapsed=None):
     return out
 
 
+# ── Model sampling settings (per-model, DIRECT LANE) ─────────────────────────
+# Spec basis: docs/research/2026-08-20-model-settings.md §0.1-0.5.
+#
+# THREE facts shape this block:
+#  (1) Until now the direct lane sent NO sampling fields at all — every generation
+#      ran on whatever the engine's own defaults were, and those differ per engine.
+#  (2) mlx_lm.server defaults `max_tokens` to 512 and mlx_vlm to 2048 when the body
+#      omits it, so every MLX reply was SILENTLY TRUNCATED. llama.cpp's -1 is
+#      unbounded, which is why the gguf lane never showed it. `max_tokens` is
+#      therefore ALWAYS sent now, for every model, whether or not it has overrides.
+#  (3) `--repeat-penalty 1.1 --repeat-last-n 256` on the llama-server launch line
+#      (scripts/start_component.sh) was a buried constant. It STAYS as the engine
+#      default floor — that is the only thing reaching the Agent/Hermes lanes, which
+#      build their own request bodies — but the same two numbers are now the VISIBLE
+#      defaults here, and a request body overrides argv (Fable D2: body wins).
+#
+# LANE HONESTY (Fable D1): this is a DIRECT-LANE feature. Odysseus sends only
+# temperature (from its own global admin preset) and Hermes structurally cannot send
+# a temperature at all, so there is deliberately no fan-out. The panel says so.
+SAMPLING_DEFAULTS = {
+    "temperature": 0.7,       # llama.cpp's own is 0.8 (creative-completion tuned);
+    "top_p": 0.95,            # 0.7 is the conventional assistant setting and is
+    "top_k": 40,              # gentler on heavily-quantized local models.
+    "min_p": 0.05,
+    "repeat_penalty": 1.1,    # promoted verbatim from the argv constant (2026-08-06
+    "repeat_last_n": 256,     # loop incident) — the one number here with evidence.
+    "max_tokens": 4096,       # see (2): omitting this truncated every MLX reply.
+    "seed": -1,               # -1 = random; never sent (MLX has no -1 convention).
+}
+# Display order for the UI (dict order is stable, but the UI must not depend on it).
+SAMPLING_ORDER = ("temperature", "top_p", "top_k", "min_p",
+                  "repeat_penalty", "repeat_last_n", "max_tokens", "seed")
+# canonical key -> the BODY key that engine actually reads. The two penalty keys are
+# genuinely named differently on the MLX servers; the numeric meaning is the same
+# (logits of repeated tokens divided by the value, 1.0 = no-op), only the "disabled"
+# sentinel differs (llama.cpp 1.0, MLX 0.0) — which is why we never write 0 here.
+_S_MLX = {"temperature": "temperature", "top_p": "top_p", "top_k": "top_k",
+          "min_p": "min_p", "repeat_penalty": "repetition_penalty",
+          "repeat_last_n": "repetition_context_size",
+          "max_tokens": "max_tokens", "seed": "seed"}
+SAMPLING_WIRE = {
+    "llamacpp": {k: k for k in SAMPLING_ORDER},
+    "mlxlm": dict(_S_MLX),
+    "mlxvlm": dict(_S_MLX),
+}
+# (min, max, coercer). Ranges are the union of what both engines accept; MLX
+# publishes its own in mlx_lm/server.py:1229-1251 and these sit inside them.
+SAMPLING_RANGES = {
+    "temperature": (0.0, 2.0, float),
+    "top_p": (0.0, 1.0, float),
+    "top_k": (0, 500, int),          # 0 = off
+    "min_p": (0.0, 1.0, float),      # 0 = off
+    "repeat_penalty": (1.0, 2.0, float),   # 1.0 = off on BOTH scales
+    "repeat_last_n": (-1, 8192, int),      # llama.cpp: -1 = whole ctx, 0 = off
+    "max_tokens": (1, 1048576, int),
+    "seed": (-1, 2147483647, int),
+}
+SAMPLING_STOP_MAX = 4          # stop strings, storage/merge only — no UI row in v1
+SAMPLING_LANE_NOTE = ("Applies to CHAT (direct) turns — the Agent and Hermes lanes "
+                      "build their own requests and use their own engines' settings. "
+                      "Values apply on your next message; no model reload.")
+
+
+def sampling_engine(entry: dict) -> str:
+    """PURE. Which request dialect this registry entry's server speaks. Mirrors
+    start_component.sh:64-66 (format mlx + vision → mlx-vlm, mlx → mlx-lm, else
+    llama.cpp). Anything unrecognisable falls back to llamacpp, whose key names are
+    the OpenAI-ish ones every engine here tolerates."""
+    e = entry if isinstance(entry, dict) else {}
+    if str(e.get("format") or "").strip().lower() == "mlx":
+        return "mlxvlm" if (e.get("vision") or e.get("mmproj")) else "mlxlm"
+    return "llamacpp"
+
+
+def _sampling_num(key: str, raw):
+    """PURE. Coerce one value, or None when it is junk / out of range. Total: any
+    input type is safe. Booleans are rejected (True == 1 would silently pass)."""
+    spec = SAMPLING_RANGES.get(key)
+    if spec is None or isinstance(raw, bool) or raw is None:
+        return None
+    lo, hi, cast = spec
+    try:
+        v = cast(raw)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):     # NaN / inf
+        return None
+    if v < lo or v > hi:
+        return None
+    return v
+
+
+def _sampling_stop(raw):
+    """PURE. A stop list, or None. Accepts a list/tuple of strings or one string."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return None
+    out = [s[:64] for s in raw if isinstance(s, str) and s.strip()][:SAMPLING_STOP_MAX]
+    return out or None
+
+
+def sampling_saved(entry: dict) -> dict:
+    """PURE. The per-model overrides, cleaned. Junk keys and junk values are dropped
+    rather than surfaced — a hand-edited registry can never break a turn."""
+    e = entry if isinstance(entry, dict) else {}
+    raw = e.get("settings")
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k, v in raw.items():
+        if k == "stop":
+            s = _sampling_stop(v)
+            if s:
+                out["stop"] = s
+            continue
+        n = _sampling_num(k, v)
+        if n is not None:
+            out[k] = n
+    return out
+
+
+def sampling_merge(entry: dict) -> dict:
+    """PURE. harness defaults → per-model overrides → engine key translation.
+    Returns the request-body fragment the direct lane merges in. NEVER raises, and
+    ALWAYS contains a `max_tokens` (that absence is the MLX truncation bug).
+
+    `seed` is omitted unless explicitly set to >= 0: -1 means "random" to
+    llama.cpp but is not a documented MLX sentinel, so we send nothing instead."""
+    eng = sampling_engine(entry)
+    wire = SAMPLING_WIRE.get(eng) or SAMPLING_WIRE["llamacpp"]
+    vals = dict(SAMPLING_DEFAULTS)
+    vals.update(sampling_saved(entry))
+    out = {}
+    for canon in SAMPLING_ORDER:
+        if canon not in wire:
+            continue                     # engine cannot honour it — send nothing
+        v = vals.get(canon)
+        if v is None:
+            continue
+        if canon == "seed" and v < 0:
+            continue
+        out[wire[canon]] = v
+    stop = vals.get("stop")
+    if stop:
+        out["stop"] = list(stop)
+    return out
+
+
+def sampling_view(entry: dict) -> dict:
+    """PURE. What the Models detail pane renders: the engine, and one row per field
+    this engine can actually honour, carrying its wire name (the honest label), the
+    harness default, and the per-model override (None = running the default).
+
+    Engine-conditional by construction: a field the engine cannot honour is ABSENT,
+    not greyed out — a control that cannot work must not be drawn."""
+    eng = sampling_engine(entry)
+    wire = SAMPLING_WIRE.get(eng) or SAMPLING_WIRE["llamacpp"]
+    saved = sampling_saved(entry)
+    fields = []
+    for canon in SAMPLING_ORDER:
+        if canon not in wire:
+            continue
+        lo, hi, _c = SAMPLING_RANGES[canon]
+        fields.append({"key": canon, "label": wire[canon],
+                       "default": SAMPLING_DEFAULTS.get(canon),
+                       "value": saved.get(canon), "min": lo, "max": hi})
+    return {"engine": eng, "fields": fields,
+            "changed": sum(1 for f in fields if f["value"] is not None),
+            "note": SAMPLING_LANE_NOTE}
+
+
+@app.post("/api/models/settings")
+async def api_model_settings(req: Request) -> JSONResponse:
+    """{id, settings:{key: value|null}} → per-model sampling overrides.
+
+    ⚠️ SEAM CHOICE: there is deliberately no GET here. `/api/models` already
+    carries every installed entry and the panel already polls it, so the read side
+    is one extra key on that payload (`sampling`) rather than a second route.
+
+    A null value REMOVES that key (the _registry_update grammar the voice pins
+    established: a reset is the ABSENCE of a key, never a stored null), and an
+    empty result removes `settings` entirely. `{id, reset:true}` resets all."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    mid = str(body.get("id") or "").strip()
+    if not mid:
+        return JSONResponse({"ok": False, "error": "no model id given"}, status_code=400)
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if entry is None:
+        return JSONResponse({"ok": False, "error": f"'{mid}' is not in the registry"},
+                            status_code=400)
+    if _voice is not None and _voice.is_audio_entry(entry):
+        return JSONResponse({"ok": False, "error": f"'{mid}' is a voice model — "
+                                                   f"sampling settings are for chat models"},
+                            status_code=400)
+    if body.get("reset"):
+        _registry_update(mid, {"settings": None})
+        print(f"[models] sampling reset {mid}", flush=True)
+        upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
+        return JSONResponse({"ok": True, "id": mid, "settings": {},
+                             "sampling": sampling_view(upd)})
+    patch = body.get("settings")
+    if not isinstance(patch, dict) or not patch:
+        return JSONResponse({"ok": False, "error": "settings must be a non-empty object"},
+                            status_code=400)
+    eng = sampling_engine(entry)
+    wire = SAMPLING_WIRE.get(eng) or SAMPLING_WIRE["llamacpp"]
+    new = sampling_saved(entry)
+    for k, v in patch.items():
+        if k == "stop":
+            if v is None:
+                new.pop("stop", None)
+                continue
+            s = _sampling_stop(v)
+            if s is None:
+                return JSONResponse({"ok": False, "error": "stop must be a list of strings"},
+                                    status_code=400)
+            new["stop"] = s
+            continue
+        if k not in SAMPLING_RANGES or k not in wire:
+            return JSONResponse(
+                {"ok": False, "error": f"'{k}' is not a sampling field this engine "
+                                       f"({eng}) can honour"}, status_code=400)
+        if v is None or v == "":
+            new.pop(k, None)
+            continue
+        n = _sampling_num(k, v)
+        if n is None:
+            lo, hi, _c = SAMPLING_RANGES[k]
+            return JSONResponse({"ok": False,
+                                 "error": f"{k} must be a number between {lo} and {hi}"},
+                                status_code=400)
+        new[k] = n
+    _registry_update(mid, {"settings": new or None})
+    print(f"[models] sampling {mid} -> {new or 'defaults'}", flush=True)
+    upd = next((m for m in _registry_models() if m.get("id") == mid), entry)
+    return JSONResponse({"ok": True, "id": mid, "settings": new,
+                         "sampling": sampling_view(upd)})
+
+
 @app.post("/api/chat/direct")
 async def chat_direct(req: Request) -> StreamingResponse:
     body = await req.json()
@@ -3528,7 +3780,13 @@ async def chat_direct(req: Request) -> StreamingResponse:
     # `model` stays our REGISTRY ID (labels/analytics); `wire` is what the runner
     # accepts — identical for llama.cpp (--alias), the model PATH for MLX servers
     # (which would otherwise try to resolve our id on HF → 404 → runner 400).
-    wire = wire_model_id(model, _registry_models())
+    _reg = _registry_models()
+    wire = wire_model_id(model, _reg)
+    # Per-model sampling, engine-translated. Read here (once per turn) rather than
+    # cached so an edit in the Models pane lands on the NEXT message with no reload.
+    # An unknown model still gets the harness defaults — which is what guarantees an
+    # explicit max_tokens on every single turn (see SAMPLING_DEFAULTS).
+    sampling = sampling_merge(next((m for m in _reg if m.get("id") == model), None) or {})
 
     # Build messages: session history (if reachable) + the new user turn.
     messages = []
@@ -3573,7 +3831,8 @@ async def chat_direct(req: Request) -> StreamingResponse:
                 headers={"Authorization": f"Bearer {key}"},
                 json={"model": wire, "messages": messages,
                       "stream": True, "cache_prompt": True,
-                      "stream_options": {"include_usage": True}},
+                      "stream_options": {"include_usage": True},
+                      **sampling},
             ) as r:
                 if r.status_code != 200:
                     yield f'data: {{"type":"proxy_error","error":"runner {r.status_code}"}}\n\n'

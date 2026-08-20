@@ -101,6 +101,15 @@ PYRESOLVE
     # Repetition guard (Fable, 2026-08-06): heavily-quantized local models (gemma-31B
     # IQ4/Q4) degenerate into token loops ("C-C-C-…"). A mild repeat penalty is the
     # standard mitigation; gated on binary support like --api-key above.
+    #
+    # NO LONGER A MYSTERY CONSTANT (2026-08-20): these two numbers are the visible
+    # `repeat_penalty` / `repeat_last_n` defaults in Models → detail → Sampling
+    # (SAMPLING_DEFAULTS, bridge/app.py). llama.cpp treats a CLI sampler as the
+    # server-wide DEFAULT a request inherits when it omits the field, so this stays
+    # here as the engine-default FLOOR for the surfaces we do not own — the Agent
+    # (Odysseus) and Hermes lanes build their own request bodies and never send a
+    # penalty. The direct lane always sends one, and a request body WINS over argv.
+    # Rationale + full engine surface: docs/research/2026-08-20-model-settings.md.
     if grep -q -- "--repeat-penalty" data/llama-server.help.txt; then
       ARGS+=(--repeat-penalty 1.1 --repeat-last-n 256)
     fi
