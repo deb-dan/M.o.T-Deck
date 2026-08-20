@@ -33,7 +33,14 @@ let tabs: [HarnessTab] = [
     HarnessTab(title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
     HarnessTab(title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
     HarnessTab(title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
-    HarnessTab(title: "Unsloth", url: URL(string: "http://127.0.0.1:8888")!),
+    // :8899, NOT upstream's default :8888 — that port belongs to Debi's standalone
+    // Unsloth app (harness.yaml carries the same number and the reason).
+    HarnessTab(title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
+    // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
+    // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
+    // a second load of the panel document, deliberately — a native tab that is always
+    // reachable, while the in-panel Music view keeps working exactly as before.
+    HarnessTab(title: "Music", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
 ]
 let tabTitles: [String] = tabs.map { $0.title }
 
@@ -281,7 +288,7 @@ final class DownloadHandler: NSObject, WKDownloadDelegate {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate,
-                         NSSplitViewDelegate {
+                         NSSplitViewDelegate, WKScriptMessageHandler {
     // retained handler for every tab's downloads (see DownloadHandler); AnyObject so the
     // stored property itself carries no availability requirement.
     var downloadHandler: AnyObject?
@@ -446,7 +453,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         // ── web views ──
         // DropWebView: native drag-destination so Finder image drops reach the chat.
-        panelWV = DropWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        // The panel — and ONLY the panel — also gets the "harness" script-message
+        // handler, so its sidebar can ask the shell to switch tabs. Registering it on
+        // any other webview would let a third-party component page drive our tab strip,
+        // so this configuration is deliberately not shared (see userContentController).
+        let panelCfg = WKWebViewConfiguration()
+        panelCfg.userContentController.add(self, name: "harness")
+        panelWV = DropWebView(frame: .zero, configuration: panelCfg)
 
         // "Harness skin" for Odysseus: override its base --font-family (unset → falls back to
         // Fira Code monospace everywhere) with a refined sans for prose/UI. Code blocks use an
@@ -969,16 +982,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         slog("tab -> \(idx) focus=\(focusedPane) left=\(currentTab) right=\(rightTab)")
     }
 
+    // ── panel → shell: switch to a tab by TITLE ──
+    //
+    // The panel's COMPONENTS sidebar is the natural place to say "take me to Odysseus",
+    // but the panel is a web page and the tabs are AppKit. This is the whole bridge for
+    // that, and it is deliberately tiny: one message name, one command, a title looked up
+    // in `tabs`, and then the EXACT path a strip click takes (routeTab + the strip sync
+    // a click gets for free from the control itself). Split view, focus, lazy load and
+    // the failed-load retry therefore behave identically whichever way the tab is chosen.
+    //
+    // An unknown title is ignored — the panel may be newer than the shell (it is served
+    // from disk and reloads on its own), so a title we do not have is a normal, benign
+    // state, not an error to surface.
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "harness",
+              let body = message.body as? [String: Any],
+              let cmd = body["cmd"] as? String else { return }
+        switch cmd {
+        case "switchTab":
+            guard let title = body["title"] as? String,
+                  let idx = tabTitles.firstIndex(of: title) else {
+                slog("panel -> switchTab (unknown title) ignored")
+                return
+            }
+            routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
+            syncStrip()   // a strip CLICK selects the segment itself; this path must not skip it
+            slog("panel -> switchTab \(title) (tab \(idx))")
+        default:
+            slog("panel -> unknown cmd ignored")
+        }
+    }
+
     // ── drag a tab onto a pane ──
 
     // Explicit per-segment widths — the whole reason the geometry below is knowable.
     //
-    // WIDTH BUDGET (checked when the 6th and 7th tabs were added, 2026-08-20). The strip
+    // WIDTH BUDGET (re-checked when the 8th tab, Music, was added, 2026-08-21). The strip
     // is centred in `tabBar` and the ⫽ button is pinned trailing at -12, so at the
     // window's minSize.width of 900 the strip may occupy roughly 830pt before the two
-    // could touch. The seven current titles total 70 characters; at 13pt SF that is
+    // could touch. The eight current titles total 75 characters; at 13pt SF that is
     // ~7.0-8.0pt per character plus the fixed 26pt padding per segment, i.e. a total of
-    // ~620pt (7.0/char) to ~745pt (8.0/char) — comfortably inside the budget, so no
+    // ~733pt (7.0/char) to ~808pt (8.0/char) — still inside the budget but no longer
+    // comfortably, so the NEXT tab almost certainly needs a shorter title. No
     // label shortening was needed. If a future tab pushes the estimate past ~830, shorten
     // the LONGEST titles (e.g. "Mission Control" → "Control") rather than removing the
     // padding: `segmentAt` reads exactly these numbers back to hit-test a drag.

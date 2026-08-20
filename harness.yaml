@@ -134,7 +134,11 @@ components:
                               # + studio/ (AGPL-3.0-only FastAPI server + React SPA).
     installed: false          # OPTIONAL
     enabled: false
-    port: 8888                # `unsloth studio`'s own default; passed explicitly anyway
+    port: 8899                # ⚠️ DELIBERATELY NOT upstream's default 8888. Debi runs a
+                              # STANDALONE Unsloth app on 8888, and start_component.sh clears
+                              # its port (listener-scoped) before launching — on 8888 that
+                              # would kill her other app every time ours starts. 8899 is passed
+                              # explicitly on the launch line, so upstream's default never applies.
     depends_on: []            # standalone — it serves its OWN models, never our runner
     # ⚠️ LICENSE: Studio is AGPL-3.0-only (studio/LICENSE.AGPL-3.0); the training library is
     # Apache-2.0. Arm's length only — separate process, HTTP, never modified.

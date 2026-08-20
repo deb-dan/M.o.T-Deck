@@ -85,9 +85,16 @@ check('exactly ONE tab strip is built from the titles array',
 check('one table declares every tab (title + url together)',
       /struct HarnessTab \{[\s\S]{0,120}let title: String[\s\S]{0,120}let url: URL/.test(swift) &&
       /let tabs: \[HarnessTab\] = \[/.test(swift));
-check('the two new optional tabs are rows in that table',
+check('the two optional component tabs are rows in that table',
       /HarnessTab\(title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
-      /HarnessTab\(title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8888"\)!\)/.test(swift));
+      // 8899, NOT upstream's 8888: that port belongs to Debi's standalone Unsloth app and
+      // the start script's listener-scoped port clear would kill it. Same number as
+      // harness.yaml (contract test pins that side).
+      /HarnessTab\(title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
+check('...and the shell never points a tab at :8888 again',
+      !/127\.0\.0\.1:8888/.test(swift));
+check('Music is a tab row loading OUR OWN panel chromeless (?solo=music)',
+      /HarnessTab\(title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
 check('special tabs are looked up BY TITLE, never written as a literal index',
       /let odysseusTab = tabTitles\.firstIndex\(of: "Odysseus"\) \?\? -1/.test(swift) &&
       /let hermesTab = tabTitles\.firstIndex\(of: "Hermes"\) \?\? -1/.test(swift));
@@ -428,6 +435,90 @@ check('...both panes are asked, so split view is genuinely covered',
       && /let rightShowsHermes = splitOn && rightTab == hermesTab/.test(vis));
 check('...and every visible Hermes surface is reloaded, not only the first',
       /for wv in targets \{ wv\.reload\(\) \}/.test(swift));
+
+// ── panel → shell tab switching (2026-08-21) ──
+// A sidebar row must be able to OPEN a component's tab, not merely highlight its card.
+// The whole bridge is one script message, and the security property is that it is
+// registered on the PANEL webview only — a component page must never drive our strip.
+const handler = swift.slice(swift.indexOf('func userContentController(_ ucc:'));
+const handlerBody = handler.slice(0, handler.indexOf('\n    }\n', handler.indexOf('default:')) + 6);
+check('the shell conforms to WKScriptMessageHandler',
+      /NSSplitViewDelegate, WKScriptMessageHandler \{/.test(swift));
+check('the handler is registered exactly ONCE, on the panel configuration',
+      (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 1
+      && /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,200}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
+check('...so no other webview\'s configuration carries it',
+      !/odyCfg\.userContentController\.add\(self/.test(swift));
+check('it accepts only the "harness" message name',
+      /message\.name == "harness"/.test(handlerBody));
+check('switchTab resolves a TITLE against the tabs table (no index on the wire)',
+      /body\["title"\] as\? String/.test(handlerBody)
+      && /tabTitles\.firstIndex\(of: title\)/.test(handlerBody));
+check('an unknown title is ignored, never coerced to a tab',
+      /else \{[\s\S]{0,160}unknown title[\s\S]{0,60}return/.test(handlerBody)
+      && !/firstIndex\(of: title\) \?\? 0/.test(handlerBody));
+check('an unknown cmd is ignored too',
+      /default:[\s\S]{0,120}unknown cmd/.test(handlerBody));
+check('it takes the SAME path a strip click takes (routeTab, focused pane)',
+      /routeTab\(idx, toPane: \(splitOn && focusedPane == 1\) \? 1 : 0\)/.test(handlerBody));
+check('...and syncs the strip, which a real click gets from the control itself',
+      /syncStrip\(\)/.test(handlerBody));
+check('the switch is logged like every other tab event',
+      /slog\("panel -> switchTab/.test(handlerBody));
+
+// ── the panel half of the same bridge ──
+check('the panel maps components to tab titles with a TABLE, not a name guess',
+      /const TAB_FOR_COMPONENT = \{/.test(html)
+      && /odysseus: 'Odysseus'/.test(html) && /comfyui: 'ComfyUI'/.test(html)
+      && /unsloth: 'Unsloth'/.test(html));
+check('...and searxng, which has no tab, is absent from it',
+      !/searxng: '/.test(html));
+const oc = html.slice(html.indexOf('function openComponent('),
+                      html.indexOf('function openMusic('));
+check('openComponent reads running state at CLICK time, not from the rendered row',
+      /lastStatus && lastStatus\.components/.test(oc));
+check('...a RUNNING component opens its tab',
+      /c\.running && title && switchTab\(title\)/.test(oc));
+check('...and everything else falls back to jumpToCard (browser, stopped, no tab)',
+      /jumpToCard\(name\)/.test(oc));
+check('switchTab returns false when the native bridge is absent',
+      /function switchTab\(title\)[\s\S]{0,240}if \(!h\) return false/.test(html));
+check('the sidebar rows call openComponent, not jumpToCard directly',
+      /onclick="openComponent\('\$\{name\}'\)"/.test(html));
+check('the Music nav entry routes to the native tab with an in-panel fallback',
+      /id="nav-music" onclick="openMusic\(\)"/.test(html)
+      && /function openMusic\(\)[\s\S]{0,240}if \(switchTab\('Music'\)\) return;[\s\S]{0,60}showView\('music'\)/.test(html));
+
+// ── solo mode ──
+check('soloView is pure and only knows the views solo mode declares',
+      /const SOLO_VIEWS = \['music'\]/.test(html)
+      && /function soloView\(search\)/.test(html));
+check('applySolo adds body.solo and pins the view, and is armed at boot',
+      /document\.body\.classList\.add\('solo'\)/.test(html)
+      && /applySolo\(\);/.test(html));
+check('solo mode hides chrome in exactly three CSS rules and restyles nothing else',
+      (html.match(/body\.solo /g) || []).length === 3
+      && /body\.solo aside \{ display:none; \}/.test(html)
+      && /body\.solo \.topbar \{ display:none; \}/.test(html));
+
+// soloView EXECUTED on the shipped source — the decision table, incl. totality.
+{
+  const src = html.slice(html.indexOf("const SOLO_VIEWS = ['music']"),
+                         html.indexOf('function applySolo('));
+  const soloView = new Function(src + '; return soloView;')();
+  const cases = [
+    ['?solo=music', 'music'], ['?solo=MUSIC', 'music'], ['?a=1&solo=music', 'music'],
+    ['?solo=music&b=2', 'music'], ['', null], ['?', null], ['?solo=', null],
+    ['?solo=chat', null], ['?solo=musicx', null], ['?notsolo=music', null],
+    [null, null], [undefined, null], ['?xsolo=music', null],
+  ];
+  let ok = true;
+  for (const [inp, want] of cases) {
+    const got = soloView(inp);
+    if (got !== want) { ok = false; console.log('   soloView(' + JSON.stringify(inp) + ') = ' + got + ', want ' + want); }
+  }
+  check('soloView decision table (13 cases incl. junk/null totality)', ok);
+}
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

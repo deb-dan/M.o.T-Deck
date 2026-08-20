@@ -897,6 +897,15 @@
   .cm-s-default .cm-def, .cm-s-default .cm-variable-2 { color:var(--cream); }
   .cm-s-default .cm-property { color:var(--fg); }
 
+  /* ============ SOLO MODE — the panel served chromeless into its own native tab ======
+       ?solo=music loads THIS document with the app's own navigation hidden: in a native
+       tab the tab STRIP is the navigation, so a sidebar + topbar beside it is duplicate
+       chrome. Same document, same polling, same view code — nothing is forked.
+       THREE rules, and they may not grow: this axis hides chrome, it does not restyle. */
+  body.solo aside { display:none; }
+  body.solo .topbar { display:none; }
+  body.solo main { padding-top:18px; max-width:none; }
+
   /* ============ MUSIC STUDIO DECK — #view-music[data-mview="studio"] ============
      Fable design (2026-08-20, FABLE-MUSIC-DECK-SPEC.md), from Debi's VoiceStudio
      Launchpad reference. A PER-PAGE alternate layout, not a third global theme:
@@ -1233,7 +1242,7 @@
     <a id="nav-mc" class="on" onclick="showView('mc')" title="Mission Control" aria-label="Mission Control"><span class="ico">◫</span> Mission Control</a>
     <a id="nav-chat" onclick="showView('chat')" title="Chat" aria-label="Chat"><span class="ico">✳</span> Chat</a>
     <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
-    <a id="nav-music" onclick="showView('music')" title="Music" aria-label="Music"><span class="ico">♫</span> Music</a>
+    <a id="nav-music" onclick="openMusic()" title="Music" aria-label="Music"><span class="ico">♫</span> Music</a>
     <a id="nav-caps" onclick="showView('caps')" title="Capabilities" aria-label="Capabilities"><span class="ico">⚙</span> Capabilities</a>
     <!-- Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): its onclick was an
          alert(), which is a SILENT no-op in WKWebView — a nav entry that does nothing
@@ -1676,8 +1685,12 @@ async function refresh(manual) {
               : (st === 'failed' || st === 'blocked') ? 'bad'
               : c.degraded ? 'bad'
               : c.running ? 'ok' : c.installed ? 'warn' : '';
+    const tabTitle = TAB_FOR_COMPONENT[name];
+    const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
+              : tabTitle ? `show ${name} on Mission Control — not running`
+              : `show ${name} on Mission Control`;
     side.insertAdjacentHTML('beforeend',
-      `<a onclick="jumpToCard('${name}')" title="${esc(name)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+      `<a onclick="openComponent('${name}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${name}</span></a>`);
   }
 
@@ -1721,6 +1734,48 @@ async function refresh(manual) {
 function showProvLog(name) {
   const p = (lastStatus && lastStatus.prov || {})[name];
   showOutputLog(p && p.detail);
+}
+
+/* ---------- panel → native shell: open a component in ITS OWN TAB ----------
+   Clicking a COMPONENTS row used to only highlight that component's Mission Control
+   card, which is not what "take me to Odysseus" means once every component has a tab.
+   The shell exposes exactly one script-message command (main.swift's
+   userContentController) and it is registered on THIS webview only.
+
+   The mapping is a TABLE, not a name guess: the titles below must match main.swift's
+   `tabs` rows exactly, and a component with no tab (searxng, the runner) is absent by
+   design. In a plain browser — or if a title ever drifts — every path degrades to
+   today's jumpToCard, so the row can never become a dead control. */
+const TAB_FOR_COMPONENT = {
+  odysseus: 'Odysseus',
+  hermes: 'Hermes',
+  voicestudio: 'VoiceStudio',
+  voicebox: 'Voicebox',
+  comfyui: 'ComfyUI',
+  unsloth: 'Unsloth',
+};
+function nativeShell() {
+  return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.harness) || null;
+}
+function switchTab(title) {
+  const h = nativeShell();
+  if (!h) return false;
+  try { h.postMessage({ cmd: 'switchTab', title: title }); return true; } catch (e) { return false; }
+}
+function openComponent(name) {
+  // Running state is read at CLICK time, not baked into the row: a component that
+  // stopped since the last poll must not send us to a tab with nothing in it. A stopped
+  // component's card is where Start lives, so that case stays on Mission Control.
+  const c = ((lastStatus && lastStatus.components) || {})[name];
+  const title = TAB_FOR_COMPONENT[name];
+  if (c && c.running && title && switchTab(title)) return;
+  jumpToCard(name);
+}
+function openMusic() {
+  // Music has a native tab of its own (the chromeless ?solo=music load). In a browser
+  // — or in a shell without that tab — the in-panel Music view is unchanged.
+  if (switchTab('Music')) return;
+  showView('music');
 }
 
 function jumpToCard(name) {
@@ -2176,6 +2231,23 @@ function toggleChrome() {
   const p = chromeProbe();
   try { console.log('[chrome] ' + p); } catch (e) {}
   feed('chrome', p);
+}
+
+/* ---------- SOLO MODE ----------
+   A native tab loads this same panel with ?solo=music. PURE: the parser is separated
+   from the DOM work so the decision table is testable, and an unknown/absent value can
+   only ever mean "not solo" (never a blank panel). */
+const SOLO_VIEWS = ['music'];
+function soloView(search) {
+  const m = /(?:^|[?&])solo=([A-Za-z]+)/.exec(String(search == null ? '' : search));
+  const v = m ? m[1].toLowerCase() : '';
+  return SOLO_VIEWS.indexOf(v) >= 0 ? v : null;
+}
+function applySolo() {
+  const v = soloView(location.search);
+  if (!v) return;
+  document.body.classList.add('solo');
+  showView(v);
 }
 
 function showView(v) {
@@ -11357,6 +11429,7 @@ loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
 loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configured voice
 loadMusicView();       // MUSIC DECK: restore the persisted per-page view (classic default)
+applySolo();           // SOLO: ?solo=<view> → chromeless, pinned to that view (native Music tab)
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>
 </body>

@@ -30,6 +30,13 @@ def test_harness_yaml_parses():
     # would make two components fight over one listener.
     ports = [comp["port"] for comp in c["components"].values() if comp.get("port")]
     assert len(ports) == len(set(ports)), f"duplicate component port in harness.yaml: {ports}"
+    # ⚠️ Unsloth must NOT sit on upstream's default 8888: Debi runs a STANDALONE Unsloth
+    # app there, and start_component.sh clears its component's port (listener-scoped)
+    # before every launch — on 8888 that kills her other app. The number is single-sourced
+    # here and read by the start script's awk, so pin it in the manifest.
+    assert c["components"]["unsloth"]["port"] == 8899, (
+        "unsloth's port moved: 8899 is deliberate (8888 belongs to a separate, "
+        "user-installed Unsloth app that our port clear would kill)")
 
 
 def test_optional_components_are_not_submodules():
@@ -58,6 +65,26 @@ def test_comfyui_entrypoint_and_flags_contract():
     assert '"--base-directory"' in args, (
         "ComfyUI dropped --base-directory: without it models/output/input/user are "
         "created next to main.py, i.e. INSIDE vendor/ (the voicebox --data-dir trap)")
+    assert '"--database-url"' in args, (
+        "ComfyUI dropped --database-url — the start script passes it because the DEFAULT "
+        "db path is computed from cli_args.py's own __file__ (…/comfy/../user/comfyui.db) "
+        "and is therefore NOT redirected by --base-directory: it writes into vendor/")
+    assert 'os.path.dirname(__file__), "..", "user"' in args, (
+        "the default database path no longer resolves against the SOURCE tree — re-check "
+        "whether start_component.sh still needs to override --database-url at all")
+    main = (vendor / "main.py").read_text(errors="replace")
+    # THE crash Debi hit on a fresh base dir: prestartup lists <base>/custom_nodes with no
+    # existence check, so the start script must create it (and the rest of the tree) first.
+    assert "os.listdir(custom_node_path)" in main, (
+        "prestartup no longer lists custom_nodes unguarded — the mkdir in "
+        "start_component.sh may be able to shrink (it is harmless either way)")
+    assert 'get_folder_paths("custom_nodes")' in main, (
+        "the custom_nodes folder key moved — start_component.sh pre-creates "
+        "<base>/custom_nodes by that exact name")
+    fp = (vendor / "folder_paths.py").read_text(errors="replace")
+    assert 'os.path.join(base_path, "custom_nodes")' in fp, (
+        "custom_nodes is no longer resolved under the base directory — the pre-created "
+        "path in start_component.sh would then be the wrong one")
     server = (vendor / "server.py").read_text(errors="replace")
     assert '"/system_stats"' in server, (
         "the /system_stats route is gone — it is the start script's health probe")

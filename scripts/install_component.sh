@@ -106,7 +106,7 @@ plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apac
     writes shell shims and downloads a FORKED, floating-tag llama.cpp + its own Node),
     and we never invoke 'unsloth start' (that is its agent-wiring path and it would
     relocate HERMES_HOME — our Hermes is not touched)
-  - serve on 127.0.0.1:8888 when started; Studio has its OWN bearer login, which is its
+  - serve on 127.0.0.1:8899 when started; Studio has its OWN bearer login, which is its
     UI's business — on a loopback launch it auto-fills its bootstrap credential
   - ⚠ AGPL-3.0-only for Studio: composed at ARM'S LENGTH ONLY — separate process over
     HTTP, never modified
@@ -695,7 +695,7 @@ elif [[ "$NAME" == "unsloth" ]]; then
   fi
   echo "[harness] NOTE: Unsloth Studio is AGPL-3.0-only (the training library is Apache-2.0)."
   echo "[harness]   The harness composes it at ARM'S LENGTH — a separate process on"
-  echo "[harness]   127.0.0.1:8888, never edited. It has its OWN login, handled in its own UI."
+  echo "[harness]   127.0.0.1:8899, never edited. It has its OWN login, handled in its own UI."
   echo "[harness]   We never run 'unsloth start' and never set HERMES_HOME: that is its"
   echo "[harness]   agent-wiring path and it must not touch your ~/.hermes."
   echo "[harness]   Models it loads live in ITS process — invisible to memory.budget_gb."

@@ -570,7 +570,7 @@ def install_plan(name: str) -> dict:
             "root, writes shell shims and downloads a forked, floating-tag llama.cpp plus "
             "its own Node) and never run 'unsloth start' — that is its agent-wiring path "
             "and it would relocate HERMES_HOME; your ~/.hermes is never touched",
-            "Serve on 127.0.0.1:8888 when started. Studio has its OWN bearer login, "
+            "Serve on 127.0.0.1:8899 when started. Studio has its OWN bearer login, "
             "handled inside its own UI; on a loopback launch its page auto-fills the "
             "bootstrap credential",
             "It can download its own llama.cpp and models into its own dirs — contained, "
@@ -622,7 +622,7 @@ _NOTES = {
     # OPTIONAL, GPL-3.0. UI + API on one loopback port, no auth. Torch import is slow.
     "comfyui": "comfyui on :8188 — loopback only, no auth; first boot imports torch (slow)",
     # OPTIONAL, AGPL-3.0-only (Studio). Its own bearer login lives in its own UI.
-    "unsloth": "unsloth studio on :8888 — loopback only; it has its own login screen",
+    "unsloth": "unsloth studio on :8899 — loopback only; it has its own login screen",
 }
 
 

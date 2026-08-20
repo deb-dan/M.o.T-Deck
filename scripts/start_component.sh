@@ -598,9 +598,31 @@ PYWIRE
     # --base-directory is MANDATORY: without it ComfyUI creates models/ output/ input/
     # user/ NEXT TO main.py, i.e. inside vendor/. Same trap class as voicebox's --data-dir.
     # --disable-auto-launch stops it opening a browser window behind the native tab.
-    mkdir -p "$ROOT/data/comfyui"
+    # ⚠️ --base-directory does NOT create the tree it points at, and ComfyUI's own
+    # startup does not create all of it either — so these MUST exist before launch:
+    #   custom_nodes  main.py::execute_prestartup_script() does an UNGUARDED
+    #                 os.listdir() on every folder_paths.get_folder_paths("custom_nodes")
+    #                 entry (= <base>/custom_nodes at v0.33.3) → FileNotFoundError and an
+    #                 instant crash on a fresh base dir. This is the crash Debi hit.
+    #   user          holds the sqlite db we point --database-url at (below); sqlalchemy
+    #                 will not create a missing parent directory.
+    #   models input output
+    #                 created lazily by upstream (folder_paths creates input/ inside a
+    #                 bare try/except; the rest only on first save) — pre-created so the
+    #                 tree Debi is told to drop checkpoints into actually exists.
+    for d in custom_nodes user models models/checkpoints input output; do
+      mkdir -p "$ROOT/data/comfyui/${d}"
+    done
+    # ⚠️ --database-url is NOT covered by --base-directory: at v0.33.3 its default is
+    # computed from comfy/cli_args.py's OWN __file__ (os.path.join(dirname(__file__),
+    # "..", "user", "comfyui.db")), i.e. vendor/comfyui/user/comfyui.db — a write INTO
+    # vendor/, the same trap class --base-directory exists to close. Point it at our
+    # base dir explicitly. (It also keeps our db lock separate from any other ComfyUI
+    # install on the machine — upstream refuses to share one db file between processes.)
     CU_CMD=(main.py --listen 127.0.0.1 --port "$CU_PORT"
-            --base-directory "$ROOT/data/comfyui" --disable-auto-launch)
+            --base-directory "$ROOT/data/comfyui"
+            --database-url "sqlite:///$ROOT/data/comfyui/user/comfyui.db"
+            --disable-auto-launch)
     # cd applies to the whole subshell (main.py resolves its package imports from the repo
     # root); pid + log use ABSOLUTE paths so they can never land outside the project.
     (
@@ -640,7 +662,9 @@ PYWIRE
     USPY="$ROOT/data/unsloth-venv/bin/python"
     [[ -x "$USPY" ]] || { echo "ERROR: $USPY not executable — reinstall unsloth"; exit 1; }
     US_PORT=$(awk '/^  unsloth:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
-    [[ "$US_PORT" =~ ^[0-9]+$ ]] || US_PORT=8888
+    # Fallback mirrors harness.yaml's 8899 — deliberately NOT upstream's 8888, which is
+    # the port Debi's STANDALONE Unsloth app listens on (the port clear below would kill it).
+    [[ "$US_PORT" =~ ^[0-9]+$ ]] || US_PORT=8899
     US_DIST="$ROOT/vendor/unsloth/studio/frontend/dist"
     # REFUSE UP FRONT rather than let it die inside uvicorn: at this pin
     # studio/backend/run.py's _missing_frontend_is_fatal() aborts any launch that is not
