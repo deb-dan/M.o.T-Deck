@@ -70,6 +70,34 @@ check("an overridden row is NOT the nc badge that disables Get",
       A.audio_license_row("mlx-community/OmniVoice-bfloat16",
                           APACHE_TAGGED)["badge"] != "nc")
 
+# MiniMax-Music3 — the SECOND confirmed mistag of the same class (2026-08-20 research).
+# Abiray/MiniMax-Music3-GGUF claims apache-2.0 over a custom Community License.
+for repo in ("Abiray/MiniMax-Music3-GGUF", "MiniMaxAI/MiniMax-Music3",
+             "PocketAiHub/MiniMax-Music3-MLX", "Comfy-Org/MiniMax-Music-3-repack",
+             "SHOUTY/MINIMAX-MUSIC3-Q4", "someone/minimax-music3-gguf"):
+    row = A.audio_license_row(repo, APACHE_TAGGED)
+    check(f"{repo} is overridden to amber", row["badge"] == "unknown")
+    check(f"{repo} carries the exact override reason",
+          row["reason"] == A.MINIMAX_MUSIC3_LICENSE_REASON)
+    check(f"{repo} names the weights term in its pill",
+          row["license"] == "minimax-community (weights)")
+    check(f"{repo} cites the upstream LICENSE file",
+          row["source_url"]
+          == "https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE")
+check("the Music3 reason is the module constant, not a copy",
+      A.LICENSE_OVERRIDES["minimax-music3"]["reason"] == A.MINIMAX_MUSIC3_LICENSE_REASON)
+check("the Music3 reason names the licence, not a guess at cc-by-nc",
+      "Community License" in A.MINIMAX_MUSIC3_LICENSE_REASON
+      and "cc-by-nc" not in A.MINIMAX_MUSIC3_LICENSE_REASON.lower())
+check("an overridden Music3 row is NOT the nc badge that disables Get",
+      A.audio_license_row("Abiray/MiniMax-Music3-GGUF", APACHE_TAGGED)["badge"] != "nc")
+check("both upstream spellings resolve to the SAME record",
+      A.license_override("Comfy-Org/MiniMax-Music-3")
+      == A.license_override("MiniMaxAI/MiniMax-Music3") != {})
+check("a music repo of another family is untouched",
+      A.license_override("ACE-Step/Ace-Step1.5") == {}
+      and A.license_override("Serveurperso/ACE-Step-1.5-GGUF") == {})
+
 check("a repo with no override falls through to the tag",
       A.audio_license_row("mlx-community/Kokoro-82M-bf16", APACHE_TAGGED)
       == A.audio_license_badge("apache-2.0"))

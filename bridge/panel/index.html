@@ -56,6 +56,11 @@
   .chip:hover { color:var(--cream); border-color:var(--line2); }
   /* PHASE 1.5: compact icon-only chip (topbar controls) — glyph only, word on hover */
   .chip-icon { padding:6px 9px; font-size:13px; line-height:1; min-width:0; }
+  /* STUDIO CHROME (2026-08-20): icon-bearing controls carry BOTH children — the icon
+     span and the editorial text span — and CSS alone picks one. This is the ONE base
+     rule the studio slice adds outside its block: editorial is the DEFAULT, so the
+     icons must be hidden with the attribute ABSENT. The studio block reverses it. */
+  .st-only { display:none; }
   /* FABLE: style pass — Capabilities section sub-tabs (reuse .chip; .on = active) */
   .caps-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 18px; }
   .caps-tab.on { color:var(--cream); border-color:var(--gold); background:var(--bg); }
@@ -892,156 +897,240 @@
   .cm-s-default .cm-def, .cm-s-default .cm-variable-2 { color:var(--cream); }
   .cm-s-default .cm-property { color:var(--fg); }
 
-  /* ============ OPTIONAL "COMPACT" CHROME — html[data-chrome="compact"] ============
-     Fable design (2026-08-14), Debi's LM-Studio-style button vision. A THIRD theme
-     axis, INDEPENDENT of light/dark: it changes CONTROL DENSITY + SHAPE only, so the
-     small-caps mono text-chips read as real buttons. It touches NO palette token, NO
-     content typography and NO editorial serif header.
-       · Every rule below is prefixed html[data-chrome="compact"] — with the attribute
-         absent (the default) the panel is byte-for-byte today's chrome.
+  /* ============ OPTIONAL "STUDIO" CHROME — html[data-chrome="studio"] ============
+     Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from Debi's Unsloth
+     screenshots. This REPLACES the parked "compact" axis wholesale: compact was three
+     failed attempts at what Studio actually is (uniform control sizing, real buttons,
+     and ICON buttons where a glyph says it better than a word). A stored legacy
+     'compact' value migrates silently to editorial (see the pre-paint script).
+       · Every rule below is prefixed html[data-chrome="studio"] — with the attribute
+         absent (the default) the panel is byte-for-byte today's editorial chrome.
        · This block is the sanctioned exception to the zero-new-rules discipline and is
          deliberately the LAST thing in the stylesheet, so it wins on equal specificity.
-       · 18 rules. Gold-fill "active" uses var(--bg) as its ink rather than the
-         hardcoded #171420 the editorial chips use, so it stays legible in BOTH themes.
+       · The surface tokens are the compact axis's MEASURED values (contrast 1.41-1.84
+         against --card/--bg2, --fg 7.7:1 on the ground, hover strictly lighter on dark
+         / darker on paper) — they were the one thing compact got right at the end, and
+         test_studio_chrome.js re-derives every one of those ratios from the hex.
+       · SPECIFICITY LANDMINES (compact post-mortem, D5): a state colour the base sheet
+         owns at EQUAL-or-lower specificity must be RESTATED here or it goes flat. Each
+         restatement below names the pair it is fixing.
      ------------------------------------------------------------------------------- */
-  html[data-chrome="compact"] {
-    /* chrome-text stack, set ONLY inside this axis (the mono chips lose their mono) */
-    --chrome-font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-    /* THE 2026-08-14h FIX. Three Mac reports of "▣ turns gold and nothing else
-       changes" were NOT a cascade or coverage failure — the stylesheet was proven
-       correct: block last in the ONE served stylesheet, brace depth 0 at its start,
-       every rule winning its properties). The defect was in the VALUES: the axis
-       asked for "solid ground, firm border" and then reached for --card2 (#181527)
-       on a --card (#14121d) parent — a 4/3/10 RGB lift, invisible on a dark panel —
-       and for `border-color:var(--line2)`, which is BYTE-IDENTICAL to what the base
-       `button` rule already sets, i.e. a literal no-op. Hover went DARKER than rest
-       (--card < --card2), the wrong direction. So the axis has its own surface
-       tokens now, chosen to be unmistakable rather than tasteful-to-the-point-of-
-       absent, and hover is the LIGHTER of the pair. ⚠ builder values. */
-    --chrome-btn:#332b50; --chrome-btn-hi:#453b6b; --chrome-edge:#574b83; }
+  html[data-chrome="studio"] {
+    --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83;
+    --st-font:-apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    --st-h:28px; --st-hs:22px; --st-r:8px; --st-gap:8px;
+    --st-fs:12px; --st-fs-s:11px; }
   /* the light axis needs its own three, or the dark slate lands on warm paper. NOTE
      the hover direction INVERTS here and that is correct: on paper a pressed-looking
      control gets DARKER, on a dark panel it gets LIGHTER. */
-  html[data-chrome="compact"][data-theme="light"] {
-    --chrome-btn:#e3d9c0; --chrome-btn-hi:#d5c7a6; --chrome-edge:#b9a878; }
-  /* (1a) topbar / sub-tab chips — solid ground, firm border, Title case as authored.
+  html[data-chrome="studio"][data-theme="light"] {
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878; }
+
+  /* (0) THE ICON/TEXT SWAP. Every icon-bearing control carries BOTH children in the
+     DOM (.st-only icon, .ed-only text) and CSS alone decides which is visible, so the
+     renderers stay mode-blind — zero JS branching on the theme. The .st-word beside an
+     icon is how a live STATE (recording clock, "listening", "Stop") stays VISIBLE when
+     the label is gone: an icon-only control must never hide state. */
+  html[data-chrome="studio"] .st-only {
+    display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+  html[data-chrome="studio"] .ed-only { display:none; }
+  html[data-chrome="studio"] .st-ico { width:15px; height:15px; flex:none; display:block; }
+  html[data-chrome="studio"] .st-word {
+    font-size:var(--st-fs-s); font-family:var(--st-font); line-height:1; letter-spacing:normal; text-transform:none; }
+
+  /* NOTE (values, not taste): every size/family pair below is written as LONGHANDS.
+     `font: var(--x) var(--y)` is legal CSS but is parsed only AFTER var substitution,
+     so one bad token would invalidate the WHOLE declaration at computed-value time
+     and the control would silently fall back to the initial font. Longhands also
+     leave font-weight alone, which is what keeps button.primary's 600 intact.
+     ------------------------------------------------------------------------------- */
+  /* (1a) topbar / sub-tab chips — solid ground, firm border, mixed case as authored.
      color:var(--fg) not --dim: a control with a real ground carries a real label
-     (and --dim on --chrome-btn is only 2.9:1, which would have been a regression). */
-  html[data-chrome="compact"] .chip {
-    font:11.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    color:var(--fg);
-    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
-    border-radius:5px; padding:5px 11px; }
-  html[data-chrome="compact"] .chip:hover {
-    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
-  /* (1b) icon-only chips (◐ ▣ ⌘K ↻ ⊕) become 26px square icon buttons */
-  html[data-chrome="compact"] .chip.chip-icon {
-    width:26px; height:26px; padding:0; font-size:12.5px; line-height:1;
-    display:inline-flex; align-items:center; justify-content:center; }
-  /* the chrome toggle can only read "on" while compact IS on — so its off state needs
+     (--dim on --st-btn is only 2.9:1, which would have been a regression). */
+  html[data-chrome="studio"] .chip {
+    height:var(--st-h); display:inline-flex; align-items:center; gap:6px;
+    font-size:var(--st-fs); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
+    color:var(--fg); background:var(--st-btn); border:1px solid var(--st-edge);
+    border-radius:var(--st-r); padding:0 12px; }
+  html[data-chrome="studio"] .chip:hover {
+    background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+  /* (1b) icon-only chips (◐ ▣ ⌘K ↻ ⊕) become 28x28 icon buttons, glyphs at 14px */
+  html[data-chrome="studio"] .chip.chip-icon {
+    width:var(--st-h); height:var(--st-h); padding:0; font-size:14px; line-height:1;
+    justify-content:center; }
+  /* the chrome toggle can only read "on" while studio IS on — its off state needs
      no rule outside this block */
-  html[data-chrome="compact"] #chrome-chip { color:var(--gold); border-color:var(--gold); }
-  /* (1c) Models / Capabilities sub-tabs — active = filled, the button idiom */
-  html[data-chrome="compact"] .caps-tab.on {
+  html[data-chrome="studio"] #chrome-chip { color:var(--gold); border-color:var(--gold); }
+  /* (1c) Models / Capabilities sub-tabs — active = filled, the button idiom.
+     LANDMINE: base .caps-tab.on is (0,2,0), the studio .chip rule is (0,2,1). */
+  html[data-chrome="studio"] .caps-tab.on {
     background:var(--gold); border-color:var(--gold); color:var(--bg); }
-  /* (1d) model-popover row actions (Eject / Switch / aux / voice chips) */
-  html[data-chrome="compact"] .mp-act {
-    font:10px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
-    border-radius:5px; padding:3px 9px; color:var(--fg); }
-  html[data-chrome="compact"] .mp-act:hover {
-    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
-  html[data-chrome="compact"] .mp-act.on {
+
+  /* (1d) model-popover row actions (Eject / Switch / aux / voice chips) — small tier */
+  html[data-chrome="studio"] .mp-act {
+    height:var(--st-hs); display:inline-flex; align-items:center;
+    font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
+    background:var(--st-btn); border:1px solid var(--st-edge);
+    border-radius:6px; padding:0 10px; color:var(--fg); }
+  html[data-chrome="studio"] .mp-act:hover {
+    background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+  /* LANDMINE: base .mp-act.on (0,2,0) vs the studio .mp-act rule (0,2,1) */
+  html[data-chrome="studio"] .mp-act.on {
     background:var(--gold); border-color:var(--gold); color:var(--bg); }
-  /* (1e) composer lane chips (Agent / Chat / Hermes / ⚙ Tools) */
-  html[data-chrome="compact"] .mode-chip {
-    font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    color:var(--fg);
-    background:var(--chrome-btn); border:1px solid var(--chrome-edge);
-    border-radius:5px; padding:4px 10px; }
-  html[data-chrome="compact"] .mode-chip:hover {
-    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
-  html[data-chrome="compact"] .mode-chip.on {
+
+  /* (1e) composer lane chips (Agent / Chat / Hermes / ⚙ Tools) — mixed case, 11px */
+  html[data-chrome="studio"] .mode-chip {
+    height:var(--st-hs); display:inline-flex; align-items:center;
+    font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
+    color:var(--fg); background:var(--st-btn); border:1px solid var(--st-edge);
+    border-radius:6px; padding:0 10px; }
+  html[data-chrome="studio"] .mode-chip:hover {
+    background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+  /* LANDMINE: base .mode-chip.on (0,2,0) vs the studio .mode-chip rule (0,2,1) */
+  html[data-chrome="studio"] .mode-chip.on {
     background:var(--gold); border-color:var(--gold); color:var(--bg); }
   /* Browse stays the quieter CAPABILITY — outline, never filled (the editorial
      restraint rule, re-expressed in button shape) */
-  html[data-chrome="compact"] #mode-browse {
-    font-size:10px; padding:4px 9px; letter-spacing:normal; }
-  html[data-chrome="compact"] #mode-browse.on {
-    background:var(--chrome-btn); border-color:var(--gold); color:var(--gold); }
+  html[data-chrome="studio"] #mode-browse { padding:0 9px; }
+  html[data-chrome="studio"] #mode-browse.on {
+    background:var(--st-btn); border-color:var(--gold); color:var(--gold); }
   /* the two closed pickers keep their truncation, gain the button ground */
-  html[data-chrome="compact"] #chat-model-btn,
-  html[data-chrome="compact"] #chat-audio-btn {
-    font:10.5px var(--chrome-font); letter-spacing:normal; padding:4px 8px;
-    color:var(--fg); border-radius:5px;
-    background:var(--chrome-btn); border-color:var(--chrome-edge); }
-  /* third restatement, same specificity hazard: `#chat-model-btn.empty` is (1,1,0)
-     and the compact id rule is (1,1,1), so "nothing selected" would stop reading
-     faint without this. */
-  html[data-chrome="compact"] #chat-model-btn.empty,
-  html[data-chrome="compact"] #chat-audio-btn.empty { color:var(--faint); }
-  /* voice / dictation micro-chips scale WITH the row rather than to one flat size —
-     11.5px here would blow the composer apart */
-  html[data-chrome="compact"] #chat-talk,
-  html[data-chrome="compact"] #chat-auto,
-  html[data-chrome="compact"] #chat-conv {
-    font-size:9.5px; padding:4px 8px; letter-spacing:normal; border-radius:5px; }
-  /* (2) primary buttons read firmer. The cream fill is RESTATED here because (3)
-     below ties with the base `button.primary` rule (both 0-1-1) and would win on
-     source order, flattening the one filled button in the panel. */
-  html[data-chrome="compact"] button.primary {
-    border-radius:8px; border-width:1px;
-    background:var(--cream); border-color:var(--cream); }
-  html[data-chrome="compact"] #chat-send { padding:6px 12px; letter-spacing:normal; }
-  /* (3) THE BARE <button> — the 2026-08-14 miss that made the toggle look DEAD.
-     Mission Control's Start / Stop / Install / Logs / Retry, every .md-actions row,
-     the download rows and the setup checklist are UNCLASSED <button>s (base rule:
-     `button { … border-radius:9px; padding:7px 15px }` above), so not one of the
-     chip rules in (1) reached them: on the opening screen the whole axis came down
-     to a 1px radius change. `:not(.primary)` on the hover leaves the cream button's
-     own hover alone, and `.cmsg .msg-act` (0-2-0) still outranks this, so the
-     per-message Copy / Edit / Fork / Delete row stays borderless text. */
-  /* deliberately sets NO color: `html[…] button` is (0,1,2) and would outrank the
-     base `button.primary` (0,1,1), turning the one cream-filled button's dark ink
-     light-on-light. Base `button` already supplies var(--fg) for everything else. */
-  html[data-chrome="compact"] button {
-    font-size:12px; padding:6px 14px; border-radius:5px;
-    background:var(--chrome-btn); border-color:var(--chrome-edge); }
-  html[data-chrome="compact"] button:hover:not(.primary) {
-    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
-  /* (4) Capabilities action buttons (Add server / presets / reset override) */
-  html[data-chrome="compact"] .cap-btn {
-    font:10.5px var(--chrome-font); letter-spacing:normal; text-transform:none;
-    color:var(--fg); border-color:var(--chrome-edge);
-    background:var(--chrome-btn); border-radius:5px; padding:5px 11px; }
-  html[data-chrome="compact"] .cap-btn:hover {
-    background:var(--chrome-btn-hi); border-color:var(--gold); color:var(--cream); }
-  /* …and the two-step-delete states RESTATED, for the same specificity reason as
-     button.primary above: `.cap-btn.arm` is (0,2,0) and the compact rule is (0,2,1),
+  html[data-chrome="studio"] #chat-model-btn,
+  html[data-chrome="studio"] #chat-audio-btn {
+    font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; padding:0 10px;
+    color:var(--fg); border-radius:6px;
+    background:var(--st-btn); border-color:var(--st-edge); }
+  /* LANDMINE: base #chat-model-btn.empty is (1,1,0) and the studio id rule is
+     (1,2,1), so "nothing selected" would stop reading faint without this. */
+  html[data-chrome="studio"] #chat-model-btn.empty,
+  html[data-chrome="studio"] #chat-audio-btn.empty { color:var(--faint); }
+
+  /* (1f) THE COMPOSER — five icon buttons (D4). Square controls at the uniform
+     height; the label spans are hidden by (0) above and the title attrs (which the
+     editorial build already carries) become the tooltips. */
+  html[data-chrome="studio"] #chat-attach,
+  html[data-chrome="studio"] #chat-send,
+  html[data-chrome="studio"] #chat-talk,
+  html[data-chrome="studio"] #chat-auto,
+  html[data-chrome="studio"] #chat-conv {
+    height:var(--st-h); min-width:var(--st-h); padding:0 8px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
+    border-radius:var(--st-r); background:var(--st-btn);
+    border:1px solid var(--st-edge); color:var(--fg); }
+  /* Send is the ONE filled control on the surface — gold, with the ink the editorial
+     gold-fills use, so an icon on gold stays readable in BOTH themes. */
+  html[data-chrome="studio"] #chat-send {
+    background:var(--gold); border-color:var(--gold); color:#171420; font-weight:600; }
+  /* recording / listening keep TODAY's signal, moved from the ● glyph to the icon */
+  html[data-chrome="studio"] #chat-talk.rec .st-ico { color:var(--bad); }
+  html[data-chrome="studio"] #chat-auto.on .st-ico,
+  html[data-chrome="studio"] #chat-conv.on .st-ico { color:var(--gold); }
+
+  /* (2) THE BARE <button> — Mission Control's Start / Stop / Install / Logs / Retry,
+     every .md-actions row, the download rows, the dialogs and the setup checklist are
+     UNCLASSED <button>s, so none of the chip rules above reach them: without this the
+     axis is a no-op on the screen the app OPENS on (the 2026-08-14 compact miss).
+     :where() carries ZERO specificity, so the exemptions cost nothing and this rule
+     stays (0,1,2) — low enough that every smaller-tier rule above still wins. */
+  html[data-chrome="studio"] button:not(:where(.msg-act, .ap-btn)) {
+    height:var(--st-h); font-size:var(--st-fs); font-family:var(--st-font); letter-spacing:normal;
+    text-transform:none; padding:0 14px; border-radius:var(--st-r);
+    background:var(--st-btn); border-color:var(--st-edge); }
+  html[data-chrome="studio"] button:hover:not(.primary) {
+    background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+  /* LANDMINE L1: html[…] button is (0,1,2) and OUTRANKS base button.primary (0,1,1),
+     so the fill, the dark ink and the weight are restated or the one filled button in
+     the panel goes flat / light-on-light. */
+  html[data-chrome="studio"] button.primary {
+    background:var(--cream); border-color:var(--cream); color:#171420; font-weight:600; }
+  /* EXEMPTIONS (D3): the per-message action row stays quiet TEXT and the approval
+     chips keep their pill identity. Their own rules already win every painted
+     property; only the uniform height would have leaked in. */
+  html[data-chrome="studio"] .cmsg .msg-act,
+  html[data-chrome="studio"] .cmsg .approval .ap-btn { height:auto; }
+
+  /* (3) Capabilities action buttons (Add server / presets / reset override) */
+  html[data-chrome="studio"] .cap-btn {
+    height:var(--st-hs); display:inline-flex; align-items:center;
+    font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
+    color:var(--fg); border-color:var(--st-edge);
+    background:var(--st-btn); border-radius:6px; padding:0 11px; }
+  html[data-chrome="studio"] .cap-btn:hover {
+    background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+  /* LANDMINE L2: .cap-btn.arm/.go are (0,2,0) and the studio .cap-btn rule is (0,2,1),
      so without these the armed ✕ would stop turning red. */
-  html[data-chrome="compact"] .cap-btn.arm {
+  html[data-chrome="studio"] .cap-btn.arm {
     color:var(--bad); border-color:var(--bad); }
-  html[data-chrome="compact"] .cap-btn.go {
+  html[data-chrome="studio"] .cap-btn.go {
     color:var(--gold); border-color:var(--gold); }
-  /* (5) approval + ask-card choice chips. The base selector is
-     `.cmsg .approval .ap-btn` (0-3-0), so the same three classes are needed HERE or
-     the attribute prefix alone (0-2-1) would silently lose — the one place in this
-     block where specificity, not coverage, is the hazard. Sets NO color and NO
-     border-color on purpose: a multi-select pick's gold `.on` state must still win. */
-  html[data-chrome="compact"] .cmsg .approval .ap-btn {
-    font:11px var(--chrome-font); letter-spacing:normal;
-    background:var(--chrome-btn); border-radius:5px; padding:5px 12px; }
-  /* ============================ end compact chrome ============================== */
+  /* the switch keeps its mechanism; only the knob is squared so it reads as the same
+     family as the rounded-rect buttons around it */
+  html[data-chrome="studio"] .cap-sw .knob { border-radius:6px; }
+
+  /* (4) session rail + the remaining small-tier actions. Each of these has its own
+     base rule at a specificity the bare-button rule cannot reach, so each is named. */
+  html[data-chrome="studio"] #cs-new {
+    height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
+    text-transform:none; color:var(--fg); background:var(--st-btn);
+    border-color:var(--st-edge); border-radius:6px; padding:0 10px; }
+  html[data-chrome="studio"] .cs-act button {
+    height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
+    color:var(--fg); background:var(--st-btn); border-color:var(--st-edge);
+    border-radius:6px; padding:0 7px; line-height:1; }
+  html[data-chrome="studio"] .hfget {
+    height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
+    text-transform:none; color:var(--fg); background:var(--st-btn);
+    border-color:var(--st-edge); border-radius:6px; padding:0 10px; }
+  html[data-chrome="studio"] .art-btn {
+    height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
+    color:var(--fg); background:var(--st-btn); border-color:var(--st-edge);
+    border-radius:6px; padding:0 10px; }
+  /* LANDMINE L2 class: base .art-btn.on (0,2,0) vs the studio .art-btn rule (0,2,1) */
+  html[data-chrome="studio"] .art-btn.on {
+    color:var(--gold); border-color:var(--gold); }
+  html[data-chrome="studio"] .dlrow .dlacts button {
+    height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
+    text-transform:none; color:var(--fg); background:var(--st-btn);
+    border-color:var(--st-edge); border-radius:6px; padding:0 9px; }
+  /* ============================ end studio chrome =============================== */
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
   try { if (localStorage.getItem('harness-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
-  // COMPACT CHROME (2026-08-14): a SECOND, independent axis, applied in the SAME
-  // pre-paint pass so controls never reflow after first paint. Editorial = default.
-  try { if (localStorage.getItem('harness-chrome') === 'compact') document.documentElement.dataset.chrome = 'compact'; } catch (e) {}
+  // STUDIO CHROME (2026-08-20, replaces the parked "compact" axis): a SECOND,
+  // independent axis, applied in the SAME pre-paint pass so controls never reflow
+  // after first paint. Editorial = default. A stored legacy 'compact' value is NOT
+  // read here, so it migrates silently to editorial (no modal, no data loss — the
+  // next ▣ click rewrites the key as 'studio').
+  try { if (localStorage.getItem('harness-chrome') === 'studio') document.documentElement.dataset.chrome = 'studio'; } catch (e) {}
 </script>
 </head>
 <body>
+
+<!-- STUDIO CHROME icon set (2026-08-20, FABLE-STUDIO-CHROME-SPEC D4) — the only new
+     assets in the panel. Six 16x16 symbols, built ONLY from primitives (line / rect /
+     circle / arc), stroked with currentColor so a state colour is one CSS declaration.
+     The sprite is positioned off-layout rather than display:none — a <use> reference
+     into a display:none sprite is the one WebKit corner that has historically failed. -->
+<svg style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-send" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="8" y1="13" x2="8" y2="4"/><line x1="4" y1="8" x2="8" y2="4"/><line x1="12" y1="8" x2="8" y2="4"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6" y="2" width="4" height="7" rx="2"/><path d="M4 8 A4 4 0 0 0 12 8"/>
+    <line x1="8" y1="12" x2="8" y2="14"/><line x1="5.5" y1="14" x2="10.5" y2="14"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="2" y1="6" x2="2" y2="10"/><line x1="5" y1="4" x2="5" y2="12"/>
+    <line x1="8" y1="2" x2="8" y2="14"/><line x1="11" y1="4" x2="11" y2="12"/>
+    <line x1="14" y1="6" x2="14" y2="10"/></symbol>
+  <symbol id="i-conv" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 9 A5 7 0 0 1 13 9"/><rect x="2" y="9" width="2.5" height="4" rx="1"/>
+    <rect x="11.5" y="9" width="2.5" height="4" rx="1"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="8" r="5"/><path d="M8 3 A5 5 0 0 1 8 13 Z" fill="currentColor" stroke="none"/></symbol>
+</defs></svg>
 
 <aside>
   <!-- FABLE: style pass — Phase 1 rail collapse toggle (Chat view only) -->
@@ -1065,9 +1154,9 @@
 <main>
   <!-- FABLE: style pass — PHASE 1.5 topbar icon-ified (glyph only; word on hover) -->
   <div class="topbar">
-    <span class="chip chip-icon" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">◐</span>
-    <!-- compact chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
-    <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle compact chrome (button-style controls)" aria-label="Toggle compact chrome">▣</span>
+    <span class="chip chip-icon" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-theme"/></svg></span><span class="ed-only">◐</span></span>
+    <!-- studio chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
+    <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle Studio chrome (uniform buttons + icons)" aria-label="Toggle Studio chrome">▣</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
     <span class="chip chip-icon" onclick="refresh(true)" title="Refresh status" aria-label="Refresh status">↻</span>
   </div>
@@ -1153,29 +1242,31 @@
           <!-- one attached image per message (direct lane + vision model only) -->
           <div id="chat-attachstrip" hidden></div>
           <div id="chat-inputrow">
+            <!-- STUDIO CHROME: every composer control carries BOTH children (icon +
+                 editorial text). CSS picks one; no renderer branches on the theme. -->
             <button class="chip chip-icon" id="chat-attach" onclick="pickImage()"
-              title="Attach an image (vision models)" aria-label="Attach an image" hidden>⊕</button>
+              title="Attach an image (vision models)" aria-label="Attach an image" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-attach"/></svg></span><span class="ed-only">⊕</span></button>
             <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp"
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message the harness…"
               oninput="growInput(this)"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message">Send</button>
+            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-send"/></svg></span><span class="ed-only">Send</span></button>
             <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg).
                  AFTER Send + 40% smaller than it (Debi 2026-08-13). -->
             <button class="primary" id="chat-talk" onclick="toggleTalk()"
               title="Dictate — record and transcribe into the message box"
-              aria-label="Dictate into the message box" hidden>● talk</button>
+              aria-label="Dictate into the message box" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-mic"/></svg></span><span class="ed-only">● talk</span></button>
             <!-- AUTO-DICTATION v1: hands-free continuous mode. Same visibility gate as
                  ● talk (an STT default must exist); mutually exclusive with it. -->
             <button class="primary" id="chat-auto" onclick="toggleAuto()"
               title="Hands-free dictation — listen continuously and transcribe each utterance"
-              aria-label="Hands-free dictation" hidden>auto</button>
+              aria-label="Hands-free dictation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-auto"/></svg></span><span class="ed-only">auto</span></button>
             <!-- CONVERSATION MODE: speak → auto-send → reply is auto-spoken → listen
                  again. Needs BOTH an STT and a TTS default (renderConvBtn). -->
             <button class="primary" id="chat-conv" onclick="toggleConv()"
               title="Conversation — speak, the reply is sent and read back to you"
-              aria-label="Hands-free conversation" hidden>conv</button>
+              aria-label="Hands-free conversation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-conv"/></svg></span><span class="ed-only">conv</span></button>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
@@ -1895,9 +1986,10 @@ function toggleTheme() {
   try { localStorage.setItem('harness-theme', toLight ? 'light' : 'dark'); } catch (e) {}
 }
 
-// COMPACT CHROME (2026-08-14): the density/shape axis, deliberately SEPARATE from
-// toggleTheme — the two are independent, and folding them into one 4-state cycle
-// would make a click on ◐ non-deterministic. Editorial (no attribute) = default.
+// STUDIO CHROME (2026-08-20, replaces the parked "compact" axis): the control-shape
+// axis, deliberately SEPARATE from toggleTheme — the two are independent, and folding
+// them into one 4-state cycle would make a click on ◐ non-deterministic. Editorial
+// (no attribute) = default; a stored legacy 'compact' reads as editorial.
 /* PURE-ish (reads the live DOM, writes nothing): the RUNTIME SELF-CHECK.
    Three Mac reports of "the toggle does nothing" were each diagnosed by reasoning
    over the stylesheet, and each diagnosis was wrong or incomplete, because a
@@ -1912,22 +2004,27 @@ function chromeProbe() {
     const el = document.getElementById('mode-chat')
             || document.querySelector('#cards button')
             || document.querySelector('.chip');
-    if (!el) return 'compact=' + attr + ' (no control on screen to probe)';
+    if (!el) return 'studio=' + attr + ' (no control on screen to probe)';
     const c = getComputedStyle(el);
     const fam = (c.fontFamily || '').split(',')[0].replace(/["']/g, '');
-    return 'compact=' + attr + ' probe=' + (el.id || el.className || el.tagName)
+    // #chat-send is probed too: it is the one control that becomes an ICON button, so
+    // its computed height is the fastest proof the composer half of the axis landed.
+    const send = document.getElementById('chat-send');
+    const sh = send ? (' send=' + getComputedStyle(send).height
+                       + '/' + getComputedStyle(send).backgroundColor) : '';
+    return 'studio=' + attr + ' probe=' + (el.id || el.className || el.tagName)
       + ' radius=' + c.borderRadius + ' bg=' + c.backgroundColor
       + ' edge=' + c.borderTopColor + ' font=' + c.fontSize + '/' + fam
-      + ' tt=' + c.textTransform;
+      + ' tt=' + c.textTransform + ' height=' + c.height + sh;
   } catch (e) { return 'probe failed: ' + (e && e.message); }
 }
 
 function toggleChrome() {
-  const on = document.documentElement.dataset.chrome !== 'compact';
-  if (on) document.documentElement.dataset.chrome = 'compact';
+  const on = document.documentElement.dataset.chrome !== 'studio';
+  if (on) document.documentElement.dataset.chrome = 'studio';
   else document.documentElement.removeAttribute('data-chrome');
-  try { localStorage.setItem('harness-chrome', on ? 'compact' : 'editorial'); } catch (e) {}
-  feed('chrome', on ? 'compact chrome on' : 'editorial chrome on');
+  try { localStorage.setItem('harness-chrome', on ? 'studio' : 'editorial'); } catch (e) {}
+  feed('chrome', on ? 'studio chrome on' : 'editorial chrome on');
   // read-back AFTER the attribute write, so what it reports is what the browser has
   const p = chromeProbe();
   try { console.log('[chrome] ' + p); } catch (e) {}
@@ -4394,7 +4491,12 @@ function speakFlash(btn, text, title){
   btn.textContent = text;
   btn.title = title || SPEAK_TITLE;
   setTimeout(() => {
-    if (document.body.contains(btn) && !(currentAudio && currentAudio.btn === btn)){
+    // …but ONLY on a real ▶ speak row action. The ● talk path also calls speakFlash
+    // (a recorded pre-existing defect: it used to leave a composer button reading
+    // "▶ speak"), and under studio chrome that restore would ALSO replace the mic
+    // icon with text two seconds later. The composer buttons own their own repaint.
+    if (document.body.contains(btn) && btn.classList.contains('msg-act')
+        && !(currentAudio && currentAudio.btn === btn)){
       btn.textContent = SPEAK_LABEL; btn.title = SPEAK_TITLE;
     }
   }, 2000);
@@ -4492,6 +4594,61 @@ function refreshSpeakChips(){
    bridge transcribes. Errors reuse the ▶ speak flash idiom (speakFlash) so both
    voice surfaces fail the same visible way. */
 let talkRec = null;              // { rec, chunks, timer, stream, fmt, stop } while live
+/* ---------- STUDIO CHROME: the icon/text pair (2026-08-20) ----------
+   A composer control carries BOTH children at all times — an icon span (.st-only) and
+   the editorial text span (.ed-only) — and the stylesheet alone decides which one is
+   visible. So every renderer below stays MODE-BLIND: there is no `if (studio)` anywhere
+   in this file, and a theme flip needs no re-render.
+   `word` is the one thing an icon cannot carry: a LIVE STATE (the recording clock,
+   "listening", "Stop"). It renders as a small 11px word beside the icon, because a
+   state that becomes invisible in one chrome is worse than no icon at all.
+   The editorial half reproduces today's markup EXACTLY: a `.talk-dot` + `.talk-t`
+   pair when a dot glyph is given (the states that had them), a bare text node when
+   not (the idle labels, which were plain `textContent` writes). */
+function ctlIcon(id){
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'st-ico');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(NS, 'use');
+  use.setAttribute('href', '#' + id);
+  svg.appendChild(use);
+  return svg;
+}
+function ctlPaint(btn, icon, dot, text, word){
+  if (!btn) return;
+  btn.innerHTML = '';
+  const s = document.createElement('span');
+  s.className = 'st-only';
+  s.appendChild(ctlIcon(icon));
+  if (word){
+    const w = document.createElement('span');
+    w.className = 'st-word'; w.textContent = word;   // textContent: never markup
+    s.appendChild(w);
+  }
+  const e = document.createElement('span');
+  e.className = 'ed-only';
+  if (dot){
+    const d = document.createElement('span');
+    d.className = 'talk-dot'; d.textContent = dot;
+    e.appendChild(d);
+    const t = document.createElement('span');
+    t.className = 'talk-t'; t.textContent = text;
+    e.appendChild(t);
+  } else {
+    e.appendChild(document.createTextNode(text));
+  }
+  btn.appendChild(s); btn.appendChild(e);
+}
+/* Send / Stop. Three call sites used to write `sb.textContent = 'Send'`, which would
+   have deleted the icon; they all funnel here now. In studio the label becomes the
+   status word beside the arrow whenever it is NOT the resting "Send" — so a Hermes
+   turn's Stop affordance is still readable without inventing a seventh symbol. */
+function sendPaint(label){
+  ctlPaint(document.getElementById('chat-send'), 'i-send', '', label,
+           label === 'Send' ? '' : label);
+}
+
 const TALK_LABEL = '● talk';
 const TALK_TITLE = 'Dictate — record and transcribe into the message box';
 const TALK_MAX_S = 60;           // hard stop; also the cap the 25MB body limit assumes
@@ -4572,7 +4729,7 @@ function renderTalkBtn(){
   if (!on && talkRec) stopTalk(true);          // model cleared mid-recording → drop it
   if (!talkRec && on){
     btn.classList.remove('rec');
-    btn.textContent = TALK_LABEL;
+    ctlPaint(btn, 'i-mic', '', TALK_LABEL, '');
     btn.title = voiceCfg.stt_model + '\n' + TALK_TITLE;
   }
   renderAutoBtn();     // the `auto` chip rides the SAME config read and visibility gate
@@ -4582,12 +4739,8 @@ function talkPaint(sec){
   const btn = document.getElementById('chat-talk');
   if (!btn) return;
   btn.classList.add('rec');
-  btn.innerHTML = '';
-  const dot = document.createElement('span');
-  dot.className = 'talk-dot'; dot.textContent = '■ ';
-  const t = document.createElement('span');
-  t.className = 'talk-t'; t.textContent = talkTime(sec);
-  btn.appendChild(dot); btn.appendChild(t);
+  // the clock is the state — it rides beside the mic icon in studio chrome too
+  ctlPaint(btn, 'i-mic', '■ ', talkTime(sec), talkTime(sec));
   btn.title = 'Stop recording and transcribe';
 }
 
@@ -4968,7 +5121,8 @@ function autoFlash(btn, text, title){
   if (!btn) return;
   btn.disabled = false;
   btn.classList.remove('on');
-  btn.textContent = text;
+  // a failure word must survive the icon swap — it IS the message
+  ctlPaint(btn, btn.id === 'chat-conv' ? 'i-conv' : 'i-auto', '', text, text);
   btn.title = title || (btn.id === 'chat-conv' ? CONV_TITLE : AUTO_TITLE);
   setTimeout(() => {
     if (document.body.contains(btn) && !autoVad){ renderAutoBtn(); renderConvBtn(); }
@@ -4982,19 +5136,14 @@ function renderAutoBtn(){
   btn.hidden = !on;
   if (!on && autoOn()) stopAuto('the speech-to-text default was cleared');
   btn.classList.toggle('on', autoOn());
-  btn.innerHTML = '';
   if (autoOn()){
-    const dot = document.createElement('span');
-    dot.className = 'talk-dot'; dot.textContent = '● ';
-    const t = document.createElement('span');
-    t.className = 'talk-t'; t.textContent = 'auto';
-    btn.appendChild(dot); btn.appendChild(t);
+    ctlPaint(btn, 'i-auto', '● ', 'auto', 'on');
     const busy = autoVad && autoVad.busy;
     btn.title = (voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '')
       + (busy ? 'transcribing…' : 'Listening — click to stop')
       + '\nTranscripts are appended to the box, never sent.';
   } else {
-    btn.textContent = AUTO_LABEL;
+    ctlPaint(btn, 'i-auto', '', AUTO_LABEL, '');
     btn.title = (voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '') + AUTO_TITLE;
   }
 }
@@ -5340,17 +5489,14 @@ function renderConvBtn(){
   btn.hidden = !avail;
   if (!avail && convOn()) stopConv('a voice default was cleared');
   btn.classList.toggle('on', convOn());
-  btn.innerHTML = '';
   if (convOn()){
-    const dot = document.createElement('span');
-    dot.className = 'talk-dot';
-    dot.textContent = (convSt.phase === 'speaking' || convSt.phase === 'grace') ? '▸ ' : '● ';
-    const t = document.createElement('span');
-    t.className = 'talk-t'; t.textContent = convLabel(convSt);
-    btn.appendChild(dot); btn.appendChild(t);
+    const dot = (convSt.phase === 'speaking' || convSt.phase === 'grace') ? '▸ ' : '● ';
+    // the phase word rides beside the headset icon in studio chrome: conversation
+    // state (listening / … / speaking) is the one thing that must never go invisible
+    ctlPaint(btn, 'i-conv', dot, convLabel(convSt), convLabel(convSt));
     btn.title = CONV_TITLE + '\nClick to stop.';
   } else {
-    btn.textContent = CONV_LABEL;
+    ctlPaint(btn, 'i-conv', '', CONV_LABEL, '');
     btn.title = CONV_TITLE;
   }
 }
@@ -8818,7 +8964,7 @@ function turnHardRelease(t){
   curTurn = null;
   chatBusy = false;
   const sb = document.getElementById('chat-send');
-  if (sb){ sb.disabled = false; sb.textContent = 'Send';
+  if (sb){ sb.disabled = false; sendPaint('Send');
     sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message'); }
   const th = document.getElementById('thinking'); if (th) th.remove();
 }
@@ -8904,7 +9050,7 @@ async function sendChat() {
   if (typeof convOn === 'function' && convOn()) convEvent('turn_start');
   const sendBtn = document.getElementById('chat-send');
   if (chatMode === 'hermes'){
-    sendBtn.textContent = 'Stop';
+    sendPaint('Stop');
     sendBtn.title = 'Stop this Hermes turn'; sendBtn.setAttribute('aria-label', 'Stop this Hermes turn');
   } else {
     sendBtn.disabled = true;
@@ -9124,7 +9270,7 @@ async function sendChat() {
     chatBusy = false;
     expireApprovals(holder);   // Phase 2: freeze any still-open approval cards
     const sb = document.getElementById('chat-send');
-    sb.disabled = false; sb.textContent = 'Send';
+    sb.disabled = false; sendPaint('Send');
     sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');
     scrollChat();
     // Refresh rail: Odysseus auto-titles a new chat + reorders by recency;
@@ -10089,7 +10235,7 @@ const commands = () => {
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
-    {t:'Toggle compact chrome', k:'▣', f:toggleChrome},
+    {t:'Toggle Studio chrome', k:'▣', f:toggleChrome},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.

@@ -2604,6 +2604,37 @@ LICENSE_NC_REASON = "non-commercial licence"
 # Get on a model the harness already ships as its recommended TTS.
 OMNIVOICE_LICENSE_REASON = ("weights CC-BY-NC per upstream README; code Apache-2.0")
 
+# MiniMax-Music3: the SECOND confirmed instance of the same defect class, on a new
+# model family (docs/research/2026-08-20-music-video-gen.md § Corrections #1) — i.e.
+# this table is structural, not a one-off patch.
+# `Abiray/MiniMax-Music3-GGUF` declares `license: apache-2.0` and its README claims it
+# "Inherits the Apache-2.0 License from the original release" — FALSE. Upstream
+# `MiniMaxAI/MiniMax-Music3` ships a custom "MiniMax-Music3 COMMUNITY LICENSE" with
+# attribution duties on commercial surfaces, a $20M-revenue written-authorization
+# trigger, a safeguards clause, and a 19-clause acceptable-use policy.
+#   https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
+# The contrast that proves the tag cannot be trusted, only the file:
+# `PocketAiHub/MiniMax-Music3-MLX` tags itself `license: other` +
+# `license_name: minimax-music3-community` and links the real LICENSE (verified live
+# via the HF API, 2026-08-20) — one repackager was honest, one was not. The key covers
+# the whole family (upstream, the honest MLX port, the Comfy-Org repack, every quant)
+# because the weights term follows a format conversion, exactly as for OmniVoice.
+#
+# ⚠️ PENDING FABLE QA: amber, Get ENABLED — same verdict shape as OmniVoice and
+# OpenRAIL. This licence is NOT non-commercial; personal use is unaffected and the
+# duties bite only on commercial surfaces, so the honest move is to SAY the term
+# rather than switch off a button.
+MINIMAX_MUSIC3_LICENSE_REASON = (
+    "weights under the MiniMax-Music3 Community License (attribution on commercial "
+    "surfaces, written authorization above $20M revenue); some repacks mistag apache-2.0")
+
+_MINIMAX_MUSIC3_RECORD = {
+    "license": "minimax-community (weights)",
+    "badge": "unknown",
+    "reason": MINIMAX_MUSIC3_LICENSE_REASON,
+    "source_url": "https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE",
+}
+
 # key = a lowercase SUBSTRING matched against the repo id (so every fork/quant of a
 # family is covered without listing them all — the mlx-community set alone is six
 # repos and theoracleguy has a seventh).
@@ -2614,6 +2645,11 @@ LICENSE_OVERRIDES = {
         "reason": OMNIVOICE_LICENSE_REASON,
         "source_url": "https://huggingface.co/k2-fsa/OmniVoice",
     },
+    "minimax-music3": _MINIMAX_MUSIC3_RECORD,
+    # Comfy-Org spells the repack `MiniMax-Music-3` (extra hyphen) and every GGUF
+    # quant of it inherits that spelling, so BOTH forms are listed rather than
+    # relying on one substring to catch a name we do not control.
+    "minimax-music-3": _MINIMAX_MUSIC3_RECORD,
 }
 
 

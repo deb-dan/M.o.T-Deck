@@ -72,8 +72,12 @@ check('forceEndTurn stamps the turn "interrupted (forced)" with the stage',
   /interrupted \(forced\)/.test(force));
 
 const hard = grab('turnHardRelease');
+// UPDATED HONESTLY 2026-08-20 (studio chrome): the Send button now carries BOTH an
+// icon and a text child, so every label site funnels through sendPaint() instead of
+// writing textContent wholesale (which would have deleted the icon). The invariant is
+// unchanged — the composer is released with the resting Send label.
 check('turnHardRelease clears chatBusy and restores the Send button',
-  /chatBusy = false;/.test(hard) && /sb\.textContent = 'Send'/.test(hard));
+  /chatBusy = false;/.test(hard) && /sendPaint\('Send'\)/.test(hard));
 check('turnHardRelease only ever releases the turn it was armed for (a late timer '
     + 'must not kill the NEXT turn)', /if \(curTurn !== t\) return;/.test(hard));
 
@@ -166,7 +170,7 @@ check('the finally clears the timer AND the turn handle (a stale curTurn would '
     + 'let the next Stop abort nothing)',
   /finally \{\s*clearTimeout\(turn\.timer\);\s*if \(curTurn === turn\) curTurn = null;/.test(send));
 check('the finally still clears chatBusy and restores the button (unchanged)',
-  /chatBusy = false;[\s\S]{0,400}sb\.textContent = 'Send'/.test(send));
+  /chatBusy = false;[\s\S]{0,400}sendPaint\('Send'\)/.test(send));
 check('a deliberate abort is not reported as a stream error',
   /if \(turn\.ended\) body\.textContent \+= '\\n· interrupted';/.test(send));
 check('conv-mode turn hooks are still inside the send path\'s try/finally, so a '
