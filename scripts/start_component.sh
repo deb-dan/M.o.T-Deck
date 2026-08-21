@@ -877,6 +877,13 @@ for m in reg:
         entry["limit"] = {"context": ctx, "output": min(4096, ctx)}
     models[key] = entry
 
+PID = "llama.cpp"          # our provider id, everywhere — never spelled twice
+
+# ⚠️ `models` MUST NOT be empty, and that is measured, not stylistic: a provider whose
+# models map is empty is DELETED outright (provider/provider.ts:1686 at the pin —
+# `if (Object.keys(provider.models).length === 0) { delete providers[providerID] }`),
+# so an empty registry would make the whole lane vanish from Settings AND the picker.
+# This fallback is what keeps the provider visible enough to explain itself.
 PROVIDER = {
     "npm": "@ai-sdk/openai-compatible",
     "name": "Harness runner (local)",
@@ -884,6 +891,8 @@ PROVIDER = {
     "models": models or {"harness-runner": {"name": "harness runner",
                                             "id": "harness-runner"}},
 }
+# The keys OpenCode will actually address — the ONLY ids a default may name.
+MODEL_KEYS = set(PROVIDER["models"])
 
 
 def load(path):
@@ -911,24 +920,80 @@ cfg = load(cfg_path)
 provider = cfg.get("provider")
 if not isinstance(provider, dict):
     provider = {}
-provider["llama.cpp"] = PROVIDER
+provider[PID] = PROVIDER
 cfg["provider"] = provider
 cfg["$schema"] = "https://opencode.ai/config.json"
 # THE PIN RULE, in the file as well as in the env: upstream's auto-update is ON by
 # default and would move the binary out from under harness.yaml.
 cfg["autoupdate"] = False
 
+# ── UN-DISABLE OURSELVES. Measured against the real server at the pin: with
+# `disabled_providers: ["llama.cpp"]` present, our provider is deleted BEFORE the
+# models loop (provider/provider.ts:1644, `if (!isProviderAllowed(providerID)) delete`)
+# and disappears from BOTH `all` and `connected` — i.e. Settings -> Providers reads
+# exactly "No connected providers" and the picker offers no local model, no matter how
+# correct the provider block beside it is.
+# ONE click on "Disconnect" in OpenCode's own Settings writes that entry
+# (app/src/components/settings-v2/providers.tsx -> PATCH /global/config), and because
+# our merge only ever replaces the keys we own, it would otherwise survive every
+# restart forever — an unrecoverable dead lane with no visible cause.
+# ⚠️ this DOES overrule a disable the user may have made deliberately. The trade is
+# deliberate: pointing this lane at the harness runner is the entire job of this Start,
+# a stuck-disabled provider has no other cure, and the line below says out loud that we
+# did it (so a user who really wants it off can disable it again and simply not Start).
+_repairs = []
+dis = cfg.get("disabled_providers")
+if isinstance(dis, list) and any(str(x) == PID for x in dis):
+    kept = [x for x in dis if str(x) != PID]
+    if kept:
+        cfg["disabled_providers"] = kept
+    else:
+        cfg.pop("disabled_providers", None)
+    _repairs.append("removed %s from disabled_providers" % PID)
+# The mirror-image key: a non-empty allowlist that omits us filters us out just the
+# same (`if (enabled && !enabled.has(id)) return false`, provider.ts:1415-1422).
+# Nothing in OpenCode's UI writes this one, so it can only be hand-written — we add
+# ourselves rather than empty it, leaving every other choice in it intact.
+# ⚠️ an EMPTY list is deliberately NOT touched: `cfg.enabled_providers ? new Set(...)`
+# reads an empty array as truthy in JS, which would mean "allow nothing", but that
+# reading is inferred and was never measured — and if it is wrong, writing one entry
+# would turn "no allowlist" into "only the harness", disabling everything else.
+en = cfg.get("enabled_providers")
+if isinstance(en, list) and en and not any(str(x) == PID for x in en):
+    cfg["enabled_providers"] = list(en) + [PID]
+    _repairs.append("added %s to enabled_providers" % PID)
+
 # The default model is SEEDED, not enforced: we set it when there is none, and we
 # replace it only when it points at one of OUR provider's models that no longer exists
 # (a stale id from a deleted model). A choice the user makes inside OpenCode survives.
+#
+# ⚠️ THE ONE RULE THAT MATTERS HERE: a default we write must NAME A MODEL THAT EXISTS.
+# `defaultModel()` returns `parseModel(cfg.model)` UNVALIDATED when the key is set
+# (provider/provider.ts:1980-1981), so a dangling id is handed onward as if it were
+# real; and with no valid selection the desktop falls back to its own ordering, whose
+# priority list is ["gpt-5", "claude-sonnet-4", "big-pickle", ...] (provider.ts:2017)
+# — that is where "Big Pickle" comes from. harness.yaml's runner.model is an INTENT
+# and can easily name something the registry does not carry (the runner is stopped, the
+# model was deleted, the id differs), so it is a candidate, never an answer.
+# Leaving `model` UNSET is safe by contrast: with no key, upstream falls through to the
+# providers named in cfg.provider — i.e. ours — and takes its first model (:2002-2007).
 want = os.environ.get("OC_MODEL") or ""
 want_key = key_of.get(want, str(want).replace("/", "_"))
+if want_key not in MODEL_KEYS:
+    # not in the registry -> deterministic first model of ours, or nothing at all
+    want_key = sorted(MODEL_KEYS)[0] if MODEL_KEYS else ""
 cur = cfg.get("model")
-stale = (isinstance(cur, str) and cur.startswith("llama.cpp/")
-         and cur.split("/", 1)[1] not in models)
+stale = (isinstance(cur, str) and cur.startswith(PID + "/")
+         and cur.split("/", 1)[1] not in MODEL_KEYS)
 if want_key and (not isinstance(cur, str) or not cur or stale):
-    cfg["model"] = "llama.cpp/" + want_key
+    cfg["model"] = PID + "/" + want_key
+elif stale:
+    # ours, dangling, and we have nothing valid to offer: unset beats dangling.
+    cfg.pop("model", None)
+    _repairs.append("cleared a default model that named no existing model")
 save(cfg_path, cfg)
+for _r in _repairs:
+    print("[harness]   REPAIRED: %s" % _r)
 
 # ── the PROJECT config: the provider only (see the shell comment above) ───────
 pcfg_path = os.environ["OC_PCFG"]
@@ -936,7 +1001,7 @@ pcfg = load(pcfg_path)
 pprovider = pcfg.get("provider")
 if not isinstance(pprovider, dict):
     pprovider = {}
-pprovider["llama.cpp"] = PROVIDER
+pprovider[PID] = PROVIDER
 pcfg["provider"] = pprovider
 pcfg["$schema"] = "https://opencode.ai/config.json"
 save(pcfg_path, pcfg)
@@ -1005,8 +1070,16 @@ PYOC
       # rather than a silent empty picker.
       # rm FIRST: a leftover from a previous Start must never be read as this one's
       # answer — a stale "CONNECTED" line would be worse than no line at all.
+      # ⚠️ 25s, not 8: MEASURED against the real binary, this route answers with the
+      # WHOLE catalogue — 193 providers, 5.2 MB — because `all` carries every provider
+      # OpenCode knows of, not just ours. It is fast over loopback, but an 8s budget was
+      # one slow moment away from printing "could not read /provider" on a healthy lane.
+      # `?directory=` asks in the scope the desktop itself asks in (the settings dialog
+      # is directory-scoped); measured identical to the unscoped answer, so this can only
+      # ever be closer to the truth, never further from it.
       rm -f "$ROOT/data/opencode-provider.json"
-      curl -sf -m 8 "http://127.0.0.1:${OC_PORT}/provider" -o "$ROOT/data/opencode-provider.json" \
+      curl -sf -m 25 --get --data-urlencode "directory=${OC_WS}" \
+        "http://127.0.0.1:${OC_PORT}/provider" -o "$ROOT/data/opencode-provider.json" \
         2>/dev/null || :
       OC_CFGP="$OC_CFG" python3 - "$ROOT/data/opencode-provider.json" <<'PYOCCHK' || true
 import json, os, sys
@@ -1020,13 +1093,24 @@ conn = [str(x) for x in (d.get("connected") or [])]
 allp = {p.get("id"): p for p in (d.get("all") or []) if isinstance(p, dict)}
 n = len((allp.get("llama.cpp") or {}).get("models") or {})
 if "llama.cpp" in conn:
+    # Settings -> Providers and the composer picker read the SAME payload — the
+    # intersection of `all` and `connected` (app/src/hooks/use-providers.ts:52-60,
+    # settings-v2/providers.tsx:48-52, context/models.tsx:40-47) — so this one word
+    # answers for both surfaces at once.
     print("[harness] opencode provider check: llama.cpp CONNECTED, %d model(s) — it is"
           " in Settings -> Providers and in the model picker" % n)
 else:
+    # Only two things can delete a provider that is present in the config, and both are
+    # now repaired above rather than merely reported; if we still land here, the config
+    # we wrote is not the config this server read.
     print("[harness] opencode provider check: llama.cpp NOT CONNECTED — the model")
     print("[harness]   picker will fall back to OpenCode Zen models (e.g. Big Pickle).")
     print("[harness]   the config we wrote: %s" % os.environ.get("OC_CFGP", "?"))
     print("[harness]   what the server reports connected: %s" % (conn or "(nothing)"))
+    print("[harness]   in `all` at all: %s" % ("yes" if "llama.cpp" in allp else "no"))
+    print("[harness]   NOTE a running OpenCode reads its config at BOOT — if you just")
+    print("[harness]   shipped harness code, Stop and Start this component (shipping is")
+    print("[harness]   not restarting), then reload the tab with cmd-R.")
 PYOCCHK
       rm -f "$ROOT/data/opencode-provider.json"
       # The tab does not open :${OC_PORT}/ — it opens the bridge's /opencode, a 307 into

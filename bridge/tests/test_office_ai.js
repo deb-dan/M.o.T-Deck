@@ -565,9 +565,9 @@ check('…and stops when it is collapsed', /clearInterval\(aiTimer\)/.test(grab(
 
 // the build stamp moved, so a stale document is still decidable by eye
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21g');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21h');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-21g/g) || []).length === 2);
+      (html.match(/loffice-2026-08-21h/g) || []).length === 2);
 
 // ── report ──
 console.log('');

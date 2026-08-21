@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21g">
+<meta name="harness-build" content="loffice-2026-08-21h">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -99,6 +99,13 @@
     --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
     --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
     --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+    /* ONE control height for the whole header — see the header comment below. */
+    --ctl-h:28px;
+    /* The two pane widths. They are CSS variables rather than inline widths so the
+       drag handlers write ONE property on <html> and both the pane and its divider
+       follow; the JS defaults (RAIL_W_DEF / AI_W_DEF) are the same numbers, and the
+       test reads both to prove they agree. */
+    --rail-w:236px; --ai-w:334px;
   }
   /* ══ THE SCOPE RULE — AND IT IS THE FIX FOR THE REPORTED "BARELY VISIBLE" BUG ══
      ⚠️ NEVER write a bare type selector in this stylesheet. Univer mounts REAL
@@ -136,13 +143,27 @@
      its portal — inherits the UA default (black), which is what a LIGHT-themed widget
      on a white ground needs and what it would get in any ordinary page. */
   :where(#boot,body>header,#msg,#richbar,#files,#empty,#ai){color:var(--fg)}
-  body>header{flex:none;display:flex;align-items:center;gap:10px;
+  /* ══ THE HEADER, AND WHY IT IS ONE ROW WITH THREE GROUPS ══════════════════════
+     Debi's verdict on the shipped page was "feels off". Part of that was here: the
+     header mixed a 16px serif wordmark, 10px mono pills and 12px sans buttons at
+     three different heights, so nothing lined up and the eye had no groups to rest
+     on. Every control in this row is now exactly --ctl-h tall (a single token, so
+     they cannot drift apart again) and the row reads left-to-right as:
+
+         [rail toggle] LOffice · <file> ●          <state> │ Rich · Import · New · SAVE
+
+     — identity, then what is open, then what state it is in, then the actions, with
+     one hairline separating "status" from "things that change the document". */
+  body>header{flex:none;display:flex;align-items:center;gap:9px;
          padding:8px 14px;border-bottom:1px solid var(--line);background:var(--bg2)}
   .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream);
-        letter-spacing:.01em}
+        letter-spacing:.01em;line-height:var(--ctl-h)}
+  /* a hairline between the status group and the action group */
+  .hsep{flex:none;width:1px;height:18px;background:var(--line2);margin:0 3px}
   .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
-        text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
-        border-radius:6px;color:var(--dim);white-space:nowrap}
+        text-transform:uppercase;padding:0 9px;border:1px solid var(--line2);
+        border-radius:6px;color:var(--dim);white-space:nowrap;
+        height:var(--ctl-h);display:inline-flex;align-items:center}
   .pill.on{color:var(--gold);border-color:var(--gold)}
   /* The dirty marker is a dot beside the file name — the office convention — not a
      word: the name is the thing the eye is already on. */
@@ -163,6 +184,23 @@
          background:none;border-color:transparent;color:var(--faint);padding:6px 8px}
   :where(#boot,body>header,#msg,#richbar,#files,#gridbar,#ai) button.ghost:hover{
          color:var(--gold);border-color:var(--line2)}
+  /* Every header control is exactly one height, from one token: the row used to mix
+     ~26px buttons with ~22px pills and a 16px serif baseline, and that mismatch is
+     most of what "feels off" was made of.
+     ⚠️ THE SCOPE RULE AT THE TOP OF THIS SHEET APPLIES HERE TOO, and these rules are
+     written `:where(body>header) button` rather than `body>header button` for exactly
+     the reason it gives: every rule that touches a bare `button` in this stylesheet is
+     scoped through :where() AND names an id, so the fence is a shape a test can check
+     rather than a judgement someone has to re-make per rule. (That is also why the
+     header carries an id at all: `:where(body>header) button` would have been just as
+     safe in fact, and the fence — correctly — cannot tell.) It keeps specificity FLAT —
+     (0,0,1) and (0,1,1), the same as the base rules they refine, so they win on source
+     order alone (they sit directly below them) and cannot outrank anything else.
+     Only the VERTICAL padding is restated; the horizontal padding stays where it is. */
+  :where(#hdr) button{height:var(--ctl-h);display:inline-flex;align-items:center;
+         padding-top:0;padding-bottom:0}
+  :where(#hdr) button.ghost{width:var(--ctl-h);justify-content:center;padding:0;
+         font-size:13px}
   .grow{flex:1 1 auto}
   /* ⚠️ NEVER give a hideable element a `display` in the stylesheet and then clear the
      INLINE one to show it: `style.display=''` removes the override and the rule wins,
@@ -173,11 +211,52 @@
        white-space:pre-wrap}
   #msg.on{display:block}
   #body{flex:1 1 auto;min-height:0;display:flex}
-  /* left: the file list */
-  #files{flex:none;width:236px;border-right:1px solid var(--line);background:var(--bg2);
-         display:flex;flex-direction:column;min-height:0}
-  body.railoff #files{display:none}
-  #files .hd{flex:none;display:flex;gap:6px;align-items:center;padding:10px 12px;
+  /* ══ THE TWO SIDE PANES — RESIZABLE, AND COLLAPSING TO A REOPENER ════════════
+     "The borders are not dragable for screensize" was the literal report, and it was
+     literally true: both panes were fixed pixel widths. They are now driven by
+     --rail-w / --ai-w and each carries a drag handle on its inner edge, built to the
+     idiom the main panel already uses for #cs-resize / #art-divider (an 8px
+     grabbable strip, a 2px bar that goes gold on hover, pointer capture so the drag
+     survives leaving the strip).
+
+     ⚠️ COLLAPSING TO display:none WAS THE OTHER HALF OF "feels off": the file list
+     vanished with nothing left behind, so getting it back meant remembering that the
+     ☰ in the header does that. A collapsed pane is now a 34px rail with its own
+     vertical label — the same shape the AI panel already used, now worn by both, so
+     the page has ONE collapse grammar instead of two. */
+  #files{flex:none;width:var(--rail-w,236px);border-right:1px solid var(--line);
+         background:var(--bg2);display:flex;flex-direction:column;min-height:0;
+         position:relative}
+  body.railoff #files{width:34px}
+  body.railoff #files-panel{display:none}
+  #files-panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  /* the slim reopener, mirrored on both sides (see #ai-tab) */
+  #rail-tab{display:none}
+  body.railoff #rail-tab{display:block;flex:1 1 auto;background:none;border:0;padding:0;
+      color:var(--dim);cursor:pointer;font:10px/1 ui-monospace,Menlo,monospace;
+      letter-spacing:.12em;text-transform:uppercase;white-space:nowrap}
+  body.railoff #rail-tab span{writing-mode:vertical-rl;display:inline-block}
+  body.railoff #rail-tab:hover{color:var(--gold)}
+  /* the drag handles. `touch-action:none` is what makes pointer capture work on a
+     trackpad; the ::after bar is the visible cue and is transparent until hovered so
+     the resting page stays quiet. */
+  #rail-resize,#ai-resize{position:absolute;top:0;width:9px;height:100%;
+      cursor:col-resize;z-index:6;touch-action:none}
+  #rail-resize{right:-5px}
+  #ai-resize{left:-5px}
+  #rail-resize::after,#ai-resize::after{content:'';position:absolute;top:50%;left:50%;
+      transform:translate(-50%,-50%);width:2px;height:38px;border-radius:2px;
+      background:transparent;transition:background .12s,height .12s}
+  #rail-resize:hover::after,#ai-resize:hover::after,
+  body.office-dragging #rail-resize::after,body.office-dragging #ai-resize::after{
+      background:var(--gold);height:100%}
+  body.railoff #rail-resize{display:none}
+  body.aioff #ai-resize{display:none}
+  /* while dragging: one cursor for the whole window, no text selection, and the
+     grid's contenteditable cells must not eat the pointer stream. */
+  body.office-dragging{cursor:col-resize;user-select:none}
+  body.office-dragging #gridwrap,body.office-dragging #sheet{pointer-events:none}
+  #files .hd{flex:none;display:flex;gap:6px;align-items:center;padding:9px 10px;
              border-bottom:1px solid var(--line)}
   #flist{flex:1 1 auto;overflow:auto;min-height:0;padding:6px}
   .frow{padding:7px 9px;border:1px solid transparent;border-radius:8px;cursor:pointer;
@@ -186,12 +265,17 @@
   .frow.on{background:var(--card);border-color:var(--gold)}
   .frow .fn{color:var(--cream);font-size:12.5px;word-break:break-all}
   .frow .fm{color:var(--faint);font-size:10.5px}
-  .frow .acts{display:none;gap:8px;margin-top:3px}
+  /* ⚠️ the row actions used to be two 10.5px words 8px apart with ZERO padding — a
+     ~9px-tall click target sitting next to a DELETE. They keep the quiet type and
+     gain a real box: a 4/7 pad, their own hover ground, and 4px between them so
+     "download" and "delete" cannot be hit by accident for one another. */
+  .frow .acts{display:none;gap:4px;margin-top:5px;margin-left:-7px}
   .frow:hover .acts,.frow.on .acts{display:flex}
-  .lnk{color:var(--faint);font-size:10.5px;cursor:pointer;background:none;border:0;
-       padding:0}
-  .lnk:hover{color:var(--gold)}
+  .lnk{color:var(--dim);font-size:10.5px;cursor:pointer;background:none;border:0;
+       padding:4px 7px;border-radius:6px;line-height:1}
+  .lnk:hover{color:var(--gold);background:var(--card2)}
   .lnk.arm{color:var(--bad)}
+  .lnk.arm:hover{color:var(--bad);background:var(--card2)}
   #fnote{flex:none;padding:9px 12px;border-top:1px solid var(--line);
          color:var(--faint);font-size:10.5px;line-height:1.45}
   #newrow{display:none;padding:8px 12px;border-bottom:1px solid var(--line);gap:6px}
@@ -267,8 +351,9 @@
      cell. A formula the model suggests is COPIED, never applied: a spreadsheet that
      silently rewrites itself is a worse product than one that hands you the formula.
      ⚠️ text colours here are --dim (7.4:1 on --bg2), never --faint (3.7:1). */
-  #ai{flex:none;width:334px;border-left:1px solid var(--line);background:var(--bg2);
-      display:flex;flex-direction:column;min-height:0}
+  #ai{flex:none;width:var(--ai-w,334px);border-left:1px solid var(--line);
+      background:var(--bg2);display:flex;flex-direction:column;min-height:0;
+      position:relative}
   body.aioff #ai{width:34px}
   body.aioff #ai-panel{display:none}
   #ai-tab{display:none}
@@ -351,14 +436,15 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21g</code>.</div>
-<header>
-  <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
+  Build <code>loffice-2026-08-21h</code>.</div>
+<header id="hdr">
+  <button id="btn-rail" class="ghost" title="Show or hide the file list (⌘\)">☰</button>
   <span class="name">LOffice</span>
   <span class="pill" id="p-file">no workbook open</span>
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
   <span class="pill" id="p-state">—</span>
+  <span class="hsep"></span>
   <button id="btn-rich" title="Load the full Univer spreadsheet engine (~11 MB, on demand)">Rich editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
   <button id="btn-new2">New</button>
@@ -369,23 +455,32 @@
 <div id="richbar"></div>
 <div id="body">
   <aside id="files">
-    <div class="hd">
-      <span class="pill">Spreadsheets</span>
-      <span class="grow"></span>
-      <button id="btn-new">New</button>
+    <!-- collapsed: the pane becomes this 34px reopener. It is REAL MARKUP and hidden
+         by a class, like everything else on this page. -->
+    <button id="rail-tab" title="Show the file list"><span>Spreadsheets</span></button>
+    <div id="files-panel">
+      <div class="hd">
+        <span class="pill">Spreadsheets</span>
+        <span class="grow"></span>
+        <button id="btn-new">New</button>
+        <button id="rail-hide" class="ghost" title="Collapse this panel">‹</button>
+      </div>
+      <div id="newrow">
+        <input id="new-name" placeholder="name (blank = Untitled)" maxlength="80" autocomplete="off">
+        <button id="btn-create">Create</button>
+      </div>
+      <div id="flist"></div>
+      <div id="fnote">
+        <span id="fidelity"></span>
+        <div style="margin-top:6px" id="fdir"></div>
+        <!-- the build stamp, copied from the <meta> once scripts are alive: it answers
+             "is the bridge serving the file I just shipped?" without a terminal -->
+        <div style="margin-top:6px;opacity:.7" id="fbuild"></div>
+      </div>
     </div>
-    <div id="newrow">
-      <input id="new-name" placeholder="name (blank = Untitled)" maxlength="80" autocomplete="off">
-      <button id="btn-create">Create</button>
-    </div>
-    <div id="flist"></div>
-    <div id="fnote">
-      <span id="fidelity"></span>
-      <div style="margin-top:6px" id="fdir"></div>
-      <!-- the build stamp, copied from the <meta> once scripts are alive: it answers
-           "is the bridge serving the file I just shipped?" without a terminal -->
-      <div style="margin-top:6px;opacity:.7" id="fbuild"></div>
-    </div>
+    <!-- the drag handle sits on the pane, not between the panes, so it can be absolute
+         against a positioned parent and needs no extra flex child in #body -->
+    <div id="rail-resize" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
   </aside>
   <main id="mid">
     <!-- TIER 1 (default, always present) -->
@@ -398,6 +493,7 @@
     <div id="empty">No workbook is open. Pick one on the left, or press New — a blank name gives you Untitled.</div>
   </main>
   <aside id="ai">
+    <div id="ai-resize" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
     <button id="ai-tab" title="Ask the model about this sheet"><span>Ask the model</span></button>
     <div id="ai-panel">
       <div id="ai-hd">
@@ -1939,6 +2035,110 @@ function aiSetOpen(open, why) {
   aiTimer = open ? setInterval(() => { if (!document.hidden) aiRefreshModel(); }, AI_POLL_MS) : null;
 }
 
+// ══ PANE GEOMETRY — drag to resize, collapse to a reopener ═══════════════════
+// Debi: "the borders are not dragable for screensize, still feels unintuitive".
+// Both panes were fixed pixel widths and the file list collapsed to nothing.
+//
+// This is deliberately the SAME shape as the main panel's #cs-resize / #art-divider
+// (bridge/panel/index.html): pointer capture on the handle so the drag survives the
+// cursor leaving the 9px strip, a span captured ONCE at pointerdown so a mid-drag
+// reflow cannot make the pane chase its own edge, and the width written to a CSS
+// variable rather than an inline style so the pane and its handle move together.
+//
+// ⚠️ PERSIST ON RELEASE, NOT ON MOVE. A pointermove fires per frame; writing
+// localStorage 60×/second for the length of a drag is the one way a resize handle
+// can make a page feel worse than no resize handle.
+const RAIL_W_DEF = 236, RAIL_W_MIN = 160, RAIL_W_MAX = 420;
+const AI_W_DEF = 334, AI_W_MIN = 260, AI_W_MAX = 560;
+const LS_RAIL = 'harness-office-rail', LS_RAIL_W = 'harness-office-rail-w';
+const LS_AI_W = 'harness-office-ai-w';
+
+// Total: a stored value can be anything (hand-edited, a stale key from another
+// build, "NaN"), and a pane 3 px wide would be indistinguishable from the bug being
+// fixed. Anything that is not a finite positive number falls back to the default;
+// anything out of range is clamped, never rejected.
+function clampW(v, lo, hi, def) {
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0) return def;
+  return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+let railW = RAIL_W_DEF, aiW = AI_W_DEF;
+function setRailW(px, save) {
+  railW = clampW(px, RAIL_W_MIN, RAIL_W_MAX, RAIL_W_DEF);
+  document.documentElement.style.setProperty('--rail-w', railW + 'px');
+  if (save) { try { localStorage.setItem(LS_RAIL_W, String(railW)); } catch (e) { /* private mode */ } }
+}
+function setAiW(px, save) {
+  aiW = clampW(px, AI_W_MIN, AI_W_MAX, AI_W_DEF);
+  document.documentElement.style.setProperty('--ai-w', aiW + 'px');
+  if (save) { try { localStorage.setItem(LS_AI_W, String(aiW)); } catch (e) { /* private mode */ } }
+}
+function loadPaneWidths() {
+  let r = null, a = null;
+  try { r = localStorage.getItem(LS_RAIL_W); a = localStorage.getItem(LS_AI_W); } catch (e) { /* defaults */ }
+  setRailW(r == null ? RAIL_W_DEF : r, false);
+  setAiW(a == null ? AI_W_DEF : a, false);
+}
+
+let paneDrag = null;
+function paneHandle(which) { return el(which === 'rail' ? 'rail-resize' : 'ai-resize'); }
+function paneDown(which, ev) {
+  ev.preventDefault();
+  const box = el(which === 'rail' ? 'files' : 'ai').getBoundingClientRect();
+  // The FIXED edge for this drag: the rail grows rightwards from its left edge, the
+  // AI panel grows leftwards from its right edge.
+  paneDrag = { which: which, edge: which === 'rail' ? box.left : box.right };
+  const h = paneHandle(which);
+  try { h.setPointerCapture(ev.pointerId); } catch (e) { /* older engines: the window listeners still work */ }
+  h.addEventListener('pointermove', paneMove);
+  h.addEventListener('pointerup', paneUp);
+  h.addEventListener('pointercancel', paneUp);
+  document.body.classList.add('office-dragging');
+}
+function paneMove(ev) {
+  if (!paneDrag) return;
+  if (paneDrag.which === 'rail') setRailW(ev.clientX - paneDrag.edge, false);
+  else setAiW(paneDrag.edge - ev.clientX, false);
+}
+function paneUp(ev) {
+  const which = paneDrag && paneDrag.which;
+  const h = which ? paneHandle(which) : null;
+  if (h) {
+    h.removeEventListener('pointermove', paneMove);
+    h.removeEventListener('pointerup', paneUp);
+    h.removeEventListener('pointercancel', paneUp);
+    try { h.releasePointerCapture(ev.pointerId); } catch (e) { /* never had it */ }
+  }
+  document.body.classList.remove('office-dragging');
+  paneDrag = null;
+  if (which === 'rail') setRailW(railW, true);
+  else if (which === 'ai') setAiW(aiW, true);
+  bx('pane-resize', which + '=' + (which === 'rail' ? railW : aiW));
+}
+// Double-click a divider = back to the shipped width. A pane dragged somewhere silly
+// otherwise needs a pixel-perfect drag to undo, which is exactly the fiddliness the
+// handle was added to remove.
+function paneReset(which) {
+  if (which === 'rail') setRailW(RAIL_W_DEF, true); else setAiW(AI_W_DEF, true);
+  bx('pane-reset', which);
+}
+
+// The rail's collapse mirrors aiSetOpen — same persistence shape, same beacon pair,
+// so the two sides of the page cannot drift into two different behaviours.
+function railSetOpen(open, why) {
+  document.body.classList.toggle('railoff', !open);
+  try { localStorage.setItem(LS_RAIL, open ? '1' : '0'); } catch (e) { /* private mode */ }
+  bx(open ? 'rail-open' : 'rail-collapse', why || '');
+}
+function railIsOpen() { return !document.body.classList.contains('railoff'); }
+
+el('rail-tab').onclick = () => railSetOpen(true, 'tab');
+el('rail-hide').onclick = () => railSetOpen(false, 'button');
+el('rail-resize').onpointerdown = ev => paneDown('rail', ev);
+el('ai-resize').onpointerdown = ev => paneDown('ai', ev);
+el('rail-resize').ondblclick = () => paneReset('rail');
+el('ai-resize').ondblclick = () => paneReset('ai');
+
 el('ai-tab').onclick = () => aiSetOpen(true, 'tab');
 el('ai-hide').onclick = () => aiSetOpen(false, 'button');
 // Clear removes the TURNS, never the placeholder markup that lives in the log.
@@ -1961,10 +2161,10 @@ el('ai-in').onkeydown = ev => {
 
 el('btn-save').onclick = save;
 el('btn-rich').onclick = upgrade;
-el('btn-rail').onclick = () => document.body.classList.toggle('railoff');
+el('btn-rail').onclick = () => railSetOpen(!railIsOpen(), 'header');
 const toggleNew = () => {
   const row = el('newrow');
-  document.body.classList.remove('railoff');
+  railSetOpen(true, 'new');           // the name box lives in the rail: show it first
   row.classList.toggle('on');
   if (row.classList.contains('on')) el('new-name').focus();
 };
@@ -1981,7 +2181,18 @@ el('new-name').onkeydown = ev => { if (ev.key === 'Enter') create();
 window.addEventListener('keydown', ev => {
   if ((ev.metaKey || ev.ctrlKey) && (ev.key || '').toLowerCase() === 's') {
     ev.preventDefault(); save();
+    return;
   }
+  // ⌘\ / Ctrl-\ toggles the file rail — the shortcut every editor with a sidebar uses.
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === '\\') {
+    ev.preventDefault(); railSetOpen(!railIsOpen(), 'key');
+    return;
+  }
+  // Esc dismisses whatever the page is telling you. A message box that can only be
+  // replaced by the next message is a message box that is in the way.
+  // ⚠️ It does NOT preventDefault: the new-name box and the grid have their own Esc
+  // meanings, and this must never steal one of them.
+  if (ev.key === 'Escape' && el('msg').classList.contains('on')) say('');
 });
 window.addEventListener('beforeunload', ev => {
   if (dirty) { ev.preventDefault(); ev.returnValue = ''; }
@@ -2033,13 +2244,18 @@ async function boot() {
   bx('dom-ready', 'tier=grid vis=' + document.visibilityState);
   paint();
   el('fbuild').textContent = BUILD;
-  // The AI panel is OPEN unless it was closed on purpose. A capability nobody can see
-  // is the bug being fixed here, so discoverability wins the default.
-  let aiWant = true;
+  // Pane geometry BEFORE anything is drawn into the panes: both widths, then both
+  // collapse states, so the first paint is already the arrangement Debi left behind.
+  loadPaneWidths();
+  let railWant = true, aiWant = true;
   try {
+    railWant = localStorage.getItem(LS_RAIL) !== '0';
     aiWant = localStorage.getItem('harness-office-ai') !== '0';
     aiCtxOn = localStorage.getItem('harness-office-ai-ctx') !== '0';
   } catch (e) { /* private mode: the defaults stand */ }
+  railSetOpen(railWant, 'boot');
+  // The AI panel is OPEN unless it was closed on purpose. A capability nobody can see
+  // is the bug being fixed here, so discoverability wins the default.
   aiSetOpen(aiWant, 'boot');
   aiPaint();
   await loadFiles();
@@ -2047,7 +2263,8 @@ async function boot() {
   await autoOpen();
   aiPaint(true);      // the context note only means something once a sheet is open
   bx('landed', 'file=' + (current || 'none') + ' mode=' + mode
-     + ' ai=' + (document.body.classList.contains('aioff') ? 'collapsed' : 'open')
+     + ' rail=' + (railIsOpen() ? railW : 'collapsed')
+     + ' ai=' + (document.body.classList.contains('aioff') ? 'collapsed' : aiW)
      + ' model=' + (aiModel || 'none'));
 }
 // The script is at the END of the body, so the document is usually already

@@ -379,6 +379,7 @@ check('…and normalises the non-breaking spaces contenteditable inserts, so a s
  'files-fail', 'open-start', 'open-ok', 'open-fail', 'save-ok', 'save-fail',
  'create-fail', 'import-fail', 'auto-open', 'landed',
  'rich-start', 'rich-loaded', 'rich-ready', 'rich-fail',
+ 'pane-resize', 'pane-reset', 'rail-open', 'rail-collapse',
  'asset-ok', 'asset-error', 'asset-timeout', 'selfcheck-pass', 'selfcheck-fail',
  'mount-start', 'mount-fail', 'mount-raf', 'mount-settled', 'page-error', 'rejection',
  'watchdog'].forEach(stage => {
@@ -394,6 +395,273 @@ check('the tier-1 watchdog is SHORT — there is no 11 MB download to be patient
       num('WATCHDOG_MS') <= 15000);
 check('the per-asset timeout is generous — the biggest bundle is ~7 MB on a cold start',
       num('ASSET_TIMEOUT_MS') >= 30000);
+
+// ══ 8. PANE GEOMETRY — resize, collapse, persistence ═════════════════════════
+// THE REPORT THIS GUARDS: "the borders are not dragable for screensize, still feels
+// unintuitive… feels off." Both side panes were fixed pixel widths and the file rail
+// collapsed to display:none — no handle, and nothing left on screen to bring it back.
+//
+// The arithmetic is EXECUTED rather than grepped, because every branch of it is a way
+// the page can end up with a pane you cannot see or cannot use: a junk stored value,
+// a drag past either end, a persisted width that survives a reload as something else.
+const CSS = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+
+const RAIL_W_DEF = num('RAIL_W_DEF'), RAIL_W_MIN = num('RAIL_W_MIN'), RAIL_W_MAX = num('RAIL_W_MAX');
+const AI_W_DEF = num('AI_W_DEF'), AI_W_MIN = num('AI_W_MIN'), AI_W_MAX = num('AI_W_MAX');
+eq('the clamps are the ones the brief asked for — rail 160-420, AI 260-560',
+   [RAIL_W_MIN, RAIL_W_MAX, AI_W_MIN, AI_W_MAX], [160, 420, 260, 560]);
+check('…and both defaults sit inside their own range',
+      RAIL_W_DEF >= RAIL_W_MIN && RAIL_W_DEF <= RAIL_W_MAX
+      && AI_W_DEF >= AI_W_MIN && AI_W_DEF <= AI_W_MAX);
+
+// The CSS default and the JS default are two copies of one number. If they drift, a
+// first-ever load paints one width and the first drag jumps to another.
+const cssRailDef = (CSS.match(/--rail-w:\s*(\d+)px/) || [])[1];
+const cssAiDef = (CSS.match(/--ai-w:\s*(\d+)px/) || [])[1];
+eq('the CSS pane defaults agree with the JS ones — a mismatch would make the very '
+   + 'first drag jump', [Number(cssRailDef), Number(cssAiDef)], [RAIL_W_DEF, AI_W_DEF]);
+
+// ── the pure clamp, over everything a stored value can actually be ──
+eval(grab('clampW'));
+[
+  ['a sane width is kept', [300, 160, 420, 236], 300],
+  ['…and rounded, because a fractional CSS pixel is a blurry 1px seam', [300.6, 160, 420, 236], 301],
+  ['below the minimum clamps UP rather than being refused', [20, 160, 420, 236], 160],
+  ['above the maximum clamps DOWN', [9999, 160, 420, 236], 420],
+  ['the boundaries themselves are allowed', [160, 160, 420, 236], 160],
+  ['…both of them', [420, 160, 420, 236], 420],
+  ['a stored string is a number, because localStorage only ever returns strings',
+   ['312', 160, 420, 236], 312],
+  ['junk falls back to the DEFAULT — never to 0, which is the bug being fixed',
+   ['nonsense', 160, 420, 236], 236],
+  ['…so does NaN', [NaN, 160, 420, 236], 236],
+  ['…so does null', [null, 160, 420, 236], 236],
+  ['…so does undefined', [undefined, 160, 420, 236], 236],
+  ['…so does an empty string, which Number() would otherwise call 0', ['', 160, 420, 236], 236],
+  ['…so does a negative', [-40, 160, 420, 236], 236],
+  ['…so does zero', [0, 160, 420, 236], 236],
+  ['…so does Infinity', [Infinity, 160, 420, 236], 236],
+].forEach(([label, args, want]) => eq('clampW: ' + label, clampW.apply(null, args), want));
+
+// ── the setters + the drag, executed against a stub DOM ──
+(function () {
+  const props = {}, store = {}, beacons = [];
+  const doc = { documentElement: { style: { setProperty: (k, v) => { props[k] = v; } } },
+                body: { classList: { _s: new Set(),
+                                     add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+                                     toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
+                                     contains(c) { return this._s.has(c); } } } };
+  const localStorage = { getItem: k => (k in store ? store[k] : null),
+                         setItem: (k, v) => { store[k] = String(v); } };
+  const nodes = {
+    'files': { getBoundingClientRect: () => ({ left: 0, right: 236 }) },
+    'ai': { getBoundingClientRect: () => ({ left: 900, right: 1234 }) },
+    'rail-resize': mkHandle(), 'ai-resize': mkHandle(),
+  };
+  function mkHandle() {
+    return { on: [], off: [], cap: 0, rel: 0,
+             setPointerCapture() { this.cap++; }, releasePointerCapture() { this.rel++; },
+             addEventListener(t) { this.on.push(t); }, removeEventListener(t) { this.off.push(t); } };
+  }
+  const document = doc;                                   // shadows the real global name
+  const el = id => nodes[id];
+  const bx = (s, d) => beacons.push(s + ':' + d);
+  let railW, aiW, paneDrag;
+  // the constants the setters close over
+  const LS_RAIL = "harness-office-rail", LS_RAIL_W = "harness-office-rail-w",
+        LS_AI_W = "harness-office-ai-w";
+  eval(grab('setRailW')); eval(grab('setAiW')); eval(grab('loadPaneWidths'));
+  eval(grab('paneHandle')); eval(grab('paneDown')); eval(grab('paneMove')); eval(grab('paneUp'));
+  eval(grab('paneReset')); eval(grab('railSetOpen')); eval(grab('railIsOpen'));
+
+  // the storage KEYS, asserted as literals: a renamed key silently forgets every
+  // width the user ever set, and looks exactly like "it did not persist".
+  eq('the persistence keys are the four harness-office-* ones',
+     [LS_RAIL, LS_RAIL_W, LS_AI_W], ['harness-office-rail', 'harness-office-rail-w',
+                                     'harness-office-ai-w']);
+  check('…and the AI panel keeps the key it already shipped with, so an existing '
+        + 'collapse preference is not thrown away by this change',
+        html.includes("'harness-office-ai'"));
+
+  // setters write the variable the stylesheet reads
+  setRailW(300, false);
+  eq('setRailW writes --rail-w', props['--rail-w'], '300px');
+  check('…and does NOT persist when told not to — a pointermove fires per frame and '
+        + 'must not write localStorage 60 times a second',
+        store[LS_RAIL_W] === undefined);
+  setRailW(300, true);
+  eq('…and persists the CLAMPED value when it is asked to', store[LS_RAIL_W], '300');
+  setAiW(5000, true);
+  eq('setAiW clamps to its own maximum, not the rail\'s', props['--ai-w'], AI_W_MAX + 'px');
+  eq('…and stores what it actually applied, never what it was handed',
+     store[LS_AI_W], String(AI_W_MAX));
+
+  // load: a stored width comes back; a missing one is the default; junk is the default
+  delete store[LS_RAIL_W]; delete store[LS_AI_W];
+  loadPaneWidths();
+  eq('a first-ever load lands on the defaults',
+     [props['--rail-w'], props['--ai-w']], [RAIL_W_DEF + 'px', AI_W_DEF + 'px']);
+  store[LS_RAIL_W] = '390'; store[LS_AI_W] = '270';
+  loadPaneWidths();
+  eq('…and a later load restores exactly what was stored',
+     [props['--rail-w'], props['--ai-w']], ['390px', '270px']);
+  store[LS_RAIL_W] = 'boom';
+  loadPaneWidths();
+  eq('…while a corrupt key gives the default rather than a 0-wide pane',
+     props['--rail-w'], RAIL_W_DEF + 'px');
+
+  // ── a real drag, event by event ──
+  store[LS_RAIL_W] = String(RAIL_W_DEF);
+  const h = nodes['rail-resize'];
+  h.on.length = 0; h.off.length = 0;
+  paneDown('rail', { preventDefault() {}, pointerId: 1 });
+  check('pointerdown takes pointer capture, so the drag survives the cursor leaving '
+        + 'the 9px strip', h.cap === 1);
+  eq('…and subscribes to move/up/cancel — cancel included, or a system gesture '
+     + 'strands the page mid-drag', h.on.sort(), ['pointercancel', 'pointermove', 'pointerup']);
+  check('…and marks the body, which is what turns off text selection and stops the '
+        + 'grid swallowing the pointer stream', doc.body.classList.contains('office-dragging'));
+  paneMove({ clientX: 340 });
+  eq('dragging right widens the rail to the cursor', props['--rail-w'], '340px');
+  paneMove({ clientX: 10 });
+  eq('…dragging past the left end stops at the minimum instead of collapsing',
+     props['--rail-w'], RAIL_W_MIN + 'px');
+  paneMove({ clientX: 5000 });
+  eq('…and past the right end stops at the maximum', props['--rail-w'], RAIL_W_MAX + 'px');
+  eq('nothing was written to storage during the drag itself',
+     store[LS_RAIL_W], String(RAIL_W_DEF));
+  paneUp({ pointerId: 1 });
+  eq('pointerup persists the width that is actually on screen',
+     store[LS_RAIL_W], String(RAIL_W_MAX));
+  eq('…and unsubscribes all three, so a second drag cannot double-handle',
+     h.off.sort(), ['pointercancel', 'pointermove', 'pointerup']);
+  check('…releases the capture', h.rel === 1);
+  check('…and clears the body flag', !doc.body.classList.contains('office-dragging'));
+  paneMove({ clientX: 200 });
+  eq('a stray pointermove after the drag ended changes nothing',
+     props['--rail-w'], RAIL_W_MAX + 'px');
+
+  // the AI side grows the other way: its right edge is fixed, so a LOWER clientX is
+  // a WIDER panel. Getting this backwards is the classic mirrored-divider bug.
+  const ah = nodes['ai-resize'];
+  paneDown('ai', { preventDefault() {}, pointerId: 2 });
+  paneMove({ clientX: 900 });
+  eq('the AI panel measures from its RIGHT edge — 1234-900 = 334', props['--ai-w'], '334px');
+  paneMove({ clientX: 800 });
+  check('…so dragging LEFT makes it wider, not narrower', Number(props['--ai-w'].replace('px','')) > 334);
+  paneUp({ pointerId: 2 });
+  check('…and its release persists to the AI key, never the rail one',
+        store[LS_AI_W] === String(clampW(1234 - 800, AI_W_MIN, AI_W_MAX, AI_W_DEF)));
+
+  // double-click reset
+  paneReset('rail'); paneReset('ai');
+  eq('double-click resets a divider to the shipped width — a pane dragged somewhere '
+     + 'silly should not need a pixel-perfect drag to undo',
+     [props['--rail-w'], props['--ai-w']], [RAIL_W_DEF + 'px', AI_W_DEF + 'px']);
+  eq('…and the reset is persisted, not just applied',
+     [store[LS_RAIL_W], store[LS_AI_W]], [String(RAIL_W_DEF), String(AI_W_DEF)]);
+
+  // collapse, both directions, and the beacon pair
+  beacons.length = 0;
+  railSetOpen(false, 'button');
+  check('collapsing the rail sets the class', doc.body.classList.contains('railoff'));
+  eq('…persists it', store[LS_RAIL], '0');
+  check('…and says so', beacons.indexOf('rail-collapse:button') >= 0);
+  check('railIsOpen agrees with the class', railIsOpen() === false);
+  railSetOpen(true, 'tab');
+  check('…and reopening puts everything back',
+        !doc.body.classList.contains('railoff') && store[LS_RAIL] === '1'
+        && railIsOpen() === true && beacons.indexOf('rail-open:tab') >= 0);
+})();
+
+// ── the markup and the stylesheet ──
+check('both panes carry a drag handle',
+      /id="rail-resize"/.test(html) && /id="ai-resize"/.test(html));
+check('…each inside its own pane, so it can be absolutely positioned against it '
+      + 'without adding a flex child to #body',
+      html.indexOf('id="rail-resize"') > html.indexOf('<aside id="files">')
+      && html.indexOf('id="rail-resize"') < html.indexOf('<main id="mid">')
+      && html.indexOf('id="ai-resize"') > html.indexOf('<aside id="ai">'));
+check('…and both say what they do on hover, including the double-click',
+      (html.match(/title="Drag to resize · double-click to reset"/g) || []).length === 2);
+check('the handles are wired to pointerdown and dblclick, not to mousedown — pointer '
+      + 'events are what make setPointerCapture available at all',
+      /rail-resize'\)\.onpointerdown/.test(html) && /ai-resize'\)\.onpointerdown/.test(html)
+      && /rail-resize'\)\.ondblclick/.test(html) && /ai-resize'\)\.ondblclick/.test(html));
+check('the panes take their width from the CSS variables',
+      /#files\{[^}]*width:var\(--rail-w/.test(CSS) && /#ai\{[^}]*width:var\(--ai-w/.test(CSS));
+check('…and neither is a fixed pixel width any more — that was the literal report',
+      !/#files\{[^}]*width:236px/.test(CSS) && !/#ai\{[^}]*width:334px/.test(CSS));
+check('a handle needs touch-action:none or a trackpad drag is stolen by scrolling',
+      /#rail-resize,#ai-resize\{[^}]*touch-action:none/.test(CSS));
+check('while dragging, the grid stops taking pointer events — otherwise a drag that '
+      + 'crosses a contenteditable cell puts the caret in it',
+      /body\.office-dragging #gridwrap[^}]*pointer-events:none/.test(CSS));
+
+// COLLAPSE, and the bug in the shipped build: the rail vanished to display:none.
+check('a collapsed rail is a 34px reopener, NOT display:none — a pane that leaves '
+      + 'nothing behind can only be brought back by remembering a button',
+      /body\.railoff #files\{width:34px\}/.test(CSS)
+      && !/body\.railoff #files\{display:none\}/.test(CSS));
+check('…and the AI panel collapses to the same 34px, so the page has one collapse '
+      + 'grammar rather than two', /body\.aioff #ai\{width:34px\}/.test(CSS));
+check('both reopeners are REAL MARKUP hidden by a class, like everything else here',
+      /<button id="rail-tab"/.test(html) && /<button id="ai-tab"/.test(html)
+      && /#rail-tab\{display:none\}/.test(CSS) && /#ai-tab\{display:none\}/.test(CSS));
+check('both panes carry a matching chevron collapse in their own header',
+      /id="rail-hide"[^>]*>‹</.test(html) && /id="ai-hide"[^>]*>›</.test(html));
+check('a collapsed pane hides its own divider — there is nothing left to resize',
+      /body\.railoff #rail-resize\{display:none\}/.test(CSS)
+      && /body\.aioff #ai-resize\{display:none\}/.test(CSS));
+check('the boot restores the rail state alongside the AI one',
+      /localStorage\.getItem\(LS_RAIL\) !== '0'/.test(grab('boot'))
+      && /railSetOpen\(railWant, 'boot'\)/.test(grab('boot')));
+check('…and the widths are applied BEFORE anything is drawn into the panes',
+      /loadPaneWidths\(\);[\s\S]{0,600}railSetOpen\(railWant/.test(grab('boot')));
+check('the rail toggle goes through railSetOpen — a raw classList.toggle would flip '
+      + 'the pane without remembering it, which is how a preference gets lost',
+      /btn-rail'\)\.onclick = \(\) => railSetOpen\(!railIsOpen\(\)/.test(html)
+      && !/classList\.toggle\('railoff'\)/.test(html));
+check('…and so does New, which needs the rail open because the name box lives in it',
+      /const toggleNew = \(\) => \{[\s\S]{0,200}railSetOpen\(true, 'new'\)/.test(html));
+check('the landing beacon reports the geometry it landed on, so "it opened tiny" is '
+      + 'answerable from the log', /rail=' \+ \(railIsOpen\(\)/.test(html));
+
+// ── keyboard + affordances ──
+check('⌘S still saves', /toLowerCase\(\) === 's'[\s\S]{0,80}save\(\)/.test(html));
+check('⌘\\ toggles the rail — the shortcut every editor with a sidebar uses',
+      /ev\.key === '\\\\'[\s\S]{0,160}railSetOpen\(!railIsOpen\(\), 'key'\)/.test(html));
+check('Esc dismisses the message box, which otherwise can only be replaced by the '
+      + 'next message', /ev\.key === 'Escape' && el\('msg'\)\.classList\.contains\('on'\)/.test(html));
+check('…and Esc does NOT preventDefault, so the name box and the grid keep their own '
+      + 'Escape meanings', !/ev\.key === 'Escape'[^\n]*preventDefault/.test(html));
+check('Enter in the name box creates', /new-name'\)\.onkeydown[\s\S]{0,120}'Enter'\) create\(\)/.test(html));
+check('the row actions are a real click target rather than two bare words — a ~9px '
+      + 'hit box next to a DELETE was the affordance bug',
+      /\.lnk\{[^}]*padding:4px 7px/.test(CSS));
+check('…and they have their own hover ground, not just a colour change',
+      /\.lnk:hover\{[^}]*background:var\(--card2\)/.test(CSS));
+check('…while the armed delete stays red on hover instead of turning gold like an '
+      + 'ordinary link', /\.lnk\.arm:hover\{color:var\(--bad\)/.test(CSS));
+check('the active file row is unmistakable — ground AND a gold border',
+      /\.frow\.on\{background:var\(--card\);border-color:var\(--gold\)\}/.test(CSS));
+check('…and every row answers the pointer', /\.frow:hover\{background:var\(--card\)\}/.test(CSS));
+
+// ── the header ──
+check('every header control is one height from ONE token, so they cannot drift apart '
+      + 'again', /--ctl-h:\s*\d+px/.test(CSS)
+      && /:where\(#hdr\) button\{height:var\(--ctl-h\)/.test(CSS)
+      && /\.pill\{[^}]*height:var\(--ctl-h\)/.test(CSS));
+check('the header separates status from the things that change the document',
+      /<span class="hsep"><\/span>/.test(html)
+      && html.indexOf('id="p-state"') < html.indexOf('class="hsep"')
+      && html.indexOf('class="hsep"') < html.indexOf('id="btn-rich"'));
+check('the action group is ordered Rich · Import · New · Save, with Save the only '
+      + 'filled button',
+      html.indexOf('id="btn-rich"') < html.indexOf('id="btn-import"')
+      && html.indexOf('id="btn-import"') < html.indexOf('id="btn-new2"')
+      && html.indexOf('id="btn-new2"') < html.indexOf('id="btn-save"')
+      && /id="btn-save" class="primary"/.test(html));
 
 // ══ THE LANDING ══════════════════════════════════════════════════════════════
 // THE BUG THIS GUARDS. LOffice booted perfectly — tier-1 ready in 4-7 ms, bridge fine,

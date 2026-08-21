@@ -639,3 +639,139 @@ def test_the_server_list_recovery_is_written_down():
     itself asks only for an address (i18n/en.ts:354-365)."""
     for needle in ("Settings → Servers", "⌘R", "http://127.0.0.1:4096"):
         assert needle in APP, f"the recovery note must name {needle!r}"
+
+
+# ── THE TWO WAYS A CONFIGURED PROVIDER DISAPPEARS ────────────────────────────
+# Everything below was MEASURED against the real opencode 1.18.19 binary
+# (opencode-linux-arm64, the same build as darwin-arm64 from the same npm version),
+# run with our own start_component.sh seeding, by curling GET /provider:
+#
+#   config shape                         | connected | in `all`
+#   -------------------------------------|-----------|---------
+#   our provider block, as seeded        | YES       | YES
+#   + disabled_providers: ["llama.cpp"]  | NO        | NO      <- Debi's exact symptom
+#   + a dangling `model` key             | YES       | YES     (provider fine, default is not)
+#   models map keyed by an MLX path      | YES       | YES     (server keeps it; the DESKTOP
+#                                        |           |          splits the key and breaks)
+#   models: {}                           | NO        | NO
+#   project config only, no global       | YES       | YES     (the redundancy works)
+#
+# So a provider that IS in the config can only vanish two ways, and both are now
+# repaired by the Start rather than merely reported.
+def test_a_stuck_disable_is_repaired_rather_than_inherited():
+    """MEASURED: with `disabled_providers: ["llama.cpp"]` the real server drops us from
+    BOTH `all` and `connected` (deleted at provider/provider.ts:1644, before the models
+    loop) — which renders as literally "No connected providers" in Settings and an empty
+    local picker. One click on Disconnect writes it, and our merge only ever replaces the
+    keys we own, so without this it would survive every restart forever."""
+    g, _ = _run_seed([GGUF], extra_global={"disabled_providers": ["llama.cpp"]})
+    assert "llama.cpp" not in (g.get("disabled_providers") or []), (
+        "a disable of OUR provider must not survive a Start — it has no other cure")
+
+
+def test_repairing_our_own_disable_leaves_everyone_elses_alone():
+    g, _ = _run_seed([GGUF],
+                     extra_global={"disabled_providers": ["openai", "llama.cpp"]})
+    assert g["disabled_providers"] == ["openai"], (
+        "we own exactly one id in that list; the user's other choices are theirs")
+
+
+def test_a_non_empty_allowlist_that_omits_us_gains_us():
+    """The mirror image: `enabled_providers` filters at the same site
+    (provider.ts:1415-1422 `if (enabled && !enabled.has(id)) return false`)."""
+    g, _ = _run_seed([GGUF], extra_global={"enabled_providers": ["openai"]})
+    assert g["enabled_providers"] == ["openai", "llama.cpp"], (
+        "add ourselves, never empty the list — the other entries are the user's")
+
+
+def test_an_empty_allowlist_is_left_exactly_as_it_was():
+    """⚠️ deliberately untouched: an empty array's meaning was inferred, never measured,
+    and if it means "no allowlist" then writing one entry would disable everything else."""
+    g, _ = _run_seed([GGUF], extra_global={"enabled_providers": []})
+    assert g["enabled_providers"] == []
+
+
+# ── the default model may never name something that does not exist ───────────
+def _default_key(cfg):
+    m = cfg.get("model")
+    assert isinstance(m, str) and m.startswith("llama.cpp/"), f"unexpected default {m!r}"
+    return m.split("/", 1)[1]
+
+
+def test_a_default_model_is_never_written_dangling():
+    """THE "Big Pickle" PATH. harness.yaml's runner.model is an INTENT — it can easily
+    name something the registry does not carry. `defaultModel()` returns
+    `parseModel(cfg.model)` UNVALIDATED when the key is set (provider.ts:1980-1981), so a
+    dangling id is passed on as if it were real, and the desktop's own fallback ordering
+    (`priority = ["gpt-5", "claude-sonnet-4", "big-pickle", ...]`, provider.ts:2017) is
+    where OpenCode's Zen models come from."""
+    g, _ = _run_seed([GGUF], want="a-model-that-was-deleted-last-week")
+    assert _default_key(g) in g["provider"]["llama.cpp"]["models"], (
+        "we may seed a default or leave it unset, but never point it at nothing")
+
+
+def test_a_default_left_over_from_a_deleted_model_is_replaced():
+    g, _ = _run_seed([GGUF], want=GGUF["id"],
+                     extra_global={"model": "llama.cpp/gone-in-a-rescan"})
+    assert _default_key(g) in g["provider"]["llama.cpp"]["models"]
+
+
+def test_an_empty_registry_still_names_a_model_that_exists():
+    """MEASURED: `models: {}` deletes the provider outright (provider.ts:1686), so the
+    fallback entry is load-bearing — and the default must name IT, not a runner model
+    that was never registered."""
+    g, _ = _run_seed([], want="gemma-4-31B-it-uncensored-biproj-q4_k_m")
+    models = g["provider"]["llama.cpp"]["models"]
+    assert models, "an empty models map would delete the whole provider"
+    assert _default_key(g) in models
+
+
+def test_a_valid_choice_of_our_own_models_is_left_alone():
+    """The seed is a seed, not an enforcement: a model the user picked inside OpenCode
+    must survive a restart."""
+    g, _ = _run_seed([GGUF, MLX], want=MLX["id"],
+                     extra_global={"model": "llama.cpp/" + GGUF["id"]})
+    assert g["model"] == "llama.cpp/" + GGUF["id"]
+
+
+def test_a_choice_of_someone_elses_provider_is_left_alone():
+    g, _ = _run_seed([GGUF], want=GGUF["id"],
+                     extra_global={"model": "anthropic/claude-sonnet-4"})
+    assert g["model"] == "anthropic/claude-sonnet-4", (
+        "we only ever adjudicate defaults inside our own provider")
+
+
+def test_the_repair_preserves_the_rest_of_the_users_config():
+    g, _ = _run_seed([GGUF], extra_global={
+        "disabled_providers": ["llama.cpp"], "theme": "opencode",
+        "keybinds": {"leader": "ctrl+x"}})
+    assert g["theme"] == "opencode" and g["keybinds"] == {"leader": "ctrl+x"}, (
+        "the repair is a merge like every other key we touch")
+
+
+def test_every_repair_announces_itself():
+    """A config we silently rewrite under the user is worse than one we refuse to."""
+    code = _seed_block()
+    assert "REPAIRED" in code, "a repair the user cannot see is a surprise, not a fix"
+
+
+# ── the self-check asks in the scope the UI asks in ──────────────────────────
+def test_the_provider_check_is_directory_scoped_and_patient():
+    b = branch()
+    i = b.index("PROVIDER SELF-CHECK")
+    seg = b[i:b.index("PYOCCHK", i)]
+    assert "--data-urlencode" in seg and "directory=" in seg, (
+        "the settings dialog is directory-scoped (hooks/use-providers.ts:26-32 passes "
+        "explicit:true whenever a directory is known), so ask in that scope")
+    assert "-m 25" in seg, (
+        "MEASURED: /provider answers with the WHOLE catalogue — 193 providers, 5.2MB — "
+        "so an 8s budget was one slow moment from reporting a healthy lane as broken")
+
+
+def test_the_failure_line_names_the_restart_that_is_actually_needed():
+    """A running OpenCode reads its config at BOOT, and ship.sh deliberately leaves
+    components up — so the commonest cause of a stale answer is that this component was
+    never restarted after the config changed."""
+    b = branch()
+    seg = b[b.index("PROVIDER SELF-CHECK"):]
+    assert "not restarting" in seg or "Stop and Start" in seg
