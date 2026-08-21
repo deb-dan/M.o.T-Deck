@@ -164,6 +164,23 @@ post_install() {
   # actually point OpenCode at them.
   mkdir -p "$DEST/xdg/config" "$DEST/xdg/cache" "$DEST/xdg/data" "$DEST/xdg/state" \
            "$ROOT/data/opencode-workspace"
+
+  # ── THE MANIFEST FLAG. Mission Control's card reads components.opencode.installed
+  # from harness.yaml (bridge/app.py::status), NOT the disk — so without this the
+  # binary lands, the script says "installed", and the card still offers Install.
+  # That was the 2026-08-21 bug: install_component.sh has flipped the flag in its tail
+  # since M0, and this standalone installer never learned to. It runs on the
+  # "already installed at the pin" path too, so a plain re-run repairs a stale flag.
+  # $ROOT is this script's OWN root, which is what makes it edit the SNAPSHOT's
+  # manifest when the bridge spawns it from ~/Library/Application Support/Harness
+  # (ship.sh's merge is additive-only and will never set it later).
+  local py_flip
+  py_flip="$(resolve_py)" || py_flip="python3"
+  "$py_flip" "$ROOT/scripts/flip_installed.py" opencode || {
+    say "ERROR: the binary is installed but components.opencode.installed could not be"
+    say "  set in harness.yaml, so the card will still say 'Not installed'. Fix with:"
+    say "  python3 scripts/flip_installed.py opencode"
+    exit 1; }
   echo ""
   say "home:      data/opencode/xdg (config, cache, sessions — never ~/.config)"
   say "workspace: data/opencode-workspace — the ONLY directory it is started in, and"

@@ -17,12 +17,19 @@ Built to docs/research/2026-08-20-office-lane-recon.md §5/§7. What each group 
 5. THE BACKUP POLICY. A save writes a NEW workbook from the snapshot, so the pre-edit
    file has to survive: one .bak per file per day, taken BEFORE the first save, and a
    backup that cannot be written refuses the save rather than overwriting the original.
-6. WIRING. The routes, the tab row, the pinned assets and the page's script ORDER
-   (React and rxjs are Univer's peer globals — the wrong order is a blank tab).
-7. THE BLANK-TAB FORENSICS. Everything above was already green while the tab on the
-   real Mac showed nothing: `defer` on 10.5 MB of script, a static fallback banner that
-   is true by default, a build stamp, the no-store headers on every bridge-served
-   DOCUMENT, and the WKWebView delegate that answers when a content process dies.
+6. WIRING. The routes, the tab row and the pinned assets. ⚠️ The bundle LOAD ORDER
+   moved to bridge/tests/test_office_grid.js at 2026-08-21e, where it is read off the
+   page's `VENDOR` list instead of scraped out of markup — because the bundles are no
+   longer static tags.
+7. THE BLANK-TAB FORENSICS, and the answer to them. Everything above was already green
+   while the tab on the real Mac showed nothing. Three rounds of diagnostics later the
+   design changed instead: the page is now TWO TIERS — a plain-DOM grid that needs
+   nothing but the served document, and Univer as an opt-in upgrade that is allowed to
+   fail. So this group pins the invariant that makes the blank tab unrepresentable
+   (no external subresource in the document at all), plus the forensics that stay
+   useful either way: a static fallback banner true by default, a build stamp, the
+   no-store headers, and the WKWebView delegate that answers when a content process
+   dies. The tier-1 grid itself is tested in bridge/tests/test_office_grid.js.
 
 Run: python3 bridge/tests/test_office_lane.py
 """
@@ -457,19 +464,17 @@ check("no runtime CDN reaches the office page",
       PAGE.split("<script")[0])
 check("openpyxl is declared in bridge/requirements.txt", "openpyxl" in REQ)
 
-# Load ORDER is the one thing a reader could get wrong and only find out in a browser.
-# The regex tolerates other attributes (they gained `defer`, 2026-08-21) — what it pins
-# is the order the browser will EXECUTE them in, which `defer` preserves.
+# ⚠️ THE BUNDLES ARE NO LONGER STATIC TAGS (2026-08-21e). They are loaded on demand by
+# `loadVendor()` when somebody presses "Rich editor" — so the LOAD ORDER, which is the
+# one thing a reader could get wrong and only find out in a browser, is now DATA (the
+# `VENDOR` list) and is pinned in bridge/tests/test_office_grid.js, where it can be read
+# as a list rather than scraped out of markup. What this file pins is the invariant that
+# made the change necessary: the served document has NO external subresource at all.
 SCRIPT_TAGS = re.findall(r'<script\b([^>]*)\bsrc="/assets/vendor/([^"]+)"([^>]*)>', PAGE)
-order = [m[1] for m in SCRIPT_TAGS]
-check("react and react-dom load before Univer (they are peer globals)",
-      order.index("react.production.min.js") < order.index("univer/presets.umd.js")
-      and order.index("react-dom.production.min.js") < order.index("univer/presets.umd.js"))
-check("rxjs loads before Univer (peer dep)",
-      order.index("univer/rxjs.umd.min.js") < order.index("univer/presets.umd.js"))
-check("the sheets preset loads after the presets runtime",
-      order.index("univer/presets.umd.js") < order.index("univer/preset-sheets-core.umd.js"))
-check("the locale loads last", order[-1] == "univer/preset-sheets-core.en-US.js")
+check("the served document loads no vendor bundle by itself — tier 1 IS the document",
+      SCRIPT_TAGS == [])
+check("the vendor bundles are declared as an ordered list instead",
+      "const VENDOR = [" in PAGE and PAGE.count("/assets/vendor/") >= 6)
 check("the stylesheet is self-hosted too",
       '/assets/vendor/univer/preset-sheets-core.css' in PAGE)
 check("the page uses the globals the pinned bundles actually define",
@@ -523,11 +528,23 @@ check("#newrow is toggled by class too", "newrow').classList" in PAGE)
 # DEFECT 2 — Univer mounted into a display:none container. mount() ran before `current`
 # was set and paint() (which un-hid #sheet) ran in the finally AFTER it, so the canvas
 # engine measured a 0x0 box and no later un-hiding re-measured it: a permanently blank
-# grid. The container is now ALWAYS laid out and the empty state is an overlay.
-sheet_rule = re.search(r"#sheet\{([^}]*)\}", PAGE)
-check("#sheet is always laid out — no display rule, no inline display",
-      sheet_rule and "display:none" not in sheet_rule.group(1)
-      and 'id="sheet" style' not in PAGE)
+# grid.
+#
+# ⚠️ THE FIX CHANGED SHAPE AT 2026-08-21e AND THE ASSERTION HAD TO CHANGE WITH IT,
+# HONESTLY. #sheet used to be "always laid out"; now it is tier 2's container and stays
+# hidden until somebody asks for the rich editor, because tier 1 owns the screen by
+# default. The invariant that actually mattered is unchanged and is now pinned as an
+# ORDERING instead of a stylesheet fact: `upgrade()` un-hides the container and yields a
+# frame BEFORE it mounts. (The full ordering assertion, over the extracted function
+# body, lives in bridge/tests/test_office_grid.js.)
+up = PAGE.split("async function upgrade()")[1].split("\n// ══")[0] \
+    if "async function upgrade()" in PAGE else ""
+check("upgrade() un-hides the tier-2 container before mounting into it",
+      bool(up) and up.index("el('sheet').classList.add('on')") < up.index("mount(snap)"))
+check("…and yields a frame in between, so the box is measured after layout",
+      bool(up) and up.index("requestAnimationFrame") < up.index("mount(snap)"))
+check("…and there is still no inline display on it (the class/inline trap)",
+      'id="sheet" style' not in PAGE)
 check("the empty state is an OVERLAY over the container, not a replacement for it",
       re.search(r"#empty\{[^}]*position:absolute", PAGE)
       and re.search(r"#empty\.off\{[^}]*display:none", PAGE)
@@ -543,7 +560,7 @@ check("a re-measure is nudged after mounting (a backgrounded tab can lay out lat
 # DOMContentLoaded boot when the bundles were deferred — same call, later moment, and
 # the later moment is the correct one: at parse time the bundles have not run yet.)
 check("the page self-checks before it mounts", "function selfCheck()" in PAGE
-      and "if (!selfCheck()) return false;" in PAGE and "if (selfCheck())" in PAGE)
+      and "if (!selfCheck()) return false;" in PAGE)
 needs = re.findall(r"\n  \['([^']+)'", PAGE.split("const NEEDS = [")[1].split("\n];")[0])
 for g in ("React", "ReactDOM.createRoot", "rxjs", "rxjs.operators", "@wendellhu/redi",
           "@wendellhu/redi/react-bindings", "UniverCore.LocaleType",
@@ -552,8 +569,17 @@ for g in ("React", "ReactDOM.createRoot", "rxjs", "rxjs.operators", "@wendellhu/
     check(f"the self-check covers {g}", any(n.startswith(g) for n in needs))
 check("…and the locale, which is the one that produces an untranslated grid",
       any(n.startswith("UniverPresetSheetsCoreEnUS") for n in needs))
-check("the stylesheet is checked by MEASUREMENT (a 404 leaves the <link> in place)",
-      "univer-absolute" in PAGE and "getComputedStyle" in PAGE)
+# ⚠️ THE CSS MEASUREMENT PROBE IS GONE AT 2026-08-21e, DELIBERATELY. It existed because
+# the stylesheet was in <head> and a 404 left the <link> in place while stripping every
+# scrap of chrome. The stylesheet is now injected on demand, is NOT awaited, and styles
+# only the optional tier-2 chrome — so its absence costs some styling on an upgrade
+# nobody has to take, and cannot cost the spreadsheet. It still reports itself.
+check("the tier-2 stylesheet reports both outcomes and is never awaited (a page stuck "
+      "behind a stylesheet is the exact failure being designed out)",
+      "'preset-sheets-core.css'" in PAGE
+      and re.search(r"l\.onload = \(\) => bx\('asset-ok'", PAGE)
+      and re.search(r"l\.onerror = \(\) => bx\('asset-error'", PAGE)
+      and not re.search(r"await[^\n]*cssAsked", PAGE))
 check("the self-check names the script that fixes it",
       "fetch_vendor_assets.sh" in PAGE)
 check("a runtime throw after boot reaches the screen, not just the console",
@@ -658,15 +684,25 @@ with tempfile.TemporaryDirectory() as td:
 #       taken down by JS, never printed by it.
 AIDER_PAGE = (ROOT / "bridge" / "panel" / "aider.html").read_text(encoding="utf-8")
 
-check("every vendor bundle is deferred — 10.5 MB may not block first paint",
-      len(SCRIPT_TAGS) == 6
-      and all("defer" in (a + b) for a, _n, b in
-              [(t[0], t[1], t[2]) for t in SCRIPT_TAGS]))
+# ⚠️ (a) WAS SOLVED BY `defer` AT 2026-08-21d AND BY DELETION AT 2026-08-21e. Deferring
+# 10.5 MB stops it blocking first paint, but the tab still could not be a spreadsheet
+# until all of it arrived and ran. It is now loaded ON DEMAND, so the assertion is the
+# stronger one: the document has no external subresource to be blocked by. Comments in
+# the page necessarily TALK about script and link tags to explain why there are none,
+# so the check reads the markup with comments stripped.
+NOCOM = re.sub(r"<!--.*?-->", "", PAGE, flags=re.S)
+check("the served document has NO external script tag at all — tier 1 needs nothing "
+      "but itself, so nothing external can stop it existing",
+      not re.search(r"<script[^>]*\bsrc=", NOCOM))
+check("…and NO external stylesheet in <head>: a render-blocking <link> that never "
+      "resolves blocks every script AFTER it, which is exactly 'the head beacon fired "
+      "and nothing else in the document ever did'",
+      not re.search(r"<link\b", NOCOM.split("</head>")[0]))
 check("…and the reason is written where the next reader will hit it",
-      "BLANK RECTANGLE" in PAGE and "defer" in PAGE)
+      "render-blocking" in PAGE and "TWO TIERS" in PAGE)
 check("the inline script is NOT deferred (inline scripts ignore it; it runs at parse "
       "time, which is what makes it the beacon)",
-      re.search(r'<script>\s*\n\s*.use strict', PAGE) is not None)
+      re.search(r'<script>\s*\n\s*\(function \(\) \{\s*\n\s*.use strict', PAGE) is not None)
 
 
 def inline_blocks(page):
@@ -688,7 +724,7 @@ def app_block(page):
     return ""
 
 # The static fallback banner: true by default, removed by the first statement of JS.
-for label, page, stamp in [("office", PAGE, "loffice-2026-08-21d"),
+for label, page, stamp in [("office", PAGE, "loffice-2026-08-21e"),
                            ("aider", AIDER_PAGE, "aider-2026-08-21c")]:
     head = page.split("<body>")[0]
     body = page.split("<body>")[1]
@@ -733,15 +769,20 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
           f"(missing: {sorted(want - have)})", not (want - have))
 
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21d") == 2)
-check("boot waits for DOMContentLoaded — deferred bundles have all run by then, so "
-      "the self-check can never accuse assets that were merely still arriving",
-      "addEventListener('DOMContentLoaded'" in PAGE
-      and re.search(r"async function boot", PAGE) is None)
-check("…and it says what it is doing while they load",
-      "Loading the spreadsheet engine" in PAGE)
-check("a watchdog turns 'still loading' into a sentence after a bounded wait",
-      "WATCHDOG_MS" in PAGE and "has not finished loading" in PAGE)
+      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21e") == 2)
+# ⚠️ CHANGED HONESTLY AT 2026-08-21e. There is nothing deferred to wait FOR any more,
+# so the boot no longer hangs on an event: the script sits at the end of the body, and
+# waiting for a DOMContentLoaded that has ALREADY FIRED would never boot at all — the
+# one failure a boot path may not have.
+check("boot runs immediately when the document is already parsed, and only waits when "
+      "it genuinely is still loading",
+      "document.readyState === 'loading'" in PAGE
+      and "addEventListener('DOMContentLoaded'" in PAGE
+      and re.search(r"\} else \{\s*\n\s*boot\(\);", PAGE) is not None)
+check("…and the rich-editor load says which file it is on, per file",
+      "Loading the rich editor" in PAGE and "VENDOR.length" in PAGE)
+check("a watchdog turns 'still starting' into a sentence after a bounded wait",
+      "WATCHDOG_MS" in PAGE and "did not finish starting" in PAGE)
 check("a 404 on a bundle is caught in the CAPTURE phase and NAMES the file "
       "(a resource error does not bubble, so the ordinary handler cannot see it)",
       re.search(r"addEventListener\('error'.{0,400}?\}, true\)", PAGE, re.S) is not None
@@ -782,7 +823,7 @@ try:
     served = cl.get("/office").text
     check("the served /office body carries today's build stamp — i.e. the route reads "
           "the file per request, so a ship really does change what is served",
-          "loffice-2026-08-21d" in served and '<div id="boot">' in served)
+          "loffice-2026-08-21e" in served and '<div id="boot">' in served)
     for asset, mime in [("/assets/vendor/react.production.min.js", "javascript"),
                         ("/assets/vendor/react-dom.production.min.js", "javascript"),
                         ("/assets/vendor/univer/rxjs.umd.min.js", "javascript"),
@@ -895,11 +936,64 @@ check("the beacon log is in _LOG_NAMES, so the trace is readable in the panel an
       "over /api/logs — the tab it describes may be showing nothing at all",
       '"loffice-boot"' in APP and office.DIAG_LOG_NAME == "loffice-boot")
 
+# ⚠️ THE GREP TAG, AND IT IS THE REASON A WHOLE ROUND WENT INTO A GHOST (2026-08-21e).
+# These lines used to be logged as `[office] diag …`, and the instruction handed to Debi
+# was `grep loffice <bridge.log>`. Only ONE stage — script-start, whose DETAIL happens
+# to contain the build stamp "loffice-2026-08-21x" — carried the string "loffice" at
+# all. So the grep returned exactly one line on a PERFECT boot, and that single line was
+# read as "the document stopped dead after the head script". Every line is greppable by
+# one stable token now, and this asserts it over a real trace rather than over the
+# format string.
+_TRACE = [office.diag_line(st, dt, "abc123", i * 10) for i, (st, dt) in enumerate([
+    ("script-start", "build=loffice-2026-08-21e ua=… url=… vis=visible"),
+    ("boot-inline", "tier-1 script running"),
+    ("dom-ready", "tier=grid vis=visible"),
+    ("files-ok", "n=2 roundtrip=true"),
+    ("grid-render", "sheet=Sheet1 rows=40 cols=12 cells=480"),
+    ("tier1-ready", "files=2"),
+])]
+check("⚠️ REGRESSION PIN: EVERY diag line is findable with one grep — a trace where "
+      "only the first line matches the documented grep is worse than no trace, "
+      "because it looks like evidence",
+      all("loffice" in f"[office] loffice-diag {ln}" for ln in _TRACE))
+check("…and the route emits exactly that tag",
+      're_office_tag' not in APP and 'loffice-diag {line}' in APP)
+check("…and it is NOT the bare word 'diag', which is what made only the stamp match",
+      not re.search(r'_office_log\(f"diag ', APP))
+
+# THE ASSET ACCESS LOG. It answers the one question the beacon cannot: when a boot
+# trace stops after a given bundle, was the next file NEVER REQUESTED (the parser died,
+# or the page never got that far) or REQUESTED AND NEVER FINISHED (a stalled transfer)?
+check("the /assets mount is wrapped so the Univer bundles are logged",
+      "class _WatchedStatic(StaticFiles)" in APP
+      and "_WatchedStatic(directory=" in APP)
+check("⚠️ …as a StaticFiles SUBCLASS, never as BaseHTTPMiddleware: a BaseHTTPMiddleware "
+      "wraps EVERY response in the harness, including the SSE chat relays whose 20s "
+      "heartbeat the panel's stall watchdog counts on — a diagnostic for the "
+      "spreadsheet tab may not go near them",
+      "app.middleware" not in re.sub(r'""".*?"""', "", APP, flags=re.S))
+_WS = APP.split("class _WatchedStatic(StaticFiles):")[1].split("\napp.mount")[0]
+check("…and it logs the request BEFORE serving and the outcome after, so a `→` with no "
+      "`←` IS the stalled case rather than a gap to be interpreted",
+      _WS.index("loffice-asset →") < _WS.index("loffice-asset ←"))
+check("…with the status and the byte count, so a truncated transfer is visible",
+      "sent['status']" in _WS and "sent['bytes']" in _WS)
+check("⚠️ REGRESSION PIN: the watch is a SUBSTRING match, not startswith. The first "
+      "draft used startswith('/vendor/univer/') on the reasoning that a Mount rewrites "
+      "the path; this Starlette does not (it leaves the full path and sets root_path), "
+      "so the branch never fired and the whole diagnostic was a no-op that reviewed "
+      "correctly. Caught by driving the real page and finding zero lines.",
+      "for w in self.WATCH" in _WS and "startswith(self.WATCH)" not in _WS)
+check("…and it is scoped to the office bundles, so it is a handful of lines per "
+      "rich-editor load and zero for every other request in the harness",
+      "/vendor/univer/" in _WS and "/vendor/react.production.min.js" in _WS)
+check("…and it never swallows an exception it logs", "raise" in _WS)
+
 HEAD = PAGE.split("</head>")[0]
 BEACON = inline_blocks(PAGE)[0]
 check("the beacon is the FIRST script in the document — its ABSENCE from the log is "
       "then a fact: no script in this document ran at all",
-      HEAD.index("<script>") < HEAD.index("<link rel=\"stylesheet\"")
+      HEAD.index("<script>") < HEAD.index("<style>")
       and "window.bx" in BEACON and "script-start" in BEACON)
 check("…and it sends with sendBeacon, the only transport specified to survive the "
       "page being torn down (a keepalive fetch is the fallback)",
@@ -914,7 +1008,7 @@ check("…and it can never throw: a diagnostic may not be the thing that breaks 
 check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
       "second copy could drift, and the stamp exists to be trusted",
       'meta[name="harness-build"]' in BEACON
-      and PAGE.count("loffice-2026-08-21d") == 2)
+      and PAGE.count("loffice-2026-08-21e") == 2)
 for _o, name, _c in SCRIPT_TAGS:
     tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]
     check(f"the {name} tag reports BOTH outcomes — the last asset-ok in the trace "
@@ -941,9 +1035,10 @@ check("the probe reports the BIGGEST canvas, not the count: Univer legitimately 
 check("…and a mount that reports success while drawing nothing SAYS SO — that is the "
       "reported symptom, finally decidable from the page itself",
       "GRID_MIN_PX" in PAGE and "drew nothing" in PAGE)
-check("the watchdog names the last asset that arrived, so the message on screen is "
-      "diagnostic on its own",
-      "lastAsset" in PAGE and "last file that finished loading" in PAGE)
+check("the progress line names the file being fetched, so a stalled upgrade is "
+      "diagnostic on screen rather than only in the log",
+      "function rich(" in PAGE and "richbar" in PAGE
+      and re.search(r"rich\('Loading the rich editor[^\n]*label", PAGE) is not None)
 
 try:
     from fastapi.testclient import TestClient                    # noqa: E402

@@ -714,13 +714,14 @@ else
   deactivate
 fi
 
-# flip installed: true in harness.yaml
-python3 - "$NAME" <<'EOF'
-import re, sys
-name = sys.argv[1]
-p = "harness.yaml"; s = open(p).read()
-block = re.compile(rf"(  {name}:\n(?:    .*\n)*?    installed: )false")
-open(p, "w").write(block.sub(r"\1true", s))
-EOF
+# flip installed: true in harness.yaml. Mission Control reads THAT FLAG, not the disk
+# (bridge/app.py::status), so an install that skips this line shows "Not installed"
+# forever — which is exactly how OpenCode shipped. The writer lives in ONE file that
+# every component-shaped installer calls; see scripts/flip_installed.py.
+"${PY:-python3}" "$ROOT/scripts/flip_installed.py" "$NAME" || {
+  echo "[harness] ERROR: $NAME installed on disk but the harness.yaml flag could not be"
+  echo "[harness]   set, so its card will still say 'Not installed'. Fix with:"
+  echo "[harness]   python3 scripts/flip_installed.py $NAME"
+  exit 1; }
 
 echo "[harness] $NAME installed. Start it from the panel or scripts/start_component.sh $NAME"

@@ -117,7 +117,70 @@ app = FastAPI(title="AI Harness Bridge")
 # the Mac / at FAT build). Ensure the mount point exists so startup never errors when the
 # libs haven't been fetched yet (the renderer degrades gracefully in that case).
 (PANEL / "assets" / "vendor").mkdir(parents=True, exist_ok=True)
-app.mount("/assets", StaticFiles(directory=str(PANEL / "assets")), name="assets")
+
+
+class _WatchedStatic(StaticFiles):
+    """StaticFiles that LOGS the Univer bundles, and nothing else.
+
+    ⚠️ WHY THIS IS A StaticFiles SUBCLASS AND NOT `@app.middleware("http")`. It exists
+    to answer one question — when LOffice's boot trace stops after a given bundle, was
+    that file NEVER REQUESTED (the parser died before the tag, or the page never got
+    that far) or REQUESTED AND NEVER FINISHED (a stalled transfer)? Those are different
+    faults with the same symptom and nothing else in the stack distinguishes them:
+    uvicorn's access log is not on in our launch line and a StaticFiles hit is
+    otherwise silent.
+
+    A `BaseHTTPMiddleware` would answer it too — and would also wrap EVERY response in
+    the harness, including the SSE chat relays, in a queue-and-pump that is documented
+    to interfere with streaming and background tasks. The whole Hermes lane rides those
+    streams (a 20s heartbeat frame the panel's stall watchdog counts on), so a
+    diagnostic for the spreadsheet tab may not go anywhere near them. This subclass
+    touches exactly the one mount, and logs only the prefix below.
+    """
+
+    # ⚠️ MATCHED AS A SUBSTRING, DELIBERATELY, AND THE FIRST DRAFT GOT THIS WRONG.
+    # It watched `scope["path"].startswith("/vendor/univer/")` on the reasoning that a
+    # Mount rewrites the path to be relative to itself. This Starlette does NOT: it
+    # leaves `path` as the FULL "/assets/vendor/univer/x.js" and puts "/assets" in
+    # `root_path` — so the branch never fired and the whole diagnostic was a no-op that
+    # looked correct in review. It was caught by driving the real page in a real
+    # browser and finding zero lines in the log. A substring is true under BOTH
+    # conventions, which is the point.
+    #
+    # The set is exactly what bridge/panel/office.html's VENDOR list loads: the five
+    # univer files plus React and React-DOM, which live one directory up because the
+    # artifact renderer already vendored them. ⚠️ Those two are therefore ALSO logged
+    # when an artifact opens — two lines, and arguably useful there too.
+    WATCH = ("/vendor/univer/", "/vendor/react.production.min.js",
+             "/vendor/react-dom.production.min.js")
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if not any(w in path for w in self.WATCH):
+            return await super().__call__(scope, receive, send)
+        t0 = time.time()
+        _office_log(f"loffice-asset → {scope.get('method', '?')} {path}")
+        sent = {"status": 0, "bytes": 0}
+
+        async def _send(msg):
+            if msg.get("type") == "http.response.start":
+                sent["status"] = msg.get("status", 0)
+            elif msg.get("type") == "http.response.body":
+                sent["bytes"] += len(msg.get("body") or b"")
+            await send(msg)
+
+        try:
+            await super().__call__(scope, receive, _send)
+        except Exception as e:                                   # noqa: BLE001
+            _office_log(f"loffice-asset ✗ {path} raised {type(e).__name__}: {e}")
+            raise
+        # A `→` with no matching `←` is the stalled case, spelled out rather than
+        # inferred from a gap in the trace.
+        _office_log(f"loffice-asset ← {sent['status']} {path} {sent['bytes']}B "
+                    f"{int((time.time() - t0) * 1000)}ms")
+
+
+app.mount("/assets", _WatchedStatic(directory=str(PANEL / "assets")), name="assets")
 
 
 def cfg() -> dict:
@@ -9119,7 +9182,15 @@ async def office_diag(req: Request) -> Response:
         line = _office.write_diag(ROOT, stage, detail, boot, ms)
     else:
         line = f"(office module unavailable) stage={stage} detail={detail}"
-    _office_log(f"diag {line}")
+    # ⚠️ THE TAG IS `loffice-diag`, NOT `diag`, AND THAT ONE WORD COST A ROUND.
+    # These lines used to be logged as `[office] diag …`, and the instruction given to
+    # Debi was `grep loffice <bridge.log>`. Only ONE stage — script-start, whose detail
+    # happens to contain the build stamp `loffice-2026-08-21x` — carried the string
+    # "loffice" at all, so the grep returned exactly one line on a PERFECT boot. That
+    # single line was then read as "the document stopped dead after the head script",
+    # and a whole round went into a failure that may never have happened. Every line
+    # is greppable by one stable token now.
+    _office_log(f"loffice-diag {line}")
     return Response(status_code=204)
 
 

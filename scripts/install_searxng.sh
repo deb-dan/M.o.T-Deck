@@ -45,6 +45,18 @@ search:
     - json
 EOF
 
+# Mission Control reads components.searxng.installed from harness.yaml, never the disk
+# (bridge/app.py::status). This installer is standalone — it is NOT a branch of
+# install_component.sh, whose tail has flipped that flag since M0 — so it has to do it
+# itself. Latent until now only because harness.yaml already ships searxng as
+# installed: true; on a fresh manifest (ship.sh forces a NEW component to false) the
+# card would have stayed "Not installed" exactly like OpenCode's did.
+"$PY" "$ROOT/scripts/flip_installed.py" searxng || {
+  echo "[harness] ERROR: searxng installed on disk but the harness.yaml flag could not"
+  echo "[harness]   be set — its card will still say 'Not installed'. Fix with:"
+  echo "[harness]   python3 scripts/flip_installed.py searxng"
+  exit 1; }
+
 echo "[harness] searxng installed."
 echo "[harness] settings: $ROOT/data/searxng/settings.yml"
 echo "[harness] test-run it with:"

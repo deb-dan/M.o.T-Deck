@@ -138,14 +138,29 @@ def test_the_preset_still_takes_the_full_ui_by_these_option_names():
         assert name in opts, f"the preset no longer takes a {name!r} option"
 
 
-def test_the_stylesheet_probe_class_still_exists():
-    """The page proves the css arrived by MEASURING `.univer-absolute` on a probe
-    element (a 404 leaves the <link> tag in place, so presence proves nothing)."""
+def test_the_stylesheet_is_still_the_one_the_page_asks_for():
+    """The css is still a real, non-trivial stylesheet at the path the page injects.
+
+    ⚠️ CHANGED HONESTLY AT 2026-08-21e. This used to pin `.univer-absolute`, which the
+    page measured on a probe element to prove the stylesheet had arrived (a 404 leaves
+    the <link> tag in place, so presence proved nothing). That probe is GONE, and its
+    absence is the point: the stylesheet is no longer in <head> and no longer
+    load-bearing. LOffice is two tiers now — a plain-DOM grid that needs no third-party
+    asset at all, and Univer as an opt-in upgrade — so this css styles only the
+    optional tier-2 chrome. It is fetched on demand, deliberately NOT awaited, and its
+    outcome is beaconed either way. A missing stylesheet costs some styling on an
+    upgrade nobody has to take; it can no longer cost the spreadsheet.
+
+    What still has to be true is that the file the page names exists and is real.
+    """
     css = _read(VENDOR / "preset-sheets-core.css")
-    assert ".univer-absolute{position:absolute}" in css, \
-        "the css probe class moved — bridge/panel/office.html's cssLoaded() must follow"
+    assert len(css) > 10000, "the sheets stylesheet is suspiciously small"
+    assert ".univer" in css, "this does not look like the Univer stylesheet"
     page = _read(ROOT / "bridge" / "panel" / "office.html")
-    assert "univer-absolute" in page
+    assert "/assets/vendor/univer/preset-sheets-core.css" in page, \
+        "the page no longer names the stylesheet this contract pins"
+    assert "VENDOR_CSS" in page and "cssAsked" in page, \
+        "the on-demand stylesheet injection moved — re-read loadVendor()"
 
 
 def test_react_and_rxjs_are_still_external_peers():

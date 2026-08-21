@@ -2,42 +2,61 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- THE BOOT BEACON. The title is set in the STATIC markup to the booting state and
-     changed by the inline script; the shell reads webView.title, so "still booting"
-     is answerable from outside the page even when the page itself shows nothing. -->
+<!-- The title is set in the STATIC markup to the booting state and changed by the
+     inline script; the shell reads webView.title, so "still booting" is answerable
+     from outside the page even when the page itself shows nothing. -->
 <title>LOffice · booting…</title>
 <!-- The build stamp is here, in markup, so it survives a dead script: it is printed in
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21d">
-<!-- The LOffice tab is its OWN document, deliberately not the panel (the /aider
-     precedent): it loads ~10MB of Univer UMD, mounts a canvas grid, and must not
-     carry the panel's poll loops. The palette values below are the panel's tokens,
-     copied — a separate document cannot inherit :root. Keep them in step by eye.
+<meta name="harness-build" content="loffice-2026-08-21e">
+<!--
+  ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
+  This page has failed three times on a Mac none of us can reach, and every time the
+  suspect was somewhere inside ~11 MB of third-party UMD that the page could not open
+  without. A spreadsheet tab whose existence is a bet on eleven megabytes compiling is
+  the wrong shape, however good the diagnostics around it get.
 
-     SLICE 1 IS SHEETS ONLY (.xlsx). Documents come later; nothing here assumes a
-     single format beyond that, but nothing here handles one either.
+  So the bet is gone:
 
-     THE SPREADSHEET CHROME IS UNIVER'S OWN, NOT OURS. The sheets preset ships the
-     ribbon toolbar, the formula bar, the sheet-tab strip and the context menus that
-     everybody already knows from Sheets/Excel — so this page MOUNTS that UI rather
-     than hand-building a lookalike. Our chrome is the thin bar above it (which file,
-     is it dirty, Save / Import / New) and the file rail. -->
+    TIER 1 — the DEFAULT. A grid built from plain DOM. Zero third-party JavaScript,
+             zero external stylesheets, nothing deferred, nothing render-blocking:
+             this document as served IS the editor. It opens, edits and saves real
+             .xlsx through the same bridge round-trip (bridge/office.py) the rich
+             editor uses, because the thing being edited is the same IWorkbookData
+             snapshot object in both tiers.
+
+    TIER 2 — OPT-IN. "Rich editor" loads the six Univer bundles ON DEMAND, one at a
+             time, with a visible per-file progress line and a beacon per file. If any
+             of it fails, times out, or the engine refuses to build, the page SAYS SO
+             and stays on Tier 1. The spreadsheet keeps working.
+
+  ⚠️ THERE IS DELIBERATELY NOTHING EXTERNAL IN <head>. The previous build carried a
+  <link rel="stylesheet"> to the Univer css there, and a render-blocking stylesheet
+  that never resolves produces EXACTLY the reported symptom: a blank rectangle, the
+  head script already run and beaconed, and no further script in the document ever
+  executing — because a pending stylesheet blocks the scripts that follow it. That
+  mechanism is now unrepresentable: the only things in <head> are the beacon and our
+  own inline CSS.
+
+  SLICE 1 IS SHEETS ONLY (.xlsx).
+-->
 <!-- ── THE BOOT BEACON, and it is deliberately the FIRST script in the document ──
-     This page has now failed twice on a Mac none of us can reach, and both times the
-     entire available evidence was "the tab is blank" — a sentence that fits a stale
-     cached document, a 404'd bundle, a JS engine that refused ten megabytes, a mount
-     into a zero-sized box and a web content process killed by jetsam, equally well.
-     So the page reports its own boot, step by step, to the bridge, which writes it
-     down. The next report is a grep, not a hypothesis:
+     The page reports its own boot, step by step, to the bridge, which writes it down.
+     The next report is a read, not a hypothesis:
 
-         grep loffice ~/Library/Application\ Support/Harness/data/logs/bridge.log
+         cat ~/Library/Application\ Support/Harness/data/logs/loffice-boot.log
 
-     It sits in <head>, above the stylesheet, so that (a) `script-start` is the
-     earliest thing that can possibly be observed — its ABSENCE means no script in
-     this document ran at all, which is the stale-cache/dead-process case — and (b)
-     the css link below can report its own failure through it.
+     (or the panel's Logs view → "loffice boot"). The bridge log carries the same
+     lines tagged `loffice-diag`, so `grep loffice <bridge.log>` finds ALL of them.
+
+     ⚠️ THAT GREP USED TO BE A TRAP AND IT COST A ROUND. The stages were logged as
+     `[office] diag …` and only ONE of them — script-start, whose detail happens to
+     contain the build stamp `loffice-…` — carried the string "loffice" at all. So
+     `grep loffice bridge.log` returned exactly one line on a PERFECT boot, and the
+     single line it returned was read as "the document stopped dead after the head
+     script". Every line is tagged now (bridge/app.py, office_diag).
 
      `navigator.sendBeacon` is the transport for one specific reason: it is the only
      one specified to survive the page being torn down, and a page being torn down is
@@ -75,9 +94,6 @@
             + ' url=' + location.href + ' vis=' + document.visibilityState);
 })();
 </script>
-<link rel="stylesheet" href="/assets/vendor/univer/preset-sheets-core.css"
-      onerror="window.bx&&bx('asset-error','preset-sheets-core.css')"
-      onload="window.bx&&bx('asset-ok','preset-sheets-core.css')">
 <style>
   :root{
     --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
@@ -112,10 +128,10 @@
                padding:6px 8px}
   button.ghost:hover{color:var(--gold);border-color:var(--line2)}
   .grow{flex:1 1 auto}
-  /* ⚠️ NEVER give #msg a `display` in the stylesheet and then clear the INLINE one to
-     show it: `style.display=''` removes the override and the rule wins, which is
-     exactly how every error this page produced became invisible. Visibility is a
-     CLASS, so the two can never fight. Same rule for #newrow and #empty below. */
+  /* ⚠️ NEVER give a hideable element a `display` in the stylesheet and then clear the
+     INLINE one to show it: `style.display=''` removes the override and the rule wins,
+     which is exactly how every error this page produced became invisible. Visibility
+     is a CLASS everywhere on this page, so the two can never fight. */
   #msg{display:none;flex:none;padding:9px 14px;font-size:12px;color:var(--bad);
        border-bottom:1px solid var(--line);background:var(--bg2);
        white-space:pre-wrap}
@@ -147,19 +163,58 @@
   #newrow input{flex:1 1 auto;min-width:0;background:var(--card);color:var(--fg);
                 border:1px solid var(--line2);border-radius:6px;padding:5px 7px;
                 font:12px -apple-system,sans-serif}
-  /* middle: the grid. Univer renders a LIGHT surface by design — a spreadsheet is a
-     white page — so the dark chrome frames it rather than fighting it.
+  /* middle. Both tiers render a LIGHT surface — a spreadsheet is a white page — so
+     the dark chrome frames it rather than fighting it.
 
-     ⚠️ #sheet IS ALWAYS LAID OUT. Univer's canvas engine measures its container when
-     it mounts; mounting into a display:none box gives a 0x0 canvas that no later
-     un-hiding re-measures, i.e. a permanently blank grid. The empty state is an
-     OVERLAY on top of the container, never a replacement for it. */
-  #mid{flex:1 1 auto;min-width:0;position:relative}
-  #sheet{position:absolute;inset:0;background:#fff}
+     ⚠️ #sheet (tier 2) IS LAID OUT BEFORE UNIVER MOUNTS INTO IT. Univer's canvas
+     engine measures its container at mount; mounting into a display:none box gives a
+     0x0 canvas that no later un-hiding re-measures, i.e. a permanently blank grid.
+     `upgrade()` therefore un-hides it and waits a frame before calling mount(). */
+  #mid{flex:1 1 auto;min-width:0;position:relative;display:flex;flex-direction:column}
+  #gridwrap{flex:1 1 auto;min-height:0;position:relative;display:flex;
+            flex-direction:column;background:#fff}
+  #gridwrap.off{display:none}
+  #gridscroll{flex:1 1 auto;min-height:0;overflow:auto}
+  #sheet{position:absolute;inset:0;background:#fff;display:none}
+  #sheet.on{display:block}
   #empty{position:absolute;inset:0;display:flex;align-items:center;
          justify-content:center;background:var(--bg);color:var(--faint);
-         font-size:12.5px;text-align:center;padding:24px;z-index:2}
+         font-size:12.5px;text-align:center;padding:24px;z-index:3}
   #empty.off{display:none}
+  /* ── TIER 1: the plain-DOM grid ──────────────────────────────────────────────
+     A <table> of contenteditable <td>. No canvas, no virtual scroller, no library —
+     the browser's own layout and text editing, which is the one part of a spreadsheet
+     nobody has to reimplement. The render window is CAPPED (see TIER1_MAX_CELLS): a
+     workbook may declare 5000x500 and a browser will not lay that out. */
+  #gt{border-collapse:separate;border-spacing:0;font:12px/1.35 -apple-system,
+      BlinkMacSystemFont,"Segoe UI",sans-serif;color:#181818;table-layout:fixed}
+  #gt th,#gt td{border-right:1px solid #dcdcdc;border-bottom:1px solid #dcdcdc;
+                padding:2px 5px;overflow:hidden;white-space:pre;vertical-align:middle}
+  #gt thead th,#gt tbody th{background:#f1f0ee;color:#5b5b5b;font-weight:500;
+                            text-align:center;position:sticky;font-size:11px;
+                            border-right:1px solid #c9c9c9;border-bottom:1px solid #c9c9c9}
+  #gt thead th{top:0;z-index:2}
+  #gt tbody th{left:0;z-index:1;width:46px;min-width:46px}
+  #gt thead th.corner{left:0;z-index:3}
+  #gt td{background:#fff;cursor:cell;min-width:28px}
+  #gt td:focus{outline:2px solid #1a73e8;outline-offset:-2px;white-space:pre-wrap;
+               overflow:visible;position:relative;z-index:4;background:#fff}
+  #gt td.num{text-align:right}
+  #gt td.fx{color:#0b6b4f}
+  /* the sheet-tab strip + the grow controls, along the bottom, office convention */
+  #gridbar{flex:none;display:flex;align-items:center;gap:6px;padding:5px 8px;
+           background:#f1f0ee;border-top:1px solid #c9c9c9;overflow:auto}
+  #gridbar button{font:11px/1 -apple-system,sans-serif;color:#2b2b2b;background:#fff;
+                  border:1px solid #cfcfcf;border-radius:6px;padding:4px 10px;
+                  white-space:nowrap}
+  #gridbar button:hover{border-color:#1a73e8}
+  #gridbar button.on{background:#e6efff;border-color:#1a73e8;color:#12376e}
+  #gridbar .sep{flex:1 1 auto}
+  #gridbar .gnote{color:#6b6b6b;font:10.5px/1 -apple-system,sans-serif;white-space:nowrap}
+  /* the rich-editor progress line, in the dark chrome above the grid */
+  #richbar{display:none;flex:none;padding:7px 14px;font-size:11.5px;color:var(--dim);
+           border-bottom:1px solid var(--line);background:var(--bg2)}
+  #richbar.on{display:block}
   /* right: the slice-2 stub. A collapsed rail with a label and NO controls — a dead
      button would be worse than an honest placeholder. */
   #ai{flex:none;width:34px;border-left:1px solid var(--line);background:var(--bg2);
@@ -182,7 +237,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21d</code>.</div>
+  Build <code>loffice-2026-08-21e</code>.</div>
 <header>
   <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
   <span class="name">LOffice</span>
@@ -190,12 +245,14 @@
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
   <span class="pill" id="p-state">—</span>
+  <button id="btn-rich" title="Load the full Univer spreadsheet engine (~11 MB, on demand)">Rich editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
   <button id="btn-new2">New</button>
   <button id="btn-save" class="primary" disabled>Save</button>
 </header>
 <input type="file" id="imp" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <div id="msg"></div>
+<div id="richbar"></div>
 <div id="body">
   <aside id="files">
     <div class="hd">
@@ -217,6 +274,12 @@
     </div>
   </aside>
   <main id="mid">
+    <!-- TIER 1 (default, always present) -->
+    <div id="gridwrap">
+      <div id="gridscroll"><table id="gt"></table></div>
+      <div id="gridbar"></div>
+    </div>
+    <!-- TIER 2 (opt-in, empty until the bundles are loaded on demand) -->
     <div id="sheet"></div>
     <div id="empty">Pick a spreadsheet on the left, or make a new one.</div>
   </main>
@@ -225,62 +288,42 @@
   </aside>
 </div>
 
-<!-- Load order is fixed and matters: React and rxjs are Univer's PEER globals, the
-     presets bundle carries a React-18 polyfill prelude, defines createUniver AND
-     bundles @wendellhu/redi + UniverCore + UniverThemes, the sheets preset registers
-     on top of those, the locale is merged by UniverCore.mergeLocales last. All
-     self-hosted — no runtime CDN, exactly like the artifact renderer.
-
-     ⚠️ EVERY ONE OF THEM IS `defer`, AND THAT IS THE POINT. These six files are 10.5 MB
-     of classic script. A classic script without `defer` blocks the parser where it sits
-     and WebKit is under no obligation to paint what it has already parsed first — so on
-     the real Mac this page was a BLANK RECTANGLE for as long as it took to fetch and
-     compile ten megabytes, with no chrome, no message and nothing to look at. `defer`
-     keeps the documented guarantees we depend on (they still execute in THIS order, and
-     all of them before DOMContentLoaded) while letting the document render immediately.
-     Because of it the inline script below runs BEFORE these do — hence boot-on-
-     DOMContentLoaded rather than boot-at-parse.
-
-     EVERY ONE OF THEM ALSO BEACONS. `defer` guarantees they execute in THIS order, so
-     the last `asset-ok` in the boot trace names the file that loaded, and the one that
-     should have come next is where the boot died — including the case where nothing
-     comes after it at all, which is what a web content process being killed part-way
-     through compiling 7 MB of `presets.umd.js` looks like from the outside. -->
-<script defer src="/assets/vendor/react.production.min.js"
-        onload="bx('asset-ok','react')" onerror="bx('asset-error','react')"></script>
-<script defer src="/assets/vendor/react-dom.production.min.js"
-        onload="bx('asset-ok','react-dom')" onerror="bx('asset-error','react-dom')"></script>
-<script defer src="/assets/vendor/univer/rxjs.umd.min.js"
-        onload="bx('asset-ok','rxjs')" onerror="bx('asset-error','rxjs')"></script>
-<script defer src="/assets/vendor/univer/presets.umd.js"
-        onload="bx('asset-ok','presets.umd.js (7 MB)')"
-        onerror="bx('asset-error','presets.umd.js')"></script>
-<script defer src="/assets/vendor/univer/preset-sheets-core.umd.js"
-        onload="bx('asset-ok','preset-sheets-core.umd.js')"
-        onerror="bx('asset-error','preset-sheets-core.umd.js')"></script>
-<script defer src="/assets/vendor/univer/preset-sheets-core.en-US.js"
-        onload="bx('asset-ok','preset-sheets-core.en-US.js')"
-        onerror="bx('asset-error','preset-sheets-core.en-US.js')"></script>
+<!-- ⚠️ THE ONLY SCRIPT IN THE BODY, AND IT IS INLINE. This document contains no
+     external script tags at all: every byte the page needs to be a working spreadsheet
+     is already here. The Univer bundles are injected by `loadVendor()` when — and only
+     when — somebody presses "Rich editor".
+     (The words "script" and "src" are kept apart on purpose above: the test harness
+     extracts inline blocks with a regex, and a literal opening-script-tag inside a
+     comment would make it capture the comment instead — a passing test that tests
+     nothing.) -->
 <script>
 'use strict';
 // ── the very first thing this page does ──────────────────────────────────────
 // Take the static fallback banner down. From here on, its presence on screen means
 // exactly one thing — this line never ran — which is the whole reason it exists.
-// Inline scripts ignore `defer`, so this runs at PARSE time, before the six bundles
-// above have executed and long before they have finished compiling.
 (function () {
   const b = document.getElementById('boot');
   if (b) b.remove();
   document.title = 'LOffice — Harness';
 })();
+bx('boot-inline', 'tier-1 script running');
 
 const el = id => document.getElementById(id);
 const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).content || '';
 
-let files = [], current = null, dirty = false, busy = false;
-let univer = null, api = null, armed = null;
+let files = [], current = null, dirty = false, busy = false, armed = null;
+// `snap` is THE document. Both tiers edit this one object: tier 1 mutates it in place,
+// tier 2 hands it to Univer and reads it back through the facade on save. Because the
+// shape is the bridge's own IWorkbookData (bridge/office.py), a save from either tier
+// goes through the identical round-trip.
+let snap = null, activeSid = null;
+let mode = 'grid';               // 'grid' | 'univer'
+let richWanted = false;          // sticky: once upgraded, later opens stay rich
+let univer = null, api = null;
 
 const UPLOAD_MAX_BYTES = 30 * 1024 * 1024;   // mirrors office.UPLOAD_MAX_BYTES
+// Univer's CellValueType, mirrored from bridge/office.py (which mirrors the bundle).
+const CV_STRING = 1, CV_NUMBER = 2, CV_BOOLEAN = 3;
 
 // ── say(): the ONE place anything is reported ────────────────────────────────
 // Visibility is a class, never an inline display (see the #msg rule).
@@ -289,63 +332,6 @@ function say(text, kind) {
   m.textContent = text || '';
   m.classList.toggle('on', !!text);
   m.style.color = kind === 'ok' ? 'var(--ok)' : (kind === 'dim' ? 'var(--faint)' : 'var(--bad)');
-}
-
-// ── the self-check ───────────────────────────────────────────────────────────
-// A spreadsheet page that quietly renders nothing is the worst outcome there is, and
-// it is exactly what happened: ten megabytes of third-party UMD either arrive whole
-// or the grid is a white rectangle with no explanation. So the page PROVES its own
-// preconditions before it tries to mount, and names the missing one on screen.
-//
-// Each entry is [what a reader would call it, a probe]. The probes are the globals
-// the pinned bundles genuinely define — verified by executing them, not by reading
-// the docs (bridge/contract_tests/test_univer_assets_contract.py pins the same set).
-const NEEDS = [
-  ['React', () => window.React && window.React.createElement],
-  ['ReactDOM.createRoot', () => window.ReactDOM && window.ReactDOM.createRoot],
-  ['rxjs', () => window.rxjs && window.rxjs.Observable],
-  ['rxjs.operators', () => window.rxjs && window.rxjs.operators],
-  ['@wendellhu/redi', () => window['@wendellhu/redi']],
-  ['@wendellhu/redi/react-bindings', () => window['@wendellhu/redi/react-bindings']],
-  ['UniverCore.LocaleType', () => window.UniverCore && window.UniverCore.LocaleType],
-  ['UniverThemes.defaultTheme', () => window.UniverThemes && window.UniverThemes.defaultTheme],
-  ['UniverPresets.createUniver', () => window.UniverPresets && window.UniverPresets.createUniver],
-  ['UniverPresetSheetsCore.UniverSheetsCorePreset',
-   () => window.UniverPresetSheetsCore && window.UniverPresetSheetsCore.UniverSheetsCorePreset],
-  ['UniverPresetSheetsCoreEnUS (the en-US locale)', () => window.UniverPresetSheetsCoreEnUS],
-];
-
-// The stylesheet is checked by MEASUREMENT, not by asking whether the <link> is in the
-// DOM: a 404 leaves the tag in place. `.univer-absolute{position:absolute}` is a real
-// rule in the pinned css (contract-pinned), so a probe element that does not come back
-// absolute means the css never arrived — which is a legible grid with no chrome.
-function cssLoaded() {
-  try {
-    const p = document.createElement('div');
-    p.className = 'univer-absolute';
-    p.style.visibility = 'hidden';
-    document.body.appendChild(p);
-    const ok = getComputedStyle(p).position === 'absolute';
-    p.remove();
-    return ok;
-  } catch (e) { return true; }   // a probe that cannot run must not accuse the assets
-}
-
-function selfCheck() {
-  const missing = [];
-  for (const [label, probe] of NEEDS) {
-    let ok = false;
-    try { ok = !!probe(); } catch (e) { ok = false; }
-    if (!ok) missing.push(label);
-  }
-  if (!cssLoaded()) missing.push('preset-sheets-core.css (the spreadsheet stylesheet)');
-  if (!missing.length) { bx('selfcheck-pass', 'all ' + NEEDS.length + ' globals present'); return true; }
-  bx('selfcheck-fail', 'missing=' + missing.join(','));
-  say('The spreadsheet engine did not load, so the grid cannot open.\n\nMissing: '
-      + missing.join(', ')
-      + '\n\nRun ./scripts/fetch_vendor_assets.sh (it puts the Univer bundles in '
-      + 'bridge/panel/assets/vendor/univer/), then reload this tab with ⌘R.');
-  return false;
 }
 
 // Anything that throws after boot lands here rather than in a console nobody opens.
@@ -363,8 +349,6 @@ window.addEventListener('error', ev => {
   const t = ev && ev.target;
   if (!t || t === window || !(t.src || t.href)) return;      // not a resource failure
   bx('asset-error', 'capture: ' + (t.src || t.href));
-  say('An asset this page needs did not load:\n  ' + (t.src || t.href)
-      + '\n\nRun ./scripts/fetch_vendor_assets.sh, then ./scripts/ship.sh, then ⌘R.');
 }, true);
 window.addEventListener('unhandledrejection', ev => {
   const r = ev && ev.reason;
@@ -386,12 +370,653 @@ function paint() {
   el('p-file').textContent = current || 'no workbook open';
   el('p-file').className = 'pill' + (current ? ' on' : '');
   el('dot').classList.toggle('on', !!dirty);
-  el('p-state').textContent = busy ? 'working…' : (dirty ? 'unsaved' : (current ? 'saved' : '—'));
-  el('btn-save').disabled = !current || busy || !api;
+  el('p-state').textContent = busy ? 'working…'
+    : (dirty ? 'unsaved' : (current ? 'saved · ' + mode : '—'));
+  el('btn-save').disabled = !current || busy || (mode === 'univer' && !api);
   el('btn-import').disabled = busy;
+  el('btn-rich').disabled = busy || mode === 'univer' || richLoading;
   el('empty').classList.toggle('off', !!current);
 }
 
+// ══ TIER 1 — the plain-DOM grid ═══════════════════════════════════════════════
+// The whole point of this tier is that it cannot fail for a reason we do not own.
+
+// A hard ceiling on RENDERED cells. A workbook may legitimately declare 5000x500 and
+// no browser will lay 2.5 M table cells out; a spreadsheet that hangs the tab is not
+// better than one that says "showing the first N rows".
+const TIER1_MAX_CELLS = 20000;
+const TIER1_MIN_ROWS = 40, TIER1_MIN_COLS = 12;
+const TIER1_MAX_COLS = 200;
+const ROW_STEP = 50, COL_STEP = 10;
+let viewRows = 0, viewCols = 0;
+
+function colName(i) {                       // 0 → A, 25 → Z, 26 → AA
+  let s = '', n = i;
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
+
+function sheetIds(s) {
+  if (!s || !s.sheets) return [];
+  const sheets = s.sheets;
+  const order = Array.isArray(s.sheetOrder) ? s.sheetOrder.filter(i => sheets[i]) : [];
+  Object.keys(sheets).forEach(k => { if (order.indexOf(k) < 0) order.push(k); });
+  return order;
+}
+function activeSheet() {
+  if (!snap || !snap.sheets) return null;
+  return snap.sheets[activeSid] || null;
+}
+function cellAt(sh, r, c) {
+  const row = sh && sh.cellData && sh.cellData[String(r)];
+  const cell = row && row[String(c)];
+  return (cell && typeof cell === 'object') ? cell : null;
+}
+function putCell(sh, r, c, cell) {
+  if (!sh.cellData || typeof sh.cellData !== 'object') sh.cellData = {};
+  const rk = String(r), ck = String(c);
+  if (cell === null) {
+    if (sh.cellData[rk]) {
+      delete sh.cellData[rk][ck];
+      if (!Object.keys(sh.cellData[rk]).length) delete sh.cellData[rk];
+    }
+    return;
+  }
+  if (!sh.cellData[rk]) sh.cellData[rk] = {};
+  sh.cellData[rk][ck] = cell;
+}
+
+// What the cell SHOWS. A formula shows its own text — this tier has no formula engine
+// and inventing one would be worse than being honest about it. When the file carried a
+// cached result (Excel/LibreOffice always writes one) it rides along in the tooltip,
+// so the number the user last saw is still reachable.
+function displayText(cell) {
+  if (!cell) return '';
+  if (typeof cell.f === 'string' && cell.f) return cell.f;
+  return valueText(cell.v, cell.t);
+}
+function valueText(v, t) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'boolean' || t === CV_BOOLEAN) return v ? 'TRUE' : 'FALSE';
+  if (typeof v === 'object') {                       // rich text: {body:{dataStream}}
+    try {
+      const ds = v.body && v.body.dataStream;
+      if (typeof ds === 'string') return ds.replace(/[\r\n]+$/, '');
+    } catch (e) { /* fall through */ }
+    return '';
+  }
+  return String(v);
+}
+// What the cell puts in the box when you start editing it — the same thing, because
+// the display IS the source text in this tier. Kept as its own function so the two can
+// diverge later (a formatted number would show formatted and edit raw).
+function editText(cell) { return displayText(cell); }
+
+// Text typed into a cell → a Univer cell object. The previous cell's STYLE survives:
+// typing a new number into a bold red cell must not strip the bold red.
+function parseInput(text, prev) {
+  const s = String(text == null ? '' : text).replace(/\r/g, '');
+  const style = (prev && prev.s !== undefined) ? prev.s : undefined;
+  if (s === '') return style === undefined ? null : { s: style };
+  const out = {};
+  if (style !== undefined) out.s = style;
+  if (s.charAt(0) === '=') { out.f = s; return out; }
+  const low = s.toLowerCase();
+  if (low === 'true' || low === 'false') { out.v = (low === 'true'); out.t = CV_BOOLEAN; return out; }
+  // A number, but only a plain one: "1e5" and "0x10" are things a person typed as
+  // TEXT far more often than as a number, and Number() would swallow both. A leading
+  // zero ("007") stays text for the same reason — it is almost always an id.
+  if (/^-?(\d+\.?\d*|\.\d+)$/.test(s) && !/^-?0\d/.test(s)) {
+    const n = Number(s);
+    if (isFinite(n)) { out.v = n; out.t = CV_NUMBER; return out; }
+  }
+  out.v = s; out.t = CV_STRING;
+  return out;
+}
+
+// A Univer style dict → inline CSS on the <td>. Only the keys bridge/office.py
+// actually carries; anything else is ignored rather than guessed at.
+function styleCss(td, cell) {
+  let s = cell && cell.s;
+  if (typeof s === 'string' && snap && snap.styles) s = snap.styles[s];
+  if (!s || typeof s !== 'object') return;
+  try {
+    if (s.bl) td.style.fontWeight = '600';
+    if (s.it) td.style.fontStyle = 'italic';
+    const dec = [];
+    if (s.ul && (s.ul === true || s.ul.s)) dec.push('underline');
+    if (s.st && (s.st === true || s.st.s)) dec.push('line-through');
+    if (dec.length) td.style.textDecoration = dec.join(' ');
+    if (typeof s.ff === 'string' && s.ff) td.style.fontFamily = s.ff;
+    if (typeof s.fs === 'number' && s.fs > 0) td.style.fontSize = s.fs + 'px';
+    const cl = s.cl && (s.cl.rgb || s.cl);
+    if (typeof cl === 'string' && cl) td.style.color = cl;
+    const bg = s.bg && (s.bg.rgb || s.bg);
+    if (typeof bg === 'string' && bg) td.style.background = bg;
+    if (s.ht === 1) td.style.textAlign = 'left';
+    if (s.ht === 2) td.style.textAlign = 'center';
+    if (s.ht === 3) td.style.textAlign = 'right';
+    if (s.vt === 1) td.style.verticalAlign = 'top';
+    if (s.vt === 3) td.style.verticalAlign = 'bottom';
+    if (s.tb === 3) td.style.whiteSpace = 'pre-wrap';
+  } catch (e) { /* a style may never cost the cell */ }
+}
+
+// The used range, so a small sheet is not padded out to 5000 rows and a big one is
+// not truncated below its own data.
+function usedExtent(sh) {
+  let maxR = -1, maxC = -1;
+  const cd = (sh && sh.cellData) || {};
+  for (const rk in cd) {
+    const r = parseInt(rk, 10);
+    if (!isFinite(r)) continue;
+    const row = cd[rk];
+    if (!row || typeof row !== 'object') continue;
+    let any = false;
+    for (const ck in row) {
+      const c = parseInt(ck, 10);
+      if (!isFinite(c)) continue;
+      any = true;
+      if (c > maxC) maxC = c;
+    }
+    if (any && r > maxR) maxR = r;
+  }
+  (Array.isArray(sh && sh.mergeData) ? sh.mergeData : []).forEach(m => {
+    if (!m) return;
+    if (Number(m.endRow) > maxR) maxR = Number(m.endRow);
+    if (Number(m.endColumn) > maxC) maxC = Number(m.endColumn);
+  });
+  return { rows: maxR + 1, cols: maxC + 1 };
+}
+
+// How much to draw. Capped by AREA, never by a fixed row count, because a 3-column
+// sheet can afford far more rows than a 200-column one.
+function planView(sh) {
+  const used = usedExtent(sh);
+  let rows = Math.max(used.rows + 10, TIER1_MIN_ROWS);
+  let cols = Math.min(Math.max(used.cols + 3, TIER1_MIN_COLS), TIER1_MAX_COLS);
+  if (rows * cols > TIER1_MAX_CELLS) rows = Math.max(1, Math.floor(TIER1_MAX_CELLS / cols));
+  return { rows: rows, cols: cols, used: used };
+}
+
+function renderGrid() {
+  const t = el('gt');
+  t.innerHTML = '';
+  const sh = activeSheet();
+  if (!sh) { renderGridBar(null, null); return; }
+  const plan = planView(sh);
+  if (!viewRows || !viewCols) { viewRows = plan.rows; viewCols = plan.cols; }
+  const rows = Math.max(viewRows, 1), cols = Math.max(viewCols, 1);
+
+  // merges: which cells are covered by an anchor elsewhere, and what each anchor spans
+  const cover = Object.create(null), span = Object.create(null);
+  (Array.isArray(sh.mergeData) ? sh.mergeData : []).forEach(m => {
+    if (!m) return;
+    const r0 = Number(m.startRow), c0 = Number(m.startColumn);
+    const r1 = Number(m.endRow), c1 = Number(m.endColumn);
+    if (!isFinite(r0) || !isFinite(c0) || !isFinite(r1) || !isFinite(c1)) return;
+    span[r0 + ':' + c0] = { rs: r1 - r0 + 1, cs: c1 - c0 + 1 };
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        if (r !== r0 || c !== c0) cover[r + ':' + c] = 1;
+      }
+    }
+  });
+
+  const colgroup = document.createElement('colgroup');
+  const rowHdr = document.createElement('col');
+  rowHdr.style.width = '46px';
+  colgroup.appendChild(rowHdr);
+  const colData = (sh.columnData && typeof sh.columnData === 'object') ? sh.columnData : {};
+  for (let c = 0; c < cols; c++) {
+    const col = document.createElement('col');
+    const w = colData[String(c)] && Number(colData[String(c)].w);
+    col.style.width = Math.round(w > 0 ? Math.min(w, 400)
+                                       : (Number(sh.defaultColumnWidth) || 88)) + 'px';
+    colgroup.appendChild(col);
+  }
+  t.appendChild(colgroup);
+
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner';
+  hr.appendChild(corner);
+  for (let c = 0; c < cols; c++) {
+    const th = document.createElement('th');
+    th.textContent = colName(c);
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  t.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const rowData = (sh.rowData && typeof sh.rowData === 'object') ? sh.rowData : {};
+  let drawn = 0;
+  for (let r = 0; r < rows; r++) {
+    const tr = document.createElement('tr');
+    const h = rowData[String(r)] && Number(rowData[String(r)].h);
+    if (h > 0) tr.style.height = Math.round(Math.min(h, 200)) + 'px';
+    const rh = document.createElement('th');
+    rh.textContent = String(r + 1);
+    tr.appendChild(rh);
+    for (let c = 0; c < cols; c++) {
+      if (cover[r + ':' + c]) continue;
+      const td = document.createElement('td');
+      const sp = span[r + ':' + c];
+      if (sp) {
+        if (sp.rs > 1) td.rowSpan = sp.rs;
+        if (sp.cs > 1) td.colSpan = sp.cs;
+      }
+      td.setAttribute('contenteditable', 'true');
+      td.setAttribute('spellcheck', 'false');
+      td.dataset.r = String(r);
+      td.dataset.c = String(c);
+      paintCell(td, cellAt(sh, r, c));
+      tr.appendChild(td);
+      drawn++;
+    }
+    tbody.appendChild(tr);
+  }
+  t.appendChild(tbody);
+  renderGridBar(sh, plan);
+  bx('grid-render', 'sheet=' + (sh.name || '?') + ' rows=' + rows + ' cols=' + cols
+     + ' cells=' + drawn + ' used=' + plan.used.rows + 'x' + plan.used.cols
+     + (sh.truncated ? ' truncated=1' : ''));
+}
+
+function renderGridBar(sh, plan) {
+  const bar = el('gridbar');
+  bar.innerHTML = '';
+  if (!snap) return;
+  sheetIds(snap).forEach(sid => {
+    const b = document.createElement('button');
+    b.textContent = (snap.sheets[sid] && snap.sheets[sid].name) || sid;
+    if (sid === activeSid) b.className = 'on';
+    b.onclick = () => selectSheet(sid);
+    bar.appendChild(b);
+  });
+  const sep = document.createElement('span');
+  sep.className = 'sep';
+  bar.appendChild(sep);
+  if (sh) {
+    const more = document.createElement('button');
+    more.textContent = '+' + ROW_STEP + ' rows';
+    more.onclick = () => {
+      viewRows += ROW_STEP;
+      if ((Number(sh.rowCount) || 0) < viewRows) sh.rowCount = viewRows;
+      renderGrid();
+    };
+    const morec = document.createElement('button');
+    morec.textContent = '+' + COL_STEP + ' cols';
+    morec.onclick = () => {
+      viewCols = Math.min(viewCols + COL_STEP, TIER1_MAX_COLS);
+      if ((Number(sh.columnCount) || 0) < viewCols) sh.columnCount = viewCols;
+      renderGrid();
+    };
+    bar.appendChild(more);
+    bar.appendChild(morec);
+    const note = document.createElement('span');
+    note.className = 'gnote';
+    const capped = plan && (plan.used.rows > viewRows || plan.used.cols > viewCols);
+    note.textContent = capped
+      ? ('showing ' + viewRows + '×' + viewCols + ' of ' + plan.used.rows + '×'
+         + plan.used.cols + ' — add rows to see the rest')
+      : (viewRows + ' × ' + viewCols);
+    bar.appendChild(note);
+  }
+}
+
+function selectSheet(sid) {
+  if (!snap || !snap.sheets || !snap.sheets[sid]) return;
+  activeSid = sid;
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+}
+
+// ── editing ──────────────────────────────────────────────────────────────────
+// One delegated listener per event on the table, not three closures per cell: a
+// 20 000-cell grid would otherwise carry 60 000 of them and leak them on every
+// re-render.
+function tdOf(ev) {
+  let n = ev.target;
+  while (n && n !== el('gt') && n.tagName !== 'TD') n = n.parentNode;
+  return (n && n.tagName === 'TD') ? n : null;
+}
+
+function paintCell(td, cell) {
+  td.textContent = displayText(cell);
+  td.className = '';
+  td.removeAttribute('style');
+  td.removeAttribute('title');
+  if (cell) {
+    if (typeof cell.f === 'string' && cell.f) {
+      td.classList.add('fx');
+      const cached = valueText(cell.v, cell.t);
+      td.title = cached ? 'formula — last calculated result: ' + cached
+                        : 'formula (no cached result in the file)';
+    } else if (cell.t === CV_NUMBER || typeof cell.v === 'number') {
+      td.classList.add('num');
+    }
+    styleCss(td, cell);
+  }
+}
+
+function commit(td) {
+  if (!td || td.dataset.editing !== '1') return;
+  td.dataset.editing = '';
+  const sh = activeSheet();
+  if (!sh) return;
+  const r = parseInt(td.dataset.r, 10), c = parseInt(td.dataset.c, 10);
+  const prev = cellAt(sh, r, c);
+  const was = editText(prev);
+  // contenteditable hands back non-breaking spaces for runs of typed spaces; a cell
+  // whose text differs from what was typed only by U+00A0 is not an edit, and saving
+  // one into a workbook would put an invisible character in somebody's data.
+  const now = td.textContent.replace(/ /g, ' ');
+  if (now === was) { paintCell(td, prev); return; }
+  const next = parseInput(now, prev);
+  putCell(sh, r, c, next);
+  paintCell(td, next);
+  if (!dirty) { dirty = true; paint(); }
+}
+
+function moveTo(r, c) {
+  const td = el('gt').querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+  if (td) { td.focus(); return true; }
+  return false;
+}
+// ⚠️ SELECTING THE WHOLE CELL ON FOCUS IS NOT A FLOURISH — WITHOUT IT THE GRID
+// CORRUPTS DATA. A contenteditable puts the caret where you clicked, so clicking a
+// cell holding `10` and typing `99` produced `9910`: the typed value was INSERTED into
+// the old one, silently, and then saved into the workbook. Every spreadsheet ever
+// written replaces on type, and this is how that is spelled here. A SECOND click
+// inside the already-focused cell does not re-fire focusin, so it positions the caret
+// normally — first click replaces, click again to edit in place, exactly like a
+// browser address bar. (Found by driving the real page; no unit test could have seen
+// it, because the caret only exists in a browser.)
+function selectCell(td) {
+  try {
+    const r = document.createRange();
+    r.selectNodeContents(td);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  } catch (e) { /* a selection may never cost the edit */ }
+}
+el('gt').addEventListener('focusin', ev => {
+  const td = tdOf(ev);
+  if (!td) return;
+  td.dataset.editing = '1';
+  const sh = activeSheet();
+  const cell = sh ? cellAt(sh, parseInt(td.dataset.r, 10), parseInt(td.dataset.c, 10)) : null;
+  td.textContent = editText(cell);     // the raw text, which is what you edit
+  selectCell(td);
+});
+el('gt').addEventListener('focusout', ev => { commit(tdOf(ev)); });
+// ⚠️ Enter / Tab / Escape only. The arrow keys deliberately move the CARET, not the
+// selection: inside a contenteditable cell there is no way to tell "the user wants the
+// next cell" from "the user is editing this text", and hijacking them would make the
+// text uneditable. This is a fallback grid, and predictable beats clever.
+el('gt').addEventListener('keydown', ev => {
+  const td = tdOf(ev);
+  if (!td) return;
+  const r = parseInt(td.dataset.r, 10), c = parseInt(td.dataset.c, 10);
+  const k = ev.key;
+  if (k === 'Enter' && !ev.shiftKey && !ev.altKey) {
+    ev.preventDefault(); commit(td); td.blur();
+    if (!moveTo(r + 1, c)) { viewRows += ROW_STEP; renderGrid(); moveTo(r + 1, c); }
+  } else if (k === 'Tab') {
+    ev.preventDefault(); commit(td); td.blur();
+    moveTo(r, ev.shiftKey ? Math.max(0, c - 1) : c + 1);
+  } else if (k === 'Escape') {
+    ev.preventDefault();
+    const sh = activeSheet();
+    td.dataset.editing = '';               // discard: repaint from the snapshot
+    paintCell(td, sh ? cellAt(sh, r, c) : null);
+    td.blur();
+  }
+});
+
+// ══ TIER 2 — the rich editor, loaded on demand ════════════════════════════════
+// Order is fixed and matters: React and rxjs are Univer's PEER globals, the presets
+// bundle carries a React-18 polyfill prelude and bundles @wendellhu/redi + UniverCore
+// + UniverThemes, the sheets preset registers on top of those, the locale is merged
+// last. Loaded SEQUENTIALLY so that order is a fact rather than a hope, and so the
+// progress line can name the file that is arriving.
+const VENDOR = [
+  ['react',                       '/assets/vendor/react.production.min.js'],
+  ['react-dom',                   '/assets/vendor/react-dom.production.min.js'],
+  ['rxjs',                        '/assets/vendor/univer/rxjs.umd.min.js'],
+  ['presets.umd.js',              '/assets/vendor/univer/presets.umd.js'],
+  ['preset-sheets-core.umd.js',   '/assets/vendor/univer/preset-sheets-core.umd.js'],
+  ['preset-sheets-core.en-US.js', '/assets/vendor/univer/preset-sheets-core.en-US.js'],
+];
+const VENDOR_CSS = '/assets/vendor/univer/preset-sheets-core.css';
+const ASSET_TIMEOUT_MS = 60000;    // per file; the biggest is ~7 MB
+let richLoading = false, richLoaded = false, cssAsked = false;
+
+function rich(text) {
+  const b = el('richbar');
+  b.textContent = text || '';
+  b.classList.toggle('on', !!text);
+}
+
+function loadScript(url, label, i) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      bx('asset-timeout', label + ' after ' + ASSET_TIMEOUT_MS + 'ms');
+      reject(new Error(label + ' did not arrive within '
+                       + (ASSET_TIMEOUT_MS / 1000) + 's'));
+    }, ASSET_TIMEOUT_MS);
+    s.onload = () => { if (done) return; done = true; clearTimeout(timer);
+                       bx('asset-ok', label); resolve(); };
+    s.onerror = () => { if (done) return; done = true; clearTimeout(timer);
+                        bx('asset-error', label);
+                        reject(new Error(label + ' could not be loaded')); };
+    s.src = url;
+    rich('Loading the rich editor — ' + (i + 1) + '/' + VENDOR.length + ' · ' + label + '…');
+    document.head.appendChild(s);
+  });
+}
+
+async function loadVendor() {
+  if (richLoaded) return true;
+  bx('rich-start', 'n=' + VENDOR.length);
+  // The stylesheet goes in FIRST but is deliberately NOT waited on: it is chrome
+  // styling, and a grid with unstyled chrome beats a page stuck behind a stylesheet —
+  // which is precisely the failure mode that cost this page a round when the same
+  // <link> sat in <head> and blocked every script after it.
+  // (tracked with a flag rather than a DOM id, so every id this page reaches for is
+  // one that exists in the markup — a rule the test harness enforces, and the reason
+  // it can catch a renamed element)
+  if (!cssAsked) {
+    cssAsked = true;
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = VENDOR_CSS;
+    l.onload = () => bx('asset-ok', 'preset-sheets-core.css');
+    l.onerror = () => bx('asset-error', 'preset-sheets-core.css');
+    document.head.appendChild(l);
+  }
+  for (let i = 0; i < VENDOR.length; i++) {
+    await loadScript(VENDOR[i][1], VENDOR[i][0], i);
+  }
+  richLoaded = true;
+  bx('rich-loaded', 'all ' + VENDOR.length + ' bundles executed');
+  return true;
+}
+
+// The self-check. Ten megabytes of third-party UMD either arrive whole or the grid is
+// a white rectangle with no explanation, so the page PROVES its preconditions before
+// it tries to mount. Each entry is [what a reader would call it, a probe] — the globals
+// the pinned bundles genuinely define, verified by executing them
+// (bridge/contract_tests/test_univer_assets_contract.py pins the same set).
+const NEEDS = [
+  ['React', () => window.React && window.React.createElement],
+  ['ReactDOM.createRoot', () => window.ReactDOM && window.ReactDOM.createRoot],
+  ['rxjs', () => window.rxjs && window.rxjs.Observable],
+  ['rxjs.operators', () => window.rxjs && window.rxjs.operators],
+  ['@wendellhu/redi', () => window['@wendellhu/redi']],
+  ['@wendellhu/redi/react-bindings', () => window['@wendellhu/redi/react-bindings']],
+  ['UniverCore.LocaleType', () => window.UniverCore && window.UniverCore.LocaleType],
+  ['UniverThemes.defaultTheme', () => window.UniverThemes && window.UniverThemes.defaultTheme],
+  ['UniverPresets.createUniver', () => window.UniverPresets && window.UniverPresets.createUniver],
+  ['UniverPresetSheetsCore.UniverSheetsCorePreset',
+   () => window.UniverPresetSheetsCore && window.UniverPresetSheetsCore.UniverSheetsCorePreset],
+  ['UniverPresetSheetsCoreEnUS (the en-US locale)', () => window.UniverPresetSheetsCoreEnUS],
+];
+
+function selfCheck() {
+  const missing = [];
+  for (const [label, probe] of NEEDS) {
+    let ok = false;
+    try { ok = !!probe(); } catch (e) { ok = false; }
+    if (!ok) missing.push(label);
+  }
+  if (!missing.length) { bx('selfcheck-pass', 'all ' + NEEDS.length + ' globals present'); return true; }
+  bx('selfcheck-fail', 'missing=' + missing.join(','));
+  say('The rich editor did not load completely — missing: ' + missing.join(', ')
+      + '\n\nThe plain grid is still working, and it is the same file.');
+  return false;
+}
+
+// How long to wait before the canvas count means anything (measured, not guessed:
+// Univer's first canvas appears a beat after the facade returns), and how big the
+// biggest canvas has to be before we call it a drawn grid.
+const MOUNT_SETTLE_MS = 2500;
+const GRID_MIN_PX = 100;
+let mountGen = 0;
+
+// The ONE place the grid's own reality is measured.
+function canvasProbe(stage) {
+  try {
+    const cs = document.querySelectorAll('#sheet canvas');
+    const r = el('sheet').getBoundingClientRect();
+    let maxW = 0, maxH = 0;
+    [].forEach.call(cs, c => { if (c.width * c.height > maxW * maxH) { maxW = c.width; maxH = c.height; } });
+    const out = { n: cs.length, maxW: maxW, maxH: maxH,
+                  cw: Math.round(r.width), ch: Math.round(r.height) };
+    bx(stage, 'canvases=' + out.n + ' biggest=' + maxW + 'x' + maxH
+       + ' sizes=' + [].map.call(cs, c => c.width + 'x' + c.height).join(',')
+       + ' container=' + out.cw + 'x' + out.ch
+       + ' dpr=' + (window.devicePixelRatio || 1));
+    return out;
+  } catch (e) { bx(stage, 'probe failed: ' + e); return null; }
+}
+
+function mount(data) {
+  const r0 = el('sheet').getBoundingClientRect();
+  bx('mount-start', 'container=' + Math.round(r0.width) + 'x' + Math.round(r0.height)
+     + ' sheets=' + Object.keys((data && data.sheets) || {}).length);
+  if (!selfCheck()) return false;
+  if (univer) { try { univer.dispose(); } catch (e) { /* already gone */ } }
+  univer = null; api = null;
+  el('sheet').innerHTML = '';
+  // ⚠️ LocaleType lives on UniverCore and defaultTheme on UniverThemes — NOT on
+  // UniverPresets, which re-exports only the core FACADE plus createUniver.
+  const locale = (window.UniverCore.LocaleType && window.UniverCore.LocaleType.EN_US) || 'enUS';
+  const locales = {}; locales[locale] = window.UniverPresetSheetsCoreEnUS;
+  // Every part of the familiar spreadsheet UI is asked for BY NAME. They are the
+  // plugin defaults too, but a reader should be able to see what this tab is meant to
+  // show, and a preset that changes a default should not quietly remove the toolbar.
+  let made;
+  try {
+    made = window.UniverPresets.createUniver({
+      locale: locale,
+      locales: locales,
+      theme: window.UniverThemes.defaultTheme,
+      darkMode: false,
+      presets: [window.UniverPresetSheetsCore.UniverSheetsCorePreset({
+        container: 'sheet',
+        header: true,       // the top bar that carries the ribbon
+        toolbar: true,      // bold / italic / fill / align / number format …
+        formulaBar: true,   // the fx bar above the grid
+        footer: true,       // the sheet-tab strip along the bottom
+        contextMenu: true,  // right-click on a cell / row / column
+      })],
+    });
+    univer = made.univer; api = made.univerAPI;
+    api.createUniverSheet(data);
+  } catch (e) {
+    bx('mount-fail', (e && (e.message || e)) || 'unknown');
+    say('The rich editor loaded but could not open this workbook:\n  '
+        + ((e && (e.message || e)) || 'unknown error')
+        + '\n\nThe plain grid still works — it is the same file.');
+    univer = null; api = null;
+    return false;
+  }
+  const gen = ++mountGen;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { window.dispatchEvent(new Event('resize')); } catch (e) { /* no-op */ }
+    canvasProbe('mount-raf');
+  }));
+  // ⚠️ AND AGAIN, LATER, BECAUSE THE EARLY NUMBER IS A LIE. Univer builds its canvases
+  // a beat after the facade returns; a probe at two animation frames reports
+  // `canvases=0` on a perfectly healthy mount. The number that counts is the settled
+  // one, and it is the settled one that is allowed to accuse.
+  setTimeout(() => {
+    if (gen !== mountGen) return;          // a later open superseded this mount
+    const p = canvasProbe('mount-settled');
+    if (p && (p.maxW < GRID_MIN_PX || p.maxH < GRID_MIN_PX)) {
+      say('The rich editor reported success but drew nothing (largest canvas '
+          + p.maxW + '×' + p.maxH + ' in a ' + p.cw + '×' + p.ch + ' box).\n\n'
+          + 'Use the plain grid — it is the same file. The boot trace is in '
+          + 'data/logs/loffice-boot.log.');
+    }
+  }, MOUNT_SETTLE_MS);
+  // Any executed command is an edit. Univer has no "is dirty" flag, and treating every
+  // command as one is the safe direction: a false "unsaved changes" costs a click, a
+  // missed one costs the work.
+  try { api.onCommandExecuted(() => { if (!dirty) { dirty = true; paint(); } }); }
+  catch (e) { /* older facade — Save still works, it just always shows saved */ }
+  return true;
+}
+
+// The upgrade. Everything here is reversible: any failure leaves the page exactly as
+// it was, on tier 1, with the same workbook open and the same unsaved edits intact.
+async function upgrade() {
+  if (mode === 'univer' || richLoading) return;
+  richLoading = true; paint();
+  try {
+    await loadVendor();
+  } catch (e) {
+    richLoading = false; paint(); rich('');
+    bx('rich-fail', (e && e.message) || 'unknown');
+    say('The rich editor could not load: ' + ((e && e.message) || 'unknown error')
+        + '\n\nThe plain grid is still working, and it is the same file. If the '
+        + 'bundles are missing, run ./scripts/fetch_vendor_assets.sh then '
+        + './scripts/ship.sh.');
+    return;
+  }
+  rich('Starting the rich editor…');
+  // The container must be LAID OUT before Univer measures it (a mount into a
+  // display:none box yields a 0x0 canvas that no later un-hiding re-measures), so the
+  // swap happens first and the mount waits a frame.
+  el('gridwrap').classList.add('off');
+  el('sheet').classList.add('on');
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const ok = snap ? mount(snap) : selfCheck();
+  richLoading = false;
+  if (!ok) {                                  // straight back to the working grid
+    el('sheet').classList.remove('on');
+    el('gridwrap').classList.remove('off');
+    rich('');
+    paint();
+    return;
+  }
+  mode = 'univer'; richWanted = true;
+  rich('');
+  bx('rich-ready', 'mode=univer file=' + (current || 'none'));
+  say('Rich editor loaded.', 'ok');
+  paint();
+}
+
+// ══ files ═════════════════════════════════════════════════════════════════════
 function renderFiles() {
   const box = el('flist');
   box.innerHTML = '';
@@ -462,117 +1087,25 @@ async function loadFiles() {
   } catch (e) { bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e); }
 }
 
-// ── the Univer instance ──────────────────────────────────────────────────────
-// One workbook at a time. Opening another DISPOSES the whole instance and builds a
-// fresh one: cheaper to reason about than unit lifecycle juggling, and it guarantees
-// no state of the previous file can survive into the next one.
-// How long to wait before the canvas count means anything (measured, not guessed:
-// Univer's first canvas appears within ~0.2s of the facade returning, well inside
-// this), and how big the biggest canvas has to be before we call it a drawn grid.
-const MOUNT_SETTLE_MS = 2500;
-const GRID_MIN_PX = 100;
-let mountGen = 0;
-
-// The ONE place the grid's own reality is measured. Returns the numbers as well as
-// beaconing them, so the caller can act on the settled reading.
-function canvasProbe(stage) {
-  try {
-    const cs = document.querySelectorAll('#sheet canvas');
-    const r = el('sheet').getBoundingClientRect();
-    let maxW = 0, maxH = 0;
-    [].forEach.call(cs, c => { if (c.width * c.height > maxW * maxH) { maxW = c.width; maxH = c.height; } });
-    const out = { n: cs.length, maxW: maxW, maxH: maxH,
-                  cw: Math.round(r.width), ch: Math.round(r.height) };
-    bx(stage, 'canvases=' + out.n + ' biggest=' + maxW + 'x' + maxH
-       + ' sizes=' + [].map.call(cs, c => c.width + 'x' + c.height).join(',')
-       + ' container=' + out.cw + 'x' + out.ch
-       + ' dpr=' + (window.devicePixelRatio || 1));
-    return out;
-  } catch (e) { bx(stage, 'probe failed: ' + e); return null; }
-}
-
-function mount(data) {
-  // The rect goes into the trace BEFORE the mount, because "the grid is blank" and
-  // "the grid was built inside a zero-sized box" are different bugs with the same
-  // screenshot, and only one of them is ours.
-  const r0 = el('sheet').getBoundingClientRect();
-  bx('mount-start', 'container=' + Math.round(r0.width) + 'x' + Math.round(r0.height)
-     + ' sheets=' + Object.keys((data && data.sheets) || {}).length);
-  if (!selfCheck()) return false;
-  if (univer) { try { univer.dispose(); } catch (e) { /* already gone */ } }
-  univer = null; api = null;
-  el('sheet').innerHTML = '';
-  // ⚠️ LocaleType lives on UniverCore and defaultTheme on UniverThemes — NOT on
-  // UniverPresets, which re-exports only the core FACADE plus createUniver. Reading
-  // them off UniverPresets yields undefined; it happens to be survivable (the locale
-  // string is 'enUS' either way and ThemeService seeds itself with defaultTheme), but
-  // it is undefined, and a page should not depend on being lucky.
-  const locale = (window.UniverCore.LocaleType && window.UniverCore.LocaleType.EN_US) || 'enUS';
-  const locales = {}; locales[locale] = window.UniverPresetSheetsCoreEnUS;
-  // Every part of the familiar spreadsheet UI is asked for BY NAME. They are the
-  // plugin defaults too, but a reader should be able to see what this tab is meant to
-  // show, and a preset that changes a default should not quietly remove the toolbar.
-  let made;
-  try {
-  made = window.UniverPresets.createUniver({
-    locale: locale,
-    locales: locales,
-    theme: window.UniverThemes.defaultTheme,
-    darkMode: false,
-    presets: [window.UniverPresetSheetsCore.UniverSheetsCorePreset({
-      container: 'sheet',
-      header: true,       // the top bar that carries the ribbon
-      toolbar: true,      // bold / italic / fill / align / number format …
-      formulaBar: true,   // the fx bar above the grid
-      footer: true,       // the sheet-tab strip along the bottom
-      contextMenu: true,  // right-click on a cell / row / column
-    })],
-  });
-  univer = made.univer; api = made.univerAPI;
-  api.createUniverSheet(data);
-  } catch (e) {
-    // The engine itself refusing to build is a different failure from a missing
-    // global, and it is the one a screenshot cannot distinguish from an empty grid.
-    bx('mount-fail', (e && (e.message || e)) || 'unknown');
-    say('The spreadsheet engine loaded but could not open this workbook:\n  '
-        + ((e && (e.message || e)) || 'unknown error')
-        + '\n\nThe boot trace is in the bridge log (grep loffice).');
-    univer = null; api = null;
-    return false;
+// One workbook is open at a time, in one tier at a time. This is the ONLY place that
+// decides which tier draws it, so the two can never both think they own the document.
+function showWorkbook(data, name) {
+  snap = data;
+  activeSid = sheetIds(snap)[0] || null;
+  viewRows = 0; viewCols = 0;
+  current = name; dirty = false;
+  if (richWanted && richLoaded && mount(snap)) {
+    mode = 'univer';
+    el('gridwrap').classList.add('off');
+    el('sheet').classList.add('on');
+    el('gt').innerHTML = '';
+    el('gridbar').innerHTML = '';
+    return;
   }
-  // The container is laid out before this runs (#sheet is never display:none), but a
-  // tab that was in the background while the app started can still have been zero-
-  // sized a frame ago, so nudge a re-measure once the browser has laid it out.
-  const gen = ++mountGen;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    try { window.dispatchEvent(new Event('resize')); } catch (e) { /* no-op */ }
-    canvasProbe('mount-raf');
-  }));
-  // ⚠️ AND AGAIN, LATER, BECAUSE THE EARLY NUMBER IS A LIE. The first draft probed at
-  // two animation frames and faithfully reported `canvases=0` on a mount that was
-  // perfectly healthy a moment afterwards — Univer builds its canvases a beat after
-  // the facade returns. A diagnostic that cries wolf on a working page is worse than
-  // none: it is what sends the NEXT session chasing the wrong thing. So the number
-  // that counts is the settled one, and it is the settled one that can accuse.
-  setTimeout(() => {
-    if (gen !== mountGen) return;          // a later open superseded this mount
-    const p = canvasProbe('mount-settled');
-    // The whole reported symptom, finally decidable: engine said yes, screen shows
-    // nothing. `maxW/maxH` is the biggest canvas — Univer legitimately keeps a 0x0 and
-    // a tiny one alongside the real grid, so a count or a minimum would both be wrong.
-    if (p && (p.maxW < GRID_MIN_PX || p.maxH < GRID_MIN_PX)) {
-      say('The spreadsheet engine loaded and reported success, but it drew nothing '
-          + '(largest canvas ' + p.maxW + '×' + p.maxH + ' in a '
-          + p.cw + '×' + p.ch + ' box).\n\nThis is the blank-grid case. The boot trace '
-          + 'is already in the bridge log — grep loffice.');
-    }
-  }, MOUNT_SETTLE_MS);
-  // Any executed command is an edit. Univer has no "is dirty" flag, and treating
-  // every command as one is the safe direction: a false "unsaved changes" costs a
-  // click, a missed one costs the work.
-  try { api.onCommandExecuted(() => { if (!dirty) { dirty = true; paint(); } }); }
-  catch (e) { /* older facade — the Save button still works, it just always shows saved */ }
-  return true;
+  mode = 'grid';                                     // the honest fallback
+  el('sheet').classList.remove('on');
+  el('gridwrap').classList.remove('off');
+  renderGrid();
 }
 
 async function openDoc(name) {
@@ -584,8 +1117,8 @@ async function openDoc(name) {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name), { cache: 'no-store' });
     const j = await r.json();
     if (!j.ok) { bx('open-fail', j.error || 'not ok'); say(j.error || 'could not open that spreadsheet'); return; }
-    if (!mount(j.snapshot)) return;
-    current = name; dirty = false;
+    showWorkbook(j.snapshot, name);
+    bx('open-ok', name + ' sheets=' + sheetIds(snap).length + ' mode=' + mode);
     const t = truncatedSheets(j.snapshot);
     if (t) say('This workbook is very large — ' + t + ' was only read up to the first '
                + '200,000 cells. Saving would write back only what you can see, so this '
@@ -594,11 +1127,11 @@ async function openDoc(name) {
   finally { busy = false; renderFiles(); paint(); }
 }
 
-function truncatedSheets(snap) {
+function truncatedSheets(s) {
   try {
-    const names = Object.keys(snap.sheets || {})
-      .filter(k => snap.sheets[k] && snap.sheets[k].truncated)
-      .map(k => snap.sheets[k].name);
+    const names = Object.keys(s.sheets || {})
+      .filter(k => s.sheets[k] && s.sheets[k].truncated)
+      .map(k => s.sheets[k].name);
     return names.length ? names.join(', ') : '';
   } catch (e) { return ''; }
 }
@@ -619,14 +1152,26 @@ function confirmDiscard(name) {
   return false;
 }
 
-async function save() {
-  if (!current || !api || busy) return;
-  let snapshot = null;
-  try {
-    const wb = api.getActiveWorkbook();
+// The snapshot to write, from whichever tier is live. Tier 1 IS the snapshot; tier 2
+// has to be asked for it, because Univer owns the document once it has mounted.
+function snapshotToSave() {
+  if (mode === 'univer') {
+    const wb = api && api.getActiveWorkbook();
     // `save()` is the current facade name; `getSnapshot()` is its deprecated alias.
-    snapshot = wb && (wb.save ? wb.save() : wb.getSnapshot());
-  } catch (e) { say('could not read the workbook back: ' + e); return; }
+    return wb && (wb.save ? wb.save() : wb.getSnapshot());
+  }
+  // Commit a cell that is still focused, so ⌘S while typing saves what is on screen.
+  const act = document.activeElement;
+  if (act && act.tagName === 'TD') commit(act);
+  return snap;
+}
+
+async function save() {
+  if (!current || busy) return;
+  let snapshot = null;
+  try { snapshot = snapshotToSave(); }
+  catch (e) { bx('save-fail', 'read-back threw: ' + e);
+              say('could not read the workbook back: ' + e); return; }
   if (!snapshot) { say('there is nothing to save'); return; }
   busy = true; say(''); paint();
   try {
@@ -635,13 +1180,24 @@ async function save() {
       body: JSON.stringify({ name: current, snapshot: snapshot }),
     });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'save failed'); return; }
+    if (!j.ok) { bx('save-fail', j.error || 'not ok'); say(j.error || 'save failed'); return; }
     dirty = false;
+    bx('save-ok', j.name + ' cells=' + j.cells + ' mode=' + mode);
     say('Saved ' + j.name + ' — ' + j.cells + ' cells'
         + (j.backup ? ' (a copy of the previous file is kept as ' + j.backup + ')' : ''), 'ok');
     await loadFiles();
-  } catch (e) { say('save failed: ' + e); }
+  } catch (e) { bx('save-fail', 'threw: ' + e); say('save failed: ' + e); }
   finally { busy = false; paint(); }
+}
+
+function clearWorkbook() {
+  current = null; dirty = false; snap = null; activeSid = null;
+  if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
+  univer = null; api = null;
+  el('sheet').innerHTML = '';
+  el('gt').innerHTML = '';
+  el('gridbar').innerHTML = '';
+  mountGen++;    // a pending settle probe must not accuse a grid we just removed
 }
 
 async function remove(name) {
@@ -654,12 +1210,7 @@ async function remove(name) {
     });
     const j = await r.json();
     if (!j.ok) { say(j.error || 'could not delete that spreadsheet'); return; }
-    if (name === current) {
-      current = null; dirty = false;
-      if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
-      univer = null; api = null; el('sheet').innerHTML = '';
-      mountGen++;    // a pending settle probe must not accuse a grid we just removed
-    }
+    if (name === current) clearWorkbook();
     await loadFiles();
   } catch (e) { say('could not delete that spreadsheet: ' + e); }
   finally { busy = false; paint(); }
@@ -704,7 +1255,8 @@ async function importFile(file) {
     const r = await fetch('/api/office/upload?name=' + encodeURIComponent(file.name),
                           { method: 'POST', body: file });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'could not import that file'); return; }
+    if (!j.ok) { bx('import-fail', j.error || 'not ok');
+                 say(j.error || 'could not import that file'); return; }
     await loadFiles();
     busy = false;
     if (j.renamed) say('Imported as ' + j.name + ' — a workbook called ' + file.name
@@ -716,6 +1268,7 @@ async function importFile(file) {
 }
 
 el('btn-save').onclick = save;
+el('btn-rich').onclick = upgrade;
 el('btn-rail').onclick = () => document.body.classList.toggle('railoff');
 const toggleNew = () => {
   const row = el('newrow');
@@ -743,46 +1296,36 @@ window.addEventListener('beforeunload', ev => {
 });
 
 // ── boot ─────────────────────────────────────────────────────────────────────
-// DOMContentLoaded, not parse time: the six bundles above are `defer`red, and the one
-// documented guarantee `defer` gives us is that they have ALL executed, in order, by
-// the time this event fires. Running selfCheck any earlier would accuse the assets of
-// being missing while they were still on their way.
-//
-// Between the inline script and this event the page is fully painted and says what it
-// is doing — the state that used to be a blank rectangle.
-const WATCHDOG_MS = 25000;
+// Tier 1 needs nothing but this document, so boot is immediate. The watchdog is short
+// for the same reason: there is no 11 MB download to be patient about any more, and a
+// tier-1 boot that has not happened in eight seconds is a fault, not a slow network.
+const WATCHDOG_MS = 8000;
 let booted = false;
-say('Loading the spreadsheet engine — about 10 MB, a few seconds on a cold start…', 'dim');
 setTimeout(() => {
   if (booted) return;
-  bx('watchdog', 'not booted after ' + WATCHDOG_MS + 'ms; last asset=' + (lastAsset || 'NONE'));
-  say('The spreadsheet engine has not finished loading after '
-      + (WATCHDOG_MS / 1000) + ' seconds.\n\nIt is ~10 MB of JavaScript, so a cold '
-      + 'start is slow — but this long usually means the assets are missing or the '
-      + 'page is a stale cached copy. Press ⌘R; if that does not help, run '
-      + './scripts/fetch_vendor_assets.sh then ./scripts/ship.sh.  Build ' + BUILD
-      + '\n\nThe last file that finished loading was: ' + (lastAsset || 'none at all')
-      + '\nThe full boot trace is in the bridge log — grep loffice.');
+  bx('watchdog', 'tier-1 not booted after ' + WATCHDOG_MS + 'ms');
+  say('This page did not finish starting after ' + (WATCHDOG_MS / 1000)
+      + ' seconds, which should be impossible — it needs nothing but itself.\n\n'
+      + 'Press ⌘R. If that does not help, run ./scripts/ship.sh and reload.  Build '
+      + BUILD + '\n\nThe boot trace is in data/logs/loffice-boot.log.');
 }, WATCHDOG_MS);
 
-// The asset beacons are also kept here, so the watchdog on SCREEN can name the last
-// file that arrived. Without it the message can only say "something is slow"; with it
-// the reader is told which of the six bundles the boot stopped after.
-let lastAsset = '';
-const _bxRaw = window.bx;
-window.bx = function (stage, detail) {
-  if (stage === 'asset-ok') lastAsset = String(detail || '');
-  return _bxRaw.apply(this, arguments);
-};
-
-window.addEventListener('DOMContentLoaded', async () => {
+async function boot() {
   booted = true;
-  bx('dom-ready', 'lastAsset=' + (lastAsset || 'NONE') + ' vis=' + document.visibilityState);
+  bx('dom-ready', 'tier=grid vis=' + document.visibilityState);
   paint();
   el('fbuild').textContent = BUILD;
-  if (selfCheck()) say('');   // say it at load, not at the first click on a dead grid
   await loadFiles();
-});
+  bx('tier1-ready', 'files=' + files.length);
+}
+// The script is at the END of the body, so the document is usually already
+// interactive by the time it runs — waiting for an event that has FIRED would hang
+// the boot forever, which is the one failure a boot path must not have.
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
 </script>
 </body>
 </html>
