@@ -244,6 +244,43 @@ if HAVE_XL:
           again is None and "already exists" in (reason or ""))
     check("create_doc refuses a junk name", office.create_doc(tmp, "../x")[0] is None)
 
+    # ── THE EMPTY NAME. ────────────────────────────────────────────────────────
+    # This is the landing. LOffice used to boot perfectly onto "No spreadsheets yet."
+    # because being useful was gated on the user typing a file name first, and pressing
+    # Create with nothing typed did NOTHING AT ALL. An empty name is now a request for
+    # a sheet, answered with DEFAULT_DOC_STEM through the ' (n)' never-clobber walk, so
+    # a fresh install lands on an editable grid and repeated presses cannot collide.
+    check("there IS a default stem, and it is the ordinary word for it",
+          office.DEFAULT_DOC_STEM == "Untitled")
+    with tempfile.TemporaryDirectory() as fresh:
+        first, reason = office.create_doc(fresh, "")
+        check("an EMPTY name creates Untitled.xlsx rather than refusing",
+              first == "Untitled.xlsx" and reason is None)
+        second, _ = office.create_doc(fresh, "")
+        check("…and a second one steps to Untitled (2).xlsx — the same never-clobber "
+              "convention as import, the artifact save and the voice clips",
+              second == "Untitled (2).xlsx")
+        check("a whitespace-only name is the same request",
+              office.create_doc(fresh, "   ")[0] == "Untitled (3).xlsx")
+        check("None is the same request — the route coerces to '', but create_doc is "
+              "called directly too", office.create_doc(fresh, None)[0] == "Untitled (4).xlsx")
+        check("every one of them is a real workbook on disk",
+              all(os.path.isfile(os.path.join(office.office_dir(fresh), n))
+                  for n in ("Untitled.xlsx", "Untitled (2).xlsx",
+                            "Untitled (3).xlsx", "Untitled (4).xlsx")))
+        check("…and list_docs returns them newest-first, which is the ONLY reason the "
+              "panel can land on files[0] and call it the one you were last in",
+              [e["name"] for e in office.list_docs(fresh)][0] == "Untitled (4).xlsx")
+        # The asymmetry is deliberate and must stay: a name the user TYPED is honoured
+        # literally, so a collision is reported rather than renamed behind their back.
+        office.create_doc(fresh, "budget")
+        check("an EXPLICIT name still refuses on collision — it is not silently "
+              "renamed the way an empty one is walked",
+              office.create_doc(fresh, "budget")[0] is None)
+        check("a junk TYPE still refuses rather than falling through to the default",
+              office.create_doc(fresh, 7)[0] is None
+              and office.create_doc(fresh, ["x"])[0] is None)
+
     # ── totality of the reverse mapper ──
     JUNK = {
         "id": "w", "sheetOrder": ["s1"], "styles": {"S1": {"bl": 1}},
@@ -413,6 +450,17 @@ check("the office module is imported DEFENSIVELY (a missing file must not kill t
       "from bridge import office as _office" in APP and "_OFFICE_ERR" in APP)
 check("every office route answers 503 when the module is missing",
       APP.count("return _office_unavailable()") >= 6)
+# The route must NOT pre-judge an empty name. `(body or {}).get("name") or ""` hands
+# create_doc the empty string, and create_doc is the one place that decides what an
+# empty name means (Untitled through the never-clobber walk). A guard here would put
+# the dead end back one layer down, where nobody would look for it.
+_new_route = APP[APP.index('@app.post("/api/office/new")'):]
+_new_route = _new_route[:_new_route.index('@app.get("/api/office/open')]
+check("POST /api/office/new passes an empty name straight through to create_doc, and "
+      "carries no empty-name refusal of its own — a guard here would put the dead end "
+      "back one layer down, where nobody would look for it",
+      '_office.create_doc, ROOT, ((body or {}).get("name") or "")' in _new_route
+      and "no file name" not in _new_route and "name.strip()" not in _new_route)
 check("download and delete both go through doc_target/delete_doc containment",
       "_office.doc_target(ROOT, name)" in APP and "_office.delete_doc" in APP)
 check("the page is served no-store (the stale-panel lesson)",
@@ -724,7 +772,7 @@ def app_block(page):
     return ""
 
 # The static fallback banner: true by default, removed by the first statement of JS.
-for label, page, stamp in [("office", PAGE, "loffice-2026-08-21e"),
+for label, page, stamp in [("office", PAGE, "loffice-2026-08-21f"),
                            ("aider", AIDER_PAGE, "aider-2026-08-21c")]:
     head = page.split("<body>")[0]
     body = page.split("<body>")[1]
@@ -769,7 +817,7 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
           f"(missing: {sorted(want - have)})", not (want - have))
 
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21e") == 2)
+      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21f") == 2)
 # ⚠️ CHANGED HONESTLY AT 2026-08-21e. There is nothing deferred to wait FOR any more,
 # so the boot no longer hangs on an event: the script sits at the end of the body, and
 # waiting for a DOMContentLoaded that has ALREADY FIRED would never boot at all — the
@@ -823,7 +871,7 @@ try:
     served = cl.get("/office").text
     check("the served /office body carries today's build stamp — i.e. the route reads "
           "the file per request, so a ship really does change what is served",
-          "loffice-2026-08-21e" in served and '<div id="boot">' in served)
+          "loffice-2026-08-21f" in served and '<div id="boot">' in served)
     for asset, mime in [("/assets/vendor/react.production.min.js", "javascript"),
                         ("/assets/vendor/react-dom.production.min.js", "javascript"),
                         ("/assets/vendor/univer/rxjs.umd.min.js", "javascript"),
@@ -945,7 +993,7 @@ check("the beacon log is in _LOG_NAMES, so the trace is readable in the panel an
 # one stable token now, and this asserts it over a real trace rather than over the
 # format string.
 _TRACE = [office.diag_line(st, dt, "abc123", i * 10) for i, (st, dt) in enumerate([
-    ("script-start", "build=loffice-2026-08-21e ua=… url=… vis=visible"),
+    ("script-start", "build=loffice-2026-08-21f ua=… url=… vis=visible"),
     ("boot-inline", "tier-1 script running"),
     ("dom-ready", "tier=grid vis=visible"),
     ("files-ok", "n=2 roundtrip=true"),
@@ -1008,7 +1056,7 @@ check("…and it can never throw: a diagnostic may not be the thing that breaks 
 check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
       "second copy could drift, and the stamp exists to be trusted",
       'meta[name="harness-build"]' in BEACON
-      and PAGE.count("loffice-2026-08-21e") == 2)
+      and PAGE.count("loffice-2026-08-21f") == 2)
 for _o, name, _c in SCRIPT_TAGS:
     tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]
     check(f"the {name} tag reports BOTH outcomes — the last asset-ok in the trace "

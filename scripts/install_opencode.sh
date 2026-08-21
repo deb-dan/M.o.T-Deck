@@ -158,12 +158,56 @@ PY
   post_install "$pin"
 }
 
+# ── THE WORKSPACE MUST BE A PROJECT, OR THE TAB LANDS ON "Add project" ────────
+# OpenCode does not have a projects file we could write. A directory IS a project
+# only if it is a git repo AND that repo yields an id — the hash of a remote URL, a
+# cached id in <git-common-dir>/opencode, or THE ROOT COMMIT SHA
+# (packages/core/src/project.ts:110-122 at pin 1.18.19). `git init` alone is NOT
+# enough: with no commits `git rev-list --max-parents=0 HEAD` fails, the id falls back
+# to the shared pseudo-project "global", and upstream asserts exactly that in its own
+# test (test/project/migrate-global.test.ts:64-72). One EMPTY commit is what turns the
+# directory into a project with an identity of its own.
+#
+# This is the honest mechanism, not a fake: it is the same thing the app's own
+# "Add project" button does for an empty directory (it calls POST /project/git/init),
+# plus the commit that button leaves you to make.
+#
+# Repo-LOCAL identity via `-c`: this must never touch the user's global git config,
+# and a machine with no user.email set would otherwise fail the commit outright.
+# Best-effort throughout — a workspace without git still works, it just shares the
+# "global" project, so this may warn but must never fail the install.
+seed_workspace_project() {
+  local ws="$ROOT/data/opencode-workspace"
+  [[ -d "$ws/.git" ]] && { say "workspace: already a git project"; return 0; }
+  command -v git >/dev/null 2>&1 || {
+    say "WARN: no git on PATH — data/opencode-workspace cannot become a distinct"
+    say "  OpenCode project; it will share the shared 'global' one."
+    return 0; }
+  if [[ ! -f "$ws/README.md" ]]; then
+    printf '%s\n' "# Harness workspace" "" \
+      "This is the working directory the OpenCode lane is started in — and, because" \
+      "OpenCode is started nowhere else, the only boundary on what it edits." \
+      "(The Hermes path-guard is a Hermes plugin hook and does NOT cover this lane.)" \
+      > "$ws/README.md" || true
+  fi
+  ( cd "$ws" \
+    && git init --quiet \
+    && git -c user.name="Harness" -c user.email="harness@localhost" \
+           -c commit.gpgsign=false commit --allow-empty --quiet -m "opencode workspace" \
+  ) && say "workspace: git-initialised — one empty commit is what makes it a real" \
+    && say "  OpenCode project rather than the shared 'global' one" \
+    || say "WARN: could not git-init data/opencode-workspace — OpenCode will treat it"
+  [[ -d "$ws/.git" ]] || say "  as the shared 'global' project. Harmless; the lane still works."
+  return 0
+}
+
 post_install() {
   # Its private home + the workspace it will be started in. Created here so the first
   # Start has somewhere to write; the four XDG_* vars in start_component.sh are what
   # actually point OpenCode at them.
   mkdir -p "$DEST/xdg/config" "$DEST/xdg/cache" "$DEST/xdg/data" "$DEST/xdg/state" \
            "$ROOT/data/opencode-workspace"
+  seed_workspace_project
 
   # ── THE MANIFEST FLAG. Mission Control's card reads components.opencode.installed
   # from harness.yaml (bridge/app.py::status), NOT the disk — so without this the

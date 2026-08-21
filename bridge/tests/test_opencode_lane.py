@@ -217,7 +217,13 @@ def test_bridge_logs_are_viewable_in_panel():
 
 
 def test_bridge_notes_row():
-    assert '"opencode": "opencode on :4096' in APP
+    from bridge import app as A
+    note = A._NOTES["opencode"]
+    assert note.startswith("opencode on :4096")
+    assert "no auth" in note
+    assert "Add project" in note, (
+        "the note carries the one manual fallback, so a user who somehow lands on "
+        "OpenCode's own empty home screen is not left guessing")
 
 
 # ── the tools warning (PURE) ─────────────────────────────────────────────────
@@ -323,3 +329,88 @@ def test_swift_width_budget_was_rechecked():
         "the tab-strip width budget comment must be re-derived whenever a tab lands — "
         "it is the only thing standing between a new tab and a strip that collides "
         "with the ⫽ button")
+
+
+# ══ THE LANDING (2026-08-21) ═════════════════════════════════════════════════
+# Debi's report: everything running, and the tab shows "Nothing here yet — Create a
+# session to get started" beside a Projects rail whose only entry is "Add project".
+# Two halves fix that, and both are silent when wrong — an unregistered workspace and
+# a wrong deep link both look exactly like the bug they replace.
+
+def test_the_workspace_is_made_a_real_git_project_at_install():
+    """A directory is only a PROJECT to OpenCode if git discovery yields an ID, and an
+    id needs a remote, a cached id, or a ROOT COMMIT. `git init` alone leaves it in the
+    shared 'global' project — which is exactly the empty Projects rail Debi saw."""
+    assert "seed_workspace_project" in INSTALL
+    body = INSTALL[INSTALL.index("seed_workspace_project() {"):]
+    body = body[:body.index("\npost_install() {")]
+    assert "git init" in body
+    assert "--allow-empty" in body, (
+        "git init WITHOUT a commit leaves the project id as 'global' — upstream's own "
+        "test asserts this (test/project/migrate-global.test.ts:64-72)")
+    assert '-c user.name=' in body and '-c user.email=' in body, (
+        "identity must be REPO-LOCAL: this may never touch the user's global git "
+        "config, and a machine with no user.email set would otherwise fail the commit")
+    assert "git config --global" not in INSTALL
+    assert '[[ -d "$ws/.git" ]] && ' in body, "idempotent — a re-run must not re-init"
+    assert "command -v git" in body, "a machine without git must warn, not fail"
+    # It runs on the already-installed path too, so a stale install self-heals by
+    # clicking Install again — the same reasoning as the manifest flag beside it.
+    pi = INSTALL[INSTALL.index("post_install() {"):]
+    assert "seed_workspace_project" in pi[:pi.index("\n}")]
+
+
+def test_the_tab_lands_on_a_session_not_on_the_empty_home():
+    from bridge.app import opencode_landing_url
+    url = opencode_landing_url("/Users/x/Library/Application Support/Harness", 4096)
+    # base64url, unpadded — upstream's own encoder (core/src/util/encode.ts:1-5).
+    assert url == ("http://127.0.0.1:4096/"
+                   "L1VzZXJzL3gvTGlicmFyeS9BcHBsaWNhdGlvbiBTdXBwb3J0L0hhcm5lc3MvZGF0YS9vcGVuY29kZS13b3Jrc3BhY2U"
+                   "/session"), url
+    assert "=" not in url.split("/")[3], "padding is stripped, as upstream strips it"
+    assert "+" not in url and " " not in url, "url-safe alphabet, and no raw space"
+    # A junk port can never produce a URL pointing at something else.
+    for junk in (None, "", "junk", 0, -1, 70000, [4096]):
+        assert opencode_landing_url("/x", junk).startswith("http://127.0.0.1:4096/")
+    assert opencode_landing_url("/x", "4200").startswith("http://127.0.0.1:4200/")
+    # The path it encodes is the workspace the start script actually cd's into.
+    assert "/data/opencode-workspace" in __import__("base64").urlsafe_b64decode(
+        opencode_landing_url("/x", 1)[len("http://127.0.0.1:1/"):-len("/session")]
+        + "==").decode()
+
+
+def test_the_landing_route_is_a_redirect_and_the_shell_points_at_it():
+    assert '@app.get("/opencode")' in APP
+    route = APP[APP.index('@app.get("/opencode")'):]
+    route = route[:route.index('@app.get("/api/models")')]
+    assert "status_code=307" in route and "Location" in route
+    assert "no-store" in route, "a redirect that depends on ROOT may not be cached"
+    assert "opencode_landing_url(ROOT, port)" in route, (
+        "the URL is built in ONE place, so the test above is the whole guard")
+    # The shell asks the bridge rather than baking a URL: only the bridge knows ROOT
+    # (repo vs snapshot) and the configured port.
+    assert 'HarnessTab(id: "opencode", title: "OpenCode",' in SWIFT
+    tab = SWIFT[SWIFT.index('HarnessTab(id: "opencode"'):]
+    tab = tab[:tab.index("\n    //", 10) if "\n    //" in tab[10:] else 400]
+    assert "127.0.0.1:8700/opencode" in tab, (
+        "the OpenCode tab must open the bridge's landing redirect, not :4096 directly "
+        "— :4096/ IS the empty home screen")
+
+
+def test_the_start_warms_the_project_row_without_leaving_litter():
+    br = START[START.index("\n  opencode)"):]
+    br = br[:br.index("\n  hermes)")]
+    assert "/project/current" in br, (
+        "one READ registers the project server-side before the first page load")
+    # Comments are stripped first: this is about what the script RUNS, and the reason
+    # for the choice is written in a comment right beside it.
+    code = "\n".join(ln for ln in br.splitlines() if not ln.strip().startswith("#"))
+    assert "--get" in code, "the warm-up is a READ"
+    assert "/session" not in code and "-XPOST" not in code and "--request POST" not in code, (
+        "deliberately NOT POST /session: one empty timestamped session per Start would "
+        "be litter, not a landing")
+    assert "|| echo" in br, "best-effort — a failed warm-up may never fail the Start"
+    assert "Add project" in br, (
+        "the honest fallback is named in the start output: if the deep link ever stops "
+        "working, one click on Add project is the manual equivalent")
+    assert "Add project" in APP, "and in the install plan / component note"

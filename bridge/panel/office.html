@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21e">
+<meta name="harness-build" content="loffice-2026-08-21f">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -237,7 +237,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21e</code>.</div>
+  Build <code>loffice-2026-08-21f</code>.</div>
 <header>
   <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
   <span class="name">LOffice</span>
@@ -261,7 +261,7 @@
       <button id="btn-new">New</button>
     </div>
     <div id="newrow">
-      <input id="new-name" placeholder="name" maxlength="80" autocomplete="off">
+      <input id="new-name" placeholder="name (blank = Untitled)" maxlength="80" autocomplete="off">
       <button id="btn-create">Create</button>
     </div>
     <div id="flist"></div>
@@ -281,7 +281,7 @@
     </div>
     <!-- TIER 2 (opt-in, empty until the bundles are loaded on demand) -->
     <div id="sheet"></div>
-    <div id="empty">Pick a spreadsheet on the left, or make a new one.</div>
+    <div id="empty">No workbook is open. Pick one on the left, or press New — a blank name gives you Untitled.</div>
   </main>
   <aside id="ai" title="An AI side-panel lands in slice 2">
     <span>Ask the model — coming in slice 2</span>
@@ -312,6 +312,11 @@ const el = id => document.getElementById(id);
 const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).content || '';
 
 let files = [], current = null, dirty = false, busy = false, armed = null;
+// Set by loadFiles from the bridge's own answer. The landing consults BOTH: a
+// listing that never arrived, or a bridge with no openpyxl, must not be answered
+// by cheerfully trying to create a workbook that cannot be written — that would
+// bury the one banner explaining why, under a second failure caused by us.
+let filesOk = false, roundtripOk = false;
 // `snap` is THE document. Both tiers edit this one object: tier 1 mutates it in place,
 // tier 2 hands it to Univer and reads it back through the facade on save. Because the
 // shape is the bridge's own IWorkbookData (bridge/office.py), a save from either tier
@@ -1024,7 +1029,7 @@ function renderFiles() {
     const d = document.createElement('div');
     d.className = 'fm';
     d.style.padding = '10px 9px';
-    d.textContent = 'No spreadsheets yet.';
+    d.textContent = 'No spreadsheets yet — New makes one.';
     box.appendChild(d);
     return;
   }
@@ -1067,8 +1072,10 @@ async function loadFiles() {
   try {
     const r = await fetch('/api/office/files', { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok) { bx('files-fail', j.error || 'not ok'); say(j.error || 'could not list spreadsheets'); return; }
+    if (!j.ok) { bx('files-fail', j.error || 'not ok'); say(j.error || 'could not list spreadsheets');
+                 filesOk = false; return false; }
     files = j.files || [];
+    filesOk = true; roundtripOk = j.roundtrip !== false;
     bx('files-ok', 'n=' + files.length + ' roundtrip=' + j.roundtrip
        + (j.roundtrip_error ? ' err=' + j.roundtrip_error : ''));
     el('fidelity').textContent = j.fidelity || '';
@@ -1084,7 +1091,9 @@ async function loadFiles() {
           + 'then restart the bridge (./scripts/ship.sh).');
     }
     renderFiles();
-  } catch (e) { bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e); }
+    return true;
+  } catch (e) { bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e);
+                filesOk = false; return false; }
 }
 
 // One workbook is open at a time, in one tier at a time. This is the ONLY place that
@@ -1216,25 +1225,42 @@ async function remove(name) {
   finally { busy = false; paint(); }
 }
 
+// AN EMPTY NAME IS A REQUEST, NOT A MISTAKE. This used to open with
+// `if (!name || busy) return;`, so pressing Create with nothing typed did NOTHING AT
+// ALL — no message, no beacon, no request — which on an empty install is exactly the
+// dead end this whole slice exists to remove. The bridge decides the default name
+// (office.DEFAULT_DOC_STEM through the ' (n)' never-clobber walk), so the panel does
+// not have to know or duplicate it. `busy` stays: that one is a real guard.
 async function create() {
+  if (busy) return null;
   const name = (el('new-name').value || '').trim();
-  if (!name || busy) return;
   busy = true; say(''); paint();
   try {
     const r = await fetch('/api/office/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name }),
     });
-    const j = await r.json();
-    if (!j.ok) { bx('create-fail', 'http=' + r.status + ' ' + (j.error || ''));
-                 say(j.error || 'could not create that spreadsheet'); return; }
+    let j = null;
+    try { j = await r.json(); } catch (pe) { j = null; }
+    if (!j || !j.ok) {
+      const why = (j && j.error) || ('the bridge answered ' + r.status);
+      bx('create-fail', 'http=' + r.status + ' ' + why);
+      say(why || 'could not create that spreadsheet');
+      return null;
+    }
     el('new-name').value = '';
     el('newrow').classList.remove('on');
     await loadFiles();
     busy = false;
     await openDoc(j.name);
-    return;
-  } catch (e) { say('could not create that spreadsheet: ' + e); }
+    return j.name;
+  } catch (e) {
+    // A create that fell over on the wire used to be silent everywhere but the message
+    // box — and the message box was the thing that was broken. It beacons now too.
+    bx('create-fail', 'threw: ' + e);
+    say('could not create that spreadsheet: ' + e);
+    return null;
+  }
   finally { busy = false; paint(); }
 }
 
@@ -1310,6 +1336,32 @@ setTimeout(() => {
       + BUILD + '\n\nThe boot trace is in data/logs/loffice-boot.log.');
 }, WATCHDOG_MS);
 
+// ── the landing ──────────────────────────────────────────────────────────────
+// THE COMPLAINT THIS ANSWERS: "LOffice is supposed to load like a sheet/office doc
+// page by default." It was landing on 'No spreadsheets yet.' and 'Pick a spreadsheet
+// on the left, or make a new one' — a page that is working perfectly and looks broken,
+// because being useful was gated on a setup step nobody asked for. A spreadsheet app
+// opens on a spreadsheet. So: newest workbook if there is one, a fresh Untitled if
+// there is not, and the main area is never a dead end again.
+//
+// It refuses to act on a bridge it could not read (filesOk) or one that cannot write
+// .xlsx at all (roundtripOk) — in both cases loadFiles has already put the real reason
+// on screen and creating a doomed workbook would only bury it.
+async function autoOpen() {
+  if (current) { bx('auto-open', 'skipped: already open'); return; }
+  if (!filesOk) { bx('auto-open', 'skipped: the file list did not load'); return; }
+  if (!roundtripOk) { bx('auto-open', 'skipped: no .xlsx round-trip on this bridge'); return; }
+  if (files.length) {
+    // list_docs sorts newest-first (bridge/office.py), so files[0] IS most-recently
+    // modified — the one you were last working in.
+    bx('auto-open', files[0].name);
+    await openDoc(files[0].name);
+    return;
+  }
+  bx('auto-open', 'untitled');
+  await create();            // empty name → the bridge names it; create() then opens it
+}
+
 async function boot() {
   booted = true;
   bx('dom-ready', 'tier=grid vis=' + document.visibilityState);
@@ -1317,6 +1369,8 @@ async function boot() {
   el('fbuild').textContent = BUILD;
   await loadFiles();
   bx('tier1-ready', 'files=' + files.length);
+  await autoOpen();
+  bx('landed', 'file=' + (current || 'none') + ' mode=' + mode);
 }
 // The script is at the END of the body, so the document is usually already
 // interactive by the time it runs — waiting for an event that has FIRED would hang

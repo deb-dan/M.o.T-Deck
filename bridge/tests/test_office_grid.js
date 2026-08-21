@@ -377,7 +377,8 @@ check('…and normalises the non-breaking spaces contenteditable inserts, so a s
 // from the real Mac is what reaches the bridge log.
 ['script-start', 'boot-inline', 'dom-ready', 'tier1-ready', 'grid-render', 'files-ok',
  'files-fail', 'open-start', 'open-ok', 'open-fail', 'save-ok', 'save-fail',
- 'create-fail', 'import-fail', 'rich-start', 'rich-loaded', 'rich-ready', 'rich-fail',
+ 'create-fail', 'import-fail', 'auto-open', 'landed',
+ 'rich-start', 'rich-loaded', 'rich-ready', 'rich-fail',
  'asset-ok', 'asset-error', 'asset-timeout', 'selfcheck-pass', 'selfcheck-fail',
  'mount-start', 'mount-fail', 'mount-raf', 'mount-settled', 'page-error', 'rejection',
  'watchdog'].forEach(stage => {
@@ -394,11 +395,104 @@ check('the tier-1 watchdog is SHORT — there is no 11 MB download to be patient
 check('the per-asset timeout is generous — the biggest bundle is ~7 MB on a cold start',
       num('ASSET_TIMEOUT_MS') >= 30000);
 
-// ── report ──
-console.log('');
-if (fails.length) {
-  console.log(`${fails.length} FAILED (of ${pass + fails.length}):`);
-  fails.forEach(f => console.log('  -', f));
-  process.exit(1);
-}
-console.log(`loffice tier-1 grid OK — ${pass} checks passed`);
+// ══ THE LANDING ══════════════════════════════════════════════════════════════
+// THE BUG THIS GUARDS. LOffice booted perfectly — tier-1 ready in 4-7 ms, bridge fine,
+// zero errors — and then sat on 'No spreadsheets yet.' with 'Pick a spreadsheet on the
+// left, or make a new one.' in the main pane. A spreadsheet app that opens on no
+// spreadsheet reads as broken however healthy its boot log is. autoOpen is the answer,
+// and it is executed here rather than grepped, because every branch of it is a way the
+// landing can go wrong: opening nothing, opening the wrong file, or creating a second
+// workbook on every single page load.
+(function () {
+  const calls = [];
+  let current = null, filesOk = true, roundtripOk = true, files = [];
+  function bx(stage, detail) { calls.push(['bx', stage, String(detail === undefined ? '' : detail)]); }
+  async function openDoc(name) { calls.push(['open', name]); current = name; }
+  async function create() { calls.push(['create']); current = 'Untitled.xlsx'; return current; }
+  // grab() anchors on `function <name>(`, which inside `async function autoOpen(`
+  // yields a body WITHOUT its async keyword — so it is put back here rather than
+  // silently defining a sync function whose awaits are a syntax error.
+  eval('async ' + grab('autoOpen'));
+
+  function run(state) {
+    calls.length = 0;
+    current = state.current || null;
+    filesOk = state.filesOk !== false;
+    roundtripOk = state.roundtripOk !== false;
+    files = state.files || [];
+    let done = false;
+    autoOpen().then(() => { done = true; });
+    // autoOpen only ever awaits our own already-resolved stubs, so one microtask drain
+    // settles it; the flag proves that rather than assuming it.
+    return new Promise(r => setImmediate(() => r({ done, calls: calls.slice() })));
+  }
+
+  const cases = [
+    ['an EMPTY library creates a workbook rather than landing on nothing',
+     { files: [] }, ['bx:auto-open:untitled', 'create']],
+    ['a NON-empty library opens the newest instead of making another one',
+     { files: [{ name: 'newest.xlsx' }, { name: 'older.xlsx' }] },
+     ['bx:auto-open:newest.xlsx', 'open:newest.xlsx']],
+    ['a workbook already open is left exactly as it is',
+     { current: 'mine.xlsx', files: [{ name: 'other.xlsx' }] },
+     ['bx:auto-open:skipped: already open']],
+    ['a file list that never arrived is NOT answered by creating a workbook — the '
+     + 'listing failure is already on screen and a second failure would bury it',
+     { filesOk: false, files: [] }, ['bx:auto-open:skipped: the file list did not load']],
+    ['a bridge with no openpyxl creates nothing — the install banner is the message '
+     + 'that matters, and a doomed create would push it off screen',
+     { roundtripOk: false, files: [] },
+     ['bx:auto-open:skipped: no .xlsx round-trip on this bridge']],
+    ['…and it still creates nothing when there ARE files but no round-trip',
+     { roundtripOk: false, files: [{ name: 'a.xlsx' }] },
+     ['bx:auto-open:skipped: no .xlsx round-trip on this bridge']],
+  ];
+
+  (async () => {
+    for (const [label, state, want] of cases) {
+      const { done, calls: got } = await run(state);
+      const flat = got.map(c => c[0] === 'bx' ? 'bx:' + c[1] + ':' + c[2] : c.join(':'));
+      eq(label, flat, want);
+      check(label + ' — and it settles', done);
+    }
+    // The one ordering fact the whole thing rests on: files[0] is the NEWEST, because
+    // office.list_docs sorts by mtime descending. If that ever flips, the landing would
+    // silently open the oldest workbook and nothing else would notice.
+    check('autoOpen takes files[0] — pinned to list_docs sorting newest-first',
+          /files\[0\]\.name/.test(grab('autoOpen')));
+    check('autoOpen never invents a name — the bridge owns the default, so create() is '
+          + 'called with nothing',
+          /await create\(\)/.test(grab('autoOpen')) && !/create\(['"]/.test(grab('autoOpen')));
+    check('boot() runs the landing, and only AFTER the file list is in',
+          /await loadFiles\(\);[\s\S]{0,200}await autoOpen\(\);/.test(grab('boot')));
+
+    // ── create(): the empty name used to be a silent no-op ──
+    const src = grab('create');
+    check('create() no longer bails on an empty name — that early return WAS the dead '
+          + 'end: no request, no message, no beacon, nothing at all',
+          !/if\s*\(\s*!name/.test(src));
+    check('…while the busy guard, which is a real one, stays', /if\s*\(busy\)\s*return/.test(src));
+    check('create() sends whatever is in the box, empty included, and lets the bridge '
+          + 'choose the default name', /JSON\.stringify\(\{ name: name \}\)/.test(src));
+    check('a create that throws on the wire beacons create-fail too — the message box '
+          + 'was the very thing that was broken the first time round',
+          /catch[\s\S]{0,400}bx\('create-fail', 'threw/.test(src));
+    check('a non-2xx with an unparseable body still reports a reason rather than '
+          + 'throwing past the handler', /the bridge answered/.test(src));
+    check('loadFiles reports whether it worked, so the landing can refuse to act on a '
+          + 'listing it never got', /filesOk = true/.test(grab('loadFiles'))
+          && /return true;/.test(grab('loadFiles')));
+    check('…and records the round-trip verdict from the bridge, not from a guess',
+          /roundtripOk = j\.roundtrip !== false/.test(grab('loadFiles')));
+
+    // ── report ──
+    console.log('');
+    if (fails.length) {
+      console.log(`${fails.length} FAILED (of ${pass + fails.length}):`);
+      fails.forEach(f => console.log('  -', f));
+      process.exit(1);
+    }
+    console.log(`loffice tier-1 grid OK — ${pass} checks passed`);
+  })();
+})();
+

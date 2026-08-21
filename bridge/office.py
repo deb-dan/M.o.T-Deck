@@ -95,6 +95,12 @@ V_ALIGN_BACK = {1: "top", 2: "center", 3: "bottom"}
 # would need font metrics we do not have, and the contract says basic formatting.
 DEFAULT_FONT_NAME, DEFAULT_FONT_SIZE = "Calibri", 11.0
 
+# The name a workbook gets when nobody typed one — see create_doc's empty-name case.
+# The ' (n)' step is free_name's, so this is `Untitled.xlsx`, `Untitled (2).xlsx`, …
+# rather than `Untitled 2.xlsx`: one never-clobber convention in this codebase, shared
+# with artifact-save, the voice clips and the .xlsx import.
+DEFAULT_DOC_STEM = "Untitled"
+
 PX_PER_CHAR = 7.0
 PT_PER_PX = 0.75               # row height: openpyxl points ↔ Univer pixels
 
@@ -780,8 +786,25 @@ def _atomic_save(wb, path) -> None:
 
 # ── the operations the routes call ───────────────────────────────────────────
 def create_doc(root, name):
-    """(name, None) or (None, reason). Never clobbers an existing workbook."""
-    safe, reason = valid_name(name)
+    """(name, None) or (None, reason). Never clobbers an existing workbook.
+
+    TWO CALLERS, TWO MEANINGS, and the difference is the whole point of the empty case:
+
+      * a NAME the user typed is honoured literally — if a workbook is already called
+        that, this refuses and says so, because silently making `budget (2).xlsx` when
+        somebody asked for `budget.xlsx` hides the thing they need to know.
+      * an EMPTY name means "just give me a sheet". That is what the landing does on a
+        fresh install (and what the New box does when you press Enter without typing),
+        so it must never fail for a reason the user did not choose — it takes
+        DEFAULT_DOC_STEM through `free_name`, the same ' (n)' never-clobber discipline
+        import uses. Before this, an empty name returned "no file name given" and the
+        panel simply swallowed it: the button did nothing, three sessions running.
+    """
+    blank = name is None or (isinstance(name, str) and not name.strip())
+    if blank:
+        safe, reason = free_name(root, DEFAULT_DOC_STEM)
+    else:
+        safe, reason = valid_name(name)          # junk types still land here, and refuse
     if not safe:
         return None, reason
     target, reason = doc_target(root, safe, must_exist=False)

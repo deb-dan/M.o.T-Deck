@@ -44,10 +44,16 @@ let tabRegistry: [HarnessTab] = [
     // Unsloth app (harness.yaml carries the same number and the reason).
     HarnessTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
     // OpenCode — the second coding lane. Its own server serves its own embedded SPA on
-    // one loopback port, which is why it is a plain tab and not a PTY like Aider.
-    // :4096 is the number its docs use; upstream's own --port DEFAULT is 0 (ephemeral),
-    // so start_component.sh always passes it explicitly (harness.yaml carries the same).
-    HarnessTab(id: "opencode", title: "OpenCode", url: URL(string: "http://127.0.0.1:4096")!),
+    // one loopback port (:4096; upstream's own --port DEFAULT is 0/ephemeral, so
+    // start_component.sh always passes it explicitly and harness.yaml carries the same).
+    //
+    // ⚠️ THE URL IS THE BRIDGE, NOT :4096, AND THAT IS THE FIX for "the tab opens on
+    // Nothing here yet". GET /opencode is a 307 to OpenCode's own new-session composer
+    // for data/opencode-workspace — a route only the bridge can build, because only it
+    // knows ROOT (repo vs snapshot) and the configured port. See opencode_landing_url
+    // in bridge/app.py for why there is nothing to seed instead.
+    HarnessTab(id: "opencode", title: "OpenCode",
+               url: URL(string: "http://127.0.0.1:8700/opencode")!),
     // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always

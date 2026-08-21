@@ -44,10 +44,22 @@ def test_harness_yaml_parses():
         "build.opencode_pin and components.opencode.pin disagree — the installer reads "
         "the build key, so a stale manifest pin would silently document the wrong version")
     # ⚠️ upstream's OWN --port default is 0 (an ephemeral port), so this number is not
-    # a convention we could drop: the start script MUST pass it and the tab hard-codes it.
+    # a convention we could drop: the start script MUST pass it explicitly.
     assert c["components"]["opencode"]["port"] == 4096
-    assert "http://127.0.0.1:4096" in (ROOT / "app" / "main.swift").read_text(), (
-        "the OpenCode tab's URL no longer matches the manifest port")
+    # The TAB no longer hard-codes that port (2026-08-21): it opens the bridge's
+    # /opencode, a 307 into OpenCode's new-session composer for our workspace, because
+    # only the bridge knows both ROOT and the configured port. So the port is read from
+    # THIS manifest at request time, and what must be pinned is that the redirect uses
+    # it rather than a second copy of the number.
+    app_py = (ROOT / "bridge" / "app.py").read_text()
+    assert '@app.get("/opencode")' in app_py
+    route = app_py[app_py.index('@app.get("/opencode")'):]
+    route = route[:route.index("\n\n\n")]
+    assert '"opencode") or {}).get("port")' in route, (
+        "the landing redirect must read the port from harness.yaml, not repeat it")
+    assert "127.0.0.1:8700/opencode" in (ROOT / "app" / "main.swift").read_text(), (
+        "the OpenCode tab must open the bridge's landing redirect — :4096/ on its own "
+        "IS the empty 'Add project' home screen Debi reported")
 
 
 def test_optional_components_are_not_submodules():

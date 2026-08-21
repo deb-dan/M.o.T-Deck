@@ -6,6 +6,7 @@ Gearbox (M2) and adapter/self-heal (M3) are stubs; see gearbox.py / adapter.py.
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import os
 import random
@@ -745,6 +746,11 @@ def install_plan(name: str) -> dict:
             "loopback only, NO authentication)",
             "It is started in data/opencode-workspace, which is the ONLY boundary on "
             "what it edits — the Hermes path-guard does not reach this lane",
+            "data/opencode-workspace is git-initialised with one empty commit: that is "
+            "the only thing that makes a directory a PROJECT to OpenCode rather than "
+            "part of its shared 'global' one, and the tab then opens straight onto a "
+            "new session there instead of its 'Add project' home screen. If you ever "
+            "do land on that screen: Add project -> data/opencode-workspace, once",
         ],
     }
     if name not in plans:
@@ -798,7 +804,10 @@ _NOTES = {
     "unsloth": "unsloth studio on :8899 — loopback only; it has its own login screen",
     # OPTIONAL, MIT. Its own UI + API on one loopback port, no auth. The tools warning
     # is appended per-request by start_plan (it depends on the LIVE model).
-    "opencode": "opencode on :4096 — loopback only, no auth",
+    "opencode": ("opencode on :4096 — loopback only, no auth. The tab opens its "
+                 "new-session composer for data/opencode-workspace (the bridge's "
+                 "/opencode redirect), not its own 'Add project' home screen. "
+                 "Needs a TOOL-CALLING model — look for the green 'tools' pill."),
 }
 
 
@@ -2406,6 +2415,59 @@ def opencode_tools_warning(entry) -> str:
     if t is False:
         return OPENCODE_TOOLS_BAD % name
     return OPENCODE_TOOLS_UNKNOWN % name
+
+
+# ── the OpenCode LANDING ─────────────────────────────────────────────────────
+# THE COMPLAINT THIS ANSWERS: the tab opened OpenCode's home screen, which read
+# "Nothing here yet — Create a session to get started" beside a Projects rail whose
+# only entry was "Add project". Everything was running; being useful was gated on a
+# setup step, which is indistinguishable from broken.
+#
+# There is nothing to seed. Read at pin 1.18.19: the Projects rail is CLIENT state,
+# persisted in the webview's own localStorage under `opencode.global.dat:server`
+# (packages/app/src/context/server.tsx:263-274, utils/persist.ts:491-494) — an
+# internal, migrating format inside WebKit's storage that we have no business writing.
+# The home session list is filtered by that same local rail
+# (pages/home/home-sessions-controller.tsx:248-256), so pre-creating a session
+# server-side would not clear the empty screen either.
+#
+# What DOES work is its own routing: `/:dir` is a DirectoryLayout whose `:dir` is the
+# base64url of an absolute path (packages/app/src/app.tsx:633-636,
+# pages/directory-layout.tsx:80-84, core/src/util/encode.ts:1-5), and `/:dir/session`
+# with no session id opens a NEW-SESSION composer for that directory (app.tsx:94-101).
+# So the tab is pointed straight at our workspace and the home screen never appears.
+#
+# ⚠️ THIS IS A DEEP LINK INTO A THIRD-PARTY SPA'S INTERNAL ROUTE SHAPE. The downside is
+# bounded and was checked: an undecodable `:dir` toasts and navigates to "/"
+# (directory-layout.tsx:97-111), i.e. the worst case is exactly today's behaviour. A
+# contract test pins the route and the encoder so a pin bump trips instead of quietly
+# regressing to the empty home.
+#
+# ⚠️ It is a BRIDGE route rather than a URL baked into app/main.swift because only the
+# bridge knows both ROOT (repo vs snapshot) and the configured port, and because a
+# route can be tested here. Cost: the tab needs the bridge up — which it always is,
+# since the bridge is what the app launches and Mission Control is served from it.
+def opencode_landing_url(root, port) -> str:
+    """PURE. The URL the OpenCode tab should open. base64url, no padding, exactly as
+    upstream's own `base64Encode` produces it (core/src/util/encode.ts)."""
+    ws = os.path.join(str(root), "data", "opencode-workspace")
+    b64 = base64.urlsafe_b64encode(ws.encode("utf-8")).decode("ascii").rstrip("=")
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        p = 4096
+    if not (0 < p < 65536):
+        p = 4096
+    return f"http://127.0.0.1:{p}/{b64}/session"
+
+
+@app.get("/opencode")
+def opencode_landing() -> Response:
+    """307 → OpenCode's new-session composer for data/opencode-workspace."""
+    port = ((cfg().get("components") or {}).get("opencode") or {}).get("port") or 4096
+    return Response(status_code=307,
+                    headers={"Location": opencode_landing_url(ROOT, port),
+                             "Cache-Control": "no-store"})
 
 
 @app.get("/api/models")

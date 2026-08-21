@@ -915,8 +915,28 @@ PYOC
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
+      # WARM THE PROJECT ROW. OpenCode registers a directory as a project LAZILY, on
+      # the first instance-scoped request for it (server cwd is only the default —
+      # routes/instance/httpapi/middleware/workspace-routing.ts:87 → instance-store →
+      # Project.fromDirectory's insert…onConflictDoUpdate, project.ts:257-289). This one
+      # READ does that registration now instead of on the first page load, and writes
+      # the id cache at <ws>/.git/opencode. Deliberately a GET, not `POST /session`: a
+      # session per Start would leave a growing pile of empty timestamped sessions in
+      # the sidebar, which is litter, not a landing.
+      curl -sf -m 5 --get --data-urlencode "directory=${OC_WS}" \
+        "http://127.0.0.1:${OC_PORT}/project/current" -o /dev/null 2>/dev/null \
+        && echo "[harness] project registered for $OC_WS" \
+        || echo "[harness] note: could not pre-register the workspace project (harmless)"
       echo "[harness] opencode up on http://127.0.0.1:${OC_PORT} (server + its own SPA, loopback, NO auth)"
       echo "[harness] workspace: $OC_WS — the only directory it is started in"
+      # The tab does not open :${OC_PORT}/ — it opens the bridge's /opencode, a 307 into
+      # OpenCode's own new-session composer for this directory, so its home screen (the
+      # one that says "Nothing here yet" beside an empty Projects rail) never appears.
+      # If it ever DOES appear, the manual equivalent is one click: Add project →
+      # data/opencode-workspace.
+      echo "[harness] the tab lands on a new session for that workspace (via the bridge's"
+      echo "[harness]   /opencode redirect). If you ever see OpenCode's own empty home"
+      echo "[harness]   screen instead: Add project -> $OC_WS, once."
       echo "[harness] REMINDER: OpenCode requires a TOOL-CALLING model (the green 'tools'"
       echo "[harness]   pill in Models). Without one it looks broken, not merely slower."
     else
