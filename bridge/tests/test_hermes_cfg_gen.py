@@ -168,8 +168,12 @@ check("the shell reads the field off /api/status (the endpoint it already fetche
       and 'appendingPathComponent("api/status")' in SWIFT)
 check("the shell reloads only on a STRICT increase",
       "let p = prev, gen > p" in SWIFT)
+# scoped to syncHermesGen's own body: STUDIO PHASE 2 added a second generation poll
+# (nav) with the same record-then-decide shape, so an unscoped index() would answer
+# about the wrong one.
+_sync = SWIFT.split("func syncHermesGen", 1)[1].split("func retryIfFailed", 1)[0]
 check("the shell records BEFORE deciding (so a reload cannot loop)",
-      SWIFT.index("self.hermesCfgGen = gen") < SWIFT.index("let p = prev, gen > p"))
+      _sync.index("self.hermesCfgGen = gen") < _sync.index("let p = prev, gen > p"))
 _swift_stale = (SWIFT.split("func maybeReloadStaleHermes", 1)[1]
                 .split("func syncHermesGen", 1)[0])
 check("the check still hangs off the EXISTING staleness entry point",

@@ -53,7 +53,8 @@ const noComments = block.replace(/\/\*[\s\S]*?\*\//g, '');
 const sels = (noComments.match(/([^{}]+)\{/g) || [])
   .map(s => s.slice(0, -1).trim()).filter(Boolean);
 
-ok(sels.length === 40, 'the studio block declares exactly 40 rules (got ' + sels.length + ')');
+// 40 → 47: STUDIO PHASE 2 §C added the FORM-FIELD rules (7). Nothing else grew.
+ok(sels.length === 47, 'the studio block declares exactly 47 rules (got ' + sels.length + ')');
 
 // ---------------------------------------------------------------------------
 // STRUCTURAL GROUND TRUTH (inherited from 2026-08-14h, the third Mac failure).
@@ -133,7 +134,11 @@ for (const target of ['.chip', '.chip.chip-icon', '.caps-tab.on', '.mp-act',
                       'button.primary', '.cap-btn', '.cap-sw', '#cs-new',
                       '.cs-act button', '.hfget', '.art-btn', '.dlacts button',
                       '#chat-send', '#chat-talk', '#chat-auto', '#chat-conv',
-                      '#chat-attach', '.st-only', '.ed-only', '.st-ico', '.st-word']) {
+                      '#chat-attach', '.st-only', '.ed-only', '.st-ico', '.st-word',
+                      // PHASE 2 §C — the form fields, the half of the Music page the
+                      // axis used to miss entirely.
+                      '.cap-inp', '.cap-num', '.cap-sel', 'textarea.cap-inp',
+                      '#chat-input', '.cap-range::-webkit-slider-thumb']) {
   ok(sels.some(x => x.includes(target)), 'studio chrome covers ' + target);
 }
 // The axis must reach the BARE element or it is a no-op on Mission Control, the
@@ -473,12 +478,51 @@ ok(delta({ tag: 'button', id: 'mus-cancel', cls: ['cap-btn'], anc: MCARD },
 ok(delta({ tag: 'button', id: null, cls: ['chip'], anc: MCARD },
          ['background', 'height', 'font-size', 'text-transform']).length >= 3,
    'the Music engine chips restyle under studio chrome');
-// HONEST NEGATIVE, recorded rather than hidden: the axis does NOT reach form fields —
-// on the Music page (two textareas, three number boxes, a slider, a select) that is
-// most of the visual mass, which is why the toggle READ as a no-op there.
+// PHASE 2 §C — THE RULING THAT CLOSED THAT GAP. The negative above used to record it
+// honestly ("the axis does not reach form fields"); the Music page is two textareas,
+// three number boxes, a slider and a select, i.e. most of its visual mass, which is why
+// ▣ READ as a no-op there. These are the same elements, now asserted the other way.
 ok(delta({ tag: 'textarea', id: 'mus-prompt', cls: ['cap-inp'], anc: MCARD },
-         ['background', 'font-size', 'border-color', 'height']).length === 0,
-   'studio chrome leaves .cap-inp form fields alone (a global gap, not a music one)');
+         ['background', 'font-size', 'border-color', 'font-family']).length >= 3,
+   'the Music page textareas restyle under studio chrome (§C)');
+ok(delta({ tag: 'textarea', id: 'mus-prompt', cls: ['cap-inp'], anc: MCARD },
+         ['height']).length === 0,
+   '...but a textarea gets NO height rule (growInput owns that at runtime)');
+ok(delta({ tag: 'input', id: 'mus-secs', cls: ['cap-inp'], anc: MCARD },
+         ['background', 'height', 'border-color', 'font-size']).length >= 3,
+   'the Music page number boxes restyle, height included (a single-line row allows it)');
+ok(delta({ tag: 'select', id: 'mus-fmt', cls: ['cap-inp'], anc: MCARD },
+         ['background', 'height', 'border-radius']).length >= 3,
+   'the Music page format select restyles under studio chrome');
+ok(delta({ tag: 'select', id: 'cap-setting-search_provider', cls: ['cap-sel'] },
+         ['background', 'height', 'border-radius', 'font-family']).length >= 3,
+   'a Capabilities .cap-sel restyles too (the ruling is global, not music-only)');
+ok(delta({ tag: 'input', id: 'cap-setting-agent_max_rounds', cls: ['cap-num'] },
+         ['background', 'height', 'border-radius']).length >= 3,
+   'a Capabilities .cap-num restyles too');
+{ // the FIELD ground is its own token and reads as a WELL, not a button
+  const w = winners({ tag: 'input', id: null, cls: ['cap-inp'] }, ON);
+  ok(w.background && w.background.v === 'var(--st-inp)',
+     'a field sits on --st-inp, deliberately NOT the button ground --st-btn');
+  ok(w['border-color'] === undefined && w.border && /--st-edge/.test(w.border.v),
+     '...with the same edge as the buttons, so it is the same family');
+}
+// LANDMINE L4 (this slice's own): base #chat-input:focus is (1,1,0) and the studio block
+// is LAST in the sheet, so a studio #chat-input rule at the same specificity would win
+// the tie on source order and take the gold focus border with it.
+{ const w = winners({ tag: 'textarea', id: 'chat-input', cls: [], pseudo: ['focus'] }, ON);
+  ok(w['border-color'] && w['border-color'].v === 'var(--gold)',
+     '#chat-input keeps its GOLD focus border under studio chrome (L4)'); }
+{ const w = winners({ tag: 'input', id: null, cls: ['cap-inp'], pseudo: ['focus'] }, ON);
+  ok(w['border-color'] && w['border-color'].v === 'var(--gold)',
+     'a focused field takes the gold edge, like every other focused control'); }
+// the slider joins by FAMILY only — asserted by grep, because a ::pseudo-element rule is
+// not a rule about the element and the resolver deliberately does not model one.
+ok(/html\[data-chrome="studio"\] \.cap-range::-webkit-slider-thumb \{ border-radius:6px; \}/
+     .test(noComments),
+   'the slider thumb is squared to the button corner; the track is untouched');
+ok(!/html\[data-chrome="studio"\] \.cap-range \{/.test(noComments),
+   '...and the track itself gets no studio rule at all');
 
 // (g) the composer chips + the icon buttons
 ok(delta({ tag: 'span', id: 'mode-agent', cls: ['mode-chip', 'on'] },
@@ -568,13 +612,20 @@ for (const cls of [['mode-chip', 'on'], ['mp-act', 'on'], ['chip', 'caps-tab', '
      'approval chips keep their unfilled ground, so a gold .on pick still reads'); }
 for (const el of [{ tag: 'span', id: null, cls: ['mpill'] },
                   { tag: 'span', id: null, cls: ['cap-pill'] },
-                  { tag: 'summary', id: null, cls: [] },
-                  { tag: 'textarea', id: 'chat-input', cls: [] }]) {
+                  { tag: 'summary', id: null, cls: [] }]) {
   ok(delta(el, ['background', 'border-radius', 'padding', 'font', 'font-size',
                 'font-family', 'height', 'text-transform', 'color',
                 'border-color']).length === 0,
      'studio chrome leaves ' + (el.id || el.cls[0] || el.tag) + ' untouched (exempt)');
 }
+// #chat-input is the PARTIAL exemption §C names: the ground, the edge and the corner
+// join the family; the 14px prose sizing and the height do not.
+ok(delta({ tag: 'textarea', id: 'chat-input', cls: [] },
+         ['background', 'border-color', 'border-radius']).length === 3,
+   'the chat composer joins the family on ground / edge / corner only');
+ok(delta({ tag: 'textarea', id: 'chat-input', cls: [] },
+         ['font', 'font-size', 'font-family', 'height', 'padding']).length === 0,
+   '...and keeps its own 14px prose sizing, padding and height (§C exemption)');
 // NEGATIVE: with the attribute ABSENT no studio selector can match anything.
 ok(!sels.some(s => matchSel(splitTop(s, ',')[0].trim(),
                             { tag: 'button', id: null, cls: ['chip'] },
@@ -591,8 +642,8 @@ ok(!sels.some(s => matchSel(splitTop(s, ',')[0].trim(),
   for (const m of css.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})\s*[;}]/g)) {
     if (!(m[1] in tok)) tok[m[1]] = m[2];       // FIRST wins = the dark :root default
   }
-  for (const t of ['--st-btn', '--st-hi', '--st-edge',
-                   '--card', '--card2', '--line2', '--bg2', '--fg']) {
+  for (const t of ['--st-btn', '--st-hi', '--st-edge', '--st-inp',
+                   '--card', '--card2', '--line2', '--bg2', '--fg', '--cream']) {
     ok(typeof tok[t] === 'string', 'token ' + t + ' resolves to a hex literal');
   }
   const lum = (h) => {
@@ -613,6 +664,25 @@ ok(!sels.some(s => matchSel(splitTop(s, ',')[0].trim(),
      'the studio border colour differs from --line2 (the base border-color — setting '
      + 'it again is a literal no-op)');
   ok(tok['--st-hi'] !== tok['--st-btn'], 'hover is not the resting ground restated');
+  // PHASE 2 §C — the FIELD ground. ⚠️ HONEST NOTE, and it is a builder call recorded
+  // rather than hidden: §C asks for ≥1.3 against the card surface, but the same
+  // sentence asks for a value DARKER than --st-btn (so a field reads as a well, not a
+  // button). On this palette no colour satisfies both — --st-btn itself is only 1.41
+  // off --card — so what is asserted here is the INTENT, which is falsifiable in every
+  // direction that matters: it is nobody else's colour, it is on the right side of the
+  // button ground, its label is readable on it, and it is not a no-op (a value equal to
+  // --card2, the base field ground, would be exactly the no-op this detector exists for).
+  ok(tok['--st-inp'] !== tok['--card'] && tok['--st-inp'] !== tok['--card2']
+     && tok['--st-inp'] !== tok['--st-btn'] && tok['--st-inp'] !== tok['--bg2'],
+     'the field ground is its own value, not an alias of --card/--card2/--st-btn/--bg2');
+  ok(lum(tok['--st-inp']) < lum(tok['--st-btn']),
+     'on the dark palette a field RECEDES below the button ground (it is a well)');
+  ok(ratio(tok['--cream'], tok['--st-inp']) >= 4.5,
+     'the text you type clears AA on the field ground (ratio '
+     + ratio(tok['--cream'], tok['--st-inp']).toFixed(2) + ')');
+  ok(ratio(tok['--st-edge'], tok['--st-inp']) >= 1.15,
+     'the field border is visible against the field ground (ratio '
+     + ratio(tok['--st-edge'], tok['--st-inp']).toFixed(2) + ')');
   // (2) it must be VISIBLE against every surface a control sits on
   for (const bg of ['--card', '--bg2', '--bg']) {
     if (!tok[bg]) continue;
@@ -655,7 +725,7 @@ ok(!sels.some(s => matchSel(splitTop(s, ',')[0].trim(),
       /html\[data-chrome="studio"\]\[data-theme="light"\]\s*\{([^}]*)\}/) || [null, ''])[1];
     const lt = {};
     for (const m of lr.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})/g)) lt[m[1]] = m[2];
-    for (const t of ['--st-btn', '--st-hi', '--st-edge']) {
+    for (const t of ['--st-btn', '--st-hi', '--st-edge', '--st-inp']) {
       ok(typeof lt[t] === 'string', 'the light override defines ' + t);
       ok(lt[t] !== tok[t], 'the light ' + t + ' is not the dark value');
     }
@@ -677,6 +747,12 @@ ok(!sels.some(s => matchSel(splitTop(s, ',')[0].trim(),
     // direction INVERTS on paper: hover darkens.
     ok(lum(lt['--st-hi']) < lum(lt['--st-btn']),
        'light-theme hover DARKENS (the inverse of dark theme, and correct on paper)');
+    // …and the well INVERTS with it: on paper a field is lighter than the button, which
+    // is the same design rule (a field recedes toward the page) with the sign flipped.
+    ok(lum(lt['--st-inp']) > lum(lt['--st-btn']),
+       'on paper a field RISES above the button ground — the well rule, inverted');
+    ok(ratio('#171420', lt['--st-inp']) >= 4.5,
+       'dark ink clears AA on the light field ground');
   }
 }
 

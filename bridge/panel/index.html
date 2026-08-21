@@ -1017,6 +1017,14 @@
      ------------------------------------------------------------------------------- */
   html[data-chrome="studio"] {
     --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83;
+    /* PHASE 2 §C — the FIELD ground. Deliberately a WELL, not a button: on the dark
+       palette it sits BELOW --st-btn (a field you type into should recede while a
+       button stands proud), and on paper it inverts and sits ABOVE it. That is the
+       property the tests assert; ⚠️ it also means it cannot clear the 1.3 the button
+       ground does against --card (a value both darker than --st-btn and 1.3 off the
+       card does not exist on this palette — the test computes it and asserts the
+       intent instead: not an alias, right side of the button, --fg readable on it). */
+    --st-inp:#221d38;
     --st-font:-apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     --st-h:28px; --st-hs:22px; --st-r:8px; --st-gap:8px;
     --st-fs:12px; --st-fs-s:11px; }
@@ -1024,7 +1032,7 @@
      the hover direction INVERTS here and that is correct: on paper a pressed-looking
      control gets DARKER, on a dark panel it gets LIGHTER. */
   html[data-chrome="studio"][data-theme="light"] {
-    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878; }
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878; --st-inp:#f4efe2; }
 
   /* (0) THE ICON/TEXT SWAP. Every icon-bearing control carries BOTH children in the
      DOM (.st-only icon, .ed-only text) and CSS alone decides which is visible, so the
@@ -1193,6 +1201,39 @@
     height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
     text-transform:none; color:var(--fg); background:var(--st-btn);
     border-color:var(--st-edge); border-radius:6px; padding:0 9px; }
+  /* (5) FORM FIELDS (PHASE 2 §C — the ruling that closes the Music-page gap). Debi
+     read ▣ as "not restyling the Music page"; the audit found the buttons there always
+     did and the FIELDS never did — and that page is two textareas, three boxes, a
+     slider and a select, i.e. most of its visual mass. Conservative by design: fields
+     join the family (font, radius, edge) on their OWN ground, so a control you type
+     into never looks like a button you press. */
+  html[data-chrome="studio"] .cap-inp,
+  html[data-chrome="studio"] .cap-num,
+  html[data-chrome="studio"] .cap-sel,
+  html[data-chrome="studio"] select {
+    font-size:var(--st-fs); font-family:var(--st-font); letter-spacing:normal;
+    color:var(--cream); background:var(--st-inp);
+    border:1px solid var(--st-edge); border-radius:var(--st-r); }
+  /* height only where a single-line row allows it. A textarea gets NO height rule
+     (§C) — #mus-prompt is three rows and growInput() owns its height at runtime. */
+  html[data-chrome="studio"] input.cap-inp,
+  html[data-chrome="studio"] .cap-num,
+  html[data-chrome="studio"] .cap-sel,
+  html[data-chrome="studio"] select { height:var(--st-h); padding:0 10px; }
+  html[data-chrome="studio"] textarea.cap-inp { padding:8px 10px; }
+  html[data-chrome="studio"] .cap-inp:focus,
+  html[data-chrome="studio"] .cap-num:focus,
+  html[data-chrome="studio"] .cap-sel:focus { border-color:var(--gold); outline:none; }
+  /* EXEMPTION (§C): the chat composer keeps its 14px PROSE sizing — only the ground,
+     the edge and the corner join. LANDMINE L4: base #chat-input:focus is (1,1,0) and
+     this block is LAST in the sheet, so the studio #chat-input rule (1,1,0) would win
+     the tie on source order and the gold focus border would disappear. Restated. */
+  html[data-chrome="studio"] #chat-input {
+    background:var(--st-inp); border-color:var(--st-edge); border-radius:var(--st-r); }
+  html[data-chrome="studio"] #chat-input:focus { border-color:var(--gold); }
+  /* the slider joins by FAMILY only: the track keeps its --line2 hairline and the gold
+     thumb is squared to the same corner as the buttons (§C). */
+  html[data-chrome="studio"] .cap-range::-webkit-slider-thumb { border-radius:6px; }
   /* ============================ end studio chrome =============================== */
 </style>
 <script>
@@ -1237,20 +1278,15 @@
   <button id="rail-toggle" onclick="toggleChatRail()" title="Expand sidebar" aria-label="Expand sidebar">»</button>
   <div class="brand">Harness</div>
   <div class="build">local · studio</div>
+  <!-- STUDIO PHASE 2: both nav groups are RENDERED from the nav model (order + hidden
+       are the user's), not written out here. With no saved layout the model IS this
+       list, so a fresh install is byte-identical to the build before this slice —
+       plus the two lanes (Aider, LOffice) that previously had no sidebar row at all.
+       Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): its onclick was an
+       alert(), which is a SILENT no-op in WKWebView. -->
   <div class="navlbl">Workspace</div>
-  <nav>
-    <a id="nav-mc" class="on" onclick="showView('mc')" title="Mission Control" aria-label="Mission Control"><span class="ico">◫</span> Mission Control</a>
-    <a id="nav-chat" onclick="showView('chat')" title="Chat" aria-label="Chat"><span class="ico">✳</span> Chat</a>
-    <a id="nav-models" onclick="showView('models')" title="Models" aria-label="Models"><span class="ico">⇄</span> Models</a>
-    <a id="nav-music" onclick="openMusic()" title="Music" aria-label="Music"><span class="ico">♫</span> Music</a>
-    <a id="nav-caps" onclick="showView('caps')" title="Capabilities" aria-label="Capabilities"><span class="ico">⚙</span> Capabilities</a>
-    <!-- Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): its onclick was an
-         alert(), which is a SILENT no-op in WKWebView — a nav entry that does nothing
-         at all is worse than no entry. A real Policies view (path-guard policy
-         display) is recorded as future work in the roadmap. -->
-    <a onclick="showLogs()" title="Logs" aria-label="Logs"><span class="ico">≣</span> Logs</a>
-  </nav>
-  <div class="navlbl">Components</div>
+  <nav id="sideworkspace"></nav>
+  <div class="navlbl" id="sidecomponents-lbl">Components</div>
   <nav id="sidecomponents"></nav>
   <!-- side-foot removed 2026-07-23 (Debi: hidden in final app). CSS rule kept for now. -->
 </aside>
@@ -1670,8 +1706,6 @@ async function refresh(manual) {
 
   const cards = document.getElementById('cards');
   cards.innerHTML = '';
-  const side = document.getElementById('sidecomponents');
-  side.innerHTML = '';
 
   cards.insertAdjacentHTML('beforeend', cardHTML('bridge', {
     running:true, installed:true, pin:'local', port:8700 }, true));
@@ -1680,19 +1714,11 @@ async function refresh(manual) {
     if (c.degraded && !lastDegraded[name]) feed('health', `${name} degraded — health lost`);
     lastDegraded[name] = !!c.degraded;
     cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false, prov[name]));
-    const p = prov[name], st = p && p.state;
-    const cls = (st === 'starting' || st === 'pending') ? 'warn'
-              : (st === 'failed' || st === 'blocked') ? 'bad'
-              : c.degraded ? 'bad'
-              : c.running ? 'ok' : c.installed ? 'warn' : '';
-    const tabTitle = TAB_FOR_COMPONENT[name];
-    const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
-              : tabTitle ? `show ${name} on Mission Control — not running`
-              : `show ${name} on Mission Control`;
-    side.insertAdjacentHTML('beforeend',
-      `<a onclick="openComponent('${name}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
-        <span style="text-transform:capitalize">${name}</span></a>`);
   }
+  // The COMPONENTS half of the sidebar is the same status snapshot, so it is redrawn
+  // here (the dots are live); the WORKSPACE half comes from the nav model and is
+  // redrawn with it. One renderer owns both, so their order can never disagree.
+  renderSidebar();
 
   const m = document.getElementById('metrics');
   const running = Object.values(s.components).filter(c=>c.running).length;
@@ -1746,21 +1772,172 @@ function showProvLog(name) {
    `tabs` rows exactly, and a component with no tab (searxng, the runner) is absent by
    design. In a plain browser — or if a title ever drifts — every path degrades to
    today's jumpToCard, so the row can never become a dead control. */
-const TAB_FOR_COMPONENT = {
-  odysseus: 'Odysseus',
-  hermes: 'Hermes',
-  voicestudio: 'VoiceStudio',
-  voicebox: 'Voicebox',
-  comfyui: 'ComfyUI',
-  unsloth: 'Unsloth',
-};
+/* ---------- THE NAV REGISTRY (STUDIO PHASE 2 §A) ----------
+   ONE table behind BOTH bars. `bridge/nav.py` is the authority for the ID SET and the
+   defaults (a test asserts the two agree); this table adds the things only the panel
+   knows — the label, the icon, which view an entry opens, which native tab it is.
+
+   `tab` must match app/main.swift's registry TITLE exactly; an entry with no tab is
+   panel-only. `prefersTab` says a click here should ask the SHELL first: it is set on
+   the lanes and components (whose whole content lives in a tab) and deliberately NOT
+   on mc/chat/models/caps, which are panel views — pinning one of those as a tab gives
+   it a strip segment without making the sidebar row jump out of the panel. */
+const NAV_ENTRIES = [
+  { id:'mc',      label:'Mission Control', ico:'◫', kind:'view', view:'mc',     tab:'Mission Control' },
+  { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
+  { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
+  { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
+  { id:'aider',   label:'Aider',           ico:'⌨', kind:'lane', view:null,     tab:'Aider',   url:'/aider',  prefersTab:true },
+  { id:'loffice', label:'LOffice',         ico:'▦', kind:'lane', view:null,     tab:'LOffice', url:'/office', prefersTab:true },
+  { id:'caps',    label:'Capabilities',    ico:'⚙', kind:'view', view:'caps',   tab:'Capabilities' },
+  // Logs is a DIALOG, so it has no view and can never be a tab — sidebar only, and the
+  // one entry allowed to be hidden everywhere because ⌘K still reaches it.
+  { id:'logs',    label:'Logs',            ico:'≣', kind:'view', view:null,     tab:null },
+  { id:'odysseus',    label:'Odysseus',    ico:null, kind:'component', view:null, tab:'Odysseus',    prefersTab:true },
+  { id:'hermes',      label:'Hermes',      ico:null, kind:'component', view:null, tab:'Hermes',      prefersTab:true },
+  { id:'voicestudio', label:'Voicestudio', ico:null, kind:'component', view:null, tab:'VoiceStudio', prefersTab:true },
+  { id:'voicebox',    label:'Voicebox',    ico:null, kind:'component', view:null, tab:'Voicebox',    prefersTab:true },
+  { id:'comfyui',     label:'Comfyui',     ico:null, kind:'component', view:null, tab:'ComfyUI',     prefersTab:true },
+  { id:'unsloth',     label:'Unsloth',     ico:null, kind:'component', view:null, tab:'Unsloth',     prefersTab:true },
+];
+// Which bars an entry may appear on — the capability half, mirroring nav.py's `bars`.
+// Logs has no solo surface, so it is sidebar-only; everything else can be either.
+const NAV_SIDEBAR_ONLY = ['logs'];
+const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
+// Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
+const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','loffice','caps','logs',
+                             'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth'];
+const NAV_DEFAULT_TOPBAR = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
+                            'unsloth','music','aider','loffice'];
+const NAV_TOPBAR_UNPINNED = ['chat','models','caps'];
+const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
+const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
+const NAV_KEY = 'harness-nav';
+
+function navEntry(id) { return NAV_ENTRIES.find(e => e.id === id) || null; }
+function navCanShow(id, bar) {
+  if (!navEntry(id)) return false;
+  return bar === 'sidebar' || NAV_SIDEBAR_ONLY.indexOf(id) < 0;
+}
+function navDefaultModel() {
+  return {
+    sidebar: NAV_DEFAULT_SIDEBAR.map(id => ({ id, pinned:true })),
+    topbar: NAV_DEFAULT_TOPBAR.map(id => ({ id, pinned:true }))
+      .concat(NAV_TOPBAR_UNPINNED.map(id => ({ id, pinned:false }))),
+  };
+}
+/* PURE mirror of nav.py's normalize: drop unknown ids, drop an id that cannot live on
+   this bar, dedupe, then APPEND every known id the caller omitted at its default state
+   (so a new registry entry appears for everyone without anybody redoing their layout).
+   An appended entry never lands pinned on a full strip. */
+function navNormalize(raw) {
+  const dflt = navDefaultModel();
+  const out = {};
+  ['sidebar','topbar'].forEach(bar => {
+    const src = (raw && Array.isArray(raw[bar])) ? raw[bar] : [];
+    const rows = [], seen = {};
+    src.forEach(r => {
+      let id = null, pinned = true;
+      if (typeof r === 'string') id = r;
+      else if (r && typeof r === 'object') { id = r.id; pinned = (r.pinned === undefined) ? true : !!r.pinned; }
+      if (typeof id !== 'string' || seen[id] || !navCanShow(id, bar)) return;
+      seen[id] = 1; rows.push({ id, pinned: !!pinned });
+    });
+    let pins = rows.filter(r => r.pinned).length;
+    dflt[bar].forEach(d => {
+      if (seen[d.id]) return;
+      let p = d.pinned;
+      if (bar === 'topbar' && p && pins >= NAV_TOPBAR_MAX) p = false;
+      rows.push({ id:d.id, pinned:!!p }); seen[d.id] = 1; if (p) pins++;
+    });
+    out[bar] = rows;
+  });
+  const mc = out.topbar.filter(r => r.id === NAV_FIXED_TOP);
+  if (mc.length) { mc[0].pinned = true; out.topbar = mc.concat(out.topbar.filter(r => r.id !== NAV_FIXED_TOP)); }
+  out.sidebar.forEach(r => { if (r.id === NAV_FIXED_SIDE) r.pinned = true; });
+  return out;
+}
+/* PURE mirror of nav.py's validate: '' = saveable, else the reason. Two rules, both
+   about not LOSING something — nothing hidden everywhere it is allowed, and at most
+   NAV_TOPBAR_MAX pinned tabs. */
+function navValidate(m) {
+  const pin = { sidebar:{}, topbar:{} };
+  ['sidebar','topbar'].forEach(b => (m[b] || []).forEach(r => { pin[b][r.id] = !!r.pinned; }));
+  for (const e of NAV_ENTRIES) {
+    if (e.id === 'logs') continue;              // reachable from ⌘K (see nav.py `always`)
+    const bars = ['sidebar','topbar'].filter(b => navCanShow(e.id, b));
+    if (bars.length && !bars.some(b => pin[b][e.id])) {
+      return e.label + ' would be hidden everywhere — keep it on the sidebar or on the tabs.';
+    }
+  }
+  const n = Object.keys(pin.topbar).filter(k => pin.topbar[k]).length;
+  if (n > NAV_TOPBAR_MAX) {
+    return 'at most ' + NAV_TOPBAR_MAX + ' tabs can be pinned to the top strip (you asked for '
+         + n + ') — unpin one first.';
+  }
+  return '';
+}
+
+let navModel = null;
+function navGet() {
+  if (!navModel) {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(NAV_KEY) || 'null'); } catch (e) {}
+    navModel = navNormalize(raw && raw.v === 1 ? raw : null);
+  }
+  return navModel;
+}
+function navSaveLocal() {
+  try { localStorage.setItem(NAV_KEY, JSON.stringify({ v:1, sidebar:navModel.sidebar, topbar:navModel.topbar })); }
+  catch (e) {}
+}
+/* Two-tier, exactly like Unsloth: localStorage is the INSTANT copy (the sidebar draws
+   from it before any request), data/nav.json is the SHARED one — and the shared one
+   wins on load, because that is the file the native shell drew its tab strip from. */
+async function navSync() {
+  try {
+    const r = await (await fetch('/api/nav')).json();
+    if (!r || !r.ok || !r.nav) return;
+    navModel = navNormalize(r.nav);
+    navSaveLocal();
+    renderSidebar();
+  } catch (e) {}
+}
+async function navSave() {
+  navSaveLocal();
+  renderSidebar();
+  try {
+    const r = await fetch('/api/nav', { method:'POST', headers:{'Content-Type':'application/json'},
+                                        body: JSON.stringify({ nav: navModel }) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) return (j && j.error) || ('save failed (' + r.status + ')');
+    navModel = navNormalize(j.nav);
+    navSaveLocal();
+    renderSidebar();
+    // Tell the SHELL immediately rather than making it wait for its nav_gen poll. The
+    // poll is the backstop (and the only path when the change came from a solo tab,
+    // which has no script-message handler); this is the fast path.
+    const h = nativeShell();
+    if (h) { try { h.postMessage({ cmd:'navChanged' }); } catch (e) {} }
+    return '';
+  } catch (e) { return 'save failed — the bridge did not answer'; }
+}
+
+// Kept as its own name because it is the whole panel→shell contract; derived from the
+// registry so a component's tab title cannot be written down twice.
+const TAB_FOR_COMPONENT = {};
+NAV_ENTRIES.forEach(e => { if (e.kind === 'component' && e.tab) TAB_FOR_COMPONENT[e.id] = e.tab; });
 function nativeShell() {
   return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.harness) || null;
 }
-function switchTab(title) {
+function switchTab(title, id) {
   const h = nativeShell();
   if (!h) return false;
-  try { h.postMessage({ cmd: 'switchTab', title: title }); return true; } catch (e) { return false; }
+  // The ID is what the shell resolves against its registry (stable); the TITLE is the
+  // fallback for an older shell that only knows titles. Sending both costs nothing and
+  // means a tab HIDDEN from the strip is still reachable — the shell shows it
+  // temporarily rather than ignoring the request.
+  try { h.postMessage({ cmd: 'switchTab', title: title, id: id || '' }); return true; } catch (e) { return false; }
 }
 function openComponent(name) {
   // Running state is read at CLICK time, not baked into the row: a component that
@@ -1768,14 +1945,67 @@ function openComponent(name) {
   // component's card is where Start lives, so that case stays on Mission Control.
   const c = ((lastStatus && lastStatus.components) || {})[name];
   const title = TAB_FOR_COMPONENT[name];
-  if (c && c.running && title && switchTab(title)) return;
+  if (c && c.running && title && switchTab(title, name)) return;
   jumpToCard(name);
 }
 function openMusic() {
   // Music has a native tab of its own (the chromeless ?solo=music load). In a browser
   // — or in a shell without that tab — the in-panel Music view is unchanged.
-  if (switchTab('Music')) return;
+  if (switchTab('Music', 'music')) return;
   showView('music');
+}
+/* ONE click handler for every sidebar row. A component keeps its own rule (running →
+   its tab, stopped → its card, where Start lives). A lane has no in-panel view at all,
+   so outside the app it opens its page in a browser tab rather than becoming dead. */
+function navOpen(id) {
+  const e = navEntry(id);
+  if (!e) return;
+  if (e.id === 'logs') { showLogs(); return; }
+  if (e.kind === 'component') { openComponent(id); return; }
+  if (e.prefersTab && e.tab && switchTab(e.tab, e.id)) return;
+  if (e.view) { showView(e.view); return; }
+  if (e.url) { window.open(e.url, '_blank'); }
+}
+
+/* ---------- the sidebar, rendered from the model ----------
+   Two groups, exactly as before: WORKSPACE (views + lanes) and COMPONENTS (the live
+   dots). A component the registry does not know — searxng, the runner — is appended
+   in status order and behaves exactly as it does today, so this can never hide a
+   component just because nobody added a row for it. */
+function navSideIds() { return navGet().sidebar.filter(r => r.pinned).map(r => r.id); }
+function renderSidebar() {
+  const ws = document.getElementById('sideworkspace');
+  const side = document.getElementById('sidecomponents');
+  if (!ws || !side) return;
+  const ids = navSideIds();
+  const comps = ((lastStatus && lastStatus.components) || {});
+  const prov = (lastStatus && lastStatus.prov) || {};
+  ws.innerHTML = ids.map(id => {
+    const e = navEntry(id);
+    if (!e || e.kind === 'component') return '';
+    const on = (e.view && e.view === curView) ? ' class="on"' : '';
+    return `<a id="nav-${escAttr(e.id)}"${on} onclick="navOpen('${escAttr(e.id)}')" title="${escAttr(e.label)}"
+      aria-label="${escAttr(e.label)}"><span class="ico">${esc(e.ico || '·')}</span> ${esc(e.label)}</a>`;
+  }).join('');
+  const known = {}; NAV_ENTRIES.forEach(e => { if (e.kind === 'component') known[e.id] = 1; });
+  const order = ids.filter(id => known[id] && comps[id])
+    .concat(Object.keys(comps).filter(n => !known[n]));
+  side.innerHTML = order.map(name => {
+    const c = comps[name] || {};
+    const p = prov[name], st = p && p.state;
+    const cls = (st === 'starting' || st === 'pending') ? 'warn'
+              : (st === 'failed' || st === 'blocked') ? 'bad'
+              : c.degraded ? 'bad'
+              : c.running ? 'ok' : c.installed ? 'warn' : '';
+    const tabTitle = TAB_FOR_COMPONENT[name];
+    const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
+              : tabTitle ? `show ${name} on Mission Control — not running`
+              : `show ${name} on Mission Control`;
+    return `<a onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+        <span style="text-transform:capitalize">${esc(name)}</span></a>`;
+  }).join('');
+  const lbl = document.getElementById('sidecomponents-lbl');
+  if (lbl) lbl.hidden = !order.length;
 }
 
 function jumpToCard(name) {
@@ -2281,7 +2511,11 @@ function toggleChrome() {
    A native tab loads this same panel with ?solo=music. PURE: the parser is separated
    from the DOM work so the decision table is testable, and an unknown/absent value can
    only ever mean "not solo" (never a blank panel). */
-const SOLO_VIEWS = ['music'];
+/* STUDIO PHASE 2: the whitelist is DERIVED from the nav registry — any entry that owns
+   a panel VIEW can be pinned to the tab strip, and pinning it means the shell loads
+   `?solo=<view>`. `mc` is excluded on purpose: Mission Control's native tab is the
+   panel itself (tab 0, the bridge-wait surface), not a chromeless second copy. */
+const SOLO_VIEWS = NAV_ENTRIES.filter(e => e.view && e.id !== 'mc').map(e => e.view);
 function soloView(search) {
   const m = /(?:^|[?&])solo=([A-Za-z]+)/.exec(String(search == null ? '' : search));
   const v = m ? m[1].toLowerCase() : '';
@@ -2294,17 +2528,22 @@ function applySolo() {
   showView(v);
 }
 
+let curView = 'mc';    // what the sidebar highlights; survives a sidebar re-render
 function showView(v) {
+  curView = v;
   document.getElementById('view-mc').hidden = (v !== 'mc');
   document.getElementById('view-chat').hidden = (v !== 'chat');
   document.getElementById('view-models').hidden = (v !== 'models');
   document.getElementById('view-caps').hidden = (v !== 'caps');
   document.getElementById('view-music').hidden = (v !== 'music');
-  document.getElementById('nav-mc').classList.toggle('on', v === 'mc');
-  document.getElementById('nav-chat').classList.toggle('on', v === 'chat');
-  document.getElementById('nav-models').classList.toggle('on', v === 'models');
-  document.getElementById('nav-music').classList.toggle('on', v === 'music');
-  document.getElementById('nav-caps').classList.toggle('on', v === 'caps');
+  // The rows are rendered from the nav model now, so a row the user hid is simply
+  // ABSENT — every lookup here has to tolerate that (a missing row is not an error,
+  // and the view itself still opens from ⌘K, a tab, or another row).
+  NAV_ENTRIES.forEach(e => {
+    if (!e.view) return;
+    const a = document.getElementById('nav-' + e.id);
+    if (a) a.classList.toggle('on', v === e.view);
+  });
   // PHASE 1: scope the slim-rail collapse to the Chat view ONLY. Other views must
   // render exactly as before, so the class is removed whenever we leave Chat.
   document.body.classList.toggle('chat-mode', v === 'chat');
@@ -2541,6 +2780,10 @@ async function initCaps() {
     // Odysseus's, so both stay usable on this path.
     const t = document.getElementById('caps-sec-tools');
     if (t) t.innerHTML = renderHermesTools() + renderVoiceMcp();
+    // Appearance is OURS — it writes data/nav.json, not Odysseus — so it must render
+    // on this path too, or a stopped Odysseus would take the layout editor with it.
+    const g = document.getElementById('caps-sec-general');
+    if (g) g.innerHTML = renderAppearance();
     applyCapsSection();
     return;
   }
@@ -2640,7 +2883,7 @@ function renderCaps() {
   // Regrouping ONLY — each group renderer below is unchanged; we just route its
   // output into its section container instead of one long scroll.
   const setSec = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
-  setSec('caps-sec-general', generalHtml);
+  setSec('caps-sec-general', generalHtml + renderAppearance());
   setSec('caps-sec-tools', renderHermesTools() + renderBuiltinTools() + renderMcpServers() + renderVoiceMcp());
   setSec('caps-sec-skills', renderSkills());
   setSec('caps-sec-models', renderModelsCaps());
@@ -2667,6 +2910,91 @@ function showCapsSection(sec) {
   if (!CAPS_SECTIONS.includes(sec)) sec = 'general';
   try { localStorage.setItem('harness-caps-section', sec); } catch (e) {}
   applyCapsSection();
+}
+
+/* ---------- APPEARANCE: sidebar + tab-strip customization (STUDIO PHASE 2 §A) ----------
+   Two ordered lists, ↑ ↓ to reorder and one chip to pin/hide. Buttons rather than
+   drag-and-drop deliberately (the spec's call): they are testable, they work with a
+   trackpad, and drag would need new CSS. ZERO new CSS — every element here is the
+   existing .caps-group / .cap-card / .cap-row / .cap-name / .cap-pill / .cap-ctl /
+   .cap-btn grammar. */
+const NAV_BAR_LABEL = { sidebar: 'Sidebar', topbar: 'Top tabs (app window)' };
+function navRowFixed(bar, id) {
+  return (bar === 'topbar' && id === NAV_FIXED_TOP) || (bar === 'sidebar' && id === NAV_FIXED_SIDE);
+}
+function navBarHtml(bar) {
+  const rows = navGet()[bar] || [];
+  const shown = rows.filter(r => r.pinned).length;
+  const cap = bar === 'topbar' ? (' · max ' + NAV_TOPBAR_MAX) : '';
+  let h = `<div class="cap-row"><div class="cap-txt">
+    <div class="cap-name">${esc(NAV_BAR_LABEL[bar])}<span class="cap-count">${shown} shown${cap}</span></div>
+    </div><div class="cap-ctl"></div></div>`;
+  rows.forEach((r, i) => {
+    const e = navEntry(r.id) || { label: r.id };
+    const fixed = navRowFixed(bar, r.id);
+    const first = (bar === 'topbar' && i <= 1);   // Mission Control is nailed to slot 0
+    const pill = r.pinned ? '' : ' <span class="cap-pill off">hidden</span>';
+    const fx = fixed ? ' <span class="cap-pill">always</span>' : '';
+    h += `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(e.label)}${pill}${fx}</div></div>
+      <div class="cap-ctl">
+        <button class="cap-btn" ${(i === 0 || first) ? 'disabled' : ''} title="Move up"
+          onclick="navMove('${bar}','${escAttr(r.id)}',-1)">↑</button>
+        <button class="cap-btn" ${(i === rows.length - 1 || (bar === 'topbar' && i === 0)) ? 'disabled' : ''} title="Move down"
+          onclick="navMove('${bar}','${escAttr(r.id)}',1)">↓</button>
+        <button class="cap-btn${r.pinned ? '' : ' go'}" ${fixed ? 'disabled' : ''}
+          title="${fixed ? 'this one always stays here' : (r.pinned ? 'hide it from this bar' : 'show it on this bar')}"
+          onclick="navPin('${bar}','${escAttr(r.id)}')">${r.pinned ? 'Hide' : 'Show'}</button>
+      </div></div>`;
+  });
+  return h;
+}
+function renderAppearance() {
+  return `<div class="caps-group"><span class="cap-h">Appearance</span><div class="cap-card">
+    <div class="cap-row"><div class="cap-txt">
+      <div class="cap-desc" style="margin-top:0">Order and hide the entries on the sidebar and on the
+        app window's tab strip. Hidden tabs are not gone — they collect in the <b>⋯</b> menu at the
+        right of the strip. Nothing can be hidden on both bars at once, and Logs stays reachable
+        from ⌘K. Changes reach the app window within a few seconds.</div>
+      <div id="nav-err" hidden style="color:var(--bad); font:10.5px var(--mono); margin-top:8px"></div>
+    </div></div>
+    <div id="caps-appearance">${navBarHtml('sidebar')}${navBarHtml('topbar')}</div>
+  </div></div>`;
+}
+function navRedraw(err) {
+  const c = document.getElementById('caps-appearance');
+  if (c) c.innerHTML = navBarHtml('sidebar') + navBarHtml('topbar');
+  const e = document.getElementById('nav-err');
+  if (e) { e.textContent = err || ''; e.hidden = !err; }
+}
+/* Every edit follows the same three steps: apply to a COPY, validate the copy, and
+   only then adopt it — so a refused change (the 13th pin, an entry that would vanish)
+   leaves the model exactly as it was rather than needing an undo. */
+function navApply(next) {
+  const err = navValidate(next);
+  if (err) { navRedraw(err); return; }
+  navModel = next;
+  navRedraw('');
+  navSave().then(e2 => { if (e2) navRedraw(e2); });
+}
+function navClone() { const m = navGet(); return { sidebar: m.sidebar.map(r => ({ ...r })),
+                                                  topbar: m.topbar.map(r => ({ ...r })) }; }
+function navMove(bar, id, dir) {
+  const next = navClone();
+  const rows = next[bar];
+  const i = rows.findIndex(r => r.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= rows.length) return;
+  if (bar === 'topbar' && (i === 0 || j === 0)) return;   // Mission Control stays first
+  const t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+  navApply(next);
+}
+function navPin(bar, id) {
+  if (navRowFixed(bar, id)) return;
+  const next = navClone();
+  const r = (next[bar] || []).find(x => x.id === id);
+  if (!r) return;
+  r.pinned = !r.pinned;
+  navApply(next);
 }
 
 /* ---------- Phase 3: Models (Background-tasks + Utility model pickers) ----------
@@ -11484,6 +11812,8 @@ loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
 loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configured voice
 loadMusicView();       // MUSIC DECK: restore the persisted per-page view (classic default)
+renderSidebar();       // NAV: draw both rails from the INSTANT (localStorage) copy…
+navSync();             // …then adopt data/nav.json, the copy the native shell reads
 applySolo();           // SOLO: ?solo=<view> → chromeless, pinned to that view (native Music tab)
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>

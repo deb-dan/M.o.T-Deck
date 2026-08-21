@@ -365,6 +365,174 @@ def test_routes_live():
         P.kill_current()
 
 
+# ── 6b. THE INSTALL PATH (the 2026-08-21 "Install does nothing" regression) ──
+#
+# Two independent defects made one silent failure, and each gets its own fence:
+#
+#   1. scripts/install_aider.sh shipped at mode 100644. The bridge runs installers as
+#      subprocess.run([<path>]), so the thread died with PermissionError before the
+#      script's first line — the install could never start on any machine.
+#   2. The page hid #msg with a stylesheet `display:none` and re-showed it with
+#      `style.display = ''`, which removes the inline declaration and falls straight
+#      back to that rule. EVERY message on the page was structurally invisible, so
+#      defect 1 (which does record install_error) rendered as nothing at all.
+def test_install_script_is_executable():
+    p = ROOT / "scripts" / "install_aider.sh"
+    ok(p.is_file(), "the installer exists")
+    ok(os.access(p, os.X_OK),
+       "install_aider.sh is EXECUTABLE — the bridge runs it directly (chmod +x)")
+    # And in the index, or a fresh clone / the fat seed ships the broken mode again.
+    r = subprocess.run(["git", "ls-files", "-s", "--", "scripts/install_aider.sh"],
+                       cwd=str(ROOT), capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        ok(r.stdout.startswith("100755"),
+           f"…and committed 100755, not 100644 (got {r.stdout.split()[0]})")
+
+
+def test_script_runner_survives_a_missing_exec_bit():
+    """Defence in depth for the same class: a script without its bit is run via bash
+    rather than raising. This branch is only reachable where today we hard-crash."""
+    import tempfile
+    from bridge import app as A
+    real_root = A.ROOT
+    with tempfile.TemporaryDirectory() as d:
+        sdir = Path(d) / "scripts"
+        sdir.mkdir()
+        probe = sdir / "probe.sh"
+        probe.write_text("#!/usr/bin/env bash\necho ran-anyway\n")
+        os.chmod(probe, 0o644)
+        A.ROOT = Path(d)
+        try:
+            r = A._script("probe.sh")
+            ok(r.returncode == 0 and "ran-anyway" in r.stdout,
+               "a non-executable script still runs (bash fallback), never PermissionError")
+            os.chmod(probe, 0o755)
+            r = A._script("probe.sh")
+            ok(r.returncode == 0 and "ran-anyway" in r.stdout,
+               "…and the normal executable path is unchanged")
+        finally:
+            A.ROOT = real_root
+
+
+def test_install_endpoint_live():
+    """POST /api/aider/install, driven through the real app with a fake installer."""
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as e:                                       # noqa: BLE001
+        print(f"  (skipped live install test — no TestClient: {e})")
+        return
+    import warnings
+    warnings.filterwarnings("ignore")
+    from bridge import app as A
+
+    client = TestClient(A.app)
+    real_script = A._script
+
+    class Fake:
+        def __init__(self, rc, out=""):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def wait_done(limit=6.0):
+        deadline = time.time() + limit
+        while time.time() < deadline:
+            s = client.get("/api/aider/status").json()
+            if not s.get("installing"):
+                return s
+            time.sleep(0.05)
+        return client.get("/api/aider/status").json()
+
+    try:
+        # 1. HAPPY PATH — the endpoint answers 200 and the flag flips.
+        seen = {"n": 0}
+
+        def slow_ok(name, *a, **k):
+            seen["n"] += 1
+            ok(name == "install_aider.sh", "the endpoint runs install_aider.sh")
+            time.sleep(0.4)
+            return Fake(0, "[aider] installed")
+        A._script = slow_ok
+        r = client.post("/api/aider/install")
+        ok(r.status_code == 200, f"install accepted (got {r.status_code})")
+        ok(r.json().get("installing") is True, "…and says so in the body")
+        mid = client.get("/api/aider/status").json()
+        ok(mid.get("installing") is True, "status reports installing while it runs")
+        # 2. A SECOND CLICK is 409 — and the page now surfaces that instead of
+        #    swallowing it (v1's bare `await fetch` ignored the status entirely).
+        r2 = client.post("/api/aider/install")
+        ok(r2.status_code == 409, f"a concurrent install is refused 409 (got {r2.status_code})")
+        ok((r2.json().get("error") or "") != "", "…with a reason the page can print")
+        done = wait_done()
+        ok(done.get("installing") is False, "the flag clears when the thread ends")
+        ok(not done.get("install_error"), "a successful install records no error")
+        ok(seen["n"] == 1, "the refused second click never spawned a second installer")
+
+        # 3. A FAILING installer must land in install_error, verbatim enough to act on.
+        A._script = lambda *a, **k: Fake(1, "pip install failed — no network")
+        client.post("/api/aider/install")
+        s = wait_done()
+        ok("pip install failed" in (s.get("install_error") or ""),
+           "the installer's own output reaches the status payload")
+
+        # 4. A CRASHING launcher (the PermissionError shape) is reported, not lost.
+        def boom(*a, **k):
+            raise PermissionError(13, "Permission denied")
+        A._script = boom
+        client.post("/api/aider/install")
+        s = wait_done()
+        ok("Permission denied" in (s.get("install_error") or ""),
+           "a launcher crash is reported instead of vanishing into the thread")
+    finally:
+        A._script = real_script
+        with A._AIDER_INSTALL_LOCK:
+            A._AIDER_INSTALLING.clear()
+
+    # the install log the page tails is a REAL, already-allowlisted log source
+    r = client.get("/api/logs/aider-install?lines=5")
+    ok(r.status_code == 200 and "lines" in r.json(),
+       "GET /api/logs/aider-install is served (no new endpoint was needed)")
+
+
+def test_page_cannot_fail_silently():
+    """The page half of the same bug. These assertions are the reason 'nothing
+    happened' can never be the whole story again."""
+    page = (ROOT / "bridge" / "panel" / "aider.html").read_text()
+    js = page.split("<script>")[-1].split("</script>")[0]
+
+    # (a) the status line is toggled by CLASS. `style.display=''` cannot beat a
+    #     stylesheet rule, which is exactly how v1 muted itself.
+    ok("#msg.show{display:block}" in page.replace(" ", ""),
+       "#msg has an explicit .show rule")
+    say_body = js.split("function say(", 1)[1].split("\n}", 1)[0]
+    ok("classList" in say_body or "className" in say_body,
+       "say() toggles a class")
+    ok("style.display" not in say_body,
+       "say() NEVER uses style.display (the defect that muted the whole page)")
+
+    # (b) every request checks its status. Exactly one bare fetch( exists: jfetch's own.
+    #     Comments are stripped first — prose about the bug is not a call site.
+    code = re.sub(r"^\s*//.*$", "", js, flags=re.M)
+    bare = len(re.findall(r"(?<!j)fetch\(", code))
+    ok(bare == 1, f"exactly one bare fetch(), inside jfetch (found {bare})")
+    ok("if (!r.ok) throw" in js, "a non-2xx response raises instead of reading as success")
+    ok("jfetch('/api/aider/install'" in js and "catch (e)" in js,
+       "the install POST goes through jfetch and its failure is caught")
+    ok("could not start the install: " in js, "…and the reason is shown to the user")
+
+    # (c) the log is reachable FROM THIS PAGE (it is not the panel, so it cannot open
+    #     the panel's log dialog).
+    ok("/api/logs/aider-install" in js, "the page tails the install log inline")
+    ok("id=\"logbox\"" in page and "id=\"lnk-log\"" in page, "the log surface exists")
+    ok("showLog(true)" in js, "a failure opens the log without a second click")
+
+    # (d) the visible states of the button.
+    ok("'installing…'" in js and "'Install aider'" in js,
+       "the button wears the state it is in")
+    ok("install failed:" in js, "a failed install says so, with the error text")
+
+    # (e) the absence of a Mission Control card is stated as intent, not left as a gap.
+    ok("lane, not a component" in page, "the footer explains why there is no card")
+
+
 # ── 7. wiring greps (the seams that live outside this module) ────────────────
 def test_wiring():
     appsrc = (ROOT / "bridge" / "app.py").read_text()
@@ -402,7 +570,7 @@ def test_wiring():
     ok("data/aider-venv" in inst, "its own venv")
 
     sw = (ROOT / "app" / "main.swift").read_text()
-    ok('HarnessTab(title: "Aider"' in sw, "the tab row exists")
+    ok('HarnessTab(id: "aider", title: "Aider"' in sw, "the tab row exists")
     ok('http://127.0.0.1:8700/aider' in sw, "…pointing at the bridge page")
     ok("NSSize(width: 1160" in sw, "minSize.width raised for the 9th tab")
     ok(sw.count("HarnessTab(title:") == len(re.findall(r"HarnessTab\(title:", sw)),
@@ -412,7 +580,11 @@ def test_wiring():
 def main():
     for fn in (test_origin_gate, test_resize, test_argv, test_env, test_installed,
                test_session_roundtrip, test_session_eof_and_group_kill,
-               test_one_at_a_time, test_routes_live, test_wiring):
+               test_one_at_a_time, test_routes_live,
+               test_install_script_is_executable,
+               test_script_runner_survives_a_missing_exec_bit,
+               test_install_endpoint_live, test_page_cannot_fail_silently,
+               test_wiring):
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"aider lane: {CHECKS} checks passed")

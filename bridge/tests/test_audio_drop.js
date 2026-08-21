@@ -73,48 +73,57 @@ check('the bridge cap really is 15 MB',
 // pane's mini strip and routes the ONE strip to the focused pane, swapping on collision.
 // These greps were updated with that redesign — the facts they pinned genuinely changed.
 check('exactly ONE tab strip is built from the titles array',
-      // 2026-08-20: tabTitles is now DERIVED from the single `tabs` table (title + url
-      // per row) rather than being a literal array — the fact this pinned genuinely
-      // changed. Still exactly one strip, still fed from one source.
-      /let tabTitles: \[String\] = tabs\.map \{ \$0\.title \}/.test(swift) &&
+      // 2026-08-20: tabTitles is DERIVED from the single `tabs` table (title + url per
+      // row) rather than being a literal array. 2026-08-21 (STUDIO PHASE 2): `tabs` is a
+      // VAR — the strip is rebuilt from the nav model — so tabTitles became a COMPUTED
+      // var over it. Both facts genuinely changed; still one strip, still one source.
+      /var tabTitles: \[String\] \{ tabs\.map \{ \$0\.title \} \}/.test(swift) &&
       (swift.match(/labels: tabTitles/g) || []).length === 1);
 
 // ── tab-count generalization (standing rule, Debi 2026-08-20) ──
 // Every tab must inherit every tab behaviour BY CONSTRUCTION. These pin the absence of
 // hardcoded counts, not the presence of any particular tab.
-check('one table declares every tab (title + url together)',
+check('one table declares every tab (id + title + url together)',
       /struct HarnessTab \{[\s\S]{0,120}let title: String[\s\S]{0,120}let url: URL/.test(swift) &&
-      /let tabs: \[HarnessTab\] = \[/.test(swift));
+      /let id: String/.test(swift) &&
+      // PHASE 2: the table split in two — the REGISTRY (everything that CAN be a tab)
+      // and the strip, which is a var rebuilt from the nav model.
+      /let tabRegistry: \[HarnessTab\] = \[/.test(swift) &&
+      /var tabs: \[HarnessTab\] = tabsFor\(navDefaultTopbar\)/.test(swift));
 check('the two optional component tabs are rows in that table',
-      /HarnessTab\(title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
+      /HarnessTab\(id: "comfyui", title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
       // 8899, NOT upstream's 8888: that port belongs to Debi's standalone Unsloth app and
       // the start script's listener-scoped port clear would kill it. Same number as
       // harness.yaml (contract test pins that side).
-      /HarnessTab\(title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
+      /HarnessTab\(id: "unsloth", title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
 check('...and the shell never points a tab at :8888 again',
       !/127\.0\.0\.1:8888/.test(swift));
 check('Music is a tab row loading OUR OWN panel chromeless (?solo=music)',
-      /HarnessTab\(title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
-check('special tabs are looked up BY TITLE, never written as a literal index',
-      /let odysseusTab = tabTitles\.firstIndex\(of: "Odysseus"\) \?\? -1/.test(swift) &&
-      /let hermesTab = tabTitles\.firstIndex\(of: "Hermes"\) \?\? -1/.test(swift));
+      /HarnessTab\(id: "music", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
+check('special tabs are looked up BY ID, never written as a literal index',
+      // PHASE 2: by ID rather than by title — the strip can be reordered now, and an id
+      // survives a rename as well as a reorder. Strictly stronger than the title lookup.
+      /var odysseusTab: Int \{ tabs\.firstIndex\(where: \{ \$0\.id == odysseusId \}\) \?\? -1 \}/.test(swift) &&
+      /var hermesTab: Int \{ tabs\.firstIndex\(where: \{ \$0\.id == hermesId \}\) \?\? -1 \}/.test(swift));
 check('...and an absent named tab degrades to -1 (never matches) rather than to tab 0',
-      !/firstIndex\(of: "(Odysseus|Hermes)"\) \?\? 0/.test(swift));
-check('the primaries are built FROM the table, so a new row needs no code here',
-      /primaries = tabs\.indices\.map \{ i -> WKWebView in/.test(swift) &&
-      /return WKWebView\(frame: \.zero, configuration: WKWebViewConfiguration\(\)\)/.test(swift));
+      !/firstIndex\(where: \{ \$0\.id == (odysseusId|hermesId) \}\) \?\? 0/.test(swift));
+check('the primaries are built FROM the registry, so a new row needs no code here',
+      /for t in tabRegistry \{/.test(swift) &&
+      /wvById\[t\.id\] = WKWebView\(frame: \.zero, configuration: WKWebViewConfiguration\(\)\)/.test(swift));
 check('webViewFor / allWebViews / urlForTab are table lookups, not switch tables',
-      /func webViewFor\(_ idx: Int\) -> WKWebView \{[\s\S]{0,300}return primaries\[idx\]/.test(swift) &&
-      /func allWebViews\(\) -> \[WKWebView\] \{ return primaries \}/.test(swift) &&
+      /func webViewFor\(_ idx: Int\) -> WKWebView \{[\s\S]{0,300}return wvById\[tabs\[idx\]\.id\] \?\? panelWV/.test(swift) &&
+      /func allWebViews\(\) -> \[WKWebView\] \{ return Array\(wvById\.values\) \}/.test(swift) &&
       /func urlForTab\(_ idx: Int\) -> URL \{[\s\S]{0,200}return tabs\[idx\]\.url/.test(swift));
-check('lazy load is ONE generic path keyed by a Set, not a flag per tab',
-      /var loadedTabs = Set<Int>\(\)/.test(swift) &&
-      /guard !loadedTabs\.contains\(idx\) else \{ return \}/.test(swift) &&
+check('lazy load is ONE generic path keyed by a Set of IDS, not a flag per tab',
+      // PHASE 2: keyed by id, which is what makes a reorder unable to make the shell
+      // think a loaded page is unloaded (or reload one that is already there).
+      /var loadedTabs = Set<String>\(\)/.test(swift) &&
+      /guard !loadedTabs\.contains\(id\) else \{ return \}/.test(swift) &&
       !/var (odyLoaded|vsLoaded|vbLoaded) /.test(swift));
 check('no per-tab webview properties survive for the optional SPAs',
       !/\bvsWV\b/.test(swift) && !/\bvbWV\b/.test(swift));
-check('urlFor resolves a primary by INDEX, so a new tab needs no identity branch',
-      /if let i = primaries\.firstIndex\(where: \{ \$0 === wv \}\) \{ return urlForTab\(i\) \}/.test(swift));
+check('urlFor resolves a primary by ID, so a new tab needs no identity branch',
+      /if let hit = wvById\.first\(where: \{ \$0\.value === wv \}\) \{ return urlForId\(hit\.key\) \}/.test(swift));
 check('Mission Control stays tab 0 by construction and keeps the sole drop overlay',
       /let panelTab = 0/.test(swift) &&
       /\(leftWV === panelWV\) \? leftHost/.test(swift));
@@ -236,7 +245,8 @@ check('the drag has its own [split] diagnostics',
 // so both halves of it are pinned.
 check('the ghost state is two booleans plus one lazily-keyed dictionary',
       /var leftIsGhost = false/.test(swift) && /var rightIsGhost = false/.test(swift) &&
-      /var secondInstances: \[Int: WKWebView\] = \[:\]/.test(swift));
+      // PHASE 2: keyed by ENTRY ID — an index would repoint under a rebuilt strip.
+      /var secondInstances: \[String: WKWebView\] = \[:\]/.test(swift));
 check('a COLLIDING drop opens a second instance instead of swapping',
       /func dropTab\([\s\S]{0,900}let other = splitOn \? \(p == 1 \? currentTab : rightTab\) : currentTab[\s\S]{0,200}if tab == other && \(splitOn \|\| p == 1\) \{[\s\S]{0,120}openSecondInstance\(tab, onPane: p\)/
         .test(swift));
@@ -249,27 +259,29 @@ check('the split-OFF right-half drop of the CURRENT tab no longer steps the left
 check('a second instance copies the primary\'s configuration (skin + shared cookies)',
       /func ghostFor\(_ idx: Int\) -> WKWebView[\s\S]{0,600}WKWebView\(frame: \.zero, configuration: webViewFor\(idx\)\.configuration\)/
         .test(swift));
+check('...and is keyed by the tab\'s ID, so a strip rebuild cannot repoint it',
+      /func ghostFor\(_ idx: Int\)[\s\S]{0,200}let id = tabId\(idx\)[\s\S]{0,120}secondInstances\[id\]/.test(swift));
 check('a second instance is a PLAIN WKWebView, not a DropWebView',
       !/func ghostFor\([\s\S]{0,600}DropWebView/.test(swift));
 check('a second instance loads its own tab URL through the shared tab→URL table',
       /func urlForTab\(_ idx: Int\) -> URL/.test(swift) &&
       /func ghostFor\([\s\S]{0,700}wv\.load\(URLRequest\(url: urlForTab\(idx\)\)\)/.test(swift));
 check('urlFor asks the ghost table FIRST (else a ⌘R on a copy would go to the bridge)',
-      /func urlFor\(_ wv: WKWebView\) -> URL[\s\S]{0,400}secondInstances\.first\(where: \{ \$0\.value === wv \}\)[\s\S]{0,60}urlForTab\(hit\.key\)/
+      /func urlFor\(_ wv: WKWebView\) -> URL[\s\S]{0,500}secondInstances\.first\(where: \{ \$0\.value === wv \}\)[\s\S]{0,60}urlForId\(hit\.key\)/
         .test(swift));
 check('⌘R reloads the COPY when the focused pane is showing one',
-      /func visibleWebView\(\)[\s\S]{0,400}rightIsGhost \? secondInstances\[rightTab\] : webViewFor\(rightTab\)/.test(swift) &&
-      /if leftIsGhost \{ return secondInstances\[currentTab\] \}/.test(swift));
+      /func visibleWebView\(\)[\s\S]{0,400}rightIsGhost \? secondInstances\[tabId\(rightTab\)\] : webViewFor\(rightTab\)/.test(swift) &&
+      /if leftIsGhost \{ return secondInstances\[tabId\(currentTab\)\] \}/.test(swift));
 // Memory discipline — the primary is never destroyed, the copy always is.
 check('destroyGhost stops loading, unparents, and drops the only strong reference',
-      /func destroyGhost\(_ idx: Int\)[\s\S]{0,500}secondInstances\.removeValue\(forKey: idx\)[\s\S]{0,400}g\.stopLoading\(\)[\s\S]{0,300}g\.removeFromSuperview\(\)/
+      /func destroyGhost\(_ id: String\)[\s\S]{0,500}secondInstances\.removeValue\(forKey: id\)[\s\S]{0,400}g\.stopLoading\(\)[\s\S]{0,300}g\.removeFromSuperview\(\)/
         .test(swift));
 check('destroyGhost forgets a failed load so the set cannot leak identifiers',
       /func destroyGhost\([\s\S]{0,500}failedLoads\.remove\(ObjectIdentifier\(g\)\)/.test(swift));
 check('releaseUnusedGhosts iterates a COPY of the keys (the dict is mutated inside)',
-      /func releaseUnusedGhosts\(\)[\s\S]{0,200}for idx in Array\(secondInstances\.keys\)/.test(swift));
+      /func releaseUnusedGhosts\(\)[\s\S]{0,200}for id in Array\(secondInstances\.keys\)/.test(swift));
 check('a copy is kept only while a pane\'s ghost flag claims it',
-      /func releaseUnusedGhosts\([\s\S]{0,500}let keptLeft = leftIsGhost && idx == currentTab[\s\S]{0,200}let keptRight = splitOn && rightIsGhost && idx == rightTab[\s\S]{0,160}destroyGhost\(idx\)/
+      /func releaseUnusedGhosts\([\s\S]{0,500}let keptLeft = leftIsGhost && id == tabId\(currentTab\)[\s\S]{0,200}let keptRight = splitOn && rightIsGhost && id == tabId\(rightTab\)[\s\S]{0,160}destroyGhost\(id\)/
         .test(swift));
 check('closing the split / a pane destroys the copy: applyPanes clears the flags first',
       /func applyPanes\(\)[\s\S]{0,900}if !splitOn \|\| rightTab != leftIdx \{ leftIsGhost = false; rightIsGhost = false \}[\s\S]{0,200}releaseUnusedGhosts\(\)/
@@ -367,7 +379,7 @@ check('visibility and health are re-checked on the main thread after the fetch',
 check('every OTHER Hermes load path records the generation too (first load, ⌘R, retry)',
       // the first-load site moved into the ONE generic ensureLoaded when the per-tab
       // `hermesLoaded = true` flag became a Set — same fact, pinned at the new site
-      /loadedTabs\.insert\(idx\)[\s\S]{0,300}if idx == hermesTab \{ syncHermesGen\(reloadIfNewer: false\) \}/.test(swift) &&
+      /loadedTabs\.insert\(id\)[\s\S]{0,300}if id == hermesId \{ syncHermesGen\(reloadIfNewer: false\) \}/.test(swift) &&
       /func retryIfFailed[\s\S]{0,240}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
         .test(swift) &&
       /func reloadTab[\s\S]{0,700}wv === hermesWV \{ syncHermesGen\(reloadIfNewer: false\) \}/
@@ -384,10 +396,14 @@ check('no new UserDefaults key was invented for any of this',
 // the SAME question while a Hermes surface is visible — and must not exist otherwise.
 const tim = swift.slice(swift.indexOf('func updateHermesGenTimer'),
                         swift.indexOf('func syncStrip'));
-check('there is exactly ONE poll and ONE place that arms it',
+check('there is exactly ONE Hermes poll and ONE place that arms it',
       (swift.match(/func updateHermesGenTimer/g) || []).length === 1
       && (swift.match(/updateHermesGenTimer\(\)/g) || []).length === 3   // decl + 2 calls
-      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 1);
+      // PHASE 2 added a SECOND timer — the nav poll — so this is no longer "the only
+      // scheduledTimer in the file". It is still the only HERMES one, and the nav one is
+      // armed from exactly one place too (see the nav section below).
+      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 2
+      && (swift.match(/hermesGenTimer = Timer\.scheduledTimer/g) || []).length === 1);
 check('the poll calls the EXISTING sync, not a second copy of the logic',
       /syncHermesGen\(reloadIfNewer: true, why: "poll"\)/.test(tim)
       && !/hermes_config_gen/.test(tim) && !/URLSession/.test(tim));
@@ -427,7 +443,7 @@ const vis = swift.slice(swift.indexOf('func visibleHermesWebViews'),
                         swift.indexOf('func updateHermesGenTimer'));
 check('the visible set covers a Hermes ghost as well as the primary',
       // the literal index became the named constant when the tab list grew — same fact
-      /secondInstances\[hermesTab\]/.test(vis) && /out\.append\(hermesWV\)/.test(vis));
+      /secondInstances\[hermesId\]/.test(vis) && /out\.append\(hermesWV\)/.test(vis));
 check('...the primary is still gated on hermesLoaded',
       /if hermesLoaded,/.test(vis));
 check('...both panes are asked, so split view is genuinely covered',
@@ -451,11 +467,18 @@ check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift));
 check('it accepts only the "harness" message name',
       /message\.name == "harness"/.test(handlerBody));
-check('switchTab resolves a TITLE against the tabs table (no index on the wire)',
+check('switchTab resolves an ID (title as the fallback) against the REGISTRY',
+      // PHASE 2: the id is the stable key and the registry — not the visible strip — is
+      // what it resolves against, so a tab the user hid is still reachable from its
+      // sidebar row (shown for the session, exactly as the ⋯ menu does it).
       /body\["title"\] as\? String/.test(handlerBody)
-      && /tabTitles\.firstIndex\(of: title\)/.test(handlerBody));
-check('an unknown title is ignored, never coerced to a tab',
-      /else \{[\s\S]{0,160}unknown title[\s\S]{0,60}return/.test(handlerBody)
+      && /body\["id"\] as\? String/.test(handlerBody)
+      && /tabRegistry\.contains\(where: \{ \$0\.id == w \}\)/.test(handlerBody)
+      && /tabRegistry\.first\(where: \{ \$0\.title == t \}\)\?\.id/.test(handlerBody));
+check('...a hidden tab is SHOWN for the session rather than ignored',
+      /if !tabs\.contains\(where: \{ \$0\.id == hit \}\) \{[\s\S]{0,160}rebuildTabs\(\)/.test(handlerBody));
+check('an unknown tab is ignored, never coerced to a tab',
+      /else \{[\s\S]{0,160}unknown tab[\s\S]{0,60}return/.test(handlerBody)
       && !/firstIndex\(of: title\) \?\? 0/.test(handlerBody));
 check('an unknown cmd is ignored too',
       /default:[\s\S]{0,120}unknown cmd/.test(handlerBody));
@@ -468,30 +491,96 @@ check('the switch is logged like every other tab event',
 
 // ── the panel half of the same bridge ──
 check('the panel maps components to tab titles with a TABLE, not a name guess',
-      /const TAB_FOR_COMPONENT = \{/.test(html)
-      && /odysseus: 'Odysseus'/.test(html) && /comfyui: 'ComfyUI'/.test(html)
-      && /unsloth: 'Unsloth'/.test(html));
+      // PHASE 2: the table is DERIVED from the one nav registry rather than written a
+      // second time — a component's tab title now exists in exactly one place.
+      /const TAB_FOR_COMPONENT = \{\};/.test(html)
+      && /NAV_ENTRIES\.forEach\(e => \{ if \(e\.kind === 'component' && e\.tab\) TAB_FOR_COMPONENT\[e\.id\] = e\.tab; \}\);/.test(html)
+      && /id:'odysseus',\s+label:'Odysseus',[\s\S]{0,120}tab:'Odysseus'/.test(html)
+      && /tab:'ComfyUI'/.test(html) && /tab:'Unsloth'/.test(html));
 check('...and searxng, which has no tab, is absent from it',
-      !/searxng: '/.test(html));
+      !/id:'searxng'/.test(html) && !/searxng: '/.test(html));
 const oc = html.slice(html.indexOf('function openComponent('),
                       html.indexOf('function openMusic('));
 check('openComponent reads running state at CLICK time, not from the rendered row',
       /lastStatus && lastStatus\.components/.test(oc));
 check('...a RUNNING component opens its tab',
-      /c\.running && title && switchTab\(title\)/.test(oc));
+      /c\.running && title && switchTab\(title, name\)/.test(oc));
 check('...and everything else falls back to jumpToCard (browser, stopped, no tab)',
       /jumpToCard\(name\)/.test(oc));
 check('switchTab returns false when the native bridge is absent',
-      /function switchTab\(title\)[\s\S]{0,240}if \(!h\) return false/.test(html));
+      /function switchTab\(title, id\)[\s\S]{0,300}if \(!h\) return false/.test(html));
 check('the sidebar rows call openComponent, not jumpToCard directly',
-      /onclick="openComponent\('\$\{name\}'\)"/.test(html));
+      // PHASE 2: the rows are rendered from the nav model, so the call site moved into
+      // renderSidebar — the rule (a component row goes through openComponent) is the same.
+      /onclick="openComponent\('\$\{escAttr\(name\)\}'\)"/.test(html));
 check('the Music nav entry routes to the native tab with an in-panel fallback',
-      /id="nav-music" onclick="openMusic\(\)"/.test(html)
-      && /function openMusic\(\)[\s\S]{0,240}if \(switchTab\('Music'\)\) return;[\s\S]{0,60}showView\('music'\)/.test(html));
+      /\{ id:'music',[\s\S]{0,120}prefersTab:true \}/.test(html)
+      && /function openMusic\(\)[\s\S]{0,260}if \(switchTab\('Music', 'music'\)\) return;[\s\S]{0,60}showView\('music'\)/.test(html));
+
+// ── STUDIO PHASE 2: the strip is a VIEW of the nav model ──
+// The shell cannot read the panel's localStorage, so data/nav.json is the shared copy.
+// These pin the properties that make a rebuild safe: it reloads nothing, it cannot lose
+// Mission Control, and nothing it hides becomes unreachable.
+check('the strip is rebuilt from the pinned list, not from a literal table',
+      /func rebuildTabs\(\)/.test(swift)
+      && /var ids = navPinned\.filter/.test(swift)
+      && /tabs = tabsFor\(ids\)/.test(swift)
+      && /seg\.segmentCount = tabs\.count/.test(swift)
+      && /seg\.setLabel\(t\.title, forSegment: i\)/.test(swift));
+check('...and the widths are recomputed, so segmentAt still hit-tests the real strip',
+      /func rebuildTabs\(\)[\s\S]{0,1600}setSegmentWidths\(\)/.test(swift));
+check('a rebuild remembers each pane BY ID, so reordering never moves what you see',
+      /func rebuildTabs\(\)[\s\S]{0,300}let keepLeft = tabId\(currentTab\)[\s\S]{0,120}let keepRight = tabId\(rightTab\)/.test(swift)
+      && /currentTab = tabs\.firstIndex\(where: \{ \$0\.id == keepLeft \}\) \?\? 0/.test(swift));
+check('Mission Control cannot be lost from the strip, whatever the file says',
+      /func rebuildTabs\([\s\S]{0,900}ids\.removeAll \{ \$0 == panelId \}[\s\S]{0,60}ids\.insert\(panelId, at: 0\)/.test(swift));
+check('a tab that is on screen stays on the strip even after it is un-pinned',
+      /func rebuildTabs\([\s\S]{0,1600}for id in \(splitOn \? \[keepLeft, keepRight\] : \[keepLeft\]\) where !ids\.contains\(id\)/.test(swift));
+check('hidden tabs collect in a ⋯ overflow menu, hidden when there are none',
+      /overflowButton = NSButton\(title: "⋯"/.test(swift)
+      && /func hiddenTabs\(\) -> \[HarnessTab\][\s\S]{0,200}tabRegistry\.filter/.test(swift)
+      && /overflowButton\.isHidden = hiddenTabs\(\)\.isEmpty/.test(swift)
+      && /NSMenu\(\)/.test(swift));
+check('...and picking one is SESSION ONLY — it never writes the layout back',
+      /func overflowPick\([\s\S]{0,400}tempShown\.append\(id\)[\s\S]{0,200}rebuildTabs\(\)/.test(swift)
+      && !/func overflowPick\([\s\S]{0,400}navPinned =/.test(swift));
+check('the overflow menu sits beside ⫽, at the strip\'s right end',
+      /overflowButton\.trailingAnchor\.constraint\(equalTo: splitButton\.leadingAnchor/.test(swift));
+check('the nav poll rides the EXISTING /api/status carrier (a nav_gen counter)',
+      /obj\["nav_gen"\] as\? Int/.test(swift)
+      && /func syncNav\(force: Bool\)/.test(swift)
+      && /func fetchNav\(\)/.test(swift));
+check('...and only a STRICT increase costs the second request',
+      /func syncNav\([\s\S]{0,1200}let prev = self\.navGen[\s\S]{0,120}self\.navGen = gen[\s\S]{0,200}guard let p = prev, gen > p else \{ return \}/.test(swift));
+check('...FAIL SAFE: an error, a non-200 or a missing field changes nothing',
+      /func fetchNav\(\)[\s\S]{0,600}guard err == nil,[\s\S]{0,300}statusCode == 200,[\s\S]{0,300}else \{ return \}/.test(swift));
+check('the poll is armed from exactly one place and pauses while the app is not frontmost',
+      (swift.match(/startNavPoll\(\)/g) || []).length === 2       // decl + the one call
+      && /navTimer = Timer\.scheduledTimer/.test(swift)
+      && /guard navTimer == nil else \{ return \}/.test(swift)
+      && /func startNavPoll\(\)[\s\S]{0,600}if !NSApp\.isActive \{ return \}/.test(swift));
+check('the panel PUSHES a layout change so the strip does not wait for the poll',
+      /case "navChanged":/.test(swift) && /syncNav\(force: true\)/.test(swift)
+      && /cmd:'navChanged'/.test(html));
+check('applyNav no-ops when nothing changed (the poll can run forever safely)',
+      /func applyNav\(_ ids: \[String\]\)[\s\S]{0,300}guard !clean\.isEmpty, clean != navPinned else \{ return \}/.test(swift));
+check('the arrangement is persisted by ID as well as by index (an index is strip-relative)',
+      /ud\.set\(tabId\(currentTab\), forKey: "harness\.split\.leftId"\)/.test(swift)
+      && /ud\.set\(tabId\(rightTab\), forKey: "harness\.split\.rightId"\)/.test(swift)
+      && /tabs\.firstIndex\(where: \{ \$0\.id == savedLeftId \}\)/.test(swift));
+check('the default strip is exactly the ten tabs that shipped, in order',
+      /let navDefaultTopbar = \["mc", "odysseus", "hermes", "voicestudio", "voicebox",\s*\n?\s*"comfyui", "unsloth", "music", "aider", "loffice"\]/.test(swift));
+check('the three pinnable VIEWS load the panel chromeless, one per view',
+      /HarnessTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
+      && /HarnessTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)
+      && /HarnessTab\(id: "caps",[\s\S]{0,90}\?solo=caps/.test(swift));
 
 // ── solo mode ──
 check('soloView is pure and only knows the views solo mode declares',
-      /const SOLO_VIEWS = \['music'\]/.test(html)
+      // PHASE 2: the whitelist is DERIVED from the nav registry (any entry that owns a
+      // panel view can be pinned as a tab) instead of being the literal ['music'].
+      // Mission Control is excluded on purpose: its native tab IS the panel.
+      /const SOLO_VIEWS = NAV_ENTRIES\.filter\(e => e\.view && e\.id !== 'mc'\)\.map\(e => e\.view\)/.test(html)
       && /function soloView\(search\)/.test(html));
 check('applySolo adds body.solo and pins the view, and is armed at boot',
       /document\.body\.classList\.add\('solo'\)/.test(html)
@@ -502,14 +591,21 @@ check('solo mode hides chrome in exactly three CSS rules and restyles nothing el
       && /body\.solo \.topbar \{ display:none; \}/.test(html));
 
 // soloView EXECUTED on the shipped source — the decision table, incl. totality.
+// PHASE 2: the whitelist is derived from NAV_ENTRIES, so the registry travels with it.
 {
-  const src = html.slice(html.indexOf("const SOLO_VIEWS = ['music']"),
-                         html.indexOf('function applySolo('));
+  const regStart = html.indexOf('const NAV_ENTRIES = [');
+  const reg = html.slice(regStart, html.indexOf('\n];', regStart) + 3);
+  const src = reg + html.slice(html.indexOf('const SOLO_VIEWS = NAV_ENTRIES'),
+                               html.indexOf('function applySolo('));
   const soloView = new Function(src + '; return soloView;')();
   const cases = [
     ['?solo=music', 'music'], ['?solo=MUSIC', 'music'], ['?a=1&solo=music', 'music'],
     ['?solo=music&b=2', 'music'], ['', null], ['?', null], ['?solo=', null],
-    ['?solo=chat', null], ['?solo=musicx', null], ['?notsolo=music', null],
+    // the three views that PHASE 2 made pinnable are now legitimate solo targets…
+    ['?solo=chat', 'chat'], ['?solo=models', 'models'], ['?solo=caps', 'caps'],
+    // …and Mission Control is deliberately NOT one: its native tab is the panel itself.
+    ['?solo=mc', null], ['?solo=logs', null],
+    ['?solo=musicx', null], ['?notsolo=music', null],
     [null, null], [undefined, null], ['?xsolo=music', null],
   ];
   let ok = true;
@@ -517,7 +613,7 @@ check('solo mode hides chrome in exactly three CSS rules and restyles nothing el
     const got = soloView(inp);
     if (got !== want) { ok = false; console.log('   soloView(' + JSON.stringify(inp) + ') = ' + got + ', want ' + want); }
   }
-  check('soloView decision table (13 cases incl. junk/null totality)', ok);
+  check('soloView decision table (18 cases incl. junk/null totality)', ok);
 }
 
 console.log('');

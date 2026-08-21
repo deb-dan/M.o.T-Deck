@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+import io as _io
 import os
 import shutil
 import tempfile
@@ -70,6 +71,10 @@ SHEET_NAME_MAX = 31            # Excel's own limit; openpyxl truncates past it
 # a person edits by hand and still well inside what JSON.stringify survives; past it
 # we stop reading and SAY the sheet was truncated rather than hanging the tab.
 MAX_CELLS = 200_000
+# Import cap. A spreadsheet that big is past what the 200k-cell reader will show
+# anyway; the point of the cap is that a webview cannot hand the bridge an arbitrary
+# amount of memory in one body.
+UPLOAD_MAX_BYTES = 30 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
 DEFAULT_ROWS, DEFAULT_COLS = 100, 26
 DEFAULT_ROW_PX, DEFAULT_COL_PX = 24, 88
@@ -774,6 +779,73 @@ def create_doc(root, name):
     except OfficeError as e:
         return None, str(e)
     return safe, None
+
+
+def free_name(root, name):
+    """A name nothing is stored under yet: `book.xlsx` → `book (2).xlsx` → …
+
+    Import NEVER clobbers. A workbook that arrives from outside is somebody's real
+    file and the one already here is somebody's real file too — the artifact-save and
+    voice-clip discipline (' (n)') is the only safe policy, and it is why upload does
+    not simply reuse create_doc's refusal.
+    """
+    safe, reason = valid_name(name)
+    if not safe:
+        return None, reason
+    stem = os.path.splitext(safe)[0]
+    for n in range(1, 1000):
+        cand = safe if n == 1 else f"{stem} ({n}){DOC_EXT}"
+        if len(cand) > NAME_MAX:
+            return None, f"refused: that name is longer than {NAME_MAX} characters"
+        target, reason = doc_target(root, cand, must_exist=False)
+        if not target:
+            return None, reason
+        if not os.path.exists(target):
+            return cand, None
+    return None, "refused: too many workbooks with that name already"
+
+
+def import_doc(root, name, data):
+    """(report, None) or (None, reason) — an .xlsx from outside, into data/office.
+
+    The bytes are VERIFIED as a workbook before they are kept: a renamed .txt would
+    otherwise land in the list and only fail later, when the user clicks it. Written
+    through the same temp-file + os.replace path as every other write here.
+    """
+    if openpyxl is None:
+        return None, ("openpyxl is not installed in the bridge venv — "
+                      f"the .xlsx round-trip is unavailable ({_OPENPYXL_ERR})")
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return None, "no file received"
+    if len(data) > UPLOAD_MAX_BYTES:
+        return None, (f"that file is {len(data) // (1024 * 1024)} MB — the import cap "
+                      f"is {UPLOAD_MAX_BYTES // (1024 * 1024)} MB")
+    safe, reason = valid_name(name)
+    if not safe:
+        return None, reason
+    try:
+        openpyxl.load_workbook(_io.BytesIO(bytes(data)), data_only=False).close()
+    except Exception as e:                                       # noqa: BLE001
+        return None, f"that file is not a readable .xlsx workbook: {e}"
+    final, reason = free_name(root, safe)
+    if not final:
+        return None, reason
+    target, reason = doc_target(root, final, must_exist=False)
+    if not target:
+        return None, reason
+    d = os.path.dirname(target)
+    fd, tmp = tempfile.mkstemp(prefix=".office-", suffix=DOC_EXT, dir=d)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(bytes(data))
+        os.replace(tmp, target)
+    except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return None, f"could not write that workbook: {e}"
+    return {"name": final, "renamed": final != safe, "bytes": len(data)}, None
 
 
 def save_doc(root, name, snapshot):

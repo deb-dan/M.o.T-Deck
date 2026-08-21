@@ -16,49 +16,83 @@ let bridgeURL = URL(string: "http://127.0.0.1:8700")!
 
 // ONE table: the tab strip's labels AND the URL each tab loads. It feeds the single
 // NSSegmentedControl (v2 deleted the right pane's mini strip), `urlForTab`, the
-// primaries array and the ghost table — so none of them can drift from each other.
+// id-keyed webview table and the ghost table — so none of them can drift from each
+// other. STUDIO PHASE 2 split it in two: the REGISTRY (everything that can be a tab)
+// and `tabs` (what is on the strip now), which the nav model chooses.
 struct HarnessTab {
+    let id: String
     let title: String
     let url: URL
 }
-let tabs: [HarnessTab] = [
+// STUDIO PHASE 2: `tabRegistry` is every entry that CAN be a tab; `tabs` (below) is
+// which of them are ON the strip right now, in the user's order, rebuilt from
+// data/nav.json. The ID is the stable key — webviews are keyed by it, so reordering or
+// hiding a tab never reloads a page — while the TITLE is only ever a label.
+let tabRegistry: [HarnessTab] = [
     // Mission Control — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
     // app's home, the page the bridge-wait screen writes into, and the only file-drop
     // target (DropOverlay). Keep it first.
-    HarnessTab(title: "Mission Control", url: bridgeURL),
-    HarnessTab(title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
-    HarnessTab(title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
+    HarnessTab(id: "mc", title: "Mission Control", url: bridgeURL),
+    HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
+    HarnessTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
     // Optional components — usually NOT running, so their first load normally fails into
     // the shared "Not reachable yet" placeholder and retries on re-select / ⌘R.
-    HarnessTab(title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
-    HarnessTab(title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
-    HarnessTab(title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
+    HarnessTab(id: "voicestudio", title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
+    HarnessTab(id: "voicebox", title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
+    HarnessTab(id: "comfyui", title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
     // :8899, NOT upstream's default :8888 — that port belongs to Debi's standalone
     // Unsloth app (harness.yaml carries the same number and the reason).
-    HarnessTab(title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
+    HarnessTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
     // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always
     // reachable, while the in-panel Music view keeps working exactly as before.
-    HarnessTab(title: "Music", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
+    HarnessTab(id: "music", title: "Music", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
     // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
-    HarnessTab(title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
-    // Office — spreadsheets over vendored Univer, served from OUR bridge (/office).
+    HarnessTab(id: "aider", title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
+    // LOffice — spreadsheets over vendored Univer, served from OUR bridge (/office).
     // Ours, bridge origin, its own document for the same reason Aider is: it loads
     // ~10MB of Univer UMD and must not carry the panel's poll loops. Debi suggested
-    // "Office Lane"; the tab-strip width budget below rules a two-word title out.
-    HarnessTab(title: "Office", url: URL(string: "http://127.0.0.1:8700/office")!),
+    // "Office Lane"; the tab-strip width budget below rules a two-word title out, so
+    // the name is LOffice (2026-08-21). The ROUTE stays /office: internal names do
+    // not churn with a wordmark.
+    HarnessTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!),
+    // PHASE 2: the three panel VIEWS that can be pinned to the strip. They are the same
+    // chromeless `?solo=` load Music already used, generalised — the panel hides its own
+    // sidebar/topbar and pins itself to that view. None of them is on the strip by
+    // default (they are one sidebar click away), so this changes nothing until asked.
+    HarnessTab(id: "chat", title: "Chat", url: URL(string: "http://127.0.0.1:8700/?solo=chat")!),
+    HarnessTab(id: "models", title: "Models", url: URL(string: "http://127.0.0.1:8700/?solo=models")!),
+    HarnessTab(id: "caps", title: "Capabilities", url: URL(string: "http://127.0.0.1:8700/?solo=caps")!),
 ]
-let tabTitles: [String] = tabs.map { $0.title }
 
-// Named indices, looked up BY TITLE so reordering `tabs` can never silently repoint a
-// behaviour at the wrong tab. `-1` when a tab is absent, which every use site reads as
-// "never matches" rather than accidentally matching tab 0.
-let panelTab = 0                                              // by construction (above)
-let odysseusTab = tabTitles.firstIndex(of: "Odysseus") ?? -1   // the only skinned webview
-let hermesTab = tabTitles.firstIndex(of: "Hermes") ?? -1       // the only staleness-reloaded one
+// The DEFAULT strip = exactly the ten tabs this app shipped with, in order. It is also
+// bridge/nav.py's DEFAULT_TOPBAR pinned prefix; the two are asserted to agree by test,
+// because a disagreement would mean the strip and the panel's Appearance editor
+// describe different windows.
+let navDefaultTopbar = ["mc", "odysseus", "hermes", "voicestudio", "voicebox",
+                        "comfyui", "unsloth", "music", "aider", "loffice"]
+func tabsFor(_ ids: [String]) -> [HarnessTab] {
+    return ids.compactMap { i in tabRegistry.first(where: { $0.id == i }) }
+}
+// THE STRIP. A `var` now: applyNav rebuilds it from data/nav.json (order + hidden), and
+// every use site below reads it live rather than caching an index.
+var tabs: [HarnessTab] = tabsFor(navDefaultTopbar)
+var tabTitles: [String] { tabs.map { $0.title } }
+
+// Named indices, looked up BY ID (stable across a rename and across a reorder) so
+// rebuilding `tabs` can never silently repoint a behaviour at the wrong tab. `-1` when
+// the tab is not on the strip, which every use site reads as "never matches" rather
+// than accidentally matching tab 0 — and which is now a REAL state: a user may hide
+// Hermes from the strip, in which case there is no Hermes tab to reload.
+let panelId = "mc"
+let odysseusId = "odysseus"
+let hermesId = "hermes"
+let panelTab = 0                                              // MC is pinned first (applyNav)
+var odysseusTab: Int { tabs.firstIndex(where: { $0.id == odysseusId }) ?? -1 }   // the only skinned webview
+var hermesTab: Int { tabs.firstIndex(where: { $0.id == hermesId }) ?? -1 }       // the only staleness-reloaded one
 
 // The panel's gold, as the focused-pane indicator. The unfocused pane gets a strip of
 // the SAME height in clear, so switching focus never moves a single pixel of content.
@@ -303,20 +337,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var downloadHandler: AnyObject?
     var window: NSWindow!
     var dropOverlay: NSView?
-    // THE primaries, index-aligned with `tabs`. One webview per tab, exactly once —
+    // THE primaries. One webview per REGISTRY entry, exactly once —
     // a pane BORROWS one by reparenting; a ghost is a second instance (secondInstances).
     // Three of them are also held by name because they have behaviour of their own
     // (the panel is the drop target + the bridge-wait surface; Odysseus is the only
     // skinned one; Hermes is the only staleness/config-generation reloaded one). Every
     // other tab is a plain webview created generically from the table.
-    var primaries: [WKWebView] = []
-    var panelWV: WKWebView!      // == primaries[panelTab]
-    var odyWV: WKWebView!        // == primaries[odysseusTab]
-    var hermesWV: WKWebView!     // == primaries[hermesTab]
+    // PHASE 2: keyed BY ENTRY ID, not by index. That is the whole reason reordering or
+    // hiding a tab never reloads a page — the strip is a view of this dictionary, and
+    // rebuilding the view touches no webview at all. One webview per REGISTRY entry
+    // (they cost nothing until something loads a URL into them, and lazy-load means an
+    // entry that is never selected never loads).
+    var wvById: [String: WKWebView] = [:]
+    var primaries: [WKWebView] { return tabs.map { wvById[$0.id] ?? panelWV } }
+    var panelWV: WKWebView!      // == wvById[panelId]
+    var odyWV: WKWebView!        // == wvById[odysseusId]
+    var hermesWV: WKWebView!     // == wvById[hermesId]
     // Lazy-load bookkeeping, one Set instead of a flag per tab (a flag per tab is
-    // exactly the hardcoded-count shape the standing rule forbids).
-    var loadedTabs = Set<Int>()
-    var hermesLoaded: Bool { return loadedTabs.contains(hermesTab) }
+    // exactly the hardcoded-count shape the standing rule forbids). By ID, so a rebuilt
+    // strip cannot make the shell think a loaded page is unloaded (or the reverse).
+    var loadedTabs = Set<String>()
+    var hermesLoaded: Bool { return loadedTabs.contains(hermesId) }
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
@@ -356,6 +397,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var rightPlaceholder: NSView!    // safety net only (see applyPanes)
     var park: NSView!                // hidden holder for un-borrowed webviews
     var splitButton: NSButton!
+    var overflowButton: NSButton!
+    // ── nav (STUDIO PHASE 2) ──
+    // Which entries are on the strip, in order, as data/nav.json last said. The shell
+    // cannot read the panel's localStorage, which is exactly why that file exists.
+    var navPinned: [String] = navDefaultTopbar
+    // Session-only: entries the user picked out of the ⋯ menu (and any entry that was
+    // hidden while it was ON SCREEN — taking the page out from under the pointer would
+    // be worse than leaving it until they navigate away). ⚠️ never persisted.
+    var tempShown: [String] = []
+    var navGen: Int?
+    var navLoaded = false
+    var navTimer: Timer?
+    // ⚠️ BUILDER NUMBER. One loopback GET of a route the shell already polls, and only
+    // while the app is frontmost — the layout can only change because of something the
+    // user did in THIS app, and the panel also pushes `navChanged` the moment it saves,
+    // so this poll is the backstop (a change made in a solo tab, which has no
+    // script-message handler) rather than the mechanism.
+    let navPoll: TimeInterval = 5
     var splitOn = false
     var rightTab = 1
     var focusedPane = 0              // 0 = left, 1 = right — the tab strip's + ⌘R's target
@@ -370,9 +429,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // both false is the ordinary two-different-tabs state.
     var leftIsGhost = false
     var rightIsGhost = false
-    // Lazily created, keyed by tab index. Destroyed the moment no pane shows them
-    // (see releaseUnusedGhosts) — the primaries are never destroyed.
-    var secondInstances: [Int: WKWebView] = [:]
+    // Lazily created, keyed by ENTRY ID (an index would repoint under a rebuilt strip).
+    // Destroyed the moment no pane shows them (see releaseUnusedGhosts) — the primaries
+    // are never destroyed.
+    var secondInstances: [String: WKWebView] = [:]
     var clickMonitor: Any?
     // ── drag a tab onto a pane ──
     // Second monitor, deliberately separate from clickMonitor (which only ever cares
@@ -438,6 +498,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         tabBar.layer?.backgroundColor = paneInk.cgColor
         container.addSubview(tabBar)
 
+        // PHASE 2: the saved arrangement is remembered by ID (see persistTabs). nav.json
+        // arrives asynchronously, so the strip starts on the DEFAULT order — seed it
+        // with any saved id that is not in that order, or a customised layout would
+        // restore its panes onto whatever happens to sit at those indices instead.
+        for key in ["harness.split.leftId", "harness.split.rightId"] {
+            guard let id = UserDefaults.standard.string(forKey: key), !id.isEmpty,
+                  tabRegistry.contains(where: { $0.id == id }),
+                  !tabs.contains(where: { $0.id == id }),
+                  !tempShown.contains(id) else { continue }
+            tempShown.append(id)
+        }
+        if !tempShown.isEmpty { tabs = tabsFor(navDefaultTopbar + tempShown) }
+
         seg = NSSegmentedControl(
             labels: tabTitles,
             trackingMode: .selectOne,
@@ -464,6 +537,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splitButton.translatesAutoresizingMaskIntoConstraints = false
         tabBar.addSubview(splitButton)
 
+        // ⋯ — the overflow menu, immediately left of ⫽. It is the strip's RELIEF VALVE:
+        // a tab the user un-pinned is not gone, it is in here, and picking one shows it
+        // for this session only (nothing is written back — a temporary look is not a
+        // change of layout). Hidden entirely while nothing is hidden.
+        overflowButton = NSButton(title: "⋯", target: self, action: #selector(showOverflow(_:)))
+        overflowButton.bezelStyle = .texturedRounded
+        overflowButton.toolTip = "Hidden tabs"
+        overflowButton.translatesAutoresizingMaskIntoConstraints = false
+        overflowButton.isHidden = true
+        tabBar.addSubview(overflowButton)
+
         // ── web views ──
         // DropWebView: native drag-destination so Finder image drops reach the chat.
         // The panel — and ONLY the panel — also gets the "harness" script-message
@@ -487,21 +571,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Hermes runs its own polished dark UI — no skin injection (unlike Odysseus).
         hermesWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
-        // Build the index-aligned primaries FROM THE TABLE. Every tab that is not one of
-        // the three named above (the optional component SPAs — VoiceStudio, Voicebox,
-        // ComfyUI, Unsloth) is a plain webview: no skin, no drag handling. Adding a row
-        // to `tabs` therefore adds a fully-working tab with no edit here.
-        primaries = tabs.indices.map { i -> WKWebView in
+        // Build the id-keyed primaries FROM THE REGISTRY (not from `tabs`: an entry the
+        // user has hidden still needs its webview, so that un-hiding it — or the ⋯ menu
+        // — shows the page it already had). Every entry that is not one of the three
+        // named above is a plain webview: no skin, no drag handling. Adding a row to
+        // `tabRegistry` therefore adds a fully-working tab with no edit here.
+        wvById = [:]
+        for t in tabRegistry {
             // explicit `!` on the three named ones: they are stored as implicitly
-            // unwrapped optionals, and being explicit here keeps the closure's return
-            // type unambiguous.
-            if i == panelTab { return panelWV! }
-            if i == odysseusTab { return odyWV! }
-            if i == hermesTab { return hermesWV! }
-            return WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+            // unwrapped optionals, and being explicit here keeps the type unambiguous.
+            if t.id == panelId { wvById[t.id] = panelWV! }
+            else if t.id == odysseusId { wvById[t.id] = odyWV! }
+            else if t.id == hermesId { wvById[t.id] = hermesWV! }
+            else { wvById[t.id] = WKWebView(frame: .zero, configuration: WKWebViewConfiguration()) }
         }
 
-        for wv in primaries {
+        for wv in wvById.values {
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.uiDelegate = self          // route target=_blank links to the default browser
             wv.navigationDelegate = self  // detect failed loads → placeholder + retry
@@ -589,6 +674,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             seg.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
             splitButton.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -12),
             splitButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
+            overflowButton.trailingAnchor.constraint(equalTo: splitButton.leadingAnchor, constant: -8),
+            overflowButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
             splitView.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -605,10 +692,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // impression than today's Mission Control.
         let ud = UserDefaults.standard
         let wasSplit = ud.bool(forKey: "harness.split.on")
-        rightTab = ud.object(forKey: "harness.split.right") as? Int ?? 1
+        // ID first (PHASE 2), the old integer key second so an upgrade from the previous
+        // build still restores its arrangement rather than silently resetting it.
+        let savedRightId = ud.string(forKey: "harness.split.rightId") ?? ""
+        let savedLeftId = ud.string(forKey: "harness.split.leftId") ?? ""
+        rightTab = tabs.firstIndex(where: { $0.id == savedRightId })
+                   ?? (ud.object(forKey: "harness.split.right") as? Int ?? 1)
         if rightTab < 0 || rightTab >= tabTitles.count { rightTab = 1 }
         if wasSplit {
-            currentTab = ud.object(forKey: "harness.split.left") as? Int ?? 0
+            currentTab = tabs.firstIndex(where: { $0.id == savedLeftId })
+                         ?? (ud.object(forKey: "harness.split.left") as? Int ?? 0)
             if currentTab < 0 || currentTab >= tabTitles.count { currentTab = 0 }
             // The two panes can never hold the same tab (that is what the swap rule
             // guarantees); repair a defaults file that somehow says otherwise.
@@ -659,6 +752,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         NSApp.activate(ignoringOtherApps: true)
 
         beginLaunch()
+        // NAV: the strip above was built from the DEFAULT order (the bridge may not even
+        // be up yet). This asks for the saved one and rebuilds if it differs — and keeps
+        // asking, cheaply, so a layout saved in the panel reaches the strip on its own.
+        updateOverflowButton()
+        startNavPoll()
     }
 
     // ── §G-phase2 portable first-run ──
@@ -891,7 +989,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             out.append(hermesWV)
         }
         if (leftShowsHermes && leftIsGhost) || (rightShowsHermes && rightIsGhost),
-           let g = secondInstances[hermesTab] {
+           let g = secondInstances[hermesId] {
             out.append(g)
         }
         return out
@@ -959,6 +1057,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let ud = UserDefaults.standard
         ud.set(currentTab, forKey: "harness.split.left")
         ud.set(rightTab, forKey: "harness.split.right")
+        // PHASE 2: the indices only mean anything against the strip that was on screen
+        // when they were written, and the strip is the user's now — so the ID is the
+        // real record and the ints are kept only as the upgrade path.
+        ud.set(tabId(currentTab), forKey: "harness.split.leftId")
+        ud.set(tabId(rightTab), forKey: "harness.split.rightId")
     }
 
     // THE v2 routing rule. If the OTHER pane already holds the requested tab, the two
@@ -989,6 +1092,154 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         retryIfFailed(webViewFor(idx))
     }
 
+    // ── the tab strip is a VIEW of the nav model (STUDIO PHASE 2 §B) ──
+    //
+    // `tabs` is rebuilt from `navPinned` + `tempShown`; every webview is keyed by ID, so
+    // a rebuild reparents nothing and reloads nothing. The panes are remembered by ID
+    // across the rebuild too, so reordering the strip does not move what you are
+    // looking at.
+    func tabId(_ idx: Int) -> String {
+        return (idx >= 0 && idx < tabs.count) ? tabs[idx].id : panelId
+    }
+    func urlForId(_ id: String) -> URL {
+        return tabRegistry.first(where: { $0.id == id })?.url ?? bridgeURL
+    }
+    func rebuildTabs() {
+        let keepLeft = tabId(currentTab)
+        let keepRight = tabId(rightTab)
+        var ids = navPinned.filter { i in tabRegistry.contains(where: { $0.id == i }) }
+        // Mission Control is FIRST and always present: it is the bridge-wait surface,
+        // the file-drop target and `panelTab = 0`. The nav model already guarantees it;
+        // this is the shell refusing to be broken by a file that does not.
+        ids.removeAll { $0 == panelId }
+        ids.insert(panelId, at: 0)
+        // Anything on screen, or picked from ⋯, stays on the strip for this session.
+        // ⚠️ deliberate: un-pinning the tab you are LOOKING AT does not yank the page out
+        // from under you — it stays until you navigate away, and lives in ⋯ after that.
+        // Only the panes that are actually on screen count (rightTab means nothing while
+        // the split is off), so hiding a tab the closed right pane once held is instant.
+        for id in tempShown where !ids.contains(id) { ids.append(id) }
+        for id in (splitOn ? [keepLeft, keepRight] : [keepLeft]) where !ids.contains(id) {
+            if tabRegistry.contains(where: { $0.id == id }) {
+                if !tempShown.contains(id) { tempShown.append(id) }
+                ids.append(id)
+            }
+        }
+        tabs = tabsFor(ids)
+        seg.segmentCount = tabs.count
+        for (i, t) in tabs.enumerated() { seg.setLabel(t.title, forSegment: i) }
+        setSegmentWidths()
+        currentTab = tabs.firstIndex(where: { $0.id == keepLeft }) ?? 0
+        rightTab = tabs.firstIndex(where: { $0.id == keepRight }) ?? ((currentTab + 1) % max(1, tabs.count))
+        if rightTab == currentTab && tabs.count > 1 { rightTab = (currentTab + 1) % tabs.count }
+        persistTabs()
+        updateOverflowButton()
+        applyPanes()
+        updateFocusStrips()
+        syncStrip()
+        let names = tabs.map { $0.id }.joined(separator: ",")
+        slog("nav -> strip \(names) left=\(currentTab) right=\(rightTab)")
+    }
+
+    func hiddenTabs() -> [HarnessTab] {
+        return tabRegistry.filter { r in !tabs.contains(where: { $0.id == r.id }) }
+    }
+    func updateOverflowButton() {
+        overflowButton.isHidden = hiddenTabs().isEmpty
+    }
+    @objc func showOverflow(_ sender: Any?) {
+        let menu = NSMenu()
+        for t in hiddenTabs() {
+            let it = NSMenuItem(title: t.title, action: #selector(overflowPick(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = t.id
+            menu.addItem(it)
+        }
+        if menu.items.isEmpty { menu.addItem(NSMenuItem(title: "No hidden tabs", action: nil, keyEquivalent: "")) }
+        _ = menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: overflowButton.bounds.height + 4),
+                       in: overflowButton)
+    }
+    @objc func overflowPick(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        if !tempShown.contains(id) { tempShown.append(id) }
+        rebuildTabs()          // session only — nothing is written back to nav.json
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
+        syncStrip()
+        slog("overflow -> \(id)")
+    }
+
+    // Adopt a pinned list. No-ops when nothing changed, so the poll can run forever
+    // without ever touching the layout.
+    func applyNav(_ ids: [String]) {
+        let clean = ids.filter { i in tabRegistry.contains(where: { $0.id == i }) }
+        guard !clean.isEmpty, clean != navPinned else { return }
+        navPinned = clean
+        // An entry that is pinned again no longer needs its session-only pass.
+        tempShown.removeAll { clean.contains($0) }
+        rebuildTabs()
+    }
+
+    // Start the nav poll. `force` on the first pass because there is no generation to
+    // compare against yet; after that only a MOVED generation costs a second request.
+    func startNavPoll() {
+        guard navTimer == nil else { return }
+        syncNav(force: true)
+        navTimer = Timer.scheduledTimer(withTimeInterval: navPoll, repeats: true) { [weak self] _ in
+            guard let s = self else { return }
+            if !NSApp.isActive { return }
+            s.syncNav(force: !s.navLoaded)
+        }
+    }
+    // FAIL SAFE, exactly like syncHermesGen: any transport error, non-200, unparseable
+    // body or missing field leaves the strip exactly as it is. A DECREASE means the
+    // bridge restarted (the counter is process-lifetime) — recorded, never acted on,
+    // because nav.json on disk did not move while the bridge was down.
+    func syncNav(force: Bool) {
+        if force { fetchNav(); return }
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/status"))
+        req.timeoutInterval = 2.0
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            guard err == nil,
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let d = data,
+                  let raw = try? JSONSerialization.jsonObject(with: d),
+                  let obj = raw as? [String: Any],
+                  let gen = obj["nav_gen"] as? Int else { return }
+            DispatchQueue.main.async {
+                let prev = self.navGen
+                self.navGen = gen                      // record FIRST → cannot loop
+                guard let p = prev, gen > p else { return }
+                self.fetchNav()
+            }
+        }.resume()
+    }
+    func fetchNav() {
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/nav"))
+        req.timeoutInterval = 2.0
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            guard err == nil,
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let d = data,
+                  let raw = try? JSONSerialization.jsonObject(with: d),
+                  let obj = raw as? [String: Any],
+                  let nav = obj["nav"] as? [String: Any],
+                  let top = nav["topbar"] as? [[String: Any]] else { return }
+            let ids = top.compactMap { r -> String? in
+                guard let id = r["id"] as? String, (r["pinned"] as? Bool) == true else { return nil }
+                return id
+            }
+            DispatchQueue.main.async {
+                self.navLoaded = true
+                if let g = obj["gen"] as? Int { self.navGen = g }
+                self.applyNav(ids)
+            }
+        }.resume()
+    }
+
     @objc func tabChanged(_ sender: NSSegmentedControl) {
         let idx = sender.selectedSegment
         routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
@@ -1013,14 +1264,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
               let cmd = body["cmd"] as? String else { return }
         switch cmd {
         case "switchTab":
-            guard let title = body["title"] as? String,
-                  let idx = tabTitles.firstIndex(of: title) else {
-                slog("panel -> switchTab (unknown title) ignored")
+            // PHASE 2: resolve the stable ID first, the title second (an older panel
+            // sends only a title). Resolution is against the REGISTRY, not the strip:
+            // a tab the user hid is still reachable from its sidebar row — it is shown
+            // for this session, exactly as the ⋯ menu does it, rather than ignored.
+            let title = body["title"] as? String
+            let wantId = body["id"] as? String
+            var id: String? = nil
+            if let w = wantId, !w.isEmpty, tabRegistry.contains(where: { $0.id == w }) { id = w }
+            if id == nil, let t = title { id = tabRegistry.first(where: { $0.title == t })?.id }
+            guard let hit = id else {
+                slog("panel -> switchTab (unknown tab) ignored")
                 return
             }
+            if !tabs.contains(where: { $0.id == hit }) {
+                if !tempShown.contains(hit) { tempShown.append(hit) }
+                rebuildTabs()
+            }
+            guard let idx = tabs.firstIndex(where: { $0.id == hit }) else { return }
             routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
             syncStrip()   // a strip CLICK selects the segment itself; this path must not skip it
-            slog("panel -> switchTab \(title) (tab \(idx))")
+            slog("panel -> switchTab \(hit) (tab \(idx))")
+        case "navChanged":
+            // The panel just saved a layout. Fetch it NOW rather than waiting for the
+            // poll — the poll exists for the cases this message cannot cover.
+            slog("panel -> navChanged")
+            syncNav(force: true)
         default:
             slog("panel -> unknown cmd ignored")
         }
@@ -1035,19 +1304,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // occupy roughly minSize.width - 70 before the two could touch. The eight-tab estimate
     // (~733-808pt) had already used up the old 900pt window's ~830pt budget, so THIS tab
     // raised minSize.width to 1160 — budget ~1090pt — rather than shrinking a label.
-    // The ten current titles (Office landed 2026-08-21, +6 characters and +1 segment)
-    // total 78 characters; at 13pt SF that is ~7.0-8.0pt per character plus the fixed
+    // The ten current titles (Office landed 2026-08-21, +6 characters and +1 segment,
+    // renamed LOffice the same day, +1) total 79 characters; at 13pt SF that is
+    // ~7.0-8.0pt per character plus the fixed
     // 26pt padding per segment, i.e. ~806pt to ~884pt: inside
     // 1090 with room for one or two more tabs. If a future tab pushes the estimate past
     // the budget, shorten the LONGEST titles (e.g. "Mission Control" → "Control") rather
     // than removing the padding: `segmentAt` reads exactly these numbers back to hit-test
     // a drag.
+    // PHASE 2: this runs again on every strip REBUILD, so the numbers `segmentAt` reads
+    // back are always the ones on screen. Debi's cap of 12 pinned tabs is the budget's
+    // upper bound — twelve of today's titles is ~950-1050pt, still inside ~1090.
     func setSegmentWidths() {
         let f = seg.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         for (i, t) in tabTitles.enumerated() {
+            guard i < seg.segmentCount else { break }
             let w = (t as NSString).size(withAttributes: [.font: f]).width
             seg.setWidth((w + 26).rounded(), forSegment: i)
         }
+        seg.invalidateIntrinsicContentSize()   // the strip is centred by autolayout
     }
 
     // Which segment is under a WINDOW-coordinate point, or nil if the point is not on the
@@ -1304,15 +1579,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Mission Control's PRIMARY, and applyPanes keeps the DropOverlay with that one. A
     // ghost of the panel tab (idx 0) is allowed, but you cannot drop files onto it.
     func ghostFor(_ idx: Int) -> WKWebView {
-        if let g = secondInstances[idx] { return g }
+        let id = tabId(idx)
+        if let g = secondInstances[id] { return g }
         let wv = WKWebView(frame: .zero, configuration: webViewFor(idx).configuration)
         wv.translatesAutoresizingMaskIntoConstraints = false
         wv.uiDelegate = self
         wv.navigationDelegate = self
         if #available(macOS 12.0, *) { wv.underPageBackgroundColor = paneInk }
-        secondInstances[idx] = wv
+        secondInstances[id] = wv
         wv.load(URLRequest(url: urlForTab(idx)))
-        slog("ghost -> created \(tabTitles[idx])")
+        slog("ghost -> created \(id)")
         return wv
     }
 
@@ -1320,24 +1596,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // is never destroyed, so closing the pane that holds the primary keeps the primary and
     // discards the copy — ⚠️ which means that copy's own navigation state is lost, by
     // design (there is nowhere honest to put it once there is one pane again).
-    func destroyGhost(_ idx: Int) {
-        guard let g = secondInstances.removeValue(forKey: idx) else { return }
+    func destroyGhost(_ id: String) {
+        guard let g = secondInstances.removeValue(forKey: id) else { return }
         g.stopLoading()
         g.navigationDelegate = nil
         g.uiDelegate = nil
         failedLoads.remove(ObjectIdentifier(g))
         g.removeFromSuperview()   // last strong reference goes with the dictionary entry
-        slog("ghost -> destroyed \(tabTitles[idx])")
+        slog("ghost -> destroyed \(id)")
     }
 
     // Called from applyPanes AFTER the ghost flags are normalised: anything the flags no
     // longer claim is gone. That single rule covers closing the split, closing either
     // pane, and moving a pane to a different tab.
     func releaseUnusedGhosts() {
-        for idx in Array(secondInstances.keys) {   // Array(): the dict is mutated in here
-            let keptLeft = leftIsGhost && idx == currentTab
-            let keptRight = splitOn && rightIsGhost && idx == rightTab
-            if !keptLeft && !keptRight { destroyGhost(idx) }
+        for id in Array(secondInstances.keys) {   // Array(): the dict is mutated in here
+            let keptLeft = leftIsGhost && id == tabId(currentTab)
+            let keptRight = splitOn && rightIsGhost && id == tabId(rightTab)
+            if !keptLeft && !keptRight { destroyGhost(id) }
         }
     }
 
@@ -1465,10 +1741,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // index can only come from the strip, a drag or a restored default, and a crash on a
     // corrupt UserDefaults value would be a far worse failure than showing the panel.
     func webViewFor(_ idx: Int) -> WKWebView {
-        guard idx >= 0 && idx < primaries.count else { return panelWV }
-        return primaries[idx]
+        guard idx >= 0 && idx < tabs.count else { return panelWV }
+        return wvById[tabs[idx].id] ?? panelWV
     }
-    func allWebViews() -> [WKWebView] { return primaries }
+    // EVERY primary, not only the ones on the strip: applyPanes parks whatever neither
+    // pane is showing, and a webview for a hidden entry must be parked too (it may
+    // still hold a loaded page from before it was hidden).
+    func allWebViews() -> [WKWebView] { return Array(wvById.values) }
 
     // Lazy-load rule unchanged: a webview loads on FIRST borrow, by either pane, and
     // exactly once. Mission Control (panelTab) is loaded by ensureBridgeThenLoad, never
@@ -1477,13 +1756,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // on re-select / ⌘R via failedLoads. No per-tab special cases except Hermes's
     // config-generation bookkeeping.
     func ensureLoaded(_ idx: Int) {
-        guard idx != panelTab, idx >= 0, idx < primaries.count else { return }
-        guard !loadedTabs.contains(idx) else { return }
-        loadedTabs.insert(idx)
-        primaries[idx].load(URLRequest(url: urlForTab(idx)))
+        guard idx >= 0, idx < tabs.count else { return }
+        let id = tabs[idx].id
+        guard id != panelId else { return }
+        guard !loadedTabs.contains(id) else { return }
+        loadedTabs.insert(id)
+        (wvById[id] ?? panelWV).load(URLRequest(url: urlForTab(idx)))
         // The first Hermes load records the generation it is loading against, so the
         // first tab switch back compares like with like instead of making no claim.
-        if idx == hermesTab { syncHermesGen(reloadIfNewer: false) }
+        if id == hermesId { syncHermesGen(reloadIfNewer: false) }
     }
 
     // Called from every path that makes the Hermes tab visible (routeTab + the
@@ -1689,17 +1970,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // SECOND INSTANCE reloads that copy, not the primary in the other pane.
     func visibleWebView() -> WKWebView? {
         if focusedPane == 1 && splitOn && (rightTab != currentTab || rightIsGhost) {
-            return rightIsGhost ? secondInstances[rightTab] : webViewFor(rightTab)
+            return rightIsGhost ? secondInstances[tabId(rightTab)] : webViewFor(rightTab)
         }
-        if leftIsGhost { return secondInstances[currentTab] }
+        if leftIsGhost { return secondInstances[tabId(currentTab)] }
         return webViewFor(currentTab)
     }
 
     func urlFor(_ wv: WKWebView) -> URL {
         // A second instance is not one of the primaries, so ask the ghost table FIRST —
-        // otherwise a ⌘R / retry on a ghost would send it to the bridge's URL.
-        if let hit = secondInstances.first(where: { $0.value === wv }) { return urlForTab(hit.key) }
-        if let i = primaries.firstIndex(where: { $0 === wv }) { return urlForTab(i) }
+        // otherwise a ⌘R / retry on a ghost would send it to the bridge's URL. Both
+        // tables are keyed by ID, so this answers for a HIDDEN entry too (a ⌘R on a
+        // pane still showing a tab the user just un-pinned must not go to the bridge).
+        if let hit = secondInstances.first(where: { $0.value === wv }) { return urlForId(hit.key) }
+        if let hit = wvById.first(where: { $0.value === wv }) { return urlForId(hit.key) }
         return bridgeURL
     }
 

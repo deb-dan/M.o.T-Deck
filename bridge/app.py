@@ -80,6 +80,20 @@ except Exception:                                # noqa: BLE001
         print(f"[office] module unavailable — the Office tab is disabled ({_OFFICE_ERR})",
               flush=True)
 
+# NAV — the sidebar/tab-strip customization model (FABLE-STUDIO-PHASE2-SPEC §A). Same
+# defensive import for the same reason: without it the panel falls back to its own
+# default layout and the shell keeps its built-in tab order, i.e. exactly the
+# behaviour before this slice.
+_NAV_ERR = ""
+try:
+    from . import nav as _nav
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import nav as _nav
+    except Exception as _e:                      # noqa: BLE001
+        _nav, _NAV_ERR = None, str(_e)[:200]
+        print(f"[nav] module unavailable — default layout only ({_NAV_ERR})", flush=True)
+
 app = FastAPI(title="AI Harness Bridge")
 
 # Serve the panel's self-hosted assets (Phase 2 artifact renderer: babel/react/prism/
@@ -96,9 +110,20 @@ def cfg() -> dict:
 
 
 def _script(name: str, *args: str, timeout: int = 1800) -> subprocess.CompletedProcess:
+    # A script that lost its execute bit is a recorded gotcha ("new scripts need
+    # chmod +x") and it bit install_aider.sh, which shipped 100644: subprocess.run
+    # raised PermissionError, the install could never start, and the page showed
+    # nothing. Running it through bash is strictly additive — this branch is only
+    # reachable where today we hard-crash — and it self-heals a snapshot whose copy
+    # arrived without the bit. bridge/tests/test_script_hygiene.py is the real fence.
+    p = ROOT / "scripts" / name
+    argv = [str(p), *args]
+    if p.is_file() and not os.access(p, os.X_OK):
+        print(f"[bridge] {name} is not executable — running it via bash "
+              f"(fix with: chmod +x scripts/{name})", flush=True)
+        argv = ["/bin/bash", str(p), *args]
     return subprocess.run(
-        [str(ROOT / "scripts" / name), *args],
-        capture_output=True, text=True, cwd=ROOT, timeout=timeout,
+        argv, capture_output=True, text=True, cwd=ROOT, timeout=timeout,
     )
 
 
@@ -391,6 +416,9 @@ async def status() -> dict:
         # refreshes itself (see the _HERMES_CFG_GEN block). Costs nothing to
         # publish here and needs no new route.
         "hermes_config_gen": hermes_cfg_gen(),
+        # …and the same carrier for the NAV layout: the shell rebuilds its tab strip
+        # when this moves (see the _NAV_GEN block). One int, no new route.
+        "nav_gen": nav_gen(),
         "components": {},
     }
     for name, comp in c["components"].items():
@@ -5853,6 +5881,67 @@ async def _ody_find_mcp(name: str):
     return next((s for s in await _ody_mcp_list() if s.get("name") == name), None)
 
 
+# ── NAV generation (FABLE-STUDIO-PHASE2-SPEC §A) ─────────────────────────────
+# The SAME carrier and the SAME shape as the Hermes generation below, for the same
+# reason and with the same failure mode: the Swift shell cannot read the panel's
+# localStorage, so it needs to know when the layout it drew is out of date. It reads
+# `nav_gen` off /api/status (a route it already polls) and re-fetches /api/nav only
+# when the number moved.
+#
+# PROCESS-LIFETIME again, and again deliberately: a bridge restart resets it to 0,
+# which the shell records silently as a DECREASE rather than treating as a change —
+# and it cannot be wrong to skip a refetch there, because nav.json on disk did not
+# move while the bridge was down and the shell fetches it once at launch anyway.
+_NAV_GEN = 0
+
+
+def _nav_bump() -> int:
+    global _NAV_GEN
+    _NAV_GEN += 1
+    return _NAV_GEN
+
+
+def nav_gen() -> int:
+    return _NAV_GEN
+
+
+@app.get("/api/nav")
+def api_nav_get() -> JSONResponse:
+    """The layout the SHELL draws its tab strip from, and the panel's shared copy."""
+    if _nav is None:
+        return JSONResponse({"ok": False, "error": "nav module unavailable: " + _NAV_ERR},
+                            status_code=503)
+    return JSONResponse({"ok": True, "nav": _nav.read(ROOT), "gen": nav_gen(),
+                         "max_topbar": _nav.NAV_TOPBAR_MAX, "ids": list(_nav.NAV_IDS)})
+
+
+@app.post("/api/nav")
+async def api_nav_set(req: Request) -> JSONResponse:
+    """Save a layout. STRICT: normalize drops what this build cannot render, then
+    validate REFUSES (400, with the reason) rather than quietly repairing — a save
+    that silently did something else is how a customisation loses an entry."""
+    if _nav is None:
+        return JSONResponse({"ok": False, "error": "nav module unavailable: " + _NAV_ERR},
+                            status_code=503)
+    try:
+        body = await req.json()
+    except Exception:                                    # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "bad json"}, status_code=400)
+    raw = body.get("nav") if isinstance(body, dict) else None
+    if raw is None:
+        raw = body
+    model = _nav.normalize(raw)
+    err = _nav.validate(model)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    try:
+        _nav.write(ROOT, model)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"could not save: {e}"}, status_code=500)
+    gen = _nav_bump()
+    return JSONResponse({"ok": True, "nav": model, "gen": gen})
+
+
 # ── Hermes config generation ────────────────────────────────────────────────
 # Hermes's own dashboard fetches its toolset/skill lists ONCE on mount
 # (web/src/pages/SkillsPage.tsx:155-174 — the useEffect is keyed only on the
@@ -8928,6 +9017,35 @@ async def office_delete(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     _office_log("deleted a workbook")
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/office/upload")
+async def office_upload(req: Request) -> JSONResponse:
+    """RAW .xlsx body + ?name= → import a workbook into data/office.
+
+    Same body shape as /api/voice/library/save: one part, so multipart would buy
+    nothing. The name is sanitized by office.valid_name like every other route here,
+    the bytes are VERIFIED as a workbook before they are kept, and an existing file is
+    never clobbered — the import comes back under ' (n)' and says so.
+    """
+    if _office is None:
+        return _office_unavailable()
+    raw = await req.body()
+    if not raw:
+        return JSONResponse({"ok": False, "error": "no file received"}, status_code=400)
+    if len(raw) > _office.UPLOAD_MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"that file is {len(raw) // (1024 * 1024)} MB — "
+                                   f"the import cap is "
+                                   f"{_office.UPLOAD_MAX_BYTES // (1024 * 1024)} MB"},
+            status_code=413)
+    report, reason = await asyncio.to_thread(
+        _office.import_doc, ROOT, (req.query_params.get("name") or ""), raw)
+    if report is None:
+        _office_log(f"import reject: {reason}")
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    _office_log(f"imported {report['name']} ({report['bytes']} bytes)")
+    return JSONResponse({"ok": True, **report})
 
 
 @app.get("/api/office/download/{name}")

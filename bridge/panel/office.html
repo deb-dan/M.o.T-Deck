@@ -2,14 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Office — Harness</title>
-<!-- The Office tab is its OWN document, deliberately not the panel (the /aider
+<title>LOffice — Harness</title>
+<!-- The LOffice tab is its OWN document, deliberately not the panel (the /aider
      precedent): it loads ~10MB of Univer UMD, mounts a canvas grid, and must not
      carry the panel's poll loops. The palette values below are the panel's tokens,
      copied — a separate document cannot inherit :root. Keep them in step by eye.
 
      SLICE 1 IS SHEETS ONLY (.xlsx). Documents come later; nothing here assumes a
-     single format beyond that, but nothing here handles one either. -->
+     single format beyond that, but nothing here handles one either.
+
+     THE SPREADSHEET CHROME IS UNIVER'S OWN, NOT OURS. The sheets preset ships the
+     ribbon toolbar, the formula bar, the sheet-tab strip and the context menus that
+     everybody already knows from Sheets/Excel — so this page MOUNTS that UI rather
+     than hand-building a lookalike. Our chrome is the thin bar above it (which file,
+     is it dirty, Save / Import / New) and the file rail. -->
 <link rel="stylesheet" href="/assets/vendor/univer/preset-sheets-core.css">
 <style>
   :root{
@@ -22,27 +28,42 @@
   body{background:var(--bg);color:var(--fg);
        font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
        display:flex;flex-direction:column;overflow:hidden}
-  header{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
-  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream)}
+  header{flex:none;display:flex;align-items:center;gap:10px;
+         padding:8px 14px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream);
+        letter-spacing:.01em}
   .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
         text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
         border-radius:6px;color:var(--dim);white-space:nowrap}
   .pill.on{color:var(--gold);border-color:var(--gold)}
-  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  /* The dirty marker is a dot beside the file name — the office convention — not a
+     word: the name is the thing the eye is already on. */
+  #dot{display:none;width:7px;height:7px;border-radius:50%;background:var(--gold);
+       flex:none}
+  #dot.on{display:block}
   button{font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
          background:var(--card2);border:1px solid var(--line2);border-radius:8px;
          padding:6px 13px;cursor:pointer}
   button:hover{border-color:var(--gold)}
   button:disabled{opacity:.45;cursor:default}
   button.primary{background:var(--cream);color:#171420;border-color:var(--cream)}
+  button.ghost{background:none;border-color:transparent;color:var(--faint);
+               padding:6px 8px}
+  button.ghost:hover{color:var(--gold);border-color:var(--line2)}
   .grow{flex:1 1 auto}
-  #msg{flex:none;padding:9px 16px;font-size:12px;display:none;color:var(--bad);
-       border-bottom:1px solid var(--line);background:var(--bg2)}
+  /* ⚠️ NEVER give #msg a `display` in the stylesheet and then clear the INLINE one to
+     show it: `style.display=''` removes the override and the rule wins, which is
+     exactly how every error this page produced became invisible. Visibility is a
+     CLASS, so the two can never fight. Same rule for #newrow and #empty below. */
+  #msg{display:none;flex:none;padding:9px 14px;font-size:12px;color:var(--bad);
+       border-bottom:1px solid var(--line);background:var(--bg2);
+       white-space:pre-wrap}
+  #msg.on{display:block}
   #body{flex:1 1 auto;min-height:0;display:flex}
   /* left: the file list */
   #files{flex:none;width:236px;border-right:1px solid var(--line);background:var(--bg2);
          display:flex;flex-direction:column;min-height:0}
+  body.railoff #files{display:none}
   #files .hd{flex:none;display:flex;gap:6px;align-items:center;padding:10px 12px;
              border-bottom:1px solid var(--line)}
   #flist{flex:1 1 auto;overflow:auto;min-height:0;padding:6px}
@@ -61,15 +82,23 @@
   #fnote{flex:none;padding:9px 12px;border-top:1px solid var(--line);
          color:var(--faint);font-size:10.5px;line-height:1.45}
   #newrow{display:none;padding:8px 12px;border-bottom:1px solid var(--line);gap:6px}
+  #newrow.on{display:flex}
   #newrow input{flex:1 1 auto;min-width:0;background:var(--card);color:var(--fg);
                 border:1px solid var(--line2);border-radius:6px;padding:5px 7px;
                 font:12px -apple-system,sans-serif}
   /* middle: the grid. Univer renders a LIGHT surface by design — a spreadsheet is a
-     white page — so the dark chrome frames it rather than fighting it. */
-  #mid{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
-  #sheet{flex:1 1 auto;min-height:0;background:#fff}
-  #empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;
-         color:var(--faint);font-size:12.5px;text-align:center;padding:24px}
+     white page — so the dark chrome frames it rather than fighting it.
+
+     ⚠️ #sheet IS ALWAYS LAID OUT. Univer's canvas engine measures its container when
+     it mounts; mounting into a display:none box gives a 0x0 canvas that no later
+     un-hiding re-measures, i.e. a permanently blank grid. The empty state is an
+     OVERLAY on top of the container, never a replacement for it. */
+  #mid{flex:1 1 auto;min-width:0;position:relative}
+  #sheet{position:absolute;inset:0;background:#fff}
+  #empty{position:absolute;inset:0;display:flex;align-items:center;
+         justify-content:center;background:var(--bg);color:var(--faint);
+         font-size:12.5px;text-align:center;padding:24px;z-index:2}
+  #empty.off{display:none}
   /* right: the slice-2 stub. A collapsed rail with a label and NO controls — a dead
      button would be worse than an honest placeholder. */
   #ai{flex:none;width:34px;border-left:1px solid var(--line);background:var(--bg2);
@@ -81,12 +110,17 @@
 </head>
 <body>
 <header>
-  <span class="name">Office</span>
+  <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
+  <span class="name">LOffice</span>
   <span class="pill" id="p-file">no workbook open</span>
-  <span class="pill" id="p-state">—</span>
+  <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
+  <span class="pill" id="p-state">—</span>
+  <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
+  <button id="btn-new2">New</button>
   <button id="btn-save" class="primary" disabled>Save</button>
 </header>
+<input type="file" id="imp" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <div id="msg"></div>
 <div id="body">
   <aside id="files">
@@ -106,8 +140,8 @@
     </div>
   </aside>
   <main id="mid">
+    <div id="sheet"></div>
     <div id="empty">Pick a spreadsheet on the left, or make a new one.</div>
-    <div id="sheet" style="display:none"></div>
   </main>
   <aside id="ai" title="An AI side-panel lands in slice 2">
     <span>Ask the model — coming in slice 2</span>
@@ -115,9 +149,10 @@
 </div>
 
 <!-- Load order is fixed and matters: React and rxjs are Univer's PEER globals, the
-     presets bundle carries a React-18 polyfill prelude and defines createUniver, the
-     sheets preset registers onto it, the locale is read by name. All self-hosted —
-     no runtime CDN, exactly like the artifact renderer. -->
+     presets bundle carries a React-18 polyfill prelude, defines createUniver AND
+     bundles @wendellhu/redi + UniverCore + UniverThemes, the sheets preset registers
+     on top of those, the locale is merged by UniverCore.mergeLocales last. All
+     self-hosted — no runtime CDN, exactly like the artifact renderer. -->
 <script src="/assets/vendor/react.production.min.js"></script>
 <script src="/assets/vendor/react-dom.production.min.js"></script>
 <script src="/assets/vendor/univer/rxjs.umd.min.js"></script>
@@ -127,18 +162,87 @@
 <script>
 'use strict';
 const el = id => document.getElementById(id);
-const UP = window.UniverPresets, USC = window.UniverPresetSheetsCore;
-const ULOC = window.UniverPresetSheetsCoreEnUS;
 
 let files = [], current = null, dirty = false, busy = false;
 let univer = null, api = null, armed = null;
 
+const UPLOAD_MAX_BYTES = 30 * 1024 * 1024;   // mirrors office.UPLOAD_MAX_BYTES
+
+// ── say(): the ONE place anything is reported ────────────────────────────────
+// Visibility is a class, never an inline display (see the #msg rule).
 function say(text, kind) {
   const m = el('msg');
   m.textContent = text || '';
-  m.style.display = text ? '' : 'none';
+  m.classList.toggle('on', !!text);
   m.style.color = kind === 'ok' ? 'var(--ok)' : (kind === 'dim' ? 'var(--faint)' : 'var(--bad)');
 }
+
+// ── the self-check ───────────────────────────────────────────────────────────
+// A spreadsheet page that quietly renders nothing is the worst outcome there is, and
+// it is exactly what happened: ten megabytes of third-party UMD either arrive whole
+// or the grid is a white rectangle with no explanation. So the page PROVES its own
+// preconditions before it tries to mount, and names the missing one on screen.
+//
+// Each entry is [what a reader would call it, a probe]. The probes are the globals
+// the pinned bundles genuinely define — verified by executing them, not by reading
+// the docs (bridge/contract_tests/test_univer_assets_contract.py pins the same set).
+const NEEDS = [
+  ['React', () => window.React && window.React.createElement],
+  ['ReactDOM.createRoot', () => window.ReactDOM && window.ReactDOM.createRoot],
+  ['rxjs', () => window.rxjs && window.rxjs.Observable],
+  ['rxjs.operators', () => window.rxjs && window.rxjs.operators],
+  ['@wendellhu/redi', () => window['@wendellhu/redi']],
+  ['@wendellhu/redi/react-bindings', () => window['@wendellhu/redi/react-bindings']],
+  ['UniverCore.LocaleType', () => window.UniverCore && window.UniverCore.LocaleType],
+  ['UniverThemes.defaultTheme', () => window.UniverThemes && window.UniverThemes.defaultTheme],
+  ['UniverPresets.createUniver', () => window.UniverPresets && window.UniverPresets.createUniver],
+  ['UniverPresetSheetsCore.UniverSheetsCorePreset',
+   () => window.UniverPresetSheetsCore && window.UniverPresetSheetsCore.UniverSheetsCorePreset],
+  ['UniverPresetSheetsCoreEnUS (the en-US locale)', () => window.UniverPresetSheetsCoreEnUS],
+];
+
+// The stylesheet is checked by MEASUREMENT, not by asking whether the <link> is in the
+// DOM: a 404 leaves the tag in place. `.univer-absolute{position:absolute}` is a real
+// rule in the pinned css (contract-pinned), so a probe element that does not come back
+// absolute means the css never arrived — which is a legible grid with no chrome.
+function cssLoaded() {
+  try {
+    const p = document.createElement('div');
+    p.className = 'univer-absolute';
+    p.style.visibility = 'hidden';
+    document.body.appendChild(p);
+    const ok = getComputedStyle(p).position === 'absolute';
+    p.remove();
+    return ok;
+  } catch (e) { return true; }   // a probe that cannot run must not accuse the assets
+}
+
+function selfCheck() {
+  const missing = [];
+  for (const [label, probe] of NEEDS) {
+    let ok = false;
+    try { ok = !!probe(); } catch (e) { ok = false; }
+    if (!ok) missing.push(label);
+  }
+  if (!cssLoaded()) missing.push('preset-sheets-core.css (the spreadsheet stylesheet)');
+  if (!missing.length) return true;
+  say('The spreadsheet engine did not load, so the grid cannot open.\n\nMissing: '
+      + missing.join(', ')
+      + '\n\nRun ./scripts/fetch_vendor_assets.sh (it puts the Univer bundles in '
+      + 'bridge/panel/assets/vendor/univer/), then reload this tab with ⌘R.');
+  return false;
+}
+
+// Anything that throws after boot lands here rather than in a console nobody opens.
+// This is the promise the page makes: it may fail, but it will never fail SILENTLY.
+window.addEventListener('error', ev => {
+  say('Something broke in this page: ' + ((ev && ev.message) || 'unknown error')
+      + (ev && ev.filename ? '\n  ' + ev.filename + ':' + ev.lineno : ''));
+});
+window.addEventListener('unhandledrejection', ev => {
+  const r = ev && ev.reason;
+  say('Something broke in this page: ' + ((r && (r.message || r)) || 'unknown error'));
+});
 
 function fmtSize(n) {
   n = Number(n) || 0;
@@ -153,11 +257,11 @@ function fmtWhen(ts) {
 function paint() {
   el('p-file').textContent = current || 'no workbook open';
   el('p-file').className = 'pill' + (current ? ' on' : '');
-  el('p-state').textContent = busy ? 'working…' : (dirty ? 'unsaved changes' : (current ? 'saved' : '—'));
-  el('p-state').className = 'pill' + (dirty ? ' bad' : '');
+  el('dot').classList.toggle('on', !!dirty);
+  el('p-state').textContent = busy ? 'working…' : (dirty ? 'unsaved' : (current ? 'saved' : '—'));
   el('btn-save').disabled = !current || busy || !api;
-  el('empty').style.display = current ? 'none' : '';
-  el('sheet').style.display = current ? '' : 'none';
+  el('btn-import').disabled = busy;
+  el('empty').classList.toggle('off', !!current);
 }
 
 function renderFiles() {
@@ -201,7 +305,7 @@ function renderFiles() {
     };
     acts.appendChild(dl); acts.appendChild(del);
     row.appendChild(n); row.appendChild(m); row.appendChild(acts);
-    row.onclick = () => open(f.name);
+    row.onclick = () => openDoc(f.name);
     box.appendChild(row);
   });
 }
@@ -214,10 +318,15 @@ async function loadFiles() {
     files = j.files || [];
     el('fidelity').textContent = j.fidelity || '';
     el('fdir').textContent = j.dir || '';
-    // The one thing worth shouting about: no openpyxl means no round-trip at all.
+    // The one thing worth shouting about: no openpyxl means no round-trip at all —
+    // New, Import, Open and Save all fail, and until this banner could actually be
+    // SHOWN they failed without a word.
     if (j.roundtrip === false) {
-      say('Spreadsheets cannot be read or written on this bridge: ' + (j.roundtrip_error
-          || 'openpyxl is missing') + ' — reinstall the bridge venv (./scripts/bootstrap.sh).');
+      say('Spreadsheets cannot be read or written on this bridge: '
+          + (j.roundtrip_error || 'openpyxl is missing')
+          + '\n\nThe bridge venv predates the Office lane. Install it once:\n'
+          + '  source data/bridge-venv/bin/activate && uv pip install openpyxl && deactivate\n'
+          + 'then restart the bridge (./scripts/ship.sh).');
     }
     renderFiles();
   } catch (e) { say('the bridge did not answer: ' + e); }
@@ -228,23 +337,42 @@ async function loadFiles() {
 // fresh one: cheaper to reason about than unit lifecycle juggling, and it guarantees
 // no state of the previous file can survive into the next one.
 function mount(data) {
-  if (!UP || !USC) {
-    say('Univer is missing — run ./scripts/fetch_vendor_assets.sh, then reload.');
-    return false;
-  }
+  if (!selfCheck()) return false;
   if (univer) { try { univer.dispose(); } catch (e) { /* already gone */ } }
   univer = null; api = null;
   el('sheet').innerHTML = '';
-  const locale = (UP.LocaleType && UP.LocaleType.EN_US) || 'enUS';
-  const locales = {}; locales[locale] = ULOC;
-  const made = UP.createUniver({
+  // ⚠️ LocaleType lives on UniverCore and defaultTheme on UniverThemes — NOT on
+  // UniverPresets, which re-exports only the core FACADE plus createUniver. Reading
+  // them off UniverPresets yields undefined; it happens to be survivable (the locale
+  // string is 'enUS' either way and ThemeService seeds itself with defaultTheme), but
+  // it is undefined, and a page should not depend on being lucky.
+  const locale = (window.UniverCore.LocaleType && window.UniverCore.LocaleType.EN_US) || 'enUS';
+  const locales = {}; locales[locale] = window.UniverPresetSheetsCoreEnUS;
+  // Every part of the familiar spreadsheet UI is asked for BY NAME. They are the
+  // plugin defaults too, but a reader should be able to see what this tab is meant to
+  // show, and a preset that changes a default should not quietly remove the toolbar.
+  const made = window.UniverPresets.createUniver({
     locale: locale,
     locales: locales,
-    theme: UP.defaultTheme,
-    presets: [USC.UniverSheetsCorePreset({ container: 'sheet' })],
+    theme: window.UniverThemes.defaultTheme,
+    darkMode: false,
+    presets: [window.UniverPresetSheetsCore.UniverSheetsCorePreset({
+      container: 'sheet',
+      header: true,       // the top bar that carries the ribbon
+      toolbar: true,      // bold / italic / fill / align / number format …
+      formulaBar: true,   // the fx bar above the grid
+      footer: true,       // the sheet-tab strip along the bottom
+      contextMenu: true,  // right-click on a cell / row / column
+    })],
   });
   univer = made.univer; api = made.univerAPI;
   api.createUniverSheet(data);
+  // The container is laid out before this runs (#sheet is never display:none), but a
+  // tab that was in the background while the app started can still have been zero-
+  // sized a frame ago, so nudge a re-measure once the browser has laid it out.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { window.dispatchEvent(new Event('resize')); } catch (e) { /* no-op */ }
+  }));
   // Any executed command is an edit. Univer has no "is dirty" flag, and treating
   // every command as one is the safe direction: a false "unsaved changes" costs a
   // click, a missed one costs the work.
@@ -253,7 +381,7 @@ function mount(data) {
   return true;
 }
 
-async function open(name) {
+async function openDoc(name) {
   if (busy) return;
   if (!confirmDiscard(name)) return;
   busy = true; say(''); paint();
@@ -353,26 +481,65 @@ async function create() {
     const j = await r.json();
     if (!j.ok) { say(j.error || 'could not create that spreadsheet'); return; }
     el('new-name').value = '';
-    el('newrow').style.display = 'none';
+    el('newrow').classList.remove('on');
     await loadFiles();
     busy = false;
-    await open(j.name);
+    await openDoc(j.name);
     return;
   } catch (e) { say('could not create that spreadsheet: ' + e); }
   finally { busy = false; paint(); }
 }
 
+// ── import ───────────────────────────────────────────────────────────────────
+// The file picker only works because the shell implements runOpenPanelWith (a
+// WKWebView with no such delegate opens nothing at all, silently — the recorded
+// ⊕-attach bug). The bytes go up as the RAW body, the /api/voice/library/save
+// precedent: one part, so multipart would buy nothing.
+async function importFile(file) {
+  if (!file || busy) return;
+  if (file.size > UPLOAD_MAX_BYTES) {
+    say('That file is ' + fmtSize(file.size) + ' — the import cap is '
+        + fmtSize(UPLOAD_MAX_BYTES) + '.');
+    return;
+  }
+  busy = true; say('', 'dim'); paint();
+  try {
+    const r = await fetch('/api/office/upload?name=' + encodeURIComponent(file.name),
+                          { method: 'POST', body: file });
+    const j = await r.json();
+    if (!j.ok) { say(j.error || 'could not import that file'); return; }
+    await loadFiles();
+    busy = false;
+    if (j.renamed) say('Imported as ' + j.name + ' — a workbook called ' + file.name
+                       + ' was already here, so nothing was overwritten.', 'ok');
+    await openDoc(j.name);
+    return;
+  } catch (e) { say('could not import that file: ' + e); }
+  finally { busy = false; paint(); }
+}
+
 el('btn-save').onclick = save;
-el('btn-new').onclick = () => {
+el('btn-rail').onclick = () => document.body.classList.toggle('railoff');
+const toggleNew = () => {
   const row = el('newrow');
-  row.style.display = row.style.display === 'flex' ? 'none' : 'flex';
-  if (row.style.display === 'flex') el('new-name').focus();
+  document.body.classList.remove('railoff');
+  row.classList.toggle('on');
+  if (row.classList.contains('on')) el('new-name').focus();
 };
+el('btn-new').onclick = toggleNew;
+el('btn-new2').onclick = toggleNew;
 el('btn-create').onclick = create;
+el('btn-import').onclick = () => { el('imp').value = ''; el('imp').click(); };
+el('imp').onchange = ev => {
+  const f = ev.target.files && ev.target.files[0];
+  if (f) importFile(f);
+};
 el('new-name').onkeydown = ev => { if (ev.key === 'Enter') create();
-                                   if (ev.key === 'Escape') el('newrow').style.display = 'none'; };
+                                   if (ev.key === 'Escape') el('newrow').classList.remove('on'); };
 window.addEventListener('keydown', ev => {
-  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); save(); }
+  if ((ev.metaKey || ev.ctrlKey) && (ev.key || '').toLowerCase() === 's') {
+    ev.preventDefault(); save();
+  }
 });
 window.addEventListener('beforeunload', ev => {
   if (dirty) { ev.preventDefault(); ev.returnValue = ''; }
@@ -380,6 +547,7 @@ window.addEventListener('beforeunload', ev => {
 
 (async function boot() {
   paint();
+  selfCheck();          // say it at load, not at the first click on a dead grid
   await loadFiles();
 })();
 </script>

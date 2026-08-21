@@ -23,6 +23,7 @@ Built to docs/research/2026-08-20-office-lane-recon.md §5/§7. What each group 
 Run: python3 bridge/tests/test_office_lane.py
 """
 import datetime
+import io
 import json
 import os
 import re
@@ -412,14 +413,26 @@ check("the blocking round-trip runs off the event loop",
 check("the fidelity note reaches the panel from the module, not a second copy",
       "_office.FIDELITY_NOTE" in APP and office.FIDELITY_NOTE not in PAGE)
 
-check("main.swift has the Office tab, last, on the bridge origin",
-      'HarnessTab(title: "Office", url: URL(string: "http://127.0.0.1:8700/office")!)' in SWIFT)
-tab_titles = re.findall(r'HarnessTab\(title: "([^"]+)"', SWIFT)
-check("Office is the tenth tab", tab_titles and tab_titles[-1] == "Office" and len(tab_titles) == 10)
+check("main.swift has the LOffice tab, last, on the bridge origin",
+      'HarnessTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!)' in SWIFT)
+# STUDIO PHASE 2 (2026-08-21) split the table into a REGISTRY (everything that can be a
+# tab) and the strip, which the nav model orders. LOffice is still the tenth and last of
+# the DEFAULT strip; the registry additionally carries the three pinnable panel views.
+tab_titles = re.findall(r'HarnessTab\(id: "[^"]+", title: "([^"]+)"', SWIFT)
+default_top = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', SWIFT)
+default_ids = re.findall(r'"([^"]+)"', default_top.group(1)) if default_top else []
+check("LOffice is the tenth and last DEFAULT tab",
+      default_ids and default_ids[-1] == "loffice" and len(default_ids) == 10)
+check("...and it is still a registry row",
+      "LOffice" in tab_titles)
+check("the ROUTE did not churn with the wordmark — the tab still points at /office",
+      "8700/office" in SWIFT and '"/office"' in APP)
+check("the page wears the same name as the tab",
+      "<title>LOffice" in PAGE and ">LOffice<" in PAGE)
 check("the width budget note was re-checked for ten tabs",
       "ten current titles" in SWIFT)
 check("the title is ONE word — a two-word title does not fit the strip budget",
-      " " not in tab_titles[-1])
+      " " not in "LOffice")
 check("…and the reason Debi's 'Office Lane' was not taken is recorded next to it",
       "Office Lane" in SWIFT)
 
@@ -466,8 +479,153 @@ check("switching files with unsaved work asks IN THE PAGE — window.confirm is 
       re.sub(r"//[^\n]*", "", PAGE) and "confirmDiscard(name)" in PAGE
       and "discardArmed" in PAGE)
 check("delete is two-step armed, not a single click", "sure?" in PAGE)
-check("a missing openpyxl is SAID on the page, not hidden",
-      "roundtrip" in PAGE and "bootstrap.sh" in PAGE)
+check("a missing openpyxl is SAID on the page, not hidden, WITH the command that fixes "
+      "it (ship.sh does not reinstall requirements, so a shipped snapshot predating "
+      "this lane has no openpyxl and every office action fails)",
+      "roundtrip" in PAGE and "uv pip install openpyxl" in PAGE)
+
+
+# ══ 7. the two defects that made the tab dead (2026-08-21) ═══════════════════
+# Both are REGRESSION FENCES: each was invisible in every unit test and only showed up
+# as "nothing happens" on a real Mac, so each gets an assertion that fails on the shape
+# of the bug rather than on a symptom.
+
+# DEFECT 1 — the page could not speak. #msg carried `display:none` in the STYLESHEET
+# while say() showed it by clearing the INLINE display; clearing an inline value falls
+# back to the rule, so the banner was unreachable and EVERY error the page produced
+# (including "openpyxl is not installed", the one that was actually firing) was
+# swallowed. Same class as the recorded `[hidden]{display:none!important}` bug.
+msg_rule = re.search(r"#msg\{([^}]*)\}", PAGE)
+check("the #msg banner has a stylesheet display rule…", msg_rule is not None)
+check("…and is therefore shown by a CLASS, never by clearing the inline display",
+      "m.classList.toggle('on'" in PAGE and "style.display = text" not in PAGE)
+check("the show-state has its own rule", re.search(r"#msg\.on\{[^}]*display:", PAGE))
+# The same trap, everywhere else a hidden thing is revealed: no code in this page may
+# assign an empty display string, because every hidable element here is hidden by CSS.
+# …read past the comments, which necessarily SAY `style.display=''` to explain it.
+PAGE_CODE = re.sub(r"/\*.*?\*/", "", PAGE, flags=re.S)
+PAGE_CODE = re.sub(r"^\s*//[^\n]*", "", PAGE_CODE, flags=re.M)
+check("no `style.display = ''` survives anywhere in the page (the whole bug class)",
+      not re.search(r"style\.display\s*=\s*(''|\"\"|``)", PAGE_CODE)
+      and not re.search(r"style\.display\s*=\s*[a-zA-Z_.]+\s*\?\s*''", PAGE_CODE))
+check("#newrow is toggled by class too", "newrow').classList" in PAGE)
+
+# DEFECT 2 — Univer mounted into a display:none container. mount() ran before `current`
+# was set and paint() (which un-hid #sheet) ran in the finally AFTER it, so the canvas
+# engine measured a 0x0 box and no later un-hiding re-measured it: a permanently blank
+# grid. The container is now ALWAYS laid out and the empty state is an overlay.
+sheet_rule = re.search(r"#sheet\{([^}]*)\}", PAGE)
+check("#sheet is always laid out — no display rule, no inline display",
+      sheet_rule and "display:none" not in sheet_rule.group(1)
+      and 'id="sheet" style' not in PAGE)
+check("the empty state is an OVERLAY over the container, not a replacement for it",
+      re.search(r"#empty\{[^}]*position:absolute", PAGE)
+      and re.search(r"#empty\.off\{[^}]*display:none", PAGE)
+      and "empty').classList.toggle('off'" in PAGE)
+check("nothing hides the grid container any more",
+      "el('sheet').style.display" not in PAGE)
+check("a re-measure is nudged after mounting (a backgrounded tab can lay out late)",
+      "requestAnimationFrame" in PAGE and "new Event('resize')" in PAGE)
+
+# THE SELF-CHECK. The page proves its own preconditions and NAMES what is missing —
+# the standing answer to "it renders nothing and says nothing".
+check("the page self-checks before it mounts", "function selfCheck()" in PAGE
+      and "if (!selfCheck()) return false;" in PAGE and "selfCheck();" in PAGE)
+needs = re.findall(r"\n  \['([^']+)'", PAGE.split("const NEEDS = [")[1].split("\n];")[0])
+for g in ("React", "ReactDOM.createRoot", "rxjs", "rxjs.operators", "@wendellhu/redi",
+          "@wendellhu/redi/react-bindings", "UniverCore.LocaleType",
+          "UniverThemes.defaultTheme", "UniverPresets.createUniver",
+          "UniverPresetSheetsCore.UniverSheetsCorePreset"):
+    check(f"the self-check covers {g}", any(n.startswith(g) for n in needs))
+check("…and the locale, which is the one that produces an untranslated grid",
+      any(n.startswith("UniverPresetSheetsCoreEnUS") for n in needs))
+check("the stylesheet is checked by MEASUREMENT (a 404 leaves the <link> in place)",
+      "univer-absolute" in PAGE and "getComputedStyle" in PAGE)
+check("the self-check names the script that fixes it",
+      "fetch_vendor_assets.sh" in PAGE)
+check("a runtime throw after boot reaches the screen, not just the console",
+      "addEventListener('error'" in PAGE and "unhandledrejection" in PAGE)
+
+# THE MODULES THE PAGE READS FROM. LocaleType is on UniverCore and defaultTheme on
+# UniverThemes — reading either off UniverPresets (which re-exports only the core
+# FACADE plus createUniver) yields undefined. It was survivable by luck; it is now
+# correct, and pinned so it cannot drift back.
+check("the locale comes from UniverCore, not UniverPresets",
+      "window.UniverCore.LocaleType" in PAGE and "UP.LocaleType" not in PAGE)
+check("the theme comes from UniverThemes, not UniverPresets",
+      "window.UniverThemes.defaultTheme" in PAGE and "UP.defaultTheme" not in PAGE)
+
+# THE FULL PRESET UI. The toolbar/formula bar/sheet tabs are Univer's own; the page
+# asks for each BY NAME so a changed plugin default cannot quietly remove one.
+for opt in ("header", "toolbar", "formulaBar", "footer", "contextMenu"):
+    check(f"the mount asks for the {opt} explicitly",
+          re.search(rf"\b{opt}:\s*true", PAGE))
+check("the container is the one element the page lays out for it",
+      "container: 'sheet'" in PAGE)
+
+# IMPORT.
+check('app.py declares @app.post("/api/office/upload")',
+      '@app.post("/api/office/upload")' in APP)
+check("the upload body is RAW, like /api/voice/library/save",
+      "await req.body()" in APP.split('@app.post("/api/office/upload")')[1])
+check("the upload is capped at the bridge, not only in the page",
+      "_office.UPLOAD_MAX_BYTES" in APP and "status_code=413" in
+      APP.split('@app.post("/api/office/upload")')[1].split("@app.get")[0])
+check("the import runs off the event loop",
+      "asyncio.to_thread(\n        _office.import_doc" in APP
+      or "asyncio.to_thread(_office.import_doc" in APP)
+check("the page can reach it, through a real file picker",
+      "/api/office/upload?name=" in PAGE and 'type="file"' in PAGE
+      and 'accept=".xlsx' in PAGE)
+check("the import cap is the same number on both sides",
+      f"{office.UPLOAD_MAX_BYTES // (1024 * 1024)} * 1024 * 1024" in PAGE)
+
+check("import never clobbers — it renames", office.free_name.__doc__
+      and "NEVER clobbers" in office.free_name.__doc__)
+with tempfile.TemporaryDirectory() as td:
+    check("free_name gives the plain name when nothing is there",
+          office.free_name(td, "book.xlsx") == ("book.xlsx", None))
+    office.create_doc(td, "book")
+    check("…and steps to ' (2)' when it is taken",
+          office.free_name(td, "book.xlsx") == ("book (2).xlsx", None))
+    office.create_doc(td, "book (2)")
+    check("…and keeps stepping", office.free_name(td, "book")[0] == "book (3).xlsx")
+    check("free_name refuses a traversal name like every other route",
+          office.free_name(td, "../x.xlsx")[0] is None)
+
+    # import_doc, executed for real against a workbook openpyxl itself produced.
+    if HAVE_XL:
+        import openpyxl as _xl
+        buf = io.BytesIO()
+        wb = _xl.Workbook()
+        wb.active["A1"] = "hello"
+        wb.active["B2"] = 41.5
+        wb.save(buf)
+        good = buf.getvalue()
+        rep, reason = office.import_doc(td, "Imported.xlsx", good)
+        check("import_doc keeps a real workbook", rep and rep["name"] == "Imported.xlsx"
+              and rep["renamed"] is False and reason is None)
+        snap, _ = office.open_doc(td, "Imported.xlsx")
+        sid = snap["sheetOrder"][0]
+        cells = snap["sheets"][sid]["cellData"]
+        check("…and the imported cells read back through the normal open path",
+              cells["0"]["0"]["v"] == "hello" and cells["1"]["1"]["v"] == 41.5)
+        rep2, _ = office.import_doc(td, "Imported.xlsx", good)
+        check("a second import of the same name is RENAMED, never overwritten",
+              rep2 and rep2["name"] == "Imported (2).xlsx" and rep2["renamed"] is True
+              and office.doc_target(td, "Imported.xlsx")[0])
+        check("a renamed .txt is refused before it can land in the list",
+              office.import_doc(td, "notreally.xlsx", b"this is not a workbook")[0] is None)
+        check("…and nothing was written for it",
+              office.doc_target(td, "notreally.xlsx")[0] is None)
+        check("an empty body is refused", office.import_doc(td, "e.xlsx", b"")[0] is None)
+        check("a body past the cap is refused without parsing it",
+              office.import_doc(td, "big.xlsx",
+                                b"x" * (office.UPLOAD_MAX_BYTES + 1))[0] is None)
+        check("a bad name is refused before the bytes are read",
+              office.import_doc(td, "../evil.xlsx", good)[0] is None)
+        check("a non-xlsx extension is refused",
+              office.import_doc(td, "book.numbers", good)[0] is None)
 
 print()
 if FAILS:

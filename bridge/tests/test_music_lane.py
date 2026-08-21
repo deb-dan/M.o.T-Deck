@@ -728,7 +728,11 @@ check("build.acestep_pin exists and is the measured commit",
 
 PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
 check("the Music view exists", 'id="view-music"' in PANEL)
-check("the sidebar has a Music entry", 'id="nav-music"' in PANEL and "showView('music')" in PANEL)
+# STUDIO PHASE 2: the sidebar is RENDERED from the nav registry, so the row is a
+# registry entry (with its own id, icon and native tab) rather than literal markup.
+check("the sidebar has a Music entry",
+      "id:'music'" in PANEL and "showView('music')" in PANEL
+      and 'id="nav-' in PANEL)
 check("showView routes to it", "document.getElementById('view-music').hidden" in PANEL)
 check("the palette can reach Music AND the prompt",
       "{t:'Music'" in PANEL and "{t:'Generate music'" in PANEL)

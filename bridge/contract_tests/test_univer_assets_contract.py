@@ -89,6 +89,65 @@ def test_style_key_names_are_still_the_short_ones():
         assert key in sheets, f"style key {key!r} no longer appears in the bundle"
 
 
+def test_the_modules_the_page_reads_locale_and_theme_from():
+    """⚠️ THE TRAP THIS PINS: `UniverPresets` re-exports ONLY the core FACADE plus
+    createUniver — it has NO LocaleType and NO defaultTheme. Slice 1 read both off it
+    and got `undefined` twice; it survived by luck (LocaleType.EN_US is the string
+    'enUS' the fallback already used, and ThemeService seeds itself with defaultTheme),
+    which is exactly the kind of luck that stops working at a pin bump.
+
+    So the page now reads UniverCore.LocaleType and UniverThemes.defaultTheme, and
+    this asserts BOTH that those globals exist and that UniverPresets still does not
+    carry them — if a future bundle re-exports them, this test says so rather than
+    leaving two ways to spell it.
+    """
+    presets = _read(PRESETS)
+    assert "e.UniverThemes=" in presets, "the themes global is gone"
+    assert "defaultTheme" in presets
+    assert "e.UniverCore=" in presets, "the core global is gone"
+    assert re.search(r"EN_US=`enUS`|EN_US:`enUS`|EN_US=\"enUS\"", presets) \
+        or "`enUS`" in presets, "LocaleType.EN_US no longer spells enUS"
+    page = _read(ROOT / "bridge" / "panel" / "office.html")
+    assert "window.UniverCore.LocaleType" in page
+    assert "window.UniverThemes.defaultTheme" in page
+
+
+def test_the_bundled_peer_globals_the_self_check_names():
+    """The page's self-check lists globals by name. Every one has to be a global the
+    pinned bundles genuinely define, or the check invents a failure and hides the tab
+    behind a banner that is itself wrong."""
+    presets, sheets = _read(PRESETS), _read(SHEETS)
+    # redi is bundled INSIDE presets.umd.js under bracket globals — not a separate file.
+    assert 'global["@wendellhu/redi"] = {}' in presets
+    assert 'global["@wendellhu/redi/react-bindings"] = {}' in presets
+    # rxjs is consumed as TWO globals: the root and the operators namespace. The 7.x
+    # `rxjs.umd.min.js` bundle carries both; the plain ESM build would not.
+    assert "e.rxjs.operators" in presets and "e.rxjs.operators" in sheets
+    rxjs = _read(VENDOR / "rxjs.umd.min.js")
+    assert "g.operators=" in rxjs, "the vendored rxjs bundle no longer exposes .operators"
+
+
+def test_the_preset_still_takes_the_full_ui_by_these_option_names():
+    """The familiar spreadsheet chrome IS the preset's — the page asks for each part by
+    name so a changed plugin default cannot quietly remove the toolbar."""
+    sheets = _read(SHEETS)
+    m = re.search(r"function p\(F=\{\}\)\{[^}]*const\{([^}]*)\}=F", sheets)
+    assert m, "the preset factory's option destructuring moved"
+    opts = m.group(1)
+    for name in ("container", "header", "footer", "toolbar", "formulaBar", "contextMenu"):
+        assert name in opts, f"the preset no longer takes a {name!r} option"
+
+
+def test_the_stylesheet_probe_class_still_exists():
+    """The page proves the css arrived by MEASURING `.univer-absolute` on a probe
+    element (a 404 leaves the <link> tag in place, so presence proves nothing)."""
+    css = _read(VENDOR / "preset-sheets-core.css")
+    assert ".univer-absolute{position:absolute}" in css, \
+        "the css probe class moved — bridge/panel/office.html's cssLoaded() must follow"
+    page = _read(ROOT / "bridge" / "panel" / "office.html")
+    assert "univer-absolute" in page
+
+
 def test_react_and_rxjs_are_still_external_peers():
     """The page loads react/react-dom/rxjs as globals BEFORE Univer. If a future
     bundle inlined them, that ordering would be dead weight; if it changed which

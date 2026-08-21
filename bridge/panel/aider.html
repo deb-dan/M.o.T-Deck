@@ -39,7 +39,26 @@
   #note b{color:var(--dim);font-weight:600}
   #wrap{flex:1 1 auto;min-height:0;padding:8px 10px 10px;background:var(--bg)}
   #term{width:100%;height:100%}
-  #msg{flex:none;padding:10px 16px;color:var(--bad);font-size:12px;display:none}
+  /* ⚠️ THE STATUS LINE IS TOGGLED BY CLASS, NEVER BY style.display.
+     v1 hid it with `display:none` here and re-showed it with `style.display=''` —
+     which removes the inline declaration and falls straight back to this rule, so
+     EVERY message on this page was structurally invisible (that is why a failed
+     install read as "nothing happened"). A class cannot be defeated that way. */
+  #msg{flex:none;padding:10px 16px;font-size:12px;white-space:pre-wrap;display:none}
+  #msg.show{display:block}
+  #msg.warn{color:var(--bad)}
+  #msg.info{color:var(--faint)}
+  #logwrap{flex:none;display:none;padding:0 16px 10px}
+  #logwrap.show{display:block}
+  #logbox{margin:0;max-height:170px;overflow:auto;background:var(--card);
+          border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+          font:10.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+          color:var(--dim);white-space:pre-wrap}
+  .link{background:none;border:0;padding:0;color:var(--dim);font:11.5px/1 -apple-system,
+        BlinkMacSystemFont,sans-serif;text-decoration:underline;cursor:pointer}
+  .link:hover{color:var(--gold);border-color:transparent}
+  #foot{flex:none;padding:7px 16px 9px;color:var(--faint);font-size:10.5px;
+        border-top:1px solid var(--line);background:var(--bg2)}
 </style>
 </head>
 <body>
@@ -49,6 +68,7 @@
   <span class="pill" id="p-model">model —</span>
   <span class="pill" id="p-ws">not connected</span>
   <span class="grow"></span>
+  <button class="link" id="lnk-log" style="display:none">view log</button>
   <button id="btn-install" style="display:none">Install aider</button>
   <button id="btn-start" class="primary" style="display:none">Start</button>
   <button id="btn-stop" style="display:none">End session</button>
@@ -59,7 +79,10 @@
   A dropped connection ends the session; there is no replay.
 </div>
 <div id="msg"></div>
+<div id="logwrap"><pre id="logbox"></pre></div>
 <div id="wrap"><div id="term"></div></div>
+<div id="foot">aider is a lane, not a component — it has no Mission Control card to
+  start or stop, because it lives in this tab and runs only while the tab is open.</div>
 
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>
@@ -72,13 +95,54 @@ const FitCtor  = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddo
 
 const el = id => document.getElementById(id);
 let term = null, fit = null, sock = null, state = null;
+let logOpen = false, pollTimer = 0, lastErr = null;
 
-function say(text, bad) {
+// kind: 'info' for an ordinary progress note, anything else (default) for a failure.
+function say(text, kind) {
   const m = el('msg');
   m.textContent = text || '';
-  m.style.display = text ? '' : 'none';
-  m.style.color = bad === false ? 'var(--faint)' : 'var(--bad)';
+  m.className = text ? ('show ' + (kind === 'info' ? 'info' : 'warn')) : '';
 }
+
+// EVERY request on this page goes through here, so a non-2xx or a dead bridge can
+// never be swallowed: v1 did a bare `await fetch(...)` with no status check, so a
+// 409/503 looked exactly like success — i.e. like nothing happening at all.
+async function jfetch(url, opts) {
+  let r;
+  try {
+    r = await fetch(url, Object.assign({ cache: 'no-store' }, opts || {}));
+  } catch (e) {
+    throw new Error('the bridge is not answering (' + e + ')');
+  }
+  let body = null;
+  try { body = await r.json(); } catch (e) { body = null; }
+  if (!r.ok) throw new Error((body && (body.error || body.detail)) || ('HTTP ' + r.status));
+  return body;
+}
+
+// The install log is the EXISTING panel log source (GET /api/logs/<name>), rendered
+// inline here because this document is not the panel and cannot open its log dialog.
+async function loadLog() {
+  const box = el('logbox');
+  try {
+    const j = await jfetch('/api/logs/aider-install?lines=60');
+    const lines = (j && j.lines) || [];
+    box.textContent = lines.length ? lines.join('\n')
+      : 'the install log is empty — the installer has not written anything yet.';
+  } catch (e) {
+    box.textContent = 'could not read the install log: ' + e.message;
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function showLog(on) {
+  logOpen = !!on;
+  el('logwrap').className = logOpen ? 'show' : '';
+  el('lnk-log').textContent = logOpen ? 'hide log' : 'view log';
+  el('lnk-log').style.display = '';
+  if (logOpen) loadLog();
+}
+el('lnk-log').onclick = () => showLog(!logOpen);
 
 function ensureTerm() {
   if (term) return term;
@@ -116,9 +180,8 @@ window.addEventListener('resize', refit);
 
 async function loadStatus() {
   try {
-    const r = await fetch('/api/aider/status', { cache: 'no-store' });
-    state = await r.json();
-  } catch (e) { state = { ok: false, error: String(e) }; }
+    state = await jfetch('/api/aider/status');
+  } catch (e) { state = { ok: false, error: String(e.message || e) }; }
   paint();
   return state;
 }
@@ -126,33 +189,69 @@ async function loadStatus() {
 function paint() {
   const s = state || {};
   const connected = sock && sock.readyState === 1;
-  el('p-install').textContent = s.installing ? 'installing…'
-    : (s.installed ? 'installed' : 'not installed');
-  el('p-install').className = 'pill' + (s.installed ? ' on' : '');
+  const dead = s.ok === false;                 // the lane itself is unavailable
+  const inst = !!s.installing;
+  el('p-install').textContent = dead ? 'lane unavailable'
+    : inst ? 'installing…' : (s.installed ? 'installed' : 'not installed');
+  el('p-install').className = 'pill' + (s.installed ? ' on' : (dead ? ' bad' : ''));
   el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
   el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
   el('p-ws').textContent = connected ? 'session live' : 'not connected';
   el('p-ws').className = 'pill' + (connected ? ' on' : '');
   if (s.workspace) el('ws-dir').textContent = s.workspace;
-  el('btn-install').style.display = (!s.installed && !s.installing) ? '' : 'none';
-  el('btn-install').disabled = !!s.installing;
+  // The button STAYS VISIBLE while installing, wearing the state — it is the control
+  // that was clicked, so it is where the answer belongs.
+  el('btn-install').style.display = (!dead && (!s.installed || inst)) ? '' : 'none';
+  el('btn-install').disabled = inst;
+  el('btn-install').textContent = inst ? 'installing…' : 'Install aider';
   el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
   el('btn-start').disabled = !s.model_ready;
   el('btn-stop').style.display = connected ? '' : 'none';
-  if (s.install_error) say('install failed — see the "aider install" log in Mission Control');
+  if (inst || s.install_error) el('lnk-log').style.display = '';
+
+  // Failure is reported ONCE per distinct error, so a poll cannot re-open a log the
+  // user just closed — and a healthy paint never clobbers a websocket message.
+  if (dead) {
+    say('the aider lane is not available on this bridge: ' + (s.error || 'unknown'));
+  } else if (s.install_error && s.install_error !== lastErr) {
+    lastErr = s.install_error;
+    say('install failed:\n' + s.install_error);
+    showLog(true);
+  }
+}
+
+// Poll while an install runs — a clone + an online pip resolve takes minutes.
+function watchInstall() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const s = await loadStatus();
+    if (logOpen) loadLog();
+    if (!s.installing) {
+      clearInterval(pollTimer);
+      pollTimer = 0;
+      if (s.installed && !s.install_error) say('aider is installed.', 'info');
+    }
+  }, 3000);
 }
 
 el('btn-install').onclick = async () => {
   say('');
-  el('btn-install').disabled = true;
-  try { await fetch('/api/aider/install', { method: 'POST' }); }
-  catch (e) { say('could not start the install: ' + e); }
+  lastErr = null;
+  const b = el('btn-install');
+  b.disabled = true;
+  try {
+    await jfetch('/api/aider/install', { method: 'POST' });
+  } catch (e) {
+    b.disabled = false;
+    say('could not start the install: ' + e.message);
+    showLog(true);
+    return;
+  }
+  say('installing aider — an online, one-time install; it takes several minutes. '
+      + 'The log below updates as it runs.', 'info');
+  showLog(true);
   await loadStatus();
-  // Poll while it runs — a clone + an online pip resolve takes minutes.
-  const tick = setInterval(async () => {
-    const s = await loadStatus();
-    if (!s.installing) clearInterval(tick);
-  }, 4000);
+  watchInstall();
 };
 
 el('btn-start').onclick = () => start();
@@ -189,7 +288,9 @@ function start() {
 (async function boot() {
   ensureTerm();
   const s = await loadStatus();
-  if (s.installed && s.model_ready) start();       // the tab IS the session
+  // An install started before this tab was opened (or reloaded) keeps being watched.
+  if (s.installing) { say('an install is already running.', 'info'); watchInstall(); }
+  else if (s.installed && s.model_ready) start();  // the tab IS the session
 })();
 </script>
 </body>
