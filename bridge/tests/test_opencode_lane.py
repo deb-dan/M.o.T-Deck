@@ -414,3 +414,228 @@ def test_the_start_warms_the_project_row_without_leaving_litter():
         "the honest fallback is named in the start output: if the deep link ever stops "
         "working, one click on Add project is the manual equivalent")
     assert "Add project" in APP, "and in the install plan / component note"
+
+
+# ── the seeded config, EXECUTED ──────────────────────────────────────────────
+# Everything above greps the shell. These run the seeding block for real against a
+# temp tree and assert the exact shape upstream requires, because "the file exists"
+# and "the file makes the provider CONNECTED" are different claims and only the
+# second one is what Debi saw fail.
+#
+# THE UPSTREAM RULES BEING PINNED (opencode 1.18.19, file:line):
+#   * a config provider lands in the runtime provider map, and the v1 route reports
+#     `connected = Object.keys(providers).filter(id => id in connected || creds[id])`
+#     — packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts:51-60;
+#   * the models map KEY is the id used in every `provider/model` string, while the
+#     entry's `id` becomes `api.id` (provider.ts:1465) which is what is literally sent
+#     on the wire (provider.ts:1886 `sdk.languageModel(model.api.id)`);
+#   * `options.baseURL` wins over the derived api url (provider.ts:1731);
+#   * a provider whose models map is EMPTY is deleted outright (provider.ts:1684-1687);
+#   * the desktop splits `provider/model` with a bare destructure
+#     (app/src/hooks/provider-catalog.ts:31-36), so a key containing "/" yields an
+#     EMPTY model id — which is why MLX paths may never be keys.
+import json
+import subprocess
+import tempfile
+
+
+def _seed_block() -> str:
+    """The python heredoc the opencode branch runs, extracted verbatim."""
+    b = branch()
+    i = b.index("<<'PYOC'\n") + len("<<'PYOC'\n")
+    j = b.index("\nPYOC\n", i)
+    return b[i:j]
+
+
+def _run_seed(models, want="", extra_global=None, extra_project=None):
+    """Execute the real seeding block over a temp registry. Returns (global, project)."""
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "data"))
+    os.makedirs(os.path.join(d, "ws"))
+    with open(os.path.join(d, "data", "models.json"), "w", encoding="utf-8") as fh:
+        json.dump({"models": models}, fh)
+    gp = os.path.join(d, "xdg", "config", "opencode", "opencode.json")
+    pp = os.path.join(d, "ws", "opencode.json")
+    for path, seed in ((gp, extra_global), (pp, extra_project)):
+        if seed is not None:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(seed, fh)
+    script = os.path.join(d, "seed.py")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(_seed_block())
+    env = dict(os.environ, OC_CFG=gp, OC_PCFG=pp, OC_MODEL=want,
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="harness-key")
+    p = subprocess.run([sys.executable, script], cwd=d, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return (json.load(open(gp, encoding="utf-8")),
+            json.load(open(pp, encoding="utf-8")))
+
+
+GGUF = {"id": "Qwen3-9B-Q4_0", "format": "gguf", "path": "/m/q.gguf", "ctx": 32768}
+MLX = {"id": "mlx-community/Qwen3-8B-4bit", "format": "mlx",
+       "path": "/Users/d/models/Qwen3-8B-4bit"}
+
+
+def test_seeded_provider_has_every_key_upstream_requires():
+    g, _ = _run_seed([GGUF])
+    p = g["provider"]["llama.cpp"]
+    assert p["npm"] == "@ai-sdk/openai-compatible", (
+        "without npm, opencode has no client for a provider it has never heard of")
+    assert p["options"]["baseURL"] == "http://127.0.0.1:6767/v1", (
+        "options.baseURL is what provider.ts:1731 prefers over the derived api url")
+    assert p["options"]["apiKey"] == "harness-key"
+    assert p["name"], "the display name shown in Settings -> Providers"
+    assert p["models"], (
+        "a provider whose models map is empty is DELETED by provider.ts:1684-1687 — "
+        "it would never appear as connected")
+    assert g["$schema"] == "https://opencode.ai/config.json"
+    assert g["autoupdate"] is False, "the pin rule, in the file as well as the env"
+
+
+def test_a_model_key_is_never_a_path_and_the_wire_id_always_is():
+    """THE MLX DEFECT. The key is what `llama.cpp/<key>` and the picker use; the
+    entry's `id` is what goes on the wire. Conflating them left the desktop with an
+    empty model id for every MLX model."""
+    g, _ = _run_seed([MLX], want=MLX["id"])
+    models = g["provider"]["llama.cpp"]["models"]
+    key, = models.keys()
+    assert "/" not in key, (
+        "a key containing '/' is destructured to an EMPTY model id by the desktop "
+        "(app/src/hooks/provider-catalog.ts:31-36)")
+    assert models[key]["id"] == MLX["path"], (
+        "the MLX servers treat `model` as a model to LOAD — the wire id must be the "
+        "registry PATH, and it belongs in `id` (api.id), not in the key")
+    assert models[key]["name"] == MLX["id"], "the picker still shows the real name"
+    assert g["model"] == "llama.cpp/" + key
+    assert g["model"].count("/") == 1, (
+        "the default-model string is split with a bare `.split('/')` destructure")
+
+
+def test_a_gguf_model_keeps_its_registry_id_on_both_sides():
+    g, _ = _run_seed([GGUF], want=GGUF["id"])
+    m = g["provider"]["llama.cpp"]["models"][GGUF["id"]]
+    assert m["id"] == GGUF["id"], (
+        "llama-server is launched with `--alias <registry id>`, so the id IS the "
+        "served name — key and wire id coincide and both must be the plain id")
+    assert g["model"] == "llama.cpp/" + GGUF["id"]
+
+
+def test_the_context_limit_is_carried_only_when_it_is_known():
+    g, _ = _run_seed([GGUF, dict(GGUF, id="noctx", ctx=None)])
+    ms = g["provider"]["llama.cpp"]["models"]
+    assert ms[GGUF["id"]]["limit"]["context"] == 32768
+    assert ms[GGUF["id"]]["limit"]["output"] <= 32768
+    assert "limit" not in ms["noctx"], (
+        "an unknown context must be ABSENT, never 0 — a 0 limit is worse than none")
+
+
+def test_tool_call_is_declared_only_when_the_registry_actually_knows():
+    g, _ = _run_seed([dict(GGUF, id="yes", tools=True),
+                      dict(GGUF, id="no", tools=False),
+                      dict(GGUF, id="unknown", tools=None)])
+    ms = g["provider"]["llama.cpp"]["models"]
+    assert ms["yes"]["tool_call"] is True
+    assert ms["no"]["tool_call"] is False
+    assert "tool_call" not in ms["unknown"], (
+        "bridge/modeltools.py is three-valued; unknown must stay absent so upstream's "
+        "own default applies rather than us asserting something unmeasured")
+
+
+def test_audio_and_hidden_models_are_never_offered():
+    g, _ = _run_seed([GGUF, dict(GGUF, id="tts", kind="audio"),
+                      dict(GGUF, id="gone", hidden=True)])
+    ms = g["provider"]["llama.cpp"]["models"]
+    assert set(ms) == {GGUF["id"]}
+
+
+def test_an_empty_registry_still_produces_a_loadable_provider():
+    """A provider with no models is deleted upstream, so the fallback entry is what
+    keeps 'Settings -> Providers' honest on a machine with nothing downloaded yet."""
+    g, _ = _run_seed([])
+    ms = g["provider"]["llama.cpp"]["models"]
+    assert ms and all("/" not in k for k in ms)
+
+
+def test_the_project_copy_carries_the_provider_but_never_the_model():
+    """config.ts:406-409 merges the project file AFTER the global one, and the desktop
+    writes a model choice back to the GLOBAL file (PATCH /global/config) — so a `model`
+    key here would stomp the user's own pick on every single load."""
+    g, p = _run_seed([GGUF], want=GGUF["id"])
+    assert p["provider"]["llama.cpp"] == g["provider"]["llama.cpp"], (
+        "two independent paths to the same fact: if the XDG redirect ever fails to "
+        "land, the project config still carries the provider")
+    assert "model" not in p
+    assert "autoupdate" not in p
+
+
+def test_both_files_merge_rather_than_overwrite():
+    g, p = _run_seed(
+        [GGUF],
+        extra_global={"theme": "mine", "provider": {"openai": {"npm": "x"}}},
+        extra_project={"permission": {"edit": "ask"}})
+    assert g["theme"] == "mine", "a user's own keys survive a restart"
+    assert "openai" in g["provider"], "and their own providers"
+    assert "llama.cpp" in g["provider"]
+    assert p["permission"] == {"edit": "ask"}
+    assert "llama.cpp" in p["provider"]
+
+
+def test_a_user_model_choice_survives_but_a_deleted_one_does_not():
+    keep, _ = _run_seed([GGUF], want=GGUF["id"],
+                        extra_global={"model": "llama.cpp/" + GGUF["id"]})
+    assert keep["model"] == "llama.cpp/" + GGUF["id"]
+    other, _ = _run_seed([GGUF], want=GGUF["id"],
+                         extra_global={"model": "anthropic/claude"})
+    assert other["model"] == "anthropic/claude", (
+        "a choice made INSIDE opencode, on another provider, must never be rewritten")
+    stale, _ = _run_seed([GGUF], want=GGUF["id"],
+                         extra_global={"model": "llama.cpp/deleted-model"})
+    assert stale["model"] == "llama.cpp/" + GGUF["id"], (
+        "but a pointer at one of OUR models that no longer exists is repaired")
+
+
+def test_a_broken_config_file_is_replaced_not_inherited():
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "data"))
+    gp = os.path.join(d, "g.json")
+    with open(gp, "w", encoding="utf-8") as fh:
+        fh.write("{ this is not json")
+    script = os.path.join(d, "seed.py")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(_seed_block())
+    env = dict(os.environ, OC_CFG=gp, OC_PCFG=os.path.join(d, "p.json"), OC_MODEL="",
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k")
+    p = subprocess.run([sys.executable, script], cwd=d, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    assert "llama.cpp" in json.load(open(gp, encoding="utf-8"))["provider"]
+
+
+# ── the self-check: the line that makes a silent failure decidable ───────────
+def test_the_start_verifies_the_provider_and_says_so():
+    b = branch()
+    code = "\n".join(ln for ln in b.splitlines() if not ln.strip().startswith("#"))
+    assert '/provider"' in code, (
+        "GET /provider is exactly what the desktop calls on the v1 protocol "
+        "(bootstrap.ts:232-234) — asking it is asking the same question the UI asks")
+    assert "provider check" in code, "one decidable line per Start"
+    assert "NOT CONNECTED" in code and "CONNECTED" in code, (
+        "both outcomes must be printable — a check that can only say 'ok' is not one")
+    assert "Big Pickle" in code, (
+        "the failure line names the symptom the user actually sees, so the next "
+        "report is a diagnosis rather than an excavation")
+    # It may never fail the Start: a diagnostic that can take a working component down
+    # is worse than no diagnostic.
+    assert "|| true" in code or "|| :" in code
+
+
+def test_the_server_list_recovery_is_written_down():
+    """Debi removed 127.0.0.1:4096 from Settings -> Servers and could not re-add it.
+    resolveServerList seeds from the props the served page passes BEFORE merging
+    stored entries (app/src/context/server.tsx:148-177, entry.tsx:156-172), so the
+    current server is re-added on every load — the recovery is a reload. Add server
+    itself asks only for an address (i18n/en.ts:354-365)."""
+    for needle in ("Settings → Servers", "⌘R", "http://127.0.0.1:4096"):
+        assert needle in APP, f"the recovery note must name {needle!r}"

@@ -739,7 +739,17 @@ def install_plan(name: str) -> dict:
             "session db) by the XDG variables the start script sets — your ~/.config and "
             "~/.cache are never touched",
             "On Start it is pointed at the harness runner (127.0.0.1:6767) with every "
-            "model in your registry listed, exactly like Hermes and Odysseus",
+            "model in your registry listed, exactly like Hermes and Odysseus. The "
+            "provider it writes is called `llama.cpp` and shows up in OpenCode's own "
+            "Settings → Providers as CONNECTED (tag: config); its model picker should "
+            "then list your models by their registry names. If it instead offers "
+            "OpenCode's own Zen models (Big Pickle, gpt-5…), the config did not reach "
+            "it — the Start log says so in one line, see the opencode log",
+            "The provider is written TWICE on purpose — into its private global config "
+            "(data/opencode/xdg/config/opencode/opencode.json) and into "
+            "data/opencode-workspace/opencode.json — so one of the two landing is "
+            "enough. Only the global copy carries the default model, because OpenCode "
+            "writes your own model choice back to that same file",
             "Its auto-updater is disabled two ways (config key + environment flag) "
             "because the version is pinned in harness.yaml — never use its in-app upgrade",
             "Serve on 127.0.0.1:4096 when started (its own web UI + API on one port, "
@@ -751,6 +761,11 @@ def install_plan(name: str) -> dict:
             "part of its shared 'global' one, and the tab then opens straight onto a "
             "new session there instead of its 'Add project' home screen. If you ever "
             "do land on that screen: Add project -> data/opencode-workspace, once",
+            "Its Settings → Servers list is the TAB's own browser storage, not ours. "
+            "Removing 127.0.0.1:4096 from it cannot strand you: the served page always "
+            "re-adds the server it was loaded from, so ⌘R brings it back. To re-add it "
+            "by hand, Add server wants only the address http://127.0.0.1:4096 — leave "
+            "name, username and password empty (this server has no password)",
         ],
     }
     if name not in plans:
@@ -807,6 +822,9 @@ _NOTES = {
     "opencode": ("opencode on :4096 — loopback only, no auth. The tab opens its "
                  "new-session composer for data/opencode-workspace (the bridge's "
                  "/opencode redirect), not its own 'Add project' home screen. "
+                 "Start seeds the `llama.cpp` provider -> the harness runner, so its "
+                 "model picker lists YOUR models (if it offers Big Pickle instead, the "
+                 "config did not reach it — the log says so). "
                  "Needs a TOOL-CALLING model — look for the green 'tools' pill."),
 }
 

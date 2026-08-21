@@ -532,9 +532,21 @@ check("the page builds the workbook through the facade",
       "createUniver(" in PAGE and "createUniverSheet(" in PAGE)
 check("saving reads the snapshot back with save() and the deprecated alias as fallback",
       "wb.save ? wb.save() : wb.getSnapshot()" in PAGE)
-check("the AI side-panel is a labelled STUB with no controls",
-      "coming in slice 2" in PAGE and "<aside id=\"ai\"" in PAGE
-      and "<button" not in PAGE.split('<aside id="ai"')[1].split("</aside>")[0])
+# ⚠️ CHANGED HONESTLY 2026-08-21: this used to pin the AI rail as "a labelled STUB with
+# no controls", which was the right assertion while it WAS one — a dead button is worse
+# than an honest placeholder. Slice 2 built the panel, so the pinned fact genuinely
+# moved; the invariants that replace it are the ones that matter now (the panel exists,
+# it is reachable, and it speaks the EXISTING chat lane rather than a new endpoint).
+# The full behaviour is pinned in bridge/tests/test_office_ai.js.
+_AI = PAGE.split('<aside id="ai"')[1].split("</aside>")[0]
+check("the slice-2 placeholder promise is gone from the served document",
+      "coming in slice 2" not in PAGE)
+check("the AI side-panel has a real composer, a send button and a model readout",
+      'id="ai-in"' in _AI and 'id="ai-send"' in _AI and 'id="ai-model"' in _AI)
+check("…and can be collapsed and re-opened",
+      'id="ai-hide"' in _AI and 'id="ai-tab"' in _AI)
+check("the panel speaks the harness's EXISTING direct chat lane, not a new office one",
+      "'/api/chat/direct'" in PAGE and "/api/office/chat" not in _AI)
 check("unsaved work is defended on navigation away", "beforeunload" in PAGE)
 check("switching files with unsaved work asks IN THE PAGE — window.confirm is a "
       "recorded WKWebView no-op that returns FALSE and would wedge the tab",
@@ -771,9 +783,25 @@ def app_block(page):
             return b
     return ""
 
+# ⚠️ THE STAMP IS READ, NOT WRITTEN DOWN. It used to be a literal here, which meant
+# every build bump had to edit this file and — worse — that the test was pinning a
+# STRING rather than the invariant. The invariant is: the page declares its stamp in
+# ONE place (the <meta>) and every other appearance is a copy of that one.
+def _stamp(page, what):
+    m = re.search(r'<meta name="harness-build" content="([^"]+)">', page)
+    if not m:
+        raise SystemExit(f"{what}: no harness-build meta — the stamp is load-bearing")
+    return m.group(1)
+
+OFFICE_STAMP = _stamp(PAGE, "office.html")
+AIDER_STAMP = _stamp(AIDER_PAGE, "aider.html")
+check(f"office: the build stamp names the page it stamps ({OFFICE_STAMP})",
+      OFFICE_STAMP.startswith("loffice-"))
+check(f"aider: likewise ({AIDER_STAMP})", AIDER_STAMP.startswith("aider-"))
+
 # The static fallback banner: true by default, removed by the first statement of JS.
-for label, page, stamp in [("office", PAGE, "loffice-2026-08-21f"),
-                           ("aider", AIDER_PAGE, "aider-2026-08-21c")]:
+for label, page, stamp in [("office", PAGE, OFFICE_STAMP),
+                           ("aider", AIDER_PAGE, AIDER_STAMP)]:
     head = page.split("<body>")[0]
     body = page.split("<body>")[1]
     check(f"{label}: the fallback banner is REAL MARKUP in the body, not JS output",
@@ -817,7 +845,7 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
           f"(missing: {sorted(want - have)})", not (want - have))
 
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21f") == 2)
+      'meta[name="harness-build"]' in PAGE and PAGE.count(OFFICE_STAMP) == 2)
 # ⚠️ CHANGED HONESTLY AT 2026-08-21e. There is nothing deferred to wait FOR any more,
 # so the boot no longer hangs on an event: the script sits at the end of the body, and
 # waiting for a DOMContentLoaded that has ALREADY FIRED would never boot at all — the
@@ -871,7 +899,7 @@ try:
     served = cl.get("/office").text
     check("the served /office body carries today's build stamp — i.e. the route reads "
           "the file per request, so a ship really does change what is served",
-          "loffice-2026-08-21f" in served and '<div id="boot">' in served)
+          OFFICE_STAMP in served and '<div id="boot">' in served)
     for asset, mime in [("/assets/vendor/react.production.min.js", "javascript"),
                         ("/assets/vendor/react-dom.production.min.js", "javascript"),
                         ("/assets/vendor/univer/rxjs.umd.min.js", "javascript"),
@@ -993,7 +1021,7 @@ check("the beacon log is in _LOG_NAMES, so the trace is readable in the panel an
 # one stable token now, and this asserts it over a real trace rather than over the
 # format string.
 _TRACE = [office.diag_line(st, dt, "abc123", i * 10) for i, (st, dt) in enumerate([
-    ("script-start", "build=loffice-2026-08-21f ua=… url=… vis=visible"),
+    ("script-start", f"build={OFFICE_STAMP} ua=… url=… vis=visible"),
     ("boot-inline", "tier-1 script running"),
     ("dom-ready", "tier=grid vis=visible"),
     ("files-ok", "n=2 roundtrip=true"),
@@ -1056,7 +1084,7 @@ check("…and it can never throw: a diagnostic may not be the thing that breaks 
 check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
       "second copy could drift, and the stamp exists to be trusted",
       'meta[name="harness-build"]' in BEACON
-      and PAGE.count("loffice-2026-08-21f") == 2)
+      and PAGE.count(OFFICE_STAMP) == 2)
 for _o, name, _c in SCRIPT_TAGS:
     tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]
     check(f"the {name} tag reports BOTH outcomes — the last asset-ok in the trace "

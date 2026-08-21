@@ -815,24 +815,34 @@ PYWIRE
     OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
     [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
     OC_CFG="$OC_HOME/config/opencode/opencode.json"
-    OC_CFG="$OC_CFG" OC_BASE="$OC_BASE" OC_KEY="$OC_KEY" OC_MODEL="$OC_MODEL" \
+    # SECOND, REDUNDANT HOME for the same provider block: the PROJECT config.
+    # config.ts:406-409 loads `opencode.json` walking up from the instance directory
+    # (ConfigPaths.files, paths.ts:10-21) and merges it AFTER the global one, so the
+    # workspace we always start in carries its own copy. Two independent paths to the
+    # same fact: if the XDG redirect ever fails to land, the provider still exists.
+    # ⚠️ the project copy deliberately carries NO `model` key — the desktop writes a
+    # model choice back to the GLOBAL config (PATCH /global/config), and a project key
+    # merges last, so seeding one here would stomp the user's own pick on every load.
+    OC_PCFG="$OC_WS/opencode.json"
+    OC_CFG="$OC_CFG" OC_PCFG="$OC_PCFG" OC_BASE="$OC_BASE" OC_KEY="$OC_KEY" OC_MODEL="$OC_MODEL" \
       python3 - <<'PYOC'
 import json, os
-cfg_path = os.environ["OC_CFG"]
-os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
-try:
-    with open(cfg_path, encoding="utf-8") as fh:
-        cfg = json.load(fh)
-    if not isinstance(cfg, dict):
-        cfg = {}
-except Exception:
-    cfg = {}
 
-# Every chat model in OUR registry, keyed by its WIRE identifier — the same rule
-# bridge/app.py::wire_model_id and the hermes branch use: llama.cpp is launched with
-# `--alias <registry id>` so the id IS the served name, while the MLX servers treat the
-# request's `model` field as a model to LOAD and would resolve a bare id on HuggingFace.
-models, wire_of = {}, {}
+# Every chat model in OUR registry.
+#
+# TWO SEPARATE IDENTIFIERS, and conflating them was a real defect:
+#   * the KEY of the models map is how OpenCode addresses the model everywhere —
+#     `provider/model` strings, the picker, `cfg.model`. It must be slash-free,
+#     because the desktop splits those strings with a bare `.split("/")`
+#     destructure (app/src/hooks/provider-catalog.ts:31-36) and an absolute path
+#     would leave the model id EMPTY.
+#   * `id` inside the entry becomes `api.id` (provider.ts:1465) which is what is
+#     literally sent as the model name on the wire (provider.ts:1886
+#     `sdk.languageModel(model.api.id)`).
+# llama.cpp is launched with `--alias <registry id>` so its wire name IS the id;
+# the MLX servers treat the request's `model` field as a model to LOAD and need the
+# registry PATH — the same rule bridge/app.py::wire_model_id encodes.
+models, key_of = {}, {}
 try:
     with open(os.path.join("data", "models.json"), encoding="utf-8") as fh:
         reg = json.load(fh).get("models", []) or []
@@ -846,17 +856,63 @@ for m in reg:
         continue
     wire = ((m.get("path") or "").strip() or mid
             if str(m.get("format") or "gguf").strip().lower() == "mlx" else mid)
-    wire_of[mid] = wire
-    models[wire] = {"name": mid}
+    key = str(mid).replace("/", "_")
+    key_of[mid] = key
+    entry = {"name": mid, "id": wire}
+    # tool_call is declared only when we actually know (bridge/modeltools.py is
+    # three-valued); unknown stays absent so upstream's own default (true,
+    # provider.ts:1490) applies rather than us asserting something unmeasured.
+    t = m.get("tools")
+    if isinstance(t, bool):
+        entry["tool_call"] = t
+    ctx = m.get("ctx")
+    try:
+        ctx = int(ctx)
+    except (TypeError, ValueError):
+        ctx = 0
+    if ctx > 0:
+        # ⚠️ builder numbers: context is the registry's, output mirrors the harness's
+        # own 4096 max_tokens default. Omitted entirely when ctx is unknown, because a
+        # limit of 0 is worse than no limit.
+        entry["limit"] = {"context": ctx, "output": min(4096, ctx)}
+    models[key] = entry
 
-provider = cfg.setdefault("provider", {}) if isinstance(cfg.get("provider"), dict) else {}
-cfg["provider"] = provider
-provider["llama.cpp"] = {
+PROVIDER = {
     "npm": "@ai-sdk/openai-compatible",
     "name": "Harness runner (local)",
     "options": {"baseURL": os.environ["OC_BASE"], "apiKey": os.environ["OC_KEY"]},
-    "models": models or {"harness-runner": {"name": "harness runner"}},
+    "models": models or {"harness-runner": {"name": "harness runner",
+                                            "id": "harness-runner"}},
 }
+
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save(path, data):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp, path)
+
+
+# ── the GLOBAL config: provider + default model + the pin rule ────────────────
+# MERGE, never overwrite: only the keys we own are replaced, so anything the user
+# adds in that file (permissions, themes, other providers) survives a restart.
+cfg_path = os.environ["OC_CFG"]
+cfg = load(cfg_path)
+provider = cfg.get("provider")
+if not isinstance(provider, dict):
+    provider = {}
+provider["llama.cpp"] = PROVIDER
+cfg["provider"] = provider
 cfg["$schema"] = "https://opencode.ai/config.json"
 # THE PIN RULE, in the file as well as in the env: upstream's auto-update is ON by
 # default and would move the binary out from under harness.yaml.
@@ -866,19 +922,29 @@ cfg["autoupdate"] = False
 # replace it only when it points at one of OUR provider's models that no longer exists
 # (a stale id from a deleted model). A choice the user makes inside OpenCode survives.
 want = os.environ.get("OC_MODEL") or ""
-want_wire = wire_of.get(want, want)
+want_key = key_of.get(want, str(want).replace("/", "_"))
 cur = cfg.get("model")
 stale = (isinstance(cur, str) and cur.startswith("llama.cpp/")
          and cur.split("/", 1)[1] not in models)
-if want_wire and (not isinstance(cur, str) or not cur or stale):
-    cfg["model"] = "llama.cpp/" + want_wire
+if want_key and (not isinstance(cur, str) or not cur or stale):
+    cfg["model"] = "llama.cpp/" + want_key
+save(cfg_path, cfg)
 
-tmp = cfg_path + ".tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    json.dump(cfg, fh, indent=2)
-os.replace(tmp, cfg_path)
-print(f"[harness] opencode config -> {cfg_path} "
-      f"({len(models)} model(s), default {cfg.get('model') or 'unset'})")
+# ── the PROJECT config: the provider only (see the shell comment above) ───────
+pcfg_path = os.environ["OC_PCFG"]
+pcfg = load(pcfg_path)
+pprovider = pcfg.get("provider")
+if not isinstance(pprovider, dict):
+    pprovider = {}
+pprovider["llama.cpp"] = PROVIDER
+pcfg["provider"] = pprovider
+pcfg["$schema"] = "https://opencode.ai/config.json"
+save(pcfg_path, pcfg)
+
+print(f"[harness] opencode config -> {cfg_path}")
+print(f"[harness] opencode config -> {pcfg_path} (project copy, provider only)")
+print(f"[harness]   provider llama.cpp -> {os.environ['OC_BASE']} · "
+      f"{len(models)} model(s) · default {cfg.get('model') or 'unset'}")
 PYOC
 
     # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
@@ -929,6 +995,40 @@ PYOC
         || echo "[harness] note: could not pre-register the workspace project (harmless)"
       echo "[harness] opencode up on http://127.0.0.1:${OC_PORT} (server + its own SPA, loopback, NO auth)"
       echo "[harness] workspace: $OC_WS — the only directory it is started in"
+      # ── PROVIDER SELF-CHECK — the line that makes "no local model" decidable ──
+      # `GET /provider` is exactly what the desktop calls on the v1 protocol
+      # (app/src/context/global-sync/bootstrap.ts:232-234 -> sdk gen.ts:759) and its
+      # `connected` array is computed as `id in provider.list() || credentials[id]`
+      # (server/routes/instance/httpapi/handlers/provider.ts:51-60). So if our id is
+      # in there, Settings -> Providers WILL list it; if it is not, the config we just
+      # wrote is not the config this server read, and that is worth one loud line
+      # rather than a silent empty picker.
+      # rm FIRST: a leftover from a previous Start must never be read as this one's
+      # answer — a stale "CONNECTED" line would be worse than no line at all.
+      rm -f "$ROOT/data/opencode-provider.json"
+      curl -sf -m 8 "http://127.0.0.1:${OC_PORT}/provider" -o "$ROOT/data/opencode-provider.json" \
+        2>/dev/null || :
+      OC_CFGP="$OC_CFG" python3 - "$ROOT/data/opencode-provider.json" <<'PYOCCHK' || true
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        d = json.load(fh)
+except Exception as e:                                            # noqa: BLE001
+    print("[harness] opencode provider check: could not read /provider (%s)" % e)
+    raise SystemExit(0)
+conn = [str(x) for x in (d.get("connected") or [])]
+allp = {p.get("id"): p for p in (d.get("all") or []) if isinstance(p, dict)}
+n = len((allp.get("llama.cpp") or {}).get("models") or {})
+if "llama.cpp" in conn:
+    print("[harness] opencode provider check: llama.cpp CONNECTED, %d model(s) — it is"
+          " in Settings -> Providers and in the model picker" % n)
+else:
+    print("[harness] opencode provider check: llama.cpp NOT CONNECTED — the model")
+    print("[harness]   picker will fall back to OpenCode Zen models (e.g. Big Pickle).")
+    print("[harness]   the config we wrote: %s" % os.environ.get("OC_CFGP", "?"))
+    print("[harness]   what the server reports connected: %s" % (conn or "(nothing)"))
+PYOCCHK
+      rm -f "$ROOT/data/opencode-provider.json"
       # The tab does not open :${OC_PORT}/ — it opens the bridge's /opencode, a 307 into
       # OpenCode's own new-session composer for this directory, so its home screen (the
       # one that says "Nothing here yet" beside an empty Projects rail) never appears.
