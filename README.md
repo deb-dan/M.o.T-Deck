@@ -1,4 +1,11 @@
-# AI Harness
+# MOT Deck
+
+> **NAMING (2026-08-21).** The product is **MOT Deck** — *Mixture of Tools*. Its home
+> screen is **MOT Main** (formerly "Mission Control"). The internal codename remains
+> `harness` and is NOT being renamed: `harness.yaml`, `HARNESS_*` env vars, API routes,
+> nav ids, `~/Library/Application Support/Harness`, `/Applications/Harness.app` and every
+> other path/key stay exactly as they are. Older text below says "Harness" for the
+> product; read it as MOT Deck.
 
 ## ⟳ STATE UPDATE — 2026-08-07
 

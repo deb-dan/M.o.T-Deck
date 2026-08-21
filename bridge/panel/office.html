@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21h">
+<meta name="harness-build" content="loffice-2026-08-21i">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -92,6 +92,37 @@
   window.bx('script-start', 'build=' + ((bmeta && bmeta.content) || '?')
             + ' ua=' + navigator.userAgent
             + ' url=' + location.href + ' vis=' + document.visibilityState);
+
+  // ══ THEME COHERENCE — "non chrome thing again" ══════════════════════════════
+  // This page is served from the SAME ORIGIN as the panel, so the two theme choices
+  // the panel already persists are simply readable here. There is no second setting
+  // and no toggle on this page ON PURPOSE: a tab that could disagree with the app it
+  // lives in is exactly the complaint.
+  //
+  //   harness-theme  === 'light'   → data-theme="light"   (the panel's own palette)
+  //   harness-chrome === 'studio'  → data-chrome="studio" (the panel's control shapes)
+  //
+  // ⚠️ IT RUNS HERE, IN THE HEAD, BEFORE THE STYLESHEET IS PARSED, for the same reason
+  // the panel does it in its own pre-paint block: applying it later would paint the
+  // page dark and then flip it, on every single load.
+  var lastSkin = '';
+  window.syncSkin = function (why) {
+    var theme = null, chrome = null;
+    try {
+      theme = localStorage.getItem('harness-theme');
+      chrome = localStorage.getItem('harness-chrome');
+    } catch (e) { return ''; }          // private mode: the defaults stand, silently
+    var d = document.documentElement;
+    if (theme === 'light') d.setAttribute('data-theme', 'light');
+    else d.removeAttribute('data-theme');
+    if (chrome === 'studio') d.setAttribute('data-chrome', 'studio');
+    else d.removeAttribute('data-chrome');
+    var now = (theme === 'light' ? 'light' : 'dark')
+            + '/' + (chrome === 'studio' ? 'studio' : 'editorial');
+    if (now !== lastSkin) { lastSkin = now; window.bx('skin', now + ' · ' + (why || '')); }
+    return now;
+  };
+  window.syncSkin('boot');
 })();
 </script>
 <style>
@@ -201,6 +232,27 @@
          padding-top:0;padding-bottom:0}
   :where(#hdr) button.ghost{width:var(--ctl-h);justify-content:center;padding:0;
          font-size:13px}
+  /* ── the File menu ──────────────────────────────────────────────────────────
+     A dropdown, not a native <select> and not window.prompt: both of those are the
+     recorded WKWebView silent-no-op class. Positioned against #filewrap, which is why
+     that wrapper exists at all. Every row is an ordinary button, so it inherits the
+     header's button grammar (and, in studio chrome, the studio grammar) for free —
+     the `.mi` rules only override what a MENU ROW needs: full width, left-aligned,
+     no border until hovered. */
+  #filewrap{position:relative;flex:none;display:flex;align-items:center}
+  #filemenu{display:none;position:absolute;top:calc(var(--ctl-h) + 7px);left:0;z-index:30;
+       min-width:214px;padding:6px;flex-direction:column;gap:1px;background:var(--card);
+       border:1px solid var(--line2);border-radius:10px;
+       box-shadow:0 14px 38px rgba(0,0,0,.45)}
+  #filemenu.on{display:flex}
+  #filemenu .mi{display:flex;width:100%;height:auto;justify-content:flex-start;
+       align-items:center;text-align:left;padding:7px 9px;border-radius:7px;
+       background:none;border-color:transparent;color:var(--fg)}
+  #filemenu .mi:hover{background:var(--card2);border-color:var(--line2)}
+  #filemenu .mi:disabled{opacity:.38;background:none;border-color:transparent}
+  #filemenu .mk{margin-left:auto;padding-left:16px;color:var(--faint);
+       font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+  #filemenu .msep{height:1px;background:var(--line);margin:5px 4px}
   .grow{flex:1 1 auto}
   /* ⚠️ NEVER give a hideable element a `display` in the stylesheet and then clear the
      INLINE one to show it: `style.display=''` removes the override and the rule wins,
@@ -430,16 +482,96 @@
         color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
   #boot b{color:var(--cream);font-weight:600}
   #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
+
+  /* ══ THE TWO PANEL AXES, FOLLOWED — NOT REINVENTED ═════════════════════════════
+     Debi's "non chrome thing again": this tab ignored the ◐ theme and the ▣ chrome
+     the rest of the harness obeys, so switching the app to light left one dark
+     rectangle behind. Both attributes are written on <html> by the head script from
+     the panel's OWN localStorage keys; these rules are the whole of what they mean
+     here.
+
+     ⚠️ EVERY RULE BELOW STARTS WITH `:where(html[…])`, WHICH CARRIES ZERO
+     SPECIFICITY, AND THAT IS THE ENTIRE SAFETY ARGUMENT. Written the obvious way,
+     `html[data-chrome="studio"] :where(…) button` would be (0,1,2) — which OUTRANKS
+     `.ghost` (0,1,1), `button.primary` (0,1,1) and `.lnk` (0,1,0), so a studio flip
+     would have filled in every ghost icon, flattened the one cream button and turned
+     the file rows' download/delete links into boxes. This is the exact specificity
+     landmine the studio-chrome post-mortem records; wrapping the prefix in :where()
+     makes it structurally unrepresentable. These rules refine the BASE ones and win
+     on source order alone, because they sit at the very bottom of this sheet, and
+     every state class still outranks them.
+
+     THE SHEET ITSELF IS NOT THEMED, in either axis: #gridwrap / #sheet / #gt /
+     #gridbar stay a white page with light chrome, because every fill and font colour
+     inside a .xlsx was chosen by somebody looking at a white page. That is the same
+     decision `darkMode:false` records for the rich editor. */
+  /* ⚠️ THE THREE PALETTE RULES ARE THE ONE DELIBERATE EXCEPTION to the :where() rule
+     above, and they have to be: `:root` (0,1,0) declares these same variables at the
+     top of this sheet, so a zero-specificity `:where(html[…])` would LOSE to it and
+     the light theme would silently do nothing. `html[data-theme="light"]` is (0,1,1)
+     — one type more than :root and nothing else — which is exactly how the panel
+     writes it. They set custom properties on the root element only, so they carry
+     none of the descendant risk the note above is about. */
+  /* the panel's own light palette, values byte-identical to bridge/panel/index.html */
+  html[data-theme="light"]{
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#6b6455; --faint:#8d8470;
+    --gold:#9c7327; --ok:#177e5d; --bad:#b13d3d}
+  /* --cream is dark INK in the light palette, so the one cream-FILLED button needs
+     light text — the same light-only fix the panel carries, for the same reason. */
+  :where(html[data-theme="light"]) :where(#boot,body>header,#msg,#richbar,#files,#ai) button.primary{
+    color:var(--bg)}
+  :where(html[data-theme="light"]) #filemenu{box-shadow:0 14px 34px rgba(60,50,30,.18)}
+  /* studio chrome: the panel's control tokens, and only the four properties that make
+     a control read as one shape rather than another. Sizes are already 28px here. */
+  html[data-chrome="studio"]{
+    --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83; --st-inp:#221d38}
+  html[data-chrome="studio"][data-theme="light"]{
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878; --st-inp:#f4efe2}
+  :where(html[data-chrome="studio"]) :where(#boot,body>header,#msg,#richbar,#files,#ai) button{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+  :where(html[data-chrome="studio"]) :where(#boot,body>header,#msg,#richbar,#files,#ai) button:hover{
+    background:var(--st-hi);border-color:var(--gold)}
+  :where(html[data-chrome="studio"]) .pill,
+  :where(html[data-chrome="studio"]) .chip{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px;
+    text-transform:none;letter-spacing:normal;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  :where(html[data-chrome="studio"]) #ai-in,
+  :where(html[data-chrome="studio"]) #new-name{background:var(--st-inp)}
 </style>
 </head>
 <body>
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21h</code>.</div>
+  Build <code>loffice-2026-08-21i</code>.</div>
 <header id="hdr">
   <button id="btn-rail" class="ghost" title="Show or hide the file list (⌘\)">☰</button>
   <span class="name">LOffice</span>
+  <!-- ══ THE FILE MENU ═══════════════════════════════════════════════════════════
+       Debi asked for the thing every office app has and this page did not: one place
+       that holds every document action, and — the half that matters — a way BACK.
+       The tab strip is AppKit and this is a web page, so "⌂ MOT Main" talks to the
+       shell through the same postMessage the panel's sidebar uses. Every row here is
+       an existing action; nothing new can happen from this menu that could not
+       already happen from the header or the rail. -->
+  <div id="filewrap">
+    <button id="btn-file" title="Document actions">File ⌄</button>
+    <div id="filemenu">
+      <button class="mi" id="mi-new">New<span class="mk">blank name = Untitled</span></button>
+      <button class="mi" id="mi-open">Open…<span class="mk">⌘O</span></button>
+      <button class="mi" id="mi-import">Import…</button>
+      <button class="mi" id="mi-rename">Rename…</button>
+      <div class="msep"></div>
+      <button class="mi" id="mi-save">Save<span class="mk">⌘S</span></button>
+      <button class="mi" id="mi-download">Download</button>
+      <button class="mi" id="mi-close">Close file</button>
+      <div class="msep"></div>
+      <button class="mi" id="mi-home">⌂ MOT Main</button>
+    </div>
+  </div>
   <span class="pill" id="p-file">no workbook open</span>
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
@@ -507,7 +639,9 @@
              this page: the panel says what it is for even if its script never runs. -->
         <div id="ai-empty"><b>Ask about this sheet.</b><br>The open sheet is sent with
           your question, so “what does column C do?”, “write me a formula that sums B
-          by month” and “is anything odd in this data?” all work.<br><br>Answers are
+          by month” and “is anything odd in this data?” all work.<br><br>It is told
+          it is answering inside a spreadsheet, so <b>“what does CLEAN do?”</b> means
+          the Excel function — not the Python one.<br><br>Answers are
           advice — nothing here writes into your spreadsheet. A formula comes back with
           a copy button.<br><br>Each question is asked on its own: the sheet travels
           with it, the earlier answers do not.</div>
@@ -545,7 +679,7 @@
 (function () {
   const b = document.getElementById('boot');
   if (b) b.remove();
-  document.title = 'LOffice — Harness';
+  document.title = 'LOffice — MOT Deck';
 })();
 bx('boot-inline', 'tier-1 script running');
 
@@ -573,9 +707,30 @@ const CV_STRING = 1, CV_NUMBER = 2, CV_BOOLEAN = 3;
 
 // ── say(): the ONE place anything is reported ────────────────────────────────
 // Visibility is a class, never an inline display (see the #msg rule).
-function say(text, kind) {
+//
+// The optional third argument is an INLINE ACTION — `{label, run}` — and it exists
+// for exactly one thing: a message that states a dilemma should be able to resolve it.
+// "…has unsaved changes. Save it first, or click again to discard" told the user about
+// a choice and then made them go and find both halves of it themselves.
+//
+// ⚠️ `innerHTML = ''` CLEARS, it never WRITES: every string that reaches this box is
+// still put in through textContent, so a bridge error containing a < is still text.
+function say(text, kind, action) {
   const m = el('msg');
-  m.textContent = text || '';
+  m.innerHTML = '';
+  if (text) {
+    const t = document.createElement('span');
+    t.textContent = text;
+    m.appendChild(t);
+    if (action && action.label && action.run) {
+      const b = document.createElement('button');
+      b.className = 'lnk';
+      b.style.marginLeft = '10px';
+      b.textContent = action.label;
+      b.onclick = action.run;
+      m.appendChild(b);
+    }
+  }
   m.classList.toggle('on', !!text);
   m.style.color = kind === 'ok' ? 'var(--ok)' : (kind === 'dim' ? 'var(--faint)' : 'var(--bad)');
 }
@@ -622,6 +777,65 @@ function paint() {
   el('btn-import').disabled = busy;
   el('btn-rich').disabled = busy || mode === 'univer' || richLoading;
   el('empty').classList.toggle('off', !!current);
+  if (el('filemenu').classList.contains('on')) fileMenuPaint();
+}
+
+// ══ THE FILE MENU ═════════════════════════════════════════════════════════════
+// Every row is an action that already existed; the menu is where they can be FOUND.
+// Its rows are disabled from the same state `paint()` reads, so a menu left open
+// while a save runs cannot offer to delete the file out from under it.
+function fileMenuPaint() {
+  const has = !!current;
+  el('mi-rename').disabled = !has || busy;
+  el('mi-save').disabled = el('btn-save').disabled;
+  el('mi-download').disabled = !has;
+  el('mi-close').disabled = !has || busy;
+  el('mi-new').disabled = busy;
+  el('mi-import').disabled = busy;
+}
+function fileMenu(open) {
+  const m = el('filemenu');
+  const now = open === undefined ? !m.classList.contains('on') : !!open;
+  m.classList.toggle('on', now);
+  if (now) { fileMenuPaint(); bx('menu-open', current || 'no workbook'); }
+}
+// A menu row does its thing and gets out of the way.
+function mi(id, run) {
+  el(id).onclick = () => { fileMenu(false); run(); };
+}
+
+// ⌂ MOT Main — the way back, and the reason the menu exists at all.
+//
+// ⚠️ THE SHELL MUST REGISTER THE "harness" SCRIPT HANDLER ON THIS WEBVIEW FOR THIS TO
+// WORK. Today it is added to the PANEL's webview only (app/main.swift builds
+// `panelCfg` with `userContentController.add(self, name: "harness")` and gives every
+// other tab a plain configuration), so on the shipped shell this call finds no handler
+// and says so instead of doing nothing. The one-line shell change is in the session
+// report; this side is written to be correct before and after it.
+//
+// The browser fallback NAVIGATES, but only in a real browser: doing that inside the
+// native shell would leave the LOffice TAB showing Mission Control, which is worse
+// than the honest message.
+function goHome() {
+  bx('home-click', current || 'no workbook');
+  let h = null;
+  try {
+    h = (window.webkit && window.webkit.messageHandlers
+         && window.webkit.messageHandlers.harness) || null;
+  } catch (e) { h = null; }
+  if (h) {
+    // id first, title second — the shell resolves the stable id against its registry
+    // and falls back to the title, so this works whatever the tab is called.
+    try { h.postMessage({ cmd: 'switchTab', title: 'MOT Main', id: 'mc' }); return true; }
+    catch (e) { bx('home-fail', String(e).slice(0, 120)); }
+  }
+  let inShell = false;
+  try { inShell = !!(window.webkit && window.webkit.messageHandlers); } catch (e) { inShell = false; }
+  if (!inShell) { window.location.href = '/'; return true; }
+  say('This shell cannot switch tabs from this page yet — pick Mission Control on the '
+      + 'tab strip above. (The shell registers its tab-switch handler on the panel '
+      + 'only; one line in app/main.swift adds it here.)', 'dim');
+  return false;
 }
 
 // ══ TIER 1 — the plain-DOM grid ═══════════════════════════════════════════════
@@ -1364,8 +1578,12 @@ function renderFiles() {
     n.textContent = f.name;
     const m = document.createElement('div');
     m.className = 'fm';
+    // "open" is said in words as well as in gold: the border alone reads as "selected",
+    // and on a page whose whole job is one document at a time, which one is OPEN is the
+    // fact the row should state.
     m.textContent = fmtSize(f.size_bytes) + ' · ' + fmtWhen(f.modified)
-                  + (f.has_backup ? ' · backup kept' : '');
+                  + (f.has_backup ? ' · backup kept' : '')
+                  + (f.name === current ? ' · open' : '');
     const acts = document.createElement('div');
     acts.className = 'acts';
     const dl = document.createElement('button');
@@ -1426,6 +1644,14 @@ function showWorkbook(data, name) {
   activeSid = sheetIds(snap)[0] || null;
   viewRows = 0; viewCols = 0;
   current = name; dirty = false;
+  // ⚠️ THE SHEET CHIP GOES BACK ON FOR EVERY WORKBOOK OPENED, and it is deliberately
+  // NOT persisted across them any more. It used to be one global sticky flag in
+  // localStorage, so a single "ask without the sheet" three sessions ago left it OFF
+  // for ever — which is half of why Debi's question about CLEAN was answered about
+  // Python. A new document is a new context, and the default for a spreadsheet
+  // assistant looking at a spreadsheet is to send it. Turning it off is a decision
+  // about the question you are asking now, and it lasts until the next open.
+  aiCtxOn = true;
   if (richWanted && richLoaded && mount(snap)) {
     mode = 'univer';
     el('gridwrap').classList.add('off');
@@ -1474,13 +1700,31 @@ function truncatedSheets(s) {
 // and a missing delegate makes confirm() return FALSE — i.e. the native tab would
 // silently refuse to open any other file once a sheet was touched. Same recorded
 // class as the ⊕-attach file picker. So: the first click warns, the second discards.
-let discardArmed = null;
+let discardArmed = null, discardAt = 0;
+// ⚠️ THE 400ms IS NOT A FLOURISH — WITHOUT IT A DOUBLE-CLICK DISCARDS YOUR WORK. A file
+// row opens on click, so double-clicking the row of the workbook you are editing sent
+// TWO opens: the first armed the discard, the second confirmed it, and unsaved edits
+// went to the bin between two halves of one gesture nobody meant as an answer. A second
+// click that arrives faster than a person can read the sentence re-arms instead.
+const DISCARD_MIN_MS = 400;
 function confirmDiscard(name) {
   if (!dirty) return true;
-  if (discardArmed === name) { discardArmed = null; return true; }
-  discardArmed = name;
-  say('“' + current + '” has unsaved changes. Save it first, or click ' + name
-      + ' again to discard them.');
+  if (discardArmed === name && Date.now() - discardAt >= DISCARD_MIN_MS) {
+    discardArmed = null; return true;
+  }
+  discardArmed = name; discardAt = Date.now();
+  // ⚠️ THE THIRD OPTION IS THE POINT. The message used to state a dilemma — save, or
+  // click again to lose the work — and then leave the user to find both halves of it
+  // by hand. This is the half nobody should have to assemble: save, then open.
+  const from = current;
+  say('“' + from + '” has unsaved changes. Save it first, or click ' + name
+      + ' again to discard them.', null,
+      { label: 'Save & open ' + name, run: async () => {
+          await save();
+          if (dirty) return;                 // the save failed; its reason is on screen
+          discardArmed = null;
+          openDoc(name);
+        } });
   setTimeout(() => { if (discardArmed === name) discardArmed = null; }, 6000);
   return false;
 }
@@ -1588,6 +1832,67 @@ async function create() {
   finally { busy = false; paint(); }
 }
 
+// ── rename ───────────────────────────────────────────────────────────────────
+// The rail's name box does double duty rather than growing a second one: same input,
+// same Enter/Escape, one of two verbs. `nameMode` is the whole of the difference.
+//
+// The bridge NEVER clobbers on rename (office.rename_doc refuses an existing name
+// rather than resolving it to ' (n)'), because a rename names a file the user typed
+// and quietly picking a different one hides the collision.
+let nameMode = 'create';
+async function renameDoc() {
+  if (busy || !current) return;
+  const to = (el('new-name').value || '').trim();
+  if (!to) { say('Type the new name first.'); return; }
+  const from = current;
+  busy = true; say(''); paint();
+  try {
+    const r = await fetch('/api/office/rename', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: from, to: to }),
+    });
+    let j = null;
+    try { j = await r.json(); } catch (pe) { j = null; }
+    if (!j || !j.ok) {
+      const why = (j && j.error) || ('the bridge answered ' + r.status);
+      bx('rename-fail', 'http=' + r.status + ' ' + why);
+      say(why);
+      return;
+    }
+    bx('rename-ok', from + ' -> ' + j.name);
+    // The open document is the same document; only its name moved. Unsaved edits are
+    // deliberately kept — a rename is not a save, and losing work to one would be a
+    // very expensive surprise.
+    current = j.name;
+    el('new-name').value = '';
+    el('newrow').classList.remove('on');
+    await loadFiles();
+    say('Renamed to ' + j.name, 'ok');
+  } catch (e) {
+    bx('rename-fail', 'threw: ' + e);
+    say('could not rename that spreadsheet: ' + e);
+  }
+  finally { busy = false; paint(); }
+}
+
+function nameRow(want) {
+  const row = el('newrow');
+  const mode = want === 'rename' ? 'rename' : 'create';
+  // Pressing the same verb twice closes the row; pressing the OTHER one switches it.
+  const open = !(row.classList.contains('on') && nameMode === mode);
+  nameMode = mode;
+  railSetOpen(true, mode);              // the name box lives in the rail: show it first
+  row.classList.toggle('on', open);
+  el('btn-create').textContent = mode === 'rename' ? 'Rename' : 'Create';
+  const inp = el('new-name');
+  inp.placeholder = mode === 'rename' ? 'new name' : 'name (blank = Untitled)';
+  if (!open) return;
+  inp.value = mode === 'rename' ? String(current || '').replace(/\.xlsx$/i, '') : '';
+  inp.focus();
+  try { inp.select(); } catch (e) { /* nothing to select */ }
+}
+function nameRowGo() { if (nameMode === 'rename') renameDoc(); else create(); }
+
 // ── import ───────────────────────────────────────────────────────────────────
 // The file picker only works because the shell implements runOpenPanelWith (a
 // WKWebView with no such delegate opens nothing at all, silently — the recorded
@@ -1677,13 +1982,15 @@ function aiPaint(recount) {
   pill.textContent = aiModel || 'no model loaded';
   pill.className = 'pill' + (aiModel ? ' on' : '');
   pill.title = aiModel ? ('the live model on the harness runner: ' + aiModel)
-                       : 'Load a model in Models (Mission Control) to use this';
+                       : 'Load a model in Models (MOT Main) to use this';
   el('ai-send').disabled = aiBusy || !aiModel;
   el('ai-in').disabled = aiBusy;
   el('ai-ctx').classList.toggle('on', aiCtxOn);
   el('ai-ctx').title = aiCtxOn
-    ? 'The open sheet is sent with your question — click to ask without it'
-    : 'Only your question is sent — click to include the open sheet';
+    ? 'The open sheet is sent with your question — click to ask without it. '
+      + 'On again for every workbook you open.'
+    : 'The sheet is NOT sent — the model is still told it is a spreadsheet assistant '
+      + 'and which workbook you are in. Click to include the data.';
   // ⚠️ the NOTE uses the cached EXTENT, never aiContext(): building 20 000 characters
   // of prompt in order to print "5×2" would be work nobody asked for.
   const c = aiCtxOn ? aiNote : null;
@@ -1706,7 +2013,7 @@ async function aiRefreshModel() {
     const was = aiModel;
     aiModel = officeModelLabel(c && c.pin, !!(c && c.running), '');
     if (aiModel !== was) bx('ai-model', aiModel || 'none');
-    if (!aiModel) aiStatus('No model is loaded. Open Mission Control → Models and '
+    if (!aiModel) aiStatus('No model is loaded. Open MOT Main → Models and '
                            + 'load one — this panel uses the same model the Chat lane does.');
     else if (!aiBusy) aiStatus('');
   } catch (e) {
@@ -1717,10 +2024,40 @@ async function aiRefreshModel() {
   aiPaint();
 }
 
+// ── THE GROUNDING PREAMBLE ───────────────────────────────────────────────────
+// THE BUG THIS FIXES, in Debi's own screenshot: she asked "What does clean function
+// do" and got an explanation of PYTHON string cleaning. Two things were wrong and only
+// one of them was the sheet toggle — NOTHING in the request said this was a
+// spreadsheet at all. The model was answering a general-purpose question correctly.
+//
+// So this goes on EVERY request, sheet attached or not. It is deliberately short (a
+// small local model reads its whole prompt for every token) and it names the one
+// ambiguity that actually bites: "function".
+//
+// PURE, and TOTAL: a missing file or sheet name costs a clause, never the preamble.
+function aiPreamble(file, sheet) {
+  const f = String(file == null ? '' : file).trim();
+  const sh = String(sheet == null ? '' : sheet).trim();
+  const where = f
+    ? ('The user is editing the workbook “' + f + '”'
+       + (sh ? ', on the sheet “' + sh + '”' : '') + '.')
+    : 'The user has no workbook open at the moment.';
+  return 'You are the assistant built into LOffice, a spreadsheet editor for Excel '
+       + '(.xlsx) workbooks inside the Harness workspace.\n'
+       + where + '\n'
+       + 'Answer as a spreadsheet expert. Unless the user names a programming '
+       + 'language, a question about a "function" means a SPREADSHEET function with '
+       + 'Excel semantics — CLEAN, TRIM, VLOOKUP, SUMIFS and the like — never a '
+       + 'function in Python, JavaScript or any other language.\n'
+       + 'Be concise, and put any formula you suggest in its own fenced code block, '
+       + 'starting with =.';
+}
+
 // ── the context ──────────────────────────────────────────────────────────────
 // PURE over a snapshot. The user can SEE exactly this — it is printed verbatim in the
-// "context sent" disclosure on their own turn — because a model answering about data
-// you cannot see is a guess you cannot check.
+// "context sent" disclosure on their own turn (which now carries the whole message,
+// preamble included) — because a model answering about data you cannot see is a guess
+// you cannot check.
 function ctxCellText(sh, r, c) {
   // tabs and newlines would break the row shape the model is told to expect
   return String(displayText(cellAt(sh, r, c))).replace(/[\t\r\n]+/g, ' ');
@@ -1808,6 +2145,14 @@ function aiContext() {
   if (!s) return null;
   const sid = aiSheetId(s);
   return sid ? buildContext(s, sid, aiSelNow(), current) : null;
+}
+// The sheet the user is on, by NAME, for the preamble. Falls back to nothing rather
+// than to an internal sheet id, which would mean nothing to a model or a reader.
+function aiSheetName() {
+  const s = aiSnapshot();
+  const sid = s ? aiSheetId(s) : null;
+  const sh = (sid && s.sheets) ? s.sheets[sid] : null;
+  return (sh && typeof sh === 'object' && sh.name) ? String(sh.name) : '';
 }
 // The cheap half: how big the context WOULD be, without building it. PURE over a
 // snapshot, so the note under the composer costs a walk of the used range, not a
@@ -1911,8 +2256,11 @@ function aiAdd(role, text, ctx) {
     const det = document.createElement('details');
     det.className = 'aidet';
     const sum = document.createElement('summary');
-    sum.textContent = 'context sent · ' + ctx.rows + '×' + ctx.cols
-                    + (ctx.truncated ? ' (truncated)' : '');
+    // ⚠️ `ctx.text` is now the WHOLE message — the grounding preamble, the sheet if it
+    // was sent, and the question — not just the sheet dump. The disclosure is the one
+    // place that answers "what did the model actually get", and a preamble it could
+    // not see would make that answer a lie.
+    sum.textContent = 'context sent · ' + (ctx.label || 'grounding only');
     const pre = document.createElement('pre');
     pre.textContent = ctx.text;
     det.appendChild(sum); det.appendChild(pre);
@@ -1934,10 +2282,18 @@ async function aiSend() {
   if (!q) return;
   if (!aiModel) { aiStatus('No model is loaded — load one in Models first.', true); return; }
   const ctx = aiCtxOn ? aiContext() : null;
-  const message = (ctx && ctx.text) ? (ctx.text + '\n\n---\n\n' + q) : q;
+  // THE ORDER IS: who you are → what is open → the data (if any) → the question.
+  // The preamble is UNCONDITIONAL; the sheet is the part the chip governs.
+  const message = aiPreamble(current, aiSheetName()) + '\n\n'
+                + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
+                + '---\n\n' + q;
+  const shown = { text: message,
+                  label: (ctx && ctx.text)
+                    ? (ctx.rows + '×' + ctx.cols + (ctx.truncated ? ' (truncated)' : ''))
+                    : 'grounding only — the sheet was not sent' };
   bx('ai-send', 'chars=' + message.length + ' ctx=' + (ctx && ctx.text ? ctx.rows + 'x' + ctx.cols : 'none'));
   el('ai-in').value = ''; aiGrow();
-  aiAdd('user', q, ctx);
+  aiAdd('user', q, shown);
   aiBusy = true; aiStatus('thinking…'); aiPaint();
   const turn = aiAdd('assistant', '', null);
   let out = '', think = '', got = false, failed = '';
@@ -2147,9 +2503,12 @@ el('ai-clear').onclick = () => {
   aiEmpty(); aiStatus('');
 };
 el('ai-send').onclick = aiSend;
+// Per-document, in memory, on purpose — see the note in showWorkbook(). There is no
+// localStorage key here any more: a sticky global "off" is a bug that outlives the
+// question it was an answer to.
 el('ai-ctx').onclick = () => {
   aiCtxOn = !aiCtxOn;
-  try { localStorage.setItem('harness-office-ai-ctx', aiCtxOn ? '1' : '0'); } catch (e) { /* ignore */ }
+  bx('ai-ctx', (aiCtxOn ? 'on' : 'off') + ' · ' + (current || 'no workbook'));
   aiPaint(true);
 };
 el('ai-in').oninput = aiGrow;
@@ -2159,25 +2518,79 @@ el('ai-in').onkeydown = ev => {
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
 };
 
-el('btn-save').onclick = save;
+el('btn-save').onclick = save; // ABCDE
 el('btn-rich').onclick = upgrade;
 el('btn-rail').onclick = () => railSetOpen(!railIsOpen(), 'header');
-const toggleNew = () => {
-  const row = el('newrow');
-  railSetOpen(true, 'new');           // the name box lives in the rail: show it first
-  row.classList.toggle('on');
-  if (row.classList.contains('on')) el('new-name').focus();
-};
+const toggleNew = () => nameRow('create');
 el('btn-new').onclick = toggleNew;
 el('btn-new2').onclick = toggleNew;
-el('btn-create').onclick = create;
-el('btn-import').onclick = () => { el('imp').value = ''; el('imp').click(); };
+el('btn-create').onclick = nameRowGo;
+const pickImport = () => { el('imp').value = ''; el('imp').click(); };
+el('btn-import').onclick = pickImport;
 el('imp').onchange = ev => {
   const f = ev.target.files && ev.target.files[0];
   if (f) importFile(f);
 };
-el('new-name').onkeydown = ev => { if (ev.key === 'Enter') create();
+el('new-name').onkeydown = ev => { if (ev.key === 'Enter') nameRowGo();
                                    if (ev.key === 'Escape') el('newrow').classList.remove('on'); };
+
+// ── the File menu, wired to the actions that already existed ─────────────────
+el('btn-file').onclick = ev => { ev.stopPropagation(); fileMenu(); };
+mi('mi-new', toggleNew);
+mi('mi-open', () => railSetOpen(true, 'menu'));
+mi('mi-import', pickImport);
+mi('mi-rename', () => nameRow('rename'));
+mi('mi-save', save);
+// Close file has its own two-step arm rather than borrowing `discardArmed`, which is
+// keyed by FILE NAME: a sentinel stuffed into a name-keyed variable is a string that
+// has to be spelled identically in three places to work at all.
+let closeArmed = false;
+mi('mi-download', () => {
+  if (current) window.location.href = '/api/office/download/' + encodeURIComponent(current);
+});
+// ⚠⚠ THREE LINES IN THIS HANDLER CARRY A DEAD TAIL AFTER A `//`, AND THAT IS NOT A
+// STYLE CHOICE. A NUL byte (U+0000) got into this block while it was being written —
+// it sits inside what were three `' close'` string literals — and the editor available
+// in that session could not express a NUL in a search string, so those bytes could not
+// be selected or deleted. The lines were therefore neutralised: the working code was
+// written BEFORE the `//` and the corrupted remainder was commented out, where a NUL is
+// legal and inert. The page is correct as it stands.
+// TO FINISH THE JOB with any ordinary editor or shell, from the repo root:
+//     LC_ALL=C tr -d '\000' < bridge/panel/office.html > /tmp/o && mv /tmp/o bridge/panel/office.html
+// then delete the three `// ⚠ dead tail` comments below. Until that is done, ripgrep
+// (and therefore the Grep tool) will refuse to search this file — it reports
+// "binary file matches" — which is the only visible symptom.
+mi('mi-close', () => {
+  // Closing lands back on the file rail rather than on nothing: #empty says what to do
+  // next, and the rail is where doing it lives.
+  if (dirty && !closeArmed) {   // ⚠ dead tail — delete to end of line (see the note above)'close') {
+    closeArmed = true;   // ⚠ dead tail — delete to end of line (see the note above)'close';
+    say('“' + current + '” has unsaved changes. Save it first, or choose Close file '
+        + 'again to discard them.', null,
+        { label: 'Save & close', run: async () => { await save(); if (!dirty) mi_close(); } });
+    setTimeout(() => { closeArmed = false; }, 6000);   // ⚠ dead tail — delete to end of line (see the note above)'close') discardArmed = null; }, 6000);
+    return;
+  }
+  mi_close();
+});
+function mi_close() {
+  closeArmed = false; discardArmed = null;
+  bx('close-file', current || 'none');
+  clearWorkbook();
+  mode = 'grid';
+  el('sheet').classList.remove('on');
+  el('gridwrap').classList.remove('off');
+  railSetOpen(true, 'close');
+  say('');
+  renderFiles(); paint(); aiPaint(true);
+}
+mi('mi-home', goHome);
+// Outside click closes it. mousedown, not click, so it closes on the way DOWN and a
+// click that lands on the page behind is not swallowed.
+document.addEventListener('mousedown', ev => {
+  const w = el('filewrap');
+  if (w && !w.contains(ev.target)) fileMenu(false);
+});
 window.addEventListener('keydown', ev => {
   if ((ev.metaKey || ev.ctrlKey) && (ev.key || '').toLowerCase() === 's') {
     ev.preventDefault(); save();
@@ -2188,6 +2601,17 @@ window.addEventListener('keydown', ev => {
     ev.preventDefault(); railSetOpen(!railIsOpen(), 'key');
     return;
   }
+  // ⌘O is Open everywhere, and here Open means "show me the workbooks".
+  if ((ev.metaKey || ev.ctrlKey) && (ev.key || '').toLowerCase() === 'o') {
+    ev.preventDefault(); railSetOpen(!railIsOpen(), 'key-o');
+    return;
+  }
+  // Esc closes the File menu before it does anything else — a menu is the innermost
+  // thing on screen, so it is the first thing Esc should take away.
+  if (ev.key === 'Escape' && el('filemenu').classList.contains('on')) {
+    fileMenu(false);
+    return;
+  }
   // Esc dismisses whatever the page is telling you. A message box that can only be
   // replaced by the next message is a message box that is in the way.
   // ⚠️ It does NOT preventDefault: the new-name box and the grid have their own Esc
@@ -2196,6 +2620,23 @@ window.addEventListener('keydown', ev => {
 });
 window.addEventListener('beforeunload', ev => {
   if (dirty) { ev.preventDefault(); ev.returnValue = ''; }
+});
+
+// ── theme coherence, kept live ───────────────────────────────────────────────
+// `syncSkin` is defined in the head script and has already run once, before first
+// paint. These three listeners are what keep it TRUE afterwards: `storage` fires in
+// this document when ANOTHER document of the same origin writes the key — which is
+// exactly what the panel's ◐ and ▣ do — and focus/visibility cover the case where the
+// two are not both alive at the same moment. It is idempotent and reads two
+// localStorage keys, so calling it too often costs nothing.
+window.addEventListener('storage', ev => {
+  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome') {
+    syncSkin('storage');
+  }
+});
+window.addEventListener('focus', () => syncSkin('focus'));
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) syncSkin('visible');
 });
 
 // ── boot ─────────────────────────────────────────────────────────────────────
@@ -2251,7 +2692,6 @@ async function boot() {
   try {
     railWant = localStorage.getItem(LS_RAIL) !== '0';
     aiWant = localStorage.getItem('harness-office-ai') !== '0';
-    aiCtxOn = localStorage.getItem('harness-office-ai-ctx') !== '0';
   } catch (e) { /* private mode: the defaults stand */ }
   railSetOpen(railWant, 'boot');
   // The AI panel is OPEN unless it was closed on purpose. A capability nobody can see

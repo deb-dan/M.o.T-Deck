@@ -7548,11 +7548,11 @@ async def voice_toggle(req: Request) -> JSONResponse:
     if on:
         if not comp.get("installed"):
             return JSONResponse({"ok": False, "error":
-                                 f"{spec['label']} isn't installed yet — install it in Mission Control first"},
+                                 f"{spec['label']} isn't installed yet — install it in MOT Main first"},
                                 status_code=409)
         if not await _port_alive(int(comp["port"])):
             return JSONResponse({"ok": False, "error":
-                                 f"{spec['label']} isn't running — start it in Mission Control first "
+                                 f"{spec['label']} isn't running — start it in MOT Main first "
                                  f"(nothing is listening on :{comp['port']})"},
                                 status_code=409)
     log, ody_on, hermes_on = [], None, None   # None = the host couldn't be reached
@@ -8999,7 +8999,7 @@ def aider_spawn_spec() -> tuple:
     rc = cfg().get("runner") or {}
     live = _live_model_id(int(rc.get("port") or 6767))
     if not live:
-        return None, None, None, ("no model is loaded — load one in Mission Control → "
+        return None, None, None, ("no model is loaded — load one in MOT Main → "
                                   "Models, then reopen this tab.")
     wire = wire_model_id(live, _registry_models())
     cwd = _pty.workspace_path(ROOT)
@@ -9351,6 +9351,26 @@ async def office_delete(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     _office_log("deleted a workbook")
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/office/rename")
+async def office_rename(req: Request) -> JSONResponse:
+    """{name, to} → the workbook under a new name. Never clobbers (office.rename_doc)."""
+    if _office is None:
+        return _office_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):        # a JSON body can legally be a list or a string
+        body = {}
+    name, reason = await asyncio.to_thread(
+        _office.rename_doc, ROOT, (body.get("name") or ""), (body.get("to") or ""))
+    if not name:
+        _office_log(f"rename reject: {reason}")
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    _office_log(f"renamed a workbook to {name}")
+    return JSONResponse({"ok": True, "name": name})
 
 
 @app.post("/api/office/upload")

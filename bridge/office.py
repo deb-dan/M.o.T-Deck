@@ -998,3 +998,37 @@ def delete_doc(root, name):
     except OSError as e:
         return False, f"could not delete: {e}"
     return True, None
+
+
+def rename_doc(root, name, to):
+    """(new_name, None) or (None, reason).
+
+    BOTH names go through `doc_target`, so the same basename + realpath containment
+    that guards open/save/delete guards this: a rename can no more reach outside
+    data/office than a delete can. It NEVER clobbers — renaming onto an existing
+    workbook is refused rather than resolved to ' (n)', because a rename names a file
+    the user typed and quietly picking a different one hides the collision.
+
+    ⚠️ The `.bak` copies keep their OLD stem. They are dated safety copies of the file
+    as it was, and moving them would make the date the only thing tying them to
+    anything; `_any_backup` already looks them up per path, so the old ones simply
+    belong to the old name.
+    """
+    src, reason = doc_target(root, name)
+    if not src:
+        return None, reason
+    safe, reason = valid_name(to)
+    if not safe:
+        return None, reason
+    dst, reason = doc_target(root, safe, must_exist=False)
+    if not dst:
+        return None, reason
+    if os.path.realpath(dst) == os.path.realpath(src):
+        return safe, None                       # renaming a file to its own name: a no-op
+    if os.path.exists(dst):
+        return None, "a workbook with that name already exists"
+    try:
+        os.rename(src, dst)
+    except OSError as e:
+        return None, f"could not rename: {e}"
+    return safe, None

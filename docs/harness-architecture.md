@@ -1,5 +1,9 @@
 # AI Harness — Architecture Document
 
+> **NAMING (2026-08-21):** the product is now **MOT Deck** (*Mixture of Tools*), its home
+> screen **MOT Main**. `harness` remains the internal codename — every path, key and
+> identifier below is unchanged.
+
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 This is the original v0.1 design (2026-07-10). It remains the best statement of *intent*; the built

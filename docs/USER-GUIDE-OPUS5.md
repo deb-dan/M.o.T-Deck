@@ -1,4 +1,7 @@
-# Harness — User Guide
+# MOT Deck — User Guide
+
+> Renamed 2026-08-21: the app is **MOT Deck** (*Mixture of Tools*), its home screen
+> **MOT Main**. Older text below may say "Harness" / "Mission Control" — same thing.
 
 A plain-language guide to using the app. No setup knowledge required.
 

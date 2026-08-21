@@ -1,4 +1,8 @@
-# Harness explainers — the source text for the in-app Help panel
+# MOT Deck explainers — the source text for the in-app Help panel
+
+> Renamed 2026-08-21: the app is **MOT Deck** (*Mixture of Tools*), its home screen
+> **MOT Main**. Entries below still say "the harness" / "Mission Control" in places —
+> same thing; rewrite as each entry is next touched.
 
 Every entry here answers a question that has actually cost time to figure out. This
 file is the CONTENT; the Help surface that renders it (sidebar, under Logs) is a

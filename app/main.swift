@@ -29,10 +29,10 @@ struct HarnessTab {
 // data/nav.json. The ID is the stable key — webviews are keyed by it, so reordering or
 // hiding a tab never reloads a page — while the TITLE is only ever a label.
 let tabRegistry: [HarnessTab] = [
-    // Mission Control — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
+    // MOT Main — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
     // app's home, the page the bridge-wait screen writes into, and the only file-drop
-    // target (DropOverlay). Keep it first.
-    HarnessTab(id: "mc", title: "Mission Control", url: bridgeURL),
+    // target (DropOverlay). Keep it first. (The id stays "mc": ids are internal keys.)
+    HarnessTab(id: "mc", title: "MOT Main", url: bridgeURL),
     HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
     HarnessTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
     // Optional components — usually NOT running, so their first load normally fails into
@@ -490,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = "Harness"
+        window.title = "MOT Deck"
         // 1160, raised from 900 when the 9th tab (Aider) landed: the tab strip is
         // centred and the ⫽ button is pinned trailing, so at 900pt the nine titles
         // could touch it (see the WIDTH BUDGET note on setSegmentWidths). Two panes at
@@ -595,6 +595,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if t.id == panelId { wvById[t.id] = panelWV! }
             else if t.id == odysseusId { wvById[t.id] = odyWV! }
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
+            / LOffice + Aider are OUR OWN pages served by the bridge (first-party, same
+            // origin as the panel) — they get the "harness" handler too, so their File
+            / menus can offer "⌂ MOT Main". Third-party component pages still never do.
+            else if t.id == "loffice" || t.id == "aider" {
+                let c = WKWebViewConfiguration()
+                c.userContentController.add(self, name: "harness")
+                wvById[t.id] = WKWebView(frame: .zero, configuration: c)
+            }
             else { wvById[t.id] = WKWebView(frame: .zero, configuration: WKWebViewConfiguration()) }
         }
 
@@ -831,8 +839,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return
         }
         let a = NSAlert()
-        a.messageText = "Set up Harness"
-        a.informativeText = "Harness will install its local stack into:\n\(homeHarness())\n\nRequirements: Xcode Command Line Tools, Homebrew, and an internet connection. This can take several minutes."
+        a.messageText = "Set up MOT Deck"
+        a.informativeText = "MOT Deck will install its local stack into:\n\(homeHarness())\n\nRequirements: Xcode Command Line Tools, Homebrew, and an internet connection. This can take several minutes."
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
@@ -892,8 +900,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return
         }
         let a = NSAlert()
-        a.messageText = "Set up Harness"
-        a.informativeText = "Harness will install its local AI stack into:\n\(appSupportHarness())\n\nNo internet is needed for setup — everything is bundled. This can take a few minutes."
+        a.messageText = "Set up MOT Deck"
+        a.informativeText = "MOT Deck will install its local AI stack into:\n\(appSupportHarness())\n\nNo internet is needed for setup — everything is bundled. This can take a few minutes."
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
@@ -1321,7 +1329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // is ~7.0-8.0pt per character plus the fixed
     // 26pt padding per segment, i.e. ~895pt to ~982pt: inside
     // 1090 with room for one more tab. If a future tab pushes the estimate past
-    // the budget, shorten the LONGEST titles (e.g. "Mission Control" → "Control") rather
+    // the budget, shorten the LONGEST titles (e.g. "VoiceStudio" → "Voice") rather
     // than removing the padding: `segmentAt` reads exactly these numbers back to hit-test
     // a drag.
     // PHASE 2: this runs again on every strip REBUILD, so the numbers `segmentAt` reads
@@ -2105,7 +2113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             "<body style='background:#0b0a10;color:#6f6a80;font-family:-apple-system;" +
             "display:flex;align-items:center;justify-content:center;height:100vh'>" +
             "<div style='text-align:center'><h2 style='color:#efe7d7;font-weight:500'>Not reachable yet</h2>" +
-            "<p>Start the component in Mission Control,<br>then re-select this tab &mdash; or press &#8984;R.</p></div></body>",
+            "<p>Start the component in MOT Main,<br>then re-select this tab &mdash; or press &#8984;R.</p></div></body>",
             baseURL: nil)
     }
 
@@ -2237,7 +2245,7 @@ let appMenu = NSMenu()
 let reloadItem = NSMenuItem(title: "Reload Tab", action: #selector(AppDelegate.reloadTab(_:)), keyEquivalent: "r")
 reloadItem.target = delegate
 appMenu.addItem(reloadItem)
-appMenu.addItem(withTitle: "Quit Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+appMenu.addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 appItem.submenu = appMenu
 let editItem = NSMenuItem()
 mainMenu.addItem(editItem)

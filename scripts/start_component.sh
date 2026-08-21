@@ -886,7 +886,7 @@ PID = "llama.cpp"          # our provider id, everywhere — never spelled twice
 # This fallback is what keeps the provider visible enough to explain itself.
 PROVIDER = {
     "npm": "@ai-sdk/openai-compatible",
-    "name": "Harness runner (local)",
+    "name": "MOT Deck (local)",
     "options": {"baseURL": os.environ["OC_BASE"], "apiKey": os.environ["OC_KEY"]},
     "models": models or {"harness-runner": {"name": "harness runner",
                                             "id": "harness-runner"}},

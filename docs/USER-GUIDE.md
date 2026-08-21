@@ -1,4 +1,8 @@
-# The Harness Guide
+# The MOT Deck Guide
+
+> The app is **MOT Deck** — *Mixture of Tools*. Its home screen is **MOT Main**.
+> (Both were renamed on 2026-08-21; older text may still say "the harness" and
+> "Mission Control" — same thing.)
 
 Everything here runs on your Mac. The models, the conversations, the search engine,
 the files — all of it lives on your disk and answers to you. This guide is organized

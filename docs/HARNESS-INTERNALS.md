@@ -1,5 +1,10 @@
 # HARNESS INTERNALS — how this system actually works
 
+> **NAMING (2026-08-21):** the PRODUCT is **MOT Deck** (*Mixture of Tools*) and its home
+> screen is **MOT Main**. The INTERNAL codename stays `harness` — every path, key, env
+> var, route and id in this document is current and correct as written. Where the text
+> says "Harness" as a product name, read "MOT Deck".
+
 Canonical technical reference. Every claim below was derived by reading the code in
 this repo (paths are repo-relative; `app.py:NNN` = `bridge/app.py` line NNN at the time
 of writing — line numbers drift, symbol names don't, so functions are named too).

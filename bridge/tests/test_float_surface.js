@@ -216,7 +216,7 @@ console.log('peek (executed)');
                            music: { id, view: 'music', label: 'Music' },
                            caps: { id, view: 'caps', label: 'Capabilities' },
                            chat: { id, view: 'chat', label: 'Chat' },
-                           mc: { id, view: 'mc', label: 'Mission Control' },
+                           mc: { id, view: 'mc', label: 'MOT Main' },
                            logs: { id, view: null, label: 'Logs' },
                            aider: { id, view: null, label: 'Aider' } })[id] || null,
         setTimeout: () => {}, initModels: () => calls.push('models'),

@@ -383,6 +383,38 @@ if HAVE_XL:
     check("delete leaves the backup alone (it exists to survive mistakes)",
           os.path.isfile(bak))
 
+    # ── rename ──
+    # Both names go through doc_target, so the rename boundary IS the delete boundary.
+    office.create_doc(tmp, "before.xlsx")
+    new, reason = office.rename_doc(tmp, "before.xlsx", "after")
+    check("rename_doc moves the workbook and forces the extension",
+          new == "after.xlsx" and os.path.isfile(os.path.join(D, "after.xlsx"))
+          and not os.path.exists(os.path.join(D, "before.xlsx")))
+    check("rename_doc REFUSES a name already in use rather than resolving it to ' (n)' "
+          "— a rename names a file the user typed, and quietly picking a different one "
+          "hides the collision", office.rename_doc(tmp, "after.xlsx", "budget.xlsx")[0] is None)
+    check("…and leaves both files exactly where they were",
+          os.path.isfile(os.path.join(D, "after.xlsx"))
+          and os.path.isfile(os.path.join(D, "budget.xlsx")))
+    check("renaming a workbook to its own name is a no-op, not a failure",
+          office.rename_doc(tmp, "after.xlsx", "after")[0] == "after.xlsx"
+          and os.path.isfile(os.path.join(D, "after.xlsx")))
+    check("rename_doc refuses traversal on the SOURCE",
+          office.rename_doc(tmp, "../x.xlsx", "ok")[0] is None)
+    check("…and on the TARGET", office.rename_doc(tmp, "after.xlsx", "../ok.xlsx")[0] is None)
+    check("rename_doc refuses a missing workbook",
+          office.rename_doc(tmp, "ghost.xlsx", "ok")[0] is None)
+    check("rename_doc refuses another extension — slice 1 is .xlsx only",
+          office.rename_doc(tmp, "after.xlsx", "after.docx")[0] is None)
+    check("rename_doc refuses an empty or junk new name without raising",
+          office.rename_doc(tmp, "after.xlsx", "")[0] is None
+          and office.rename_doc(tmp, "after.xlsx", None)[0] is None
+          and office.rename_doc(tmp, None, "x")[0] is None
+          and office.rename_doc(tmp, "after.xlsx", 7)[0] is None)
+    check("every refusal comes with a sentence, never a bare None",
+          isinstance(office.rename_doc(tmp, "ghost.xlsx", "ok")[1], str)
+          and office.rename_doc(tmp, "ghost.xlsx", "ok")[1] != "")
+
     # ── the cell cap ──
     big = {"sheetOrder": ["s"], "sheets": {"s": {"name": "Big", "cellData": {}}}}
     check("MAX_CELLS is a real bound, not decoration", office.MAX_CELLS >= 100000)
@@ -444,6 +476,7 @@ REQ = (ROOT / "bridge" / "requirements.txt").read_text(encoding="utf-8")
 for route in ['@app.get("/office")', '@app.get("/api/office/files")',
               '@app.post("/api/office/new")', '@app.get("/api/office/open/{name}")',
               '@app.post("/api/office/save")', '@app.post("/api/office/delete")',
+              '@app.post("/api/office/rename")',
               '@app.get("/api/office/download/{name}")']:
     check(f"app.py declares {route}", route in APP)
 check("the office module is imported DEFENSIVELY (a missing file must not kill the bridge)",
@@ -463,6 +496,10 @@ check("POST /api/office/new passes an empty name straight through to create_doc,
       and "no file name" not in _new_route and "name.strip()" not in _new_route)
 check("download and delete both go through doc_target/delete_doc containment",
       "_office.doc_target(ROOT, name)" in APP and "_office.delete_doc" in APP)
+check("rename goes through rename_doc — which puts BOTH names through doc_target, so "
+      "it can no more reach outside data/office than a delete can",
+      "_office.rename_doc, ROOT" in APP
+      and "asyncio.to_thread(\n        _office.rename_doc" in APP)
 check("the page is served no-store (the stale-panel lesson)",
       re.search(r'PANEL / "office\.html",\s*headers=\{"Cache-Control": "no-store',
                 APP, re.S) is not None)

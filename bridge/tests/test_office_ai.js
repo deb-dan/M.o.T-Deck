@@ -498,6 +498,7 @@ check('…and the only chat URL anywhere in the page is the shared lane',
 check('every URL the page calls is one of the endpoints that already existed',
       urls.every(u => ["'/api/chat/direct'", "'/api/status'", "'/api/office/files'",
                        "'/api/office/new'", "'/api/office/save'", "'/api/office/delete'",
+                       "'/api/office/rename'",
                        "'/api/office/upload?name='", "'/api/office/open/'",
                        "'/api/office/download/'", "'/api/office/diag'"].indexOf(u) >= 0), urls);
 check('the session is deliberately EMPTY, so a spreadsheet question can never appear '
@@ -551,8 +552,12 @@ check('the landing beacon now says whether the panel is open and what model it f
 
 // state
 check('the open/closed choice is persisted', /localStorage\.setItem\('harness-office-ai'/.test(html));
-check('…and the sheet-context choice separately',
-      /localStorage\.setItem\('harness-office-ai-ctx'/.test(html));
+// ⚠️ CHANGED IN ROUND 3, and the old assertion was pinning the bug. The sheet-context
+// choice USED to be a persisted global, so one "ask without the sheet" survived every
+// later document and every later session — which is half of why a question about CLEAN
+// came back about Python. It is now per-document and in memory (see PART 3).
+check('…while the sheet-context choice is deliberately NOT persisted any more',
+      code.indexOf('harness-office-ai-ctx') < 0);
 check('the panel is OPEN by default — a capability nobody can see is the bug being '
       + 'fixed here', /localStorage\.getItem\('harness-office-ai'\) !== '0'/.test(grab('boot')));
 check('a localStorage that throws (private mode) does not stop the boot',
@@ -563,11 +568,194 @@ check('the model pill re-checks itself while the panel is open',
       /setInterval\(\(\) => \{ if \(!document\.hidden\) aiRefreshModel\(\); \}, AI_POLL_MS\)/.test(grab('aiSetOpen')));
 check('…and stops when it is collapsed', /clearInterval\(aiTimer\)/.test(grab('aiSetOpen')));
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   PART 3 — ROUND 3: the model was not sheet-aware, there was no way out of the page,
+   and the page ignored the app's own theme.
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+// ── the grounding preamble ───────────────────────────────────────────────────
+// THE BUG, from Debi's screenshot: "What does clean function do" → an explanation of
+// PYTHON string cleaning. Two things were wrong, and the sheet toggle was only one of
+// them: NOTHING in the request said this was a spreadsheet at all.
+eval(grab('aiPreamble'));
+const PRE = aiPreamble('Sales.xlsx', 'Q3');
+check('the preamble says what this app is', /LOffice/.test(PRE) && /spreadsheet/i.test(PRE));
+check('…and that it is Excel .xlsx it is talking about', /Excel/.test(PRE) && /xlsx/.test(PRE));
+check('…names the workbook and the sheet the question is about',
+      /Sales\.xlsx/.test(PRE) && /Q3/.test(PRE));
+check('…and settles the exact ambiguity that produced the bug: an unqualified '
+      + '"function" is a SPREADSHEET function, not a Python one',
+      /function/.test(PRE) && /Excel semantics/.test(PRE) && /Python/.test(PRE));
+check('…and asks for formulas in a fenced block, which the reply renderer already '
+      + 'turns into a copyable card', /fenced/.test(PRE));
+check('with no workbook open it says so rather than naming an empty file',
+      /no workbook open/.test(aiPreamble('', '')) && !/“”/.test(aiPreamble('', '')));
+check('a missing SHEET name costs a clause, never the preamble',
+      /Sales\.xlsx/.test(aiPreamble('Sales.xlsx', '')) && aiPreamble('Sales.xlsx', '').length > 200);
+[[null, null], [undefined, undefined], [0, 0], [{}, []], [' ', ' ']].forEach(([f, s], i) => {
+  let out = null, threw = null;
+  try { out = aiPreamble(f, s); } catch (e) { threw = e; }
+  check('aiPreamble is total — it is fed `current`, which can be anything (case '
+        + i + ')', !threw && typeof out === 'string' && out.length > 100);
+});
+
+const send3 = grab('aiSend');
+check('THE FIX: the preamble is prepended UNCONDITIONALLY. The sheet chip governs the '
+      + 'DATA, never whether the model is told it is inside a spreadsheet',
+      /const message = aiPreamble\(current, aiSheetName\(\)\)/.test(send3));
+check('…and the order is preamble → sheet (if sent) → question',
+      /aiPreamble[\s\S]{0,200}ctx\.text[\s\S]{0,120}'---/.test(send3));
+check('the disclosure now carries the WHOLE message, preamble included — a prompt the '
+      + 'user cannot see is a prompt they cannot check', /text: message/.test(send3));
+check('…and says out loud when only the grounding went', /grounding only/.test(send3));
+check('the preamble travels in the SAME single message on the SAME lane — no second '
+      + 'field, no system role, nothing new on the wire',
+      /JSON\.stringify\(\{ session: '', message: message \}\)/.test(send3));
+check('it is READ-ONLY like everything else in this panel', !writers.test(grab('aiPreamble')));
+
+// ── the sheet chip, per document ─────────────────────────────────────────────
+check('the chip starts ON in the markup', /id="ai-ctx" class="chip on"/.test(html));
+check('…and EVERY workbook opened turns it back on', /aiCtxOn = true/.test(grab('showWorkbook')));
+check('…so turning it off is a decision about the question you are asking now, and '
+      + 'cannot outlive the document', code.indexOf('harness-office-ai-ctx') < 0);
+check('the off state names the workbook it applies to, in the boot trace',
+      /bx\('ai-ctx'/.test(code));
+check('…and the chip still says plainly when the sheet is not going',
+      /sheet not sent/.test(grab('aiPaint')));
+
+// ── the File menu ────────────────────────────────────────────────────────────
+const MENU = ['mi-new', 'mi-open', 'mi-import', 'mi-rename', 'mi-save', 'mi-download',
+              'mi-close', 'mi-home'];
+MENU.forEach(id => check('the File menu carries a ' + id + ' row', html.indexOf('id="' + id + '"') > 0));
+check('the File button sits at the left of the header, before the file name',
+      html.indexOf('id="btn-file"') > html.indexOf('id="btn-rail"')
+      && html.indexOf('id="btn-file"') < html.indexOf('id="p-file"'));
+check('every row goes through ONE helper that closes the menu first, so no row can '
+      + 'leave it hanging open', MENU.every(id => new RegExp("mi\\('" + id + "'").test(code))
+      && /function mi\(id, run\)[\s\S]{0,140}fileMenu\(false\)/.test(code));
+check('it closes on an outside mousedown', /filewrap[\s\S]{0,140}contains\(ev\.target\)[\s\S]{0,60}fileMenu\(false\)/.test(code));
+check('…and on Escape, before Escape means anything else',
+      /Escape' && el\('filemenu'\)\.classList\.contains\('on'\)/.test(code));
+check('the rows are disabled from the SAME state the header reads, so a menu left open '
+      + 'through a save cannot act on a file that is moving',
+      /el\('mi-save'\)\.disabled = el\('btn-save'\)\.disabled/.test(code)
+      && /el\('mi-rename'\)\.disabled = !has \|\| busy/.test(code));
+check('…and paint() keeps an OPEN menu honest rather than only painting it once',
+      /if \(el\('filemenu'\)\.classList\.contains\('on'\)\) fileMenuPaint\(\)/.test(code));
+check('the menu is a real dropdown, hidden by a CLASS like everything else on this page',
+      rules.some(r => r.sel === '#filemenu' && /display:none/.test(r.body))
+      && rules.some(r => r.sel === '#filemenu.on' && /display:flex/.test(r.body)));
+check('it invents no dialog primitive — window.prompt and window.confirm are both '
+      + 'silent no-ops in a WKWebView, so Rename is an inline row and every '
+      + 'are-you-sure is a second click',
+      !/window\.(prompt|confirm)\s*\(/.test(code));
+
+// ── the way home ─────────────────────────────────────────────────────────────
+const home = grab('goHome');
+check('⌂ MOT Main asks the SHELL to switch tabs, through the same postMessage contract '
+      + 'the panel sidebar already uses',
+      /messageHandlers[\s\S]{0,80}harness/.test(home) && /cmd: 'switchTab'/.test(home));
+check('…sending the stable id AS WELL AS the title, so a renamed tab still resolves',
+      /id: 'mc'/.test(home) && /title: 'MOT Main'/.test(home));
+check('…defensively, because the shell does not register that handler on this webview '
+      + 'yet: no handler is a MESSAGE, never a silent nothing',
+      /try \{/.test(home) && /say\(/.test(home));
+check('…and in a real browser it simply navigates — while inside the shell it does NOT, '
+      + 'because that would strand the LOffice tab on Mission Control',
+      /inShell/.test(home) && /window\.location\.href = '\/'/.test(home));
+check('both the menu and the way home are beaconed',
+      code.indexOf("bx('menu-open'") > 0 && code.indexOf("bx('home-click'") > 0);
+
+// ── rename ───────────────────────────────────────────────────────────────────
+const ren = grab('renameDoc');
+check('rename goes through the bridge, which owns the name rules',
+      /fetch\('\/api\/office\/rename'/.test(ren));
+check('…carrying both names', /JSON\.stringify\(\{ name: from, to: to \}\)/.test(ren));
+check('the open document follows its new name, so the next Save writes the right file',
+      /current = j\.name/.test(ren));
+check('…and a rename NEVER throws unsaved edits away — it is not a save',
+      !/dirty = false/.test(ren));
+check('a rename that fails says why, from the bridge, and beacons it',
+      /bx\('rename-fail'/.test(ren) && /the bridge answered/.test(ren));
+check('the rail\'s one name box does both verbs rather than growing a second one',
+      /function nameRow\(want\)/.test(code) && /nameMode === 'rename' \? 'Rename' : 'Create'/.test(code)
+      && /function nameRowGo\(\)/.test(code));
+check('…and Enter in that box follows the verb it is showing',
+      /if \(ev\.key === 'Enter'\) nameRowGo\(\)/.test(code));
+
+// ── the third option, and the double-click that used to bin your work ────────
+const cd = grab('confirmDiscard');
+check('the unsaved-changes message offers the third option outright instead of '
+      + 'describing a dilemma and walking away', /Save & open/.test(cd) && /await save\(\)/.test(cd));
+check('…and does NOT open when the save failed — its reason is already on screen',
+      /if \(dirty\) return;/.test(cd));
+check('a DOUBLE-CLICK on a file row can no longer arm and confirm a discard between two '
+      + 'halves of one gesture', /DISCARD_MIN_MS/.test(cd) && num('DISCARD_MIN_MS') >= 250);
+const sayFn = grab('say');
+check('say() renders an inline action as a real button…', /b\.textContent = action\.label/.test(sayFn));
+check('…and STILL puts every string in through textContent — innerHTML is only ever '
+      + 'used to clear', !/innerHTML = text/.test(sayFn) && /m\.innerHTML = '';/.test(sayFn)
+      && /t\.textContent = text/.test(sayFn));
+check('closing a file is offered a Save & close in the same shape',
+      /Save & close/.test(code) && code.indexOf("bx('close-file'") > 0);
+check('the rail says which workbook is OPEN, not merely which row is selected',
+      /' · open'/.test(grab('renderFiles')));
+
+// ── theme coherence ──────────────────────────────────────────────────────────
+// "non chrome thing again": the tab ignored the ◐ theme and the ▣ chrome the rest of
+// the harness obeys, so flipping the app to light left one dark rectangle behind.
+check('the page READS the panel\'s own two keys and invents no setting of its own',
+      /localStorage\.getItem\('harness-theme'\)/.test(html)
+      && /localStorage\.getItem\('harness-chrome'\)/.test(html)
+      && !/setItem\('harness-theme'/.test(html) && !/setItem\('harness-chrome'/.test(html));
+check('…before first paint, in the head, exactly as the panel does it — applying it '
+      + 'later would paint dark and then flip, every load',
+      html.indexOf('syncSkin') > 0 && html.indexOf('syncSkin') < html.indexOf('<style>'));
+check('…and it stays in step afterwards: a storage event (which is precisely what the '
+      + 'panel writing the key looks like from here), focus, and becoming visible',
+      /addEventListener\('storage'/.test(code) && /syncSkin\('focus'\)/.test(code)
+      && /syncSkin\('visible'\)/.test(code));
+check('a localStorage that throws leaves the page on its defaults rather than failing',
+      /catch \(e\) \{ return ''; \}/.test(html));
+check('the skin is beaconed, and only when it CHANGES', /bx\('skin'/.test(html)
+      && /now !== lastSkin/.test(html));
+
+const themeRules = rules.filter(r => /data-theme|data-chrome/.test(r.sel));
+check('both axes are implemented in CSS, not by rewriting the page at runtime',
+      themeRules.length >= 6);
+{
+  const root = rules.find(r => r.sel === ':root');
+  const lite = rules.find(r => r.sel === 'html[data-theme="light"]');
+  check('the light PALETTE rule outranks :root — written with a zero-specificity '
+        + ':where() it would have lost, and the theme would have done nothing at all',
+        !!root && !!lite && cmp(spec(lite.sel), spec(root.sel)) > 0);
+}
+{
+  // THE LANDMINE THE STUDIO-CHROME POST-MORTEM RECORDS, tested rather than trusted.
+  const stBtn = rules.find(r => /^:where\(html\[data-chrome="studio"\]\)[\s\S]*\) button$/.test(r.sel));
+  const ghost = rules.find(r => /\) button\.ghost$/.test(r.sel));
+  check('the studio chrome restyles our buttons', !!stBtn);
+  eq('…with its whole prefix inside :where(), so it carries the specificity of a bare '
+     + '`button`', spec(stBtn ? stBtn.sel : 'nope'), [0, 0, 1]);
+  check('…and therefore LOSES to .ghost, button.primary and .lnk: a studio flip cannot '
+        + 'fill in the icon buttons, flatten the one cream button, or turn the file '
+        + 'row\'s download/delete links into boxes',
+        !!stBtn && !!ghost && !!prim
+        && cmp(spec(ghost.sel), spec(stBtn.sel)) > 0
+        && cmp(spec(prim.sel), spec(stBtn.sel)) > 0
+        && cmp(spec('.lnk'), spec(stBtn.sel)) > 0);
+  check('…and to #gridbar button, so the white sheet\'s own chrome is untouched by '
+        + 'either axis', !!gb && !!stBtn && cmp(spec(gb.sel), spec(stBtn.sel)) > 0);
+}
+check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were all '
+      + 'chosen against a white page',
+      themeRules.every(r => !/#gt|#gridwrap|#gridbar|#sheet\b/.test(r.sel)));
+
 // the build stamp moved, so a stale document is still decidable by eye
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21h');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21i');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-21h/g) || []).length === 2);
+      (html.match(/loffice-2026-08-21i/g) || []).length === 2);
 
 // ── report ──
 console.log('');

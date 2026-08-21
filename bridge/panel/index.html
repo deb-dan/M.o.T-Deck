@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Harness</title>
+<title>MOT Deck</title>
 <style>
   :root {
     --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
@@ -1397,8 +1397,11 @@
 <aside>
   <!-- FABLE: style pass — Phase 1 rail collapse toggle (Chat view only) -->
   <button id="rail-toggle" onclick="toggleChatRail()" title="Expand sidebar" aria-label="Expand sidebar">»</button>
-  <div class="brand">Harness</div>
-  <div class="build">local · studio</div>
+  <!-- Wordmark: the acronym carries the display weight (216px rail — "Mixture of Tools
+       (MOT)" cannot be set at 22px italic serif without shrinking the whole mark), and
+       the expansion rides the existing .build line. ZERO new CSS. -->
+  <div class="brand">MOT</div>
+  <div class="build">mixture of tools<br>local · control</div>
   <!-- STUDIO PHASE 2: both nav groups are RENDERED from the nav model (order + hidden
        are the user's), not written out here. With no saved layout the model IS this
        list, so a fresh install is byte-identical to the build before this slice —
@@ -1430,8 +1433,8 @@
 
   <div id="view-mc">
     <div class="kicker"><span class="num">I.</span><span class="rule"></span>
-      <span class="lbl">Mission Control</span></div>
-    <h1>Mission Control</h1>
+      <span class="lbl">MOT Main</span></div>
+    <h1>MOT Main</h1>
     <div class="sub">Status of every component, every port, every pin.</div>
     <div class="stamp" id="stamp">—</div>
 
@@ -1515,7 +1518,7 @@
               title="Attach an image (vision models)" aria-label="Attach an image" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-attach"/></svg></span><span class="ed-only">⊕</span></button>
             <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp"
               onchange="onImagePicked(event)" hidden>
-            <textarea id="chat-input" rows="2" placeholder="Message the harness…"
+            <textarea id="chat-input" rows="2" placeholder="Message MOT…"
               oninput="growInput(this)"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-send"/></svg></span><span class="ed-only">Send</span></button>
@@ -1920,7 +1923,7 @@ function showProvLog(name) {
    on mc/chat/models/caps, which are panel views — pinning one of those as a tab gives
    it a strip segment without making the sidebar row jump out of the panel. */
 const NAV_ENTRIES = [
-  { id:'mc',      label:'Mission Control', ico:'◫', kind:'view', view:'mc',     tab:'Mission Control' },
+  { id:'mc',      label:'MOT Main',        ico:'◫', kind:'view', view:'mc',     tab:'MOT Main' },
   { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
   { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
@@ -2143,8 +2146,8 @@ function renderSidebar() {
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     const tabTitle = TAB_FOR_COMPONENT[name];
     const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
-              : tabTitle ? `show ${name} on Mission Control — not running`
-              : `show ${name} on Mission Control`;
+              : tabTitle ? `show ${name} on MOT Main — not running`
+              : `show ${name} on MOT Main`;
     return `<a onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${esc(name)}</span></a>`;
   }).join('');
@@ -2517,7 +2520,7 @@ function openSetup() {
     scrim = document.createElement('div'); scrim.id = 'setup-scrim';
     scrim.innerHTML = `<div id="setup-card" class="float-surface">
         <h3>Setting things up</h3>
-        <div class="su-sub">green means ready — the harness runs fully local</div>
+        <div class="su-sub">green means ready — MOT runs fully local</div>
         <div id="su-rows"></div>
         <div class="su-foot"><button id="su-dismiss" onclick="closeSetup()">Run in background</button></div>
       </div>`;
@@ -3027,7 +3030,7 @@ async function initCaps() {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
   } catch (e) {
-    stamp.textContent = 'Odysseus unreachable — start it in Mission Control';
+    stamp.textContent = 'Odysseus unreachable — start it in MOT Main';
     // The voice rows and the Hermes toolset rows write HERMES's config, not
     // Odysseus's, so both stay usable on this path.
     const t = document.getElementById('caps-sec-tools');
@@ -4779,7 +4782,7 @@ async function initChat() {
   }
   try {
     const list = await loadSessions();
-    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MISSION CONTROL'; return; }
+    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT MAIN'; return; }
     const want = localStorage.getItem('harness-chat-sid');
     const pick = (want && list.find(s => s.id === want)) || list[0];
     if (pick) await selectSession(pick.id);
@@ -12107,7 +12110,7 @@ const commands = () => {
   }
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
-    {t:'Mission Control', k:'◫', f:()=>showView('mc')},
+    {t:'MOT Main', k:'◫', f:()=>showView('mc')},
     {t:'Music', k:'♫', f:()=>showView('music')},
     {t:'Generate music', k:'♫', f:()=>{ showView('music'); setTimeout(()=>{
         const el = document.getElementById('mus-prompt'); if (el) el.focus(); }, 120); }},
