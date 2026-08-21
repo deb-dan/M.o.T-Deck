@@ -789,6 +789,142 @@ PYWIRE
       exit 1
     fi
     ;;
+  opencode)
+    # OPTIONAL second coding lane (MIT). ONE prebuilt native binary; no venv, no repo.
+    # It serves its OWN embedded SPA and its JSON API on the same loopback port, which
+    # is exactly the tab shape — no PTY, no xterm.js, no websocket of ours.
+    ROOT="$(pwd)"
+    OC_BIN="$ROOT/data/opencode/bin/opencode"
+    [[ -x "$OC_BIN" ]] || { echo "ERROR: opencode is not installed ($OC_BIN missing) — click Install first"; exit 1; }
+    OC_PORT=$(awk '/^  opencode:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    # ⚠️ upstream's OWN --port default is 0 (an ephemeral port), so this fallback is not
+    # cosmetic: without an explicit --port the tab would point at a port nothing holds.
+    [[ "$OC_PORT" =~ ^[0-9]+$ ]] || OC_PORT=4096
+    OC_HOME="$ROOT/data/opencode/xdg"
+    OC_WS="$ROOT/data/opencode-workspace"
+    mkdir -p "$OC_HOME/config" "$OC_HOME/cache" "$OC_HOME/data" "$OC_HOME/state" "$OC_WS"
+
+    # ── config fan-out: point OpenCode at OUR runner, the same way Hermes is pointed ──
+    # Its global config file is <XDG_CONFIG_HOME>/opencode/opencode.json (Global.Path.config
+    # = xdgConfig/opencode at the pin), which is why the XDG_* redirect below is what makes
+    # this file the one it reads — we never write to ~/.config.
+    # MERGE, never overwrite: only the keys we own are replaced, so anything the user adds
+    # in that file (permissions, themes, other providers) survives a restart.
+    OC_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
+    OC_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
+    OC_CFG="$OC_HOME/config/opencode/opencode.json"
+    OC_CFG="$OC_CFG" OC_BASE="$OC_BASE" OC_KEY="$OC_KEY" OC_MODEL="$OC_MODEL" \
+      python3 - <<'PYOC'
+import json, os
+cfg_path = os.environ["OC_CFG"]
+os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+try:
+    with open(cfg_path, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    if not isinstance(cfg, dict):
+        cfg = {}
+except Exception:
+    cfg = {}
+
+# Every chat model in OUR registry, keyed by its WIRE identifier — the same rule
+# bridge/app.py::wire_model_id and the hermes branch use: llama.cpp is launched with
+# `--alias <registry id>` so the id IS the served name, while the MLX servers treat the
+# request's `model` field as a model to LOAD and would resolve a bare id on HuggingFace.
+models, wire_of = {}, {}
+try:
+    with open(os.path.join("data", "models.json"), encoding="utf-8") as fh:
+        reg = json.load(fh).get("models", []) or []
+except Exception:
+    reg = []
+for m in reg:
+    if not isinstance(m, dict) or m.get("kind") == "audio" or m.get("hidden"):
+        continue
+    mid = m.get("id")
+    if not mid:
+        continue
+    wire = ((m.get("path") or "").strip() or mid
+            if str(m.get("format") or "gguf").strip().lower() == "mlx" else mid)
+    wire_of[mid] = wire
+    models[wire] = {"name": mid}
+
+provider = cfg.setdefault("provider", {}) if isinstance(cfg.get("provider"), dict) else {}
+cfg["provider"] = provider
+provider["llama.cpp"] = {
+    "npm": "@ai-sdk/openai-compatible",
+    "name": "Harness runner (local)",
+    "options": {"baseURL": os.environ["OC_BASE"], "apiKey": os.environ["OC_KEY"]},
+    "models": models or {"harness-runner": {"name": "harness runner"}},
+}
+cfg["$schema"] = "https://opencode.ai/config.json"
+# THE PIN RULE, in the file as well as in the env: upstream's auto-update is ON by
+# default and would move the binary out from under harness.yaml.
+cfg["autoupdate"] = False
+
+# The default model is SEEDED, not enforced: we set it when there is none, and we
+# replace it only when it points at one of OUR provider's models that no longer exists
+# (a stale id from a deleted model). A choice the user makes inside OpenCode survives.
+want = os.environ.get("OC_MODEL") or ""
+want_wire = wire_of.get(want, want)
+cur = cfg.get("model")
+stale = (isinstance(cur, str) and cur.startswith("llama.cpp/")
+         and cur.split("/", 1)[1] not in models)
+if want_wire and (not isinstance(cur, str) or not cur or stale):
+    cfg["model"] = "llama.cpp/" + want_wire
+
+tmp = cfg_path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh, indent=2)
+os.replace(tmp, cfg_path)
+print(f"[harness] opencode config -> {cfg_path} "
+      f"({len(models)} model(s), default {cfg.get('model') or 'unset'})")
+PYOC
+
+    # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
+    _clear_port "$OC_PORT" opencode
+    sleep 1
+    # `serve`, deliberately NOT `web`: at the pin both commands call the SAME
+    # Server.listen with the SAME network options and the SAME embedded SPA — `web`
+    # only differs by calling open() on the URL, which would pop a browser window
+    # behind our native tab on every Start.
+    (
+      cd "$OC_WS"
+      # THE CONFINEMENT. packages/core/src/global.ts derives config/cache/data/state
+      # from xdg-basedir, so these four variables are the ONLY thing keeping its
+      # sessions db and the provider packages it installs at runtime (@npmcli/arborist)
+      # inside data/opencode instead of ~/.config and ~/.cache.
+      XDG_CONFIG_HOME="$OC_HOME/config" XDG_CACHE_HOME="$OC_HOME/cache" \
+      XDG_DATA_HOME="$OC_HOME/data" XDG_STATE_HOME="$OC_HOME/state" \
+      OPENCODE_DISABLE_AUTOUPDATE=1 \
+      nohup "$OC_BIN" serve --hostname 127.0.0.1 --port "$OC_PORT" \
+        >>"$ROOT/data/logs/opencode.log" 2>&1 &
+      echo $! > "$ROOT/data/opencode.pid"
+    )
+    up=0
+    TRIES=60
+    for i in $(seq 1 "$TRIES"); do
+      # /global/health is its own JSON route; `/` (the embedded SPA) is the fallback so
+      # a route rename at a future pin degrades to "the tab has something to show".
+      if curl -sf -m 2 "http://127.0.0.1:${OC_PORT}/global/health" >/dev/null 2>&1 \
+         || curl -sf -m 2 "http://127.0.0.1:${OC_PORT}/" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/opencode.pid")" 2>/dev/null || {
+        echo "ERROR: opencode exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/opencode.log"
+        exit 1; }
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] opencode up on http://127.0.0.1:${OC_PORT} (server + its own SPA, loopback, NO auth)"
+      echo "[harness] workspace: $OC_WS — the only directory it is started in"
+      echo "[harness] REMINDER: OpenCode requires a TOOL-CALLING model (the green 'tools'"
+      echo "[harness]   pill in Models). Without one it looks broken, not merely slower."
+    else
+      echo "ERROR: opencode did not answer on :${OC_PORT} in ~2min:"
+      tail -20 "$ROOT/data/logs/opencode.log"
+      exit 1
+    fi
+    ;;
   hermes)
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091

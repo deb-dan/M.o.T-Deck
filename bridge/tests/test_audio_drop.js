@@ -568,8 +568,8 @@ check('the arrangement is persisted by ID as well as by index (an index is strip
       /ud\.set\(tabId\(currentTab\), forKey: "harness\.split\.leftId"\)/.test(swift)
       && /ud\.set\(tabId\(rightTab\), forKey: "harness\.split\.rightId"\)/.test(swift)
       && /tabs\.firstIndex\(where: \{ \$0\.id == savedLeftId \}\)/.test(swift));
-check('the default strip is exactly the ten tabs that shipped, in order',
-      /let navDefaultTopbar = \["mc", "odysseus", "hermes", "voicestudio", "voicebox",\s*\n?\s*"comfyui", "unsloth", "music", "aider", "loffice"\]/.test(swift));
+check('the default strip is exactly the eleven default tabs, in order',
+      /let navDefaultTopbar = \["mc", "odysseus", "hermes", "voicestudio", "voicebox",\s*\n?\s*"comfyui", "unsloth", "music", "aider", "loffice", "opencode"\]/.test(swift));
 check('the three pinnable VIEWS load the panel chromeless, one per view',
       /HarnessTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
       && /HarnessTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)

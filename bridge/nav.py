@@ -54,6 +54,7 @@ NAV_ENTRIES = (
     {"id": "voicebox",    "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "comfyui",     "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "unsloth",     "kind": "component", "bars": ("sidebar", "topbar")},
+    {"id": "opencode",    "kind": "component", "bars": ("sidebar", "topbar")},
 )
 NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 
@@ -65,14 +66,14 @@ DEFAULT_SIDEBAR = (
     ("mc", True), ("chat", True), ("models", True), ("music", True),
     ("aider", True), ("loffice", True), ("caps", True), ("logs", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
-    ("voicebox", True), ("comfyui", True), ("unsloth", True),
+    ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
 )
 # …and this is the shell's `tabs` table as it shipped, in order, followed by the three
 # views that CAN be pinned as solo tabs but are not by default.
 DEFAULT_TOPBAR = (
     ("mc", True), ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("music", True),
-    ("aider", True), ("loffice", True),
+    ("aider", True), ("loffice", True), ("opencode", True),
     ("chat", False), ("models", False), ("caps", False),
 )
 DEFAULTS = {"sidebar": DEFAULT_SIDEBAR, "topbar": DEFAULT_TOPBAR}

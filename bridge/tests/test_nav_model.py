@@ -84,8 +84,13 @@ def test_normalize():
     ok(nav.validate(d) == "", "the DEFAULT layout is itself valid")
     ok(ids(d, "sidebar")[0] == "mc", "the sidebar default opens on Mission Control")
     ok(ids(d, "topbar")[0] == "mc", "…and so does the strip")
-    ok(nav.visible(d, "topbar") == list(nav.DEFAULT_TOPBAR[i][0] for i in range(10)),
-       "the default strip is exactly the ten tabs that shipped, in order")
+    # The pinned prefix of DEFAULT_TOPBAR, in order — eleven since OpenCode landed
+    # (2026-08-21). Derived from the table rather than a literal count so adding a tab
+    # is a one-line change here, but the ORDER is still asserted.
+    ok(nav.visible(d, "topbar") == [i for i, p in nav.DEFAULT_TOPBAR if p],
+       "the default strip is exactly the pinned defaults, in order")
+    ok(len(nav.visible(d, "topbar")) == 11,
+       "eleven default tabs (ten shipped + OpenCode) — a change here must be deliberate")
     ok(nav.hidden(d, "topbar") == ["chat", "models", "caps"],
        "the three pinnable views start hidden (one sidebar click away)")
 
@@ -174,13 +179,20 @@ def test_validate():
         r["pinned"] = True
     n = sum(1 for r in m["topbar"] if r["pinned"])
     err = nav.validate(m)
-    ok(n == 13, "the registry offers 13 strip-able entries (so the cap is reachable)")
-    ok(err and str(nav.NAV_TOPBAR_MAX) in err, "a 13th pin is refused, naming the limit")
+    ok(n > nav.NAV_TOPBAR_MAX,
+       f"the registry offers {n} strip-able entries, so the cap is reachable at all")
+    ok(err and str(nav.NAV_TOPBAR_MAX) in err,
+       "pinning every entry is refused, naming the limit")
     ok(nav.NAV_TOPBAR_MAX == 12, "the limit is Debi's 12")
-    # exactly 12 is allowed — boundary inclusive
-    for r in m["topbar"]:
-        if r["id"] == "caps":
+    # exactly 12 is allowed — boundary inclusive. Unpin from the END so the leading
+    # choices survive, the same rule `repair` follows.
+    over = n - nav.NAV_TOPBAR_MAX
+    for r in reversed(m["topbar"]):
+        if over and r["pinned"]:
             r["pinned"] = False
+            over -= 1
+    ok(sum(1 for r in m["topbar"] if r["pinned"]) == nav.NAV_TOPBAR_MAX,
+       "unpinning from the end lands exactly on the cap")
     ok(nav.validate(m) == "", "exactly 12 pinned tabs is allowed (boundary inclusive)")
 
 

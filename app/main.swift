@@ -43,6 +43,11 @@ let tabRegistry: [HarnessTab] = [
     // :8899, NOT upstream's default :8888 — that port belongs to Debi's standalone
     // Unsloth app (harness.yaml carries the same number and the reason).
     HarnessTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
+    // OpenCode — the second coding lane. Its own server serves its own embedded SPA on
+    // one loopback port, which is why it is a plain tab and not a PTY like Aider.
+    // :4096 is the number its docs use; upstream's own --port DEFAULT is 0 (ephemeral),
+    // so start_component.sh always passes it explicitly (harness.yaml carries the same).
+    HarnessTab(id: "opencode", title: "OpenCode", url: URL(string: "http://127.0.0.1:4096")!),
     // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always
@@ -68,12 +73,12 @@ let tabRegistry: [HarnessTab] = [
     HarnessTab(id: "caps", title: "Capabilities", url: URL(string: "http://127.0.0.1:8700/?solo=caps")!),
 ]
 
-// The DEFAULT strip = exactly the ten tabs this app shipped with, in order. It is also
-// bridge/nav.py's DEFAULT_TOPBAR pinned prefix; the two are asserted to agree by test,
-// because a disagreement would mean the strip and the panel's Appearance editor
+// The DEFAULT strip, in order (eleven tabs since OpenCode landed, 2026-08-21). It is
+// also bridge/nav.py's DEFAULT_TOPBAR pinned prefix; the two are asserted to agree by
+// test, because a disagreement would mean the strip and the panel's Appearance editor
 // describe different windows.
 let navDefaultTopbar = ["mc", "odysseus", "hermes", "voicestudio", "voicebox",
-                        "comfyui", "unsloth", "music", "aider", "loffice"]
+                        "comfyui", "unsloth", "music", "aider", "loffice", "opencode"]
 func tabsFor(_ ids: [String]) -> [HarnessTab] {
     return ids.compactMap { i in tabRegistry.first(where: { $0.id == i }) }
 }
@@ -1305,11 +1310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // occupy roughly minSize.width - 70 before the two could touch. The eight-tab estimate
     // (~733-808pt) had already used up the old 900pt window's ~830pt budget, so THIS tab
     // raised minSize.width to 1160 — budget ~1090pt — rather than shrinking a label.
-    // The ten current titles (Office landed 2026-08-21, +6 characters and +1 segment,
-    // renamed LOffice the same day, +1) total 79 characters; at 13pt SF that is
-    // ~7.0-8.0pt per character plus the fixed
-    // 26pt padding per segment, i.e. ~806pt to ~884pt: inside
-    // 1090 with room for one or two more tabs. If a future tab pushes the estimate past
+    // The ELEVEN current titles (OpenCode landed 2026-08-21, +8 characters and +1
+    // segment, on top of the ten that totalled 79) total 87 characters; at 13pt SF that
+    // is ~7.0-8.0pt per character plus the fixed
+    // 26pt padding per segment, i.e. ~895pt to ~982pt: inside
+    // 1090 with room for one more tab. If a future tab pushes the estimate past
     // the budget, shorten the LONGEST titles (e.g. "Mission Control" → "Control") rather
     // than removing the padding: `segmentAt` reads exactly these numbers back to hit-test
     // a drag.

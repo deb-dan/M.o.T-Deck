@@ -18,10 +18,10 @@ def test_harness_yaml_parses():
     # itself, the searxng precedent).
     assert set(c["components"]) == {
         "hermes", "odysseus", "searxng", "voicestudio", "voicebox",
-        "comfyui", "unsloth"}
+        "comfyui", "unsloth", "opencode"}
     for comp in c["components"].values():
         assert comp["pin"], "every component must be pinned"
-    for name in ("voicestudio", "voicebox", "comfyui", "unsloth"):
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode"):
         comp = c["components"][name]
         assert comp["installed"] is False, f"{name} is OPTIONAL — it must ship installed:false"
         assert comp["depends_on"] == [], f"{name} must not be a dependency edge"
@@ -37,6 +37,17 @@ def test_harness_yaml_parses():
     assert c["components"]["unsloth"]["port"] == 8899, (
         "unsloth's port moved: 8899 is deliberate (8888 belongs to a separate, "
         "user-installed Unsloth app that our port clear would kill)")
+    # OpenCode's pin is an NPM VERSION, not a git ref — and the two places that carry
+    # it must agree, because the installer reads build.opencode_pin while the manifest
+    # entry is what a human reads.
+    assert c["build"]["opencode_pin"] == c["components"]["opencode"]["pin"], (
+        "build.opencode_pin and components.opencode.pin disagree — the installer reads "
+        "the build key, so a stale manifest pin would silently document the wrong version")
+    # ⚠️ upstream's OWN --port default is 0 (an ephemeral port), so this number is not
+    # a convention we could drop: the start script MUST pass it and the tab hard-codes it.
+    assert c["components"]["opencode"]["port"] == 4096
+    assert "http://127.0.0.1:4096" in (ROOT / "app" / "main.swift").read_text(), (
+        "the OpenCode tab's URL no longer matches the manifest port")
 
 
 def test_optional_components_are_not_submodules():
@@ -47,7 +58,7 @@ def test_optional_components_are_not_submodules():
     if not gm.exists():
         return
     src = gm.read_text(errors="replace")
-    for name in ("voicestudio", "voicebox", "comfyui", "unsloth"):
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode"):
         assert f"vendor/{name}" not in src, (
             f"{name} became a submodule — it must stay a shallow clone made by "
             "install_component.sh, or bootstrap will pull it for everyone")

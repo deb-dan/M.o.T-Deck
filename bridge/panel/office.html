@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21c">
+<meta name="harness-build" content="loffice-2026-08-21d">
 <!-- The LOffice tab is its OWN document, deliberately not the panel (the /aider
      precedent): it loads ~10MB of Univer UMD, mounts a canvas grid, and must not
      carry the panel's poll loops. The palette values below are the panel's tokens,
@@ -24,7 +24,60 @@
      everybody already knows from Sheets/Excel — so this page MOUNTS that UI rather
      than hand-building a lookalike. Our chrome is the thin bar above it (which file,
      is it dirty, Save / Import / New) and the file rail. -->
-<link rel="stylesheet" href="/assets/vendor/univer/preset-sheets-core.css">
+<!-- ── THE BOOT BEACON, and it is deliberately the FIRST script in the document ──
+     This page has now failed twice on a Mac none of us can reach, and both times the
+     entire available evidence was "the tab is blank" — a sentence that fits a stale
+     cached document, a 404'd bundle, a JS engine that refused ten megabytes, a mount
+     into a zero-sized box and a web content process killed by jetsam, equally well.
+     So the page reports its own boot, step by step, to the bridge, which writes it
+     down. The next report is a grep, not a hypothesis:
+
+         grep loffice ~/Library/Application\ Support/Harness/data/logs/bridge.log
+
+     It sits in <head>, above the stylesheet, so that (a) `script-start` is the
+     earliest thing that can possibly be observed — its ABSENCE means no script in
+     this document ran at all, which is the stale-cache/dead-process case — and (b)
+     the css link below can report its own failure through it.
+
+     `navigator.sendBeacon` is the transport for one specific reason: it is the only
+     one specified to survive the page being torn down, and a page being torn down is
+     one of the things we are trying to catch. -->
+<script>
+(function () {
+  'use strict';
+  // A fresh id per document load. Two `script-start` lines with DIFFERENT ids seconds
+  // apart is the unmistakable signature of a reload loop — i.e. the web content
+  // process is dying and the shell's terminate delegate is reloading it.
+  var BOOT = Math.random().toString(36).slice(2, 8);
+  var T0 = Date.now();
+  var SENT = 0, CAP = 80;      // a malfunctioning page must not become a traffic source
+  window.__lofficeBoot = BOOT;
+  window.bx = function (stage, detail) {
+    try {
+      if (SENT++ > CAP) return;
+      var body = JSON.stringify({ stage: String(stage || ''),
+                                  detail: detail == null ? '' : String(detail),
+                                  boot: BOOT, ms: Date.now() - T0 });
+      var url = '/api/office/diag';
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([body], { type: 'text/plain' }));
+      } else {
+        fetch(url, { method: 'POST', body: body, keepalive: true }).catch(function () {});
+      }
+    } catch (e) { /* a diagnostic may never be the thing that breaks the page */ }
+  };
+  // The build is READ from the <meta> above rather than written again here: the stamp
+  // exists to answer "is the bridge serving the file I shipped?", and a second copy of
+  // it that could drift from the first would make that answer a lie.
+  var bmeta = document.querySelector('meta[name="harness-build"]');
+  window.bx('script-start', 'build=' + ((bmeta && bmeta.content) || '?')
+            + ' ua=' + navigator.userAgent
+            + ' url=' + location.href + ' vis=' + document.visibilityState);
+})();
+</script>
+<link rel="stylesheet" href="/assets/vendor/univer/preset-sheets-core.css"
+      onerror="window.bx&&bx('asset-error','preset-sheets-core.css')"
+      onload="window.bx&&bx('asset-ok','preset-sheets-core.css')">
 <style>
   :root{
     --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
@@ -129,7 +182,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21c</code>.</div>
+  Build <code>loffice-2026-08-21d</code>.</div>
 <header>
   <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
   <span class="name">LOffice</span>
@@ -186,13 +239,28 @@
      keeps the documented guarantees we depend on (they still execute in THIS order, and
      all of them before DOMContentLoaded) while letting the document render immediately.
      Because of it the inline script below runs BEFORE these do — hence boot-on-
-     DOMContentLoaded rather than boot-at-parse. -->
-<script defer src="/assets/vendor/react.production.min.js"></script>
-<script defer src="/assets/vendor/react-dom.production.min.js"></script>
-<script defer src="/assets/vendor/univer/rxjs.umd.min.js"></script>
-<script defer src="/assets/vendor/univer/presets.umd.js"></script>
-<script defer src="/assets/vendor/univer/preset-sheets-core.umd.js"></script>
-<script defer src="/assets/vendor/univer/preset-sheets-core.en-US.js"></script>
+     DOMContentLoaded rather than boot-at-parse.
+
+     EVERY ONE OF THEM ALSO BEACONS. `defer` guarantees they execute in THIS order, so
+     the last `asset-ok` in the boot trace names the file that loaded, and the one that
+     should have come next is where the boot died — including the case where nothing
+     comes after it at all, which is what a web content process being killed part-way
+     through compiling 7 MB of `presets.umd.js` looks like from the outside. -->
+<script defer src="/assets/vendor/react.production.min.js"
+        onload="bx('asset-ok','react')" onerror="bx('asset-error','react')"></script>
+<script defer src="/assets/vendor/react-dom.production.min.js"
+        onload="bx('asset-ok','react-dom')" onerror="bx('asset-error','react-dom')"></script>
+<script defer src="/assets/vendor/univer/rxjs.umd.min.js"
+        onload="bx('asset-ok','rxjs')" onerror="bx('asset-error','rxjs')"></script>
+<script defer src="/assets/vendor/univer/presets.umd.js"
+        onload="bx('asset-ok','presets.umd.js (7 MB)')"
+        onerror="bx('asset-error','presets.umd.js')"></script>
+<script defer src="/assets/vendor/univer/preset-sheets-core.umd.js"
+        onload="bx('asset-ok','preset-sheets-core.umd.js')"
+        onerror="bx('asset-error','preset-sheets-core.umd.js')"></script>
+<script defer src="/assets/vendor/univer/preset-sheets-core.en-US.js"
+        onload="bx('asset-ok','preset-sheets-core.en-US.js')"
+        onerror="bx('asset-error','preset-sheets-core.en-US.js')"></script>
 <script>
 'use strict';
 // ── the very first thing this page does ──────────────────────────────────────
@@ -271,7 +339,8 @@ function selfCheck() {
     if (!ok) missing.push(label);
   }
   if (!cssLoaded()) missing.push('preset-sheets-core.css (the spreadsheet stylesheet)');
-  if (!missing.length) return true;
+  if (!missing.length) { bx('selfcheck-pass', 'all ' + NEEDS.length + ' globals present'); return true; }
+  bx('selfcheck-fail', 'missing=' + missing.join(','));
   say('The spreadsheet engine did not load, so the grid cannot open.\n\nMissing: '
       + missing.join(', ')
       + '\n\nRun ./scripts/fetch_vendor_assets.sh (it puts the Univer bundles in '
@@ -282,6 +351,8 @@ function selfCheck() {
 // Anything that throws after boot lands here rather than in a console nobody opens.
 // This is the promise the page makes: it may fail, but it will never fail SILENTLY.
 window.addEventListener('error', ev => {
+  bx('page-error', ((ev && ev.message) || 'unknown')
+     + (ev && ev.filename ? ' @' + ev.filename + ':' + ev.lineno : ''));
   say('Something broke in this page: ' + ((ev && ev.message) || 'unknown error')
       + (ev && ev.filename ? '\n  ' + ev.filename + ':' + ev.lineno : ''));
 });
@@ -291,11 +362,13 @@ window.addEventListener('error', ev => {
 window.addEventListener('error', ev => {
   const t = ev && ev.target;
   if (!t || t === window || !(t.src || t.href)) return;      // not a resource failure
+  bx('asset-error', 'capture: ' + (t.src || t.href));
   say('An asset this page needs did not load:\n  ' + (t.src || t.href)
       + '\n\nRun ./scripts/fetch_vendor_assets.sh, then ./scripts/ship.sh, then ⌘R.');
 }, true);
 window.addEventListener('unhandledrejection', ev => {
   const r = ev && ev.reason;
+  bx('rejection', (r && (r.message || r)) || 'unknown');
   say('Something broke in this page: ' + ((r && (r.message || r)) || 'unknown error'));
 });
 
@@ -369,8 +442,10 @@ async function loadFiles() {
   try {
     const r = await fetch('/api/office/files', { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'could not list spreadsheets'); return; }
+    if (!j.ok) { bx('files-fail', j.error || 'not ok'); say(j.error || 'could not list spreadsheets'); return; }
     files = j.files || [];
+    bx('files-ok', 'n=' + files.length + ' roundtrip=' + j.roundtrip
+       + (j.roundtrip_error ? ' err=' + j.roundtrip_error : ''));
     el('fidelity').textContent = j.fidelity || '';
     el('fdir').textContent = j.dir || '';
     // The one thing worth shouting about: no openpyxl means no round-trip at all —
@@ -384,14 +459,45 @@ async function loadFiles() {
           + 'then restart the bridge (./scripts/ship.sh).');
     }
     renderFiles();
-  } catch (e) { say('the bridge did not answer: ' + e); }
+  } catch (e) { bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e); }
 }
 
 // ── the Univer instance ──────────────────────────────────────────────────────
 // One workbook at a time. Opening another DISPOSES the whole instance and builds a
 // fresh one: cheaper to reason about than unit lifecycle juggling, and it guarantees
 // no state of the previous file can survive into the next one.
+// How long to wait before the canvas count means anything (measured, not guessed:
+// Univer's first canvas appears within ~0.2s of the facade returning, well inside
+// this), and how big the biggest canvas has to be before we call it a drawn grid.
+const MOUNT_SETTLE_MS = 2500;
+const GRID_MIN_PX = 100;
+let mountGen = 0;
+
+// The ONE place the grid's own reality is measured. Returns the numbers as well as
+// beaconing them, so the caller can act on the settled reading.
+function canvasProbe(stage) {
+  try {
+    const cs = document.querySelectorAll('#sheet canvas');
+    const r = el('sheet').getBoundingClientRect();
+    let maxW = 0, maxH = 0;
+    [].forEach.call(cs, c => { if (c.width * c.height > maxW * maxH) { maxW = c.width; maxH = c.height; } });
+    const out = { n: cs.length, maxW: maxW, maxH: maxH,
+                  cw: Math.round(r.width), ch: Math.round(r.height) };
+    bx(stage, 'canvases=' + out.n + ' biggest=' + maxW + 'x' + maxH
+       + ' sizes=' + [].map.call(cs, c => c.width + 'x' + c.height).join(',')
+       + ' container=' + out.cw + 'x' + out.ch
+       + ' dpr=' + (window.devicePixelRatio || 1));
+    return out;
+  } catch (e) { bx(stage, 'probe failed: ' + e); return null; }
+}
+
 function mount(data) {
+  // The rect goes into the trace BEFORE the mount, because "the grid is blank" and
+  // "the grid was built inside a zero-sized box" are different bugs with the same
+  // screenshot, and only one of them is ours.
+  const r0 = el('sheet').getBoundingClientRect();
+  bx('mount-start', 'container=' + Math.round(r0.width) + 'x' + Math.round(r0.height)
+     + ' sheets=' + Object.keys((data && data.sheets) || {}).length);
   if (!selfCheck()) return false;
   if (univer) { try { univer.dispose(); } catch (e) { /* already gone */ } }
   univer = null; api = null;
@@ -406,7 +512,9 @@ function mount(data) {
   // Every part of the familiar spreadsheet UI is asked for BY NAME. They are the
   // plugin defaults too, but a reader should be able to see what this tab is meant to
   // show, and a preset that changes a default should not quietly remove the toolbar.
-  const made = window.UniverPresets.createUniver({
+  let made;
+  try {
+  made = window.UniverPresets.createUniver({
     locale: locale,
     locales: locales,
     theme: window.UniverThemes.defaultTheme,
@@ -422,12 +530,43 @@ function mount(data) {
   });
   univer = made.univer; api = made.univerAPI;
   api.createUniverSheet(data);
+  } catch (e) {
+    // The engine itself refusing to build is a different failure from a missing
+    // global, and it is the one a screenshot cannot distinguish from an empty grid.
+    bx('mount-fail', (e && (e.message || e)) || 'unknown');
+    say('The spreadsheet engine loaded but could not open this workbook:\n  '
+        + ((e && (e.message || e)) || 'unknown error')
+        + '\n\nThe boot trace is in the bridge log (grep loffice).');
+    univer = null; api = null;
+    return false;
+  }
   // The container is laid out before this runs (#sheet is never display:none), but a
   // tab that was in the background while the app started can still have been zero-
   // sized a frame ago, so nudge a re-measure once the browser has laid it out.
+  const gen = ++mountGen;
   requestAnimationFrame(() => requestAnimationFrame(() => {
     try { window.dispatchEvent(new Event('resize')); } catch (e) { /* no-op */ }
+    canvasProbe('mount-raf');
   }));
+  // ⚠️ AND AGAIN, LATER, BECAUSE THE EARLY NUMBER IS A LIE. The first draft probed at
+  // two animation frames and faithfully reported `canvases=0` on a mount that was
+  // perfectly healthy a moment afterwards — Univer builds its canvases a beat after
+  // the facade returns. A diagnostic that cries wolf on a working page is worse than
+  // none: it is what sends the NEXT session chasing the wrong thing. So the number
+  // that counts is the settled one, and it is the settled one that can accuse.
+  setTimeout(() => {
+    if (gen !== mountGen) return;          // a later open superseded this mount
+    const p = canvasProbe('mount-settled');
+    // The whole reported symptom, finally decidable: engine said yes, screen shows
+    // nothing. `maxW/maxH` is the biggest canvas — Univer legitimately keeps a 0x0 and
+    // a tiny one alongside the real grid, so a count or a minimum would both be wrong.
+    if (p && (p.maxW < GRID_MIN_PX || p.maxH < GRID_MIN_PX)) {
+      say('The spreadsheet engine loaded and reported success, but it drew nothing '
+          + '(largest canvas ' + p.maxW + '×' + p.maxH + ' in a '
+          + p.cw + '×' + p.ch + ' box).\n\nThis is the blank-grid case. The boot trace '
+          + 'is already in the bridge log — grep loffice.');
+    }
+  }, MOUNT_SETTLE_MS);
   // Any executed command is an edit. Univer has no "is dirty" flag, and treating
   // every command as one is the safe direction: a false "unsaved changes" costs a
   // click, a missed one costs the work.
@@ -440,17 +579,18 @@ async function openDoc(name) {
   if (busy) return;
   if (!confirmDiscard(name)) return;
   busy = true; say(''); paint();
+  bx('open-start', name);
   try {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name), { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'could not open that spreadsheet'); return; }
+    if (!j.ok) { bx('open-fail', j.error || 'not ok'); say(j.error || 'could not open that spreadsheet'); return; }
     if (!mount(j.snapshot)) return;
     current = name; dirty = false;
     const t = truncatedSheets(j.snapshot);
     if (t) say('This workbook is very large — ' + t + ' was only read up to the first '
                + '200,000 cells. Saving would write back only what you can see, so this '
                + 'copy is best treated as read-only.', 'dim');
-  } catch (e) { say('could not open that spreadsheet: ' + e); }
+  } catch (e) { bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
   finally { busy = false; renderFiles(); paint(); }
 }
 
@@ -518,6 +658,7 @@ async function remove(name) {
       current = null; dirty = false;
       if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
       univer = null; api = null; el('sheet').innerHTML = '';
+      mountGen++;    // a pending settle probe must not accuse a grid we just removed
     }
     await loadFiles();
   } catch (e) { say('could not delete that spreadsheet: ' + e); }
@@ -534,7 +675,8 @@ async function create() {
       body: JSON.stringify({ name: name }),
     });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'could not create that spreadsheet'); return; }
+    if (!j.ok) { bx('create-fail', 'http=' + r.status + ' ' + (j.error || ''));
+                 say(j.error || 'could not create that spreadsheet'); return; }
     el('new-name').value = '';
     el('newrow').classList.remove('on');
     await loadFiles();
@@ -613,15 +755,29 @@ let booted = false;
 say('Loading the spreadsheet engine — about 10 MB, a few seconds on a cold start…', 'dim');
 setTimeout(() => {
   if (booted) return;
+  bx('watchdog', 'not booted after ' + WATCHDOG_MS + 'ms; last asset=' + (lastAsset || 'NONE'));
   say('The spreadsheet engine has not finished loading after '
       + (WATCHDOG_MS / 1000) + ' seconds.\n\nIt is ~10 MB of JavaScript, so a cold '
       + 'start is slow — but this long usually means the assets are missing or the '
       + 'page is a stale cached copy. Press ⌘R; if that does not help, run '
-      + './scripts/fetch_vendor_assets.sh then ./scripts/ship.sh.  Build ' + BUILD);
+      + './scripts/fetch_vendor_assets.sh then ./scripts/ship.sh.  Build ' + BUILD
+      + '\n\nThe last file that finished loading was: ' + (lastAsset || 'none at all')
+      + '\nThe full boot trace is in the bridge log — grep loffice.');
 }, WATCHDOG_MS);
+
+// The asset beacons are also kept here, so the watchdog on SCREEN can name the last
+// file that arrived. Without it the message can only say "something is slow"; with it
+// the reader is told which of the six bundles the boot stopped after.
+let lastAsset = '';
+const _bxRaw = window.bx;
+window.bx = function (stage, detail) {
+  if (stage === 'asset-ok') lastAsset = String(detail || '');
+  return _bxRaw.apply(this, arguments);
+};
 
 window.addEventListener('DOMContentLoaded', async () => {
   booted = true;
+  bx('dom-ready', 'lastAsset=' + (lastAsset || 'NONE') + ' vis=' + document.visibilityState);
   paint();
   el('fbuild').textContent = BUILD;
   if (selfCheck()) say('');   // say it at load, not at the first click on a dead grid

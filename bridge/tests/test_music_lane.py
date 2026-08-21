@@ -739,8 +739,16 @@ check("the palette can reach Music AND the prompt",
 check("the log dialog lists the music install log", "'music-install'" in PANEL)
 check("the panel POLLS ONLY WHILE SOMETHING RUNS",
       "function musicNeedsPoll()" in PANEL and "if (musicPollT || !musicNeedsPoll()) return;" in PANEL)
+# 2026-08-21: the retire still happens on leaving, but it now has exactly ONE honest
+# exception — a music PEEK keeps that view on screen over another page, so its poll must
+# survive the navigation underneath it. The exception is asserted here BY NAME so it can
+# never quietly widen into "the poll leaks".
 check("the poll is retired when leaving the view",
-      "else stopMusicPoll();" in PANEL and "function stopMusicPoll()" in PANEL)
+      "else if (!(peekState && peekState.view === 'music')) stopMusicPoll();" in PANEL
+      and "function stopMusicPoll()" in PANEL)
+check("…and closing a music peek retires it too (the only exception closes itself)",
+      "if (st.view === 'music' && curView !== 'music' && typeof stopMusicPoll === 'function')"
+      in PANEL)
 check("all three sections are rendered",
       "function renderMusicEngines(" in PANEL and "function renderMusicCreate(" in PANEL
       and "function renderMusicLibrary(" in PANEL)

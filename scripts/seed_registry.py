@@ -20,6 +20,32 @@ dir without touching the real one. main() uses the real paths.
 import os
 import json
 import configparser
+import importlib.util
+
+# ── tool-calling capability (2026-08-21) ─────────────────────────────────────
+# `bridge/modeltools.py` owns the verdict for BOTH consumers (this scan and the
+# bridge's download registrars), so there is exactly ONE implementation of the
+# GGUF header reader and the marker rule — replicating a binary-format parser the
+# way the audio CONSTANTS were replicated would rot on the first bump.
+# This script is not part of a package, so the module is loaded BY PATH — resolved
+# from THIS FILE's location, never the cwd, so it works from the repo and from the
+# provisioned snapshot alike. If it cannot be loaded, `tools` simply stays absent:
+# an unknown capability is a missing pill, never a broken rescan.
+def _load_modeltools():
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         os.pardir, "bridge", "modeltools.py")
+        spec = importlib.util.spec_from_file_location("harness_modeltools", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+MODELTOOLS = _load_modeltools()
 
 JAN_MODELS_DIR = os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/models")
@@ -626,6 +652,21 @@ def local_entries_for(local_dir):
     return audio + [m for m in scan_local(local_dir) if m.get("id") not in audio_ids]
 
 
+def annotate_tools(models):
+    """Fill `tools` (True/False/None) on every chat entry that lacks a verdict.
+
+    Runs ONCE over the MERGED list rather than inside each scanner, so it also
+    reaches the entries merge() preserves untouched — source "download" models,
+    which is most of what a real registry contains. A no-op when bridge/modeltools
+    could not be loaded."""
+    if MODELTOOLS is None:
+        return models
+    try:
+        return MODELTOOLS.annotate_tools(models)
+    except Exception:                                          # noqa: BLE001
+        return models
+
+
 def main():
     local_entries = local_entries_for(LOCAL_MODELS_DIR)
     audio_local = [m for m in local_entries if m.get("kind") == "audio"]
@@ -635,6 +676,7 @@ def main():
     existing = load_existing(REGISTRY_PATH)
     merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
                    audio_cache)
+    merged = annotate_tools(merged)
     write(REGISTRY_PATH, merged)
     print(f"seeded {len(merged)} models "
           f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "

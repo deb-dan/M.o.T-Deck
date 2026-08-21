@@ -425,16 +425,19 @@ check("main.swift has the LOffice tab, last, on the bridge origin",
 tab_titles = re.findall(r'HarnessTab\(id: "[^"]+", title: "([^"]+)"', SWIFT)
 default_top = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', SWIFT)
 default_ids = re.findall(r'"([^"]+)"', default_top.group(1)) if default_top else []
-check("LOffice is the tenth and last DEFAULT tab",
-      default_ids and default_ids[-1] == "loffice" and len(default_ids) == 10)
+# (OpenCode landed after LOffice and took the last slot, 2026-08-21 — so the assertion
+# is that LOffice is ON the default strip and still ahead of anything added later, not
+# that it is last forever.)
+check("LOffice is on the DEFAULT strip",
+      "loffice" in default_ids and len(default_ids) >= 10)
 check("...and it is still a registry row",
       "LOffice" in tab_titles)
 check("the ROUTE did not churn with the wordmark — the tab still points at /office",
       "8700/office" in SWIFT and '"/office"' in APP)
 check("the page wears the same name as the tab",
       "<title>LOffice" in PAGE and ">LOffice<" in PAGE)
-check("the width budget note was re-checked for ten tabs",
-      "ten current titles" in SWIFT)
+check("the width budget note was re-checked when the tab count last changed",
+      "ELEVEN current titles" in SWIFT)
 check("the title is ONE word — a two-word title does not fit the strip budget",
       " " not in "LOffice")
 check("…and the reason Debi's 'Office Lane' was not taken is recorded next to it",
@@ -665,8 +668,27 @@ check("the inline script is NOT deferred (inline scripts ignore it; it runs at p
       "time, which is what makes it the beacon)",
       re.search(r'<script>\s*\n\s*.use strict', PAGE) is not None)
 
+
+def inline_blocks(page):
+    """Every <script> in `page` that has no src, in document order.
+
+    ⚠️ office.html has TWO of them since the boot beacon landed (2026-08-21): the
+    beacon in <head> and the application script at the end of <body>. Anything that
+    means "the inline script" has to say WHICH, or it silently starts pinning the
+    wrong one — which is how a passing test stops testing anything.
+    """
+    return re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', page, re.S)
+
+
+def app_block(page):
+    """The APPLICATION inline script — the one that owns the fallback banner."""
+    for b in inline_blocks(page):
+        if "getElementById('boot')" in b:
+            return b
+    return ""
+
 # The static fallback banner: true by default, removed by the first statement of JS.
-for label, page, stamp in [("office", PAGE, "loffice-2026-08-21c"),
+for label, page, stamp in [("office", PAGE, "loffice-2026-08-21d"),
                            ("aider", AIDER_PAGE, "aider-2026-08-21c")]:
     head = page.split("<body>")[0]
     body = page.split("<body>")[1]
@@ -681,7 +703,7 @@ for label, page, stamp in [("office", PAGE, "loffice-2026-08-21c"),
     # "first" is asserted over the STATEMENTS, not the raw characters: both pages
     # carry a paragraph of comment explaining why the line is there, and a character
     # window would be pinning the length of that comment rather than the order.
-    inline = re.search(r"<script>\n(.*?)</script>", page, re.S).group(1)
+    inline = app_block(page)
     stmts = re.sub(r"//[^\n]*", "", inline)
     stmts = re.sub(r"\s+", " ", stmts).strip()
     lead = stmts[:stmts.index("getElementById('boot')")]
@@ -711,7 +733,7 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
           f"(missing: {sorted(want - have)})", not (want - have))
 
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21c") == 2)
+      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21d") == 2)
 check("boot waits for DOMContentLoaded — deferred bundles have all run by then, so "
       "the self-check can never accuse assets that were merely still arriving",
       "addEventListener('DOMContentLoaded'" in PAGE
@@ -760,7 +782,7 @@ try:
     served = cl.get("/office").text
     check("the served /office body carries today's build stamp — i.e. the route reads "
           "the file per request, so a ship really does change what is served",
-          "loffice-2026-08-21c" in served and '<div id="boot">' in served)
+          "loffice-2026-08-21d" in served and '<div id="boot">' in served)
     for asset, mime in [("/assets/vendor/react.production.min.js", "javascript"),
                         ("/assets/vendor/react-dom.production.min.js", "javascript"),
                         ("/assets/vendor/univer/rxjs.umd.min.js", "javascript"),
@@ -778,6 +800,174 @@ try:
           .headers.get("cache-control", ""))
 except Exception as _e:                                          # noqa: BLE001
     print(f"  (skipped live route checks — no TestClient/app: {_e})")
+
+# ══ 8. THE BOOT BEACON (2026-08-21) ══════════════════════════════════════════
+# WHY THIS GROUP EXISTS. Round 7 above made the page able to describe its own failure
+# ON SCREEN — and the page then failed a third time on a Mac none of us can reach, so
+# the description went nowhere. The screen is only a report if somebody can read it;
+# the bridge log is a report you can grep after the fact. Every stage of the boot is
+# now beaconed, and this group pins the parts that can silently stop working:
+#   * `diag_line` is PURE and TOTAL — it is fed by a page that is, by hypothesis,
+#     malfunctioning, so it must survive every shape of junk.
+#   * the route NEVER fails. A beacon endpoint that 4xx's would trip the page's own
+#     error handling, i.e. the diagnostic would become the second fault to diagnose.
+#   * ⚠️ THE REGRESSION THAT NEARLY SHIPPED: the first draft parsed the body with
+#     `json.loads`, and this module has no module-level `json` import. The NameError
+#     was swallowed by the route's own except and EVERY beacon logged as
+#     "unparseable-beacon" — a diagnostic that reported only its own breakage. It was
+#     caught by driving the real page in a real browser. Both halves are pinned below.
+DIAG_TABLE = [
+    (("mount-ok", "canvases=3", "ab12cd", 1240), "stage=mount-ok", "the ordinary line"),
+    (("mount-ok", "", "ab12cd", 0), "+0ms", "zero elapsed is a number, not a blank"),
+    (("s", None, "b", 5), "stage=s", "a None detail is simply absent"),
+    (("s", "d", "b", None), "+?ms", "a missing elapsed is marked, never invented"),
+    (("s", "d", "b", "junk"), "+?ms", "a non-numeric elapsed cannot raise"),
+    (("s", "d", "b", float("nan")), "+?ms", "NaN is not an elapsed"),
+    (("s", "d", "b", float("inf")), "+?ms", "neither is infinity"),
+    ((None, "d", "b", 1), "stage=?", "a missing stage still yields a line"),
+    (("s", 12345, "b", 1), "detail=12345", "a numeric detail is coerced"),
+    (("s", {"a": 1}, "b", 1), "detail=", "a dict detail is coerced, not crashed on"),
+]
+for args, needle, why in DIAG_TABLE:
+    try:
+        line = office.diag_line(*args)
+        ok = needle in line and "\n" not in line
+    except Exception:                                            # noqa: BLE001
+        line, ok = "RAISED", False
+    check(f"diag_line: {why}", ok)
+
+check("diag_line flattens newlines — one beacon is one line, and a detail that could "
+      "carry a newline could forge a second entry",
+      "\n" not in office.diag_line("s", "a\nb\rc\td", "boot", 1)
+      and "a b c d" in office.diag_line("s", "a\nb\rc\td", "boot", 1))
+check("diag_line clamps a hostile detail to DIAG_DETAIL_MAX",
+      len(office.diag_line("s", "x" * 9000, "b", 1)) < office.DIAG_DETAIL_MAX + 200)
+check("diag_line clamps the stage too",
+      len(office.diag_line("y" * 500, "", "b", 1)) < office.DIAG_STAGE_MAX + 120)
+check("diag_line carries the boot id — two script-starts with DIFFERENT ids is the "
+      "signature of a reload loop, i.e. a dying web content process",
+      "boot=ab12cd" in office.diag_line("s", "d", "ab12cd", 1))
+
+with tempfile.TemporaryDirectory() as td:
+    line = office.write_diag(td, "script-start", "build=x", "aa11", 7)
+    logf = Path(td) / "data" / "logs" / (office.DIAG_LOG_NAME + ".log")
+    check("write_diag creates data/logs and appends the line",
+          logf.exists() and line in logf.read_text())
+    office.write_diag(td, "second", "", "aa11", 9)
+    check("…and it APPENDS rather than replacing",
+          len(logf.read_text().splitlines()) == 2)
+    for i in range(office.DIAG_MAX_LINES + 250):
+        office.write_diag(td, "loop", "x" * 150, "bb22", i)
+    n = len(logf.read_text().splitlines())
+    check("…and it is BOUNDED — a crash loop is the loudest thing this file can "
+          "carry, and it must not also become a disk problem",
+          n <= office.DIAG_MAX_LINES + 5)
+    check("…keeping the NEWEST lines (the tail is the incident)",
+          f"+{office.DIAG_MAX_LINES + 249}ms" in logf.read_text().splitlines()[-1])
+check("write_diag never raises on an unwritable root — it is an error path",
+      isinstance(office.write_diag("/proc/nonexistent/nope", "s", "d", "b", 1), str))
+
+APP = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
+DIAG_ROUTE = APP.split('@app.post("/api/office/diag")')[1].split("@app.")[0] \
+    if '@app.post("/api/office/diag")' in APP else ""
+check("the bridge exposes POST /api/office/diag", bool(DIAG_ROUTE))
+# The route's own docstring and comments TALK about the trap below, so the assertion
+# has to read the CODE — a grep over prose would pass on the strength of the warning
+# while the bug it warns about sat two lines under it.
+DIAG_CODE = re.sub(r"#[^\n]*", "", re.sub(r'""".*?"""', "", DIAG_ROUTE, flags=re.S))
+check("⚠️ REGRESSION PIN: the route parses with `await req.json()`, NOT `json.loads` "
+      "— bridge/app.py has no module-level `json` import, so json.loads is a "
+      "NameError that this route's own except would swallow, and every beacon would "
+      "log as 'unparseable'",
+      "await req.json()" in DIAG_CODE and "json.loads" not in DIAG_CODE)
+check("…and app.py still has no module-level `json` import, which is what makes the "
+      "line above load-bearing rather than decorative",
+      not re.search(r"^import json$", APP, re.M))
+check("the route works with the office module UNAVAILABLE — that case (openpyxl "
+      "missing, a syntax error in office.py) is itself worth reporting, so the "
+      "reporting path cannot depend on the module importing",
+      "_office is not None" in DIAG_CODE and "office module unavailable" in DIAG_ROUTE)
+check("the route answers 204 and never an error status — a failing beacon endpoint "
+      "would make the page's own error handling fire",
+      "status_code=204" in DIAG_CODE
+      and "status_code=400" not in DIAG_CODE and "status_code=500" not in DIAG_CODE)
+check("the beacon log is in _LOG_NAMES, so the trace is readable in the panel and "
+      "over /api/logs — the tab it describes may be showing nothing at all",
+      '"loffice-boot"' in APP and office.DIAG_LOG_NAME == "loffice-boot")
+
+HEAD = PAGE.split("</head>")[0]
+BEACON = inline_blocks(PAGE)[0]
+check("the beacon is the FIRST script in the document — its ABSENCE from the log is "
+      "then a fact: no script in this document ran at all",
+      HEAD.index("<script>") < HEAD.index("<link rel=\"stylesheet\"")
+      and "window.bx" in BEACON and "script-start" in BEACON)
+check("…and it sends with sendBeacon, the only transport specified to survive the "
+      "page being torn down (a keepalive fetch is the fallback)",
+      "navigator.sendBeacon" in BEACON and "keepalive: true" in BEACON)
+check("…with a per-load boot id, so a reload loop is visible as repeated "
+      "script-start under DIFFERENT ids",
+      "Math.random()" in BEACON and "boot: BOOT" in BEACON)
+check("…and it is capped, so a malfunctioning page cannot become a traffic source",
+      "CAP" in BEACON and "SENT++" in BEACON)
+check("…and it can never throw: a diagnostic may not be the thing that breaks the page",
+      BEACON.count("try {") >= 1 and "catch (e)" in BEACON)
+check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
+      "second copy could drift, and the stamp exists to be trusted",
+      'meta[name="harness-build"]' in BEACON
+      and PAGE.count("loffice-2026-08-21d") == 2)
+for _o, name, _c in SCRIPT_TAGS:
+    tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]
+    check(f"the {name} tag reports BOTH outcomes — the last asset-ok in the trace "
+          f"names where a boot stopped",
+          bool(tag) and "onload=" in tag[0] and "onerror=" in tag[0])
+for stage in ["script-start", "asset-ok", "asset-error", "dom-ready", "selfcheck-pass",
+              "selfcheck-fail", "files-ok", "files-fail", "mount-start", "mount-fail",
+              "mount-settled", "page-error", "rejection", "watchdog", "create-fail",
+              "open-fail"]:
+    check(f"the page beacons '{stage}'", f"'{stage}'" in PAGE)
+check("⚠️ the canvas count is read SETTLED, not at two animation frames: the early "
+      "number is 0 on a perfectly healthy mount (measured), and a diagnostic that "
+      "cries wolf is what sends the next session chasing the wrong thing",
+      "MOUNT_SETTLE_MS" in PAGE and "mount-raf" in PAGE
+      and re.search(r"MOUNT_SETTLE_MS\s*=\s*(\d+)", PAGE)
+      and int(re.search(r"MOUNT_SETTLE_MS\s*=\s*(\d+)", PAGE).group(1)) >= 1000)
+check("…and the settled probe is generation-guarded, so a superseded mount cannot "
+      "accuse the grid that replaced it",
+      "gen !== mountGen" in PAGE and "++mountGen" in PAGE)
+check("the probe reports the BIGGEST canvas, not the count: Univer legitimately keeps "
+      "a 0x0 and a tiny canvas beside the real grid, so a count or a minimum would "
+      "both read as broken on a working page",
+      "biggest=" in PAGE and "maxW" in PAGE)
+check("…and a mount that reports success while drawing nothing SAYS SO — that is the "
+      "reported symptom, finally decidable from the page itself",
+      "GRID_MIN_PX" in PAGE and "drew nothing" in PAGE)
+check("the watchdog names the last asset that arrived, so the message on screen is "
+      "diagnostic on its own",
+      "lastAsset" in PAGE and "last file that finished loading" in PAGE)
+
+try:
+    from fastapi.testclient import TestClient                    # noqa: E402
+    from bridge.app import app as _app                           # noqa: E402
+    cl = TestClient(_app)
+    for body, ctype, why in [
+        ('{"stage":"unit","detail":"d","boot":"zz","ms":5}', "text/plain",
+         "a text/plain sendBeacon body (the shape WebKit actually sends)"),
+        ('{"stage":"unit2"}', "application/json", "a tidy json post"),
+        ("not json at all", "text/plain", "junk"),
+        ("", "text/plain", "an empty body"),
+        ('"a bare string"', "application/json", "a non-dict json body"),
+        ("[1,2,3]", "application/json", "a json array"),
+    ]:
+        r = cl.post("/api/office/diag", content=body, headers={"Content-Type": ctype})
+        check(f"POST /api/office/diag answers 204 for {why} — it never fails",
+              r.status_code == 204)
+    check("…and a real beacon actually reaches the log file",
+          "unit" in (ROOT / "data" / "logs" / "loffice-boot.log").read_text()
+          if (ROOT / "data" / "logs" / "loffice-boot.log").exists() else False)
+    check("the beacon log is readable over /api/logs like every other source",
+          cl.get("/api/logs/loffice-boot").status_code == 200)
+except Exception as _e:                                          # noqa: BLE001
+    print(f"  (skipped live diag route checks: {_e})")
 
 print()
 if FAILS:

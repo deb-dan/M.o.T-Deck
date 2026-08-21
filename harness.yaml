@@ -151,6 +151,46 @@ components:
     # ⚠️ It can download its own (forked, floating-tag) llama.cpp into its own dirs. Contained,
     # but those weights are invisible to the harness RAM ledger.
 
+  # ── OPTIONAL second CODING lane (docs/research/2026-08-21-opencode-omnigent-recon.md) ──
+  # aider stays the PTY lane (it needs no tool-calling and is the only structurally
+  # honest option for a 4B). OpenCode is the CAPABLE one — LSP, subagents, plan mode,
+  # MCP, skills, apply_patch and a real web UI — and it is a TAB, not a PTY, because
+  # its server already serves its own SPA on its own loopback port.
+  opencode:
+    # NOT a git checkout: upstream ships a PREBUILT native binary per platform on npm
+    # (built with Bun; no Node at run time), so `repo` is informational and the pin is
+    # the NPM VERSION, which is unambiguous. scripts/install_opencode.sh fetches the
+    # two tarballs from registry.npmjs.org and extracts ONE Mach-O arm64 file.
+    # ⚠️ upstream's live git repo is sst/opencode but its own README build badge and
+    # brew tap now point at an `anomalyco` org — pin by npm version, never by org.
+    repo: https://github.com/sst/opencode.git
+    pin: "1.18.19"            # = build.opencode_pin (kept here so the manifest is
+                              # self-describing; the installer reads build.opencode_pin)
+    installed: false          # OPTIONAL — nothing depends on it; bootstrap never clones it
+    enabled: false
+    port: 4096                # ⚠️ upstream's OWN --port DEFAULT IS 0 (an ephemeral port,
+                              # cli/network.ts at the pin) — 4096 is only the number its
+                              # DOCS use. The start script ALWAYS passes --port explicitly;
+                              # without it the tab would point at a port nothing listens on.
+    depends_on: []            # NOT [runner]: it is usable against any provider it has
+                              # configured, and our config fan-out is best-effort. Start
+                              # the runner yourself for the local lane.
+    # ⚠️ LICENSE: MIT. Clean — nothing propagates.
+    # ⚠️ TOOL-CALLING IS REQUIRED. Every mutation is a native tool call and there is NO
+    # aider-style text-edit fallback, so on a model that cannot emit one it looks BROKEN
+    # rather than degraded. That is why chat models now carry a `tools` verdict
+    # (bridge/modeltools.py) and why the start plan warns when the live model lacks it.
+    # ⚠️ NO AUTH by default (OPENCODE_SERVER_PASSWORD unset) — loopback only, forever.
+    #    Never pass --cors and never --mdns (the latter flips the host to 0.0.0.0).
+    # ⚠️ AUTO-UPDATE IS ON BY DEFAULT upstream (cli/upgrade.ts: `if (config.autoupdate
+    #    === false || Flag.OPENCODE_DISABLE_AUTOUPDATE) return`). We nail it shut BOTH
+    #    ways — "autoupdate": false in the config we write AND OPENCODE_DISABLE_AUTOUPDATE=1
+    #    at spawn. Never use its in-app upgrade: that is the pin-discipline rule.
+    # ⚠️ It installs provider packages at RUNTIME with @npmcli/arborist (unpinned, needs
+    #    network on first use). Confined to data/opencode/xdg/cache by the XDG_* env the
+    #    start script sets — see start_component.sh — but it IS a floating dependency and
+    #    it is why this install is ONLINE-ONLY and cannot ride the fat wheelhouse.
+
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
@@ -327,6 +367,22 @@ build:
   # cecli-dev/cecli at a release tag (Apache-2.0 verified) keeping --edit-format whole.
   # Read by scripts/install_aider.sh (awk, same pattern as the other pins).
   aider_pin: "5dc9490bb35f9729ef2c95d00a19ccd30c26339c"
+  # ── OPENCODE, the second coding lane (recon 2026-08-21, slice 2026-08-21) ────
+  # An NPM VERSION, not a git sha: upstream publishes a prebuilt native binary per
+  # platform and `npm i` is just a download. Verified LIVE against registry.npmjs.org
+  # 2026-08-21: opencode-ai@1.18.19 is MIT, declares optionalDependencies including
+  # opencode-darwin-arm64@1.18.19, and THAT package's tarball contains exactly two
+  # files — package.json and `package/bin/opencode`, a 143.7MB Mach-O 64-bit arm64
+  # executable already mode 0755, with the web SPA EMBEDDED (thousands of vite
+  # `assets/…` entries in its strings, so the tab needs no network for its UI).
+  # npm's dist.shasum for the arm64 tarball is de1489448cf8eb0180b807f5e4a75e6b6614fef1
+  # and scripts/install_opencode.sh verifies it before extracting.
+  # A bump = edit here, re-run the installer, and re-check three things in the new
+  # source: the `serve` subcommand's network options (--port/--hostname), the
+  # `autoupdate` config key + OPENCODE_DISABLE_AUTOUPDATE flag, and that the four
+  # XDG_* variables still drive packages/core/src/global.ts (they are the ONLY thing
+  # keeping its config/cache/data/state inside data/opencode).
+  opencode_pin: "1.18.19"
   # ── OFFICE lane (docs/research/2026-08-20-office-lane-recon.md, slice 1: SHEETS) ──
   # Univer, Apache-2.0, vendored as UMD assets our OWN bridge serves — no new process,
   # no port, no component card. Read by scripts/fetch_vendor_assets.sh (awk, same

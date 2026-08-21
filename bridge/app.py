@@ -94,6 +94,21 @@ except Exception:                                # noqa: BLE001
         _nav, _NAV_ERR = None, str(_e)[:200]
         print(f"[nav] module unavailable — default layout only ({_NAV_ERR})", flush=True)
 
+# MODELTOOLS — the per-model tool-calling verdict (the OpenCode slice). Same
+# defensive import for the same reason: without it every model simply reports
+# `tools: null`, i.e. no pill and no warning — never a broken Models pane.
+# scripts/seed_registry.py loads the SAME file by path, so there is one implementation.
+_MODELTOOLS_ERR = ""
+try:
+    from . import modeltools as _modeltools
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import modeltools as _modeltools
+    except Exception as _e:                      # noqa: BLE001
+        _modeltools, _MODELTOOLS_ERR = None, str(_e)[:200]
+        print(f"[models] modeltools unavailable — no tool-calling pills "
+              f"({_MODELTOOLS_ERR})", flush=True)
+
 app = FastAPI(title="AI Harness Bridge")
 
 # Serve the panel's self-hosted assets (Phase 2 artifact renderer: babel/react/prism/
@@ -491,7 +506,16 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               "unsloth", "unsloth-install",
               # the aider lane: one line per PTY session (start/exit/teardown) plus the
               # online-only install log — same voicebox-install rule.
-              "aider", "aider-install")
+              "aider", "aider-install",
+              # the OpenCode tab: its server log + the online-only binary install
+              # (same voicebox-install rule — a download install must be readable
+              # in-panel, not only from a terminal).
+              "opencode", "opencode-install",
+              # LOffice's boot beacon (bridge/office.py DIAG_LOG_NAME). The page phones
+              # home at every step of its own boot; this is where that trace lands, and
+              # it must be readable in-panel because the tab it describes may be showing
+              # nothing at all.
+              "loffice-boot")
 
 
 @app.post("/api/logs/{name}/clear")
@@ -635,6 +659,30 @@ def install_plan(name: str) -> dict:
             "It can download its own llama.cpp and models into its own dirs — contained, "
             "but those weights are invisible to the harness model-RAM ledger",
         ],
+        "opencode": [
+            "OPTIONAL second coding lane — license MIT. Not a source checkout and not a "
+            "venv: upstream ships a PREBUILT native binary per platform on npm, so this "
+            "downloads two npm tarballs (~46MB), verifies npm's own sha1, and extracts "
+            "ONE ~144MB executable to data/opencode/bin/",
+            "⚠ IT REQUIRES A TOOL-CALLING MODEL. Every edit it makes is a native tool "
+            "call and there is NO text fallback — on a model without tool support it "
+            "will look BROKEN rather than merely worse. Use a model showing the green "
+            "'tools' pill in Models (aider is the lane that works without one)",
+            "ONLINE-ONLY, and it stays online-ish: it installs its provider package "
+            "(@ai-sdk/openai-compatible) on first use with npm's own resolver. That "
+            "download is UNPINNED — it is the one floating dependency in this lane",
+            "Everything it writes is redirected into data/opencode/xdg (config, cache, "
+            "session db) by the XDG variables the start script sets — your ~/.config and "
+            "~/.cache are never touched",
+            "On Start it is pointed at the harness runner (127.0.0.1:6767) with every "
+            "model in your registry listed, exactly like Hermes and Odysseus",
+            "Its auto-updater is disabled two ways (config key + environment flag) "
+            "because the version is pinned in harness.yaml — never use its in-app upgrade",
+            "Serve on 127.0.0.1:4096 when started (its own web UI + API on one port, "
+            "loopback only, NO authentication)",
+            "It is started in data/opencode-workspace, which is the ONLY boundary on "
+            "what it edits — the Hermes path-guard does not reach this lane",
+        ],
     }
     if name not in plans:
         raise HTTPException(404, "unknown component")
@@ -646,10 +694,13 @@ def install_plan(name: str) -> dict:
 def install(name: str) -> JSONResponse:
     """Execute the install after the panel's approve step."""
     if name not in ("hermes", "odysseus", "searxng", "voicestudio", "voicebox",
-                    "comfyui", "unsloth"):
+                    "comfyui", "unsloth", "opencode"):
         raise HTTPException(404, "unknown component")
-    script = "install_searxng.sh" if name == "searxng" else "install_component.sh"
-    args = () if name == "searxng" else (name, "--yes")
+    # opencode is a BINARY download, not a clone+venv, so it has its own installer —
+    # the same shape searxng's exception already has.
+    script = {"searxng": "install_searxng.sh",
+              "opencode": "install_opencode.sh"}.get(name, "install_component.sh")
+    args = () if name in ("searxng", "opencode") else (name, "--yes")
     # voicestudio pulls ~5-8GB of wheels (torch/whisperx/mlx) + a bun SPA build, which
     # can outrun the default 30-minute budget on a slow link — give it 2h and surface a
     # timeout as a readable message instead of an unhandled 500. voicebox is the same
@@ -682,6 +733,9 @@ _NOTES = {
     "comfyui": "comfyui on :8188 — loopback only, no auth; first boot imports torch (slow)",
     # OPTIONAL, AGPL-3.0-only (Studio). Its own bearer login lives in its own UI.
     "unsloth": "unsloth studio on :8899 — loopback only; it has its own login screen",
+    # OPTIONAL, MIT. Its own UI + API on one loopback port, no auth. The tools warning
+    # is appended per-request by start_plan (it depends on the LIVE model).
+    "opencode": "opencode on :4096 — loopback only, no auth",
 }
 
 
@@ -691,9 +745,30 @@ async def start_plan(name: str) -> dict:
     c = cfg()
     steps = []
     for n in _closure(name, c, []):
-        steps.append({"name": n, "running": await _running(n, c), "note": _NOTES.get(n, "")})
+        note = _NOTES.get(n, "")
+        # OpenCode is the one component whose usefulness depends on the LOADED
+        # MODEL, so the plan says so before anything starts. A warning, never a
+        # refusal (see opencode_tools_warning).
+        if n == "opencode":
+            warn = _opencode_live_warning(c)
+            if warn:
+                note = (note + " · " + warn) if note else warn
+        steps.append({"name": n, "running": await _running(n, c), "note": note})
     return {"target": name, "steps": steps,
             "to_start": [s["name"] for s in steps if not s["running"]]}
+
+
+def _opencode_live_warning(c: dict) -> str:
+    """The tools warning for whatever the runner is CURRENTLY serving. Never raises
+    (a plan must render even with no registry and no runner)."""
+    try:
+        port = (c.get("runner", {}) or {}).get("port")
+        live = _live_model_id(int(port)) if port else None
+        entry = next((m for m in _registry_models() if m.get("id") == live), None) \
+            if live else None
+        return opencode_tools_warning(entry)
+    except Exception:                                            # noqa: BLE001
+        return ""
 
 
 @app.post("/api/components/{name}/start")
@@ -2223,6 +2298,53 @@ def _within_budget(candidate_bytes: int, other_slot_bytes: int, budget_bytes: in
     return (candidate_bytes + other_slot_bytes) <= budget_bytes
 
 
+def _model_caps(m: dict) -> list:
+    """The `capabilities` list for one registry entry. PURE.
+
+    `vision` is unchanged. `tools` joins it ONLY on an explicit True — a null
+    verdict (unreadable template, a shape modeltools does not know) must never be
+    reported as an absent capability, because the panel and the OpenCode gate both
+    read the absence as "this model cannot do it"."""
+    caps = []
+    if m.get("vision") or m.get("mmproj"):
+        caps.append("vision")
+    if m.get("tools") is True:
+        caps.append("tools")
+    return caps
+
+
+# ── the OpenCode start gate ──────────────────────────────────────────────────
+# OpenCode has NO text-edit fallback: every mutation is a native tool call
+# (docs/research/2026-08-21-opencode-omnigent-recon.md §1). On a model that cannot
+# emit one it does not degrade, it looks broken. So starting it against such a model
+# WARNS — loudly, by name — and never refuses: the verdict is a template heuristic,
+# and a heuristic may not stand between the user and a program they asked to run.
+OPENCODE_TOOLS_OK = ""
+OPENCODE_TOOLS_UNKNOWN = (
+    "⚠ the loaded model %s does not say whether it supports tool calling — "
+    "OpenCode needs it (look for the green `tools` pill in Models)")
+OPENCODE_TOOLS_BAD = (
+    "⚠ the loaded model %s has NO tool-calling support — OpenCode requires it and "
+    "will look broken, not merely worse. Load a model with the green `tools` pill.")
+OPENCODE_TOOLS_NONE = (
+    "⚠ no model is loaded — OpenCode needs a running runner with a tool-capable model")
+
+
+def opencode_tools_warning(entry) -> str:
+    """'' when the live model is tool-capable, else the sentence to show. PURE.
+
+    `entry` is the live model's registry entry, or None when nothing is loaded."""
+    if not isinstance(entry, dict):
+        return OPENCODE_TOOLS_NONE
+    name = str(entry.get("id") or entry.get("name") or "?")
+    t = entry.get("tools")
+    if t is True:
+        return OPENCODE_TOOLS_OK
+    if t is False:
+        return OPENCODE_TOOLS_BAD % name
+    return OPENCODE_TOOLS_UNKNOWN % name
+
+
 @app.get("/api/models")
 def api_models() -> JSONResponse:
     """Installed models (from OUR registry data/models.json — the only source since
@@ -2272,7 +2394,12 @@ def api_models() -> JSONResponse:
                 "size_bytes": m.get("size_bytes"),
                 "engine": ("mlx" if m.get("format") == "mlx" else "llamacpp"),
                 "embedding": False,
-                "capabilities": (["vision"] if (m.get("vision") or m.get("mmproj")) else []),
+                "capabilities": _model_caps(m),
+                # TOOL-CALLING (the OpenCode slice): True / False / None, derived
+                # from the model's own chat template by bridge/modeltools.py.
+                # `None` = we could not tell, and the panel draws NOTHING for it —
+                # a missing pill must never read as "this model cannot".
+                "tools": (m.get("tools") if isinstance(m.get("tools"), bool) else None),
                 "format": m.get("format", "gguf"),
                 "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path"),
                 # Per-model sampling: the READ side of /api/models/settings lives
@@ -3469,6 +3596,16 @@ async def _run_download(dl_id: str) -> None:
                 # entry and say so, rather than dropping the model on the floor.
                 print(f"[dl] audio hint {vf!r} rejected ({ex}) — "
                       f"registering {base.get('id')!r} as a chat model", flush=True)
+        # TOOL-CALLING verdict, read from the freshly-downloaded files (the GGUF
+        # header / the MLX tokenizer_config). Done HERE rather than inside the two
+        # pure builders so those stay filesystem-free — and done at all so a model
+        # that just landed shows its `tools` pill without a Rescan. Never raises:
+        # `tools: None` is a legitimate "we could not tell".
+        if _modeltools is not None and base.get("kind") != "audio":
+            try:
+                base["tools"] = _modeltools.tools_for_entry(base)
+            except Exception:                                    # noqa: BLE001
+                base["tools"] = None
         _registry_add(base)
         e["state"] = "done"
     except Exception as ex:
@@ -8938,6 +9075,52 @@ def office_page() -> FileResponse:
         headers={"Cache-Control": "no-store, no-cache, must-revalidate",
                  "Pragma": "no-cache"},
     )
+
+
+@app.post("/api/office/diag")
+async def office_diag(req: Request) -> Response:
+    """THE BOOT BEACON. `{stage, detail, boot, ms}` → the bridge log + its own file.
+
+    Written after LOffice failed twice on a Mac none of us can reach, where the whole
+    report a person can give is "the tab is blank" — a description that fits a stale
+    cached document, a 404'd bundle, a JS engine that refused to parse ten megabytes,
+    a mount into a zero-sized box and a web content process killed by jetsam, all
+    equally. The page now says which one it is, while it happens, and the answer is a
+    grep instead of a hypothesis.
+
+    THREE RULES, all deliberate:
+      * it NEVER fails. 204 for everything — junk body, wrong content-type, no body.
+        A beacon endpoint that 4xx's would make the page's own error handling fire,
+        i.e. the diagnostic would become a second fault to diagnose.
+      * it works with `_office` UNAVAILABLE. That case (openpyxl missing, a syntax
+        error in office.py) is one of the failures worth reporting, so the reporting
+        path cannot depend on the module being importable — it degrades to the bridge
+        log alone.
+      * the body is parsed leniently. `navigator.sendBeacon` is the transport of
+        choice precisely because it survives a page being torn down, and it sends
+        text/plain or a Blob, never a tidy JSON content-type.
+    """
+    # `req.json()` — NOT `json.loads`: this module has no module-level `json` import
+    # (every other body-reading route here uses `await req.json()` or a local alias),
+    # and Starlette's own parser ignores the content-type, which is exactly what a
+    # text/plain sendBeacon needs. ⚠️ The first draft of this route DID write
+    # `json.loads`, the NameError was swallowed by the except below, and every single
+    # beacon logged as "unparseable" — caught by driving the real page in a real
+    # browser, which is the only reason this line is right.
+    try:
+        body = await req.json()
+        if not isinstance(body, dict):
+            body = {"stage": "malformed-beacon", "detail": str(body)[:200]}
+    except Exception:                                            # noqa: BLE001
+        body = {"stage": "unparseable-beacon"}
+    stage, detail = body.get("stage"), body.get("detail")
+    boot, ms = body.get("boot"), body.get("ms")
+    if _office is not None:
+        line = _office.write_diag(ROOT, stage, detail, boot, ms)
+    else:
+        line = f"(office module unavailable) stage={stage} detail={detail}"
+    _office_log(f"diag {line}")
+    return Response(status_code=204)
 
 
 @app.get("/api/office/files")

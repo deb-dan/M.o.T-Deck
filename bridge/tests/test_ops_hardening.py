@@ -326,16 +326,17 @@ blind = [ln for ln in START.splitlines()
 check("no blind lsof|xargs-kill port clear survives in start_component.sh", blind == [], )
 check("_clear_port exists", "_clear_port() {" in START)
 clears = re.findall(r"^\s*_clear_port \S+ (\w+)( force)?$", START, re.M)
-check("every component's port clear is routed through _clear_port (10 sites)",
-      len(clears) == 10)
+check("every component's port clear is routed through _clear_port (11 sites)",
+      len(clears) == 11)
 check("every _clear_port site names its component",
       {c for c, _ in clears} == {"runner", "odysseus", "searxng", "voicestudio",
-                                 "voicebox", "comfyui", "unsloth", "hermes"})
+                                 "voicebox", "comfyui", "unsloth", "hermes", "opencode"})
 check("the runner keeps its force (-9) kill", clears.count(("runner", " force")) == 3)
 check("hermes keeps its force (-9) kill", ("hermes", " force") in clears)
-check("odysseus/searxng/voice*/comfy/unsloth keep plain SIGTERM",
+check("odysseus/searxng/voice*/comfy/unsloth/opencode keep plain SIGTERM",
       all(f == "" for c, f in clears
-          if c in {"odysseus", "searxng", "voicestudio", "voicebox", "comfyui", "unsloth"}))
+          if c in {"odysseus", "searxng", "voicestudio", "voicebox", "comfyui",
+                   "unsloth", "opencode"}))
 check("_clear_port is still LISTENER-scoped", "-sTCP:LISTEN" in START)
 check("a foreign listener refuses with the exact message",
       "does not look like ours — refusing to kill it." in START)

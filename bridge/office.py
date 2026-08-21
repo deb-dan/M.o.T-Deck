@@ -98,6 +98,21 @@ DEFAULT_FONT_NAME, DEFAULT_FONT_SIZE = "Calibri", 11.0
 PX_PER_CHAR = 7.0
 PT_PER_PX = 0.75               # row height: openpyxl points ↔ Univer pixels
 
+# ── the boot beacon ──────────────────────────────────────────────────────────
+# THE PROBLEM THIS EXISTS FOR: this page failed twice on a Mac nobody here can reach,
+# and every hypothesis about WHY was unfalsifiable from a screenshot of a blank
+# rectangle. So the page now phones home at every step of its own boot and the
+# bridge writes it down. The next report is one command, not a theory:
+#
+#     grep loffice ~/Library/Application\ Support/Harness/data/logs/bridge.log
+#
+# The trace also lands in its own file (data/logs/loffice-boot.log, viewable in the
+# panel's log picker) so it survives a bridge log that has rolled past it.
+DIAG_LOG_NAME = "loffice-boot"
+DIAG_MAX_LINES = 400
+DIAG_STAGE_MAX = 40
+DIAG_DETAIL_MAX = 400
+
 # Excel's day-zero. 1899-12-30, not 12-31: the 1900 leap-year bug means serial 60 is
 # a date that never existed, and every spreadsheet since has compensated the same way.
 _EPOCH = _dt.datetime(1899, 12, 30)
@@ -885,6 +900,68 @@ def open_doc(root, name):
         return None, str(e)
     snap["name"] = os.path.splitext(os.path.basename(target))[0]
     return snap, None
+
+
+def diag_line(stage, detail="", boot="", ms=None, now=None) -> str:
+    """PURE. One line of the boot trace, in the shape a person greps.
+
+        2026-08-21 05:31:44 boot=7f3a1c +1240ms stage=mount-ok detail=canvases=3 …
+
+    Everything here arrives from a webview that is, by hypothesis, MALFUNCTIONING —
+    so every field is coerced and clamped. A diagnostic that can itself raise is
+    worse than no diagnostic: it would take the bridge down while reporting that
+    the page is down. Newlines are flattened because one beacon is one line, and a
+    beacon that could inject a newline could forge a second entry.
+    """
+    def clean(v, cap):
+        s = "" if v is None else str(v)
+        s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
+        return s[:cap] or ""
+    st = clean(stage, DIAG_STAGE_MAX) or "?"
+    dt = clean(detail, DIAG_DETAIL_MAX)
+    bt = clean(boot, 16) or "?"
+    try:
+        n = float(ms)
+        if n != n or n in (float("inf"), float("-inf")):         # NaN / inf
+            raise ValueError
+        el = f"+{int(n)}ms"
+    except (TypeError, ValueError):
+        el = "+?ms"
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S",
+                          time.localtime(now if isinstance(now, (int, float)) else time.time()))
+    return f"{stamp} boot={bt} {el} stage={st}" + (f" detail={dt}" if dt else "")
+
+
+def write_diag(root, stage, detail="", boot="", ms=None) -> str:
+    """Append one `diag_line` to data/logs/loffice-boot.log and return it.
+
+    Bounded on purpose: the loudest signal this file can carry is a CRASH LOOP (the
+    same `script-start` stage arriving again and again under different boot ids, which
+    is what a jetsammed web content process being reloaded looks like from outside),
+    and a crash loop writing an unbounded file is a disk problem on top of a tab
+    problem. Trim to the last DIAG_MAX_LINES.
+
+    Never raises: the caller is an error path.
+    """
+    line = diag_line(stage, detail, boot, ms)
+    try:
+        d = os.path.join(str(root), "data", "logs")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, DIAG_LOG_NAME + ".log")
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+        # cheap trim: only when the file has grown past the cap, and only by rewriting
+        # the tail — an append-mostly file that is read in full once in a while.
+        if os.path.getsize(p) > DIAG_MAX_LINES * 200:
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                keep = fh.read().splitlines()[-DIAG_MAX_LINES:]
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(keep) + "\n")
+            os.replace(tmp, p)
+    except Exception:                                            # noqa: BLE001
+        pass
+    return line
 
 
 def delete_doc(root, name):

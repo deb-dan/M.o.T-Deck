@@ -91,12 +91,12 @@ console.log('defaults');
   ok(ws.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs',
      'the workspace rail is today\'s order + the two lanes: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
-  ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth',
+  ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
   ok(d.sidebar.every(r => r.pinned), 'nothing starts hidden on the sidebar');
   const top = d.topbar.filter(r => r.pinned).map(r => r.id);
-  ok(top.join(',') === 'mc,odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,music,aider,loffice',
-     'the default strip is exactly the ten tabs that shipped, in order');
+  ok(top.join(',') === 'mc,odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,music,aider,loffice,opencode',
+     'the default strip is exactly the eleven default tabs, in order');
   ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps',
      'the three pinnable VIEWS start hidden (they are one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
@@ -162,11 +162,17 @@ console.log('validate');
   // Debi's ruling, both sides of the boundary
   m = M.navNormalize({});
   m.topbar.forEach(r => { r.pinned = true; });
-  ok(m.topbar.length === 13, 'the registry offers 13 strip-able entries');
+  ok(m.topbar.length > M.NAV_TOPBAR_MAX,
+     'the registry offers ' + m.topbar.length + ' strip-able entries, so the cap is reachable');
   const e13 = M.navValidate(m);
   ok(e13 && e13.indexOf(String(M.NAV_TOPBAR_MAX)) >= 0,
-     'the 13th pin is refused and the message NAMES the limit: ' + e13);
-  m.topbar.forEach(r => { if (r.id === 'caps') r.pinned = false; });
+     'pinning them all is refused and the message NAMES the limit: ' + e13);
+  // Unpin from the END, the same rule navRepair follows, until exactly the cap remains.
+  let over = m.topbar.length - M.NAV_TOPBAR_MAX;
+  for (let i = m.topbar.length - 1; i >= 0 && over > 0; i--) {
+    if (m.topbar[i].pinned) { m.topbar[i].pinned = false; over--; }
+  }
+  ok(m.topbar.filter(r => r.pinned).length === M.NAV_TOPBAR_MAX, 'exactly the cap is pinned');
   ok(M.navValidate(m) === '', 'exactly 12 is allowed (the boundary is inclusive)');
   ok(M.NAV_TOPBAR_MAX === 12, 'the cap is Debi\'s 12');
 }
@@ -230,8 +236,15 @@ console.log('render (executed)');
       runner: { running: true, installed: true } }, prov: {} },
     TAB_FOR_COMPONENT: {},
   };
+  // renderSidebar now asks peekEligible() which rows get the ⧉ overlay trigger. The
+  // REAL predicate is pulled in (not stubbed) so the render is proved against the same
+  // rule the click path uses.
+  const peekStart = html.indexOf('const PEEK_VIEWS = [');
+  const peekEnd = html.indexOf('function pkFlash(');
+  ok(peekStart > 0 && peekEnd > peekStart, 'the peek predicate block is where the test expects it');
+  const peekSrc = html.slice(peekStart, peekEnd);
   const run = new Function(...Object.keys(env),
-    srcFull + html.slice(sideStart, sideEnd) + `
+    srcFull + peekSrc + html.slice(sideStart, sideEnd) + `
     NAV_ENTRIES.forEach(e => { if (e.kind === 'component' && e.tab) TAB_FOR_COMPONENT[e.id] = e.tab; });
     renderSidebar();
     return { ws: document.getElementById('sideworkspace').innerHTML,
@@ -245,6 +258,15 @@ console.log('render (executed)');
   ok((out.ws.match(/onclick="navOpen\(/g) || []).length === rows.length,
      'every workspace row is clickable through navOpen');
   ok(/<span class="ico">♫<\/span> Music/.test(out.ws), 'the icons and labels come from the registry');
+  // ⧉ = open as an overlay (2026-08-21). It rides the eligible workspace rows only.
+  const peeks = [...out.ws.matchAll(/peekOpen\('([a-z]+)'/g)].map(m => m[1]).sort();
+  ok(peeks.join(',') === 'caps,models,music',
+     'the ⧉ overlay trigger is on Models / Music / Capabilities only: ' + peeks.join(','));
+  for (const no of ['chat', 'mc', 'logs', 'aider', 'loffice']) {
+    ok(peeks.indexOf(no) < 0, no + ' has NO ⧉ trigger (it is not a peekable view)');
+  }
+  ok(/onclick="peekOpen\('models', event, this\)"/.test(out.ws),
+     'the trigger passes the event (so it can stop the row navigating) and its own element');
   const comps = [...out.comp.matchAll(/openComponent\('([a-z]+)'\)/g)].map(m => m[1]);
   ok(comps.join(',') === 'odysseus,hermes,searxng,runner',
      'the components group lists the registry ones in nav order, then the rest: ' + comps.join(','));
@@ -260,7 +282,7 @@ console.log('render (executed)');
                                     topbar: [{ id: 'models', pinned: true }] }),
     setItem: () => {} } });
   const run2 = new Function(...Object.keys(env2),
-    srcFull + html.slice(sideStart, sideEnd) + `
+    srcFull + peekSrc + html.slice(sideStart, sideEnd) + `
     renderSidebar();
     return document.getElementById('sideworkspace').innerHTML;`);
   const ws2 = run2(...Object.values(env2));
@@ -305,7 +327,9 @@ console.log('customize overlay');
 const css = html.split('<style>')[1].split('</style>')[0];
 {
   // -- the surface itself
-  ok(/<dialog id="navdlg">/.test(html), 'the overlay is a <dialog> (Esc and a backdrop for free)');
+  ok(/<dialog id="navdlg" class="float-surface">/.test(html),
+     'the overlay is a <dialog> (Esc and a backdrop for free) wearing the shared '
+     + 'floating-surface grammar (2026-08-21: it no longer owns its own ground)');
   ok(/<div class="nv-body" id="nv-body">/.test(html), '…with a body the renderer fills');
   const b0 = css.indexOf('APPEARANCE OVERLAY — #navdlg');
   const b1 = css.indexOf('end appearance overlay');
@@ -316,15 +340,19 @@ const css = html.split('<style>')[1].split('</style>')[0];
      '…and it sits BEFORE the studio block, which must stay last in the sheet');
   const blk = css.slice(b0, b1).replace(/\/\*[\s\S]*?\*\//g, '');
   const sels = [...blk.matchAll(/(?:^|\})\s*([^{}]+?)\s*\{/g)].map(m => m[1].trim());
-  ok(sels.length === 15, 'the overlay block declares exactly 15 rules (got ' + sels.length + ')');
+  // 15 → 14: the light-theme ground moved out to the shared --float-* tokens.
+  ok(sels.length === 14, 'the overlay block declares exactly 14 rules (got ' + sels.length + ')');
   ok(sels.every(s => s.indexOf('#navdlg') >= 0),
      'every one of them names #navdlg — nothing leaks onto the page underneath');
-  ok(/backdrop-filter:blur\(16px\)/.test(blk) && /-webkit-backdrop-filter/.test(blk),
-     'it is backdrop-BLURRED, with the WebKit prefix (this renders in WKWebView)');
-  ok(/background:rgba\(20,18,29,\.86\)/.test(blk),
-     '…on a TRANSLUCENT ground, so the page reads through it (Debi\'s reference)');
-  ok(/html\[data-theme="light"\] #navdlg \{ background:rgba\(/.test(blk),
-     '…and the light theme gets its own translucent ground rather than the dark one');
+  // The blur + translucency ARE still there, they are just no longer this block's to
+  // declare: bridge/tests/test_float_surface.js owns the shared grammar and asserts that
+  // #navdlg wears it. What must be true HERE is the negative — this block must not have
+  // kept a second, drifting copy of the ground.
+  // (::backdrop is the page DIMMER, not the surface — it legitimately keeps its own.)
+  const noBackdropRule = blk.replace(/#navdlg::backdrop\s*\{[^}]*\}/g, '');
+  ok(!/backdrop-filter/.test(noBackdropRule) && !/background:rgba\(/.test(noBackdropRule),
+     'the overlay block declares NO ground of its own — it comes from .float-surface, so '
+     + 'the floating surfaces cannot drift apart again');
   ok(/#navdlg::backdrop/.test(blk) && /rgba\(5,4,10,\.3\)/.test(blk),
      'the backdrop is faint — the point is that the page stays visible');
   ok(/#navdlg \.nv-h \{[^}]*cursor:grab/.test(blk), 'the handle looks draggable');

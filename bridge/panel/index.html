@@ -349,8 +349,8 @@
   /* §E — first-launch setup checklist overlay + coach-mark walkthrough */
   #setup-scrim { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:60;
       display:flex; align-items:center; justify-content:center; }
-  #setup-card { background:var(--card2); border:1px solid var(--line2); border-radius:16px;
-      padding:26px 28px; width:440px; max-width:92vw; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  /* ground/edge/radius/shadow come from .float-surface (2026-08-21 uniformity ruling) */
+  #setup-card { padding:26px 28px; width:440px; max-width:92vw; }
   #setup-card h3 { font-family:var(--serif); font-weight:500; font-size:24px; color:var(--cream); }
   #setup-card .su-sub { font:11px var(--mono); color:var(--faint); letter-spacing:.1em;
       text-transform:uppercase; margin:4px 0 16px; }
@@ -629,9 +629,9 @@
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #chat-audio-btn.empty { color:var(--faint); }
   /* popover: opens ABOVE the composer (chat bar sits at the bottom of the view) */
+  /* ground/edge/radius/shadow come from .float-surface (2026-08-21 uniformity ruling) */
   #model-pop, #audio-pop { position:fixed; width:380px; max-height:46vh; overflow-y:auto;
-      background:var(--card); border:1px solid var(--line); border-radius:8px;
-      box-shadow:0 8px 30px rgba(0,0,0,.5); z-index:9000; padding:6px; }
+      z-index:9000; padding:6px; }
   #model-pop[hidden], #audio-pop[hidden] { display:none; }
   .mp-row { padding:8px 9px; border-radius:7px; cursor:pointer;
       border-left:2px solid transparent; }
@@ -1011,15 +1011,11 @@
      existing .cap-sw switch grammar rather than inventing a second one. */
   /* max-width is restated because the base `dialog` rule caps every dialog at 520px —
      without it the declared width above would silently be a lie. */
-  #navdlg { padding:0; width:min(560px,92vw); max-width:none; max-height:80vh; overflow:hidden;
-            background:rgba(20,18,29,.86); border:1px solid var(--line2); border-radius:14px;
-            -webkit-backdrop-filter:blur(16px) saturate(130%);
-            backdrop-filter:blur(16px) saturate(130%);
-            box-shadow:0 24px 60px rgba(0,0,0,.5); }
-  /* light theme: the same translucency over warm paper. The ground stays close to
-     --card2 on both palettes, so --cream / --dim keep the contrast they were measured at. */
-  html[data-theme="light"] #navdlg { background:rgba(243,238,226,.88);
-                                     box-shadow:0 24px 60px rgba(60,50,30,.22); }
+  /* The GROUND (translucency, blur, edge, radius, shadow) is NO LONGER declared here — it
+     comes from the shared `.float-surface` grammar below, which every floating surface in
+     the panel now wears (Debi's uniformity ruling, 2026-08-21). What stays here is only
+     what is particular to THIS card: its size and its own backdrop. */
+  #navdlg { padding:0; width:min(560px,92vw); max-width:none; max-height:80vh; overflow:hidden; }
   /* deliberately FAINT: the whole point is that you can still see the page behind it. */
   #navdlg::backdrop { background:rgba(5,4,10,.3); backdrop-filter:blur(2px); }
   #navdlg .nv-head { display:flex; align-items:baseline; gap:12px; padding:17px 20px 4px; }
@@ -1044,6 +1040,83 @@
      nor switch — it recedes, rather than offering controls that would only refuse. */
   #navdlg .nv-row.nv-fixed .nv-n { color:var(--dim); }
   /* ========================= end appearance overlay ============================== */
+
+  /* ====== FLOATING-SURFACE GRAMMAR + VIEW PEEK (2026-08-21) =======================
+     Debi's uniformity ruling after the Customize overlay landed: the panel had SEVEN
+     different answers to "what does a surface floating above the page look like" — the
+     install dialog and the log dialog wore the flat --card2 dialog ground, the two
+     popovers wore --card with a tighter radius, the setup card had its own 16px radius,
+     and only the new overlay was translucent + blurred. There is now exactly ONE
+     answer, declared once here and worn by all of them.
+
+     ALPHA = .72, and the number is measured rather than picked. A see-through surface
+     has to stay readable over ARBITRARY page content, so the worst case is the ground
+     composited over a solid field of the lightest thing the panel can put behind it,
+     --cream (#efe7d7) — a case that cannot really occur, since cream is text. At .72
+     that ground is rgb(81,78,81): --cream reads 6.70:1 and --fg 4.83:1.
+     HONEST NOTE: the brief's .70 also clears the bar, but only just (--fg 4.52:1), and
+     .68 does not (4.23:1). .72 is the same look with real margin, which is why the
+     number is pinned by a test that recomputes these ratios rather than trusting this
+     comment. Over the grounds that actually occur (--bg … --card2) the same text reads
+     at 9-13:1. Light is the warm-paper equivalent (--card2 at the same .72).
+
+     OVERSCROLL: scrolling inside a floating surface must never chain to the page
+     behind it. The declaration is applied to the surface AND every descendant — it is
+     inert on anything that does not scroll, so the universal is what makes the rule
+     TOTAL: a scrollable region added to any of these surfaces later cannot be missed.
+     (It is also the other half of the popover close-on-scroll fix: the popovers
+     already ignore scroll events raised inside themselves, but before this the chain
+     to the page raised an OUTSIDE scroll event the moment the list hit its end, which
+     is exactly the close Debi kept hitting.)
+
+     WHAT IS **NOT** UNIFIED, deliberately: the page DIMMER behind each surface. The
+     grammar is about the surface; how hard the page is dimmed underneath is a property
+     of the surface's PURPOSE. A modal that has to be read before you answer it (the
+     install plan, the logs, the palette) keeps the base `dialog::backdrop` at .72; the
+     two surfaces whose whole point is that the page stays visible (Customize, peek)
+     dim at .3 and .34. So the install dialog will read as less see-through than the
+     Customize card — that is intended, not drift. */
+  :root { --float-bg:rgba(20,18,29,.72); --float-edge:var(--line2);
+          --float-blur:blur(20px) saturate(140%);
+          --float-shadow:0 24px 60px rgba(0,0,0,.5); }
+  html[data-theme="light"] { --float-bg:rgba(250,246,236,.72);
+                             --float-shadow:0 24px 60px rgba(60,50,30,.22); }
+  .float-surface { background:var(--float-bg); border:1px solid var(--float-edge);
+                   border-radius:14px; box-shadow:var(--float-shadow);
+                   -webkit-backdrop-filter:var(--float-blur);
+                   backdrop-filter:var(--float-blur); }
+  .float-surface, .float-surface * { overscroll-behavior:contain; }
+
+  /* ---- view PEEK: a full view borrowed ON TOP of the page you are already on ----
+     Debi: Models / Music / Capabilities should be reachable for a quick change without
+     leaving what you were doing. The mechanism is REPARENTING, not a copy: the real
+     #view-X node is moved into the overlay and moved back to its exact position on
+     close, so its render code, its state and its event wiring are untouched. */
+  #peek-scrim { position:fixed; inset:0; z-index:9500; display:flex;
+                align-items:center; justify-content:center;
+                background:rgba(5,4,10,.34); -webkit-backdrop-filter:blur(2px);
+                backdrop-filter:blur(2px); }
+  #peek-card { width:min(1100px,92vw); height:84vh; display:flex; flex-direction:column;
+               overflow:hidden; }
+  #peek-card .pk-head { flex:none; display:flex; align-items:baseline; gap:12px;
+                        padding:17px 22px 6px; }
+  #peek-card .pk-head h3 { margin:0; font-family:var(--serif); font-weight:500;
+                           font-size:20px; color:var(--cream); }
+  #peek-card .pk-sub { font:9.5px var(--mono); letter-spacing:.2em;
+                       text-transform:uppercase; color:var(--faint); }
+  #peek-card .pk-x { margin-left:auto; cursor:pointer; color:var(--faint);
+                     font:13px var(--mono); padding:2px 7px; border-radius:6px; }
+  #peek-card .pk-x:hover { color:var(--cream); background:var(--card); }
+  #peek-card .pk-body { flex:1; min-height:0; overflow-y:auto; padding:6px 22px 22px; }
+  /* the ⧉ trigger: quiet, revealed by hovering the row, never competing with the label */
+  .pk-open { margin-left:auto; font:12px var(--mono); color:var(--faint); opacity:0;
+             padding:0 3px; border-radius:5px; transition:opacity .12s ease; }
+  nav a:hover .pk-open { opacity:.65; }
+  .pk-open:hover { opacity:1; color:var(--gold); }
+  /* the no-op flash: peeking the view you are already ON has nothing to show, so the
+     glyph answers instead of the overlay opening onto the page it was borrowed from */
+  .pk-open.pk-flash { opacity:1; color:var(--gold); background:var(--card2); }
+  /* ===================== end floating-surface grammar ============================ */
 
   /* ============ OPTIONAL "STUDIO" CHROME — html[data-chrome="studio"] ============
      Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from Debi's Unsloth
@@ -1464,9 +1537,9 @@
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
-        <div id="model-pop" role="listbox" aria-label="Choose a model" hidden></div>
+        <div id="model-pop" class="float-surface" role="listbox" aria-label="Choose a model" hidden></div>
         <!-- PHASE C: voice picker popover — same anchoring/CSS as #model-pop -->
-        <div id="audio-pop" role="listbox" aria-label="Choose a voice model" hidden></div>
+        <div id="audio-pop" class="float-surface" role="listbox" aria-label="Choose a voice model" hidden></div>
       </div>
 
       <!-- TASK A: draggable divider between the chat column and the artifact viewer -->
@@ -1674,7 +1747,7 @@
   </div>
 </main>
 
-<dialog id="dlg">
+<dialog id="dlg" class="float-surface">
   <h3 id="dlg-title"></h3>
   <div class="note">Nothing runs until you approve.</div>
   <ul id="dlg-plan"></ul>
@@ -1685,7 +1758,7 @@
   <pre id="dlg-log" hidden></pre>
 </dialog>
 
-<dialog id="logdlg">
+<dialog id="logdlg" class="float-surface">
   <h3>Logs</h3>
   <!-- FABLE: style pass — log source chips (bridge … path-guard) -->
   <div id="log-srcs" class="caps-tabs" style="margin:6px 0 10px"></div>
@@ -1700,14 +1773,14 @@
   </div>
 </dialog>
 
-<dialog id="palette">
+<dialog id="palette" class="float-surface">
   <input id="pal-q" placeholder="Type a command…" autocomplete="off">
   <div id="pal-list"></div>
 </dialog>
 
 <!-- APPEARANCE OVERLAY (STUDIO PHASE 2 §A v2). A <dialog> because it gives Esc and a
      backdrop for free; the outside-click close is wired in openNavDlg. -->
-<dialog id="navdlg">
+<dialog id="navdlg" class="float-surface">
   <div class="nv-head">
     <h3>Customize navigation</h3>
     <span class="nv-x" onclick="closeNavDlg()" title="Close" aria-label="Close">✕</span>
@@ -1863,6 +1936,7 @@ const NAV_ENTRIES = [
   { id:'voicebox',    label:'Voicebox',    ico:null, kind:'component', view:null, tab:'Voicebox',    prefersTab:true },
   { id:'comfyui',     label:'Comfyui',     ico:null, kind:'component', view:null, tab:'ComfyUI',     prefersTab:true },
   { id:'unsloth',     label:'Unsloth',     ico:null, kind:'component', view:null, tab:'Unsloth',     prefersTab:true },
+  { id:'opencode',    label:'Opencode',    ico:null, kind:'component', view:null, tab:'OpenCode',    prefersTab:true },
 ];
 // Which bars an entry may appear on — the capability half, mirroring nav.py's `bars`.
 // Logs has no solo surface, so it is sidebar-only; everything else can be either.
@@ -1870,9 +1944,10 @@ const NAV_SIDEBAR_ONLY = ['logs'];
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
 const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','loffice','caps','logs',
-                             'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth'];
+                             'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
+                             'opencode'];
 const NAV_DEFAULT_TOPBAR = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
-                            'unsloth','music','aider','loffice'];
+                            'unsloth','music','aider','loffice','opencode'];
 const NAV_TOPBAR_UNPINNED = ['chat','models','caps'];
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
@@ -2048,8 +2123,13 @@ function renderSidebar() {
     const e = navEntry(id);
     if (!e || e.kind === 'component') return '';
     const on = (e.view && e.view === curView) ? ' class="on"' : '';
+    // ⧉ = open this view as an OVERLAY over whatever you are doing. Hover-revealed and
+    // its own click target: the row's onclick still navigates normally.
+    const pk = peekEligible(e.id)
+      ? `<span class="pk-open" onclick="peekOpen('${escAttr(e.id)}', event, this)"
+           title="Open as overlay" aria-label="Open ${escAttr(e.label)} as overlay">⧉</span>` : '';
     return `<a id="nav-${escAttr(e.id)}"${on} onclick="navOpen('${escAttr(e.id)}')" title="${escAttr(e.label)}"
-      aria-label="${escAttr(e.label)}"><span class="ico">${esc(e.ico || '·')}</span> ${esc(e.label)}</a>`;
+      aria-label="${escAttr(e.label)}"><span class="ico">${esc(e.ico || '·')}</span> ${esc(e.label)}${pk}</a>`;
   }).join('');
   const known = {}; NAV_ENTRIES.forEach(e => { if (e.kind === 'component') known[e.id] = 1; });
   const order = ids.filter(id => known[id] && comps[id])
@@ -2235,6 +2315,10 @@ const LOG_SOURCES = [
   {n:'comfyui', label:'comfyui'}, {n:'comfyui-install', label:'comfyui install'},
   {n:'unsloth', label:'unsloth'}, {n:'unsloth-install', label:'unsloth install'},
   {n:'aider', label:'aider'}, {n:'aider-install', label:'aider install'},
+  {n:'opencode', label:'opencode'}, {n:'opencode-install', label:'opencode install'},
+  // LOffice's boot beacon — the page phones home at every step of its own boot, and
+  // that trace must be readable in-panel because the tab it describes may be blank.
+  {n:'loffice-boot', label:'loffice boot'},
 ];
 
 // The same dialog also shows one-shot COMMAND OUTPUT (install/start failures) —
@@ -2431,7 +2515,7 @@ function openSetup() {
   let scrim = document.getElementById('setup-scrim');
   if (!scrim) {
     scrim = document.createElement('div'); scrim.id = 'setup-scrim';
-    scrim.innerHTML = `<div id="setup-card">
+    scrim.innerHTML = `<div id="setup-card" class="float-surface">
         <h3>Setting things up</h3>
         <div class="su-sub">green means ready — the harness runs fully local</div>
         <div id="su-rows"></div>
@@ -2594,6 +2678,10 @@ function applySolo() {
 
 let curView = 'mc';    // what the sidebar highlights; survives a sidebar re-render
 function showView(v) {
+  // A peek BORROWS a view node out of <main>. If the navigation is TO that view, the
+  // node has to be handed back before the hidden flags below are written, or the view
+  // the user just asked for would still be sitting inside the overlay.
+  if (peekState && peekState.view === v) closePeek();
   curView = v;
   document.getElementById('view-mc').hidden = (v !== 'mc');
   document.getElementById('view-chat').hidden = (v !== 'chat');
@@ -2626,9 +2714,109 @@ function showView(v) {
   if (v === 'models') initModels();
   if (v === 'caps') initCaps();
   // MUSIC: the status poll is armed on entry and RETIRED on exit — it must never
-  // keep polling behind another view (and it only ticks while a render runs).
-  if (v === 'music') initMusic(); else stopMusicPoll();
+  // keep polling behind another view (and it only ticks while a render runs). The one
+  // exception is a music PEEK: that view is on screen, so its poll must survive a
+  // navigation happening underneath it.
+  if (v === 'music') initMusic();
+  else if (!(peekState && peekState.view === 'music')) stopMusicPoll();
+  // A borrowed view is ON SCREEN in its overlay, so the hidden flag written above for
+  // "not the active view" does not apply to it.
+  if (peekState) peekState.node.hidden = false;
 }
+
+/* ---------- VIEW PEEK — open a whole view ON TOP of the page you are on ----------
+   Debi: Models / Capabilities / Music should be reachable for a quick change without
+   losing what you were doing; normal navigation stays exactly as it is.
+
+   The mechanism is REPARENTING, not a second copy: the real `#view-X` node is moved
+   into the overlay and moved back to its exact position on close (an anchor comment
+   holds the slot). Because it is the SAME node, every render function, every element
+   id and every piece of in-page state keeps working with no knowledge of the overlay
+   — and there is no second Models pane that could disagree with the first.
+
+   Excluded on purpose: CHAT (a streaming composer with a live mic and an artifact
+   pane — borrowing it mid-turn is a bigger design question than this slice), MISSION
+   CONTROL (it is the page you are normally standing on), LOGS (already a dialog). */
+const PEEK_VIEWS = ['models', 'music', 'caps'];
+let peekState = null;          // { id, view, node, anchor } — at most ONE at a time
+
+function peekViewFor(id) { const e = navEntry(id); return (e && e.view) || null; }
+function peekEligible(id) {
+  const v = peekViewFor(id);
+  return !!v && PEEK_VIEWS.indexOf(v) >= 0;
+}
+
+/* the no-op answer: peeking the view you are ALREADY on would open an overlay onto the
+   page it was just borrowed from, i.e. a hole. The glyph flashes instead. */
+function pkFlash(el) {
+  if (!el || !el.classList) return;
+  el.classList.add('pk-flash');
+  setTimeout(() => { if (el && el.classList) el.classList.remove('pk-flash'); }, 700);
+}
+
+function peekEnsure() {
+  let scrim = document.getElementById('peek-scrim');
+  if (scrim) return scrim;
+  scrim = document.createElement('div');
+  scrim.id = 'peek-scrim';
+  scrim.hidden = true;
+  scrim.innerHTML = `<div id="peek-card" class="float-surface">
+      <div class="pk-head"><h3 id="peek-title"></h3>
+        <span class="pk-sub">overlay</span>
+        <span class="pk-x" onclick="closePeek()" title="Close (Esc)" aria-label="Close">✕</span></div>
+      <div class="pk-body" id="peek-body"></div>
+    </div>`;
+  document.body.appendChild(scrim);
+  // outside-mousedown closes; a mousedown INSIDE the card must never reach this
+  scrim.addEventListener('mousedown', e => { if (e.target === scrim) closePeek(); });
+  return scrim;
+}
+
+function peekOpen(id, ev, el) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const view = peekViewFor(id);
+  if (!peekEligible(id)) return false;
+  if (view === curView) { pkFlash(el); return false; }   // nothing to borrow
+  if (peekState) closePeek();                            // one at a time
+  const node = document.getElementById('view-' + view);
+  if (!node || !node.parentNode) return false;
+  // the popovers are position:fixed and would be stranded under the overlay
+  if (typeof closeModelPop === 'function') closeModelPop();
+  if (typeof closeAudioPop === 'function') closeAudioPop();
+  const anchor = document.createComment('peek-anchor:' + view);
+  node.parentNode.insertBefore(anchor, node);
+  const scrim = peekEnsure();
+  document.getElementById('peek-body').appendChild(node);
+  node.hidden = false;
+  peekState = { id, view, node, anchor };
+  const e = navEntry(id);
+  document.getElementById('peek-title').textContent = (e && e.label) || view;
+  scrim.hidden = false;
+  document.addEventListener('keydown', peekKey, true);
+  // the view's own entry work, exactly as showView would have run it
+  if (view === 'models') initModels();
+  else if (view === 'caps') initCaps();
+  else if (view === 'music') initMusic();
+  return true;
+}
+
+function closePeek() {
+  if (!peekState) return;
+  const st = peekState;
+  peekState = null;                       // FIRST — so anything this triggers is inert
+  if (st.view === 'music' && curView !== 'music' && typeof stopMusicPoll === 'function')
+    stopMusicPoll();
+  if (st.anchor && st.anchor.parentNode) {
+    st.anchor.parentNode.insertBefore(st.node, st.anchor);
+    st.anchor.parentNode.removeChild(st.anchor);
+  }
+  st.node.hidden = (curView !== st.view);
+  const scrim = document.getElementById('peek-scrim');
+  if (scrim) scrim.hidden = true;
+  document.removeEventListener('keydown', peekKey, true);
+}
+
+function peekKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closePeek(); } }
 
 /* ---------- PHASE 1: roomier Chat workspace (rail + sessions collapse) ----------
    Both classes live on <body> always; the CSS only acts inside body.chat-mode, so
@@ -4924,6 +5112,7 @@ function renderModelPop(){
       s.className = 'mpill ' + cls; s.textContent = text; meta.appendChild(s); };
     if (isLive) pill('live', 'live');
     if ((m.capabilities || []).includes('vision')) pill('vision', 'vision');
+    if (modelHasTools(m)) pill('vision', 'tools');
     const fmt = m.format || m.engine || ''; if (fmt) pill('fmt', fmt);
     if (m.size_bytes) pill('fmt', fmtGB(m.size_bytes));
     if (modelAuxId && m.id === modelAuxId) pill('aux', 'aux');
@@ -6841,6 +7030,19 @@ function srcLabel(src){
        : src === 'audio-hf-cache' ? 'HF cache'
        : (src || '');
 }
+/* ---------- tool-calling capability (the OpenCode slice, 2026-08-21) ----------
+   The bridge sends `tools` as true | false | null and `capabilities` carries "tools"
+   only on a true. THREE values, and the third is the point: null means the model's
+   chat template could not be read, and an unknown must be drawn as NOTHING rather
+   than as a "no" — the same absent-not-greyed rule the Sampling fields follow.
+   One predicate, used by all three render sites, so they cannot disagree. */
+const TOOLS_PILL_TITLE = 'This model&#39;s chat template renders tool calls — required by OpenCode';
+function modelHasTools(m){
+  if (!m) return false;
+  if (m.tools === true) return true;
+  return (m.capabilities || []).indexOf('tools') >= 0;
+}
+
 function srcBadge(src){
   if (!src) return '';
   const owned = isAppOwned(src);
@@ -6853,6 +7055,9 @@ function srcBadge(src){
 function modelRowHtml(m, isActive, isAux, runnerUp){
   const badges = [];
   if ((m.capabilities || []).includes('vision')) badges.push('<span class="mpill vision">vision</span>');
+  // TOOL-CALLING. Drawn only on an explicit yes — a null verdict (a template we could
+  // not read) must never look like a "no", so absence means "unknown", not "cannot".
+  if (modelHasTools(m)) badges.push('<span class="mpill vision" title="' + TOOLS_PILL_TITLE + '">tools</span>');
   const q = quantOf(m.id); if (q) badges.push('<span class="mpill quant">' + esc(q) + '</span>');
   badges.push('<span class="mpill fmt">' + esc(m.format || m.engine || '') + '</span>');
   const sb = srcBadge(m.source); if (sb) badges.push(sb);
@@ -8470,6 +8675,11 @@ function renderDetail(){
     const meta = [esc(m.id), esc(m.engine || ''), fmtGB(m.size_bytes),
                   (m.ctx ? (m.ctx.toLocaleString() + ' ctx') : ''), esc(m.source || '')]
                  .filter(Boolean).join(' · ');
+    // Capability pills. Same absent-not-greyed rule as the rows: a null tools verdict
+    // draws nothing at all rather than claiming the model cannot call tools.
+    const caps = [];
+    if ((m.capabilities || []).includes('vision')) caps.push('<span class="mpill vision">vision</span>');
+    if (modelHasTools(m)) caps.push('<span class="mpill vision" title="' + TOOLS_PILL_TITLE + '">tools</span>');
     // Empty when the bridge sent no `sampling` (older bridge) — then the wrapper is
     // omitted entirely rather than leaving an empty section's margin behind.
     const samp = renderSampling(m);
@@ -8479,6 +8689,7 @@ function renderDetail(){
     const lau = (samp || ld) ? renderLaunch(m) : '';
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
+      ${caps.length ? `<div class="mbadges" style="margin-top:6px">${caps.join('')}</div>` : ''}
       <div class="md-actions" id="md-actions"></div>
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
