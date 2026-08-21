@@ -1799,7 +1799,15 @@ let lastStatus = null;
 let lastProv = {};      // previous provisioning snapshot (for transition detection)
 let statusFails = 0;    // consecutive /api/status misses — tolerate brief unreachability
                         // during a switch/restart (item D) before declaring the bridge down
-let lastDegraded = {};  // previous degraded flags (for transition detection)
+let lastHealth = {};    // previous health verdict per component (transition detection).
+                        // Was `lastDegraded`, keyed off the INSTANTANEOUS degraded flag:
+                        // a one-poll probe blip (a `ship.sh --restart <comp>` window, or
+                        // our own event loop being busy) wrote a permanent
+                        // "<comp> degraded — health lost" line into the feed while the
+                        // card — repainted from the same field on the next poll — went
+                        // back to Online, and nothing ever retracted the line. The bridge
+                        // now debounces that into ok|transient|lost and BOTH surfaces
+                        // read the one verdict, so they cannot contradict each other.
 let pollTimer = null;   // adaptive poll timer
 
 function feed(tag, msg) {
@@ -1851,8 +1859,16 @@ async function refresh(manual) {
     running:true, installed:true, pin:'local', port:8700 }, true));
 
   for (const [name, c] of Object.entries(s.components)) {
-    if (c.degraded && !lastDegraded[name]) feed('health', `${name} degraded — health lost`);
-    lastDegraded[name] = !!c.degraded;
+    // ONE verdict drives the feed line AND the card below (healthOf), and every
+    // episode is closed by a recovery line — so the feed can never be left saying
+    // "health lost" about a component whose card reads Online.
+    const h = healthOf(c), was = lastHealth[name] || 'ok';
+    if (h !== was) {
+      if (h === 'transient')   feed('health', `${name} probe missed — retrying`);
+      else if (h === 'lost')   feed('health', `${name} degraded — health lost (${c.misses || 0} probes missed)`);
+      else if (was !== 'ok')   feed('health', `${name} back online`);
+    }
+    lastHealth[name] = h;
     cards.insertAdjacentHTML('beforeend', cardHTML(name, c, false, prov[name]));
   }
   // The COMPONENTS half of the sidebar is the same status snapshot, so it is redrawn
@@ -2072,6 +2088,54 @@ NAV_ENTRIES.forEach(e => { if (e.kind === 'component' && e.tab) TAB_FOR_COMPONEN
 function nativeShell() {
   return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.harness) || null;
 }
+// Are we inside Harness.app AT ALL? A WKWebView always has `window.webkit.messageHandlers`
+// (even with no handler registered on it); a browser tab has no `window.webkit`. This is
+// deliberately WEAKER than nativeShell(): it is true even when the "harness" handler is
+// missing, which is exactly the state a shell built BEFORE that handler existed leaves us
+// in — and the state we must not answer by opening the default browser.
+function inNativeApp() {
+  return !!(window.webkit && window.webkit.messageHandlers);
+}
+/* What the SHELL says about itself. app/main.swift injects, at document start, into its
+   own first-party pages only:
+       window.harnessShell = { api: <n>, tabs: [<every tabRegistry id>] }
+   This exists to answer the one question a ONE-WAY script message cannot: does this
+   build of the app know that tab at all? `tabs` is the shell's REGISTRY (everything that
+   CAN be a tab), not the strip — a tab the user hid is still reachable. An older shell
+   injects nothing, so the answer is `null` = "cannot be asked", never "no". */
+function shellTabs() {
+  const s = window.harnessShell;
+  return (s && typeof s === 'object' && Array.isArray(s.tabs)) ? s.tabs : null;
+}
+function shellKnowsTab(id) {
+  const t = shellTabs();
+  return t ? t.indexOf(id) >= 0 : null;      // null = unknowable, deliberately not false
+}
+const SHELL_STALE_NOTE = 'this build of the app has no such tab — run ./scripts/ship.sh';
+/* THE FALLBACK RULE, and it is as much about expectations as about UX: inside the app a
+   lane row must NEVER open in the default browser. That is the 2026-08-21 regression —
+   `swiftc` failed on a malformed comment, ship.sh therefore never rebuilt the shell, the
+   stale binary had no "harness" handler, switchTab returned false, and navOpen fell
+   through to window.open() → the page appeared in CHROME. The user asked for a tab and
+   got another application, with nothing on screen saying why. A note is the honest
+   answer, and it is written where the click happened as well as into the feed. */
+function navShellNote(id, why) {
+  const e = navEntry(id);
+  const label = (e && e.label) || id;
+  feed('nav', esc(label) + ' opens in a native tab — ' + esc(why));
+  const row = document.getElementById('nav-' + id);
+  if (!row) return;
+  const old = row.querySelector('.nav-note');
+  if (old) old.remove();
+  const s = document.createElement('span');
+  // Inline style rather than a class: one transient diagnostic line does not earn a CSS
+  // rule (the panel's zero-new-CSS habit), and it must read as an aside, not a control.
+  s.style.cssText = 'margin-left:6px;opacity:.55;font-size:9.5px;text-transform:none';
+  s.className = 'nav-note';
+  s.textContent = '— ' + why;
+  row.appendChild(s);
+  setTimeout(() => { if (s.parentNode) s.parentNode.removeChild(s); }, 8000);
+}
 function switchTab(title, id) {
   const h = nativeShell();
   if (!h) return false;
@@ -2087,7 +2151,15 @@ function openComponent(name) {
   // component's card is where Start lives, so that case stays on Mission Control.
   const c = ((lastStatus && lastStatus.components) || {})[name];
   const title = TAB_FOR_COMPONENT[name];
-  if (c && c.running && title && switchTab(title, name)) return;
+  if (c && c.running && title) {
+    // Do not post a message the shell cannot resolve: an unknown id is IGNORED on the
+    // other side, which is the silent half of this bug class (nothing happens, nothing
+    // is said). `null` means the shell could not be asked, so we still try.
+    if (shellKnowsTab(name) !== false && switchTab(title, name)) return;
+    // Stale shell. Unlike a lane, a component has somewhere useful to land — its card —
+    // so we say what happened AND still go there.
+    if (inNativeApp()) navShellNote(name, SHELL_STALE_NOTE);
+  }
   jumpToCard(name);
 }
 function openMusic() {
@@ -2104,7 +2176,14 @@ function navOpen(id) {
   if (!e) return;
   if (e.id === 'logs') { showLogs(); return; }
   if (e.kind === 'component') { openComponent(id); return; }
-  if (e.prefersTab && e.tab && switchTab(e.tab, e.id)) return;
+  if (e.prefersTab && e.tab) {
+    if (shellKnowsTab(e.id) !== false && switchTab(e.tab, e.id)) return;
+    // A LANE (Aider, LOffice) has no in-panel view: `e.url` below is its page on our own
+    // bridge, and window.open() in a WKWebView hands that URL to NSWorkspace — i.e. the
+    // DEFAULT BROWSER. Inside the app that is never the right answer, so stop here and
+    // say so. In a real browser (no window.webkit at all) the URL still is the answer.
+    if (inNativeApp() && !e.view) { navShellNote(e.id, SHELL_STALE_NOTE); return; }
+  }
   if (e.view) { showView(e.view); return; }
   if (e.url) { window.open(e.url, '_blank'); }
 }
@@ -2142,13 +2221,16 @@ function renderSidebar() {
     const p = prov[name], st = p && p.state;
     const cls = (st === 'starting' || st === 'pending') ? 'warn'
               : (st === 'failed' || st === 'blocked') ? 'bad'
-              : c.degraded ? 'bad'
+              : healthOf(c) === 'lost' ? 'bad'
+              : healthOf(c) === 'transient' ? 'warn'
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     const tabTitle = TAB_FOR_COMPONENT[name];
     const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
               : tabTitle ? `show ${name} on MOT Main — not running`
               : `show ${name} on MOT Main`;
-    return `<a onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+    // id="nav-<name>": the same shape the workspace rows use, so navShellNote can write
+    // its aside onto the row that was clicked. Component ids never collide with view ids.
+    return `<a id="nav-${escAttr(name)}" onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${esc(name)}</span></a>`;
   }).join('');
   const lbl = document.getElementById('sidecomponents-lbl');
@@ -2168,8 +2250,18 @@ function metric(k, v) {
   return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 }
 
+// The ONE derivation of a component's health, used by the card, the sidebar dot and
+// the feed. `c.health` is the bridge's debounced ok|transient|lost verdict; the
+// fallback to the raw degraded flag keeps this panel honest against an older bridge
+// (a snapshot where only the panel half of a ship landed) rather than silently
+// reading undefined. This is the ONLY place that flag is read.
+function healthOf(c) {
+  return (c && c.health) || (c && c.degraded ? 'lost' : 'ok');
+}
+
 function cardHTML(name, c, isBridge, prov) {
   const ps = prov && prov.state;
+  const h = healthOf(c);
   const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
   let dot, state, actions = '';
   const provisioning = (ps === 'starting' || ps === 'pending' || ps === 'blocked');
@@ -2178,8 +2270,13 @@ function cardHTML(name, c, isBridge, prov) {
     state = ps === 'starting' ? 'Starting…' : ps === 'pending' ? 'Pending…' : 'Blocked';
   } else if (ps === 'failed') {
     dot = 'bad'; state = 'Failed';
-  } else if (c.degraded) {
+  } else if (h === 'lost') {
     dot = 'bad'; state = 'Degraded';   // was started, health now failing (crashed)
+  } else if (h === 'transient') {
+    // Expected-up and one or two probes missed. Overwhelmingly a restart window
+    // (`ship.sh --restart <comp>` clears the listener a second before the new pid
+    // lands) — so say so, rather than crying Degraded and then quietly going green.
+    dot = 'warn'; state = 'Reconnecting…';
   } else if (name === 'runner' && !c.running && c.port_up) {
     // ISSUE C: the runner process holds the port but no model is loaded yet → it is
     // LOADING, not Online (green) and not Stopped. Keeps MC honest + agreeing with the
@@ -2195,7 +2292,9 @@ function cardHTML(name, c, isBridge, prov) {
     } else if (ps === 'failed') {
       actions = `<button class="primary" onclick="startAny('${name}')">Retry</button>
                  <button onclick="showProvLog('${name}')">View log</button>`;
-    } else if (c.degraded) {
+    } else if (h === 'lost' || h === 'transient') {
+      // Same actions in both states: a transient reading must never take the Restart
+      // button away from someone looking at a component that really did die.
       actions = `<button class="primary" onclick="startAny('${name}')">Restart</button>
                  <button onclick="act('${name}','stop')">Stop</button>`;
     } else if (name === 'runner') {

@@ -93,6 +93,23 @@ func tabsFor(_ ids: [String]) -> [HarnessTab] {
 var tabs: [HarnessTab] = tabsFor(navDefaultTopbar)
 var tabTitles: [String] { tabs.map { $0.title } }
 
+// WHAT THE SHELL TELLS THE PANEL ABOUT ITSELF (2026-08-21, the regression repair).
+//
+// The panel→shell channel is a ONE-WAY script message, so the panel could not tell
+// "the shell switched the tab" from "the shell has never heard of that tab" — and its
+// fallback for the second case was window.open(), which in a WKWebView means the
+// DEFAULT BROWSER. Clicking Aider in the sidebar opened Chrome. The cause was one
+// stage earlier: a malformed comment made `swiftc` fail, so ship.sh never rebuilt this
+// binary while the panel (served from disk) moved on. A panel newer than its shell is
+// therefore a NORMAL state that must be DETECTABLE rather than a silent no-op.
+//
+// So the shell injects one global into its own first-party pages:
+//     window.harnessShell = { api: <shellAPI>, tabs: [<every tabRegistry id>] }
+// `tabs` is the REGISTRY, not the strip: the question is "does this build know that tab
+// at all", and a hidden tab is still reachable (switchTab shows it for the session).
+// Bump `shellAPI` when the panel needs to detect a NEW shell capability.
+let shellAPI = 2
+
 // Named indices, looked up BY ID (stable across a rename and across a reorder) so
 // rebuilding `tabs` can never silently repoint a behaviour at the wrong tab. `-1` when
 // the tab is not on the strip, which every use site reads as "never matches" rather
@@ -562,12 +579,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         // ── web views ──
         // DropWebView: native drag-destination so Finder image drops reach the chat.
-        // The panel — and ONLY the panel — also gets the "harness" script-message
-        // handler, so its sidebar can ask the shell to switch tabs. Registering it on
-        // any other webview would let a third-party component page drive our tab strip,
-        // so this configuration is deliberately not shared (see userContentController).
+        //
+        // OUR OWN PAGES — and only ours — get the "harness" script-message handler, so
+        // that a sidebar row (or LOffice's File menu) can ask the shell to switch tabs.
+        // That is the panel here, plus LOffice and Aider in the registry loop below;
+        // registering it on any other webview would let a THIRD-PARTY component page
+        // drive our tab strip, so those configurations are deliberately bare.
+        //
+        // The self-description above, as a user script. Injected at documentStart so it
+        // is there before any of the panel's own code runs. Every id is a literal from
+        // `tabRegistry`, so there is nothing here to escape.
+        let shellIds = tabRegistry.map { "\"\($0.id)\"" }.joined(separator: ",")
+        let shellScript = WKUserScript(
+            source: "window.harnessShell={api:\(shellAPI),tabs:[\(shellIds)]};",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true)
+
         let panelCfg = WKWebViewConfiguration()
         panelCfg.userContentController.add(self, name: "harness")
+        panelCfg.userContentController.addUserScript(shellScript)
         panelWV = DropWebView(frame: .zero, configuration: panelCfg)
 
         // "Harness skin" for Odysseus: override its base --font-family (unset → falls back to
@@ -595,12 +624,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if t.id == panelId { wvById[t.id] = panelWV! }
             else if t.id == odysseusId { wvById[t.id] = odyWV! }
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
-            / LOffice + Aider are OUR OWN pages served by the bridge (first-party, same
+            // LOffice + Aider are OUR OWN pages served by the bridge (first-party, same
             // origin as the panel) — they get the "harness" handler too, so their File
-            / menus can offer "⌂ MOT Main". Third-party component pages still never do.
+            // menus can ask the shell to switch tabs. Third-party pages never do.
             else if t.id == "loffice" || t.id == "aider" {
                 let c = WKWebViewConfiguration()
                 c.userContentController.add(self, name: "harness")
+                c.userContentController.addUserScript(shellScript)
                 wvById[t.id] = WKWebView(frame: .zero, configuration: c)
             }
             else { wvById[t.id] = WKWebView(frame: .zero, configuration: WKWebViewConfiguration()) }
@@ -1762,7 +1792,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // corrupt UserDefaults value would be a far worse failure than showing the panel.
     func webViewFor(_ idx: Int) -> WKWebView {
         guard idx >= 0 && idx < tabs.count else { return panelWV }
-        return wvById[tabs[idx].id] ?? panelWV
+        if let wv = wvById[tabs[idx].id] { return wv }
+        // UNREACHABLE BY CONSTRUCTION: wvById is built from tabRegistry and `tabs` is
+        // always a subset of it. If it ever happens it is a real defect, and its symptom
+        // is precisely "this tab shows Mission Control" — so it gets a log line rather
+        // than looking like a rendering quirk. Still returns the panel: a nil here would
+        // be a crash, and a crash is worse than the wrong page.
+        slog("BUG: no webview for tab id \(tabs[idx].id) — showing the panel instead")
+        return panelWV
     }
     // EVERY primary, not only the ones on the strip: applyPanes parks whatever neither
     // pane is showing, and a webview for a hidden entry must be parked too (it may
@@ -1780,8 +1817,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let id = tabs[idx].id
         guard id != panelId else { return }
         guard !loadedTabs.contains(id) else { return }
+        // NO `?? panelWV` HERE, deliberately: loading another tab's URL into the PANEL's
+        // webview would replace Mission Control with that page — the bridge-wait surface
+        // and the file-drop target — and leave the tab that asked for it showing the
+        // panel. Refuse loudly instead, and do not mark it loaded, so a later attempt
+        // (⌘R, re-select) can still succeed if whatever went wrong was transient.
+        guard let wv = wvById[id] else {
+            slog("BUG: no webview for tab id \(id) — refusing to load \(urlForTab(idx)) into the panel")
+            return
+        }
         loadedTabs.insert(id)
-        (wvById[id] ?? panelWV).load(URLRequest(url: urlForTab(idx)))
+        wv.load(URLRequest(url: urlForTab(idx)))
         // The first Hermes load records the generation it is loading against, so the
         // first tab switch back compares like with like instead of making no claim.
         if id == hermesId { syncHermesGen(reloadIfNewer: false) }

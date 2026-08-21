@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21i">
+<meta name="harness-build" content="loffice-2026-08-21k">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -232,27 +232,20 @@
          padding-top:0;padding-bottom:0}
   :where(#hdr) button.ghost{width:var(--ctl-h);justify-content:center;padding:0;
          font-size:13px}
-  /* ── the File menu ──────────────────────────────────────────────────────────
+  /* ── the File menu: only its VISIBILITY lives here now ─────────────────────
      A dropdown, not a native <select> and not window.prompt: both of those are the
      recorded WKWebView silent-no-op class. Positioned against #filewrap, which is why
-     that wrapper exists at all. Every row is an ordinary button, so it inherits the
-     header's button grammar (and, in studio chrome, the studio grammar) for free —
-     the `.mi` rules only override what a MENU ROW needs: full width, left-aligned,
-     no border until hovered. */
+     that wrapper exists at all.
+     ⚠️ EVERYTHING ELSE ABOUT ITS LOOK MOVED to the `.mpop` grammar in the MENU BAR
+     block near the bottom of this sheet, and the five `#filemenu .mi/.mk/.msep` rules
+     that used to sit here were DELETED rather than left in place: an id-scoped
+     (1,1,0) rule would have outranked the shared `.mpop .mi` (0,2,0) one and made
+     the File dropdown the one menu of eight that looked different — which is the
+     literal complaint this slice answers ("everything ... uniform"). These two rules
+     stay, in this shape, because a test pins them by exact selector. */
   #filewrap{position:relative;flex:none;display:flex;align-items:center}
-  #filemenu{display:none;position:absolute;top:calc(var(--ctl-h) + 7px);left:0;z-index:30;
-       min-width:214px;padding:6px;flex-direction:column;gap:1px;background:var(--card);
-       border:1px solid var(--line2);border-radius:10px;
-       box-shadow:0 14px 38px rgba(0,0,0,.45)}
+  #filemenu{display:none}
   #filemenu.on{display:flex}
-  #filemenu .mi{display:flex;width:100%;height:auto;justify-content:flex-start;
-       align-items:center;text-align:left;padding:7px 9px;border-radius:7px;
-       background:none;border-color:transparent;color:var(--fg)}
-  #filemenu .mi:hover{background:var(--card2);border-color:var(--line2)}
-  #filemenu .mi:disabled{opacity:.38;background:none;border-color:transparent}
-  #filemenu .mk{margin-left:auto;padding-left:16px;color:var(--faint);
-       font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
-  #filemenu .msep{height:1px;background:var(--line);margin:5px 4px}
   .grow{flex:1 1 auto}
   /* ⚠️ NEVER give a hideable element a `display` in the stylesheet and then clear the
      INLINE one to show it: `style.display=''` removes the override and the rule wins,
@@ -357,9 +350,16 @@
   #sheet{position:absolute;inset:0;background:#fff;display:none;
          box-shadow:inset 0 1px 0 var(--line2),inset 1px 0 0 var(--line2)}
   #sheet.on{display:block}
-  #empty{position:absolute;inset:0;display:flex;align-items:center;
-         justify-content:center;background:var(--bg);color:var(--faint);
-         font-size:12.5px;text-align:center;padding:24px;z-index:3}
+  /* ⚠️ #empty IS THE START SCREEN NOW — same element, same overlay, same `.off`
+     class, because "no document is open" and "the start screen" are the same state
+     and a spreadsheet app should have exactly one of them. It stopped being a
+     centred sentence (`align-items:center` + `text-align:center` + `--faint`) and
+     became a scrollable page: a start screen taller than the pane must be reachable,
+     which `align-items:center` makes impossible. The look lives with the rest of the
+     start screen in the MENU BAR block below. */
+  #empty{position:absolute;inset:0;display:flex;align-items:flex-start;
+         justify-content:center;background:var(--bg);overflow:auto;
+         font-size:12.5px;padding:26px 24px 40px;z-index:3}
   #empty.off{display:none}
   /* ── TIER 1: the plain-DOM grid ──────────────────────────────────────────────
      A <table> of contenteditable <td>. No canvas, no virtual scroller, no library —
@@ -399,9 +399,13 @@
      Slice 2. This used to be a vertical label promising a panel in a later slice,
      which is the thing Debi called out: a spreadsheet tab inside an AI harness with
      no way to reach the model "defeats the purpose".
-     It is READ-ONLY ADVISORY by construction — see aiSend(). Nothing here writes a
-     cell. A formula the model suggests is COPIED, never applied: a spreadsheet that
-     silently rewrites itself is a worse product than one that hands you the formula.
+     ⚠️ IT CAN NOW WRITE, AND IT NEEDS NO CSS OF ITS OWN TO DO IT. A proposed change
+     is rendered by actCard() out of the classes already here — .aicode for the box,
+     .bar / .lang for its footer, .aidet for the two disclosures, .lnk for Dismiss,
+     .grow for the spacer and a plain <button> for Apply. ZERO new rules; the only
+     inline styles are the three that .aicode's own <pre> would otherwise impose on a
+     block of ordinary text. Nothing is written until Apply is pressed, and an ordinary
+     suggested formula is still COPIED, never applied.
      ⚠️ text colours here are --dim (7.4:1 on --bg2), never --faint (3.7:1). */
   #ai{flex:none;width:var(--ai-w,334px);border-left:1px solid var(--line);
       background:var(--bg2);display:flex;flex-direction:column;min-height:0;
@@ -483,6 +487,153 @@
   #boot b{color:var(--cream);font-weight:600}
   #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
 
+  /* ╔══════════════════════════════════════════════════════════════════════════╗
+     ║  THE MENU BAR, THE FIND BAR AND THE START SCREEN                         ║
+     ║  ONE contiguous block. 47 rules (and 6 were deleted above, so the sheet   ║
+     ║  grows by 41). Nothing above this line was restyled.                     ║
+     ╚══════════════════════════════════════════════════════════════════════════╝
+     THE COMPLAINT, VERBATIM: "The design of the new/file etc is so bad. It's not even
+     on the main strip as all office/sheet docs have it. … See how extensive it is, how
+     everything is in the white strip and uniform."
+
+     All three halves of that are true and all three are answered here, from the
+     transcription in docs/research/2026-08-21-office-ui-reference.md:
+
+       · ON THE STRIP. Every command that acts on the document is in ONE menu row —
+         File · Edit · View · Insert · Format · Data · AI · Help — instead of spread
+         across a `File ⌄` popup, four header buttons and two hover-only row links.
+       · WHITE. The strip and the dropdowns are a LIGHT surface, flush with the sheet,
+         in BOTH themes. ⚠️ THIS IS DELIBERATE AND IT IS THE ONE THING TO OVERRULE IF
+         IT READS WRONG: in the dark theme the app frame stays dark and the strip stays
+         light, exactly the way a desktop office app in dark mode frames a white page.
+         It is the same argument #gridwrap/#sheet already make ("every colour inside a
+         .xlsx was chosen by somebody looking at a white page"), extended one row up,
+         because the menu bar belongs to the DOCUMENT, not to the app chrome. The
+         studio (▣) axis is likewise NOT wired to it: studio is a control-shape grammar
+         for our chrome, and a menu bar that changed shape with it would stop being a
+         menu bar.
+       · UNIFORM. One label height, one row height, one shortcut column, one hairline,
+         one shadow — and the File dropdown now uses the SAME `.mpop` grammar as the
+         other seven, which is why its five id-scoped rules were deleted above.
+
+     Colours are literal hex, not tokens, for the same reason #gt's are: this surface
+     does not follow the theme, so a token would be a lie. Measured on #fff (WCAG 2.1
+     relative luminance, the same arithmetic chromeProbe uses): label ink #20242b
+     15.5:1, row ink #1f2328 15.0:1, shortcut #6b7280 4.8:1, status #5f6368 5.9:1,
+     warn #9a3412 6.4:1. ⚠️ the DISABLED row ink #9aa0a6 is ~2.6:1 and that is
+     on purpose — WCAG 1.4.3 exempts inactive controls, and a greyed row that reads as
+     live would be the worse bug. */
+
+  /* ── row 2: the strip itself ─────────────────────────────────────────────── */
+  /* the two new regions are not in the sheet's shared box-sizing list at the top (that
+     list is pinned by a test and names the regions that existed then), so they say it
+     for themselves rather than reaching back up and editing it */
+  #menubar,#menubar *,#findrow,#findrow *{box-sizing:border-box}
+  #menubar{flex:none;display:flex;align-items:stretch;gap:6px;padding:0 8px;
+      background:#fff;border-bottom:1px solid #d7d9dd;min-height:31px}
+  /* ⚠️ NO `overflow` HERE, EVER. The dropdowns are absolutely positioned inside
+     .mwrap, and an ancestor with overflow:hidden CLIPS an absolutely positioned
+     descendant — which would have made all eight menus open into nothing. */
+  #menus{display:flex;align-items:stretch;gap:1px;min-width:0}
+  .mwrap{position:relative;display:flex;align-items:stretch;flex:none}
+  /* a menu LABEL. Not a chip, not a pill: text, mixed case, sans, generous padding,
+     no border until it is hovered — which is the whole of Google's menu grammar. */
+  .mtop{font:13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:#20242b;background:none;border:0;border-radius:5px;padding:0 9px;margin:3px 0;
+      cursor:pointer;white-space:nowrap;letter-spacing:0}
+  .mtop:hover{background:#eef1f5}
+  .mtop.on{background:#e4e9f2;color:#12305e}
+  /* the save state and the tier, on the RIGHT of the menu row — where Google puts
+     "All changes saved in Drive". #p-file and #p-state moved here from the header. */
+  #menubar .mstat{align-self:center;font:11.5px/1 -apple-system,BlinkMacSystemFont,
+      sans-serif;color:#5f6368;white-space:nowrap;padding:0 2px}
+  #menubar .mstat.warn{color:#9a3412}
+
+  /* ── the dropdowns, all eight ────────────────────────────────────────────── */
+  .mpop{display:none;position:absolute;top:100%;left:0;z-index:40;min-width:246px;
+      padding:6px 0;flex-direction:column;background:#fff;
+      border:1px solid #dadce0;border-radius:8px;
+      box-shadow:0 8px 26px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.12)}
+  .mpop.on{display:flex}
+  /* ⚠️ THE LEFT GUTTER IS RESERVED ON EVERY ROW, TICK OR NO TICK, AND THAT IS THE
+     WHOLE OF "uniform" IN ONE DECLARATION. With the tick in the flow, a row that had
+     one indented its label 20px further than the row above it — so inside a single
+     menu the labels would not line up, which is the exact complaint. The tick is
+     therefore absolutely positioned in a gutter every row pays for. (Google's Docs
+     menus reserve an icon column on every row for the same reason.) */
+  .mpop .mi{display:flex;width:100%;align-items:center;justify-content:flex-start;
+      position:relative;text-align:left;padding:0 14px 0 34px;height:30px;
+      border:0;border-radius:0;background:none;cursor:pointer;white-space:nowrap;
+      font:13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2328}
+  .mpop .mi:hover{background:#eef1f5}
+  .mpop .mi:disabled{color:#9aa0a6;background:none;cursor:default}
+  /* the shortcut column: right-aligned, dimmer, monospace so the glyphs line up */
+  .mpop .mk{margin-left:auto;padding-left:22px;color:#6b7280;
+      font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .mpop .msep{height:1px;background:#e8eaed;margin:5px 0;flex:none}
+  /* a toggle row states what it IS, not what clicking it would do */
+  .mpop .mtick{position:absolute;left:13px;top:0;height:30px;width:12px;
+      display:flex;align-items:center;color:#12305e;font-size:11px}
+  .mpop .mi:disabled .mtick{color:#9aa0a6}
+
+  /* ── row 1: the document title, click to rename ───────────────────────────── */
+  #doctitle{font-family:Georgia,"Times New Roman",serif;font-size:15.5px;
+      color:var(--cream);background:none;border:1px solid transparent;border-radius:6px;
+      padding:0 7px;max-width:38ch;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;cursor:text}
+  #doctitle:hover{border-color:var(--line2);background:var(--card)}
+  #doctitle:disabled{opacity:.55;cursor:default}
+
+  /* ── the find bar (Edit → Find), a light strip under the menus ────────────── */
+  #findrow{display:none;flex:none;align-items:center;gap:6px;padding:5px 10px;
+      background:#f6f7f9;border-bottom:1px solid #d7d9dd}
+  #findrow.on{display:flex}
+  #find-q{flex:0 1 320px;min-width:0;font:12.5px -apple-system,sans-serif;color:#1f2328;
+      background:#fff;border:1px solid #c3c7cd;border-radius:6px;padding:4px 8px}
+  #find-q:focus{outline:none;border-color:#1a73e8}
+  .fbtn{font:12px/1 -apple-system,sans-serif;color:#1f2328;background:#fff;
+      border:1px solid #c3c7cd;border-radius:6px;padding:4px 9px;cursor:pointer}
+  .fbtn:hover{border-color:#1a73e8}
+  #find-n{font:11.5px/1 -apple-system,sans-serif;color:#5f6368;white-space:nowrap}
+
+  /* ── two things the View menu needs from the grid ─────────────────────────── */
+  /* zoom. `zoom` (not `transform:scale`) because a transform breaks the sticky row and
+     column headers, and zoom does not. ⚠️ UNVERIFIED IN WKWEBVIEW — it is view-only,
+     so the worst case is that 100% is the only setting that looks right. */
+  #gt{zoom:var(--gt-zoom,1)}
+  #gt.nolines td{border-color:transparent}
+  /* the current find match. An outline, so it cannot hide a cell's own fill. */
+  #gt td.hit{box-shadow:inset 0 0 0 2px #f4a900}
+
+  /* ── the START SCREEN — #empty, rebuilt as the Sheets home band ───────────── */
+  /* Modelled on docs.google.com/spreadsheets: a "Start a new spreadsheet" row with a
+     Blank card first, then templates, then the recent list. ⚠️ IT KEEPS THE HARNESS
+     PALETTE rather than going white like the strip: this screen is app chrome (no
+     document is open), and the card thumbnails carry the white page instead. */
+  #home{width:100%;max-width:880px;display:flex;flex-direction:column;gap:26px}
+  .hband{display:flex;flex-direction:column;gap:10px}
+  .hlab{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.13em;
+      text-transform:uppercase;color:var(--dim)}
+  .hcards{display:flex;flex-wrap:wrap;gap:12px}
+  .hcard{width:132px;display:flex;flex-direction:column;gap:7px;padding:0;
+      background:none;border:0;cursor:pointer;text-align:left}
+  .hthumb{height:92px;border-radius:8px;border:1px solid var(--line2);background:#fff;
+      display:flex;align-items:center;justify-content:center;color:#7d838c;
+      font:22px/1 -apple-system,sans-serif;overflow:hidden}
+  .hcard:hover .hthumb{border-color:var(--gold)}
+  .hcname{font-size:12.5px;color:var(--cream)}
+  .hlist{display:flex;flex-direction:column;gap:2px}
+  .hrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+      padding:9px 11px;border:1px solid transparent;border-radius:8px;background:none;
+      cursor:pointer;font:inherit}
+  .hrow:hover{background:var(--card)}
+  .hrow:focus{outline:none;background:var(--card);border-color:var(--gold)}
+  .hrow .hn{flex:1 1 auto;min-width:0;color:var(--cream);font-size:13px;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hrow .hm{flex:none;color:var(--dim);font-size:11px;white-space:nowrap}
+  .hempty{color:var(--dim);font-size:12.5px;padding:6px 2px}
+  #home .hnote{color:var(--dim);font-size:11px;line-height:1.55}
+
   /* ══ THE TWO PANEL AXES, FOLLOWED — NOT REINVENTED ═════════════════════════════
      Debi's "non chrome thing again": this tab ignored the ◐ theme and the ▣ chrome
      the rest of the harness obeys, so switching the app to light left one dark
@@ -522,7 +673,9 @@
      light text — the same light-only fix the panel carries, for the same reason. */
   :where(html[data-theme="light"]) :where(#boot,body>header,#msg,#richbar,#files,#ai) button.primary{
     color:var(--bg)}
-  :where(html[data-theme="light"]) #filemenu{box-shadow:0 14px 34px rgba(60,50,30,.18)}
+  /* (the light-theme #filemenu shadow override was deleted here: an id-scoped shadow
+     on ONE of the eight dropdowns is exactly the non-uniformity being removed, and the
+     menus are a light surface in BOTH themes now, so there is nothing to re-tune.) */
   /* studio chrome: the panel's control tokens, and only the four properties that make
      a control read as one shape rather than another. Sizes are already 28px here. */
   html[data-chrome="studio"]{
@@ -546,42 +699,183 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21i</code>.</div>
+  Build <code>loffice-2026-08-21k</code>.</div>
+<!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
+     Google's own layout, and the reason it is two rows: the logo sits at the far left
+     across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
+     it. The save state does NOT live up here — it lives to the right of the MENU row,
+     which is where Google puts "All changes saved in Drive" and where #p-file and
+     #p-state have moved to. -->
 <header id="hdr">
   <button id="btn-rail" class="ghost" title="Show or hide the file list (⌘\)">☰</button>
   <span class="name">LOffice</span>
-  <!-- ══ THE FILE MENU ═══════════════════════════════════════════════════════════
-       Debi asked for the thing every office app has and this page did not: one place
-       that holds every document action, and — the half that matters — a way BACK.
-       The tab strip is AppKit and this is a web page, so "⌂ MOT Main" talks to the
-       shell through the same postMessage the panel's sidebar uses. Every row here is
-       an existing action; nothing new can happen from this menu that could not
-       already happen from the header or the rail. -->
-  <div id="filewrap">
-    <button id="btn-file" title="Document actions">File ⌄</button>
-    <div id="filemenu">
-      <button class="mi" id="mi-new">New<span class="mk">blank name = Untitled</span></button>
-      <button class="mi" id="mi-open">Open…<span class="mk">⌘O</span></button>
-      <button class="mi" id="mi-import">Import…</button>
-      <button class="mi" id="mi-rename">Rename…</button>
-      <div class="msep"></div>
-      <button class="mi" id="mi-save">Save<span class="mk">⌘S</span></button>
-      <button class="mi" id="mi-download">Download</button>
-      <button class="mi" id="mi-close">Close file</button>
-      <div class="msep"></div>
-      <button class="mi" id="mi-home">⌂ MOT Main</button>
-    </div>
-  </div>
-  <span class="pill" id="p-file">no workbook open</span>
+  <!-- the title is a BUTTON because clicking a document title renames it in every
+       office app there is; it opens the rail's existing name row in rename mode. -->
+  <button id="doctitle" title="Click to rename this spreadsheet">no workbook open</button>
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
-  <span class="pill" id="p-state">—</span>
   <span class="hsep"></span>
   <button id="btn-rich" title="Load the full Univer spreadsheet engine (~11 MB, on demand)">Rich editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
   <button id="btn-new2">New</button>
   <button id="btn-save" class="primary" disabled>Save</button>
 </header>
+<!-- ══ ROW 2 — THE MENU BAR ════════════════════════════════════════════════════════
+     "It's not even on the main strip as all office/sheet docs have it… see how
+     extensive it is, how everything is in the white strip and uniform."
+
+     Eight menus, one grammar, and EVERY row either does something or is visibly
+     disabled with the reason in its own title — never a live-looking dead item. The
+     mapping from each row to its implementation (ours, the bridge's, or "needs the
+     rich editor") is written out in docs/research/2026-08-21-office-ui-reference.md.
+
+     ⚠️ EVERY DROPDOWN IS REAL MARKUP, hidden by a class, like everything else on this
+     page: the menus exist even if the script never runs, and a `style.display` could
+     never fight a stylesheet rule here (the recorded #msg trap).
+     ⚠️ #filemenu KEEPS ITS ID AND ALL EIGHT OF ITS PINNED `mi-*` ROW IDS — they are
+     pinned by bridge/tests/test_office_ai.js, and they are also simply the right
+     names; the three new File rows sit beside them. -->
+<nav id="menubar">
+  <div id="menus">
+    <div id="filewrap" class="mwrap">
+      <button class="mtop" id="btn-file">File</button>
+      <div id="filemenu" class="mpop">
+        <button class="mi" id="mi-new">New spreadsheet<span class="mk">blank name = Untitled</span></button>
+        <button class="mi" id="mi-open">Open…<span class="mk">⌘O</span></button>
+        <button class="mi" id="mi-import">Import…</button>
+        <button class="mi" id="mi-makecopy" disabled title="There is no copy route on the bridge yet. Download already gives you a byte-exact copy of the saved file — composing this out of New + Save would round-trip through our mapper and quietly drop charts, images and borders.">Make a copy</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-rename">Rename…</button>
+        <button class="mi" id="mi-save">Save<span class="mk">⌘S</span></button>
+        <button class="mi" id="mi-download">Download<span class="mk">.xlsx</span></button>
+        <button class="mi" id="mi-delete">Delete…</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-close">Close file</button>
+        <button class="mi" id="mi-start">⌂ LOffice home</button>
+        <div class="msep"></div>
+        <!-- the way OUT of LOffice, said in words, at the bottom, where a "leave this
+             app" action belongs. It used to be the item labelled "home", which is the
+             bug: ⌂ home now means LOffice's own start screen. -->
+        <button class="mi" id="mi-home">Back to MOT Main<span class="mk">↗</span></button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-edit">Edit</button>
+      <div id="m-edit" class="mpop">
+        <button class="mi" id="mi-undo" disabled title="⌘Z works inside the cell you are editing — that is the browser's own undo. A whole-sheet history needs the rich editor.">Undo<span class="mk">⌘Z</span></button>
+        <button class="mi" id="mi-redo" disabled title="Same as Undo: the cell you are editing has the browser's history, the sheet does not.">Redo<span class="mk">⇧⌘Z</span></button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-cut" disabled title="Use ⌘X in the cell. Opening this menu moves the focus out of it — in this grid the selection IS the focused cell — so a Cut from here would have nothing to cut.">Cut<span class="mk">⌘X</span></button>
+        <button class="mi" id="mi-copy" disabled title="Use ⌘C in the cell, for the same reason as Cut.">Copy<span class="mk">⌘C</span></button>
+        <button class="mi" id="mi-paste" disabled title="A web page is not allowed to paste for you. Press ⌘V in the cell.">Paste<span class="mk">⌘V</span></button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-find">Find…<span class="mk">⌘F</span></button>
+        <button class="mi" id="mi-replace" disabled title="Replace is not built yet. Find takes you to each match and you can type over the cell.">Find and replace</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-clearcell">Clear this cell<span class="mk">⌫</span></button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-view">View</button>
+      <div id="m-view" class="mpop">
+        <button class="mi" id="mi-rail"><span class="mtick"></span>File list<span class="mk">⌘\</span></button>
+        <button class="mi" id="mi-aipane"><span class="mtick"></span>AI panel</button>
+        <button class="mi" id="mi-fullwidth">Full width<span class="mk">hide both</span></button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-lines"><span class="mtick"></span>Gridlines</button>
+        <button class="mi" id="mi-freeze" disabled title="Freezing needs a second sticky axis the plain grid does not have. The rich editor freezes rows and columns.">Freeze rows or columns</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-z50"><span class="mtick"></span>Zoom 50%</button>
+        <button class="mi" id="mi-z75"><span class="mtick"></span>Zoom 75%</button>
+        <button class="mi" id="mi-z100"><span class="mtick"></span>Zoom 100%</button>
+        <button class="mi" id="mi-z125"><span class="mtick"></span>Zoom 125%</button>
+        <button class="mi" id="mi-z150"><span class="mtick"></span>Zoom 150%</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-rich">Rich editor<span class="mk">~11 MB</span></button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-insert">Insert</button>
+      <div id="m-insert" class="mpop">
+        <button class="mi" id="mi-sheet">Sheet<span class="mk">⇧F11</span></button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-rows">50 more rows<span class="mk">at the end</span></button>
+        <button class="mi" id="mi-cols">10 more columns<span class="mk">at the end</span></button>
+        <button class="mi" id="mi-rowabove" disabled title="Inserting inside the sheet would have to renumber every merged range and every formula reference. The rich editor does that.">Row above</button>
+        <button class="mi" id="mi-colleft" disabled title="Same as Row above: an insert in the middle renumbers merges and formulas.">Column to the left</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-func" disabled title="Type it straight into the cell, starting with =. LOffice stores the formula as text and Excel recalculates it when you open the file there.">Function</button>
+        <button class="mi" id="mi-chart" disabled title="LOffice's .xlsx round-trip does not model charts — see Help → What round-trips.">Chart</button>
+        <button class="mi" id="mi-image" disabled title="LOffice's .xlsx round-trip does not model images — see Help → What round-trips.">Image</button>
+        <button class="mi" id="mi-link" disabled title="Hyperlinks are not carried by the round-trip yet — see Help → What round-trips.">Link<span class="mk">⌘K</span></button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-format">Format</button>
+      <div id="m-format" class="mpop">
+        <button class="mi" id="mi-bold"><span class="mtick"></span>Bold<span class="mk">⌘B</span></button>
+        <button class="mi" id="mi-italic"><span class="mtick"></span>Italic<span class="mk">⌘I</span></button>
+        <button class="mi" id="mi-underline"><span class="mtick"></span>Underline<span class="mk">⌘U</span></button>
+        <button class="mi" id="mi-strike"><span class="mtick"></span>Strikethrough</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-alignl"><span class="mtick"></span>Align left</button>
+        <button class="mi" id="mi-alignc"><span class="mtick"></span>Align centre</button>
+        <button class="mi" id="mi-alignr"><span class="mtick"></span>Align right</button>
+        <button class="mi" id="mi-wrap"><span class="mtick"></span>Wrap text</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-numfmt" disabled title="The plain grid shows raw values, so a number format you could not see would be worse than none. The bridge carries them both ways and the rich editor renders them.">Number format</button>
+        <button class="mi" id="mi-colour" disabled title="Text and fill colours are carried both ways by the bridge, but a colour picker is a control this page does not have yet.">Text and fill colour</button>
+        <button class="mi" id="mi-merge" disabled title="Merging needs a selected RANGE, and this grid selects one cell at a time. Merges already in the file are drawn and preserved.">Merge cells</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-clearfmt">Clear formatting</button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-data">Data</button>
+      <div id="m-data" class="mpop">
+        <button class="mi" id="mi-stats">Column statistics</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-sortaz" disabled title="Sorting moves cells, and this grid will not risk a merged range or a formula reference until it has an undo stack.">Sort sheet A → Z</button>
+        <button class="mi" id="mi-sortza" disabled title="Same as Sort A → Z: it needs an undo stack first.">Sort sheet Z → A</button>
+        <button class="mi" id="mi-filter" disabled title="Filters are not carried by the .xlsx round-trip yet — see Help → What round-trips.">Create a filter</button>
+        <button class="mi" id="mi-valid" disabled title="Data validation is not carried by the .xlsx round-trip yet — see Help → What round-trips.">Data validation</button>
+        <div class="msep"></div>
+        <button class="mi" id="mi-sheetname" disabled title="The rail's one name box is already doing two jobs (create and rename a FILE); a third verb is not this page's to add yet. The rich editor renames a sheet from its tab.">Rename this sheet</button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-ai">AI</button>
+      <div id="m-ai" class="mpop">
+        <button class="mi" id="mi-ask">Ask about this sheet</button>
+        <button class="mi" id="mi-aishow"><span class="mtick"></span>Show the AI panel</button>
+        <button class="mi" id="mi-aiclear">Clear the conversation</button>
+      </div>
+    </div>
+    <div class="mwrap">
+      <button class="mtop" id="btn-help">Help</button>
+      <div id="m-help" class="mpop">
+        <button class="mi" id="mi-keys">Keyboard shortcuts</button>
+        <button class="mi" id="mi-fidelity">What round-trips</button>
+        <button class="mi" id="mi-about">About this build</button>
+      </div>
+    </div>
+  </div>
+  <span class="grow"></span>
+  <!-- the two status readouts, to the RIGHT of the menu row, Google-style -->
+  <span class="mstat" id="p-file">no workbook open</span>
+  <span class="mstat" id="p-state">—</span>
+</nav>
+<!-- Edit → Find. A light strip under the menus, and it is the one genuinely NEW
+     capability in this slice: it scans the open sheet's own cell data. -->
+<div id="findrow">
+  <input id="find-q" placeholder="Find in this sheet" maxlength="120" autocomplete="off"
+         spellcheck="false">
+  <button class="fbtn" id="find-prev" title="Previous match (⇧⏎)">‹</button>
+  <button class="fbtn" id="find-next" title="Next match (⏎)">›</button>
+  <span id="find-n"></span>
+  <span class="grow"></span>
+  <button class="fbtn" id="find-x" title="Close the find bar (Esc)">✕</button>
+</div>
 <input type="file" id="imp" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <div id="msg"></div>
 <div id="richbar"></div>
@@ -622,7 +916,37 @@
     </div>
     <!-- TIER 2 (opt-in, empty until the bundles are loaded on demand) -->
     <div id="sheet"></div>
-    <div id="empty">No workbook is open. Pick one on the left, or press New — a blank name gives you Untitled.</div>
+    <!-- ══ THE START SCREEN ═══════════════════════════════════════════════════════
+         #empty was one centred sentence: "No workbook is open. Pick one on the left…"
+         — a page that is working perfectly and reads as broken, because it states a
+         problem and points at a control somewhere else. It is now LOffice's own home,
+         modelled on the Sheets home screen: a "Start a new spreadsheet" band with a
+         Blank card first, then the recent list. Same element, same `.off` class, same
+         overlay — "no document is open" and "the start screen" ARE the same state, and
+         a spreadsheet app should have exactly one of them.
+         Real markup, filled in by renderHome(); the cards work before the list arrives. -->
+    <div id="empty">
+      <div id="home">
+        <div class="hband">
+          <div class="hlab">Start a new spreadsheet</div>
+          <div class="hcards">
+            <button class="hcard" id="h-blank" title="A new empty workbook">
+              <span class="hthumb">＋</span><span class="hcname">Blank</span></button>
+            <button class="hcard" id="h-budget"
+                    title="A month of income and outgoings, with the totals already summed">
+              <span class="hthumb">▦</span><span class="hcname">Monthly budget</span></button>
+            <button class="hcard" id="h-tasks"
+                    title="Task, owner, status, due date — a header row and a few examples">
+              <span class="hthumb">☑</span><span class="hcname">Task tracker</span></button>
+          </div>
+        </div>
+        <div class="hband">
+          <div class="hlab">Recent spreadsheets</div>
+          <div class="hlist" id="hlist"></div>
+        </div>
+        <div class="hnote" id="hnote"></div>
+      </div>
+    </div>
   </main>
   <aside id="ai">
     <div id="ai-resize" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
@@ -641,10 +965,14 @@
           your question, so “what does column C do?”, “write me a formula that sums B
           by month” and “is anything odd in this data?” all work.<br><br>It is told
           it is answering inside a spreadsheet, so <b>“what does CLEAN do?”</b> means
-          the Excel function — not the Python one.<br><br>Answers are
-          advice — nothing here writes into your spreadsheet. A formula comes back with
-          a copy button.<br><br>Each question is asked on its own: the sheet travels
-          with it, the earlier answers do not.</div>
+          the Excel function — not the Python one.<br><br>It can also
+          <b>fill the sheet in</b>: “create a 2026 monthly budget with a total row”,
+          “put the months down column A”, “bold the header”.
+          You get a preview of every cell it would touch and it changes nothing until
+          you press <b>Apply</b> — with an <b>Undo</b> after, and the
+          file only written when you press ⌘S.<br><br>
+          Each question is asked on its own: the sheet travels with it, the earlier
+          answers do not.</div>
       </div>
       <div id="ai-status"></div>
       <div id="ai-foot">
@@ -768,16 +1096,30 @@ function fmtWhen(ts) {
 }
 
 function paint() {
-  el('p-file').textContent = current || 'no workbook open';
-  el('p-file').className = 'pill' + (current ? ' on' : '');
+  // ── row 1: the document TITLE, which is also the rename control ──
+  const t = el('doctitle');
+  t.textContent = current || 'no workbook open';
+  t.disabled = !current || busy;
+  t.title = current ? 'Click to rename “' + current + '”'
+                    : 'No workbook is open — pick one, or start a new one';
   el('dot').classList.toggle('on', !!dirty);
-  el('p-state').textContent = busy ? 'working…'
-    : (dirty ? 'unsaved' : (current ? 'saved · ' + mode : '—'));
+  // ── row 2, right of the menus: the save state and the tier, which is where every
+  // office app puts them ("All changes saved in Drive"). #p-file carries the STATE
+  // sentence now rather than the file name — the name is the title above it, and
+  // printing it twice was the redundancy. ⚠️ the two ids are kept as they are because
+  // a test pins their document order against the File button.
+  el('p-file').textContent = busy ? 'working…'
+    : (!current ? 'no workbook open'
+                : (dirty ? 'unsaved changes' : 'all changes saved'));
+  el('p-file').className = 'mstat' + ((dirty && !busy) ? ' warn' : '');
+  el('p-state').textContent = current ? (mode === 'univer' ? 'rich editor' : 'grid editor') : '';
+  el('p-state').className = 'mstat';
   el('btn-save').disabled = !current || busy || (mode === 'univer' && !api);
   el('btn-import').disabled = busy;
   el('btn-rich').disabled = busy || mode === 'univer' || richLoading;
   el('empty').classList.toggle('off', !!current);
   if (el('filemenu').classList.contains('on')) fileMenuPaint();
+  if (openMenu > 0) menuPaint(openMenu);
 }
 
 // ══ THE FILE MENU ═════════════════════════════════════════════════════════════
@@ -792,16 +1134,25 @@ function fileMenuPaint() {
   el('mi-close').disabled = !has || busy;
   el('mi-new').disabled = busy;
   el('mi-import').disabled = busy;
+  el('mi-delete').disabled = !has || busy;
+  el('mi-start').disabled = busy;
+  el('mi-home').disabled = busy;
 }
+// Kept as the File menu's own door, because three pinned behaviours reach for it by
+// name (the outside-mousedown close, the Escape close, and `mi()`); it is a thin
+// wrapper over the eight-menu engine so there is still only one open/close path.
 function fileMenu(open) {
   const m = el('filemenu');
   const now = open === undefined ? !m.classList.contains('on') : !!open;
-  m.classList.toggle('on', now);
-  if (now) { fileMenuPaint(); bx('menu-open', current || 'no workbook'); }
+  if (now) menuOpen(0); else menuClose('file');
 }
-// A menu row does its thing and gets out of the way.
+// A menu row does its thing and gets out of the way — any menu, not just File.
+// It also reports itself: "she clicked Format → Bold and nothing happened" is the
+// class of report this page exists to make answerable, and the row id is the answer.
 function mi(id, run) {
-  el(id).onclick = () => { fileMenu(false); run(); };
+  const n = el(id);
+  if (!n) return;
+  n.onclick = () => { fileMenu(false); menuClose('row'); bx('menu-row', id); run(); };
 }
 
 // ⌂ MOT Main — the way back, and the reason the menu exists at all.
@@ -837,6 +1188,612 @@ function goHome() {
       + 'only; one line in app/main.swift adds it here.)', 'dim');
   return false;
 }
+
+// ══ THE MENU BAR ══════════════════════════════════════════════════════════════
+// Eight menus, ONE engine. The two arrays are the whole of the bar's identity, in
+// order, so adding a menu is adding a pair — there is no per-menu code below.
+//
+// THE HARD RULE, and it is the one Debi keeps having to ask for: EVERY ROW EITHER
+// DOES SOMETHING OR IS VISIBLY DISABLED WITH THE REASON IN ITS OWN TITLE. A row that
+// looks live and does nothing is the defect; a greyed row that explains itself is a
+// feature, and it is how Google keeps a menu bar this wide honest.
+const MENUS = ['filemenu', 'm-edit', 'm-view', 'm-insert', 'm-format', 'm-data',
+               'm-ai', 'm-help'];
+const MTOPS = ['btn-file', 'btn-edit', 'btn-view', 'btn-insert', 'btn-format',
+               'btn-data', 'btn-ai', 'btn-help'];
+let openMenu = -1;                       // index into MENUS; -1 = nothing open
+
+// The three sentences a disabled row can carry, written once so they cannot drift.
+const T1_ONLY = 'The rich editor owns the document while it is loaded — use its own '
+              + 'toolbar. Close and reopen the file to come back to the plain grid.';
+const NO_DOC = 'No workbook is open.';
+const NO_CELL = 'Click a cell first — this acts on the cell you last had selected.';
+const NO_AI = 'The AI panel is not available in this build.';
+
+// ⚠️ THE BEACON BUDGET IS WHY THIS IS TRACED THE WAY IT IS. The boot beacon caps
+// itself at 80 sends per page load so that a malfunctioning page cannot become a
+// traffic source — and hover-to-switch fires menuOpen once per label the cursor
+// crosses, which would have spent the whole diagnostic budget on a single sweep of the
+// mouse. So: the bar reports the FIRST time it is opened (which is the question a boot
+// trace needs answered — "did she reach the menus at all?"), closing is not reported
+// at all, and every deliberate ROW CLICK is reported by mi(), which is bounded by
+// intent rather than by cursor movement and is the far more useful line to have.
+let menuTraced = false;
+function menuOpen(i) {
+  if (!(i >= 0) || i >= MENUS.length) return;
+  MENUS.forEach((id, k) => {
+    const p = el(id), b = el(MTOPS[k]);
+    if (p) p.classList.toggle('on', k === i);
+    if (b) b.classList.toggle('on', k === i);
+  });
+  openMenu = i;
+  if (i === 0) fileMenuPaint(); else menuPaint(i);
+  if (!menuTraced) {
+    menuTraced = true;
+    bx('menu-open', MTOPS[i] + ' · ' + (current || 'no workbook'));
+  }
+}
+function menuClose(why) {
+  if (openMenu < 0) return;
+  MENUS.forEach((id, k) => {
+    const p = el(id), b = el(MTOPS[k]);
+    if (p) p.classList.remove('on');
+    if (b) b.classList.remove('on');
+  });
+  openMenu = -1;
+}
+// ← / → walk the bar, ↑ / ↓ walk the open menu, Enter is the button's own. Disabled
+// rows are skipped by the walk rather than focused and refused.
+function menuStep(d) { if (openMenu >= 0) menuOpen((openMenu + d + MENUS.length) % MENUS.length); }
+function menuRows(i) {
+  const p = (i >= 0) ? el(MENUS[i]) : null;
+  return p ? [].filter.call(p.querySelectorAll('.mi'), n => !n.disabled) : [];
+}
+function menuMove(d) {
+  const rows = menuRows(openMenu);
+  if (!rows.length) return;
+  const at = rows.indexOf(document.activeElement);
+  const nx = at < 0 ? (d > 0 ? 0 : rows.length - 1) : (at + d + rows.length) % rows.length;
+  try { rows[nx].focus(); } catch (e) { /* nothing focusable, nothing lost */ }
+}
+
+// ── what a row is allowed to do right now ────────────────────────────────────
+// TIER MATTERS AND IT IS EASY TO GET WRONG: every action below writes into `snap`,
+// and once Univer has mounted, UNIVER owns the document — a tier-1 write would edit a
+// snapshot nobody is looking at and be lost at the next save. So they are disabled in
+// univer mode, and the row SAYS why rather than silently doing nothing.
+function t1ok() { return !!current && !busy && mode === 'grid'; }
+function setRow(id, ok, why) {
+  const n = el(id);
+  if (!n) return;
+  n.disabled = !ok;
+  n.title = (!ok && why) ? why : '';
+}
+function tick(id, on) {
+  const n = el(id), s = n && n.querySelector('.mtick');
+  if (s) s.textContent = on ? '✓' : '';
+}
+function aiAvail() {
+  try { return typeof aiSetOpen === 'function' && !!el('ai-panel'); } catch (e) { return false; }
+}
+function aiPaneOpen() { return !document.body.classList.contains('aioff'); }
+
+function menuPaint(i) {
+  const has = !!current, rc = lastCellNow();
+  const whyCell = !has ? NO_DOC : (mode !== 'grid' ? T1_ONLY : NO_CELL);
+  const whyDoc = !has ? NO_DOC : T1_ONLY;
+  if (i === 1) {                                                        // Edit
+    setRow('mi-find', has && mode === 'grid' && !busy, whyDoc);
+    setRow('mi-clearcell', t1ok() && !!rc, whyCell);
+  } else if (i === 2) {                                                 // View
+    tick('mi-rail', railIsOpen());
+    setRow('mi-aipane', aiAvail(), NO_AI);
+    tick('mi-aipane', aiPaneOpen());
+    setRow('mi-lines', mode === 'grid', T1_ONLY);
+    tick('mi-lines', !el('gt').classList.contains('nolines'));
+    ZOOMS.forEach(z => {
+      setRow('mi-z' + z, mode === 'grid', T1_ONLY);
+      tick('mi-z' + z, zoomNow === z);
+    });
+    setRow('mi-rich', !el('btn-rich').disabled,
+           mode === 'univer' ? 'The rich editor is already loaded.'
+                             : 'Not while the page is busy.');
+  } else if (i === 3) {                                                 // Insert
+    ['mi-sheet', 'mi-rows', 'mi-cols'].forEach(id => setRow(id, t1ok(), whyDoc));
+  } else if (i === 4) {                                                 // Format
+    const st = cellStyle(rc), ok = t1ok() && !!rc;
+    ['mi-bold', 'mi-italic', 'mi-underline', 'mi-strike', 'mi-alignl', 'mi-alignc',
+     'mi-alignr', 'mi-wrap', 'mi-clearfmt'].forEach(id => setRow(id, ok, whyCell));
+    tick('mi-bold', !!(st && st.bl));
+    tick('mi-italic', !!(st && st.it));
+    tick('mi-underline', !!(st && st.ul));
+    tick('mi-strike', !!(st && st.st));
+    tick('mi-alignl', !!(st && st.ht === 1));
+    tick('mi-alignc', !!(st && st.ht === 2));
+    tick('mi-alignr', !!(st && st.ht === 3));
+    tick('mi-wrap', !!(st && st.tb === 3));
+  } else if (i === 5) {                                                 // Data
+    setRow('mi-stats', t1ok() && !!rc, whyCell);
+  } else if (i === 6) {                                                 // AI
+    ['mi-ask', 'mi-aishow', 'mi-aiclear'].forEach(id => setRow(id, aiAvail(), NO_AI));
+    tick('mi-aishow', aiPaneOpen());
+  }
+}
+
+// ── the cell a menu acts on ──────────────────────────────────────────────────
+// ⚠️ IT CANNOT BE `document.activeElement`. Clicking a menu label BLURS the cell (and,
+// through the grid's focusout, commits it), so by the time a row runs there is no
+// focused cell left. The last one that HAD focus is recorded instead, which is also
+// what the user means by "this cell".
+let lastRC = null;
+el('gt').addEventListener('focusin', ev => {
+  const td = tdOf(ev);
+  if (td) lastRC = { r: parseInt(td.dataset.r, 10), c: parseInt(td.dataset.c, 10) };
+});
+function lastCellNow() { return (lastRC && activeSheet()) ? lastRC : null; }
+// ⌘B while a cell is being edited has to bank the typing first — the style write reads
+// the COMMITTED cell and repaints from it, so an uncommitted keystroke would vanish.
+function commitFocused() {
+  const act = document.activeElement;
+  if (!act || act.tagName !== 'TD') return;
+  commit(act);
+  // ⚠️ AND RE-ARM, WHICH IS NOT OPTIONAL. commit() clears `editing`, and `focusin` will
+  // never fire again for a cell that never LOST focus — so without this line the next
+  // thing typed into that cell would be dropped at focusout, silently, which is the
+  // worst class of bug this grid can have. The cell is still being edited as far as the
+  // person holding the keyboard is concerned, and this says so.
+  act.dataset.editing = '1';
+}
+function tdFor(rc) {
+  return el('gt').querySelector('td[data-r="' + rc.r + '"][data-c="' + rc.c + '"]');
+}
+// A cell's resolved style, whichever form it is stored in.
+function cellStyle(rc) {
+  const sh = activeSheet();
+  if (!sh || !rc) return null;
+  const c = cellAt(sh, rc.r, rc.c);
+  let s = c && c.s;
+  if (typeof s === 'string' && snap && snap.styles) s = snap.styles[s];
+  return (s && typeof s === 'object') ? s : null;
+}
+
+// ── Format: the style writes, and the one trap in them ───────────────────────
+// ⚠️ A STYLE ID IS SHARED BETWEEN CELLS. A cell's `s` is either an inline dict or a
+// STRING ID into snap.styles — bridge/office.py::_resolve_style accepts both — so a
+// toggle RESOLVES the base style, COPIES it, and writes the copy back inline on this
+// one cell. Mutating the shared entry would bold half the workbook, silently, and the
+// save would make it permanent.
+function styleWrite(fn) {
+  const sh = activeSheet(), rc = lastCellNow();
+  if (!sh || !rc || !t1ok()) return;
+  commitFocused();
+  const prev = cellAt(sh, rc.r, rc.c), base = cellStyle(rc);
+  const next = {};
+  if (base) for (const k in base) next[k] = base[k];
+  fn(next);
+  const cell = {};
+  if (prev) for (const k in prev) if (k !== 's') cell[k] = prev[k];
+  if (Object.keys(next).length) cell.s = next;
+  const out = Object.keys(cell).length ? cell : null;
+  putCell(sh, rc.r, rc.c, out);
+  const td = tdFor(rc);
+  if (td) paintCell(td, out);
+  dirty = true;
+  paint();
+}
+function fmtToggle(key, val) {
+  styleWrite(s => { if (s[key]) delete s[key]; else s[key] = (val === undefined ? 1 : val); });
+}
+function fmtAlign(v) { styleWrite(s => { if (s.ht === v) delete s.ht; else s.ht = v; }); }
+function fmtClear() { styleWrite(s => { for (const k in s) delete s[k]; }); }
+
+// ── Edit / Insert / Data ─────────────────────────────────────────────────────
+function clearCell() {
+  const sh = activeSheet(), rc = lastCellNow();
+  if (!sh || !rc || !t1ok()) return;
+  commitFocused();
+  putCell(sh, rc.r, rc.c, null);
+  const td = tdFor(rc);
+  if (td) paintCell(td, null);
+  dirty = true;
+  paint();
+}
+function addSheet() {
+  if (!t1ok() || !snap || !snap.sheets) return;
+  const ids = sheetIds(snap);
+  const taken = ids.map(i => String((snap.sheets[i] || {}).name || '').toLowerCase());
+  let n = ids.length + 1, name = 'Sheet' + n;
+  while (taken.indexOf(name.toLowerCase()) >= 0) { n++; name = 'Sheet' + n; }
+  const sid = 'sheet-' + Date.now().toString(36);
+  snap.sheets[sid] = { id: sid, name: name, cellData: {},
+                       rowCount: 200, columnCount: 26 };
+  if (!Array.isArray(snap.sheetOrder)) snap.sheetOrder = ids.slice();
+  snap.sheetOrder.push(sid);
+  dirty = true;
+  selectSheet(sid);
+  paint();
+  say('Added ' + name + ' — Save writes it into the file.', 'ok');
+  bx('add-sheet', name);
+}
+function growRows() {
+  const sh = activeSheet();
+  if (!sh || !t1ok()) return;
+  viewRows = (viewRows || 0) + ROW_STEP;
+  if ((Number(sh.rowCount) || 0) < viewRows) sh.rowCount = viewRows;
+  renderGrid();
+}
+function growCols() {
+  const sh = activeSheet();
+  if (!sh || !t1ok()) return;
+  viewCols = Math.min((viewCols || 0) + COL_STEP, TIER1_MAX_COLS);
+  if ((Number(sh.columnCount) || 0) < viewCols) sh.columnCount = viewCols;
+  renderGrid();
+}
+// The one Data item that ships enabled, and the reason it does: it READS. Sorting and
+// filtering move cells, and nothing in this tier moves a cell until there is an undo.
+function colStats() {
+  const sh = activeSheet(), rc = lastCellNow();
+  if (!sh || !rc) return;
+  commitFocused();
+  const used = usedExtent(sh);
+  let filled = 0, blank = 0, nums = 0, sum = 0, min = null, max = null;
+  for (let r = 0; r < used.rows; r++) {
+    const cell = cellAt(sh, r, rc.c);
+    if (displayText(cell) === '') { blank++; continue; }
+    filled++;
+    const v = (cell && !cell.f && typeof cell.v === 'number' && isFinite(cell.v)) ? cell.v : null;
+    if (v === null) continue;
+    nums++; sum += v;
+    if (min === null || v < min) min = v;
+    if (max === null || v > max) max = v;
+  }
+  const r6 = x => Math.round(x * 1e6) / 1e6;
+  say('Column ' + colName(rc.c) + ' over ' + used.rows + ' rows — '
+      + filled + ' filled, ' + blank + ' empty, ' + nums + ' numeric'
+      + (nums ? ('\n  sum ' + r6(sum) + ' · min ' + r6(min) + ' · max ' + r6(max)
+                 + ' · mean ' + r6(sum / nums)) : '')
+      + (nums < filled ? '\n  (a cell holding a formula is counted as filled, not as a '
+                       + 'number: this tier has no formula engine)' : ''), 'dim');
+}
+
+// ── View: zoom and gridlines ─────────────────────────────────────────────────
+const ZOOMS = [50, 75, 100, 125, 150];
+const LS_ZOOM = 'harness-office-zoom', LS_LINES = 'harness-office-lines';
+let zoomNow = 100;
+function setZoom(z) {
+  zoomNow = ZOOMS.indexOf(Number(z)) >= 0 ? Number(z) : 100;
+  document.documentElement.style.setProperty('--gt-zoom', String(zoomNow / 100));
+  try { localStorage.setItem(LS_ZOOM, String(zoomNow)); } catch (e) { /* private mode */ }
+  bx('zoom', String(zoomNow));
+}
+function toggleLines() {
+  const off = el('gt').classList.toggle('nolines');
+  try { localStorage.setItem(LS_LINES, off ? '0' : '1'); } catch (e) { /* private mode */ }
+}
+function fullWidth() {
+  railSetOpen(false, 'menu');
+  if (aiAvail()) { try { aiSetOpen(false, 'menu'); } catch (e) { /* their panel, their call */ } }
+}
+
+// ── Edit → Find. The one genuinely new capability in this slice. ─────────────
+// It scans the OPEN SHEET'S OWN cellData, not the DOM, so it finds a match that is
+// outside the rendered window and then grows the window to reach it.
+const FIND_MAX = 500;
+let findHits = [], findAt = -1;
+function findClear() {
+  findHits = []; findAt = -1;
+  el('find-n').textContent = '';
+  [].forEach.call(el('gt').querySelectorAll('td.hit'), td => td.classList.remove('hit'));
+}
+function findOpen(on) {
+  const row = el('findrow');
+  const want = on === undefined ? !row.classList.contains('on') : !!on;
+  row.classList.toggle('on', want);
+  bx(want ? 'find-open' : 'find-close', current || 'no workbook');
+  if (!want) { findClear(); return; }
+  const q = el('find-q');
+  try { q.focus(); q.select(); } catch (e) { /* nothing to select */ }
+  findRun();
+}
+function findRun() {
+  findClear();
+  const sh = activeSheet();
+  const q = (el('find-q').value || '').trim().toLowerCase();
+  if (!sh || !q) return;
+  commitFocused();
+  const used = usedExtent(sh);
+  for (let r = 0; r < used.rows && findHits.length < FIND_MAX; r++) {
+    for (let c = 0; c < used.cols; c++) {
+      if (displayText(cellAt(sh, r, c)).toLowerCase().indexOf(q) >= 0) {
+        findHits.push({ r: r, c: c });
+        if (findHits.length >= FIND_MAX) break;
+      }
+    }
+  }
+  if (!findHits.length) { el('find-n').textContent = 'no matches'; return; }
+  findAt = -1;
+  findGo(1);
+}
+function findGo(d) {
+  if (!findHits.length) return;
+  findAt = (findAt + d + findHits.length) % findHits.length;
+  const h = findHits[findAt];
+  // grow the render window until the match is inside it — a find that scrolls to
+  // nothing because the row is not drawn yet is worse than no find at all
+  let grew = false;
+  while (h.r >= viewRows) { viewRows += ROW_STEP; grew = true; }
+  while (h.c >= viewCols && viewCols < TIER1_MAX_COLS) {
+    viewCols = Math.min(viewCols + COL_STEP, TIER1_MAX_COLS);
+    grew = true;
+  }
+  if (grew) renderGrid();
+  [].forEach.call(el('gt').querySelectorAll('td.hit'), td => td.classList.remove('hit'));
+  const td = tdFor(h);
+  if (td) {
+    td.classList.add('hit');
+    try { td.scrollIntoView({ block: 'center', inline: 'center' }); }
+    catch (e) { try { td.scrollIntoView(); } catch (e2) { /* not scrollable */ } }
+  }
+  el('find-n').textContent = (findAt + 1) + ' of ' + findHits.length
+    + (findHits.length >= FIND_MAX ? '+' : '')
+    + (td ? '' : ' · inside a merged cell');
+}
+
+// ── Help ─────────────────────────────────────────────────────────────────────
+// The cheat sheet lists what THIS page implements, not what a spreadsheet usually has.
+const KEYS_TEXT = [
+  'Keyboard — LOffice',
+  '',
+  '  ⌘S             save',
+  '  ⌘O             show the file list',
+  '  ⌘\\             show or hide the file list',
+  '  ⌘F             find in this sheet',
+  '  ⌘B ⌘I ⌘U      bold / italic / underline the selected cell',
+  '  Enter          commit the cell and move down',
+  '  Tab · ⇧Tab     commit and move right · left',
+  '  Esc            cancel the cell, close a menu, dismiss a message',
+  '  ⏎ · ⇧⏎         in the find bar: next · previous match',
+  '  ← → ↑ ↓        in a menu: walk it. In a cell: move the caret.',
+].join('\n');
+function helpKeys() { say(KEYS_TEXT, 'dim'); }
+function helpFidelity() {
+  say('What the .xlsx round-trip carries\n\n'
+      + '  values (text, numbers, booleans), formulas as text with their last cached '
+      + 'result, dates, number formats, bold, italic, underline, strikethrough, font '
+      + 'name, size and colour, solid fills, alignment, wrap, merged ranges, column '
+      + 'widths, row heights, sheet names and order.\n\n'
+      + 'What a SAVE drops\n\n'
+      + '  charts, images, pivot tables, conditional formatting, data validation, '
+      + 'comments, cell borders, freeze panes, filters, named ranges, macros.\n\n'
+      + 'That is why a copy of the previous file is kept the first time you save each '
+      + 'day, and why File → Download (which hands you the file itself) is the only '
+      + 'byte-exact copy.\n\n' + (el('fidelity').textContent || ''), 'dim');
+}
+function helpAbout() {
+  say('LOffice ' + BUILD + '\n'
+      + '  editor: ' + (mode === 'univer' ? 'rich (Univer)' : 'plain grid (tier 1)') + '\n'
+      + '  documents: ' + (el('fdir').textContent || 'unknown') + '\n'
+      + '  boot trace: data/logs/loffice-boot.log', 'dim');
+}
+
+// ══ ⌂ LOFFICE HOME — and this is the bug fix ══════════════════════════════════
+// The File menu's home item used to be `⌂ MOT Main`, i.e. the one thing called "home"
+// left LOffice altogether. Home now means LOffice's OWN start screen: the document is
+// closed and #empty — which IS the start screen — comes forward. Leaving the app is a
+// separate row, at the bottom, labelled "Back to MOT Main ↗".
+let startArmed = false;
+function goStart() {
+  bx('home-start', current || 'no workbook');
+  if (!current) { renderHome(); return; }
+  if (dirty && !startArmed) {
+    startArmed = true;
+    say('“' + current + '” has unsaved changes. Save it first, or choose LOffice home '
+        + 'again to discard them.', null,
+        { label: 'Save & go home', run: async () => {
+            await save();
+            if (dirty) return;                 // the save failed; its reason is on screen
+            startArmed = false;
+            mi_close();
+          } });
+    setTimeout(() => { startArmed = false; }, 6000);
+    return;
+  }
+  startArmed = false;
+  mi_close();                                  // closes the document → the start screen
+}
+
+// ══ THE START SCREEN ══════════════════════════════════════════════════════════
+// Modelled on the Sheets home band: Blank first, then templates, then the recent list.
+// It is rendered from `files`, the same array the rail draws, so the two can never
+// disagree — renderFiles() calls this at its end.
+const HOME_MAX = 24;
+function renderHome() {
+  const list = el('hlist');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!files.length) {
+    const d = document.createElement('div');
+    d.className = 'hempty';
+    d.textContent = filesOk
+      ? 'Nothing here yet — Blank makes your first spreadsheet.'
+      : 'The bridge did not answer, so there is no list to show.';
+    list.appendChild(d);
+  } else {
+    // ⚠️ a row is a focusable DIV, not a <button>, for one structural reason: it holds
+    // the download and delete buttons, and a <button> may not contain a <button>. The
+    // keyboard behaviour a button would have given for free is therefore written out.
+    files.slice(0, HOME_MAX).forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'hrow';
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = 'Open ' + f.name;
+      const n = document.createElement('span');
+      n.className = 'hn';
+      n.textContent = f.name;
+      const m = document.createElement('span');
+      m.className = 'hm';
+      m.textContent = fmtSize(f.size_bytes) + ' · ' + fmtWhen(f.modified);
+      const dl = document.createElement('button');
+      dl.className = 'lnk';
+      dl.textContent = 'download';
+      dl.onclick = ev => {
+        ev.stopPropagation();
+        window.location.href = '/api/office/download/' + encodeURIComponent(f.name);
+      };
+      const del = document.createElement('button');
+      del.className = 'lnk' + (armed === f.name ? ' arm' : '');
+      del.textContent = armed === f.name ? 'sure?' : 'delete';
+      del.onclick = ev => { ev.stopPropagation(); homeDel(f.name); };
+      row.appendChild(n); row.appendChild(m); row.appendChild(dl); row.appendChild(del);
+      row.onclick = () => openDoc(f.name);
+      row.onkeydown = ev => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openDoc(f.name); return; }
+        if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+        ev.preventDefault();
+        const rows = [].slice.call(list.querySelectorAll('.hrow'));
+        const at = rows.indexOf(row);
+        const nx = rows[(at + (ev.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length];
+        if (nx) try { nx.focus(); } catch (e) { /* nothing to focus */ }
+      };
+      list.appendChild(row);
+    });
+  }
+  const note = el('hnote');
+  if (note) {
+    note.textContent = (el('fidelity').textContent || '')
+      + (files.length > HOME_MAX
+          ? ' · showing the ' + HOME_MAX + ' most recent; the file list on the left has them all'
+          : '');
+  }
+  bx('home-render', 'files=' + files.length);
+}
+// The same two-step arm the rail uses, and the same `armed` variable, so a delete armed
+// in one list shows as armed in the other.
+function homeDel(name) {
+  if (armed !== name) {
+    armed = name;
+    renderFiles();
+    setTimeout(() => { if (armed === name) { armed = null; renderFiles(); } }, 3000);
+    return;
+  }
+  armed = null;
+  remove(name);
+}
+
+// ── the starter templates ────────────────────────────────────────────────────
+// Generated CLIENT-SIDE out of the two routes we already have (new, then save), so
+// there is no template file to ship, nothing to fetch, and nothing new on the bridge.
+// The header row is bolded through the same style path Format → Bold uses, which means
+// a template is also a live demonstration that styles round-trip.
+const TPL = {
+  budget: { name: 'Monthly budget',
+            rows: [['Item', 'Planned', 'Actual', 'Difference'],
+                   ['Rent', '900', '900', '=C2-B2'],
+                   ['Groceries', '320', '', '=C3-B3'],
+                   ['Transport', '75', '', '=C4-B4'],
+                   ['Utilities', '140', '', '=C5-B5'],
+                   ['Total', '=SUM(B2:B5)', '=SUM(C2:C5)', '=SUM(D2:D5)']] },
+  tasks: { name: 'Task tracker',
+           rows: [['Task', 'Owner', 'Status', 'Due'],
+                  ['Write the brief', 'me', 'done', ''],
+                  ['Review it', '', 'in progress', ''],
+                  ['Ship it', '', 'todo', '']] },
+};
+async function newBlank() {
+  el('new-name').value = '';
+  await create();
+}
+async function newFromTemplate(kind) {
+  const t = TPL[kind];
+  if (!t || busy) return;
+  bx('template', kind);
+  el('new-name').value = t.name;
+  const made = await create();          // create() names it, opens it, and reports
+  if (!made) return;                    // …or has already said why not
+  const sh = activeSheet();
+  if (!sh) return;
+  t.rows.forEach((row, r) => row.forEach((txt, c) => {
+    if (txt === '') return;
+    const cell = parseInput(txt, null);
+    if (!cell) return;
+    if (r === 0) cell.s = { bl: 1 };
+    putCell(sh, r, c, cell);
+  }));
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  dirty = true;
+  paint();
+  await save();
+}
+
+// ── the bar's own wiring ─────────────────────────────────────────────────────
+// Click to open, then HOVER to switch: that pair is what makes a menu bar feel like a
+// menu bar instead of eight unrelated popovers, and it is Google's exact behaviour.
+MTOPS.forEach((id, i) => {
+  const b = el(id);
+  if (!b) return;
+  b.onclick = ev => { ev.stopPropagation(); if (openMenu === i) menuClose('toggle'); else menuOpen(i); };
+  b.onmouseenter = () => { if (openMenu >= 0 && openMenu !== i) menuOpen(i); };
+});
+el('find-q').oninput = findRun;
+el('find-q').onkeydown = ev => {
+  if (ev.key === 'Enter') { ev.preventDefault(); findGo(ev.shiftKey ? -1 : 1); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); findOpen(false); }
+};
+el('find-next').onclick = () => findGo(1);
+el('find-prev').onclick = () => findGo(-1);
+el('find-x').onclick = () => findOpen(false);
+el('h-blank').onclick = newBlank;
+el('h-budget').onclick = () => newFromTemplate('budget');
+el('h-tasks').onclick = () => newFromTemplate('tasks');
+
+// A SECOND keydown listener, deliberately not an edit to the existing one: it handles
+// only the keys this slice adds, and it takes nothing away from the grid or the name
+// box. (Escape for the FILE menu stays where it already is, below; only the other
+// seven and the find bar are handled here, so there is exactly one owner per case.)
+window.addEventListener('keydown', ev => {
+  if (openMenu >= 0) {
+    // named `nk` rather than `k` so it cannot be read as shadowing the `k` below —
+    // legal either way, but a reader should not have to work that out
+    const nk = ev.key;
+    if (nk === 'ArrowRight') { ev.preventDefault(); menuStep(1); return; }
+    if (nk === 'ArrowLeft') { ev.preventDefault(); menuStep(-1); return; }
+    if (nk === 'ArrowDown') { ev.preventDefault(); menuMove(1); return; }
+    if (nk === 'ArrowUp') { ev.preventDefault(); menuMove(-1); return; }
+    if (nk === 'Escape' && openMenu > 0) { menuClose('esc'); return; }
+  }
+  if (ev.key === 'Escape' && el('findrow').classList.contains('on')
+      && document.activeElement === el('find-q')) {
+    findOpen(false);
+    return;
+  }
+  const meta = ev.metaKey || ev.ctrlKey;
+  if (!meta) return;
+  const k = (ev.key || '').toLowerCase();
+  if (k === 'f') { ev.preventDefault(); if (current && mode === 'grid') findOpen(true); return; }
+  // ⚠️ ⌘B / ⌘I / ⌘U MUST preventDefault. Inside a contenteditable the browser would
+  // otherwise apply RICH TEXT bold — a <b> element inside the cell, which this grid
+  // reads with textContent and would therefore lose at the next commit, and which
+  // would never reach the .xlsx. Our own style write is the only one that survives.
+  if (!t1ok()) return;
+  if (k === 'b') { ev.preventDefault(); fmtToggle('bl'); }
+  else if (k === 'i') { ev.preventDefault(); fmtToggle('it'); }
+  else if (k === 'u') { ev.preventDefault(); fmtToggle('ul', { s: 1 }); }
+});
+
+// Zoom and gridlines are restored HERE rather than in boot(): they are pure view state,
+// the elements they touch already exist (this script is at the end of the body), and
+// doing it now means the first paint of the grid is already at the right zoom.
+(function () {
+  let z = 100, lines = true;
+  try {
+    z = Number(localStorage.getItem(LS_ZOOM)) || 100;
+    lines = localStorage.getItem(LS_LINES) !== '0';
+  } catch (e) { /* private mode: the defaults stand */ }
+  setZoom(z);
+  el('gt').classList.toggle('nolines', !lines);
+})();
 
 // ══ TIER 1 — the plain-DOM grid ═══════════════════════════════════════════════
 // The whole point of this tier is that it cannot fail for a reason we do not own.
@@ -1568,6 +2525,7 @@ function renderFiles() {
     d.style.padding = '10px 9px';
     d.textContent = 'No spreadsheets yet — New makes one.';
     box.appendChild(d);
+    renderHome();          // ⚠️ the empty case is exactly the one the start screen is for
     return;
   }
   files.forEach(f => {
@@ -1607,6 +2565,9 @@ function renderFiles() {
     row.onclick = () => openDoc(f.name);
     box.appendChild(row);
   });
+  // The rail and the start screen draw the SAME `files` array, from the same call, so
+  // they can never disagree about what exists or which delete is armed.
+  renderHome();
 }
 
 async function loadFiles() {
@@ -1938,11 +2899,19 @@ async function importFile(file) {
 // Mission Control. This panel keeps its own short scrollback, in memory, and that is
 // the whole of its state.
 //
-// AND IT IS ADVISORY ONLY. Nothing below writes a cell, and that is enforced by
-// construction: this block contains no putCell, no commit, no renderGrid. A formula
-// comes back as a copyable block. A spreadsheet that rewrites itself because a 4B
-// model suggested something would be a worse product than one that hands you the
-// formula and lets you paste it.
+// ⚠️ IT IS NO LONGER ADVISORY ONLY, AND THAT IS A DELIBERATE POLICY CHANGE — the one
+// this slice exists to make. Debi: "it seems not possible to do tool functions, i.e.
+// just ask it to create a document with data on that page." It is now possible, and
+// the shape of it is in the ACTION BLOCK section below.
+//
+// WHAT REPLACED "nothing here writes a cell" IS A SHORTER SENTENCE, NOT A WEAKER ONE:
+// NOTHING IS WRITTEN UNTIL THE USER PRESSES APPLY. A reply that proposes a change is
+// PARSED, CAPPED and PREVIEWED — every cell it would touch, listed — and the write
+// happens in exactly one function (actRunOps) reachable from exactly one onclick.
+// Every apply keeps a full clone of the workbook, so a single Undo puts it back. The
+// FILE is never written by any of it: the document goes dirty and the user saves.
+//
+// An ordinary suggested formula still comes back as a copyable block, unchanged.
 
 const AI_CTX_ROWS = 200;              // rows of the used range we are willing to send
 const AI_CTX_COLS = 30;               // …and columns
@@ -2050,7 +3019,53 @@ function aiPreamble(file, sheet) {
        + 'Excel semantics — CLEAN, TRIM, VLOOKUP, SUMIFS and the like — never a '
        + 'function in Python, JavaScript or any other language.\n'
        + 'Be concise, and put any formula you suggest in its own fenced code block, '
-       + 'starting with =.';
+       + 'starting with =.\n'
+       + actHelp();
+}
+
+// ── THE ACTION FORMAT, TAUGHT IN THE PROMPT ──────────────────────────────────
+// "it seems not possible to do tool functions, i.e. just ask it to create a document
+// with data on that page."
+//
+// ⚠️ THIS IS DELIBERATELY NOT OPENAI FUNCTION-CALLING, AND THAT IS THE WHOLE DESIGN
+// DECISION. Most of the models Debi runs locally cannot tool-call at all — that is
+// exactly what the green `tools` pill on the Models page exists to label — and the
+// direct chat lane this panel speaks sends no `tools` array. A tool-calling path would
+// therefore work on some of her models and silently do nothing on the rest, which is
+// the worst of the two failures. So the mechanism is one every model can reach: a
+// STRUCTURED BLOCK the model is taught to emit, which the panel parses, PREVIEWS, and
+// applies on the user's click. Same family as the artifact fences the chat pane
+// already renders.
+//
+// It rides in the SAME single message on the SAME lane. Nothing new on the wire.
+//
+// ⚠️ IT IS ON EVERY REQUEST, and that costs about 900 characters of prompt that a 4B
+// model re-reads for every token. The alternative — sniffing the question for words
+// like "create" and only then teaching the format — would mean the capability
+// silently vanishes for any phrasing the sniffer did not think of, which is a worse
+// bug than a longer prompt. The last sentence is what keeps a plain question in prose.
+function actHelp() {
+  return 'WHEN THE USER ASKS YOU TO WRITE, FILL IN, CREATE OR CHANGE CELLS, do not '
+       + 'describe the steps — emit ONE fenced block tagged loffice holding this JSON, '
+       + 'with at most one short line of prose outside it:\n'
+       + '```loffice\n'
+       + '{"v":1,"file":"2026 budget","sheet":"Sheet1","ops":[\n'
+       + '{"op":"set","at":"A1","values":[["Month","Planned"],["January",900]]},\n'
+       + '{"op":"set","at":"B14","values":[["=SUM(B2:B13)"]]},\n'
+       + '{"op":"style","at":"A1:B1","set":{"bl":1}},\n'
+       + '{"op":"sheet","add":"Notes"},\n'
+       + '{"op":"resize","rows":200,"cols":12}]}\n'
+       + '```\n'
+       + '"at" is where the values START — one array per row, left to right, so a '
+       + 'column of twelve months is twelve one-element rows. A string beginning with '
+       + '= is a formula; null empties a cell. "style" understands only bl it ul st ff '
+       + 'fs cl bg ht vt tb n (bold, italic, underline, strikethrough, font name, '
+       + 'size, text colour, fill colour, horizontal align, vertical align, wrap, '
+       + 'number format) — anything else is dropped, because anything else is not '
+       + 'carried by the .xlsx round-trip. Every set and style operation acts on ONE '
+       + 'sheet.\n'
+       + 'Nothing is written until the user presses Apply, so propose the whole change '
+       + 'in a single block. For a QUESTION, answer in prose and emit no loffice block.';
 }
 
 // ── the context ──────────────────────────────────────────────────────────────
@@ -2187,6 +3202,786 @@ function aiFences(text) {
   return parts.filter(p => p.kind === 'code' ? p.body.trim() !== '' : p.body.trim() !== '');
 }
 
+/* ══ THE ACTION BLOCK — PARSE, PREVIEW, APPLY, UNDO ═════════════════════════════
+   This is the half that ends "advisory only", and it is built so that the sentence
+   which replaces it is just as short: NOTHING IS WRITTEN UNTIL THE USER CLICKS APPLY.
+
+   THE MODEL IS UNTRUSTED INPUT — not because it is malicious, but because a 4B model
+   emitting JSON gets it wrong in every direction there is: a truncated stream, a
+   half-quoted string, `"at": "the total row"`, 40 000 cells, a style key that does
+   not exist, prose wrapped around the block, TWO blocks. So the parse is PURE, TOTAL
+   (it can never throw) and CAPPED, it reports WHY it refused in words a person can
+   read, and the only thing a successful parse earns is a PREVIEW.
+
+   THREE FENCES, in order of how much they matter:
+     1. `parseActions` returns a plan; it writes nothing and touches no global.
+     2. `actRunOps` is the ONE function in this block that writes a cell, and the only
+        way to reach it is the Apply button's own onclick. A test pins the complete
+        set of functions in this page that may call putCell.
+     3. Every apply takes a full JSON clone of the workbook FIRST, so Undo is a
+        restore rather than a reverse-operation guess. A workbook too big to clone
+        still applies — and the card SAYS undo is unavailable, rather than offering
+        one that would not work.
+
+   ⚠️ HERMES IS THE REAL THING AND THIS IS NOT IT. Hermes already has approval cards,
+   the path-guard and write_file; a "send this to Hermes" hand-off from a sheet is a
+   later slice, deliberately not started here — this panel keeps its one rule of
+   inventing nothing on the wire. A future tool-calling path would attach in exactly
+   one place, `aiSend`'s request body, and would land on the same `parseActions` →
+   preview → `actApply` pipeline: the wire format changes, the trust model does not. */
+
+const ACT_LANGS = ['loffice', 'loffice-actions', 'actions'];
+const ACT_V = 1;
+const ACT_MAX_OPS = 60;
+const ACT_MAX_CELLS = 2000;         // over ALL ops in one plan
+const ACT_MAX_ROW = 4999;           // row 5000 — beyond any sheet this tier draws
+const ACT_MAX_COL = 199;            // column GR — mirrors TIER1_MAX_COLS
+const ACT_STR_MAX = 2000;           // one cell's text
+const ACT_LIST_MAX = 40;            // lines in the preview list before "+N more"
+const ACT_SHEET_MAX = 31;           // Excel's own sheet-name limit (office.py mirrors it)
+const ACT_NAME_MAX = 80;            // office.NAME_MAX
+const ACT_UNDO_MAX_BYTES = 4 * 1024 * 1024;
+// The horizontal/vertical alignment words a model actually writes, mapped to the
+// numbers bridge/office.py carries. Accepting the words is not indulgence: `"center"`
+// is what every model emits, and refusing it would make the style op useless.
+const ACT_HT = { left: 1, center: 2, centre: 2, right: 3 };
+const ACT_VT = { top: 1, middle: 2, center: 2, centre: 2, bottom: 3 };
+
+// ── the pure half ────────────────────────────────────────────────────────────
+// A value simple enough to be a cell. `null` is allowed and MEANS "empty this cell".
+// An object, an array, undefined, NaN and Infinity are not values — they are the
+// model having lost the thread, and the op is refused rather than guessed at.
+function actScalar(v) {
+  if (v === null) return true;
+  const t = typeof v;
+  if (t === 'boolean') return true;
+  if (t === 'number') return isFinite(v);
+  if (t === 'string') return v.length <= ACT_STR_MAX;
+  return false;
+}
+
+// "B12" / "$b$12" → {r:11,c:1}. The inverse of colName(), and lower case and the $
+// signs are accepted because a model that has ever seen a spreadsheet writes both.
+function actRef(s) {
+  const m = /^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return null;
+  const letters = m[1].toUpperCase();
+  let c = 0;
+  for (let i = 0; i < letters.length; i++) c = c * 26 + (letters.charCodeAt(i) - 64);
+  const r = parseInt(m[2], 10) - 1;
+  if (!(r >= 0) || !(c >= 1)) return null;
+  return { r: r, c: c - 1 };
+}
+// "A1" or "A1:C10" → a normalised rectangle (so "C10:A1" is the same rectangle).
+function actRange(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (!t) return null;
+  const bits = t.split(':');
+  if (bits.length === 1) {
+    const a = actRef(bits[0]);
+    return a ? { r0: a.r, c0: a.c, r1: a.r, c1: a.c } : null;
+  }
+  if (bits.length !== 2) return null;
+  const a = actRef(bits[0]), b = actRef(bits[1]);
+  if (!a || !b) return null;
+  return { r0: Math.min(a.r, b.r), c0: Math.min(a.c, b.c),
+           r1: Math.max(a.r, b.r), c1: Math.max(a.c, b.c) };
+}
+
+// Anything the model called "values" → a row-major grid, or null.
+// FORGIVING ON READ, deliberately: a scalar becomes a 1x1 grid and a flat array
+// becomes ONE ROW, because those are the two shapes a model reaches for when it means
+// "one cell" and "one row". A HALF-nested array (`[["a"], "b"]`) is refused rather
+// than repaired — that one is genuinely ambiguous, and guessing at it could put a
+// value in the wrong cell, which is the one outcome worse than refusing.
+function actGrid(v) {
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v)) return actScalar(v) ? [[v]] : null;
+  if (!v.length) return null;
+  const nested = v.filter(x => Array.isArray(x)).length;
+  if (nested && nested !== v.length) return null;
+  const rows = nested ? v : [v];
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row) || !row.length) return null;
+    for (let j = 0; j < row.length; j++) if (!actScalar(row[j])) return null;
+    out.push(row.slice());
+  }
+  return out.length ? out : null;
+}
+
+// "#abc" / "#AABBCC" / {rgb:"#..."} → {rgb:"#aabbcc"}. A colour name is refused: the
+// round-trip stores hex, and inventing a hex for "reddish" would be a lie in a file.
+function actColor(v) {
+  const raw = (v && typeof v === 'object' && !Array.isArray(v)) ? v.rgb : v;
+  const t = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(t)) return { rgb: t };
+  if (/^#[0-9a-f]{3}$/.test(t)) {
+    return { rgb: '#' + t[1] + t[1] + t[2] + t[2] + t[3] + t[3] };
+  }
+  return null;
+}
+
+// A style dict → only the keys bridge/office.py::apply_style actually writes into the
+// .xlsx. ⚠️ THE LIST IS NOT A STYLE CHOICE: a key this page accepted and the bridge
+// dropped would be a formatting change that survives on screen, vanishes on save, and
+// comes back missing on the next open — the worst kind of silent loss. Unknown keys
+// are dropped; an op left with nothing is refused, and the reason says so.
+function actStyleSet(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out = {};
+  if (v.bl) out.bl = 1;
+  if (v.it) out.it = 1;
+  if (v.ul) out.ul = { s: 1 };
+  if (v.st) out.st = { s: 1 };
+  if (typeof v.ff === 'string' && v.ff.trim() && v.ff.length <= 64) out.ff = v.ff.trim();
+  const fs = Number(v.fs);
+  if (isFinite(fs) && fs >= 1 && fs <= 409) out.fs = fs;          // office.py's own range
+  const cl = actColor(v.cl); if (cl) out.cl = cl;
+  const bg = actColor(v.bg); if (bg) out.bg = bg;
+  const ht = (typeof v.ht === 'string') ? ACT_HT[v.ht.trim().toLowerCase()] : v.ht;
+  if (ht === 1 || ht === 2 || ht === 3) out.ht = ht;
+  const vt = (typeof v.vt === 'string') ? ACT_VT[v.vt.trim().toLowerCase()] : v.vt;
+  if (vt === 1 || vt === 2 || vt === 3) out.vt = vt;
+  if (v.tb === 3 || v.tb === true || v.tb === 'wrap') out.tb = 3;
+  const pat = (v.n && typeof v.n === 'object' && !Array.isArray(v.n)) ? v.n.pattern : v.n;
+  if (typeof pat === 'string' && pat.trim() && pat.length <= 64) out.n = { pattern: pat.trim() };
+  return Object.keys(out).length ? out : null;
+}
+
+// A workbook name the model suggested → something the BRIDGE can be asked for. The
+// bridge owns the name rules (office.valid_name) and the ' (n)' never-clobber walk, so
+// this only removes what could not possibly be a file name and lets the bridge refuse
+// the rest, in its own words.
+// ⚠️ THE DOUBLE QUOTE IS TAKEN OUT WITH split/join RATHER THAN IN THE CHARACTER CLASS,
+// AND THAT IS NOT A STYLE CHOICE. bridge/tests/*.js extract a function from this page
+// with a string-aware walker that is NOT regex-aware: a literal `"` inside a regex
+// literal opens a string state it never closes, and the extractor then throws
+// "unbalanced braces" — i.e. the test does not fail, it CRASHES, and every assertion
+// after it is never reached. A `"` inside a single-quoted string is safe, so that is
+// where it goes. The same rule is why actScan sniffs with indexOf('"ops"') rather than
+// a regex. Anyone adding a regex to this page: keep double quotes out of it.
+function actDocName(v) {
+  const s = String(v == null ? '' : v)
+    .split('"').join(' ')
+    .replace(/[\\/:*?<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.xlsx$/i, '')
+    .trim();
+  return s.slice(0, ACT_NAME_MAX);
+}
+
+// The validator. PURE, TOTAL, and every refusal carries a sentence the card prints —
+// "the model tried something and I could not read it" is only useful if it says what.
+function actValidate(obj) {
+  const no = why => ({ ok: false, why: why });
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    return no('the block was not a JSON object');
+  }
+  if (!(obj.v === ACT_V || String(obj.v) === String(ACT_V))) {
+    return no('the block did not say "v": ' + ACT_V);
+  }
+  const raw = obj.ops;
+  if (!Array.isArray(raw) || !raw.length) return no('the block carried no "ops" list');
+  if (raw.length > ACT_MAX_OPS) {
+    return no('that is ' + raw.length + ' operations and the cap is ' + ACT_MAX_OPS);
+  }
+  const ops = [];
+  const count = { cells: 0, cleared: 0, formulas: 0, styled: 0,
+                  sheets: 0, renames: 0, resizes: 0, lines: 0 };
+  let budget = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const o = raw[i];
+    const at = 'operation ' + (i + 1) + ': ';
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return no(at + 'not an object');
+    const kind = String(o.op == null ? '' : o.op).trim().toLowerCase();
+    if (kind === 'set') {
+      const rg = actRange(o.at);
+      if (!rg) return no(at + '"at" is not a cell or a range (' + JSON.stringify(o.at) + ')');
+      const grid = actGrid(o.values !== undefined ? o.values : o.value);
+      if (!grid) return no(at + '"values" is not a row-major grid of simple values');
+      let w = 0;
+      grid.forEach(r => { if (r.length > w) w = r.length; });
+      // ⚠️ THE RANGE IS AN ANCHOR, NOT A CLIP. `at:"A1:C3"` with five rows of values
+      // writes five rows: clipping would silently drop data the model meant to write,
+      // and a spreadsheet that quietly loses half a table is worse than one that
+      // writes further than you expected — which you can see, and undo.
+      if (rg.r0 + grid.length - 1 > ACT_MAX_ROW || rg.c0 + w - 1 > ACT_MAX_COL) {
+        return no(at + 'that would write past ' + colName(ACT_MAX_COL) + (ACT_MAX_ROW + 1));
+      }
+      let n = 0;
+      grid.forEach(r => r.forEach(x => {
+        n++;
+        if (x === null || x === '') count.cleared++;
+        else { count.cells++; if (typeof x === 'string' && x.charAt(0) === '=') count.formulas++; }
+      }));
+      budget += n;
+      count.lines += n;
+      if (budget > ACT_MAX_CELLS) {
+        return no('that is more than ' + ACT_MAX_CELLS + ' cells in one change — ask '
+                  + 'for it in a few smaller pieces');
+      }
+      ops.push({ op: 'set', r: rg.r0, c: rg.c0, values: grid });
+    } else if (kind === 'style') {
+      const rg = actRange(o.at);
+      if (!rg) return no(at + '"at" is not a cell or a range (' + JSON.stringify(o.at) + ')');
+      if (rg.r1 > ACT_MAX_ROW || rg.c1 > ACT_MAX_COL) {
+        return no(at + 'that range reaches past ' + colName(ACT_MAX_COL) + (ACT_MAX_ROW + 1));
+      }
+      const st = actStyleSet(o.set !== undefined ? o.set : o.style);
+      if (!st) {
+        return no(at + 'none of those formatting keys are carried by the .xlsx '
+                     + 'round-trip, so applying them would only look right until you saved');
+      }
+      budget += (rg.r1 - rg.r0 + 1) * (rg.c1 - rg.c0 + 1);
+      if (budget > ACT_MAX_CELLS) {
+        return no('that formats more than ' + ACT_MAX_CELLS + ' cells in one change — '
+                  + 'ask for it in a few smaller pieces');
+      }
+      count.styled++; count.lines++;
+      ops.push({ op: 'style', r0: rg.r0, c0: rg.c0, r1: rg.r1, c1: rg.c1, set: st });
+    } else if (kind === 'sheet') {
+      const add = (typeof o.add === 'string') ? o.add.trim() : '';
+      const ren = (typeof o.rename === 'string') ? o.rename.trim() : '';
+      if (add) {
+        if (add.length > ACT_SHEET_MAX) return no(at + 'a sheet name is at most ' + ACT_SHEET_MAX + ' characters');
+        count.sheets++; count.lines++;
+        ops.push({ op: 'sheet', add: add });
+      } else if (ren) {
+        if (ren.length > ACT_SHEET_MAX) return no(at + 'a sheet name is at most ' + ACT_SHEET_MAX + ' characters');
+        count.renames++; count.lines++;
+        ops.push({ op: 'sheet', rename: ren, at: (typeof o.at === 'string') ? o.at.trim() : '' });
+      } else {
+        return no(at + 'a "sheet" operation needs "add" or "rename"');
+      }
+    } else if (kind === 'resize') {
+      // ⚠️ RESIZE CLAMPS WHERE SET REFUSES, and the asymmetry is the point: a clamped
+      // resize loses nothing (it is a view and a row count), while a clamped SET would
+      // drop data. A model asking for 100 000 rows means "a lot of rows".
+      const rows = Math.floor(Number(o.rows));
+      const cols = Math.floor(Number(o.cols));
+      const R = (isFinite(rows) && rows > 0) ? Math.min(rows, ACT_MAX_ROW + 1) : 0;
+      const C = (isFinite(cols) && cols > 0) ? Math.min(cols, ACT_MAX_COL + 1) : 0;
+      if (!R && !C) return no(at + 'a "resize" needs "rows" or "cols"');
+      count.resizes++; count.lines++;
+      ops.push({ op: 'resize', rows: R, cols: C });
+    } else {
+      return no(at + 'unknown operation ' + JSON.stringify(kind));
+    }
+  }
+  if (!ops.length) return no('the block asked for nothing');
+  return { ok: true, why: '', v: ACT_V,
+           file: actDocName(obj.file),
+           sheet: (typeof obj.sheet === 'string') ? obj.sheet.trim().slice(0, ACT_SHEET_MAX) : '',
+           ops: ops, count: count };
+}
+
+// Which fenced part of the reply — if any — is the change, and what came of reading
+// it. PURE over the parts array `aiFences` already produced, so the renderer and the
+// parser can never disagree about WHICH block the card belongs to.
+//
+// A block tagged `loffice` is always a candidate, even when it will not parse: that is
+// the case where the model TRIED and the user deserves to be told. An UNTAGGED block
+// is a candidate only if it parses into something with an "ops" list — otherwise a
+// reply containing ordinary JSON would sprout an Apply button.
+//
+// The FIRST candidate wins and the rest are counted, never merged: two plans applied
+// in sequence is a change nobody previewed.
+function actScan(parts) {
+  const out = { found: false, at: -1, ok: false, why: '', plan: null, extra: 0, body: '' };
+  if (!Array.isArray(parts)) return out;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p || p.kind !== 'code') continue;
+    const lang = String(p.lang == null ? '' : p.lang).trim().toLowerCase();
+    const body = String(p.body == null ? '' : p.body).trim();
+    const tagged = ACT_LANGS.indexOf(lang) >= 0;
+    // the cheap sniff that keeps us from JSON.parse-ing every code block in a reply.
+    // ⚠️ indexOf, not a regex — see the note on actDocName: a `"` in a regex literal
+    // breaks the test harness's function extractor.
+    if (!tagged && !(body.charAt(0) === '{' && body.indexOf('"ops"') > 0)) continue;
+    let obj = null, why = '';
+    try { obj = JSON.parse(body); }
+    catch (e) {
+      obj = null;
+      why = 'the block is not valid JSON — ' + String((e && e.message) || e).slice(0, 90);
+    }
+    const shaped = obj && typeof obj === 'object' && !Array.isArray(obj) && Array.isArray(obj.ops);
+    if (!tagged && !shaped) continue;
+    if (out.found) { out.extra++; continue; }
+    out.found = true; out.at = i; out.body = body;
+    // ⚠️ `if (why)`, NOT `if (!obj)`. JSON.parse can legally SUCCEED and hand back
+    // `null`, `0` or `false` — and with `!obj` those took the parse-error path and
+    // reported an EMPTY reason, so the card would have said "unknown reason" for a
+    // block whose problem the validator can name exactly.
+    if (why) { out.why = why; continue; }
+    const v = actValidate(obj);
+    out.ok = !!v.ok;
+    out.why = v.ok ? '' : (v.why || 'the block could not be read');
+    out.plan = v.ok ? v : null;
+  }
+  return out;
+}
+function parseActions(text) { return actScan(aiFences(text)); }
+
+// "12 cells in Sheet1 · 3 formulas · 1 new sheet". PURE.
+function actSummary(plan, where) {
+  if (!plan || !plan.count) return '';
+  const c = plan.count, w = String(where == null ? '' : where).trim(), bits = [];
+  if (c.cells) bits.push(c.cells + (c.cells === 1 ? ' cell' : ' cells') + (w ? ' in ' + w : ''));
+  if (c.cleared) bits.push(c.cleared + (c.cleared === 1 ? ' cell emptied' : ' cells emptied'));
+  if (c.formulas) bits.push(c.formulas + (c.formulas === 1 ? ' formula' : ' formulas'));
+  if (c.styled) bits.push(c.styled + (c.styled === 1 ? ' formatted range' : ' formatted ranges'));
+  if (c.sheets) bits.push(c.sheets + (c.sheets === 1 ? ' new sheet' : ' new sheets'));
+  if (c.renames) bits.push(c.renames === 1 ? 'a sheet renamed' : c.renames + ' sheets renamed');
+  if (c.resizes) bits.push('more rows or columns');
+  return bits.length ? bits.join(' · ') : 'nothing to change';
+}
+
+// The exact list, capped. PURE — it reads the PLAN's own literal values, never the
+// sheet, so what the preview promises is what the apply will write.
+function actCellList(plan) {
+  const out = { lines: [], more: 0 };
+  if (!plan || !Array.isArray(plan.ops)) return out;
+  const push = s => { if (out.lines.length < ACT_LIST_MAX) out.lines.push(s); else out.more++; };
+  plan.ops.forEach(o => {
+    if (o.op === 'set') {
+      for (let r = 0; r < o.values.length; r++) {
+        for (let c = 0; c < o.values[r].length; c++) {
+          const v = o.values[r][c];
+          const shown = (v === null || v === '') ? '(empty)' : String(v);
+          push(colName(o.c + c) + (o.r + r + 1) + ' → ' + shown.slice(0, 60));
+        }
+      }
+    } else if (o.op === 'style') {
+      push(colName(o.c0) + (o.r0 + 1) + ':' + colName(o.c1) + (o.r1 + 1)
+           + ' → ' + Object.keys(o.set).join(' '));
+    } else if (o.op === 'sheet') {
+      push(o.add ? 'a new sheet called ' + o.add : 'rename a sheet to ' + o.rename);
+    } else if (o.op === 'resize') {
+      push('grow to ' + (o.rows || '—') + ' rows × ' + (o.cols || '—') + ' columns');
+    }
+  });
+  return out;
+}
+
+// Text typed by the MODEL → a cell. A JSON number stays a number; a string goes
+// through `parseInput`, the SAME converter a typed cell uses — so "=SUM(A1:A2)" is a
+// formula, "120" is a number and "007" stays text, exactly as if the user had typed
+// it. There is no second set of rules for what a value means.
+function actCell(v, prev) {
+  const style = (prev && prev.s !== undefined) ? prev.s : undefined;
+  if (v === null || v === undefined || v === '') {
+    return style === undefined ? null : { s: style };
+  }
+  if (typeof v === 'number') {
+    if (!isFinite(v)) return style === undefined ? null : { s: style };
+    const out = { v: v, t: CV_NUMBER };
+    if (style !== undefined) out.s = style;
+    return out;
+  }
+  if (typeof v === 'boolean') {
+    const out = { v: v, t: CV_BOOLEAN };
+    if (style !== undefined) out.s = style;
+    return out;
+  }
+  return parseInput(String(v), prev);
+}
+
+// ── the impure half: apply, and the undo that makes it safe to try ───────────
+// `actLast` is the one apply that can still be taken back. It holds a FULL clone of
+// the workbook as it was, which is the only form of undo that cannot be subtly wrong —
+// reversing a list of operations has to guess at what a cell was before, and a merged
+// range or a shared style id makes that guess wrong in ways nobody would notice until
+// the file was saved.
+let actLast = null;
+let actSeq = 0;
+
+function actClone(s) {
+  try {
+    const t = JSON.stringify(s);
+    if (!t || t.length > ACT_UNDO_MAX_BYTES) return null;
+    return JSON.parse(t);
+  } catch (e) { return null; }
+}
+
+// A sheet NAME (the only handle a model has) → the sheet id we hold. An unknown name
+// falls back to the open sheet rather than inventing a sheet nobody asked for; the
+// card says so before you press Apply.
+function actTargetSid(name) {
+  const want = String(name == null ? '' : name).trim().toLowerCase();
+  if (!want || !snap || !snap.sheets) return activeSid;
+  const ids = sheetIds(snap);
+  for (let i = 0; i < ids.length; i++) {
+    const sh = snap.sheets[ids[i]];
+    if (sh && String(sh.name == null ? '' : sh.name).trim().toLowerCase() === want) return ids[i];
+  }
+  return activeSid;
+}
+function actSheetExists(name) {
+  const want = String(name == null ? '' : name).trim().toLowerCase();
+  if (!want || !snap || !snap.sheets) return false;
+  return sheetIds(snap).some(id => {
+    const sh = snap.sheets[id];
+    return sh && String(sh.name == null ? '' : sh.name).trim().toLowerCase() === want;
+  });
+}
+
+// addSheet()'s body, with a name and without the message — the menu's version says
+// "Added Sheet2" on screen, which would be one line of noise per sheet here.
+function actAddSheet(name) {
+  const ids = sheetIds(snap);
+  const taken = ids.map(i => String((snap.sheets[i] || {}).name || '').toLowerCase());
+  const base = (String(name == null ? '' : name).trim() || 'Sheet').slice(0, ACT_SHEET_MAX);
+  let nm = base, n = 2;
+  while (taken.indexOf(nm.toLowerCase()) >= 0) {
+    nm = (base + ' ' + n).slice(0, ACT_SHEET_MAX);
+    n++;
+  }
+  const sid = 'sheet-' + Date.now().toString(36) + '-' + (++actSeq);
+  snap.sheets[sid] = { id: sid, name: nm, cellData: {}, rowCount: 200, columnCount: 26 };
+  if (!Array.isArray(snap.sheetOrder)) snap.sheetOrder = ids.slice();
+  snap.sheetOrder.push(sid);
+  return nm;
+}
+
+// cellStyle()'s rule, for a cell on ANY sheet rather than the selected one.
+function actResolveStyle(cell) {
+  let s = cell && cell.s;
+  if (typeof s === 'string' && snap && snap.styles) s = snap.styles[s];
+  return (s && typeof s === 'object') ? s : null;
+}
+
+// ⚠️ THE ONLY FUNCTION IN THIS BLOCK THAT WRITES A CELL. It goes through `putCell`,
+// the same door the grid's own `commit` uses, so there is no second writer with its
+// own idea of what cellData looks like. It touches NO view state — `wantRows` /
+// `wantCols` are reported back and the caller decides — and it does not mark the
+// document dirty either, so it can be exercised on a bare snapshot in a test.
+function actRunOps(sid, ops) {
+  // ⚠️ `styledCells`, not `styled`: the PLAN counts formatted RANGES (that is what the
+  // preview says) and this counts the CELLS in them. Two different numbers, so they get
+  // two different names — one `styled` meaning both would be a report nobody can read.
+  const done = { cells: 0, cleared: 0, styledCells: 0, sheets: [], renamed: '',
+                 skipped: 0, wantRows: 0, wantCols: 0 };
+  const sh = (snap && snap.sheets) ? snap.sheets[sid] : null;
+  if (!sh || !Array.isArray(ops)) return null;
+  ops.forEach(o => {
+    if (o.op === 'set') {
+      for (let r = 0; r < o.values.length; r++) {
+        for (let c = 0; c < o.values[r].length; c++) {
+          const rr = o.r + r, cc = o.c + c;
+          const prev = cellAt(sh, rr, cc);
+          const cell = actCell(o.values[r][c], prev);
+          putCell(sh, rr, cc, cell);
+          if (cell && (cell.v !== undefined || cell.f !== undefined)) done.cells++;
+          else done.cleared++;
+          if ((Number(sh.rowCount) || 0) <= rr) sh.rowCount = rr + 1;
+          if ((Number(sh.columnCount) || 0) <= cc) sh.columnCount = cc + 1;
+          if (done.wantRows <= rr) done.wantRows = rr + 1;
+          if (done.wantCols <= cc) done.wantCols = cc + 1;
+        }
+      }
+    } else if (o.op === 'style') {
+      for (let r = o.r0; r <= o.r1; r++) {
+        for (let c = o.c0; c <= o.c1; c++) {
+          // ⚠️ THE SHARED-STYLE-ID TRAP, and it is the same one styleWrite() records:
+          // a cell's `s` may be a STRING ID into snap.styles, shared with other cells.
+          // The base is resolved, COPIED, and written back inline on this one cell;
+          // mutating the shared entry would bold half the workbook, silently.
+          const prev = cellAt(sh, r, c);
+          const base = actResolveStyle(prev);
+          const next = {};
+          if (base) for (const k in base) next[k] = base[k];
+          for (const k in o.set) next[k] = o.set[k];
+          const cell = {};
+          if (prev) for (const k in prev) if (k !== 's') cell[k] = prev[k];
+          if (Object.keys(next).length) cell.s = next;
+          putCell(sh, r, c, Object.keys(cell).length ? cell : null);
+          done.styledCells++;
+          if (done.wantRows <= r) done.wantRows = r + 1;
+          if (done.wantCols <= c) done.wantCols = c + 1;
+        }
+      }
+    } else if (o.op === 'sheet') {
+      if (o.add) done.sheets.push(actAddSheet(o.add));
+      else if (o.rename) {
+        const tid = o.at ? actTargetSid(o.at) : sid;
+        const t = (snap && snap.sheets) ? snap.sheets[tid] : null;
+        if (t) { t.name = String(o.rename).slice(0, ACT_SHEET_MAX); done.renamed = t.name; }
+        else done.skipped++;
+      }
+    } else if (o.op === 'resize') {
+      if (o.rows) {
+        if ((Number(sh.rowCount) || 0) < o.rows) sh.rowCount = o.rows;
+        if (done.wantRows < o.rows) done.wantRows = o.rows;
+      }
+      if (o.cols) {
+        if ((Number(sh.columnCount) || 0) < o.cols) sh.columnCount = o.cols;
+        if (done.wantCols < o.cols) done.wantCols = o.cols;
+      }
+    }
+  });
+  return done;
+}
+
+// Where the change will land, in words, for the card. Impure (it reads the workbook)
+// and deliberately separate from actSummary, which must stay pure.
+function actWhere(plan) {
+  if (!current) {
+    const f = plan && plan.file;
+    return f ? 'a new spreadsheet called ' + f : 'a new spreadsheet';
+  }
+  const sh = (snap && snap.sheets) ? snap.sheets[actTargetSid(plan && plan.sheet)] : null;
+  return (sh && sh.name) ? String(sh.name) : 'this sheet';
+}
+
+async function actApply(card, plan) {
+  if (!card || !plan || card._state === 'busy' || card._state === 'applied') return;
+  if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
+  // The rich editor OWNS the document once it has mounted, exactly as the Format and
+  // Insert menus say: a tier-1 write would edit a snapshot nobody is looking at and be
+  // lost at the next save. So this refuses, in the same words, rather than pretending.
+  if (mode !== 'grid') {
+    bx('action-refused', 'univer');
+    actNote(card, T1_ONLY);
+    return;
+  }
+  card._state = 'busy';
+  actPaint(card);
+  // "create a document with data on that page" — the whole flow, from nothing.
+  if (!current) {
+    el('new-name').value = plan.file || '';
+    const made = await create();          // names it, opens it, and reports its own errors
+    if (!made || !current) {
+      card._state = 'ready';
+      bx('action-refused', 'create failed');
+      actPaint(card);
+      actNote(card, 'The spreadsheet could not be created, so nothing was changed.');
+      return;
+    }
+  }
+  const sid = actTargetSid(plan.sheet);
+  const sh = (snap && snap.sheets) ? snap.sheets[sid] : null;
+  if (!sh) {
+    card._state = 'ready';
+    bx('action-refused', 'no sheet');
+    actPaint(card);
+    actNote(card, 'There is no sheet to write into.');
+    return;
+  }
+  // BEFORE the first write, and the card tells the truth about whether it worked.
+  const before = actClone(snap);
+  const keep = { before: before, dirty: dirty, sid: activeSid, name: current, card: card };
+  const done = actRunOps(sid, plan.ops);
+  if (!done) {
+    card._state = 'ready';
+    bx('action-refused', 'runOps returned nothing');
+    actPaint(card);
+    actNote(card, 'Nothing could be written to that sheet.');
+    return;
+  }
+  activeSid = sid;
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  // A `resize` asks for a window bigger than the data needs, and renderGrid() sizes
+  // itself from the data — so it is honoured here, after, and only when it asked for
+  // more than we already draw.
+  if (done.wantRows > viewRows || done.wantCols > viewCols) {
+    viewRows = Math.max(viewRows, Math.min(done.wantRows, ACT_MAX_ROW + 1));
+    viewCols = Math.min(Math.max(viewCols, done.wantCols), TIER1_MAX_COLS);
+    renderGrid();
+  }
+  dirty = true;                       // ⚠️ the USER saves. Nothing here writes the file.
+  paint();
+  aiPaint(true);
+  actLast = before ? keep : null;
+  card._state = 'applied';
+  card._done = done;
+  card._undo = !!before;
+  actPaint(card);
+  bx('action-applied', 'cells=' + done.cells + ' cleared=' + done.cleared
+     + ' styledCells=' + done.styledCells + ' sheets=' + done.sheets.length
+     + ' undo=' + (before ? 'yes' : 'too-large'));
+  say(actSummary(plan, actWhere(plan)) + ' — applied. Press ⌘S to save it to the file.',
+      'ok');
+}
+
+function actUndo(card) {
+  // ⚠️ A STALE UNDO SAYS SO. Only the LAST apply is undoable — a second one replaces
+  // the clone — and an older card keeps its button until something repaints it. A
+  // button that does nothing at all is the defect class this page exists to remove.
+  if (!actLast || actLast.card !== card) {
+    actNote(card, 'This one can no longer be undone from here: a later change replaced '
+                + 'the copy of the sheet it would have restored.');
+    return;
+  }
+  if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
+  if (current !== actLast.name) {
+    actNote(card, 'That change was made in “' + actLast.name + '”, which is not the '
+                + 'open workbook any more.');
+    return;
+  }
+  snap = actLast.before;
+  const ids = sheetIds(snap);
+  activeSid = (actLast.sid && snap.sheets && snap.sheets[actLast.sid])
+    ? actLast.sid : (ids[0] || null);
+  dirty = actLast.dirty;              // a clean document goes back to clean
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  paint();
+  aiPaint(true);
+  bx('action-undone', 'file=' + current);
+  actLast = null;
+  card._state = 'ready';
+  card._undone = true;
+  actPaint(card);
+  say('Undone — the sheet is back to what it was before that change.', 'ok');
+}
+
+// ── the card ─────────────────────────────────────────────────────────────────
+// Built from the grammar the reply renderer already has (.aicode / .bar / .lang /
+// .aidet / .lnk / .err / .grow) — ZERO new CSS.
+function actChip(bar, label, cls) {
+  const b = document.createElement('button');
+  if (cls) b.className = cls;
+  b.textContent = label;
+  bar.appendChild(b);
+  return b;
+}
+function actDet(label, text) {
+  const det = document.createElement('details');
+  det.className = 'aidet';
+  const sum = document.createElement('summary');
+  sum.textContent = label;
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  det.appendChild(sum); det.appendChild(pre);
+  return det;
+}
+// One inline line on the card, for a refusal that happened after it was drawn.
+function actNote(card, text) {
+  if (!card || !card._head) return;
+  const d = document.createElement('div');
+  d.className = 'err';
+  d.style.marginTop = '6px';
+  d.textContent = text;
+  card._head.appendChild(d);
+}
+
+function actPaint(card) {
+  const scan = card._scan, plan = scan.plan;
+  const head = card._head, bar = card._bar;
+  head.innerHTML = ''; bar.innerHTML = '';
+  const lang = document.createElement('span');
+  lang.className = 'lang';
+  bar.appendChild(lang);
+  const grow = document.createElement('span');
+  grow.className = 'grow';
+
+  if (card._state === 'error') {
+    lang.textContent = 'proposed change · unreadable';
+    const d = document.createElement('div');
+    d.className = 'err';
+    d.textContent = 'The model tried to change the sheet and I could not read what it '
+                  + 'sent, so nothing was touched: ' + (scan.why || 'unknown reason');
+    head.appendChild(d);
+    head.appendChild(actDet('the block it sent', scan.body));
+    bar.appendChild(grow);
+    const cp = actChip(bar, 'copy', 'lnk');
+    cp.onclick = () => aiCopy(cp, scan.body);
+    return;
+  }
+
+  const where = actWhere(plan);
+  const line = document.createElement('div');
+  line.textContent = actSummary(plan, where);
+  head.appendChild(line);
+
+  if (card._state === 'applied') {
+    lang.textContent = 'change applied';
+    const done = card._done || {};
+    const d = document.createElement('div');
+    d.style.marginTop = '5px';
+    d.style.color = 'var(--dim)';
+    d.style.fontSize = '11px';
+    d.textContent = 'Applied to ' + where + ' — ' + done.cells + ' written'
+      + (done.cleared ? ', ' + done.cleared + ' emptied' : '')
+      + (done.sheets && done.sheets.length ? ', sheets added: ' + done.sheets.join(', ') : '')
+      + '. The file is NOT saved yet — press ⌘S.'
+      + (card._undo ? '' : ' This workbook is too large to hold an undo copy, so this '
+                         + 'change cannot be taken back from here.');
+    head.appendChild(d);
+    bar.appendChild(grow);
+    if (card._undo && actLast && actLast.card === card) {
+      const u = actChip(bar, 'Undo');
+      u.onclick = () => actUndo(card);
+    }
+    return;
+  }
+
+  // ready (or busy, which is ready with the buttons switched off)
+  lang.textContent = card._state === 'busy' ? 'applying…' : 'proposed change';
+  const notes = [];
+  if (card._undone) notes.push('That change was undone — you can apply it again.');
+  if (!current) {
+    notes.push('No spreadsheet is open, so Apply makes one first'
+               + (plan.file ? ' (“' + plan.file + '”)' : '') + '.');
+  } else if (plan.sheet && !actSheetExists(plan.sheet)) {
+    notes.push('There is no sheet called “' + plan.sheet + '” — the change goes to '
+               + where + '.');
+  }
+  if (scan.extra) {
+    notes.push(scan.extra + (scan.extra === 1 ? ' further block was' : ' further blocks were')
+               + ' ignored: only the first change is offered, so nothing can be '
+               + 'applied that you did not read.');
+  }
+  notes.push('Nothing is written until you press Apply, and the file is only saved '
+             + 'when you press ⌘S.');
+  const n = document.createElement('div');
+  n.style.marginTop = '5px';
+  n.style.color = 'var(--dim)';
+  n.style.fontSize = '11px';
+  n.textContent = notes.join(' ');
+  head.appendChild(n);
+
+  const list = actCellList(plan);
+  head.appendChild(actDet('what it will change'
+    + (list.more ? ' · showing ' + list.lines.length + ' of ' + (list.lines.length + list.more) : ''),
+    list.lines.join('\n') + (list.more ? '\n… and ' + list.more + ' more' : '')));
+  head.appendChild(actDet('the block it sent', scan.body));
+
+  bar.appendChild(grow);
+  const no = actChip(bar, 'Dismiss', 'lnk');
+  no.disabled = card._state === 'busy';
+  no.onclick = () => { card.remove(); bx('action-dismissed', 'ops=' + plan.ops.length); };
+  const yes = actChip(bar, current ? 'Apply' : 'Create & apply');
+  yes.disabled = card._state === 'busy';
+  yes.onclick = () => actApply(card, plan);
+}
+
+function actCard(host, scan) {
+  const card = document.createElement('div');
+  card.className = 'aicode';
+  const head = document.createElement('div');
+  head.style.padding = '8px 9px';
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  card.appendChild(head); card.appendChild(bar);
+  card._head = head; card._bar = bar; card._scan = scan;
+  card._state = scan.ok ? 'ready' : 'error';
+  card._undone = false;
+  actPaint(card);
+  host.appendChild(card);
+  bx('action-parsed', (scan.ok ? 'ok' : 'refused')
+     + ' ops=' + (scan.plan ? scan.plan.ops.length : 0)
+     + ' cells=' + (scan.plan ? scan.plan.count.cells : 0)
+     + ' extra=' + scan.extra
+     + (scan.ok ? '' : ' why=' + String(scan.why).slice(0, 120)));
+  return card;
+}
+
 function aiCopy(btn, text) {
   const done = ok => { btn.textContent = ok ? 'copied' : 'copy failed';
                        setTimeout(() => { btn.textContent = 'copy'; }, 1600); };
@@ -2210,7 +4005,12 @@ function aiCopy(btn, text) {
 // text node, and the fenced blocks become cards in ONE re-render at the end.
 function aiRenderBody(host, text) {
   host.innerHTML = '';
-  aiFences(text).forEach(p => {
+  // ONE scan over the SAME parts array the renderer walks, so the card can never be
+  // attached to a different block from the one that was parsed.
+  const parts = aiFences(text);
+  const scan = actScan(parts);
+  parts.forEach((p, i) => {
+    if (scan.found && i === scan.at) { actCard(host, scan); return; }
     if (p.kind === 'text') {
       const d = document.createElement('div');
       d.className = 'txt';
@@ -2230,7 +4030,11 @@ function aiRenderBody(host, text) {
     const cp = document.createElement('button');
     cp.className = 'lnk';
     cp.textContent = 'copy';
-    // ⚠️ COPY, NOT APPLY. See the header of this block.
+    // ⚠️ AN ORDINARY FENCE STILL ONLY OFFERS COPY, and that has not changed: a
+    // suggested formula in a ```excel block is advice. The one block that earns an
+    // Apply button is an ACTION block, which is a different renderer (actCard) reached
+    // only through actScan — so "the model suggested a formula" and "the model proposed
+    // a change" cannot be confused for one another.
     cp.onclick = () => aiCopy(cp, pre.textContent);
     bar.appendChild(lang);
     bar.appendChild(cp);
@@ -2585,11 +4389,78 @@ function mi_close() {
   renderFiles(); paint(); aiPaint(true);
 }
 mi('mi-home', goHome);
+// ⌂ LOffice home — the other half of the fix above it: this one stays inside LOffice.
+mi('mi-start', goStart);
+// Delete the OPEN file, with the same two-step the rail's ✕ uses — through say()'s
+// inline action, so the question and its answer are in the same sentence.
+mi('mi-delete', () => {
+  if (!current || busy) return;
+  const name = current;
+  say('Delete “' + name + '”? This cannot be undone — File → Download first if you '
+      + 'want to keep a copy.', null,
+      { label: 'Delete ' + name, run: () => { say(''); remove(name); } });
+});
+// The document title IS the rename control, the way it is in every office app.
+el('doctitle').onclick = () => { if (current && !busy) nameRow('rename'); };
+
+// ── the other seven menus ────────────────────────────────────────────────────
+// Every row here is wired; every row NOT here is `disabled` in the markup with its
+// reason in its own title. There is deliberately no third state.
+mi('mi-find', () => findOpen(true));
+mi('mi-clearcell', clearCell);
+
+mi('mi-rail', () => railSetOpen(!railIsOpen(), 'menu'));
+mi('mi-aipane', () => {
+  if (!aiAvail()) return;
+  try { aiSetOpen(!aiPaneOpen(), 'menu'); } catch (e) { /* their panel, their call */ }
+});
+mi('mi-fullwidth', fullWidth);
+mi('mi-lines', toggleLines);
+ZOOMS.forEach(z => mi('mi-z' + z, () => setZoom(z)));
+mi('mi-rich', upgrade);
+
+mi('mi-sheet', addSheet);
+mi('mi-rows', growRows);
+mi('mi-cols', growCols);
+
+mi('mi-bold', () => fmtToggle('bl'));
+mi('mi-italic', () => fmtToggle('it'));
+mi('mi-underline', () => fmtToggle('ul', { s: 1 }));
+mi('mi-strike', () => fmtToggle('st', { s: 1 }));
+mi('mi-alignl', () => fmtAlign(1));
+mi('mi-alignc', () => fmtAlign(2));
+mi('mi-alignr', () => fmtAlign(3));
+mi('mi-wrap', () => fmtToggle('tb', 3));
+mi('mi-clearfmt', fmtClear);
+
+mi('mi-stats', colStats);
+
+// The AI rows call ANOTHER surface's functions, so every one of them is guarded: if
+// that panel moves or is not in the build, the row disables itself (menuPaint) rather
+// than throwing into a page that has to keep working.
+mi('mi-ask', () => {
+  if (!aiAvail()) return;
+  try { aiSetOpen(true, 'menu'); } catch (e) { /* their panel, their call */ }
+  const box = el('ai-in');
+  if (box) try { box.focus(); } catch (e) { /* nothing to focus */ }
+});
+mi('mi-aishow', () => {
+  if (!aiAvail()) return;
+  try { aiSetOpen(!aiPaneOpen(), 'menu'); } catch (e) { /* their panel, their call */ }
+});
+mi('mi-aiclear', () => { const b = el('ai-clear'); if (b) b.click(); });
+
+mi('mi-keys', helpKeys);
+mi('mi-fidelity', helpFidelity);
+mi('mi-about', helpAbout);
+
 // Outside click closes it. mousedown, not click, so it closes on the way DOWN and a
-// click that lands on the page behind is not swallowed.
+// click that lands on the page behind is not swallowed. The whole BAR is the inside
+// now, not just the File wrapper — a click on another menu label must switch menus,
+// not be read as "outside" by the menu that is already open.
 document.addEventListener('mousedown', ev => {
-  const w = el('filewrap');
-  if (w && !w.contains(ev.target)) fileMenu(false);
+  const w = el('menubar') || el('filewrap');
+  if (w && !w.contains(ev.target)) { fileMenu(false); menuClose('outside'); }
 });
 window.addEventListener('keydown', ev => {
   if ((ev.metaKey || ev.ctrlKey) && (ev.key || '').toLowerCase() === 's') {
@@ -2658,13 +4529,20 @@ setTimeout(() => {
 // THE COMPLAINT THIS ANSWERS: "LOffice is supposed to load like a sheet/office doc
 // page by default." It was landing on 'No spreadsheets yet.' and 'Pick a spreadsheet
 // on the left, or make a new one' — a page that is working perfectly and looks broken,
-// because being useful was gated on a setup step nobody asked for. A spreadsheet app
-// opens on a spreadsheet. So: newest workbook if there is one, a fresh Untitled if
-// there is not, and the main area is never a dead end again.
+// because being useful was gated on a setup step nobody asked for. A RETURNING user
+// therefore still lands straight in the workbook they were last in.
 //
-// It refuses to act on a bridge it could not read (filesOk) or one that cannot write
-// .xlsx at all (roundtripOk) — in both cases loadFiles has already put the real reason
-// on screen and creating a doomed workbook would only bury it.
+// ⚠️ WHAT CHANGED AT 2026-08-21j, AND IT IS A JUDGEMENT CALL: an EMPTY library no
+// longer auto-creates `Untitled.xlsx`. It lands on the START SCREEN, which now exists
+// and has a Blank card as its first element — one click, and no file appears in the
+// user's documents folder that they never asked for. That was the whole reason the
+// auto-create was there ("never a dead end"), and a start screen is not a dead end:
+// Google's own home screen does exactly this and creates nothing until you click Blank.
+// A returning user's landing is untouched.
+//
+// It still refuses to act on a bridge it could not read (filesOk) or one that cannot
+// write .xlsx at all (roundtripOk) — in both cases loadFiles has already put the real
+// reason on screen, and opening or creating anything would only bury it.
 async function autoOpen() {
   if (current) { bx('auto-open', 'skipped: already open'); return; }
   if (!filesOk) { bx('auto-open', 'skipped: the file list did not load'); return; }
@@ -2676,8 +4554,8 @@ async function autoOpen() {
     await openDoc(files[0].name);
     return;
   }
-  bx('auto-open', 'untitled');
-  await create();            // empty name → the bridge names it; create() then opens it
+  bx('auto-open', 'start screen');
+  renderHome();
 }
 
 async function boot() {

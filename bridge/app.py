@@ -217,10 +217,14 @@ def _pid_alive(name: str) -> bool:
         return False
 
 
-async def _port_alive(port: int) -> bool:
+async def _port_alive(port: int, timeout: float = 0.5) -> bool:
+    # `timeout` is defaulted so every existing call site keeps its 0.5s budget
+    # byte-for-byte; only /api/status passes a per-component value (see
+    # PROBE_TIMEOUT_S — a component whose probe legitimately needs longer must not
+    # be able to widen everybody else's).
     try:
         _, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", port), timeout=0.5)
+            asyncio.open_connection("127.0.0.1", port), timeout=timeout)
         writer.close()
         return True
     except Exception:
@@ -481,6 +485,90 @@ def _live_model_id(port: int) -> "str | None":
     return _reconcile_live(probed, ids, intent, models)
 
 
+# ── COMPONENT HEALTH: one probe budget per component, ONE debounced verdict ───
+# Debi 2026-08-21: the activity feed said `opencode degraded — health lost` while the
+# opencode CARD still read Online. Those two surfaces are drawn from the SAME field
+# on the SAME poll (panel/index.html:1854-1856), so they never disagreed at a single
+# instant — the card is repainted from scratch every poll and shows NOW, while the
+# feed is a permanent scrollback line about a PAST instant that nothing ever
+# retracted. A one-poll blip therefore left a scary line sitting beside a green card.
+#
+# Two entirely healthy things produce exactly that one-poll blip:
+#   1. A CLI RESTART. `ship.sh --restart opencode` runs the snapshot's
+#      start_component.sh (ship.sh:230), whose opencode arm clears the listener and
+#      only writes the NEW pid about a second later (start_component.sh:1016-1033).
+#      Nothing on that path touches data/<name>.expected — only the panel's Start
+#      writes it (_mark_expected, _provision) and only Stop clears it — so for that
+#      window the component is "expected-up, no listener, and a pid file naming a
+#      process that has just been killed", i.e. degraded by the letter of the rule.
+#   2. PROBE CONGESTION. `asyncio.wait_for(open_connection, 0.5)` can fire because
+#      our own event loop was busy, not because the port was gone. /api/status probes
+#      every component SEQUENTIALLY on that loop, which it shares with the SSE chat
+#      relays and LOffice's ~10MB static reads.
+#
+# So: let a component that needs it have its OWN probe budget, and require a miss to
+# PERSIST before calling it lost — the shape the panel already uses for the bridge
+# itself (index.html:1820, three consecutive misses before BRIDGE UNREACHABLE).
+PROBE_TIMEOUT_DEFAULT = 0.5
+# opencode is a ~144MB Bun executable that does real work on its first requests.
+# The probe stays a TCP handshake and is DELIBERATELY NOT an HTTP GET to its own
+# /global/health (start_component.sh:1040 uses that for the readiness poll, and
+# global.ts:66 defines it): a handshake is completed by the KERNEL from the listen
+# backlog and needs nothing from the server's event loop, whereas an HTTP probe does
+# — which makes an HTTP probe strictly MORE likely to time out on a busy server,
+# i.e. the exact false negative being fixed here. The wider budget is insurance
+# against OUR loop, and costs nothing at all when the port answers (sub-millisecond).
+PROBE_TIMEOUT_S = {"opencode": 2.0}
+HEALTH_MISS_LOST = 3            # consecutive failed probes before "lost"
+_HEALTH_MISS: dict = {}         # component -> consecutive failed probes
+
+
+def _probe_timeout(name: str, expected: bool = True) -> float:
+    """Probe budget for one component. Everything not named in PROBE_TIMEOUT_S keeps
+    the historical 0.5s exactly — and so does a component we are NOT expecting to be
+    up (Stop clears data/<name>.expected), because a component with no alarm to raise
+    is not worth making every /api/status poll 1.5s slower for. The wide budget is
+    only ever spent where it can PREVENT a false alarm."""
+    if not expected:
+        return PROBE_TIMEOUT_DEFAULT
+    return PROBE_TIMEOUT_S.get(name, PROBE_TIMEOUT_DEFAULT)
+
+
+def health_verdict(expected: bool, running: bool, misses: int,
+                   lost_at: int = HEALTH_MISS_LOST) -> str:
+    """PURE (unit-tested). ok | transient | lost.
+         running, or never started by us   -> ok
+         expected-up and missing, briefly  -> transient  (restart window / busy loop)
+         expected-up and missing, N times  -> lost       (it really is gone)
+    Total: a junk miss count degrades to 'transient', never to a false 'lost' — and
+    the type check is STRICT rather than an int() coercion on purpose, so no value
+    arriving as a string can ever escalate an alarm."""
+    if running or not expected:
+        return "ok"
+
+    def _int(v, fallback, floor=None):
+        ok = isinstance(v, int) and not isinstance(v, bool)
+        return v if ok and (floor is None or v >= floor) else fallback
+    m = _int(misses, 0)
+    # A threshold below 1 is nonsense (it would mean "declare lost before a probe has
+    # even missed"), so it falls back to the default rather than being clamped into
+    # the most alarming possible behaviour.
+    n = _int(lost_at, HEALTH_MISS_LOST, floor=1)
+    return "lost" if m >= n else "transient"
+
+
+def _health_track(name: str, expected: bool, running: bool) -> tuple:
+    """Advance the consecutive-miss counter for `name`; return (verdict, misses).
+    A recovery (or a clean Stop, which clears .expected) forgets the streak, so a
+    component that blips twice an hour never accumulates its way to 'lost'."""
+    if running or not expected:
+        _HEALTH_MISS.pop(name, None)
+        return ("ok", 0)
+    m = _HEALTH_MISS.get(name, 0) + 1
+    _HEALTH_MISS[name] = m
+    return (health_verdict(expected, running, m), m)
+
+
 @app.get("/api/status")
 async def status() -> dict:
     import shutil
@@ -502,12 +590,20 @@ async def status() -> dict:
     }
     for name, comp in c["components"].items():
         port = comp.get("port") or comp.get("mcp_port")
-        running = (await _port_alive(int(port)) if port else False) or _pid_alive(name)
+        expected = _expected_path(name).exists()
+        running = ((await _port_alive(int(port), _probe_timeout(name, expected))
+                    if port else False) or _pid_alive(name))
+        verdict, misses = _health_track(name, expected, running)
         out["components"][name] = {
             "installed": bool(comp.get("installed")),
             "pin": str(comp.get("pin")),
             "running": running,
-            "degraded": _expected_path(name).exists() and not running,
+            # UNCHANGED: the instantaneous fact (expected-up and THIS probe missed).
+            "degraded": expected and not running,
+            # …and the DEBOUNCED verdict, which is what the panel renders on both the
+            # card and the feed, so those two can never tell Debi opposite things.
+            "health": verdict,
+            "misses": misses,
             "port": port,
         }
     # M1 runner slot: a managed component (engine per model format since the llamacpp/mlx shift).
@@ -520,6 +616,12 @@ async def status() -> dict:
         port_up = await _port_alive(int(rport)) if rport else False
         live_id = (await asyncio.to_thread(_live_model_id, int(rport))) if rport else None
         loaded = bool(live_id)
+        # The runner's health is keyed on PORT_UP, exactly as its `degraded` is: a live
+        # port with no model yet is "loading", not dead. Same debounce as everything
+        # else, so a model switch (port down for a moment) reads as reconnecting rather
+        # than painting a permanent "health lost" line in the feed.
+        r_verdict, r_misses = _health_track(
+            "runner", _expected_path("runner").exists(), port_up)
         out["components"]["runner"] = {
             "installed": True,
             "pin": str(live_id or rc.get("model") or rc.get("adapter") or "auto"),
@@ -529,6 +631,8 @@ async def status() -> dict:
             # degraded = the process actually died (not merely mid-load): expected-up
             # AND the port is gone. A live port with no model yet = "loading", not degraded.
             "degraded": _expected_path("runner").exists() and not port_up,
+            "health": r_verdict,
+            "misses": r_misses,
             "port": rport,
             "kind": "runner",
             "engine": _runner_engine(rc),

@@ -382,7 +382,10 @@ check('…and normalises the non-breaking spaces contenteditable inserts, so a s
  'pane-resize', 'pane-reset', 'rail-open', 'rail-collapse',
  'asset-ok', 'asset-error', 'asset-timeout', 'selfcheck-pass', 'selfcheck-fail',
  'mount-start', 'mount-fail', 'mount-raf', 'mount-settled', 'page-error', 'rejection',
- 'watchdog'].forEach(stage => {
+ 'watchdog',
+ // the menu bar and the start screen, added at 2026-08-21j
+ 'menu-open', 'menu-row', 'home-start', 'home-render', 'find-open', 'find-close',
+ 'zoom', 'add-sheet', 'template'].forEach(stage => {
   check(`the page beacons '${stage}'`, html.includes("'" + stage + "'"));
 });
 check('the boot runs immediately when the document is already parsed — this script is '
@@ -622,8 +625,15 @@ check('the rail toggle goes through railSetOpen — a raw classList.toggle would
       + 'the pane without remembering it, which is how a preference gets lost',
       /btn-rail'\)\.onclick = \(\) => railSetOpen\(!railIsOpen\(\)/.test(html)
       && !/classList\.toggle\('railoff'\)/.test(html));
+// ⚠️ THIS ONE WAS ALREADY RED BEFORE 2026-08-21j AND IS REPAIRED HERE, NOT WEAKENED.
+// It pinned `const toggleNew = () => { … railSetOpen(true, 'new') … }`, a shape the
+// page has not had since the name row learned its second verb: `toggleNew` is a
+// one-liner into nameRow(), and nameRow() is what opens the rail (with its own mode as
+// the reason string). The invariant is unchanged — New must open the rail, because the
+// name box lives in it — so it is pinned where it now lives.
 check('…and so does New, which needs the rail open because the name box lives in it',
-      /const toggleNew = \(\) => \{[\s\S]{0,200}railSetOpen\(true, 'new'\)/.test(html));
+      /const toggleNew = \(\) => nameRow\('create'\)/.test(html)
+      && /railSetOpen\(true, mode\);/.test(grab('nameRow')));
 check('the landing beacon reports the geometry it landed on, so "it opened tiny" is '
       + 'answerable from the log', /rail=' \+ \(railIsOpen\(\)/.test(html));
 
@@ -635,7 +645,11 @@ check('Esc dismisses the message box, which otherwise can only be replaced by th
       + 'next message', /ev\.key === 'Escape' && el\('msg'\)\.classList\.contains\('on'\)/.test(html));
 check('…and Esc does NOT preventDefault, so the name box and the grid keep their own '
       + 'Escape meanings', !/ev\.key === 'Escape'[^\n]*preventDefault/.test(html));
-check('Enter in the name box creates', /new-name'\)\.onkeydown[\s\S]{0,120}'Enter'\) create\(\)/.test(html));
+// ⚠️ ALSO ALREADY RED BEFORE 2026-08-21j: it pinned `'Enter') create()`, and that box
+// stopped being create-only when it learned Rename. `nameRowGo()` is the verb it is
+// currently showing, which is the behaviour that actually matters.
+check('Enter in the name box does whichever verb the box is showing',
+      /new-name'\)\.onkeydown[\s\S]{0,120}'Enter'\) nameRowGo\(\)/.test(html));
 check('the row actions are a real click target rather than two bare words — a ~9px '
       + 'hit box next to a DELETE was the affordance bug',
       /\.lnk\{[^}]*padding:4px 7px/.test(CSS));
@@ -652,9 +666,17 @@ check('every header control is one height from ONE token, so they cannot drift a
       + 'again', /--ctl-h:\s*\d+px/.test(CSS)
       && /:where\(#hdr\) button\{height:var\(--ctl-h\)/.test(CSS)
       && /\.pill\{[^}]*height:var\(--ctl-h\)/.test(CSS));
-check('the header separates status from the things that change the document',
+// ⚠️ THIS ASSERTION CHANGED SHAPE AT 2026-08-21j, HONESTLY, BECAUSE THE LAYOUT DID.
+// It used to pin `p-state` ABOVE the hairline, in the header's status group. The save
+// state and the tier are no longer in the header at all: they sit to the RIGHT OF THE
+// MENU ROW, which is where every office application puts them ("All changes saved in
+// Drive"). What the old check was really about — that the row reads as groups rather
+// than a line of unrelated controls — is pinned below instead, as the hairline sitting
+// between the title group and the actions.
+check('the header still separates the title group from the things that change the '
+      + 'document, with the hairline between them',
       /<span class="hsep"><\/span>/.test(html)
-      && html.indexOf('id="p-state"') < html.indexOf('class="hsep"')
+      && html.indexOf('id="doctitle"') < html.indexOf('class="hsep"')
       && html.indexOf('class="hsep"') < html.indexOf('id="btn-rich"'));
 check('the action group is ordered Rich · Import · New · Save, with Save the only '
       + 'filled button',
@@ -662,6 +684,12 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
       && html.indexOf('id="btn-import"') < html.indexOf('id="btn-new2"')
       && html.indexOf('id="btn-new2"') < html.indexOf('id="btn-save"')
       && /id="btn-save" class="primary"/.test(html));
+check('row 1 carries the DOCUMENT TITLE, and it is a control — clicking a title '
+      + 'renames the document in every office app there is',
+      /<button id="doctitle"/.test(html)
+      && /doctitle'\)\.onclick = \(\) => \{ if \(current && !busy\) nameRow\('rename'\)/.test(html));
+check('…and paint() keeps it truthful rather than leaving the placeholder up',
+      /t\.textContent = current \|\| 'no workbook open'/.test(grab('paint')));
 
 // ══ THE LANDING ══════════════════════════════════════════════════════════════
 // THE BUG THIS GUARDS. LOffice booted perfectly — tier-1 ready in 4-7 ms, bridge fine,
@@ -677,6 +705,7 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
   function bx(stage, detail) { calls.push(['bx', stage, String(detail === undefined ? '' : detail)]); }
   async function openDoc(name) { calls.push(['open', name]); current = name; }
   async function create() { calls.push(['create']); current = 'Untitled.xlsx'; return current; }
+  function renderHome() { calls.push(['home']); }
   // grab() anchors on `function <name>(`, which inside `async function autoOpen(`
   // yields a body WITHOUT its async keyword — so it is put back here rather than
   // silently defining a sync function whose awaits are a syntax error.
@@ -696,8 +725,15 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
   }
 
   const cases = [
-    ['an EMPTY library creates a workbook rather than landing on nothing',
-     { files: [] }, ['bx:auto-open:untitled', 'create']],
+    // ⚠️ THIS CASE CHANGED AT 2026-08-21j AND IT IS A DELIBERATE BEHAVIOUR CHANGE, not
+    // a relaxation. An empty library used to auto-create `Untitled.xlsx`, because the
+    // alternative at the time was landing on one centred sentence. The alternative now
+    // is the START SCREEN, whose first element is a Blank card — so the reason for the
+    // auto-create ("never a dead end") is served without putting a file in somebody's
+    // documents folder that they never asked for. Google's own home does exactly this.
+    ['an EMPTY library lands on the START SCREEN and creates nothing — a start screen '
+     + 'with a Blank card in it is not a dead end',
+     { files: [] }, ['bx:auto-open:start screen', 'home']],
     ['a NON-empty library opens the newest instead of making another one',
      { files: [{ name: 'newest.xlsx' }, { name: 'older.xlsx' }] },
      ['bx:auto-open:newest.xlsx', 'open:newest.xlsx']],
@@ -728,9 +764,14 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
     // silently open the oldest workbook and nothing else would notice.
     check('autoOpen takes files[0] — pinned to list_docs sorting newest-first',
           /files\[0\]\.name/.test(grab('autoOpen')));
-    check('autoOpen never invents a name — the bridge owns the default, so create() is '
-          + 'called with nothing',
-          /await create\(\)/.test(grab('autoOpen')) && !/create\(['"]/.test(grab('autoOpen')));
+    check('autoOpen creates NOTHING at all any more — a workbook appears because '
+          + 'somebody clicked Blank, never because a page loaded',
+          !/create\(/.test(grab('autoOpen')));
+    check('…and the Blank card is the thing that does create one, with no name of its '
+          + 'own, so the bridge still owns the default',
+          /el\('h-blank'\)\.onclick = newBlank/.test(html)
+          && /await create\(\)/.test(grab('newBlank'))
+          && !/create\(['"]/.test(grab('newBlank')));
     check('boot() runs the landing, and only AFTER the file list is in',
           /await loadFiles\(\);[\s\S]{0,200}await autoOpen\(\);/.test(grab('boot')));
 
@@ -752,6 +793,354 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
           && /return true;/.test(grab('loadFiles')));
     check('…and records the round-trip verdict from the bridge, not from a guess',
           /roundtripOk = j\.roundtrip !== false/.test(grab('loadFiles')));
+
+    /* ══ 9. THE MENU BAR ═══════════════════════════════════════════════════════
+       THE REPORT THIS GUARDS, verbatim: "The design of the new/file etc is so bad.
+       It's not even on the main strip as all office/sheet docs have it… See how
+       extensive it is, how everything is in the white strip and uniform."
+
+       So the three things asserted here are location, breadth and honesty — and the
+       last one is the one that keeps the other two from becoming a lie: a menu bar is
+       only worth having if every row in it either works or says why not. */
+    const STAMP = (html.match(/<meta name="harness-build" content="([^"]+)">/) || [])[1] || '';
+    // ⚠️ A LITERAL, AND IT HAS TO BE BUMPED BY HAND EVERY SLICE — which is exactly what
+    // it is for (it fails loudly when someone changes the page and forgets the stamp).
+    // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
+    // it; nothing else in this file changed.
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-21k');
+    check('…and the static fallback banner carries the SAME one, so "is the bridge '
+          + 'serving what I shipped?" is answerable by eye, with no console',
+          html.indexOf('<code>' + STAMP + '</code>') > 0);
+
+    // ── the strip exists, is light, and is a strip ──
+    check('there IS a menu bar, and it is its own row under the title — not a button '
+          + 'floating in the app chrome', /<nav id="menubar">/.test(html)
+          && html.indexOf('<nav id="menubar">') > html.indexOf('</header>'));
+    check('it is a LIGHT surface, flush with the sheet — "everything in the white strip"',
+          /#menubar\{[^}]*background:#fff/.test(CSS));
+    // ⚠️ THE DELIBERATE DECISION, PINNED SO IT CANNOT BE UNDONE BY ACCIDENT: neither
+    // theme axis repaints the strip or the dropdowns. A desktop office app in dark mode
+    // still frames a white page, and this bar belongs to the DOCUMENT. Overruling it is
+    // a one-line addition here plus one in the sheet — which is the point of pinning it.
+    check('…in BOTH themes: neither the light palette nor the studio axis repaints the '
+          + 'strip or the dropdowns',
+          !/data-theme="light"\]\)\s*#menubar/.test(CSS)
+          && !/data-chrome="studio"\]\)\s*#menubar/.test(CSS)
+          && !/data-theme="light"\]\)\s*\.mpop/.test(CSS)
+          && !/data-chrome="studio"\]\)\s*\.mpop/.test(CSS)
+          && !/data-theme="light"\]\)\s*\.mtop/.test(CSS));
+    check('…and the dropdowns are the same light surface',
+          /\.mpop\{[^}]*background:#fff/.test(CSS));
+    check('the dropdowns are NOT clipped: an ancestor with overflow:hidden would hide '
+          + 'every absolutely-positioned menu, which is a whole-feature failure',
+          /#menus\{[^}]*\}/.test(CSS) && !/#menus\{[^}]*overflow/.test(CSS));
+    check('a menu label is text, not a chip — mixed case, sans, no border until hover',
+          /\.mtop\{[^}]*font:13px/.test(CSS) && /\.mtop:hover\{/.test(CSS)
+          && !/\.mtop\{[^}]*text-transform/.test(CSS));
+
+    // ── eight menus, in Google's order ──
+    const BAR = ['File', 'Edit', 'View', 'Insert', 'Format', 'Data', 'AI', 'Help'];
+    const TOPS = ['btn-file', 'btn-edit', 'btn-view', 'btn-insert', 'btn-format',
+                  'btn-data', 'btn-ai', 'btn-help'];
+    const POPS = ['filemenu', 'm-edit', 'm-view', 'm-insert', 'm-format', 'm-data',
+                  'm-ai', 'm-help'];
+    TOPS.forEach((id, i) => {
+      check('the bar carries ' + BAR[i],
+            new RegExp('<button class="mtop" id="' + id + '">' + BAR[i] + '<').test(html));
+    });
+    POPS.forEach(id => check('…and ' + id + ' is a real dropdown in the markup',
+                             new RegExp('id="' + id + '" class="mpop"').test(html)
+                             || new RegExp('<div id="' + id + '" class="mpop">').test(html)));
+    check('the labels appear in that order in the document, so the strip reads the way '
+          + 'the transcription does', TOPS.every((id, i) =>
+            i === 0 || html.indexOf('id="' + id + '"') > html.indexOf('id="' + TOPS[i - 1] + '"')));
+    check('the engine is DATA, not eight copies of one function — adding a menu is '
+          + 'adding a pair to two arrays',
+          /const MENUS = \[/.test(html) && /const MTOPS = \[/.test(html));
+    // the JS arrays and the markup are two lists of the same eight things
+    const jsPops = (html.match(/const MENUS = \[([\s\S]*?)\];/) || [, ''])[1]
+      .match(/'([^']+)'/g).map(s => s.replace(/'/g, ''));
+    const jsTops = (html.match(/const MTOPS = \[([\s\S]*?)\];/) || [, ''])[1]
+      .match(/'([^']+)'/g).map(s => s.replace(/'/g, ''));
+    eq('…and the engine\'s dropdown list is exactly the markup\'s', jsPops, POPS);
+    eq('…and its label list is exactly the markup\'s', jsTops, TOPS);
+
+    // ── THE HONESTY RULE, and it is the important one ──
+    const ROWS = [...html.matchAll(/<button class="mi" id="(mi-[\w-]+)"([^>]*)>/g)]
+      .map(m => ({ id: m[1], attrs: m[2] }));
+    check('the bar is EXTENSIVE — Google Sheets carries ~120 items across ten menus, '
+          + 'and a menu bar\'s credibility is breadth', ROWS.length >= 55);
+    const ZLIST = ((html.match(/const ZOOMS = \[([^\]]*)\]/) || [, ''])[1])
+      .split(',').map(s => s.trim()).filter(Boolean);
+    check('the zoom steps are declared as data', ZLIST.length >= 3);
+    function wired(id) {
+      if (new RegExp("mi\\('" + id + "'").test(html)) return true;
+      // the zoom rows are wired by a loop over ZOOMS rather than one call each
+      return /^mi-z\d+$/.test(id) && ZLIST.indexOf(id.slice(4)) >= 0
+             && /ZOOMS\.forEach\(z => mi\('mi-z' \+ z/.test(html);
+    }
+    const dead = ROWS.filter(r => /^\s+disabled\b/.test(r.attrs));
+    const live = ROWS.filter(r => !/^\s+disabled\b/.test(r.attrs));
+    check('most of the bar is LIVE, not a wall of grey', live.length >= 35);
+    eq('EVERY live row is wired to something. A row that looks live and does nothing '
+       + 'is the whole complaint, so this is the assertion that matters most',
+       live.filter(r => !wired(r.id)).map(r => r.id), []);
+    eq('…and EVERY disabled row carries a REAL reason in its own title, so a greyed '
+       + 'row explains itself instead of merely refusing',
+       dead.filter(r => !/title="[^"]{25,}"/.test(r.attrs)).map(r => r.id), []);
+    eq('…and no row is both wired and disabled — there is no third state',
+       dead.filter(r => wired(r.id)).map(r => r.id), []);
+    check('the shortcut column is right-aligned and dimmer, the way every menu on the '
+          + 'reference screenshots draws it',
+          /\.mpop \.mk\{[^}]*margin-left:auto/.test(CSS) && /\.mpop \.mk\{[^}]*color:#/.test(CSS));
+    check('groups are separated by a hairline rather than listed flat',
+          /\.mpop \.msep\{/.test(CSS) && (html.match(/<div class="msep">/g) || []).length >= 8);
+    check('a toggle row states what it IS, with a tick, rather than what clicking would do',
+          /\.mpop \.mtick\{/.test(CSS) && /<span class="mtick">/.test(html)
+          && /function tick\(id, on\)/.test(html));
+    check('a DISABLED row\'s tick greys with it, so a ticked-but-dead row cannot read '
+          + 'as active', /\.mpop \.mi:disabled \.mtick\{/.test(CSS));
+
+    // ── the pinned contract with the other suite ──
+    check('btn-rail → btn-file → p-file order is preserved (test_office_ai.js pins it, '
+          + 'and it is why the two status readouts moved to the menu row rather than '
+          + 'staying in the header)',
+          html.indexOf('id="btn-rail"') < html.indexOf('id="btn-file"')
+          && html.indexOf('id="btn-file"') < html.indexOf('id="p-file"'));
+    check('…and both readouts really are on the menu row, after the menus',
+          html.indexOf('id="p-file"') > html.indexOf('<nav id="menubar">')
+          && html.indexOf('id="p-file"') > html.indexOf('id="btn-help"')
+          && /<span class="mstat" id="p-file">/.test(html)
+          && /<span class="mstat" id="p-state">/.test(html));
+    check('the File dropdown keeps its exact two pinned visibility rules',
+          /#filemenu\{display:none\}/.test(CSS) && /#filemenu\.on\{display:flex\}/.test(CSS));
+    check('…and no id-scoped rule styles its ROWS any more, which is what made it the '
+          + 'one menu of eight that looked different',
+          !/#filemenu \.mi\{/.test(CSS) && !/#filemenu \.mk\{/.test(CSS));
+
+    // ── keyboard + hover, the behaviour that makes it a BAR ──
+    check('click to open, then HOVER to switch — without the second half it is eight '
+          + 'unrelated popovers', /onmouseenter = \(\) => \{ if \(openMenu >= 0/.test(html));
+    check('← → walk the bar and ↑ ↓ walk the open menu',
+          /ArrowRight'\) \{ ev\.preventDefault\(\); menuStep\(1\)/.test(html)
+          && /ArrowLeft'\) \{ ev\.preventDefault\(\); menuStep\(-1\)/.test(html)
+          && /ArrowDown'\) \{ ev\.preventDefault\(\); menuMove\(1\)/.test(html)
+          && /ArrowUp'\) \{ ev\.preventDefault\(\); menuMove\(-1\)/.test(html));
+    check('…and the walk SKIPS disabled rows rather than focusing one that will refuse',
+          /=> !n\.disabled/.test(grab('menuRows')));
+    check('Escape closes an open menu — the File one where it already was, the other '
+          + 'seven in the new listener, so there is exactly one owner per case',
+          /Escape' && el\('filemenu'\)\.classList\.contains\('on'\)/.test(html)
+          && /k === 'Escape' && openMenu > 0/.test(html));
+    check('an outside mousedown closes the whole BAR, not just the File wrapper — a '
+          + 'click on another label must switch menus, not read as "outside"',
+          /const w = el\('menubar'\) \|\| el\('filewrap'\)/.test(html));
+    check('⌘B / ⌘I / ⌘U preventDefault, because inside a contenteditable the browser '
+          + 'would otherwise insert RICH TEXT bold that textContent throws away and '
+          + 'that could never reach the .xlsx',
+          /k === 'b'\) \{ ev\.preventDefault\(\); fmtToggle\('bl'\)/.test(html)
+          && /k === 'i'\) \{ ev\.preventDefault\(\); fmtToggle\('it'\)/.test(html)
+          && /k === 'u'\) \{ ev\.preventDefault\(\); fmtToggle\('ul', \{ s: 1 \}\)/.test(html));
+    check('…and they are refused outright in the rich editor rather than writing into a '
+          + 'snapshot Univer is no longer reading', /if \(!t1ok\(\)\) return;/.test(html)
+          && /mode === 'grid'/.test(grab('t1ok')));
+    check('the beacon budget is respected: the bar reports its FIRST open, not one per '
+          + 'label the cursor crosses (hover-switching would have spent all 80)',
+          /if \(!menuTraced\) \{/.test(html) && /menuTraced = true;/.test(html));
+    check('…and every deliberate row click IS reported, which is the line that answers '
+          + '"I clicked Format → Bold and nothing happened"',
+          /bx\('menu-row', id\)/.test(grab('mi')));
+
+    // ── ⌂ HOME: the bug fix ──
+    const START = grab('goStart'), HOME = grab('goHome');
+    check('⌂ LOffice home stays INSIDE LOffice — it closes the document and shows the '
+          + 'start screen, and it can no longer switch the whole app to another tab',
+          !/switchTab/.test(START) && !/messageHandlers/.test(START)
+          && /mi_close\(\)/.test(START));
+    check('…while the way OUT is its own row at the bottom, still using the shell\'s '
+          + 'postMessage contract', /switchTab/.test(HOME) && /id: 'mc'/.test(HOME)
+          && /mi\('mi-home', goHome\)/.test(html) && /mi\('mi-start', goStart\)/.test(html));
+    check('…and the two rows are labelled so nobody has to guess which is which',
+          /id="mi-start">⌂ LOffice home</.test(html)
+          && /id="mi-home">Back to MOT Main</.test(html));
+    check('home is the LAST thing before the exit row, and the exit row is last of all',
+          html.indexOf('id="mi-start"') < html.indexOf('id="mi-home"'));
+    check('going home with unsaved work offers to save rather than discarding it, and '
+          + 'does not go if the save failed',
+          /Save & go home/.test(START) && /if \(dirty\) return;/.test(START));
+
+    /* ══ 10. THE START SCREEN ═══════════════════════════════════════════════════
+       #empty stopped being one centred sentence and became LOffice's own home, on the
+       Sheets-home model: a Blank card first, then templates, then the recent list.
+       It is the SAME element and the SAME `.off` class, because "no document is open"
+       and "the start screen" are one state, and rendering it is EXECUTED here because
+       an empty library is the case it exists for and the case that used to look broken. */
+    check('the start screen is the empty state, not a second surface — same element, '
+          + 'same overlay, same class', /<div id="empty">/.test(html)
+          && /#empty\{[^}]*position:absolute/.test(CSS) && /#empty\.off\{display:none\}/.test(CSS));
+    check('…and it can SCROLL, which a centred flex box cannot — a start screen taller '
+          + 'than the pane has to be reachable',
+          /#empty\{[^}]*overflow:auto/.test(CSS)
+          && !/#empty\{[^}]*align-items:center/.test(CSS));
+    check('it opens with "Start a new spreadsheet" and a Blank card FIRST, exactly like '
+          + 'the reference home screen',
+          /Start a new spreadsheet/.test(html)
+          && html.indexOf('id="h-blank"') < html.indexOf('id="h-budget"')
+          && /<div class="hcards">/.test(html));
+    check('…and the template cards are generated from the routes we already have, so '
+          + 'there is no template file to ship and nothing new on the bridge',
+          /const TPL = \{/.test(html) && /await create\(\)/.test(grab('newFromTemplate'))
+          && /await save\(\)/.test(grab('newFromTemplate'))
+          && !/fetch\(/.test(grab('newFromTemplate')));
+    check('…with a bolded header row, which also makes a template a live demonstration '
+          + 'that styles round-trip', /cell\.s = \{ bl: 1 \}/.test(grab('newFromTemplate')));
+    check('the recent list and the file rail are drawn from ONE array by ONE call, so '
+          + 'they cannot disagree about what exists',
+          (grab('renderFiles').match(/renderHome\(\)/g) || []).length >= 2);
+    check('…including the EMPTY branch, which is the one the start screen is for',
+          /renderHome\(\);\s*\/\/[^\n]*empty/.test(html));
+
+    // renderHome, executed against a stub DOM
+    (function () {
+      function mkNode(tag) {
+        const n = { tag: tag || 'div', children: [], attrs: {}, className: '',
+                    textContent: '', title: '', tabIndex: -1,
+                    appendChild(c) { this.children.push(c); return c; },
+                    setAttribute(k, v) { this.attrs[k] = v; },
+                    focus() { n.focused = true; },
+                    querySelectorAll(sel) {
+                      const want = String(sel).replace(/^\./, ''), out = [];
+                      (function walk(x) {
+                        x.children.forEach(c => {
+                          if (String(c.className || '').split(' ').indexOf(want) >= 0) out.push(c);
+                          walk(c);
+                        });
+                      })(this);
+                      return out;
+                    } };
+        Object.defineProperty(n, 'innerHTML',
+          { get() { return ''; }, set(v) { if (v === '') n.children.length = 0; } });
+        return n;
+      }
+      const nodes = { hlist: mkNode(), hnote: mkNode(), fidelity: mkNode() };
+      nodes.fidelity.textContent = 'the fidelity sentence';
+      const el = id => nodes[id];
+      const document = { createElement: mkNode };
+      const bx = () => {};
+      let files = [], filesOk = true, armed = null;
+      function fmtSize(n) { return n + 'B'; }
+      function fmtWhen(t) { return 'when' + t; }
+      async function openDoc() {}
+      function renderFiles() {}
+      function remove() {}
+      const HOME_MAX = num('HOME_MAX');
+      eval(grab('renderHome'));
+      eval(grab('homeDel'));
+
+      const rowsOf = () => nodes.hlist.children.filter(
+        c => String(c.className).split(' ').indexOf('hrow') >= 0);
+
+      files = []; renderHome();
+      eq('an empty library draws exactly one line, and it points at the Blank card '
+         + 'rather than at a control somewhere else',
+         nodes.hlist.children.map(c => c.className), ['hempty']);
+      check('…and that line names Blank',
+            /Blank/.test(nodes.hlist.children[0].textContent));
+      filesOk = false; renderHome();
+      check('…while a bridge that never answered says THAT instead of pretending the '
+            + 'library is empty', /bridge did not answer/.test(nodes.hlist.children[0].textContent));
+      filesOk = true;
+
+      files = [{ name: 'newest.xlsx', size_bytes: 10, modified: 2 },
+               { name: 'older.xlsx', size_bytes: 20, modified: 1 }];
+      renderHome();
+      eq('two files give two rows, newest first (list_docs sorts them, the page does not '
+         + 're-sort and cannot disagree)',
+         rowsOf().map(r => r.children[0].textContent), ['newest.xlsx', 'older.xlsx']);
+      eq('…each row carrying its name, its meta, and the two actions',
+         rowsOf()[0].children.map(c => c.className), ['hn', 'hm', 'lnk', 'lnk']);
+      eq('…and the actions are download and delete, in that order — never delete first',
+         rowsOf()[0].children.slice(2).map(c => c.textContent), ['download', 'delete']);
+      check('a row is keyboard-reachable, so Enter opens the selected file',
+            rowsOf()[0].tabIndex === 0 && rowsOf()[0].attrs.role === 'button'
+            && typeof rowsOf()[0].onkeydown === 'function');
+      check('…and it says what it does on hover', /^Open /.test(rowsOf()[0].title));
+
+      armed = 'older.xlsx'; renderHome();
+      eq('a delete armed anywhere shows as armed HERE too, because both lists read the '
+         + 'same variable', rowsOf()[1].children[3].textContent, 'sure?');
+      check('…and only that one row is armed',
+            rowsOf()[0].children[3].textContent === 'delete');
+      armed = null;
+
+      files = [];
+      for (let i = 0; i < HOME_MAX + 6; i++) files.push({ name: 'f' + i + '.xlsx', size_bytes: 1, modified: i });
+      renderHome();
+      eq('a big library is capped rather than drawing hundreds of rows', rowsOf().length, HOME_MAX);
+      check('…and the note SAYS it is capped, and where the rest are',
+            /most recent/.test(nodes.hnote.textContent)
+            && /file list on the left/.test(nodes.hnote.textContent));
+      check('…while a small one just carries the fidelity sentence',
+            (function () { files = [{ name: 'a.xlsx', size_bytes: 1, modified: 1 }];
+                           renderHome();
+                           return nodes.hnote.textContent === 'the fidelity sentence'; })());
+    })();
+
+    // ── FIND, the one new capability ──
+    check('Find scans the SHEET, not the DOM, so it can match a row that is not drawn '
+          + 'yet', /cellAt\(sh, r, c\)/.test(grab('findRun'))
+          && /usedExtent\(sh\)/.test(grab('findRun')));
+    check('…and then GROWS the render window to reach the match, terminating even when '
+          + 'the column cap is hit',
+          /while \(h\.r >= viewRows\)/.test(grab('findGo'))
+          && /viewCols < TIER1_MAX_COLS/.test(grab('findGo')));
+    check('…is capped, so a one-letter query on a huge sheet cannot hang the tab',
+          num('FIND_MAX') > 0 && /findHits\.length < FIND_MAX/.test(grab('findRun')));
+    check('…says how many and where you are, and admits when a match sits under a merge',
+          /' of ' \+ findHits\.length/.test(grab('findGo'))
+          && /merged cell/.test(grab('findGo')));
+    check('…and Enter / ⇧Enter walk the matches',
+          /findGo\(ev\.shiftKey \? -1 : 1\)/.test(html));
+
+    // ── Format: the write path, and the trap in it ──
+    const SWR = grab('styleWrite');
+    check('a style toggle RESOLVES the base style and writes a COPY back inline — a '
+          + 'style id is shared between cells, and mutating it would bold half the '
+          + 'workbook silently',
+          /cellStyle\(rc\)/.test(SWR) && /for \(const k in base\) next\[k\] = base\[k\]/.test(SWR)
+          && /cell\.s = next/.test(SWR));
+    check('…and it banks the cell being typed into first, then RE-ARMS the edit, '
+          + 'because commit() clears the flag and focusin will never fire again for a '
+          + 'cell that never lost focus',
+          /commitFocused\(\)/.test(SWR)
+          && /act\.dataset\.editing = '1'/.test(grab('commitFocused')));
+    check('…keeping the value while replacing only the style',
+          /if \(prev\) for \(const k in prev\) if \(k !== 's'\)/.test(SWR));
+    check('the style keys are the ones bridge/office.py::apply_style actually reads, so '
+          + 'a format applied here survives a save',
+          /fmtToggle\('bl'\)/.test(html) && /fmtToggle\('it'\)/.test(html)
+          && /fmtToggle\('ul', \{ s: 1 \}\)/.test(html)
+          && /fmtToggle\('st', \{ s: 1 \}\)/.test(html)
+          && /fmtToggle\('tb', 3\)/.test(html)
+          && /fmtAlign\(1\)/.test(html) && /fmtAlign\(2\)/.test(html) && /fmtAlign\(3\)/.test(html));
+    check('the cell a menu acts on is the LAST FOCUSED one, never activeElement — '
+          + 'clicking a menu label has already blurred the cell',
+          /let lastRC = null/.test(html) && /function lastCellNow\(\)/.test(html)
+          && !/document\.activeElement/.test(grab('menuPaint')));
+
+    // ── every tier-1 write is refused in the rich editor, and SAYS so ──
+    check('a tier-1 write cannot run while Univer owns the document — it would edit a '
+          + 'snapshot nobody is reading and be lost at the next save',
+          [grab('styleWrite'), grab('clearCell'), grab('addSheet'), grab('growRows'),
+           grab('growCols')].every(f => /t1ok\(\)/.test(f)));
+    check('…and the row says which of the three reasons applies rather than going grey '
+          + 'in silence', /const T1_ONLY = /.test(html) && /const NO_DOC = /.test(html)
+          && /const NO_CELL = /.test(html)
+          && /n\.title = \(!ok && why\) \? why : ''/.test(grab('setRow')));
+    check('the AI rows are guarded, because that panel belongs to another surface: they '
+          + 'disable themselves instead of throwing into a page that must keep working',
+          /typeof aiSetOpen === 'function'/.test(grab('aiAvail'))
+          && /setRow\(id, aiAvail\(\), NO_AI\)/.test(html));
 
     // ── report ──
     console.log('');

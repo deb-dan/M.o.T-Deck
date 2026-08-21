@@ -1015,6 +1015,23 @@ PYOC
     # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
     _clear_port "$OC_PORT" opencode
     sleep 1
+    # ── ANNOTATE THE LOG: the scary line that follows is EXPECTED ───────────────
+    # `serve` prints "OPENCODE_SERVER_PASSWORD is not set; server is unsecured."
+    # unconditionally (cli/cmd/serve.ts:17). We deliberately do NOT set that
+    # variable: the server is bound to 127.0.0.1 with no auth BY DESIGN, exactly
+    # like Hermes's loopback dashboard, and setting a password would gate the
+    # EMBEDDED SPA that our own native tab loads — OpenCode's "Add server" dialog
+    # asks for a username/password BY HAND (i18n/en.ts:354-365), so nothing would
+    # supply ours and the tab would become unusable. Leaving it unset is the choice;
+    # this block is what stops it reading as an alarm.
+    # The delimiter matters too: this log is opened with >> below, so it ACCUMULATES
+    # one block per Start. Six identical blocks mean six starts, not six servers.
+    {
+      echo "[harness] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${OC_PORT}, NO auth BY DESIGN"
+      echo "[harness]   the 'OPENCODE_SERVER_PASSWORD is not set; server is unsecured' line below is EXPECTED:"
+      echo "[harness]   we never set that variable - it would gate the embedded SPA this app's own tab loads."
+      echo "[harness]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
+    } >>"$ROOT/data/logs/opencode.log"
     # `serve`, deliberately NOT `web`: at the pin both commands call the SAME
     # Server.listen with the SAME network options and the SAME embedded SPA — `web`
     # only differs by calling open() on the URL, which would pop a browser window

@@ -112,3 +112,99 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > Roadmap updated + grep-verified. NOTHING EXECUTED this turn (no bash anywhere) —
 > ship gate + Debi's smoke tests are the validation. Restart the session for a
 > clean VM before the next heavy round.
+
+> **🧯 REGRESSION REPAIR + LOFFICE BECOMES AN OFFICE APP (2026-08-21 latest, Opus-5
+> builder ×4 in parallel, VM STILL DEAD — file-tools only, nothing executed;
+> ⚠️ ALL OF THIS IS PENDING FABLE QA. THE GOOGLE REFERENCE SCREENSHOTS DEBI SENT
+> (Sheets home + Sheets File/Edit/View/Insert/Format/Data menus, Docs Insert/Format/
+> Tools/Gemini menus, Slides Edit/View/Insert) ARE IN THE CHAT TRANSCRIPT AND ARE
+> TRANSCRIBED ITEM-BY-ITEM IN `docs/research/2026-08-21-office-ui-reference.md` —
+> Fable must read that doc; Debi called seeing them "paramount".**
+> **(1) THE REGRESSION WAS MINE (Fable's own Swift edit last turn): two comment lines
+> written with a SINGLE `/` instead of `//`** → `swiftc` failed → ship.sh copied panel
+> +bridge and moved on → the shell binary stayed OLDER than the panel (topbar still
+> read "Mission Control" while the sidebar read "MOT Main"). Every symptom Debi
+> reported follows from that skew. **STANDING LESSON, third strike class: Grep's
+> `-A/-B` CONTEXT LINES CAN DROP A LEADING CHARACTER** (a healthy `//` renders as `/`)
+> — never diagnose or copy comment syntax from context output; Read to confirm. A
+> whole-file scan for `^\s*/[^/*]` is now the cheap gate for main.swift.
+> **(2) LANE ROW → CHROME, root-caused:** `navOpen` did
+> `if (e.prefersTab && e.tab && switchTab(...)) return;` then `window.open(e.url)`;
+> `switchTab` returns false when the handler is absent (an old shell), and
+> `window.open` in a WKWebView lands in `createWebViewWith` → `NSWorkspace.open` →
+> the DEFAULT BROWSER. Aider/LOffice are `view:null` lanes so nothing else caught it.
+> FIX: new `inNativeApp()` (webkit present, deliberately weaker than `nativeShell()`)
+> + `shellTabs()`/`shellKnowsTab()` reading a NEW shell→page capability record
+> `window.harnessShell = {api:2, tabs:[...every registry id...]}` injected at
+> documentStart on the panel + loffice + aider only. Inside the app a lane can NEVER
+> reach `window.open` — it prints `this build of the app has no such tab — run
+> ./scripts/ship.sh`. **A one-way postMessage was previously silent on failure; it
+> now has a diagnosable answer.** Also fenced: `ensureLoaded`'s `wvById[id] ?? panelWV`
+> could have loaded `/office` INTO THE PANEL'S WEBVIEW (destroying Mission Control and
+> showing the panel in the asking tab — exactly Debi's symptom 2); now a `guard` that
+> logs `BUG:` and refuses. `/office` + `/aider` routes verified registered OUTSIDE the
+> defensive office try/except and unshadowed; office.py audited importable by reading.
+> **(3) LOFFICE MENU BAR — the Google-literal rebuild** (Debi: "did you even care to do
+> research… everything is in the white strip and uniform"): row 1 = dark app chrome
+> (mark · click-to-rename title · dirty dot · Rich/Import/New/Save), **row 2 = a WHITE
+> `<nav id="menubar">` flush with the sheet in BOTH themes: File · Edit · View ·
+> Insert · Format · Data · AI · Help, 63 rows**, uniform metrics, left tick gutter,
+> right-aligned mono shortcut column, hairline groups, click-then-hover switching,
+> ←→↑↓/Esc, **41 rows WIRED · 22 DISABLED WITH THE REASON IN THEIR OWN title** (Google's
+> grey-not-hide grammar; no dead item may look live). New capability: a real **Find**
+> bar (scans cellData, grows the render window, cap 500). Format's bold/italic/
+> underline/strike/align/wrap were chosen because `office.py::apply_style` provably
+> round-trips exactly `bl it ul st ff fs cl bg ht vt tb n`. **⌂ home NO LONGER LEAVES
+> LOFFICE** (Debi's exact complaint): `mi-start` shows LOffice's own **START SCREEN**
+> (Sheets-home shaped: "Start a new spreadsheet" Blank + 2 client-generated templates,
+> then the recent list with Enter/↑/↓/download/two-step delete), and a separate
+> `Back to MOT Main ↗` at the File menu's bottom keeps the switchTab. `autoOpen` no
+> longer auto-creates Untitled on an empty library — it lands on the start screen.
+> CSS: +47 rules in ONE contiguous block, −6 (`#filemenu` row rules) = net +41.
+> **(4) THE AI PANEL CAN NOW WRITE THE SHEET** (Debi: "not possible to do tool
+> functions… maybe even Hermes-like abilities"). **Mechanism ruling: NOT
+> OpenAI function-calling** — most of her local models can't tool-call and the direct
+> lane sends no `tools`, so it would work on some models and silently no-op on the
+> rest. Instead a **taught ACTION BLOCK**: ```loffice {v:1, file?, sheet?, ops:[set|
+> style|sheet|resize]}``` → pure total `parseActions` (caps 60 ops / 2000 cells /
+> GR5000 bounds; `set` REFUSES when over cap, `resize` CLAMPS — asymmetric on purpose)
+> → **a PREVIEW card (summary + exact `A1 → value` list, capped) with Apply/Dismiss;
+> nothing is written until the click** → Apply writes through the grid's OWN
+> putCell/parseInput/renderGrid/dirty path (no second writer) → **Undo restores a
+> pre-write full clone** (reversing ops has to guess what a cell held; a shared style
+> id or a merge makes that guess wrong invisibly). Never auto-saves — the user saves.
+> No-workbook case = `create()` then apply ("Create & apply"). Tier-2 (Univer mounted)
+> REFUSES with an honest message. **The old "this panel can never write" assertions
+> were deliberately rewritten** and replaced by something stronger: a fence computed
+> over every function in the page asserting the complete writer set is exactly
+> `[actRunOps, clearCell, commit, newFromTemplate, styleWrite]` (self-tested — an
+> injected writer trips it). `actRunOps` is EXECUTED in-test against bare snapshots
+> incl. the shared-style-id trap and byte-for-byte undo. Hermes hand-off = a LATER
+> slice, deliberately not started (Hermes has the real tools + approval cards +
+> path-guard). **Stamp loffice-2026-08-21k** (page ×2 + both test files agree).
+> **(5) OPENCODE "degraded while green" — DIAGNOSED, and the expensive-endpoint
+> hypothesis is REFUTED.** The card and the feed read the SAME `c.degraded` in the same
+> loop iteration — they cannot disagree at an instant; the difference is LIFETIME (the
+> card is rebuilt every poll, the feed line is permanent scrollback with no retraction).
+> `degraded` was instantaneous: `expected-up AND not running`, and `running` is a 0.5s
+> TCP handshake OR pid-alive — it never touches `/provider`. Two healthy windows
+> produce it for one poll: **a CLI `--restart` (which Debi ran: `_clear_port` → sleep →
+> new pid, while `.expected` is only written by the PANEL's Start)** and event-loop
+> congestion. FIXES: per-component probe budget (`{opencode: 2.0}`, default 0.5,
+> spent only when expected-up so a stopped component can't slow every poll), a pure
+> `health_verdict` → `ok|transient|lost` with **3 consecutive misses** (mirrors the
+> panel's own BRIDGE-UNREACHABLE rule), ONE derivation `healthOf(c)` feeding feed+card
+> +dot, and the line that makes a stale alarm impossible: **`back online`**. Card reads
+> `Reconnecting…` during a restart. **Deliberately NOT switched to `/global/health`:
+> a TCP handshake is completed by the KERNEL from the listen backlog, an HTTP GET needs
+> the server's event loop — the "cheaper" endpoint would be MORE likely to false-fail.**
+> The six log blocks are six STARTS appended to one log (`>>`, never truncated) — no
+> leak, ownership-checked port clearing, no `opencode` name signature so a stranger on
+> :4096 is never killed; the start log now says so, and annotates the vendored
+> `OPENCODE_SERVER_PASSWORD` warning as expected-on-loopback (setting one would gate
+> the SPA our own tab loads — Add-server asks for it BY HAND, nothing would supply it).
+> ⚠️ QUEUED: probe components concurrently (`asyncio.gather`) — worst-case /api/status
+> latency now +1.5s while opencode is expected-up-and-missing.
+> **(6) DEBI'S OPEN QUESTION, answered honestly: LOffice is Sheets-only today.**
+> Docs + Slides ride the ONLYOFFICE probe (its bundle carries all three editors + PDF);
+> the menu bar and start screen were built so a document-type row slots in.

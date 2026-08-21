@@ -111,7 +111,7 @@ check('the primaries are built FROM the registry, so a new row needs no code her
       /for t in tabRegistry \{/.test(swift) &&
       /wvById\[t\.id\] = WKWebView\(frame: \.zero, configuration: WKWebViewConfiguration\(\)\)/.test(swift));
 check('webViewFor / allWebViews / urlForTab are table lookups, not switch tables',
-      /func webViewFor\(_ idx: Int\) -> WKWebView \{[\s\S]{0,300}return wvById\[tabs\[idx\]\.id\] \?\? panelWV/.test(swift) &&
+      /func webViewFor\(_ idx: Int\) -> WKWebView \{[\s\S]{0,300}if let wv = wvById\[tabs\[idx\]\.id\] \{ return wv \}/.test(swift) &&
       /func allWebViews\(\) -> \[WKWebView\] \{ return Array\(wvById\.values\) \}/.test(swift) &&
       /func urlForTab\(_ idx: Int\) -> URL \{[\s\S]{0,200}return tabs\[idx\]\.url/.test(swift));
 check('lazy load is ONE generic path keyed by a Set of IDS, not a flag per tab',
@@ -120,6 +120,17 @@ check('lazy load is ONE generic path keyed by a Set of IDS, not a flag per tab',
       /var loadedTabs = Set<String>\(\)/.test(swift) &&
       /guard !loadedTabs\.contains\(id\) else \{ return \}/.test(swift) &&
       !/var (odyLoaded|vsLoaded|vbLoaded) /.test(swift));
+// REGRESSION FENCE (2026-08-21): the old `(wvById[id] ?? panelWV).load(...)` would, for
+// an unmapped id, load that tab's URL INTO MISSION CONTROL — losing the bridge-wait
+// surface and the drop target, and leaving the asking tab showing the panel. That is
+// exactly the symptom "the LOffice tab shows MOT Main", so it must be unrepresentable.
+check('a tab with no webview REFUSES to load, and never loads into the panel',
+      /guard let wv = wvById\[id\] else \{[\s\S]{0,240}return\n\s*\}/.test(swift) &&
+      /wv\.load\(URLRequest\(url: urlForTab\(idx\)\)\)/.test(swift) &&
+      !/\(wvById\[id\] \?\? panelWV\)\.load/.test(swift));
+check('...and does not mark itself loaded, so ⌘R or a re-select can still succeed',
+      swift.indexOf('guard let wv = wvById[id] else {') <
+      swift.indexOf('loadedTabs.insert(id)'));
 check('no per-tab webview properties survive for the optional SPAs',
       !/\bvsWV\b/.test(swift) && !/\bvbWV\b/.test(swift));
 check('urlFor resolves a primary by ID, so a new tab needs no identity branch',
@@ -460,11 +471,31 @@ const handler = swift.slice(swift.indexOf('func userContentController(_ ucc:'));
 const handlerBody = handler.slice(0, handler.indexOf('\n    }\n', handler.indexOf('default:')) + 6);
 check('the shell conforms to WKScriptMessageHandler',
       /NSSplitViewDelegate, WKScriptMessageHandler \{/.test(swift));
-check('the handler is registered exactly ONCE, on the panel configuration',
-      (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 1
-      && /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,200}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
+// It is registered on OUR OWN pages only: the panel, plus LOffice and Aider (also
+// first-party documents served by our bridge, whose File menus ask for a tab the same
+// way the sidebar does). That is TWO registration sites — the panel's, and one arm of
+// the registry loop gated on exactly those two ids. THAT GATE IS THE SECURITY PROPERTY:
+// a third-party component page must never be able to drive our tab strip.
+check('the handler is registered on the panel configuration',
+      /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,300}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
+check('...and on our own LOffice/Aider pages, on nothing else',
+      (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \{[\s\S]{0,300}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
-      !/odyCfg\.userContentController\.add\(self/.test(swift));
+      !/odyCfg\.userContentController\.add\(self/.test(swift)
+      // the generic arm — every third-party component page — gets a BARE configuration.
+      && /else \{ wvById\[t\.id\] = WKWebView\(frame: \.zero, configuration: WKWebViewConfiguration\(\)\) \}/.test(swift));
+// The shell tells the panel what it can do, so a panel NEWER than the shell is
+// detectable instead of silently no-op (and never falls through to the default browser).
+check('the shell injects its own capability record into its first-party pages',
+      /let shellAPI = \d+/.test(swift)
+      && /window\.harnessShell=\{api:\\\(shellAPI\),tabs:\[\\\(shellIds\)\]\};/.test(swift)
+      && /let shellIds = tabRegistry\.map \{ "\\"\\\(\$0\.id\)\\"" \}\.joined\(separator: ","\)/.test(swift)
+      && /injectionTime: \.atDocumentStart, forMainFrameOnly: true/.test(swift));
+check('...the tab list it publishes is the REGISTRY, not the visible strip',
+      /shellIds = tabRegistry\.map/.test(swift) && !/shellIds = tabs\.map/.test(swift));
+check('...and it is added to the panel and to LOffice/Aider, nowhere else',
+      (swift.match(/addUserScript\(shellScript\)/g) || []).length === 2);
 check('it accepts only the "harness" message name',
       /message\.name == "harness"/.test(handlerBody));
 check('switchTab resolves an ID (title as the fallback) against the REGISTRY',
@@ -504,7 +535,10 @@ const oc = html.slice(html.indexOf('function openComponent('),
 check('openComponent reads running state at CLICK time, not from the rendered row',
       /lastStatus && lastStatus\.components/.test(oc));
 check('...a RUNNING component opens its tab',
-      /c\.running && title && switchTab\(title, name\)/.test(oc));
+      /c\.running && title\) \{/.test(oc)
+      && /shellKnowsTab\(name\) !== false && switchTab\(title, name\)/.test(oc));
+check('...and a stale shell SAYS so rather than silently landing on the card',
+      /if \(inNativeApp\(\)\) navShellNote\(name, SHELL_STALE_NOTE\);/.test(oc));
 check('...and everything else falls back to jumpToCard (browser, stopped, no tab)',
       /jumpToCard\(name\)/.test(oc));
 check('switchTab returns false when the native bridge is absent',

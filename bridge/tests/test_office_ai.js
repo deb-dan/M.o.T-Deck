@@ -505,17 +505,43 @@ check('the session is deliberately EMPTY, so a spreadsheet question can never ap
       + 'in — or retitle — a chat in Mission Control',
       /session: ''/.test(send));
 
-// READ-ONLY ADVISORY, enforced by construction.
+/* ⚠️⚠️ THE FOUR ASSERTIONS BELOW WERE REWRITTEN AT 2026-08-21k AND THAT IS A DELIBERATE
+   POLICY CHANGE, NOT A WEAKENING. This panel used to be read-only advisory and these
+   lines pinned it: "aiSend writes NOTHING", "nor does the reply renderer", "a suggested
+   formula is COPIED, never applied". Debi asked for the opposite — "it seems not
+   possible to do tool functions, i.e. just ask it to create a document with data on
+   that page" — so the panel can now WRITE, and pinning a promise the product no longer
+   makes would be worse than pinning nothing.
+
+   WHAT THEY WERE PINNING SURVIVES AS TWO NARROWER, STRONGER FACTS, both below and both
+   in PART 4: (1) `aiSend` and the reply renderer STILL write nothing themselves — the
+   write lives behind one click, in one function; (2) an ORDINARY fenced block is still
+   copy-only, and only an ACTION block earns an Apply.
+
+   ⚠️ AND ONE OF THEM WOULD STILL HAVE PASSED, WHICH IS WHY IT HAD TO GO. `aiRenderBody`
+   now renders the Apply card, but it does it by CALLING actCard — so a regex looking for
+   `putCell(` in aiRenderBody's own body finds nothing and reports "the reply renderer
+   writes nothing into the spreadsheet", which is true of the text and false of the
+   product. A negative that keeps passing after the thing it guarded is gone is worse
+   than no negative at all. The replacement (PART 4's writer-set fence) is computed over
+   EVERY function in the page, so it cannot be defeated by moving the call one level
+   down. */
 const writers = /\bputCell\(|\bcommit\(|\brenderGrid\(|\bparseInput\(|dirty = true/;
-check('aiSend writes NOTHING into the spreadsheet', !writers.test(send));
-check('…nor does the reply renderer', !writers.test(grab('aiRenderBody')));
+check('aiSend itself writes nothing into the spreadsheet — the reply is text, and the '
+      + 'only thing that can act on it is a button the user has to press',
+      !writers.test(send) && !/actApply|actRunOps/.test(stripComments(send)));
+check('the reply renderer performs no write of its own either: it DELEGATES to actCard, '
+      + 'and the writer-set fence in PART 4 is what proves that is the only route',
+      !writers.test(grab('aiRenderBody'))
+      && /actCard\(host, scan\)/.test(grab('aiRenderBody')));
 check('…nor the context builder (it only reads)', !writers.test(grab('buildContext')));
 check('…nor the snapshot reader — and it is deliberately NOT snapshotToSave(), which '
       + 'COMMITS the focused cell', !writers.test(grab('aiSnapshot'))
       && !/snapshotToSave/.test(grab('aiSnapshot')) && !/snapshotToSave/.test(send));
-check('a suggested formula is COPIED, never applied to a cell',
+check('an ORDINARY fenced block is still copy-only — a suggested formula in a ```excel '
+      + 'block is advice, and it grew no Apply button',
       /aiCopy\(cp, pre\.textContent\)/.test(grab('aiRenderBody'))
-      && !/apply/i.test(stripComments(grab('aiRenderBody'))));
+      && !/actApply/.test(stripComments(grab('aiRenderBody'))));
 check('the copy button falls back to execCommand where the async clipboard is absent '
       + '(a WKWebView is not a browser)', /execCommand\('copy'\)/.test(grab('aiCopy')));
 
@@ -577,6 +603,11 @@ check('…and stops when it is collapsed', /clearInterval\(aiTimer\)/.test(grab(
 // THE BUG, from Debi's screenshot: "What does clean function do" → an explanation of
 // PYTHON string cleaning. Two things were wrong, and the sheet toggle was only one of
 // them: NOTHING in the request said this was a spreadsheet at all.
+// ⚠️ actHelp FIRST, and this is not cosmetic: at 2026-08-21k the preamble ENDS by
+// calling it (the action format is taught on every request), so evaluating the preamble
+// on its own and then calling it would throw ReferenceError — which is a CRASHED test,
+// not a failing one, and every assertion after it would never run.
+eval(grab('actHelp'));
 eval(grab('aiPreamble'));
 const PRE = aiPreamble('Sales.xlsx', 'Q3');
 check('the preamble says what this app is', /LOffice/.test(PRE) && /spreadsheet/i.test(PRE));
@@ -611,7 +642,12 @@ check('…and says out loud when only the grounding went', /grounding only/.test
 check('the preamble travels in the SAME single message on the SAME lane — no second '
       + 'field, no system role, nothing new on the wire',
       /JSON\.stringify\(\{ session: '', message: message \}\)/.test(send3));
-check('it is READ-ONLY like everything else in this panel', !writers.test(grab('aiPreamble')));
+// ⚠️ REWORDED AT 2026-08-21k: it used to read "it is READ-ONLY like everything else in
+// this panel", and the second half of that is no longer true. The fact it pinned is,
+// and it is still worth pinning: the preamble is a string builder, nothing more.
+check('the preamble builds a STRING and does nothing else — the model may now propose a '
+      + 'change, but the thing that describes the format cannot make one',
+      !writers.test(grab('aiPreamble')) && !/actApply|actRunOps/.test(grab('aiPreamble')));
 
 // ── the sheet chip, per document ─────────────────────────────────────────────
 check('the chip starts ON in the markup', /id="ai-ctx" class="chip on"/.test(html));
@@ -752,10 +788,665 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
       themeRules.every(r => !/#gt|#gridwrap|#gridbar|#sheet\b/.test(r.sel)));
 
 // the build stamp moved, so a stale document is still decidable by eye
+// ⚠️ THIS WAS RED WHEN THIS SLICE STARTED: the menu-bar rebuild bumped the page to
+// `j` and left this literal on `i`, so two assertions in this file were already
+// failing. Bumped to `k` for the AI-actions slice, and the same one-line literal in
+// test_office_grid.js was bumped with it (that file reads the stamp for everything
+// EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21i');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21k');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-21i/g) || []).length === 2);
+      (html.match(/loffice-2026-08-21k/g) || []).length === 2);
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
+   ═════════════════════════════════════════════════════════════════════════════
+   "The model on LOffice seems to be aware now. However, it seems not possible to do
+   tool functions, i.e. just ask it to create a document with data on that page."
+
+   THE MECHANISM IS NOT OPENAI FUNCTION-CALLING, ON PURPOSE: most of the models Debi
+   runs locally cannot tool-call at all (that is what the `tools` pill on the Models
+   page exists to say) and the direct chat lane sends no tools array — so a
+   function-calling path would work on some of her models and silently do nothing on
+   the rest. Instead the format is TAUGHT IN THE PROMPT and the reply is parsed.
+
+   WHICH MAKES THE MODEL AN UNTRUSTED INPUT, and that is what most of this part is
+   about: the parse is pure, total, capped, and explains every refusal; the preview is
+   built from the plan's own literal values; and the write happens in ONE function
+   behind ONE click, with a full-workbook clone taken first so Undo is a restore. */
+
+const officePy = fs.readFileSync(path.join(ROOT, 'bridge', 'office.py'), 'utf8');
+
+// The constants come out of the page as `var`, because a `const` inside a sloppy-mode
+// direct eval is scoped to the eval and would be lost (function declarations leak,
+// lexical declarations do not — the same reason this file is not 'use strict').
+function constLine(name) {
+  const m = html.match(new RegExp('^const ' + name + ' = .*?;', 'm'));
+  if (!m) throw new Error('const ' + name + ' not found in office.html');
+  return m[0].replace(/^const /, 'var ');
+}
+eval(constLine('ACT_LANGS'));
+eval(constLine('ACT_V'));
+eval(constLine('ACT_MAX_OPS'));
+eval(constLine('ACT_MAX_CELLS'));
+eval(constLine('ACT_MAX_ROW'));
+eval(constLine('ACT_MAX_COL'));
+eval(constLine('ACT_STR_MAX'));
+eval(constLine('ACT_LIST_MAX'));
+eval(constLine('ACT_SHEET_MAX'));
+eval(constLine('ACT_NAME_MAX'));
+eval(constLine('ACT_UNDO_MAX_BYTES'));
+eval(constLine('ACT_HT'));
+eval(constLine('ACT_VT'));
+var actSeq = 0;                       // page-side module state, mirrored for actAddSheet
+
+eval(grab('parseInput')); eval(grab('putCell'));
+eval(grab('actHelp'));
+eval(grab('actScalar')); eval(grab('actRef')); eval(grab('actRange'));
+eval(grab('actGrid')); eval(grab('actColor')); eval(grab('actStyleSet'));
+eval(grab('actDocName')); eval(grab('actValidate')); eval(grab('actScan'));
+eval(grab('parseActions')); eval(grab('actSummary')); eval(grab('actCellList'));
+eval(grab('actCell')); eval(grab('actClone')); eval(grab('actTargetSid'));
+eval(grab('actSheetExists')); eval(grab('actAddSheet')); eval(grab('actResolveStyle'));
+eval(grab('actRunOps')); eval(grab('actWhere'));
+
+check('the caps mirror the grid they write into: the column ceiling is TIER1_MAX_COLS',
+      ACT_MAX_COL === num('TIER1_MAX_COLS') - 1);
+check('…the sheet-name cap is Excel\'s own, which bridge/office.py also mirrors',
+      ACT_SHEET_MAX === 31 && /SHEET_NAME_MAX = 31/.test(officePy));
+check('…and the file-name cap is office.NAME_MAX',
+      ACT_NAME_MAX === 80 && /^NAME_MAX = 80/m.test(officePy));
+
+// ── the prompt half: what the model is told, and the cross-file fence on it ──
+const HELP = actHelp();
+check('the help names the fence tag the parser looks for',
+      HELP.indexOf('```loffice') >= 0 && ACT_LANGS.indexOf('loffice') === 0);
+check('…shows every operation the parser implements',
+      ['"op":"set"', '"op":"style"', '"op":"sheet"', '"op":"resize"']
+        .every(s => HELP.indexOf(s) >= 0));
+check('…says where the values start, and that = is a formula and null empties a cell',
+      /values START/.test(HELP) && /= is a formula/.test(HELP) && /null empties/.test(HELP));
+check('…says nothing is written until Apply — the model should not promise otherwise',
+      /Nothing is written until the user presses Apply/.test(HELP));
+check('…and gives it the way OUT, so a plain question is still answered in prose',
+      /answer in prose and emit no loffice block/.test(HELP));
+// THE CROSS-FILE FENCE. The style keys the model is told about, the keys the parser
+// accepts and the keys bridge/office.py::apply_style actually writes into the .xlsx
+// must be ONE list. A key we accepted and the bridge dropped would be a formatting
+// change that looks right, vanishes on save and comes back missing — silent loss.
+const APPLY_STYLE = officePy.slice(officePy.indexOf('def apply_style'),
+                                   officePy.indexOf('def cell_snapshot'));
+const STYLE_KEYS = ['bl', 'it', 'ul', 'st', 'ff', 'fs', 'cl', 'bg', 'ht', 'vt', 'tb', 'n'];
+STYLE_KEYS.forEach(k => {
+  check('office.py::apply_style really writes the "' + k + '" style key',
+        APPLY_STYLE.indexOf('style.get("' + k + '")') >= 0
+        || APPLY_STYLE.indexOf('style["' + k + '"]') >= 0);
+});
+check('the help lists exactly those keys, in one place, so the model is told the truth',
+      HELP.indexOf(STYLE_KEYS.join(' ')) >= 0);
+const styleSrc = grab('actStyleSet');
+check('…and actStyleSet emits no key apply_style would not read',
+      (styleSrc.match(/out\.([a-z]+) =/g) || [])
+        .map(s => s.replace(/out\.| =/g, ''))
+        .every(k => STYLE_KEYS.indexOf(k) >= 0));
+// the preamble carries it, unconditionally, on the same one message
+eval(grab('aiPreamble'));
+const PRE4 = aiPreamble('Sales.xlsx', 'Q3');
+check('the grounding preamble carries the action format on EVERY request — a heuristic '
+      + 'that only taught it when the question "looked like" a write would make the '
+      + 'capability vanish for phrasings nobody thought of',
+      PRE4.indexOf(HELP) > 0 && /actHelp\(\)/.test(grab('aiPreamble')));
+check('…so the "context sent" disclosure shows it too, because that disclosure is the '
+      + 'WHOLE message', /text: message/.test(send));
+check('…and it still costs one message on one lane: nothing new on the wire',
+      /JSON\.stringify\(\{ session: '', message: message \}\)/.test(send));
+
+// ── A1 references ───────────────────────────────────────────────────────────
+[['A1', 0, 0], ['B3', 2, 1], ['AA1', 0, 26], ['AB10', 9, 27], ['GR5000', 4999, 199],
+ ['a1', 0, 0], ['$B$2', 1, 1], ['  C7  ', 6, 2], ['ZZ1', 0, 701]
+].forEach(([s, r, c]) => {
+  eq('actRef(' + JSON.stringify(s) + ')', actRef(s), { r: r, c: c });
+});
+check('actRef is the exact inverse of colName, which is what draws the headers',
+      [0, 1, 25, 26, 27, 51, 52, 199, 701].every(c => {
+        const ref = actRef(colName(c) + '1');
+        return ref && ref.c === c;
+      }));
+eq('actRef refuses everything that is not a cell rather than inventing one',
+   ['A0', '0A', '1A', 'A', '1', '', '   ', 'A1:B2', 'AAAA1', 'the total row',
+    null, undefined, 42, {}, []].map(s => actRef(s)),
+   [null, null, null, null, null, null, null, null, null, null,
+    null, null, null, null, null]);
+eq('actRange takes a single cell as a 1x1 rectangle', actRange('B3'),
+   { r0: 2, c0: 1, r1: 2, c1: 1 });
+eq('…a range as itself', actRange('A1:C3'), { r0: 0, c0: 0, r1: 2, c1: 2 });
+eq('…and a BACKWARDS range as the same rectangle, because it is the same rectangle',
+   actRange('C3:A1'), actRange('A1:C3'));
+eq('actRange refuses junk', [actRange(''), actRange('A1:B2:C3'), actRange('A1:'),
+   actRange(':B2'), actRange('nope'), actRange(null)],
+   [null, null, null, null, null, null]);
+
+// ── values → a grid ─────────────────────────────────────────────────────────
+eq('a 2-D array is a grid', actGrid([['a', 'b'], ['c', 'd']]), [['a', 'b'], ['c', 'd']]);
+eq('a FLAT array is one row — the shape a model reaches for when it means "a row"',
+   actGrid(['a', 'b']), [['a', 'b']]);
+eq('a bare scalar is one cell', actGrid(42), [[42]]);
+eq('…including a string, a boolean and null (null means empty this cell)',
+   [actGrid('x'), actGrid(true), actGrid(null)], [[['x']], [[true]], null]);
+eq('a HALF-nested array is REFUSED, not repaired: guessing could put a value in the '
+   + 'wrong cell, which is worse than saying no', actGrid([['a'], 'b']), null);
+eq('…as are empty arrays, empty rows, and a cell holding an object',
+   [actGrid([]), actGrid([[]]), actGrid([[{ a: 1 }]]), actGrid([[undefined]])],
+   [null, null, null, null]);
+eq('a non-finite number is not a value', [actGrid(NaN), actGrid([[Infinity]])], [null, null]);
+check('a cell longer than the text cap is refused rather than truncated into the file',
+      actGrid([['x'.repeat(ACT_STR_MAX)]]) !== null
+      && actGrid([['x'.repeat(ACT_STR_MAX + 1)]]) === null);
+eq('actGrid copies the rows it was given rather than aliasing the model\'s array',
+   (() => { const src = [['a']]; const out = actGrid(src); out[0][0] = 'b'; return src[0][0]; })(),
+   'a');
+
+// ── styles ──────────────────────────────────────────────────────────────────
+eq('bold, italic, underline and strikethrough take the shapes office.py reads',
+   actStyleSet({ bl: true, it: 1, ul: true, st: true }),
+   { bl: 1, it: 1, ul: { s: 1 }, st: { s: 1 } });
+eq('alignment is accepted as a WORD, because that is what a model writes',
+   [actStyleSet({ ht: 'center' }), actStyleSet({ ht: 'Right' }), actStyleSet({ vt: 'top' }),
+    actStyleSet({ ht: 2 })],
+   [{ ht: 2 }, { ht: 3 }, { vt: 1 }, { ht: 2 }]);
+eq('a colour is normalised to 6-digit lower-case hex, and a NAME is refused — the file '
+   + 'stores hex and inventing one for "reddish" would be a lie in a document',
+   [actStyleSet({ cl: '#ABCDEF' }), actStyleSet({ bg: '#f00' }),
+    actStyleSet({ cl: { rgb: '#123456' } }), actStyleSet({ cl: 'red' })],
+   [{ cl: { rgb: '#abcdef' } }, { bg: { rgb: '#ff0000' } },
+    { cl: { rgb: '#123456' } }, null]);
+eq('a font size outside openpyxl\'s own 1..409 is dropped',
+   [actStyleSet({ fs: 11 }), actStyleSet({ fs: 0 }), actStyleSet({ fs: 500 }),
+    actStyleSet({ fs: 'big' })],
+   [{ fs: 11 }, null, null, null]);
+eq('wrap is accepted in all three shapes a model writes it',
+   [actStyleSet({ tb: 3 }), actStyleSet({ tb: true }), actStyleSet({ tb: 'wrap' })],
+   [{ tb: 3 }, { tb: 3 }, { tb: 3 }]);
+eq('a number format travels as {pattern}', actStyleSet({ n: '0.00' }), { n: { pattern: '0.00' } });
+eq('UNKNOWN keys are dropped, and an op left with nothing is refused outright',
+   [actStyleSet({ border: 'thin', shadow: true }), actStyleSet({ bl: 1, border: 'thin' })],
+   [null, { bl: 1 }]);
+eq('actStyleSet is total over junk',
+   [actStyleSet(null), actStyleSet('bold'), actStyleSet([1, 2]), actStyleSet(undefined),
+    actStyleSet({})],
+   [null, null, null, null, null]);
+
+// ── file names ──────────────────────────────────────────────────────────────
+eq('a suggested file name loses only what could not be a file name; the BRIDGE owns '
+   + 'the rest of the rules and its own never-clobber walk',
+   [actDocName('2026 budget'), actDocName('a/b\\c.xlsx'), actDocName('  x  '),
+    actDocName('Sales.XLSX'), actDocName(''), actDocName(null), actDocName(42)],
+   ['2026 budget', 'a b c', 'x', 'Sales', '', '', '42']);
+check('…and it can never be longer than the bridge accepts',
+      actDocName('n'.repeat(400)).length === ACT_NAME_MAX);
+
+/* ── the validator, which is where the model is actually held to account ──── */
+function plan(obj) { return actValidate(obj); }
+const OK = { v: 1, ops: [{ op: 'set', at: 'A1', values: [['Month', 'Planned']] }] };
+check('a well-formed block validates', plan(OK).ok === true);
+eq('…and reports what it will do', plan(OK).count.cells, 2);
+check('the version is required — a future format must not be read as this one',
+      plan({ ops: OK.ops }).ok === false
+      && plan({ v: 2, ops: OK.ops }).ok === false
+      && plan({ v: '1', ops: OK.ops }).ok === true);
+check('…and a version of `true` is not a version', plan({ v: true, ops: OK.ops }).ok === false);
+[['not an object at all', 'a string'], ['an array', [1, 2]], ['null', null],
+ ['no ops', { v: 1 }], ['ops that is not a list', { v: 1, ops: 'set A1' }],
+ ['an empty ops list', { v: 1, ops: [] }],
+ ['an op that is not an object', { v: 1, ops: ['set A1 to x'] }],
+ ['an unknown op', { v: 1, ops: [{ op: 'delete_file', at: 'A1' }] }],
+ ['an op with no op name', { v: 1, ops: [{ at: 'A1', values: [['x']] }] }],
+ ['a set with no values', { v: 1, ops: [{ op: 'set', at: 'A1' }] }],
+ ['a set whose "at" is prose', { v: 1, ops: [{ op: 'set', at: 'the total row', values: [['x']] }] }],
+ ['a style with no readable key', { v: 1, ops: [{ op: 'style', at: 'A1', set: { border: 1 } }] }],
+ ['a sheet op with neither add nor rename', { v: 1, ops: [{ op: 'sheet' }] }],
+ ['a resize with neither rows nor cols', { v: 1, ops: [{ op: 'resize' }] }],
+ ['a sheet name past Excel\'s limit', { v: 1, ops: [{ op: 'sheet', add: 'x'.repeat(40) }] }]
+].forEach(([label, obj]) => {
+  const p = plan(obj);
+  check('REFUSED, with a reason a person can read — ' + label,
+        p.ok === false && typeof p.why === 'string' && p.why.length > 8);
+});
+check('every refusal that is about one operation NAMES which one',
+      /operation 2: /.test(plan({ v: 1, ops: [OK.ops[0], { op: 'nope' }] }).why));
+// the caps
+check('more than ' + ACT_MAX_OPS + ' operations is refused before anything is read',
+      plan({ v: 1, ops: new Array(ACT_MAX_OPS + 1).fill(OK.ops[0]) }).ok === false
+      && plan({ v: 1, ops: new Array(ACT_MAX_OPS).fill(OK.ops[0]) }).ok === true);
+{
+  const wide = [];
+  for (let i = 0; i < 60; i++) wide.push(new Array(40).fill('x'));    // 2400 cells
+  check('a plan over the ' + ACT_MAX_CELLS + '-cell budget is refused WHOLE, not '
+        + 'truncated — half a table written is worse than none',
+        plan({ v: 1, ops: [{ op: 'set', at: 'A1', values: wide }] }).ok === false);
+  check('…and the budget is shared across ALL the ops in one plan, not per op',
+        plan({ v: 1, ops: [
+          { op: 'set', at: 'A1', values: [new Array(30).fill('x')] },
+          { op: 'style', at: 'A1:AZ100', set: { bl: 1 } }]}).ok === false);
+}
+check('a set that would land outside the grid this tier can draw is refused',
+      plan({ v: 1, ops: [{ op: 'set', at: 'GR5000', values: [['x']] }] }).ok === true
+      && plan({ v: 1, ops: [{ op: 'set', at: 'GS1', values: [['x']] }] }).ok === false
+      && plan({ v: 1, ops: [{ op: 'set', at: 'A5000', values: [['a'], ['b']] }] }).ok === false);
+check('…and so is a style range that reaches past it',
+      plan({ v: 1, ops: [{ op: 'style', at: 'A1:GS2', set: { bl: 1 } }] }).ok === false);
+// ⚠️ THE ONE DELIBERATE ASYMMETRY, pinned so it reads as a decision
+check('RESIZE clamps where SET refuses: a clamped resize loses nothing, a clamped set '
+      + 'would drop data',
+      plan({ v: 1, ops: [{ op: 'resize', rows: 999999, cols: 999999 }] }).ok === true
+      && plan({ v: 1, ops: [{ op: 'resize', rows: 999999 }] }).ops[0].rows === ACT_MAX_ROW + 1
+      && plan({ v: 1, ops: [{ op: 'resize', cols: 999999 }] }).ops[0].cols === ACT_MAX_COL + 1);
+// the range is an ANCHOR
+{
+  const p = plan({ v: 1, ops: [{ op: 'set', at: 'A1:B2',
+                                 values: [['a'], ['b'], ['c'], ['d'], ['e']] }] });
+  check('a range is an ANCHOR, not a clip: five rows offered at A1:B2 write five rows, '
+        + 'because clipping would silently drop what the model meant to write',
+        p.ok === true && p.count.cells === 5 && p.ops[0].r === 0 && p.ops[0].c === 0);
+}
+// counting, which is what the preview promises
+{
+  const p = plan({ v: 1, ops: [
+    { op: 'set', at: 'A1', values: [['Month', 'Planned'], ['January', 900]] },
+    { op: 'set', at: 'B14', values: [['=SUM(B2:B13)']] },
+    { op: 'set', at: 'C1', values: [[null]] },
+    { op: 'style', at: 'A1:B1', set: { bl: 1 } },
+    { op: 'sheet', add: 'Notes' },
+    { op: 'sheet', rename: 'Budget' },
+    { op: 'resize', rows: 200 }] });
+  check('the plan counts what it will do', p.ok === true);
+  eq('…cells, emptied cells and formulas',
+     [p.count.cells, p.count.cleared, p.count.formulas], [5, 1, 1]);
+  eq('…formatted RANGES (not cells), new sheets, renames and resizes',
+     [p.count.styled, p.count.sheets, p.count.renames, p.count.resizes], [1, 1, 1, 1]);
+  const s = actSummary(p, 'Sheet1');
+  check('the summary reads like the brief asked: "N cells in Sheet1 · N formulas · …"',
+        /^5 cells in Sheet1 · 1 cell emptied · 1 formula · 1 formatted range · 1 new sheet/.test(s));
+  eq('a plan with one cell says "cell", not "cells"',
+     actSummary(plan({ v: 1, ops: [{ op: 'set', at: 'A1', values: [['x']] }] }), 'S'),
+     '1 cell in S');
+  eq('actSummary is total', [actSummary(null, 'x'), actSummary({}, 'x'),
+     actSummary(p, null), actSummary(p, undefined)].map(x => typeof x),
+     ['string', 'string', 'string', 'string']);
+  // the LIST is what the user actually reads before pressing Apply
+  const list = actCellList(p);
+  check('the preview lists the exact cells, from the plan\'s OWN values — what it '
+        + 'promises is what the apply writes',
+        list.lines[0] === 'A1 → Month' && list.lines[1] === 'B1 → Planned'
+        && list.lines[2] === 'A2 → January' && list.lines[3] === 'B2 → 900'
+        && list.lines[4] === 'B14 → =SUM(B2:B13)');
+  check('…an emptied cell reads as (empty) rather than as the word null',
+        list.lines[5] === 'C1 → (empty)');
+  check('…a style op names its range and the keys it sets',
+        list.lines[6] === 'A1:B1 → bl');
+  check('…and the sheet and resize ops say what they are',
+        /a new sheet called Notes/.test(list.lines[7])
+        && /rename a sheet to Budget/.test(list.lines[8])
+        && /grow to 200 rows/.test(list.lines[9]));
+  eq('the plan\'s own line count agrees with the list, so "+N more" can never lie',
+     p.count.lines, list.lines.length + list.more);
+}
+{
+  // the cap, and the "+N more" that goes with it
+  const many = [];
+  for (let i = 0; i < ACT_LIST_MAX + 15; i++) many.push(['row ' + i]);
+  const p = plan({ v: 1, ops: [{ op: 'set', at: 'A1', values: many }] });
+  const list = actCellList(p);
+  eq('the preview list is capped', list.lines.length, ACT_LIST_MAX);
+  eq('…and says how many it did not show', list.more, 15);
+  eq('…and the two still add up to the plan', p.count.lines, ACT_LIST_MAX + 15);
+}
+check('a very long value is shortened in the PREVIEW only — the plan still carries it '
+      + 'whole, because the preview is a description and the plan is the data',
+      (() => {
+        const p = plan({ v: 1, ops: [{ op: 'set', at: 'A1', values: [['y'.repeat(400)]] }] });
+        return actCellList(p).lines[0].length < 100 && p.ops[0].values[0][0].length === 400;
+      })());
+eq('actCellList is total over a junk plan',
+   [actCellList(null), actCellList({}), actCellList({ ops: 'nope' })].map(x => x.lines.length),
+   [0, 0, 0]);
+
+/* ── finding the block in a real reply ─────────────────────────────────────── */
+const REPLY_OK = 'Here is the budget.\n\n```loffice\n'
+  + '{"v":1,"file":"2026 budget","sheet":"Sheet1","ops":['
+  + '{"op":"set","at":"A1","values":[["Month","Planned","Actual"]]},'
+  + '{"op":"set","at":"A2","values":[["January",900,null],["February",900,null]]},'
+  + '{"op":"set","at":"B4","values":[["=SUM(B2:B3)"]]},'
+  + '{"op":"style","at":"A1:C1","set":{"bl":1}}]}\n```\n\nPress Apply.';
+{
+  const s = parseActions(REPLY_OK);
+  check('a tagged block in a real reply is found, parsed and accepted',
+        s.found === true && s.ok === true && s.why === '' && s.extra === 0);
+  eq('…and the card is told WHICH fenced part it belongs to', s.at, 1);
+  eq('…the prose around it survives as its own parts',
+     aiFences(REPLY_OK).map(p => p.kind), ['text', 'code', 'text']);
+  eq('…and the plan is the one the block described',
+     [s.plan.file, s.plan.sheet, s.plan.ops.length, s.plan.count.cells,
+      s.plan.count.formulas, s.plan.count.cleared],
+     ['2026 budget', 'Sheet1', 4, 8, 1, 2]);
+}
+check('an UNTAGGED block is still read when it is unmistakably a plan — a model that '
+      + 'writes ```json instead of ```loffice has not failed',
+      parseActions('```json\n{"v":1,"ops":[{"op":"set","at":"A1","values":[["x"]]}]}\n```').ok === true);
+check('…but ordinary JSON in a reply grows NO Apply button',
+      parseActions('```json\n{"name":"x","rows":[1,2]}\n```').found === false);
+check('…and neither does ordinary prose, or code, or a formula in a fence',
+      parseActions('The CLEAN function strips control characters.').found === false
+      && parseActions('```excel\n=SUM(A1:A2)\n```').found === false
+      && parseActions('```python\nprint(1)\n```').found === false);
+check('a TRUNCATED block — the stream cut mid-JSON — is REPORTED, not silently dropped: '
+      + 'the model tried, and the user is owed that',
+      (() => {
+        const s = parseActions('ok\n```loffice\n{"v":1,"ops":[{"op":"set","at":"A1"');
+        return s.found === true && s.ok === false && /not valid JSON/.test(s.why);
+      })());
+check('a tagged block full of nonsense is reported the same way',
+      (() => {
+        const s = parseActions('```loffice\nplease write the months in column A\n```');
+        return s.found === true && s.ok === false && s.why.length > 8;
+      })());
+check('a tagged block that PARSES but is not a plan says which part it failed on',
+      /"v"/.test(parseActions('```loffice\n{"ops":[]}\n```').why));
+{
+  const two = '```loffice\n{"v":1,"ops":[{"op":"set","at":"A1","values":[["one"]]}]}\n```\n'
+            + 'and also\n'
+            + '```loffice\n{"v":1,"ops":[{"op":"set","at":"A1","values":[["two"]]}]}\n```';
+  const s = parseActions(two);
+  check('with TWO blocks only the FIRST is offered, and the rest are COUNTED — two '
+        + 'plans applied in sequence is a change nobody previewed',
+        s.found === true && s.ok === true && s.extra === 1
+        && s.plan.ops[0].values[0][0] === 'one');
+  check('…and the card says so out loud rather than quietly dropping one',
+        /further block/.test(grab('actPaint')) && /scan\.extra/.test(grab('actPaint')));
+}
+check('an empty tagged fence produces nothing at all — aiFences already drops it',
+      parseActions('```loffice\n\n```').found === false);
+// TOTALITY: every one of these is a value that arrives from a language model
+[null, undefined, '', 0, 42, {}, [], '```loffice', '```loffice\n```', '`'.repeat(9),
+ '```loffice\n{"v":1,"ops":[{"op":"set","at":"A1","values":[[', '```loffice\nnull\n```',
+ '```loffice\n[1,2,3]\n```', '```loffice\n"just a string"\n```',
+ '```loffice\n{"v":1,"ops":{"op":"set"}}\n```'
+].forEach((v, i) => {
+  let out = null, threw = null;
+  try { out = parseActions(v); } catch (e) { threw = e; }
+  check('parseActions survives whatever the model said (case ' + i + ')',
+        !threw && out && typeof out.found === 'boolean' && typeof out.why === 'string');
+});
+eq('actScan is total over a junk parts array',
+   [actScan(null), actScan('nope'), actScan([null, 1, { kind: 'code' }])].map(x => x.found),
+   [false, false, false]);
+
+/* ── a value the MODEL wrote → a cell, through the SAME converter typing uses ── */
+eq('a JSON number is a number cell', actCell(900, null), { v: 900, t: CV_NUMBER });
+eq('a formula string is a formula', actCell('=SUM(B2:B3)', null), { f: '=SUM(B2:B3)' });
+eq('a numeric STRING is a number, exactly as if it had been typed',
+   actCell('120', null), { v: 120, t: CV_NUMBER });
+eq('…and a leading-zero string stays text, for the same reason parseInput says so',
+   actCell('007', null), { v: '007', t: CV_STRING });
+eq('a boolean is a boolean cell', actCell(true, null), { v: true, t: CV_BOOLEAN });
+eq('null and "" empty the cell', [actCell(null, null), actCell('', null)], [null, null]);
+// ⚠️ the KEY ORDER in the expectations is not cosmetic: eq() compares JSON, and the
+// string path goes through parseInput (which writes `s` first) while the number and
+// boolean paths are actCell's own (which write it last). Two different orders because
+// there are genuinely two writers, and pinning them proves neither drifted.
+eq('the cell\'s STYLE survives a value the model wrote — writing a number into a bold '
+   + 'red cell must not strip the bold red',
+   [actCell(5, { v: 1, s: { bl: 1 } }), actCell('x', { v: 1, s: { bl: 1 } }),
+    actCell(null, { v: 1, s: { bl: 1 } })],
+   [{ v: 5, t: CV_NUMBER, s: { bl: 1 } }, { s: { bl: 1 }, v: 'x', t: CV_STRING },
+    { s: { bl: 1 } }]);
+eq('a non-finite number cannot reach a cell', actCell(Infinity, null), null);
+
+/* ── APPLY, EXECUTED, and the undo that makes it safe to try ──────────────── */
+// The write half is run for real against a bare snapshot. actRunOps touches no DOM and
+// no view state by construction, which is exactly why this is possible.
+// D9 is the SENTINEL: the plan below never mentions it, so it is how "the apply wrote
+// only what the preview promised" is checked, and how the undo is checked to have put
+// back a cell the change had nothing to do with.
+function fresh() {
+  return { sheets: { s1: { id: 's1', name: 'Sheet1',
+                           cellData: { '8': { '3': { v: 'keep', t: CV_STRING } } },
+                           rowCount: 200, columnCount: 26 } },
+           sheetOrder: ['s1'] };
+}
+{
+  snap = fresh();
+  activeSid = 's1';
+  const original = JSON.stringify(snap);
+  const before = actClone(snap);            // exactly what actApply keeps
+  const p = parseActions(REPLY_OK).plan;
+  const done = actRunOps('s1', p.ops);
+  check('actRunOps reports what it wrote', !!done && done.cells === 8 && done.cleared === 2);
+  eq('the header row landed where the plan said',
+     [snap.sheets.s1.cellData['0']['0'].v, snap.sheets.s1.cellData['0']['2'].v],
+     ['Month', 'Actual']);
+  eq('…a number arrived as a number', snap.sheets.s1.cellData['1']['1'],
+     { v: 900, t: CV_NUMBER });
+  eq('…a formula arrived as a formula', snap.sheets.s1.cellData['3']['1'], { f: '=SUM(B2:B3)' });
+  eq('…and the style op bolded the header without touching its value',
+     snap.sheets.s1.cellData['0']['0'], { v: 'Month', t: CV_STRING, s: { bl: 1 } });
+  check('the sheet grew to hold what was written',
+        Number(snap.sheets.s1.rowCount) >= 4 && done.wantRows === 4 && done.wantCols === 3);
+  eq('THE CELL THE PLAN DID NOT MENTION IS UNTOUCHED — the apply writes what the '
+     + 'preview promised and nothing else',
+     snap.sheets.s1.cellData['8']['3'], { v: 'keep', t: CV_STRING });
+  // THE UNDO, performed the way actUndo performs it: assign the clone back.
+  snap = before;
+  eq('UNDO RESTORES THE WORKBOOK EXACTLY — a clone put back, not a list of operations '
+     + 'reversed, because reversing has to GUESS what a cell held before',
+     JSON.stringify(snap), original);
+}
+{
+  // a shared style id is the trap styleWrite() records, and actRunOps must not fall in
+  snap = { styles: { S1: { it: 1 } },
+           sheets: { s1: { id: 's1', name: 'Sheet1', cellData: {
+             '0': { '0': { v: 'a', t: CV_STRING, s: 'S1' },
+                    '1': { v: 'b', t: CV_STRING, s: 'S1' } } } } },
+           sheetOrder: ['s1'] };
+  actRunOps('s1', plan({ v: 1, ops: [{ op: 'style', at: 'A1', set: { bl: 1 } }] }).ops);
+  eq('a style write RESOLVES a shared style id, copies it and writes the copy back on '
+     + 'THAT ONE CELL — mutating the shared entry would bold half the workbook silently',
+     snap.sheets.s1.cellData['0']['0'], { v: 'a', t: CV_STRING, s: { it: 1, bl: 1 } });
+  eq('…and the cell that shared the id is untouched',
+     snap.sheets.s1.cellData['0']['1'], { v: 'b', t: CV_STRING, s: 'S1' });
+  eq('…and the shared entry itself is unchanged', snap.styles.S1, { it: 1 });
+}
+{
+  snap = fresh();
+  actRunOps('s1', plan({ v: 1, ops: [{ op: 'sheet', add: 'Notes' },
+                                     { op: 'sheet', add: 'Notes' }] }).ops);
+  const names = Object.keys(snap.sheets).map(k => snap.sheets[k].name);
+  check('two sheets asked for by the same name do not collide — the second is renamed, '
+        + 'never dropped and never a duplicate',
+        names.length === 3 && names.indexOf('Notes') > 0 && names.indexOf('Notes 2') > 0);
+  check('…and both are in the sheet ORDER, so the tab strip shows them',
+        snap.sheetOrder.length === 3);
+}
+{
+  snap = fresh();
+  actRunOps('s1', plan({ v: 1, ops: [{ op: 'sheet', rename: '2026' }] }).ops);
+  eq('a rename with no target renames the sheet the change is aimed at',
+     snap.sheets.s1.name, '2026');
+}
+{
+  snap = fresh();
+  activeSid = 's1';
+  eq('a sheet the model named that does not exist falls back to the open one rather '
+     + 'than inventing a sheet nobody asked for', actTargetSid('Nope'), 's1');
+  eq('…and one that does exist is found by NAME, which is the only handle a model has',
+     actTargetSid('sheet1'), 's1');
+  check('…and the card SAYS which of the two happened before you press Apply',
+        /actSheetExists/.test(grab('actPaint'))
+        && /There is no sheet called/.test(grab('actPaint')));
+  check('actRunOps refuses a sheet id that is not there rather than throwing',
+        actRunOps('nope', []) === null && actRunOps('s1', 'not a list') === null);
+}
+{
+  // what the card TELLS the user about where the change will land
+  snap = fresh(); activeSid = 's1';
+  const cur = current;
+  current = 'Budget.xlsx';
+  eq('the card names the sheet the change lands on', actWhere({ sheet: 'Sheet1' }), 'Sheet1');
+  eq('…and names the OPEN one when the model asked for a sheet that is not there, '
+     + 'which is exactly what it then does', actWhere({ sheet: 'Nope' }), 'Sheet1');
+  current = '';
+  eq('…and with nothing open it says a new spreadsheet, by the name the model chose',
+     actWhere({ file: '2026 budget' }), 'a new spreadsheet called 2026 budget');
+  eq('…or just a new spreadsheet when it chose none', actWhere({}), 'a new spreadsheet');
+  current = cur;
+}
+check('a workbook too big to clone still applies, and the card says the change cannot '
+      + 'be taken back — an Undo button that would not work is worse than none',
+      actClone({ big: 'x'.repeat(ACT_UNDO_MAX_BYTES) }) === null
+      && /too large to hold an undo copy/.test(grab('actPaint'))
+      && /card\._undo = !!before/.test(grab('actApply')));
+check('actClone survives a snapshot it cannot serialise at all',
+      (() => { const o = {}; o.self = o; return actClone(o) === null; })());
+
+/* ── THE STRUCTURAL FENCES ─────────────────────────────────────────────────── */
+// THE ONE THAT MATTERS MOST, and it replaces the old "the panel never writes": the
+// COMPLETE set of functions in this page that may write a cell. Computed over every
+// function in the document, so moving a putCell one level down cannot defeat it.
+const fnNames = Array.from(new Set((code.match(/function\s+([A-Za-z_$][\w$]*)\s*\(/g) || [])
+  .map(s => s.replace(/^function\s+/, '').replace(/\s*\($/, ''))));
+check('the scan really found the page\'s functions — a vacuous fence is no fence',
+      fnNames.length > 40 && fnNames.indexOf('commit') >= 0
+      && fnNames.indexOf('actRunOps') >= 0);
+const writeFns = fnNames.filter(n => {
+  let body = '';
+  try { body = grabFrom(code, n, 'office.html'); } catch (e) { return false; }
+  return /\bputCell\s*\(/.test(body.slice(body.indexOf('{')));
+}).sort();
+eq('EXACTLY these functions may write a cell — the grid\'s own three, the template '
+   + 'builder, and the AI panel\'s ONE writer. Nothing else in the page can.',
+   writeFns, ['actRunOps', 'clearCell', 'commit', 'newFromTemplate', 'styleWrite']);
+check('…and the fence would notice a new writer appearing', (() => {
+  const faked = code.replace('function aiGrow(', 'function aiGrow(){putCell(1,2,3,4)}\nfunction aiGrowX(');
+  let body = '';
+  try { body = grabFrom(faked, 'aiGrow', 'faked'); } catch (e) { return false; }
+  return /\bputCell\s*\(/.test(body.slice(body.indexOf('{')));
+})());
+
+// NOTHING APPLIES WITHOUT A CLICK.
+const applySites = (code.match(/\bactApply\s*\(/g) || []).length;
+eq('`actApply` appears exactly twice in the page: its definition and ONE call site',
+   applySites, 2);
+check('…and that call site is a button\'s own onclick handler',
+      /yes\.onclick = \(\) => actApply\(card, plan\)/.test(grab('actPaint')));
+check('…on a button labelled Apply (or Create & apply when there is no workbook yet)',
+      /actChip\(bar, current \? 'Apply' : 'Create & apply'\)/.test(grab('actPaint')));
+check('nothing on a timer, and no auto-apply anywhere near the reply path',
+      !/setTimeout[\s\S]{0,80}actApply/.test(code) && !/actApply/.test(stripComments(send))
+      && !/actApply/.test(stripComments(grab('aiRenderBody')))
+      && !/actApply/.test(stripComments(grab('actCard'))));
+check('the card renderers write no cell of their own',
+      ['actCard', 'actPaint', 'actChip', 'actDet', 'actNote', 'actCellList', 'actSummary']
+        .every(fn => !/\bputCell\s*\(/.test(grab(fn))));
+check('the parse half touches no global and no DOM at all',
+      ['actValidate', 'actScan', 'actGrid', 'actStyleSet', 'actRef', 'actRange', 'actCell']
+        .every(fn => !/document\.|\bel\(|\bsnap\b|dirty|renderGrid/.test(grab(fn))));
+
+// THE APPLY ITSELF. ⚠️ the NEGATIVES are asserted over the comment-stripped body: this
+// function's comments talk about saving and about the user, and a negative that a
+// comment can defeat is worse than none (the rule stripComments exists for).
+const ap = grab('actApply');
+const apCode = stripComments(ap);
+check('the undo clone is taken BEFORE the first write, or there is nothing to restore',
+      apCode.indexOf('actClone(snap)') > 0
+      && apCode.indexOf('actClone(snap)') < apCode.indexOf('actRunOps('));
+check('the document is marked dirty and the grid redrawn, so the change is on screen',
+      /dirty = true/.test(apCode) && /renderGrid\(\)/.test(apCode));
+// ⚠️ THE RULE THE BRIEF ASKED FOR IN SO MANY WORDS: never auto-save over their file.
+check('APPLY NEVER SAVES. The file is written only when the user presses ⌘S — an '
+      + 'auto-save would put a model\'s guess into a document with no way back',
+      !/\bsave\s*\(/.test(apCode) && apCode.indexOf('/api/office/save') < 0
+      && /press ⌘S/.test(grab('actPaint')));
+check('and the WRITER touches no view state and no dirty flag of its own, which is why '
+      + 'it can be run against a bare snapshot in this file',
+      (() => {
+        const ro = stripComments(grab('actRunOps'));
+        return !/dirty/.test(ro) && !/renderGrid/.test(ro) && !/viewRows|viewCols/.test(ro)
+               && !/document\./.test(ro) && !/\bel\(/.test(ro);
+      })());
+check('parseActions is nothing but actScan over the parts aiFences already made — one '
+      + 'fence parser for the whole panel',
+      /function parseActions\(text\) \{ return actScan\(aiFences\(text\)\); \}/.test(code));
+check('a second click while it is working is ignored, and an applied card cannot be '
+      + 'applied twice', /card\._state === 'busy' \|\| card\._state === 'applied'/.test(ap));
+check('the rich editor OWNS the document once it has mounted, so Apply refuses there '
+      + 'in the same words the Format menu uses, rather than writing a snapshot nobody '
+      + 'is looking at', /mode !== 'grid'/.test(ap) && /T1_ONLY/.test(ap));
+check('with no workbook open, Apply CREATES one first — which is the whole of "create a '
+      + 'document with data on that page"',
+      /if \(!current\)/.test(ap) && /await create\(\)/.test(ap)
+      && /el\('new-name'\)\.value = plan\.file/.test(ap));
+check('…and a create that failed leaves the card re-armed and says so, rather than '
+      + 'writing into nothing',
+      /create failed/.test(ap) && /card\._state = 'ready'/.test(ap));
+check('it goes through the SAME /api/office/new route the New button uses — no new '
+      + 'endpoint for this feature either',
+      /fetch\('\/api\/office\/new'/.test(grab('create')));
+
+// THE UNDO
+const un = grab('actUndo');
+check('Undo restores the clone, whole', /snap = actLast\.before/.test(un));
+check('…including the dirty flag, so a clean document goes back to CLEAN and does not '
+      + 'ask to be saved for a change that no longer exists',
+      /dirty = actLast\.dirty/.test(un));
+check('…and it will not restore over a DIFFERENT workbook',
+      /current !== actLast\.name/.test(un));
+check('…nor silently do nothing when a later change replaced the copy: a dead button '
+      + 'is the defect class this page exists to remove',
+      /actLast\.card !== card/.test(un) && /can no longer be undone/.test(un));
+check('only the LAST apply is undoable, and the card only draws the button when it is '
+      + 'the one holding the copy',
+      /card\._undo && actLast && actLast\.card === card/.test(grab('actPaint')));
+
+// ZERO NEW CSS — the card is built from the grammar the reply renderer already had
+{
+  const cardSrc = ['actCard', 'actPaint', 'actChip', 'actDet', 'actNote'].map(grab).join('\n');
+  const cls = Array.from(new Set(
+    (cardSrc.match(/className = '([\w-]+)'/g) || []).map(s => s.split("'")[1])
+      .concat((cardSrc.match(/actChip\(bar, [^,]+, '([\w-]+)'\)/g) || [])
+        .map(s => s.split("'").slice(-2)[0]))));
+  check('the card uses several of the existing classes', cls.length >= 6);
+  check('…and EVERY ONE of them is already in the stylesheet — which is the whole of '
+        + 'the zero-new-CSS claim: a class the card invented would have to be styled '
+        + 'to be worth having, and there is no rule for one',
+        cls.every(c => rules.some(r => new RegExp('\\.' + c + '(?![\\w-])').test(r.sel))), cls);
+  // ⚠️ THE ONE HONEST DEVIATION, PINNED RATHER THAN HIDDEN: the card sets four
+  // properties inline (the same trick #fnote and say() already use) because .aicode's
+  // own <pre> rule would otherwise impose code styling on a block of ordinary prose.
+  const inline = Array.from(new Set((cardSrc.match(/\.style\.([A-Za-z]+) =/g) || [])
+    .map(s => s.replace(/\.style\.| =/g, '')))).sort();
+  eq('…and the only hand-styling on it is four inline properties', inline,
+     ['color', 'fontSize', 'marginTop', 'padding']);
+}
+
+// BEACONS — this page's whole diagnostic contract, extended to the new capability
+['action-parsed', 'action-applied', 'action-undone', 'action-refused', 'action-dismissed']
+  .forEach(st => check('the panel beacons ' + st, code.indexOf("bx('" + st + "'") > 0));
+check('the parse beacon carries the refusal reason, so "it did nothing" is answerable '
+      + 'from the boot log alone', /bx\('action-parsed'[\s\S]{0,320}scan\.why/.test(code));
+check('…and the applied beacon says whether an undo copy was kept',
+      /bx\('action-applied'[\s\S]{0,220}too-large/.test(code));
+
+// WHAT THE PANEL PROMISES THE USER, which must match what it does
+check('the placeholder says the model can fill the sheet in',
+      /<b>fill the sheet in<\/b>/.test(html));
+check('…and names the three guarantees: a preview, an Apply, an Undo',
+      /preview of every cell/.test(html) && /<b>Apply<\/b>/.test(html)
+      && /<b>Undo<\/b>/.test(html));
+check('…and that the FILE is only written on ⌘S',
+      /file only written when you press ⌘S/.test(html));
+check('the block header no longer claims the panel is advisory only, because it is not',
+      html.indexOf('AND IT IS ADVISORY ONLY') < 0
+      && /NO LONGER ADVISORY ONLY/.test(html));
 
 // ── report ──
 console.log('');

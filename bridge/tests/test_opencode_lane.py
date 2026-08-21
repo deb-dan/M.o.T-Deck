@@ -775,3 +775,214 @@ def test_the_failure_line_names_the_restart_that_is_actually_needed():
     b = branch()
     seg = b[b.index("PROVIDER SELF-CHECK"):]
     assert "not restarting" in seg or "Stop and Start" in seg
+
+
+# ══ "IT QUIETLY DEGRADED, WAS STILL SHOWING GREEN" (Debi, 2026-08-21) ═════════
+# The feed carried `opencode degraded — health lost   13:34` while the card read
+# Online. Diagnosis: NOT two disagreeing probes. The panel drew the card and wrote
+# the feed line from the SAME `degraded` field on the SAME poll — but that field was
+# INSTANTANEOUS (expected-up AND this one probe missed), the card is repainted every
+# poll and shows NOW, and the feed line is permanent scrollback about a PAST instant
+# that nothing retracted. One blip therefore painted a permanent alarm beside a green
+# card. Two healthy things produce that blip:
+#   * `ship.sh --restart opencode` (ship.sh:230 -> the snapshot's start_component.sh)
+#     clears the listener and writes the new pid ~1s later (start_component.sh
+#     :1016-1033) while data/opencode.expected — written only by the panel's Start —
+#     stays put; and
+#   * `asyncio.wait_for(open_connection, 0.5)` can fire because OUR event loop was
+#     busy, not because the port was gone.
+
+def test_the_probe_budget_is_per_component_and_nobody_elses_moved():
+    """A component that legitimately needs longer must not widen everybody's budget,
+    and the historical 0.5s must remain EXACTLY that for every other component."""
+    from bridge import app as A
+    assert A.PROBE_TIMEOUT_DEFAULT == 0.5, "the historical budget, unchanged"
+    assert A.PROBE_TIMEOUT_S == {"opencode": 2.0}, (
+        "exactly one exception — a table that grows silently is how every component "
+        "ends up with a different, unexplained probe budget")
+    assert A._probe_timeout("opencode") == 2.0
+    # THE NEGATIVE: every other component (and the runner) is byte-identical.
+    for name in list(MANIFEST["components"]) + ["runner", "bridge", "nonsense"]:
+        if name == "opencode":
+            continue
+        assert A._probe_timeout(name) == 0.5, f"{name}'s probe budget must not change"
+    # …and the wide budget is spent ONLY where it can prevent a false alarm: a
+    # component we are not expecting to be up has no alarm to raise, so a STOPPED
+    # opencode may not make every status poll 1.5s slower.
+    assert A._probe_timeout("opencode", False) == 0.5
+    assert A._probe_timeout("opencode", True) == 2.0
+
+
+def test_every_pre_existing_probe_call_site_keeps_its_own_budget():
+    """`_port_alive` gained the parameter with a DEFAULT, so the five other call sites
+    are unchanged text and unchanged behaviour."""
+    import inspect
+    from bridge import app as A
+    sig = inspect.signature(A._port_alive)
+    assert sig.parameters["timeout"].default == 0.5
+    # …and only the status loop passes one.
+    assert APP.count("_port_alive(int(port), _probe_timeout(name, expected))") == 1
+    # The expected-up flag is read BEFORE the probe, or the budget could not depend
+    # on it (and the probe would have been chosen from a value not yet computed).
+    i = APP.index("_port_alive(int(port), _probe_timeout(name, expected))")
+    assert "expected = _expected_path(name).exists()" in APP[i - 220:i]
+    for call in ("_port_alive(int(rport))", "_port_alive(int(port))",
+                 "_port_alive(int(comp[\"port\"]))"):
+        assert call in APP, f"an existing single-argument call site vanished: {call}"
+
+
+def test_the_probe_is_a_handshake_not_an_http_request():
+    """DELIBERATE: opencode's liveness stays a TCP connect. A handshake is completed
+    by the KERNEL out of the listen backlog and needs nothing from the server's event
+    loop; an HTTP GET (even to its own cheap /global/health) needs the server to RUN
+    our request, which is strictly more likely to time out on a busy server — the
+    exact false negative this whole slice exists to remove."""
+    block = APP[APP.index("PROBE_TIMEOUT_DEFAULT = 0.5"):APP.index('@app.get("/api/status")')]
+    assert "/global/health" in block, (
+        "the rejected alternative must be named where the decision was made, with the "
+        "reason — otherwise the next reader 'fixes' it back into an HTTP probe")
+    # …and it is genuinely NOT used: the health block issues no HTTP request at all.
+    for http in ("urlopen", "httpx", "requests.get", "curl", "aiohttp"):
+        assert http not in block, f"the liveness probe must not speak HTTP ({http})"
+    assert APP.count("/global/health") == 1, (
+        "one mention, in that comment — the bridge never calls the route")
+    assert "/global/health" in branch(), (
+        "the START readiness poll still uses it — that one is allowed to be slow, it "
+        "runs once per Start with a 2s curl budget and 60 tries")
+
+
+def test_health_verdict_is_a_pure_total_decision_table():
+    from bridge import app as A
+    assert A.HEALTH_MISS_LOST == 3, (
+        "the same number the panel already uses for the bridge itself "
+        "(index.html: three consecutive misses before BRIDGE UNREACHABLE)")
+    v = A.health_verdict
+    # running wins over everything
+    assert v(True, True, 99) == "ok"
+    # never started by us -> not our business, whatever the probe said
+    assert v(False, False, 99) == "ok"
+    # expected-up and missing: transient until it persists
+    assert v(True, False, 1) == "transient"
+    assert v(True, False, 2) == "transient"
+    assert v(True, False, 3) == "lost", "boundary is INCLUSIVE at HEALTH_MISS_LOST"
+    assert v(True, False, 4) == "lost"
+    assert v(True, False, 0) == "transient"
+    # TOTALITY: junk may never manufacture a false 'lost'. The check is deliberately
+    # a STRICT isinstance rather than int(), so even a numeric STRING — the shape a
+    # value arriving over a wire would have — cannot escalate an alarm.
+    for junk in (None, "", "3", "99", 3.0, True, [], {}, object()):
+        assert v(True, False, junk) == "transient", f"{junk!r} must not read as lost"
+    for junk in (None, "x", 0, -1, [], 1.5):
+        assert v(True, False, 1, junk) == "transient", (
+            f"a junk threshold ({junk!r}) falls back to HEALTH_MISS_LOST, it does not "
+            "become 'declare lost immediately'")
+    assert v(True, False, 1, 1) == "lost", "a caller may tighten it to one miss"
+
+
+def test_the_miss_streak_is_forgotten_on_recovery_and_on_a_clean_stop():
+    """A component that blips once an hour must never accumulate its way to 'lost'."""
+    from bridge import app as A
+    A._HEALTH_MISS.pop("t", None)
+    assert A._health_track("t", True, False) == ("transient", 1)
+    assert A._health_track("t", True, False) == ("transient", 2)
+    assert A._health_track("t", True, True) == ("ok", 0), "recovery clears the streak"
+    assert A._health_track("t", True, False) == ("transient", 1), "…back to one"
+    # A clean Stop clears data/<n>.expected, so expected=False — also forgets it.
+    assert A._health_track("t", False, False) == ("ok", 0)
+    assert A._health_track("t", True, False) == ("transient", 1)
+    # …and it does escalate when the miss is real.
+    assert A._health_track("t", True, False)[0] == "transient"
+    assert A._health_track("t", True, False) == ("lost", 3)
+    A._HEALTH_MISS.pop("t", None)
+
+
+def test_status_publishes_the_verdict_and_keeps_degraded_byte_identical():
+    """`degraded` is still the raw instantaneous fact for both the components loop and
+    the runner — nothing downstream of /api/status may have its meaning changed under
+    it. The new `health` key is what the panel renders."""
+    assert '"degraded": expected and not running,' in APP, (
+        "the components loop's degraded rule is unchanged (only hoisted into a local)")
+    assert '"degraded": _expected_path("runner").exists() and not port_up,' in APP, (
+        "the runner's degraded rule is untouched — a live port with no model is still "
+        "'loading', not degraded")
+    assert APP.count('"health": ') == 2 and APP.count('"misses": ') == 2, (
+        "both the components loop and the runner publish it, and nothing else does")
+    # The runner's verdict is keyed on PORT_UP, exactly as its degraded is — NOT on
+    # `loaded`, or a 90s model load would be reported as a health failure.
+    i = APP.index('_health_track(\n            "runner"')
+    call = APP[i:i + 90]
+    assert "port_up)" in call and "loaded" not in call
+
+
+def test_the_panel_reads_ONE_verdict_on_both_surfaces():
+    """The defect was two readings of one instantaneous field. The fix is one reading
+    of one debounced field — so `degraded` may appear in the panel exactly once, inside
+    the compatibility fallback, and nowhere else."""
+    assert "function healthOf(c) {" in PANEL
+    assert PANEL.count("c.degraded") == 1, (
+        "the only surviving read is healthOf's fallback for an older bridge")
+    i = PANEL.index("function healthOf(c) {")
+    assert "c.degraded" in PANEL[i:i + 200], "…and that is where it is"
+    # all three surfaces go through it
+    assert "const h = healthOf(c), was = lastHealth[name] || 'ok';" in PANEL, "the feed"
+    assert "const h = healthOf(c);" in PANEL, "the card"
+    assert "healthOf(c) === 'lost' ? 'bad'" in PANEL, "the sidebar dot"
+    assert "lastDegraded[" not in PANEL, (
+        "the old per-poll flag is gone as a variable (it survives only in the comment "
+        "that records why)")
+
+
+def test_the_feed_can_never_be_left_saying_lost_beside_a_green_card():
+    """Three transitions, and the recovery line is the one that actually answers
+    Debi's report: an episode that heals now SAYS it healed."""
+    i = PANEL.index("const h = healthOf(c), was = lastHealth[name] || 'ok';")
+    seg = PANEL[i:i + 700]
+    assert "probe missed — retrying" in seg, "transient is named as transient"
+    assert "degraded — health lost" in seg, "the honest alarm keeps its wording"
+    assert "back online" in seg, (
+        "the recovery line is what stops a stale alarm being the last word in the feed")
+    assert "c.misses" in seg, "the alarm says how many probes were missed"
+
+
+def test_the_card_says_reconnecting_rather_than_degraded_during_a_restart():
+    i = PANEL.index("} else if (h === 'lost') {")
+    seg = PANEL[i:i + 800]
+    assert "Reconnecting…" in seg
+    assert seg.index("h === 'lost'") < seg.index("h === 'transient'"), (
+        "lost is checked first — a persistent failure must not be softened")
+    assert "name === 'runner' && !c.running && c.port_up" in seg, (
+        "the runner's Loading… branch still comes after both, so a model load is not "
+        "reported as a health problem")
+    # A transient reading must not take the Restart button away from someone looking
+    # at a component that really did die.
+    assert "} else if (h === 'lost' || h === 'transient') {" in PANEL
+
+
+def test_the_start_annotates_the_password_warning_as_expected():
+    """We run loopback with NO auth by design (`serve` has password: Option.none()),
+    so upstream's unconditional warning is noise — but a user reading the log cannot
+    know that. Setting OPENCODE_SERVER_PASSWORD is the rejected alternative: it would
+    gate the embedded SPA our own tab loads, and OpenCode's Add-server dialog asks for
+    the password BY HAND, so nothing would supply it."""
+    b = branch()
+    assert "OPENCODE_SERVER_PASSWORD" in b, "the warning is named where it is explained"
+    assert "EXPECTED" in b
+    assert "NO auth BY DESIGN" in b
+    assert 'OPENCODE_SERVER_PASSWORD=' not in b, (
+        "we must NOT set it — it would gate the SPA the native tab loads")
+    # The explanation goes into the component's OWN log, next to the warning it is
+    # about — not only to stdout, which the panel's Start does not surface.
+    i = b.index("OPENCODE_SERVER_PASSWORD")
+    assert '>>"$ROOT/data/logs/opencode.log"' in b[i:i + 2000]
+    assert b.index("EXPECTED") < b.index("nohup"), "written before the process starts"
+
+
+def test_the_start_says_the_log_appends_so_n_blocks_is_n_starts():
+    """Debi saw the same two lines six times and read it as six servers. It is one
+    append-only log with six start blocks — say so IN the log."""
+    b = branch()
+    assert '>>"$ROOT/data/logs/opencode.log" 2>&1 &' in b, (
+        "append, deliberately: a truncating log would lose the crash that preceded "
+        "the restart, which is the one thing worth keeping")
+    assert "APPENDS" in b and "not N servers" in b
+    assert "----- start" in b, "a per-Start delimiter is what makes it readable"

@@ -535,12 +535,28 @@ console.log('routing');
      'Logs opens the dialog');
   ok(/if \(e\.kind === 'component'\) \{ openComponent\(id\); return; \}/.test(open),
      'a component keeps its own rule (running → its tab, stopped → its card)');
-  ok(/if \(e\.prefersTab && e\.tab && switchTab\(e\.tab, e\.id\)\) return;/.test(open),
-     'a lane asks the shell for its tab first');
+  ok(/if \(e\.prefersTab && e\.tab\) \{/.test(open)
+     && /if \(shellKnowsTab\(e\.id\) !== false && switchTab\(e\.tab, e\.id\)\) return;/.test(open),
+     'a lane asks the shell for its tab first — and never with an id the shell says it lacks');
   ok(/if \(e\.view\) \{ showView\(e\.view\); return; \}/.test(open),
      'a panel view opens IN the panel');
   ok(/window\.open\(e\.url, '_blank'\)/.test(open),
      'a lane in a plain browser opens its page rather than becoming a dead row');
+  // THE 2026-08-21 REGRESSION, pinned: clicking Aider/LOffice inside the app opened the
+  // page in CHROME, because a stale shell made switchTab return false and the very next
+  // line was window.open(). The in-app guard must exist AND must precede that line.
+  const guard = open.indexOf('if (inNativeApp() && !e.view) { navShellNote(e.id, SHELL_STALE_NOTE); return; }');
+  const wopen = open.indexOf("window.open(e.url, '_blank')");
+  ok(guard >= 0, 'inside the app a lane with no view says so instead of falling through');
+  ok(guard >= 0 && wopen >= 0 && guard < wopen,
+     '…and that guard sits BEFORE the window.open fallback (this is the whole bug)');
+  // Pinned as its WHOLE body: it must ask only whether we are in a WKWebView, never
+  // whether the "harness" handler is there. A shell built before that handler existed is
+  // exactly the case this has to be true for.
+  ok(/function inNativeApp\(\) \{\s*\n\s*return !!\(window\.webkit && window\.webkit\.messageHandlers\);\s*\n\}/.test(html),
+     'inNativeApp is deliberately weaker than nativeShell — true even with no harness handler');
+  ok(/function shellKnowsTab\(id\)[\s\S]{0,200}return t \? t\.indexOf\(id\) >= 0 : null;/.test(html),
+     'an unknowable shell answers null, never false (a missing global is not "no tabs")');
   // the deliberate asymmetry, recorded: mc/chat/models/caps are views and do NOT jump
   // out of the panel even when the user has pinned them as tabs.
   ok(!M.navEntry('chat').prefersTab && !M.navEntry('models').prefersTab
