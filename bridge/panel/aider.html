@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Aider — Harness</title>
+<!-- The boot beacon: the title starts in the booting state and the inline script
+     below changes it, so "the scripts never ran" is answerable from the shell
+     (webView.title) as well as from the static banner in the body. -->
+<title>Aider · booting…</title>
+<meta name="harness-build" content="aider-2026-08-21c">
 <!-- The Aider tab is its OWN document, deliberately not the panel: it is a terminal,
      it loads xterm.js, and it must not carry the panel's poll loops. The palette
      values below are the panel's tokens, copied (a separate document cannot inherit
@@ -44,6 +48,14 @@
      which removes the inline declaration and falls straight back to this rule, so
      EVERY message on this page was structurally invisible (that is why a failed
      install read as "nothing happened"). A class cannot be defeated that way. */
+  /* The STATIC fallback banner — plain markup, visible by default, removed by the
+     first line of the inline script. A page whose scripts never ran (a stale cached
+     document, a dead web content process) used to be indistinguishable from an empty
+     one; now it says so. Same treatment as office.html. */
+  #boot{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);
+        color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
+  #boot b{color:var(--cream);font-weight:600}
+  #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
   #msg{flex:none;padding:10px 16px;font-size:12px;white-space:pre-wrap;display:none}
   #msg.show{display:block}
   #msg.warn{color:var(--bad)}
@@ -62,6 +74,10 @@
 </style>
 </head>
 <body>
+<div id="boot"><b>If you can read this, this page's scripts did not run.</b>
+  That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
+  this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
+  Build <code>aider-2026-08-21c</code>.</div>
 <header>
   <span class="name">Aider</span>
   <span class="pill" id="p-install">checking…</span>
@@ -87,6 +103,13 @@
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>
 <script>
+// First thing: take the static fallback banner down. From here on its presence on
+// screen means exactly one thing — this line never ran.
+(function () {
+  const b = document.getElementById('boot');
+  if (b) b.remove();
+  document.title = 'Aider — Harness';
+})();
 'use strict';
 // The two UMD bundles expose either the class directly or a module namespace holding
 // it, depending on the build. Ask for both rather than betting on one.

@@ -294,57 +294,209 @@ console.log('persistence');
      '…which is a no-op in a plain browser');
 }
 
-// ── 7. the Appearance editor ───────────────────────────────────────────────
-console.log('appearance');
+// ── 7. the CUSTOMIZE overlay (v2 — Debi rejected v1's static ↑ ↓ section) ──
+//
+// The reference is Unsloth's "Customize sidebar", and the standing doctrine is that a
+// design reference is LITERAL. So the questions here are about the INTERACTION: is it a
+// floating translucent panel over the page, are rows DRAGGED, is there a switch per row,
+// does every change apply immediately, and does a refusal roll back rather than leaving
+// the user looking at a layout the bridge did not accept.
+console.log('customize overlay');
+const css = html.split('<style>')[1].split('</style>')[0];
 {
-  ok(/function renderAppearance\(\)/.test(html), 'renderAppearance exists');
-  ok(/setSec\('caps-sec-general', generalHtml \+ renderAppearance\(\)\)/.test(html),
-     'it lives in Capabilities → General (no new top-level view)');
-  ok(/if \(g\) g\.innerHTML = renderAppearance\(\);/.test(html),
-     '…and renders on the Odysseus-unreachable path too (it writes OUR file, not theirs)');
-  const bar = html.slice(html.indexOf('function navBarHtml(bar)'),
-                         html.indexOf('function renderAppearance()'));
-  ok(/navMove\('\$\{bar\}','\$\{escAttr\(r\.id\)\}',-1\)/.test(bar)
-     && /navMove\('\$\{bar\}','\$\{escAttr\(r\.id\)\}',1\)/.test(bar),
-     'each row has ↑ and ↓ (buttons, not drag — testable and needs no new CSS)');
-  ok(/navPin\('\$\{bar\}','\$\{escAttr\(r\.id\)\}'\)/.test(bar), '…and one pin/hide chip');
-  ok(/\$\{\(i === 0 \|\| first\) \? 'disabled' : ''\}/.test(bar),
-     'the first row cannot move up');
-  ok(/navRowFixed\(bar, r\.id\)/.test(bar) && /\$\{fixed \? 'disabled' : ''\}/.test(bar),
-     'a fixed entry\'s pin chip is disabled, not silently ignored');
-  ok(/class="cap-pill off">hidden/.test(bar), 'a hidden row says so');
-  // ZERO new CSS: every class used here already exists in the stylesheet
-  const css = html.split('<style>')[1].split('</style>')[0];
-  ['cap-row', 'cap-txt', 'cap-name', 'cap-ctl', 'cap-btn', 'cap-pill', 'cap-count',
-   'caps-group', 'cap-card', 'cap-desc'].forEach(c => {
-    ok(css.indexOf('.' + c) >= 0, 'Appearance reuses the existing .' + c);
-  });
-  ok(!/#caps-appearance\s*\{/.test(css) && !/\.nav-row\s*\{/.test(css),
-     'the editor invents NO new css rule of its own');
+  // -- the surface itself
+  ok(/<dialog id="navdlg">/.test(html), 'the overlay is a <dialog> (Esc and a backdrop for free)');
+  ok(/<div class="nv-body" id="nv-body">/.test(html), '…with a body the renderer fills');
+  const b0 = css.indexOf('APPEARANCE OVERLAY — #navdlg');
+  const b1 = css.indexOf('end appearance overlay');
+  ok(b0 > 0 && b1 > b0, 'the sanctioned overlay CSS block is present exactly once');
+  ok(html.indexOf('APPEARANCE OVERLAY — #navdlg', html.indexOf('APPEARANCE OVERLAY — #navdlg') + 1) === -1,
+     '…and only once in the document');
+  ok(css.indexOf('OPTIONAL "STUDIO" CHROME') > b1,
+     '…and it sits BEFORE the studio block, which must stay last in the sheet');
+  const blk = css.slice(b0, b1).replace(/\/\*[\s\S]*?\*\//g, '');
+  const sels = [...blk.matchAll(/(?:^|\})\s*([^{}]+?)\s*\{/g)].map(m => m[1].trim());
+  ok(sels.length === 15, 'the overlay block declares exactly 15 rules (got ' + sels.length + ')');
+  ok(sels.every(s => s.indexOf('#navdlg') >= 0),
+     'every one of them names #navdlg — nothing leaks onto the page underneath');
+  ok(/backdrop-filter:blur\(16px\)/.test(blk) && /-webkit-backdrop-filter/.test(blk),
+     'it is backdrop-BLURRED, with the WebKit prefix (this renders in WKWebView)');
+  ok(/background:rgba\(20,18,29,\.86\)/.test(blk),
+     '…on a TRANSLUCENT ground, so the page reads through it (Debi\'s reference)');
+  ok(/html\[data-theme="light"\] #navdlg \{ background:rgba\(/.test(blk),
+     '…and the light theme gets its own translucent ground rather than the dark one');
+  ok(/#navdlg::backdrop/.test(blk) && /rgba\(5,4,10,\.3\)/.test(blk),
+     'the backdrop is faint — the point is that the page stays visible');
+  ok(/#navdlg \.nv-h \{[^}]*cursor:grab/.test(blk), 'the handle looks draggable');
+  ok(/#navdlg \.nv-row\.nv-dragging/.test(blk), 'the dragged row has a state of its own');
+
+  // -- three ways in, one overlay
+  ok(/<nav id="sidemore"><a onclick="openNavDlg\(\)"/.test(html),
+     'the sidebar carries the ⋯ Customize row (Unsloth\'s own path)');
+  ok(html.indexOf('<nav id="sidemore">') > html.indexOf('<nav id="sideworkspace">'),
+     '…under the Workspace list');
+  ok(!/renderSidebar[\s\S]{0,4000}sidemore/.test(html.slice(html.indexOf('function renderSidebar'))),
+     '…and it is STATIC markup, so no edit made in the overlay can hide the way back in');
+  ok(/<button class="cap-btn" onclick="openNavDlg\(\)">Customize…<\/button>/.test(html),
+     'Capabilities → General keeps a one-line link to the same overlay');
+  ok(/\{t:'Customize navigation', k:'⠿', f:openNavDlg\}/.test(html), '…and ⌘K reaches it');
+
+  // -- the old v1 editor is GONE, not merely unused
+  ok(!/function navMove\(/.test(html), 'the v1 ↑ ↓ handler is gone');
+  ok(!/function navPin\(/.test(html), 'the v1 Hide chip handler is gone');
+  ok(!/function navRedraw\(/.test(html), '…and its redraw with it');
+  const app = html.slice(html.indexOf('function renderAppearance()'),
+                         html.indexOf('function renderAppearance()') + 900);
+  ok(!/navBarHtml/.test(app), 'the Capabilities section no longer renders the list itself');
+
+  // -- open / close
+  const open = html.slice(html.indexOf('function openNavDlg()'),
+                          html.indexOf('/* ---------- live drag reorder'));
+  ok(/renderNavDlg\(''\)/.test(open) && /navdlg\.showModal\(\)/.test(open),
+     'opening renders fresh and shows the dialog modally');
+  ok(/if \(!navdlg\.open\) navdlg\.showModal\(\)/.test(open),
+     '…and opening it twice cannot throw');
+  ok(/function closeNavDlg\(\) \{ if \(navdlg && navdlg\.open\) navdlg\.close\(\); \}/.test(open),
+     'closing is idempotent');
+  ok(/addEventListener\('mousedown', e => \{ if \(e\.target === navdlg\) closeNavDlg\(\); \}\)/.test(open),
+     'a click OUTSIDE closes it — on mousedown-on-the-dialog-itself, which is the backdrop');
+  ok(/nv-x" onclick="closeNavDlg\(\)"/.test(html), '…and there is a ✕');
+
+  // -- drag, live
+  const drag = html.slice(html.indexOf('/* ---------- live drag reorder'),
+                          html.indexOf('function navToggle('));
+  ok(/draggable="true"/.test(html) && /ondragstart="navDragStart\(/.test(html),
+     'rows are DRAGGED (not moved by buttons)');
+  ok(/ondragover="navDragOver\(/.test(html) && /ondrop="navDrop\(/.test(html)
+     && /ondragend="navDragEnd\(/.test(html), '…with the full HTML5 drag wiring');
+  ok(/box\.insertBefore\(navDrag\.el, before\)/.test(drag)
+     && /box\.appendChild\(navDrag\.el\)/.test(drag),
+     'the list RE-FLOWS LIVE — the node itself is moved while you drag');
+  ok(/ev\.clientY < b\.top \+ b\.height \/ 2/.test(drag),
+     '…deciding by the midpoint of the row under the cursor');
+  ok(/if \(!navDrag \|\| navDrag\.bar !== bar \|\| navDrag\.grp !== grp\) return;/.test(drag),
+     'a row can only be dropped in its OWN group — which is what keeps the saved order '
+     + 'and the rendered sidebar in step (v1\'s real reorder bug)');
+  ok(/function navDragEnd\(\)[\s\S]*navCommitOrder\(d\.bar\)/.test(drag),
+     'the commit hangs off dragend, which fires on every ending incl. a cancelled drag');
+  ok(/classList\.remove\('nv-dragging'\)/.test(drag), '…and the drag state is always cleared');
+  ok(/function navDrop\(ev\) \{ ev\.preventDefault\(\); \}/.test(drag),
+     'drop itself does nothing but allow the drop (no double commit)');
+  ok(/ev\.target\.closest\('\.cap-sw'\)\) \{ ev\.preventDefault\(\); return; \}/.test(drag),
+     'a drag that starts ON the switch is refused — it toggles, it does not move the row');
+  ok(/max-width:none/.test(blk),
+     'the overlay restates max-width (the base `dialog` rule caps every dialog at 520px)');
+
+  // -- every change is its own POST, and a refusal rolls back
   const apply = html.slice(html.indexOf('function navApply(next)'),
                            html.indexOf('function navClone()'));
   ok(apply.indexOf('navValidate(next)') < apply.indexOf('navModel = next'),
-     'a change is VALIDATED before it is adopted (a refused edit leaves the model alone)');
-  ok(/if \(err\) \{ navRedraw\(err\); return; \}/.test(apply),
-     '…and the reason is shown instead of being applied');
-  const mv = html.slice(html.indexOf('function navMove(bar, id, dir)'),
-                        html.indexOf('function navPin(bar, id)'));
-  ok(/if \(bar === 'topbar' && \(i === 0 \|\| j === 0\)\) return;/.test(mv),
-     'nothing can be moved above Mission Control on the strip');
-  ok(/const next = navClone\(\)/.test(mv), 'edits are made on a COPY');
-  const pin = html.slice(html.indexOf('function navPin(bar, id)'),
-                         html.indexOf('function navPin(bar, id)') + 500);
-  ok(/if \(navRowFixed\(bar, id\)\) return;/.test(pin),
-     'the fixed entries cannot be un-pinned even by calling the handler directly');
-  ok(/id="nav-err"/.test(html), 'there is somewhere for the refusal to appear');
+     'a change is VALIDATED before it is adopted');
+  ok(/if \(err\) \{ renderNavDlg\(err\); return Promise\.resolve\(err\); \}/.test(apply),
+     '…and a client-side refusal adopts nothing at all, it just says why');
+  ok(/const prev = navGet\(\);/.test(apply) && /navModel = prev; navSaveLocal\(\); renderSidebar\(\); renderNavDlg\(e2\);/.test(apply),
+     'a BRIDGE refusal rolls the whole model back (optimistic UI, honest rollback)');
+  ok(/return navSave\(\)/.test(apply), 'every accepted change is saved immediately (no Save button)');
+  const rend = html.slice(html.indexOf('function renderNavDlg(err)'),
+                          html.indexOf('const navdlg = document.getElementById'));
+  ok(!/Save|Apply/.test(rend), '…and the overlay renders no Save/Apply button at all');
+  ok(/function navToggle\(bar, id, el\)[\s\S]{0,260}navApply\(next\)/.test(html),
+     'a switch writes through the same path');
+  ok(/if \(navRowFixed\(bar, id\)\) \{ if \(el\) el\.checked = true; return; \}/.test(html),
+     '…and a fixed entry cannot be switched off even by calling the handler directly');
+  ok(/id="nav-err"/.test(html), 'there is somewhere for a refusal to appear, inside the overlay');
   ok(/⋯/.test(html), 'the copy tells the user where a hidden tab goes');
-  // Debi's amendment: the sidebar is UNCAPPED and must scroll when it grows. It already
-  // does — pinned here so a future layout change cannot quietly take it away, and so the
-  // "zero new CSS" claim for this slice is checkable.
   ok(/aside \{ position: sticky; top: 0; align-self: flex-start;\s*\n\s*height: 100vh; overflow-y: auto; \}/
        .test(css),
-     'the sidebar scrolls when it is longer than the window (no cap on entries)');
+     'the sidebar still scrolls when it is longer than the window (no cap on entries)');
 }
+
+// ── 7b. EXECUTE the overlay's renderer + its commit ────────────────────────
+// The renderer and navCommitOrder are the two places a bug would be invisible to a grep:
+// one decides what you can touch, the other turns what you SEE back into the model.
+console.log('overlay behaviour');
+{
+  const s0 = html.indexOf('const NAV_BAR_LABEL =');
+  const s1 = html.indexOf('function renderNavDlg(err)');
+  const c0 = html.indexOf('function navCommitOrder(bar)');
+  const c1 = html.indexOf('function navToggle(bar, id, el)');
+  ok(s0 > 0 && s1 > s0 && c0 > s1 && c1 > c0, 'the overlay helpers are where the test expects');
+  const model = { sidebar: M.navDefaultModel().sidebar, topbar: M.navDefaultModel().topbar };
+  const posted = [];
+  const env = {
+    esc: x => String(x), escAttr: x => String(x),
+    navGet: () => model,
+    navClone: () => ({ sidebar: model.sidebar.map(r => ({ ...r })),
+                       topbar: model.topbar.map(r => ({ ...r })) }),
+    navApply: next => { posted.push(next); return Promise.resolve(''); },
+    document: null,
+  };
+  // the pure model half, again (section 5's copy is block-scoped)
+  const pure = html.slice(html.indexOf('const NAV_ENTRIES = ['), html.indexOf('let navModel = null;'));
+  const body = pure + html.slice(s0, s1) + html.slice(c0, c1);
+  const mk = extra => new Function(...Object.keys(env), body + extra);
+
+  // (1) the sidebar is edited in the TWO GROUPS the sidebar is DRAWN in
+  const groups = mk('return { g: navGroups("sidebar").map(x => x.key), t: navGroups("topbar").map(x => x.key) };')
+    (...Object.values(env));
+  ok(groups.g.join(',') === 'ws,comp', 'the sidebar has a Workspace group and a Components group');
+  ok(groups.t.join(',') === 'all', '…and the strip is one list');
+  const barHtml = mk('return navBarHtml("sidebar");')(...Object.values(env));
+  const grpIds = [...barHtml.matchAll(/data-grp="(\w+)"/g)].map(m => m[1]);
+  ok(grpIds.join(',') === 'ws,comp', 'both groups are rendered as their own drop zones');
+  const wsPart = barHtml.slice(barHtml.indexOf('data-grp="ws"'), barHtml.indexOf('data-grp="comp"'));
+  ok(/data-id="hermes"/.test(barHtml) && !/data-id="hermes"/.test(wsPart),
+     'a component is in the Components group, never the Workspace one');
+  // (2) fixed rows show no controls rather than controls that refuse
+  const rowOf = (h, id) => ('<div class="nv-row' + h.split('<div class="nv-row')
+    .find(p => p.indexOf('data-id="' + id + '"') >= 0));
+  const chatRow = rowOf(barHtml, 'chat');
+  ok(/nv-fixed/.test(chatRow) && !/type="checkbox"/.test(chatRow) && !/draggable="true"/.test(chatRow),
+     'Chat (fixed on the sidebar) has no switch and cannot be dragged');
+  ok(/class="cap-pill">always/.test(chatRow), '…and says so');
+  const topHtml = mk('return navBarHtml("topbar");')(...Object.values(env));
+  const mcRow = rowOf(topHtml, 'mc');
+  ok(/nv-fixed/.test(mcRow) && !/draggable="true"/.test(mcRow),
+     'Mission Control is fixed on the strip, so nothing can be dropped above it');
+  ok((topHtml.match(/type="checkbox"/g) || []).length === model.topbar.length - 1,
+     'every other strip row gets exactly one switch');
+  ok(/max 12/.test(topHtml), 'the strip names its cap');
+  // a HIDDEN row is still listed (hiding keeps its place — nav.py\'s design) and unchecked
+  const m2 = { sidebar: model.sidebar.map(r => r.id === 'models' ? { ...r, pinned: false } : r),
+               topbar: model.topbar };
+  const env2 = Object.assign({}, env, { navGet: () => m2 });
+  const h2 = mk('return navBarHtml("sidebar");')(...Object.values(env2));
+  ok(/data-id="models"/.test(h2), 'a hidden entry keeps its place in the editor…');
+  const mrow = h2.slice(h2.indexOf('data-id="models"'), h2.indexOf('data-id="models"') + 400);
+  ok(/type="checkbox" \n?\s*onchange/.test(mrow) || !/checked/.test(mrow.split('onchange')[0]),
+     '…with its switch OFF');
+
+  // (3) navCommitOrder: read the DOM back → model. Stubbed document, real logic.
+  const fakeDom = ids => ({
+    querySelectorAll: () => ids.map(id => ({ getAttribute: () => id })),
+  });
+  const order = model.topbar.map(r => r.id);
+  const moved = [order[0]].concat([order[2]], order.slice(1, 2), order.slice(3));
+  const env3 = Object.assign({}, env, { document: fakeDom(moved) });
+  posted.length = 0;
+  mk('navCommitOrder("topbar");')(...Object.values(env3));
+  ok(posted.length === 1, 'a real move posts exactly once');
+  ok(posted[0].topbar.map(r => r.id).join(',') === moved.join(','),
+     '…carrying the order the user is looking at');
+  ok(posted[0].topbar.every(r => r.pinned === model.topbar.find(x => x.id === r.id).pinned),
+     '…and a REORDER never changes what is shown (pins are carried by id)');
+  posted.length = 0;
+  const env4 = Object.assign({}, env, { document: fakeDom(order) });
+  mk('navCommitOrder("topbar");')(...Object.values(env4));
+  ok(posted.length === 0, 'a drag that ends where it started posts NOTHING');
+  posted.length = 0;
+  const env5 = Object.assign({}, env, { document: fakeDom(['nope', order[1]]) });
+  mk('navCommitOrder("topbar");')(...Object.values(env5));
+  ok(posted.length === 1 && posted[0].topbar.length === model.topbar.length,
+     'an id the model does not know is ignored, and no row is lost');
+  ok(posted[0].topbar.map(r => r.id).indexOf('nope') < 0, '…rather than being adopted');
+}
+
 
 // ── 8. click routing ───────────────────────────────────────────────────────
 console.log('routing');

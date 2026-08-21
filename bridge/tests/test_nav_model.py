@@ -319,6 +319,44 @@ def test_routes_live():
             ok([x["id"] for x in r.json()["nav"]["topbar"]][:2] == ["mc", "hermes"],
                "…with Mission Control forced first")
 
+            # ── THE REORDER ROUND TRIP (Debi: "reorder not working", 2026-08-21) ──
+            # Driven in EXACTLY the panel's payload shape — {"nav": {sidebar:[{id,pinned}],
+            # topbar:[...]}} — so a mismatch between what the panel sends and what nav.py
+            # accepts would fail here. It does not: the order comes back verbatim, the
+            # generation moves, and the file agrees. The bug Debi saw was PANEL-side (the
+            # sidebar is drawn as two groups out of one flat list, so moving a component
+            # above a view saved perfectly and moved nothing on screen — see the v2 note in
+            # bridge/panel/index.html).
+            base = client.get("/api/nav").json()["nav"]
+            g1 = client.get("/api/nav").json()["gen"]
+            moved = {b: [dict(r) for r in base[b]] for b in nav.BARS}
+            row = [r for r in moved["topbar"] if r["id"] == "unsloth"][0]
+            moved["topbar"].remove(row)
+            moved["topbar"].insert(1, row)          # straight after the pinned mc
+            srow = [r for r in moved["sidebar"] if r["id"] == "music"][0]
+            moved["sidebar"].remove(srow)
+            moved["sidebar"].insert(0, srow)
+            want_top = [r["id"] for r in moved["topbar"]]
+            want_side = [r["id"] for r in moved["sidebar"]]
+            r = client.post("/api/nav", json={"nav": moved})
+            ok(r.status_code == 200 and r.json()["ok"],
+               f"a REORDER in the panel's own payload shape is accepted ({r.json().get('error')})")
+            ok([x["id"] for x in r.json()["nav"]["topbar"]] == want_top,
+               "…the strip order comes back exactly as sent")
+            ok([x["id"] for x in r.json()["nav"]["sidebar"]] == want_side,
+               "…and so does the sidebar order")
+            ok(r.json()["gen"] == g1 + 1, "…and the generation the SHELL polls moves")
+            back = client.get("/api/nav").json()["nav"]
+            ok([x["id"] for x in back["topbar"]] == want_top,
+               "…and a fresh read of data/nav.json agrees (it really persisted)")
+            ok([x["id"] for x in json.loads(open(nav.nav_path(td)).read())["topbar"]] == want_top,
+               "…as does the file itself")
+            ok(all(r0["pinned"] == r1["pinned"]
+                   for r0, r1 in zip(sorted(base["topbar"], key=lambda x: x["id"]),
+                                     sorted(back["topbar"], key=lambda x: x["id"]))),
+               "…and a reorder changed nothing about what is SHOWN")
+
+            gen_pre_bad = client.get("/api/nav").json()["gen"]
             bad = nav.normalize({})
             for bar in nav.BARS:
                 for row in bad[bar]:
@@ -328,7 +366,7 @@ def test_routes_live():
             ok(r.status_code == 400 and "comfyui" in r.json()["error"],
                "an entry that would vanish is refused 400, by name")
             gen_after = client.get("/api/nav").json()["gen"]
-            ok(gen_after == gen0 + 1, "a REFUSED save does not move the generation")
+            ok(gen_after == gen_pre_bad, "a REFUSED save does not move the generation")
 
             r = client.post("/api/nav", data="not json")
             ok(r.status_code == 400, "a body that is not json is 400, not a 500")

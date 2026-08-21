@@ -997,6 +997,54 @@
     height:34px; padding:0 26px; font-size:13px; }
   /* ============================ end music deck ================================== */
 
+  /* ====== APPEARANCE OVERLAY — #navdlg (STUDIO PHASE 2 §A v2, 2026-08-21) ========
+     Debi rejected v1's shape (a static settings section with up/down buttons and Hide
+     chips): her reference is Unsloth's "Customize sidebar", and the STANDING DOCTRINE is
+     that a design reference is LITERAL — match the interaction, not an approximation. So
+     this is a floating card ON TOP of whatever you were doing: translucent and
+     backdrop-blurred so the page reads through it, rows carrying a drag handle that are
+     DRAGGED to reorder with the list re-flowing live, one switch per row, applied
+     immediately. No Save button, nothing navigates away.
+
+     It sits HERE, before the studio block, because that block must stay LAST in the sheet
+     (test-pinned). Every rule is prefixed #navdlg, so nothing leaks; the rows reuse the
+     existing .cap-sw switch grammar rather than inventing a second one. */
+  /* max-width is restated because the base `dialog` rule caps every dialog at 520px —
+     without it the declared width above would silently be a lie. */
+  #navdlg { padding:0; width:min(560px,92vw); max-width:none; max-height:80vh; overflow:hidden;
+            background:rgba(20,18,29,.86); border:1px solid var(--line2); border-radius:14px;
+            -webkit-backdrop-filter:blur(16px) saturate(130%);
+            backdrop-filter:blur(16px) saturate(130%);
+            box-shadow:0 24px 60px rgba(0,0,0,.5); }
+  /* light theme: the same translucency over warm paper. The ground stays close to
+     --card2 on both palettes, so --cream / --dim keep the contrast they were measured at. */
+  html[data-theme="light"] #navdlg { background:rgba(243,238,226,.88);
+                                     box-shadow:0 24px 60px rgba(60,50,30,.22); }
+  /* deliberately FAINT: the whole point is that you can still see the page behind it. */
+  #navdlg::backdrop { background:rgba(5,4,10,.3); backdrop-filter:blur(2px); }
+  #navdlg .nv-head { display:flex; align-items:baseline; gap:12px; padding:17px 20px 4px; }
+  #navdlg h3 { margin:0; font-size:20px; }
+  #navdlg .nv-x { margin-left:auto; cursor:pointer; color:var(--faint); font:13px var(--mono);
+                  padding:2px 7px; border-radius:6px; }
+  #navdlg .nv-x:hover { color:var(--cream); background:var(--card); }
+  #navdlg .nv-body { padding:0 16px 16px; max-height:calc(80vh - 66px); overflow-y:auto; }
+  #navdlg .nv-lbl { font:9.5px var(--mono); letter-spacing:.2em; text-transform:uppercase;
+                    color:var(--faint); padding:14px 6px 6px; }
+  #navdlg .nv-row { display:flex; align-items:center; gap:11px; padding:7px 8px;
+                    border-radius:9px; border:1px solid transparent; }
+  #navdlg .nv-row:hover { background:var(--card); }
+  /* The dragged row fades and the list re-flows around it live — the NODE is moved, so
+     what you are looking at IS the order that gets saved. */
+  #navdlg .nv-row.nv-dragging { opacity:.35; border-color:var(--gold); }
+  #navdlg .nv-h { flex:none; cursor:grab; color:var(--faint); font-size:13px; line-height:1;
+                  user-select:none; -webkit-user-select:none; }
+  #navdlg .nv-n { flex:1; min-width:0; font-size:13.5px; color:var(--cream);
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* A fixed row (Mission Control on the strip, Chat on the sidebar) shows neither handle
+     nor switch — it recedes, rather than offering controls that would only refuse. */
+  #navdlg .nv-row.nv-fixed .nv-n { color:var(--dim); }
+  /* ========================= end appearance overlay ============================== */
+
   /* ============ OPTIONAL "STUDIO" CHROME — html[data-chrome="studio"] ============
      Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from Debi's Unsloth
      screenshots. This REPLACES the parked "compact" axis wholesale: compact was three
@@ -1286,6 +1334,12 @@
        alert(), which is a SILENT no-op in WKWebView. -->
   <div class="navlbl">Workspace</div>
   <nav id="sideworkspace"></nav>
+  <!-- STUDIO PHASE 2 v2: the "More" affordance, Unsloth's own path to Customize.
+       Static markup (not rendered from the model) so the one row that opens the editor
+       can never be hidden by an edit made in it. It is its own <nav> because
+       renderSidebar owns #sideworkspace's innerHTML. -->
+  <nav id="sidemore"><a onclick="openNavDlg()" title="Customize navigation — order and show/hide"
+      aria-label="Customize navigation"><span class="ico">⋯</span> Customize</a></nav>
   <div class="navlbl" id="sidecomponents-lbl">Components</div>
   <nav id="sidecomponents"></nav>
   <!-- side-foot removed 2026-07-23 (Debi: hidden in final app). CSS rule kept for now. -->
@@ -1649,6 +1703,16 @@
 <dialog id="palette">
   <input id="pal-q" placeholder="Type a command…" autocomplete="off">
   <div id="pal-list"></div>
+</dialog>
+
+<!-- APPEARANCE OVERLAY (STUDIO PHASE 2 §A v2). A <dialog> because it gives Esc and a
+     backdrop for free; the outside-click close is wired in openNavDlg. -->
+<dialog id="navdlg">
+  <div class="nv-head">
+    <h3>Customize navigation</h3>
+    <span class="nv-x" onclick="closeNavDlg()" title="Close" aria-label="Close">✕</span>
+  </div>
+  <div class="nv-body" id="nv-body"></div>
 </dialog>
 
 <script>
@@ -2912,89 +2976,184 @@ function showCapsSection(sec) {
   applyCapsSection();
 }
 
-/* ---------- APPEARANCE: sidebar + tab-strip customization (STUDIO PHASE 2 §A) ----------
-   Two ordered lists, ↑ ↓ to reorder and one chip to pin/hide. Buttons rather than
-   drag-and-drop deliberately (the spec's call): they are testable, they work with a
-   trackpad, and drag would need new CSS. ZERO new CSS — every element here is the
-   existing .caps-group / .cap-card / .cap-row / .cap-name / .cap-pill / .cap-ctl /
-   .cap-btn grammar. */
+/* ---------- APPEARANCE v2: the CUSTOMIZE overlay (STUDIO PHASE 2 §A, 2026-08-21) ------
+   v1 was a static settings section with ↑ ↓ buttons and Hide chips. Debi rejected the
+   SHAPE, not the plumbing: her reference is Unsloth's "Customize sidebar" — a floating
+   panel over the current page, rows dragged by a handle, a switch per row, live. The
+   standing doctrine is that a design reference is LITERAL, so v2 is that interaction.
+
+   Three ways in, all the same overlay: the ⋯ Customize row at the foot of the Workspace
+   rail (Unsloth's own path), a one-line link in Capabilities → General (where the old
+   section was), and ⌘K.
+
+   ONE THING V1 GOT WRONG BEYOND THE LOOK, and it is why reordering half the rows looked
+   dead: nav.json's sidebar is ONE flat list, but `renderSidebar` draws it as TWO groups
+   (Workspace, then Components — each filtered out of the same list). Moving a component
+   above a view therefore changed the model, saved perfectly, and moved NOTHING on
+   screen. v2 edits in the two groups the sidebar actually draws, and writes them back
+   concatenated, so the saved order can never disagree with the rendered one.
+   ⚠️ consequence: the first save from this overlay normalises an interleaved sidebar
+   order (only reachable by hand-editing nav.json) into group order. */
 const NAV_BAR_LABEL = { sidebar: 'Sidebar', topbar: 'Top tabs (app window)' };
 function navRowFixed(bar, id) {
   return (bar === 'topbar' && id === NAV_FIXED_TOP) || (bar === 'sidebar' && id === NAV_FIXED_SIDE);
+}
+/* The groups a bar is EDITED in, which are exactly the groups it is RENDERED in.
+   The topbar is one strip, so it has one group. */
+function navGroups(bar) {
+  return bar === 'sidebar'
+    ? [{ key:'ws',   label:'Workspace',  test:id => (navEntry(id) || {}).kind !== 'component' },
+       { key:'comp', label:'Components', test:id => (navEntry(id) || {}).kind === 'component' }]
+    : [{ key:'all',  label:'',           test:() => true }];
+}
+function navRowHtml(bar, r) {
+  const e = navEntry(r.id) || { label: r.id, ico: null };
+  const fixed = navRowFixed(bar, r.id);
+  const ico = esc((e.kind === 'component') ? '•' : (e.ico || '·'));
+  if (fixed) {
+    return `<div class="nv-row nv-fixed" data-id="${escAttr(r.id)}">
+      <span class="nv-h" style="visibility:hidden">⠿</span>
+      <span class="nv-n">${ico} ${esc(e.label || r.id)}</span>
+      <span class="cap-pill">always</span></div>`;
+  }
+  return `<div class="nv-row" draggable="true" data-id="${escAttr(r.id)}"
+      ondragstart="navDragStart(event,'${bar}','${escAttr(r.id)}')" ondragend="navDragEnd(event)">
+    <span class="nv-h" title="Drag to reorder">⠿</span>
+    <span class="nv-n">${ico} ${esc(e.label || r.id)}</span>
+    <label class="cap-sw" title="${r.pinned ? 'showing — switch off to hide' : 'hidden — switch on to show'}">
+      <input type="checkbox" ${r.pinned ? 'checked' : ''}
+        onchange="navToggle('${bar}','${escAttr(r.id)}', this)">
+      <span class="track"></span><span class="knob"></span></label></div>`;
 }
 function navBarHtml(bar) {
   const rows = navGet()[bar] || [];
   const shown = rows.filter(r => r.pinned).length;
   const cap = bar === 'topbar' ? (' · max ' + NAV_TOPBAR_MAX) : '';
-  let h = `<div class="cap-row"><div class="cap-txt">
-    <div class="cap-name">${esc(NAV_BAR_LABEL[bar])}<span class="cap-count">${shown} shown${cap}</span></div>
-    </div><div class="cap-ctl"></div></div>`;
-  rows.forEach((r, i) => {
-    const e = navEntry(r.id) || { label: r.id };
-    const fixed = navRowFixed(bar, r.id);
-    const first = (bar === 'topbar' && i <= 1);   // Mission Control is nailed to slot 0
-    const pill = r.pinned ? '' : ' <span class="cap-pill off">hidden</span>';
-    const fx = fixed ? ' <span class="cap-pill">always</span>' : '';
-    h += `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(e.label)}${pill}${fx}</div></div>
-      <div class="cap-ctl">
-        <button class="cap-btn" ${(i === 0 || first) ? 'disabled' : ''} title="Move up"
-          onclick="navMove('${bar}','${escAttr(r.id)}',-1)">↑</button>
-        <button class="cap-btn" ${(i === rows.length - 1 || (bar === 'topbar' && i === 0)) ? 'disabled' : ''} title="Move down"
-          onclick="navMove('${bar}','${escAttr(r.id)}',1)">↓</button>
-        <button class="cap-btn${r.pinned ? '' : ' go'}" ${fixed ? 'disabled' : ''}
-          title="${fixed ? 'this one always stays here' : (r.pinned ? 'hide it from this bar' : 'show it on this bar')}"
-          onclick="navPin('${bar}','${escAttr(r.id)}')">${r.pinned ? 'Hide' : 'Show'}</button>
-      </div></div>`;
+  let h = `<div class="nv-lbl">${esc(NAV_BAR_LABEL[bar])} — ${shown} shown${esc(cap)}</div>`;
+  navGroups(bar).forEach(g => {
+    const mine = rows.filter(r => g.test(r.id));
+    if (!mine.length) return;
+    if (g.label) h += `<div class="nv-lbl" style="padding-top:9px">${esc(g.label)}</div>`;
+    h += `<div class="nv-grp" data-bar="${bar}" data-grp="${g.key}"
+        ondragover="navDragOver(event,'${bar}','${g.key}')" ondrop="navDrop(event)">`
+      + mine.map(r => navRowHtml(bar, r)).join('') + `</div>`;
   });
   return h;
 }
-function renderAppearance() {
-  return `<div class="caps-group"><span class="cap-h">Appearance</span><div class="cap-card">
-    <div class="cap-row"><div class="cap-txt">
-      <div class="cap-desc" style="margin-top:0">Order and hide the entries on the sidebar and on the
-        app window's tab strip. Hidden tabs are not gone — they collect in the <b>⋯</b> menu at the
-        right of the strip. Nothing can be hidden on both bars at once, and Logs stays reachable
-        from ⌘K. Changes reach the app window within a few seconds.</div>
-      <div id="nav-err" hidden style="color:var(--bad); font:10.5px var(--mono); margin-top:8px"></div>
-    </div></div>
-    <div id="caps-appearance">${navBarHtml('sidebar')}${navBarHtml('topbar')}</div>
-  </div></div>`;
+function renderNavDlg(err) {
+  const b = document.getElementById('nv-body');
+  if (!b) return;
+  b.innerHTML =
+    `<div style="font-size:12px; color:var(--dim); line-height:1.5; margin:2px 6px 0">Drag <b>⠿</b> to reorder, switch a row off to
+       hide it. Changes apply as you make them. A hidden tab is not gone — it collects in the
+       <b>⋯</b> menu at the right of the app's tab strip. Nothing can be hidden on both bars at
+       once, and Logs stays reachable from ⌘K. The tab strip only exists in the app window, and
+       it follows within a few seconds.</div>
+     <div id="nav-err" ${err ? '' : 'hidden'} style="color:var(--bad); font:10.5px var(--mono); margin:8px 6px 0">${esc(err || '')}</div>`
+    + navBarHtml('sidebar') + navBarHtml('topbar');
 }
-function navRedraw(err) {
-  const c = document.getElementById('caps-appearance');
-  if (c) c.innerHTML = navBarHtml('sidebar') + navBarHtml('topbar');
-  const e = document.getElementById('nav-err');
-  if (e) { e.textContent = err || ''; e.hidden = !err; }
+const navdlg = document.getElementById('navdlg');
+function openNavDlg() {
+  if (!navdlg) return;
+  renderNavDlg('');
+  if (!navdlg.open) navdlg.showModal();
 }
-/* Every edit follows the same three steps: apply to a COPY, validate the copy, and
-   only then adopt it — so a refused change (the 13th pin, an entry that would vanish)
-   leaves the model exactly as it was rather than needing an undo. */
-function navApply(next) {
-  const err = navValidate(next);
-  if (err) { navRedraw(err); return; }
-  navModel = next;
-  navRedraw('');
-  navSave().then(e2 => { if (e2) navRedraw(e2); });
+function closeNavDlg() { if (navdlg && navdlg.open) navdlg.close(); }
+if (navdlg) {
+  // click OUTSIDE closes. A <dialog>'s own box is the only hit area it has, so a
+  // mousedown landing on the element itself is the backdrop. mousedown, not click, so a
+  // drag that ends outside cannot close it.
+  navdlg.addEventListener('mousedown', e => { if (e.target === navdlg) closeNavDlg(); });
 }
-function navClone() { const m = navGet(); return { sidebar: m.sidebar.map(r => ({ ...r })),
-                                                  topbar: m.topbar.map(r => ({ ...r })) }; }
-function navMove(bar, id, dir) {
+
+/* ---------- live drag reorder ----------
+   The DOM node is MOVED while you drag (insertBefore), so the list you are looking at is
+   the order that will be saved; the commit simply reads the containers back. Constrained
+   to the row's own group, which is what keeps the saved order and the rendered sidebar
+   in step (see the note above). */
+let navDrag = null;      // { bar, grp, id, el }
+function navDragStart(ev, bar, id) {
+  // A drag started ON the switch would move the row instead of toggling it. The row is
+  // draggable (Unsloth lets you grab anywhere), the one control on it is not.
+  if (ev.target && ev.target.closest && ev.target.closest('.cap-sw')) { ev.preventDefault(); return; }
+  const el = ev.currentTarget;
+  const grp = el.parentNode && el.parentNode.getAttribute('data-grp');
+  navDrag = { bar, grp, id, el };
+  try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', id); } catch (e) {}
+  setTimeout(() => { if (navDrag) navDrag.el.classList.add('nv-dragging'); }, 0);
+}
+function navDragEnd() {
+  if (!navDrag) return;
+  navDrag.el.classList.remove('nv-dragging');
+  const d = navDrag; navDrag = null;
+  navCommitOrder(d.bar);
+}
+function navDragOver(ev, bar, grp) {
+  if (!navDrag || navDrag.bar !== bar || navDrag.grp !== grp) return;   // own group only
+  ev.preventDefault();
+  try { ev.dataTransfer.dropEffect = 'move'; } catch (e) {}
+  const box = ev.currentTarget;
+  const rows = [...box.querySelectorAll('.nv-row')].filter(r => r !== navDrag.el);
+  // insert before the first row whose MIDPOINT is below the cursor; past them all → end.
+  const before = rows.find(r => {
+    const b = r.getBoundingClientRect();
+    return ev.clientY < b.top + b.height / 2;
+  });
+  if (before) { if (before.previousSibling !== navDrag.el) box.insertBefore(navDrag.el, before); }
+  else if (box.lastChild !== navDrag.el) box.appendChild(navDrag.el);
+}
+function navDrop(ev) { ev.preventDefault(); }   // dragend does the commit (it always fires)
+
+/* Read the containers back and adopt that order. Pinned flags come from the CURRENT
+   model, keyed by id, so a reorder can never change what is shown. */
+function navCommitOrder(bar) {
+  const cur = navGet()[bar] || [];
+  const pin = {}; cur.forEach(r => { pin[r.id] = !!r.pinned; });
+  const ids = [];
+  document.querySelectorAll('#nv-body .nv-grp[data-bar="' + bar + '"] .nv-row')
+    .forEach(el => { const id = el.getAttribute('data-id'); if (id && (id in pin)) ids.push(id); });
+  // anything the DOM did not carry (shouldn't happen) keeps its place at the end
+  cur.forEach(r => { if (ids.indexOf(r.id) < 0) ids.push(r.id); });
+  if (ids.join(',') === cur.map(r => r.id).join(',')) return;    // no move → no POST
   const next = navClone();
-  const rows = next[bar];
-  const i = rows.findIndex(r => r.id === id);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= rows.length) return;
-  if (bar === 'topbar' && (i === 0 || j === 0)) return;   // Mission Control stays first
-  const t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+  next[bar] = ids.map(id => ({ id, pinned: pin[id] }));
   navApply(next);
 }
-function navPin(bar, id) {
-  if (navRowFixed(bar, id)) return;
+function navToggle(bar, id, el) {
+  if (navRowFixed(bar, id)) { if (el) el.checked = true; return; }
   const next = navClone();
   const r = (next[bar] || []).find(x => x.id === id);
   if (!r) return;
   r.pinned = !r.pinned;
   navApply(next);
+}
+
+/* Every edit follows the same steps: apply to a COPY, validate the copy, adopt it
+   OPTIMISTICALLY (the sidebar and the overlay redraw at once), and roll the whole model
+   back to the previous one if the bridge refuses — so what you see is never a layout the
+   bridge did not accept. A client-side refusal never adopts anything at all. */
+function navApply(next) {
+  const err = navValidate(next);
+  if (err) { renderNavDlg(err); return Promise.resolve(err); }
+  const prev = navGet();
+  navModel = next;
+  renderNavDlg('');
+  return navSave().then(e2 => {
+    if (e2) { navModel = prev; navSaveLocal(); renderSidebar(); renderNavDlg(e2); }
+    return e2 || '';
+  });
+}
+function navClone() { const m = navGet(); return { sidebar: m.sidebar.map(r => ({ ...r })),
+                                                  topbar: m.topbar.map(r => ({ ...r })) }; }
+/* Capabilities → General keeps ONE line: the editor itself is the overlay now. */
+function renderAppearance() {
+  return `<div class="caps-group"><span class="cap-h">Appearance</span><div class="cap-card">
+    <div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">Navigation</div>
+      <div class="cap-desc">Order the sidebar and the app window's tab strip, and hide what you
+        do not use. Opens over this page — drag to reorder, switch a row off to hide it.</div>
+    </div><div class="cap-ctl"><button class="cap-btn" onclick="openNavDlg()">Customize…</button></div></div>
+  </div></div>`;
 }
 
 /* ---------- Phase 3: Models (Background-tasks + Utility model pickers) ----------
@@ -11744,6 +11903,7 @@ const commands = () => {
     {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
+    {t:'Customize navigation', k:'⠿', f:openNavDlg},   // STUDIO PHASE 2 §A v2
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
     {t:'Toggle Studio chrome', k:'▣', f:toggleChrome},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},

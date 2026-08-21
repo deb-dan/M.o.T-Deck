@@ -19,6 +19,10 @@ Built to docs/research/2026-08-20-office-lane-recon.md §5/§7. What each group 
    backup that cannot be written refuses the save rather than overwriting the original.
 6. WIRING. The routes, the tab row, the pinned assets and the page's script ORDER
    (React and rxjs are Univer's peer globals — the wrong order is a blank tab).
+7. THE BLANK-TAB FORENSICS. Everything above was already green while the tab on the
+   real Mac showed nothing: `defer` on 10.5 MB of script, a static fallback banner that
+   is true by default, a build stamp, the no-store headers on every bridge-served
+   DOCUMENT, and the WKWebView delegate that answers when a content process dies.
 
 Run: python3 bridge/tests/test_office_lane.py
 """
@@ -451,7 +455,10 @@ check("no runtime CDN reaches the office page",
 check("openpyxl is declared in bridge/requirements.txt", "openpyxl" in REQ)
 
 # Load ORDER is the one thing a reader could get wrong and only find out in a browser.
-order = [m for m in re.findall(r'<script src="/assets/vendor/([^"]+)"', PAGE)]
+# The regex tolerates other attributes (they gained `defer`, 2026-08-21) — what it pins
+# is the order the browser will EXECUTE them in, which `defer` preserves.
+SCRIPT_TAGS = re.findall(r'<script\b([^>]*)\bsrc="/assets/vendor/([^"]+)"([^>]*)>', PAGE)
+order = [m[1] for m in SCRIPT_TAGS]
 check("react and react-dom load before Univer (they are peer globals)",
       order.index("react.production.min.js") < order.index("univer/presets.umd.js")
       and order.index("react-dom.production.min.js") < order.index("univer/presets.umd.js"))
@@ -529,8 +536,11 @@ check("a re-measure is nudged after mounting (a backgrounded tab can lay out lat
 
 # THE SELF-CHECK. The page proves its own preconditions and NAMES what is missing —
 # the standing answer to "it renders nothing and says nothing".
+# (`selfCheck();` at parse time became `if (selfCheck()) say('');` inside the
+# DOMContentLoaded boot when the bundles were deferred — same call, later moment, and
+# the later moment is the correct one: at parse time the bundles have not run yet.)
 check("the page self-checks before it mounts", "function selfCheck()" in PAGE
-      and "if (!selfCheck()) return false;" in PAGE and "selfCheck();" in PAGE)
+      and "if (!selfCheck()) return false;" in PAGE and "if (selfCheck())" in PAGE)
 needs = re.findall(r"\n  \['([^']+)'", PAGE.split("const NEEDS = [")[1].split("\n];")[0])
 for g in ("React", "ReactDOM.createRoot", "rxjs", "rxjs.operators", "@wendellhu/redi",
           "@wendellhu/redi/react-bindings", "UniverCore.LocaleType",
@@ -626,6 +636,148 @@ with tempfile.TemporaryDirectory() as td:
               office.import_doc(td, "../evil.xlsx", good)[0] is None)
         check("a non-xlsx extension is refused",
               office.import_doc(td, "book.numbers", good)[0] is None)
+
+# ══ 7. the blank-tab forensics (2026-08-21) ══════════════════════════════════
+# WHY THIS GROUP EXISTS. The page shipped correct — every route 200s, every bundle
+# defines every global it promises (executed in a JS engine, not read out of the docs)
+# — and it was STILL a blank rectangle on the real Mac, with the self-check banner it
+# was given for exactly this purpose nowhere to be seen. Two facts explain that, and
+# both of them are now structural rather than remembered:
+#
+#   (a) 10.5 MB of NON-deferred classic script sat between the body and first paint.
+#       A classic <script src> blocks the parser where it stands, and WebKit is under
+#       no obligation to paint what it has already parsed first — so "blank" was the
+#       page's honest state for as long as the compile took, and every diagnostic the
+#       page carried was on the far side of that wall. `defer` moves the wall.
+#   (b) A page can only report on itself while its scripts are alive. A stale cached
+#       document, a parse error or a killed web content process leaves NOTHING — so
+#       the first line of diagnosis has to be plain HTML that is true by default and
+#       taken down by JS, never printed by it.
+AIDER_PAGE = (ROOT / "bridge" / "panel" / "aider.html").read_text(encoding="utf-8")
+
+check("every vendor bundle is deferred — 10.5 MB may not block first paint",
+      len(SCRIPT_TAGS) == 6
+      and all("defer" in (a + b) for a, _n, b in
+              [(t[0], t[1], t[2]) for t in SCRIPT_TAGS]))
+check("…and the reason is written where the next reader will hit it",
+      "BLANK RECTANGLE" in PAGE and "defer" in PAGE)
+check("the inline script is NOT deferred (inline scripts ignore it; it runs at parse "
+      "time, which is what makes it the beacon)",
+      re.search(r'<script>\s*\n\s*.use strict', PAGE) is not None)
+
+# The static fallback banner: true by default, removed by the first statement of JS.
+for label, page, stamp in [("office", PAGE, "loffice-2026-08-21c"),
+                           ("aider", AIDER_PAGE, "aider-2026-08-21c")]:
+    head = page.split("<body>")[0]
+    body = page.split("<body>")[1]
+    check(f"{label}: the fallback banner is REAL MARKUP in the body, not JS output",
+          '<div id="boot">' in body
+          and "scripts did not run" in body
+          and body.index('<div id="boot">') < body.index("<script"))
+    check(f"{label}: …and it says what to do about it",
+          "⌘R" in body.split("</div>")[0] and "ship.sh" in body.split("</div>")[0])
+    check(f"{label}: …and it is not hidden by a stylesheet rule",
+          not re.search(r'#boot\{[^}]*display:\s*none', page))
+    # "first" is asserted over the STATEMENTS, not the raw characters: both pages
+    # carry a paragraph of comment explaining why the line is there, and a character
+    # window would be pinning the length of that comment rather than the order.
+    inline = re.search(r"<script>\n(.*?)</script>", page, re.S).group(1)
+    stmts = re.sub(r"//[^\n]*", "", inline)
+    stmts = re.sub(r"\s+", " ", stmts).strip()
+    lead = stmts[:stmts.index("getElementById('boot')")]
+    check(f"{label}: the first thing the inline script does is remove it",
+          lead.replace("'use strict';", "").strip()
+          == "(function () { const b = document."
+          and ".remove()" in stmts[:len(lead) + 90])
+    check(f"{label}: the build stamp is in a <meta> AND printed in the banner, "
+          "so a stale document is identifiable with no terminal",
+          f'name="harness-build" content="{stamp}"' in head
+          and stamp in body.split("</div>")[0])
+    check(f"{label}: the static <title> is the BOOTING state — the shell reads "
+          "webView.title, so a dead page is visible from outside too",
+          "· booting…</title>" in head)
+    check(f"{label}: …and JS changes it once it is alive",
+          "document.title = " in page)
+
+# Every id the script reaches for has to exist in the markup. `el(...)` returns null for
+# a name that does not, and the wiring at the bottom of the file assigns onclick straight
+# onto the result — so ONE renamed element is a TypeError at parse time, i.e. a page that
+# renders its chrome and then does nothing at all, which is a described symptom.
+for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
+    have = set(re.findall(r'\bid="([^"]+)"', page))
+    want = (set(re.findall(r"el\('([^']+)'\)", page))
+            | set(re.findall(r"getElementById\('([^']+)'\)", page)))
+    check(f"{label}: every element the script reaches for exists in the markup "
+          f"(missing: {sorted(want - have)})", not (want - have))
+
+check("the page reads its stamp from the meta rather than keeping a second copy",
+      'meta[name="harness-build"]' in PAGE and PAGE.count("loffice-2026-08-21c") == 2)
+check("boot waits for DOMContentLoaded — deferred bundles have all run by then, so "
+      "the self-check can never accuse assets that were merely still arriving",
+      "addEventListener('DOMContentLoaded'" in PAGE
+      and re.search(r"async function boot", PAGE) is None)
+check("…and it says what it is doing while they load",
+      "Loading the spreadsheet engine" in PAGE)
+check("a watchdog turns 'still loading' into a sentence after a bounded wait",
+      "WATCHDOG_MS" in PAGE and "has not finished loading" in PAGE)
+check("a 404 on a bundle is caught in the CAPTURE phase and NAMES the file "
+      "(a resource error does not bubble, so the ordinary handler cannot see it)",
+      re.search(r"addEventListener\('error'.{0,400}?\}, true\)", PAGE, re.S) is not None
+      and "did not load" in PAGE)
+
+# The missing delegate. Same class as runOpenPanelWith and the media-capture grant:
+# a WKWebView whose content process is killed shows nothing at all, forever, unless
+# the host answers for it.
+check("main.swift answers webViewWebContentProcessDidTerminate",
+      "func webViewWebContentProcessDidTerminate(_ webView: WKWebView)" in SWIFT)
+check("…and reloads ONCE rather than looping", "crashedOnce" in SWIFT
+      and "crashedOnce.insert(key)" in SWIFT and "crashedOnce.contains(key)" in SWIFT)
+check("…and a second death in a row becomes a readable notice, not a void",
+      "ran out of memory" in SWIFT)
+_dfin = SWIFT.find("func webView(_ webView: WKWebView, didFinish")
+check("…and a successful load clears the crash memory, so the next one is a new "
+      "incident with its own retry",
+      _dfin > 0 and "crashedOnce.remove(" in SWIFT[_dfin:_dfin + 500])
+check("…and it says so in the log, tagged as a tab rather than as the split view",
+      '"[tab] \\(title): web content process died' in SWIFT)
+
+# Live: what the bridge actually puts on the wire. Answers "is the document cacheable"
+# and "does the served body contain today's page" in one pass.
+try:
+    from fastapi.testclient import TestClient                     # noqa: E402
+    import warnings
+    warnings.filterwarnings("ignore")
+    from bridge import app as A                                   # noqa: E402
+    cl = TestClient(A.app)
+    for route in ["/", "/office", "/aider"]:
+        r = cl.get(route)
+        cc = r.headers.get("cache-control", "")
+        check(f"GET {route} is 200 html", r.status_code == 200
+              and r.headers.get("content-type", "").startswith("text/html"))
+        check(f"GET {route} is no-store — a bridge-served DOCUMENT may never be "
+              "cached by the WKWebView (the recorded stale-panel incident)",
+              "no-store" in cc)
+    served = cl.get("/office").text
+    check("the served /office body carries today's build stamp — i.e. the route reads "
+          "the file per request, so a ship really does change what is served",
+          "loffice-2026-08-21c" in served and '<div id="boot">' in served)
+    for asset, mime in [("/assets/vendor/react.production.min.js", "javascript"),
+                        ("/assets/vendor/react-dom.production.min.js", "javascript"),
+                        ("/assets/vendor/univer/rxjs.umd.min.js", "javascript"),
+                        ("/assets/vendor/univer/presets.umd.js", "javascript"),
+                        ("/assets/vendor/univer/preset-sheets-core.umd.js", "javascript"),
+                        ("/assets/vendor/univer/preset-sheets-core.en-US.js", "javascript"),
+                        ("/assets/vendor/univer/preset-sheets-core.css", "text/css")]:
+        r = cl.get(asset)
+        check(f"{asset} serves 200 with a {mime} content-type and real bytes",
+              r.status_code == 200 and mime in r.headers.get("content-type", "")
+              and int(r.headers.get("content-length", "0")) > 1000)
+    check("the vendor bundles are NOT no-store — they are pinned, immutable and 10 MB; "
+          "revalidation is the right cost",
+          "no-store" not in cl.get("/assets/vendor/univer/presets.umd.js")
+          .headers.get("cache-control", ""))
+except Exception as _e:                                          # noqa: BLE001
+    print(f"  (skipped live route checks — no TestClient/app: {_e})")
 
 print()
 if FAILS:

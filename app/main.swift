@@ -359,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var loadedTabs = Set<String>()
     var hermesLoaded: Bool { return loadedTabs.contains(hermesId) }
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
+    var crashedOnce = Set<ObjectIdentifier>()   // webviews whose content process died since their last good load
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
     // close-without-status (WS 1005) as a terminal "session ended" and refuses to
@@ -2006,6 +2007,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if let u = webView.url, u.scheme == "http" { failedLoads.remove(ObjectIdentifier(webView)) }
+        // A load that actually landed clears the crash memory: the next termination on
+        // this tab is a NEW incident and gets its own automatic retry.
+        crashedOnce.remove(ObjectIdentifier(webView))
+    }
+
+    // ── the web content process died ────────────────────────────────────────
+    // ⚠️ THE MISSING DELEGATE, same class as runOpenPanelWith (⊕ attach), the media
+    // capture grant (● talk) and WKDownloadDelegate (downloads): when WebKit kills a
+    // tab's web content process — jetsam under memory pressure is the usual reason, and
+    // LOffice is by far the heaviest page we serve at ~10.5 MB of script plus a canvas
+    // engine — the view is left showing NOTHING. No error, no navigation callback, no
+    // console, and no amount of looking at the page can tell you it happened. That is
+    // an exact description of the symptom this delegate was written for.
+    //
+    // Policy: reload ONCE, silently (a jetsam under transient pressure is recoverable
+    // and a reload is what recovers it). A SECOND death without an intervening
+    // successful load is not transient, so say so rather than loop.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        let key = ObjectIdentifier(webView)
+        let title = tabRegistry.first { wvById[$0.id] === webView }?.title ?? "a tab"
+        if crashedOnce.contains(key) {
+            NSLog("%@", "[tab] \(title): web content process died again — showing the notice" as NSString)
+            failedLoads.insert(key)
+            webView.loadHTMLString(
+                "<body style='background:#0b0a10;color:#6f6a80;font-family:-apple-system;" +
+                "display:flex;align-items:center;justify-content:center;height:100vh'>" +
+                "<div style='text-align:center;max-width:460px'>" +
+                "<h2 style='color:#efe7d7;font-weight:500'>This tab ran out of memory</h2>" +
+                "<p>macOS stopped its web process twice in a row. Close a pane or eject a " +
+                "model to free memory, then press &#8984;R to load it again.</p></div></body>",
+                baseURL: nil)
+            return
+        }
+        crashedOnce.insert(key)
+        NSLog("%@", "[tab] \(title): web content process died — reloading once" as NSString)
+        if let u = webView.url, u.scheme == "http" {
+            webView.load(URLRequest(url: u))
+        } else {
+            webView.reload()
+        }
     }
 
     // ── download routing (all five tabs share this delegate) ──

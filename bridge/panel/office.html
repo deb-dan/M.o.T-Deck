@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>LOffice — Harness</title>
+<!-- THE BOOT BEACON. The title is set in the STATIC markup to the booting state and
+     changed by the inline script; the shell reads webView.title, so "still booting"
+     is answerable from outside the page even when the page itself shows nothing. -->
+<title>LOffice · booting…</title>
+<!-- The build stamp is here, in markup, so it survives a dead script: it is printed in
+     the static fallback banner below and copied into the footer once JS runs. If Debi
+     reports a stamp older than the one in this file, the bridge is serving a stale copy
+     and the answer is a ship + hard reload — a question that used to be unanswerable. -->
+<meta name="harness-build" content="loffice-2026-08-21c">
 <!-- The LOffice tab is its OWN document, deliberately not the panel (the /aider
      precedent): it loads ~10MB of Univer UMD, mounts a canvas grid, and must not
      carry the panel's poll loops. The palette values below are the panel's tokens,
@@ -106,9 +114,22 @@
   #ai span{writing-mode:vertical-rl;transform:rotate(180deg);color:var(--faint);
            font:10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;
            text-transform:uppercase;white-space:nowrap}
+  /* THE STATIC FALLBACK BANNER. Plain markup, visible by DEFAULT, removed by the first
+     line of the inline script. It exists because "the tab is blank" was un-diagnosable:
+     a page whose scripts never ran (a stale cached document, a parse error, a dead web
+     content process) previously looked identical to a page that was merely empty. Now
+     the two are distinguishable by eye, with no console and no debugging. */
+  #boot{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);
+        color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
+  #boot b{color:var(--cream);font-weight:600}
+  #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
 </style>
 </head>
 <body>
+<div id="boot"><b>If you can read this, this page's scripts did not run.</b>
+  That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
+  this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
+  Build <code>loffice-2026-08-21c</code>.</div>
 <header>
   <button id="btn-rail" class="ghost" title="Show or hide the file list">☰</button>
   <span class="name">LOffice</span>
@@ -137,6 +158,9 @@
     <div id="fnote">
       <span id="fidelity"></span>
       <div style="margin-top:6px" id="fdir"></div>
+      <!-- the build stamp, copied from the <meta> once scripts are alive: it answers
+           "is the bridge serving the file I just shipped?" without a terminal -->
+      <div style="margin-top:6px;opacity:.7" id="fbuild"></div>
     </div>
   </aside>
   <main id="mid">
@@ -152,16 +176,38 @@
      presets bundle carries a React-18 polyfill prelude, defines createUniver AND
      bundles @wendellhu/redi + UniverCore + UniverThemes, the sheets preset registers
      on top of those, the locale is merged by UniverCore.mergeLocales last. All
-     self-hosted — no runtime CDN, exactly like the artifact renderer. -->
-<script src="/assets/vendor/react.production.min.js"></script>
-<script src="/assets/vendor/react-dom.production.min.js"></script>
-<script src="/assets/vendor/univer/rxjs.umd.min.js"></script>
-<script src="/assets/vendor/univer/presets.umd.js"></script>
-<script src="/assets/vendor/univer/preset-sheets-core.umd.js"></script>
-<script src="/assets/vendor/univer/preset-sheets-core.en-US.js"></script>
+     self-hosted — no runtime CDN, exactly like the artifact renderer.
+
+     ⚠️ EVERY ONE OF THEM IS `defer`, AND THAT IS THE POINT. These six files are 10.5 MB
+     of classic script. A classic script without `defer` blocks the parser where it sits
+     and WebKit is under no obligation to paint what it has already parsed first — so on
+     the real Mac this page was a BLANK RECTANGLE for as long as it took to fetch and
+     compile ten megabytes, with no chrome, no message and nothing to look at. `defer`
+     keeps the documented guarantees we depend on (they still execute in THIS order, and
+     all of them before DOMContentLoaded) while letting the document render immediately.
+     Because of it the inline script below runs BEFORE these do — hence boot-on-
+     DOMContentLoaded rather than boot-at-parse. -->
+<script defer src="/assets/vendor/react.production.min.js"></script>
+<script defer src="/assets/vendor/react-dom.production.min.js"></script>
+<script defer src="/assets/vendor/univer/rxjs.umd.min.js"></script>
+<script defer src="/assets/vendor/univer/presets.umd.js"></script>
+<script defer src="/assets/vendor/univer/preset-sheets-core.umd.js"></script>
+<script defer src="/assets/vendor/univer/preset-sheets-core.en-US.js"></script>
 <script>
 'use strict';
+// ── the very first thing this page does ──────────────────────────────────────
+// Take the static fallback banner down. From here on, its presence on screen means
+// exactly one thing — this line never ran — which is the whole reason it exists.
+// Inline scripts ignore `defer`, so this runs at PARSE time, before the six bundles
+// above have executed and long before they have finished compiling.
+(function () {
+  const b = document.getElementById('boot');
+  if (b) b.remove();
+  document.title = 'LOffice — Harness';
+})();
+
 const el = id => document.getElementById(id);
+const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).content || '';
 
 let files = [], current = null, dirty = false, busy = false;
 let univer = null, api = null, armed = null;
@@ -239,6 +285,15 @@ window.addEventListener('error', ev => {
   say('Something broke in this page: ' + ((ev && ev.message) || 'unknown error')
       + (ev && ev.filename ? '\n  ' + ev.filename + ':' + ev.lineno : ''));
 });
+// A <script> or <link> that 404s fires an `error` event that does NOT bubble, so the
+// handler above cannot see it — the page would only find out later, as a missing
+// global, and could not say WHICH file. Capture phase does see it, and names the file.
+window.addEventListener('error', ev => {
+  const t = ev && ev.target;
+  if (!t || t === window || !(t.src || t.href)) return;      // not a resource failure
+  say('An asset this page needs did not load:\n  ' + (t.src || t.href)
+      + '\n\nRun ./scripts/fetch_vendor_assets.sh, then ./scripts/ship.sh, then ⌘R.');
+}, true);
 window.addEventListener('unhandledrejection', ev => {
   const r = ev && ev.reason;
   say('Something broke in this page: ' + ((r && (r.message || r)) || 'unknown error'));
@@ -545,11 +600,33 @@ window.addEventListener('beforeunload', ev => {
   if (dirty) { ev.preventDefault(); ev.returnValue = ''; }
 });
 
-(async function boot() {
+// ── boot ─────────────────────────────────────────────────────────────────────
+// DOMContentLoaded, not parse time: the six bundles above are `defer`red, and the one
+// documented guarantee `defer` gives us is that they have ALL executed, in order, by
+// the time this event fires. Running selfCheck any earlier would accuse the assets of
+// being missing while they were still on their way.
+//
+// Between the inline script and this event the page is fully painted and says what it
+// is doing — the state that used to be a blank rectangle.
+const WATCHDOG_MS = 25000;
+let booted = false;
+say('Loading the spreadsheet engine — about 10 MB, a few seconds on a cold start…', 'dim');
+setTimeout(() => {
+  if (booted) return;
+  say('The spreadsheet engine has not finished loading after '
+      + (WATCHDOG_MS / 1000) + ' seconds.\n\nIt is ~10 MB of JavaScript, so a cold '
+      + 'start is slow — but this long usually means the assets are missing or the '
+      + 'page is a stale cached copy. Press ⌘R; if that does not help, run '
+      + './scripts/fetch_vendor_assets.sh then ./scripts/ship.sh.  Build ' + BUILD);
+}, WATCHDOG_MS);
+
+window.addEventListener('DOMContentLoaded', async () => {
+  booted = true;
   paint();
-  selfCheck();          // say it at load, not at the first click on a dead grid
+  el('fbuild').textContent = BUILD;
+  if (selfCheck()) say('');   // say it at load, not at the first click on a dead grid
   await loadFiles();
-})();
+});
 </script>
 </body>
 </html>
