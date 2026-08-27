@@ -307,21 +307,34 @@ check('…and reports itself either way',
 check('…exactly once per page (a second upgrade attempt must not stack <link> tags)',
       /cssAsked/.test(LV) && /cssAsked = true/.test(LV));
 
-// The upgrade is reversible. This is the whole promise of the two-tier design: a
-// failure of the optional half may not cost the working half.
+// TIER 2 IS ONLYOFFICE NOW (loffice-2026-08-27c). The five checks below used to pin
+// the Univer lazy-mount inside upgrade(); they pin the navigation that replaced it,
+// and the promise is unchanged in shape — a failure of the optional half may not
+// cost the working half, and nothing may be a dead click.
+// ⚠️ The Univer bundle machinery above (VENDOR / loadVendor / mount) is RETIRED but
+// still present and still pinned, because the vendored assets are still on disk and
+// it is the rollback. What is asserted here is that upgrade() no longer USES it.
 const UP = grab('upgrade');
-check('upgrade() un-hides the tier-2 container BEFORE mounting into it (Univer measures '
-      + 'its container at mount; a 0x0 box is a permanently blank grid)',
-      UP.indexOf("el('sheet').classList.add('on')") < UP.indexOf('mount(snap)')
-      && UP.indexOf('requestAnimationFrame') < UP.indexOf('mount(snap)'));
-check('…and a failed load leaves the page on tier 1 with the grid still shown',
-      /catch \(e\) \{[\s\S]*?richLoading = false;[\s\S]*?rich-fail/.test(UP));
-check('…and a failed MOUNT puts the grid straight back',
-      UP.indexOf("el('gridwrap').classList.remove('off')") > UP.indexOf('const ok ='));
-check('…and only a success flips the mode',
-      UP.lastIndexOf("mode = 'univer'") > UP.indexOf('const ok ='));
+check('upgrade() navigates to the ONLYOFFICE glue page for the OPEN workbook',
+      /location\.href = '\/oo-edit\?doc=' \+ encodeURIComponent\(current\)/.test(UP));
+check('…and no longer touches the retired Univer loader',
+      !/loadVendor|mount\(snap\)|selfCheck\(\)/.test(UP));
+check('…and asks the bridge whether the editor is installed FIRST, so a missing '
+      + 'bundle is a sentence rather than a dead click',
+      UP.indexOf("'/api/oo/status'") > 0
+      && UP.indexOf("'/api/oo/status'") < UP.indexOf("location.href")
+      && /st\.installed/.test(UP) && /st\.installer/.test(UP));
+check('…and refuses with a reason when there is no workbook to open',
+      UP.indexOf('if (!current)') > 0
+      && UP.indexOf('if (!current)') < UP.indexOf("'/api/oo/status'"));
 check('the failure message says the grid still works rather than only naming the error',
       /plain grid is still working/.test(UP));
+// Unsaved grid edits are the one thing a navigation can quietly leave behind, so it
+// is the one thing upgrade() must ask about.
+check('…and unsaved grid edits are confirmed before navigating away from them',
+      UP.indexOf('if (dirty)') > 0
+      && UP.indexOf('if (dirty)') < UP.indexOf('location.href')
+      && /window\.confirm/.test(UP));
 
 // Saving must ask the tier that owns the document. Tier 1 IS the snapshot; Univer owns
 // it once mounted, and reading the stale `snap` after an upgrade would silently save
@@ -826,7 +839,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27b');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27c');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);

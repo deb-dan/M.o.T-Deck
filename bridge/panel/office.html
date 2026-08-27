@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-27b">
+<meta name="harness-build" content="loffice-2026-08-27c">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -772,7 +772,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-27b</code>.</div>
+  Build <code>loffice-2026-08-27c</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -788,7 +788,7 @@
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
   <span class="hsep"></span>
-  <button id="btn-rich" title="Load the full Univer spreadsheet engine (~11 MB, on demand)">Rich editor</button>
+  <button id="btn-rich" title="Open this workbook in the full ONLYOFFICE editor (real ribbon, high-fidelity .xlsx)">Rich editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
   <button id="btn-new2">New</button>
   <button id="btn-save" class="primary" disabled>Save</button>
@@ -882,7 +882,7 @@
           </div>
         </div>
         <div class="msep"></div>
-        <button class="mi" id="mi-rich">Rich editor<span class="mk">~11 MB</span></button>
+        <button class="mi" id="mi-rich">Rich editor<span class="mk">ONLYOFFICE</span></button>
       </div>
     </div>
     <div class="mwrap">
@@ -1279,7 +1279,12 @@ function paint() {
   el('p-state').className = 'mstat';
   el('btn-save').disabled = !current || busy || (mode === 'univer' && !api);
   el('btn-import').disabled = busy;
-  el('btn-rich').disabled = busy || mode === 'univer' || richLoading;
+  // TIER 2 IS A NAVIGATION NOW (see upgrade()), so the button's only preconditions
+  // are "there is a workbook" and "we are not mid-flight". It is deliberately NOT
+  // disabled when ONLYOFFICE is missing: that case opens and explains, because a
+  // greyed button with no sentence is exactly the dead click this lane keeps
+  // promising not to ship.
+  el('btn-rich').disabled = !current || busy || richLoading;
   el('empty').classList.toggle('off', !!current);
   if (el('filemenu').classList.contains('on')) fileMenuPaint();
   if (openMenu > 0) menuPaint(openMenu);
@@ -1605,9 +1610,11 @@ function menuPaint(i) {
       setRow('mi-z' + z, mode === 'grid', T1_ONLY);
       tick('mi-z' + z, zoomNow === z);
     });
+    // The rich editor OPENS A DIFFERENT PAGE, so the only reasons it can be refused
+    // are "no workbook to open" and "not while the page is busy". "Not installed" is
+    // not one of them — that answer is a sentence, not a grey row.
     setRow('mi-rich', !el('btn-rich').disabled,
-           mode === 'univer' ? 'The rich editor is already loaded.'
-                             : 'Not while the page is busy.');
+           !current ? whyDoc : 'Not while the page is busy.');
   } else if (i === 3) {                                                 // Insert
     ['mi-sheet', 'mi-rows', 'mi-cols'].forEach(id => setRow(id, t1ok(), whyDoc));
     // The four that arrived at 2026-08-27a. They act on the cell you last selected —
@@ -2588,11 +2595,30 @@ function helpFidelity() {
       + 'day, and why File → Download (which hands you the file itself) is the only '
       + 'byte-exact copy.\n\n' + (el('fidelity').textContent || ''), 'dim');
 }
-function helpAbout() {
+// ⚖️ ABOUT CARRIES THE AGPL ATTRIBUTION — condition #3 of the 2026-08-27 ONLYOFFICE
+// ruling, which says that if this harness is ever handed to anyone else, the About
+// surface must name ONLYOFFICE + AGPL-3.0 and link the exact vendored source. It is
+// read from /api/oo/status (bridge/oo.py's ATTRIBUTION) rather than retyped, so this
+// and the editor page's own footer cannot drift apart. It states the licence even
+// when the bundle is NOT installed: what we would ship is the fact being recorded.
+async function helpAbout() {
+  let attrib = '';
+  try {
+    const st = await (await fetch('/api/oo/status')).json();
+    const a = st && st.attribution;
+    if (a) {
+      attrib = '\n\nRich editor (tier 2)\n'
+        + '  ' + a.name + ' — ' + a.licence + '\n'
+        + (st.installed ? '  vendored: editor ' + st.editor_tag + ' · x2t ' + st.x2t_tag
+                          + '\n' : '  not installed on this Mac\n')
+        + (a.sources || []).map(sc => '  ' + sc.what + ': ' + sc.url).join('\n')
+        + '\n  ' + a.note;
+    }
+  } catch (e) { attrib = '\n\n(the bridge did not answer about the rich editor)'; }
   say('LOffice ' + BUILD + '\n'
-      + '  editor: ' + (mode === 'univer' ? 'rich (Univer)' : 'plain grid (tier 1)') + '\n'
+      + '  editor: plain grid (tier 1) — the rich editor opens in its own page\n'
       + '  documents: ' + (el('fdir').textContent || 'unknown') + '\n'
-      + '  boot trace: data/logs/loffice-boot.log', 'dim');
+      + '  boot trace: data/logs/loffice-boot.log' + attrib, 'dim');
 }
 
 // ══ ⌂ LOFFICE HOME — and this is the bug fix ══════════════════════════════════
@@ -3573,45 +3599,90 @@ function mount(data) {
   return true;
 }
 
-// The upgrade. Everything here is reversible: any failure leaves the page exactly as
-// it was, on tier 1, with the same workbook open and the same unsaved edits intact.
+// ══ THE UPGRADE — TIER 2 IS ONLYOFFICE AS OF THIS BUILD ════════════════════════
+//
+// It used to lazy-load six Univer bundles into #sheet. That path is RETIRED: the
+// 2026-08-27 WKWebView probe passed the real ONLYOFFICE editors (full ribbon, real
+// formula engine, high-fidelity .xlsx import) and Fable ruled GO for adoption, so
+// tier 2 is now a NAVIGATION to /oo-edit?doc=<name> — our own glue page over the
+// vendored bundle (bridge/panel/oo.html, bridge/oo.py).
+//
+// WHY A NAVIGATION AND NOT AN IFRAME HERE. The editors only work inside a
+// cross-origin-isolated document (COOP/COEP — without it they hang at "Loading
+// spreadsheet" forever with ZERO console errors, measured). Embedding them would
+// force COEP onto THIS page, and a cross-origin-isolated document refuses every
+// subresource that lacks CORP — so the whole tier-1 asset path would have to be
+// re-plumbed to gain nothing. A full page with a "‹ LOffice" button back is simpler
+// and honest about what it is: a different editor, owning the file on disk.
+//
+// TIER 1 STILL OWNS NOTHING IT DID NOT OWN BEFORE. The ownership story changed
+// shape: the rich editor no longer takes over this page, it takes over THE FILE, in
+// another page. So the guard here is about unsaved grid edits, not about `mode`.
+// Everything below is reversible — the only irreversible act is the navigation, and
+// it happens last.
 async function upgrade() {
-  if (mode === 'univer' || richLoading) return;
+  if (busy || richLoading) return;
+  if (!current) {
+    say('Open a workbook first — the rich editor opens the file you are looking at.');
+    return;
+  }
   richLoading = true; paint();
+  let st = null;
   try {
-    await loadVendor();
-  } catch (e) {
-    richLoading = false; paint(); rich('');
-    bx('rich-fail', (e && e.message) || 'unknown');
-    say('The rich editor could not load: ' + ((e && e.message) || 'unknown error')
-        + '\n\nThe plain grid is still working, and it is the same file. If the '
-        + 'bundles are missing, run ./scripts/fetch_vendor_assets.sh then '
-        + './scripts/ship.sh.');
+    const r = await fetch('/api/oo/status');
+    st = await r.json();
+  } catch (e) { st = null; }
+  richLoading = false; paint();
+
+  if (!st) {
+    bx('rich-fail', 'status unreachable');
+    say('The bridge did not answer when asked about the rich editor.'
+        + '\n\nThe plain grid is still working, and it is the same file.');
     return;
   }
-  rich('Starting the rich editor…');
-  // The container must be LAID OUT before Univer measures it (a mount into a
-  // display:none box yields a 0x0 canvas that no later un-hiding re-measures), so the
-  // swap happens first and the mount waits a frame.
-  el('gridwrap').classList.add('off');
-  el('sheet').classList.add('on');
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const ok = snap ? mount(snap) : selfCheck();
-  richLoading = false;
-  if (!ok) {                                  // straight back to the working grid
-    el('sheet').classList.remove('on');
-    el('gridwrap').classList.remove('off');
-    rich('');
-    paint();
+  if (!st.installed) {
+    // NEVER a dead click: the button opens, and this is the sentence.
+    bx('rich-fail', 'not installed: ' + (st.reason || '?'));
+    say('The rich editor is not installed yet.\n\n' + (st.reason || '')
+        + '\n\nInstall it once (about 1 GB on disk, no network if the zips are '
+        + 'already cached):\n    ./' + (st.installer || 'scripts/install_onlyoffice.sh')
+        + '\n\nThe plain grid is still working, and it is the same file.');
     return;
   }
-  mode = 'univer'; richWanted = true;
-  rich('');
-  bx('rich-ready', 'mode=univer file=' + (current || 'none'));
-  say('Rich editor loaded.', 'ok');
-  paint();
-  aiPaint(true);      // the snapshot now comes back from Univer, so recount once
+  // THE UNSAVED-EDITS FENCE. The rich editor opens the file AS IT IS ON DISK, so
+  // grid edits that were never saved would simply not be there. That is the one
+  // thing a navigation can quietly lose, so it is asked IN THE PAGE — never with
+  // window.confirm, which a WKWebView without the JS-panel delegate answers FALSE
+  // without showing anything (the same recorded class as confirmDiscard above).
+  // First click warns and offers the save; a second click, no sooner than a person
+  // can read the sentence, opens anyway.
+  if (dirty && !(richArmed === current && Date.now() - richArmedAt >= DISCARD_MIN_MS)) {
+    richArmed = current; richArmedAt = Date.now();
+    const from = current;
+    say('“' + from + '” has unsaved changes. The rich editor opens the file as it is '
+        + 'on disk, so they would be left behind. Save first, or press Rich editor '
+        + 'again to open without them.', null,
+        { label: 'Save & open the rich editor', run: async () => {
+            await save();
+            if (dirty) return;              // the save failed; its reason is on screen
+            richArmed = null;
+            location.href = '/oo-edit?doc=' + encodeURIComponent(from);
+          } });
+    setTimeout(() => { if (richArmed === from) richArmed = null; }, 6000);
+    return;
+  }
+  richArmed = null;
+  bx('rich-ready', 'onlyoffice ' + (st.editor_tag || '?') + ' file=' + current);
+  location.href = '/oo-edit?doc=' + encodeURIComponent(current);
 }
+
+// ⚠️ RETIRED, NOT DELETED. `loadVendor` / `mount` / `selfCheck` / the VENDOR list
+// above are the Univer tier-2 path. Nothing calls them any more — `upgrade()` used
+// to be the only caller. They are left in place deliberately: the vendored assets
+// are still on disk (deleting ~11 MB of Apache-2.0 UMD is an ops decision, not a
+// builder's), bridge/contract_tests/test_univer_assets_contract.py still pins the
+// asset set, and if the ONLYOFFICE lane ever has to be rolled back this is the
+// rollback. Do not extend them; do not wire them to a button.
 
 // ══ files ═════════════════════════════════════════════════════════════════════
 function renderFiles() {
@@ -3764,6 +3835,8 @@ function truncatedSheets(s) {
 // silently refuse to open any other file once a sheet was touched. Same recorded
 // class as the ⊕-attach file picker. So: the first click warns, the second discards.
 let discardArmed = null, discardAt = 0;
+// The same two-step arm, for the same reason, guarding the tier-2 navigation.
+let richArmed = null, richArmedAt = 0;
 // ⚠️ THE 400ms IS NOT A FLOURISH — WITHOUT IT A DOUBLE-CLICK DISCARDS YOUR WORK. A file
 // row opens on click, so double-clicking the row of the workbook you are editing sent
 // TWO opens: the first armed the discard, the second confirmed it, and unsaved edits

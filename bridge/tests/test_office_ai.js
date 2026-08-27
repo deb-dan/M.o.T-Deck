@@ -440,8 +440,12 @@ check('the 15-second model poll does NOT force one', /aiPaint\(\);\s*\n\}/.test(
 ['aiSetOpen', 'aiSend'].forEach(fn =>
   check(fn + ' forces a recount, because the user just did something',
         /aiPaint\(true\)/.test(grab(fn))));
-check('…as does opening another workbook, and switching to the rich editor',
-      /aiPaint\(true\)/.test(grab('openDoc')) && /aiPaint\(true\)/.test(grab('upgrade')));
+// ⚠️ upgrade() dropped out of this list at loffice-2026-08-27c and that is correct,
+// not a regression: tier 2 is now a NAVIGATION to /oo-edit, so there is no panel left
+// on this page to recount. It is asserted the other way round instead.
+check('…as does opening another workbook',
+      /aiPaint\(true\)/.test(grab('openDoc'))
+      && !/aiPaint/.test(grab('upgrade')));
 
 // the placeholder must step aside AFTER the turn is in the log, not before — it counts
 check('aiAdd appends the turn and only THEN re-evaluates the placeholder',
@@ -500,7 +504,13 @@ check('every URL the page calls is one of the endpoints that already existed',
                        "'/api/office/new'", "'/api/office/save'", "'/api/office/delete'",
                        "'/api/office/rename'",
                        "'/api/office/upload?name='", "'/api/office/open/'",
-                       "'/api/office/download/'", "'/api/office/diag'"].indexOf(u) >= 0), urls);
+                       "'/api/office/download/'", "'/api/office/diag'",
+                       // TIER 2 (loffice-2026-08-27c): the ONLY new endpoint the page
+                       // calls. It asks whether the ONLYOFFICE bundle is installed
+                       // before navigating, so the button is never a dead click. The
+                       // editor page itself is /oo-edit, not an /api/ URL — this page
+                       // does not talk to the editor, it hands the file over to it.
+                       "'/api/oo/status'"].indexOf(u) >= 0), urls);
 check('the session is deliberately EMPTY, so a spreadsheet question can never appear '
       + 'in — or retitle — a chat in Mission Control',
       /session: ''/.test(send));
@@ -794,9 +804,9 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27b');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27c');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-27b/g) || []).length === 2);
+      (html.match(/loffice-2026-08-27c/g) || []).length === 2);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click

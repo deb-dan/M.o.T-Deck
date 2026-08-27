@@ -634,12 +634,21 @@ check("#newrow is toggled by class too", "newrow').classList" in PAGE)
 # ORDERING instead of a stylesheet fact: `upgrade()` un-hides the container and yields a
 # frame BEFORE it mounts. (The full ordering assertion, over the extracted function
 # body, lives in bridge/tests/test_office_grid.js.)
-up = PAGE.split("async function upgrade()")[1].split("\n// ══")[0] \
+# ⚠️ AND IT CHANGED SHAPE AGAIN AT loffice-2026-08-27c, which retires the mount this
+# used to pin. TIER 2 IS ONLYOFFICE NOW and it lives in its OWN page (/oo-edit), so
+# `upgrade()` no longer mounts anything into #sheet — there is no container to measure
+# and no 0x0-canvas trap left to guard. What is pinned instead is the property that
+# replaced it: the navigation only happens after the bridge has confirmed the editor is
+# installed, so the button cannot be a dead click. (The full ordering assertions over
+# the extracted body live in bridge/tests/test_office_grid.js, and the ONLYOFFICE lane
+# itself in bridge/tests/test_oo_lane.py.)
+up = PAGE.split("async function upgrade()")[1].split("\n// ⚠️ RETIRED")[0] \
     if "async function upgrade()" in PAGE else ""
-check("upgrade() un-hides the tier-2 container before mounting into it",
-      bool(up) and up.index("el('sheet').classList.add('on')") < up.index("mount(snap)"))
-check("…and yields a frame in between, so the box is measured after layout",
-      bool(up) and up.index("requestAnimationFrame") < up.index("mount(snap)"))
+check("upgrade() hands the workbook to the ONLYOFFICE page rather than mounting a "
+      "second engine into this one",
+      bool(up) and "/oo-edit?doc=" in up and "mount(snap)" not in up)
+check("…and it asks the bridge whether that editor exists before navigating",
+      bool(up) and up.index("'/api/oo/status'") < up.index("location.href"))
 check("…and there is still no inline display on it (the class/inline trap)",
       'id="sheet" style' not in PAGE)
 check("the empty state is an OVERLAY over the container, not a replacement for it",
@@ -677,8 +686,12 @@ check("the tier-2 stylesheet reports both outcomes and is never awaited (a page 
       and re.search(r"l\.onload = \(\) => bx\('asset-ok'", PAGE)
       and re.search(r"l\.onerror = \(\) => bx\('asset-error'", PAGE)
       and not re.search(r"await[^\n]*cssAsked", PAGE))
-check("the self-check names the script that fixes it",
-      "fetch_vendor_assets.sh" in PAGE)
+# ⚠️ THE SCRIPT IT NAMES CHANGED AT loffice-2026-08-27c. Tier 2 is ONLYOFFICE now, so
+# the thing a user can be missing is the vendored ONLYOFFICE bundle, not the Univer
+# UMD — and the sentence has to name THAT installer or it is advice about the wrong
+# problem. The property is unchanged: a tier-2 failure names the command that fixes it.
+check("the tier-2 failure names the script that fixes it",
+      "scripts/install_onlyoffice.sh" in PAGE or "st.installer" in PAGE)
 check("a runtime throw after boot reaches the screen, not just the console",
       "addEventListener('error'" in PAGE and "unhandledrejection" in PAGE)
 

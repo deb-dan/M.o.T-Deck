@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="harness-build" content="oo-2026-08-27a">
+<title>LOffice — rich editor</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  LOffice TIER 2 — OUR OWN first-party integration of the vendored ONLYOFFICE
+  editors. Served by bridge/app.py at /oo-edit?doc=<name>, with the three
+  cross-origin-isolation headers bridge/oo.py stamps on this page AND on every
+  /oo/* response. Nothing here is third-party code: this file drives the bundle
+  through its published surface and never patches a vendored byte (AGPL ruling #2).
+
+  ── HOW THIS WORKS, AND WHY IT IS SHAPED LIKE THIS ──────────────────────────────
+
+  The vendored bundle is CryptPad's build of ONLYOFFICE. It is a DocumentServer
+  client: left alone it loads socket.io and waits forever for a server to answer.
+  MEASURED, not assumed — a WKWebView probe on 2026-08-27 served this exact bundle
+  with full cross-origin isolation and a plain `document.url` pointing at a real
+  .xlsx: the ribbon rendered, `crossOriginIsolated === true`, SharedArrayBuffer was
+  present, ZERO console errors, and it sat at "Loading spreadsheet" for 90 seconds
+  without ever fetching the workbook. Only 26 requests, one of them socket.io.
+
+  (The probe's earlier PASS was measured against fernfei/OnlyofficePersonal, whose
+  web-apps build is PATCHED — a requirejs alias injecting an `x2t_helper` that does
+  client-side conversion inside the editor. That patch is exactly the unverified
+  modification AGPL ruling #4 forbids us to ship, so its simpler wiring is not
+  available to us. This page pays for that with about 120 lines of glue.)
+
+  So the integration has three parts, all of them documented in the bundle's own
+  sources (`web-apps/apps/api/documents/api-orig.js` is shipped unminified):
+
+    1. x2t.wasm, driven BY US, converts .xlsx → Editor.bin before the editor opens
+       and Editor.bin → .xlsx when we save. `dist/x2t/x2t.js` is a plain Emscripten
+       module (no pthreads, no SharedArrayBuffer) exporting exactly `ccall` and `FS`
+       plus one entry point, `main1(paramsXmlPath)`. Measured in WKWebView: an .xlsx
+       became an Editor.bin in 20ms and came back out again with rc=0 both ways.
+
+    2. `connectMockServer` — CryptPad's own addition to `api.js`, which is part of
+       the bundle we vendor. It answers the editor's collaboration handshake in-page:
+       `handleAuth` replies to `auth` by itself and hands the editor the Editor.bin
+       URL, so all we implement is the handful of lock/save messages a SINGLE user
+       generates. There is no co-editing protocol here and none is needed — one
+       user's edits already live in their own editor instance.
+
+    3. THE SAVE HOOK — `asc_nativeGetFile()`, called on the editor instance inside
+       the iframe. Said plainly because it is the one design decision most likely to
+       be questioned: this is NOT the `onSaveDocument` event and NOT `downloadAs`.
+         · `onSaveDocument` (the `canSaveDocumentToBinary` path) IS implemented in
+           this bundle, but sdkjs only takes its zero-server branch when
+           `isOpenOOXInBrowser` is true, which requires `Asc.Addons.ooxml === true`
+           — and nothing in this bundle ever sets `Asc.Addons`. Its other branch
+           calls `downloadAs`, i.e. asks a DocumentServer to convert. Dead end.
+         · `downloadAs`/`onDownloadAs` returns a URL the server produced. Same dead
+           end, and it would also need a download delegate in the tab.
+         · `asc_nativeGetFile()` is sdkjs's synchronous serialiser
+           (`new AscCommonExcel.BinaryFileWriter(this.wbModel).Write()`) and returns
+           the live document as an `XLSY;v2;<len>;<base64>` string. It is what
+           CryptPad itself saves with. The iframe is same-origin, so reaching the
+           instance is a property access, not a hack.
+       We then run that string back through x2t and POST the .xlsx to the bridge.
+
+  ── WHAT THIS PAGE DELIBERATELY DOES NOT DO ────────────────────────────────────
+  · No autosave. Save is explicit (the Save button or ⌘S) because it OVERWRITES the
+    workbook, and the bridge takes a daily .bak and refuses a save whose file
+    changed underneath it.
+  · No co-editing, no comments, no chat, no plugins, no history.
+  · No third-party origin, ever: a COEP page refuses cross-origin subresources, and
+    every byte here comes from this bridge.
+  ═══════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+    --ctl-h:28px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column}
+  header{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;
+         border-bottom:1px solid var(--line);background:var(--bg2)}
+  header .name{font-weight:600;max-width:38vw;overflow:hidden;text-overflow:ellipsis;
+               white-space:nowrap}
+  header .tag{font:10px/1 -apple-system,sans-serif;letter-spacing:.09em;
+              text-transform:uppercase;padding:0 9px;height:18px;line-height:18px;
+              border:1px solid var(--line2);border-radius:9px;color:var(--gold)}
+  header .sp{flex:1 1 auto}
+  button{height:var(--ctl-h);padding:0 12px;border-radius:8px;cursor:pointer;
+         font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2)}
+  button:hover:not(:disabled){background:var(--card)}
+  button:disabled{opacity:.42;cursor:default}
+  button.primary{border-color:var(--gold);color:var(--gold)}
+  #state{color:var(--dim);font-size:12px;max-width:34vw;overflow:hidden;
+         text-overflow:ellipsis;white-space:nowrap}
+  #note{display:none;flex:none;align-items:baseline;gap:10px;padding:7px 12px;
+        border-bottom:1px solid var(--line);background:var(--card);font-size:12px}
+  #note.on{display:flex}
+  #note.bad{border-bottom-color:var(--bad)}
+  #note.bad #note-text{color:var(--bad)}
+  #note.ok #note-text{color:var(--ok)}
+  #note-text{flex:1 1 auto}
+  #note-acts{flex:none;display:flex;gap:6px}
+  #note-acts button{height:22px;padding:0 10px;font-size:11px}
+  #note-x{flex:none;height:22px;padding:0 8px;font-size:11px;border-color:transparent;
+          background:transparent;color:var(--faint)}
+  #stage{flex:1 1 auto;position:relative;min-height:0;background:var(--bg)}
+  #editor{position:absolute;inset:0}
+  #editor iframe{border:0}
+  #boot{position:absolute;inset:0;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:14px;padding:28px;
+        text-align:center;background:var(--bg)}
+  #boot.gone{display:none}
+  #boot h1{margin:0;font-size:17px;font-weight:600}
+  #boot p{margin:0;max-width:56ch;color:var(--dim)}
+  #boot code{background:var(--card);border:1px solid var(--line2);border-radius:5px;
+             padding:2px 6px;font-size:12px;color:var(--gold);
+             font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #bar{width:min(420px,70vw);height:4px;border-radius:2px;background:var(--card2);
+       overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--gold);
+         transition:width .25s ease}
+  #boot .steps{color:var(--faint);font-size:12px;white-space:pre-line;text-align:left}
+  #boot.bad h1{color:var(--bad)}
+  footer{flex:none;padding:6px 12px;border-top:1px solid var(--line);
+         background:var(--bg2);color:var(--faint);font-size:11px;
+         display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  footer a{color:var(--dim)}
+  footer .agpl{color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <button id="btn-back" title="Back to the LOffice grid">‹ LOffice</button>
+  <span class="tag">rich editor</span>
+  <span class="name" id="docname">—</span>
+  <span class="sp"></span>
+  <span id="state"></span>
+  <button id="btn-save" class="primary" disabled title="Overwrite this workbook (⌘S)">Save</button>
+</header>
+
+<!-- ⚠️ NO window.confirm / window.alert ANYWHERE ON THIS PAGE. A WKWebView whose host
+     does not implement the JS-panel delegates shows neither, and confirm() returns
+     FALSE without a pixel on screen — recorded in bridge/tests/test_office_ai.js as
+     the rule this lane learned the hard way. So every question and every failure is
+     THIS strip: a sentence plus, at most, one button that does the thing. -->
+<div id="note"><span id="note-text"></span><span id="note-acts"></span>
+  <button id="note-x" title="Dismiss">✕</button></div>
+
+<div id="stage">
+  <div id="editor"></div>
+  <div id="boot">
+    <h1 id="boot-title">Opening the rich editor…</h1>
+    <div id="bar"><i></i></div>
+    <p id="boot-msg">The first open compiles a 57 MB WebAssembly converter and a
+      large editor bundle. Later opens are cached.</p>
+    <div class="steps" id="boot-steps"></div>
+    <button id="boot-back" style="display:none">‹ Back to LOffice</button>
+  </div>
+</div>
+
+<footer>
+  <!-- ⚖️ AGPL-3.0 attribution, condition #3 of the 2026-08-27 ruling. Rendered from
+       bridge/oo.py's ATTRIBUTION so this and the LOffice About sheet cannot drift. -->
+  <span class="agpl" id="attrib">Rich editing by ONLYOFFICE · AGPL-3.0</span>
+  <span id="attrib-src"></span>
+</footer>
+
+<script>
+'use strict';
+// ── the constants that are actually decisions ────────────────────────────────
+const OO_BASE  = '/oo/dist/v9';
+const X2T_BASE = '/oo/dist/x2t';
+const API_JS   = OO_BASE + '/web-apps/apps/api/documents/api.js';
+
+// x2t infers the INPUT format from the file extension and writes its output to
+// `<input> + "." + <format>` — CryptPad's convention, kept because it is the one the
+// converter is exercised with every day. `m_bIsNoBase64` false is likewise
+// CryptPad's: the Editor.bin the editor expects is the `XLSY;v2;len;base64` text
+// form, and the same flag on the way back still yields a real binary .xlsx.
+const DOC_TYPES = {xlsx: 'cell', xlsm: 'cell', csv: 'cell',
+                   docx: 'word', pptx: 'slide'};
+
+const el = (id) => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const DOC = (qs.get('doc') || '').trim();
+
+let steps = [];
+let openedMtime = null;      // the mtime the editor opened — the write-back fence
+let editor = null;           // the DocsAPI.DocEditor (the CryptPad wrapper instance)
+let x2t = null;              // window.Module, once the wasm runtime is up
+let saving = false;
+let ready = false;
+
+function step(msg, pct) {
+  steps.push(msg);
+  if (steps.length > 9) steps = steps.slice(-9);
+  el('boot-steps').textContent = steps.join('\n');
+  if (typeof pct === 'number') el('bar').firstElementChild.style.width = pct + '%';
+}
+function state(msg) { el('state').textContent = msg || ''; }
+
+// The ONLY question-and-answer primitive on this page. `acts` is a list of
+// {label, run}; the strip is dismissible and replaces itself, so two failures in a
+// row cannot stack into a wall of text.
+function note(text, kind, acts) {
+  const box = el('note');
+  el('note-text').textContent = text || '';
+  const holder = el('note-acts');
+  holder.innerHTML = '';
+  (acts || []).forEach((a) => {
+    const btn = document.createElement('button');
+    btn.textContent = a.label;
+    if (a.primary) btn.className = 'primary';
+    btn.addEventListener('click', () => { noteClear(); a.run(); });
+    holder.appendChild(btn);
+  });
+  box.className = 'on' + (kind ? ' ' + kind : '');
+}
+function noteClear() { el('note').className = ''; el('note-acts').innerHTML = ''; }
+function fail(title, msg, showBack) {
+  el('boot').classList.remove('gone');
+  el('boot').classList.add('bad');
+  el('boot-title').textContent = title;
+  el('boot-msg').innerHTML = msg;
+  el('bar').style.display = 'none';
+  if (showBack !== false) el('boot-back').style.display = '';
+}
+function goBack() { location.href = '/office'; }
+el('btn-back').addEventListener('click', goBack);
+el('boot-back').addEventListener('click', goBack);
+el('note-x').addEventListener('click', noteClear);
+
+// ── x2t ──────────────────────────────────────────────────────────────────────
+// The wasm build's own pre-js sets `Module.noInitialRun`, `Module.noExitRuntime`
+// and, crucially, `Module.locateFile` — derived from `document.currentScript`'s
+// `src` ATTRIBUTE via `new URL(...)`. A relative src therefore throws
+// "cannot be parsed as a URL" before anything loads (measured, twice). The src MUST
+// be absolute, and we must NOT set locateFile ourselves: pre-js overwrites it.
+function loadX2T() {
+  return new Promise((resolve, reject) => {
+    window.Module = {
+      noInitialRun: true,
+      print: (t) => console.log('[x2t] ' + t),
+      printErr: (t) => console.log('[x2t err] ' + t),
+      onAbort: (t) => reject(new Error('x2t aborted: ' + t)),
+      onRuntimeInitialized: function () {
+        const M = window.Module;
+        try {
+          ['/working', '/working/media', '/working/fonts', '/working/themes']
+            .forEach((d) => { try { M.FS.mkdir(d); } catch (e) { /* exists */ } });
+        } catch (e) { return reject(e); }
+        x2t = M;
+        resolve(M);
+      }
+    };
+    const s = document.createElement('script');
+    s.src = location.origin + X2T_BASE + '/x2t.js';
+    s.onerror = () => reject(new Error('could not load ' + X2T_BASE + '/x2t.js'));
+    document.body.appendChild(s);
+  });
+}
+
+// Synchronous, on the main thread, exactly as CryptPad runs it. It is fast enough
+// that a worker would buy latency and cost us a postMessage copy of the document:
+// 20ms for a real workbook, measured.
+function x2tConvert(data, inName, outFormat) {
+  const M = x2t;
+  if (!M) throw new Error('the converter is not loaded');
+  const inPath = '/working/' + inName;
+  const outPath = inPath + '.' + outFormat;
+  try { M.FS.unlink(outPath); } catch (e) { /* first run */ }
+  M.FS.writeFile(inPath, data);
+  M.FS.writeFile('/working/params.xml',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+    + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+    + '<m_sFileFrom>' + inPath + '</m_sFileFrom>'
+    + '<m_sThemeDir>/working/themes</m_sThemeDir>'
+    + '<m_sFileTo>' + outPath + '</m_sFileTo>'
+    + '<m_bIsNoBase64>false</m_bIsNoBase64>'
+    + '</TaskQueueDataConvert>');
+  const rc = M.ccall('main1', 'number', ['string'], ['/working/params.xml']);
+  if (rc !== 0) throw new Error('x2t returned ' + rc + ' converting to ' + outFormat);
+  const out = M.FS.readFile(outPath);
+  try { M.FS.unlink(inPath); M.FS.unlink(outPath); } catch (e) { /* fine */ }
+  return out;
+}
+
+// ── the mock server ──────────────────────────────────────────────────────────
+// `api.js`'s own `handleAuth` answers the `auth` message and hands the editor the
+// Editor.bin URL; everything below is the single-user remainder. `saveChanges` is
+// ACKed and NOT rebroadcast — rebroadcasting to the only participant is how you
+// make an editor apply its own edits twice.
+function mockServer() {
+  return {
+    getParticipants: () => ({
+      index: 1,
+      // Two entries, one of them a fake, because that is what CryptPad ships and
+      // some sdkjs paths behave oddly for a genuinely lone participant.
+      list: [
+        {id: 'harness', idOriginal: 'harness', username: 'You', indexUser: 1,
+         connectionId: 'harness-1', isCloseCoAuthoring: false, view: false},
+        {id: 'history', idOriginal: 'history', username: 'History', indexUser: 1,
+         connectionId: 'harness-h', isCloseCoAuthoring: true, view: true}
+      ]
+    }),
+    getInitialChanges: () => [],
+    onMessage: (m) => {
+      const t = m && m.type;
+      if (t === 'auth') return;                      // api.js already answered it
+      if (t === 'isSaveLock') {
+        editor.sendMessageToOO({type: 'saveLock', saveLock: false});
+      } else if (t === 'getLock') {
+        editor.sendMessageToOO({type: 'getLock', locks: [
+          {time: Date.now(), user: 'harness', block: m.block && m.block[0]}]});
+      } else if (t === 'getMessages') {
+        editor.sendMessageToOO({type: 'message'});
+      } else if (t === 'saveChanges') {
+        editor.sendMessageToOO({type: 'unSaveLock', index: 0, time: Date.now()});
+      } else if (t === 'unLockDocument') {
+        if (m.releaseLocks) editor.sendMessageToOO({type: 'releaseLock', locks: []});
+        if (m.isSave) editor.sendMessageToOO({type: 'unSaveLock', time: -1, index: -1});
+      }
+      // Anything else is a message a single user does not need answered. Silence is
+      // the correct reply; guessing would be worse.
+    }
+  };
+}
+
+// The editor api instance inside the iframe. The word editor sets `window.editor`,
+// the spreadsheet sets `window.editorCell` (`if (window.editor == undefined)
+// window.editorCell = this`), so both are checked — CryptPad's own accessor.
+function innerEditor() {
+  try {
+    const w = window.frames && window.frames[0];
+    return w && (w.editor || w.editorCell) || null;
+  } catch (e) { return null; }
+}
+
+// ── save ─────────────────────────────────────────────────────────────────────
+async function save(force) {
+  if (saving || !ready) return;
+  const api = innerEditor();
+  if (!api || typeof api.asc_nativeGetFile !== 'function') {
+    state('the editor is not ready to save yet');
+    return;
+  }
+  saving = true;
+  el('btn-save').disabled = true;
+  state('saving…');
+  try {
+    // asc_nativeGetFile() is synchronous and returns the live document as the
+    // `XLSY;v2;len;base64` text form of Editor.bin.
+    const bin = api.asc_nativeGetFile();
+    if (!bin || !bin.length) throw new Error('the editor returned an empty document');
+    const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
+    const bytes = x2tConvert(bin, 'save.bin', ext);
+    const url = '/api/office/writeback/' + encodeURIComponent(DOC)
+      + (openedMtime !== null ? '?mtime=' + encodeURIComponent(openedMtime) : '')
+      + (force ? (openedMtime !== null ? '&' : '?') + 'force=1' : '');
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/octet-stream'},
+      body: bytes
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      // THE MTIME FENCE FIRED. Nothing was written. The choice is the user's and it
+      // is offered as two buttons, because a page that cannot ask is a page that
+      // guesses — and both guesses lose somebody's work.
+      state('not saved');
+      saving = false;
+      el('btn-save').disabled = false;
+      note((j.error || 'That workbook changed on disk since this editor opened it.'),
+           'bad',
+           [{label: 'Overwrite it', primary: true, run: () => save(true)},
+            {label: 'Leave it alone', run: () => state('not saved — the file on disk '
+                                                      + 'is newer')}]);
+      return;
+    }
+    if (!r.ok || !j.ok) throw new Error(j.error || ('the bridge said ' + r.status));
+    openedMtime = j.mtime;
+    noteClear();
+    state('saved · ' + Math.round(j.bytes / 1024) + ' KB'
+          + (j.backup ? ' · safety copy ' + j.backup : ''));
+  } catch (e) {
+    state('not saved');
+    note('Could not save: ' + (e && e.message ? e.message : e)
+         + ' — the workbook on disk was not changed.', 'bad',
+         [{label: 'Try again', run: () => save(false)}]);
+  }
+  saving = false;
+  el('btn-save').disabled = false;
+}
+el('btn-save').addEventListener('click', () => save(false));
+// ⌘S. The editor's own Save lives inside the iframe and would be handled there, so
+// this only catches the shortcut while our chrome has focus. The Save BUTTON is the
+// documented path; this is a convenience, not the contract.
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    save(false);
+  }
+});
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('could not load ' + src));
+    document.body.appendChild(s);
+  });
+}
+
+function renderAttribution(a) {
+  if (!a) return;
+  el('attrib').textContent = 'Rich editing by ' + a.name + ' · ' + a.licence;
+  const links = (a.sources || []).slice(0, 2).map(
+    (s) => '<a href="' + s.url + '" target="_blank" rel="noreferrer">'
+           + s.url.replace('https://github.com/', '') + '</a>').join(' · ');
+  el('attrib-src').innerHTML = links ? 'source: ' + links : '';
+}
+
+async function boot() {
+  if (!DOC) {
+    fail('No workbook named', 'Open this page from LOffice — it needs '
+         + '<code>?doc=&lt;file name&gt;</code>.');
+    return;
+  }
+  el('docname').textContent = DOC;
+  document.title = DOC + ' — LOffice rich editor';
+
+  step('checking the editor bundle…', 4);
+  let status;
+  try {
+    status = await (await fetch('/api/oo/status')).json();
+  } catch (e) {
+    fail('The bridge did not answer', 'Could not reach <code>/api/oo/status</code>.');
+    return;
+  }
+  renderAttribution(status.attribution);
+  if (!status.installed) {
+    fail('The rich editor is not installed',
+         (status.reason || 'The ONLYOFFICE bundle is missing.')
+         + '<br><br>Install it once with<br><code>./'
+         + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>');
+    return;
+  }
+  step('bundle ' + (status.editor_tag || '?') + ' · x2t ' + (status.x2t_tag || '?'), 8);
+
+  // The mtime fence. Taken BEFORE the bytes, so a change between the two makes the
+  // fence pessimistic (a refused save) rather than optimistic (a lost edit).
+  try {
+    const files = await (await fetch('/api/office/files')).json();
+    const row = (files.files || []).find((f) => f.name === DOC);
+    if (row) openedMtime = row.modified;
+  } catch (e) { /* the fence is a safety net, not a precondition */ }
+
+  step('reading ' + DOC + '…', 12);
+  let raw;
+  try {
+    const r = await fetch('/api/office/download/' + encodeURIComponent(DOC));
+    if (!r.ok) throw new Error('the bridge said ' + r.status);
+    raw = new Uint8Array(await r.arrayBuffer());
+  } catch (e) {
+    fail('Could not read that workbook', String(e.message || e));
+    return;
+  }
+  step('read ' + Math.round(raw.length / 1024) + ' KB', 16);
+
+  step('loading the converter (57 MB wasm, first time only)…', 20);
+  try {
+    await loadX2T();
+  } catch (e) {
+    fail('The converter did not load', String(e.message || e));
+    return;
+  }
+  step('converter ready', 45);
+
+  let bin;
+  try {
+    bin = x2tConvert(raw, DOC.replace(/[^A-Za-z0-9._-]/g, '_'),
+                     'bin');
+  } catch (e) {
+    fail('Could not convert that workbook',
+         String(e.message || e) + '<br><br>The file on disk was not touched.');
+    return;
+  }
+  step('converted to the editor format (' + Math.round(bin.length / 1024) + ' KB)', 55);
+
+  step('loading the editor…', 60);
+  try {
+    await loadScript(API_JS);
+  } catch (e) {
+    fail('The editor did not load', String(e.message || e));
+    return;
+  }
+  if (typeof DocsAPI === 'undefined' || !DocsAPI.DocEditor) {
+    fail('The editor did not register', 'api.js loaded but <code>DocsAPI</code> is '
+         + 'not there. The vendored bundle may be incomplete — re-run <code>'
+         + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>.');
+    return;
+  }
+
+  // sdkjs reads `window.APP` (connectMockServer installs getImageURL onto it), so it
+  // must exist first. Ours is deliberately bare — we serve no editor-side images.
+  window.APP = window.APP || {};
+
+  const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
+  const blobUrl = URL.createObjectURL(new Blob([bin]));
+  step('starting the editor…', 68);
+
+  editor = new DocsAPI.DocEditor('editor', {
+    document: {
+      fileType: ext,
+      key: 'harness-' + Date.now(),
+      title: DOC,
+      url: blobUrl,
+      permissions: {download: false, print: true, edit: true}
+    },
+    documentType: DOC_TYPES[ext] || 'cell',
+    width: '100%',
+    height: '100%',
+    editorConfig: {
+      lang: 'en',
+      mode: 'edit',
+      user: {id: 'harness', name: 'You'},
+      customization: {
+        about: false, feedback: false, chat: false, comments: false,
+        help: false, plugins: false, compactHeader: false,
+        hideRightMenu: false, autosave: false, forcesave: false
+      }
+    },
+    events: {
+      onAppReady: () => { step('editor frame ready', 78); },
+      onDocumentReady: () => {
+        ready = true;
+        el('boot').classList.add('gone');
+        el('btn-save').disabled = false;
+        state('ready');
+        // The editor keeps the document; the blob has been read.
+        try { URL.revokeObjectURL(blobUrl); } catch (e) { /* fine */ }
+      },
+      onError: (e) => {
+        const d = e && e.data;
+        fail('The editor reported an error',
+             '<code>' + JSON.stringify(d) + '</code>');
+      },
+      onWarning: (e) => { console.log('[oo warning]', e && e.data); },
+      onDocumentStateChange: (e) => {
+        if (ready && e && e.data) state('unsaved changes');
+      }
+    }
+  });
+  editor.connectMockServer(mockServer());
+  step('waiting for the document…', 82);
+}
+
+// A page-level guard: any throw here would otherwise leave the boot overlay saying
+// "Opening…" forever, which is the exact failure mode this whole lane keeps hitting.
+window.addEventListener('error', (e) => {
+  if (!ready) fail('Something broke while opening',
+                   '<code>' + String(e.message || 'unknown') + '</code>');
+});
+boot().catch((e) => fail('Something broke while opening',
+                         '<code>' + String((e && e.message) || e) + '</code>'));
+</script>
+</body>
+</html>

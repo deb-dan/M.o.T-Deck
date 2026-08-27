@@ -81,6 +81,21 @@ except Exception:                                # noqa: BLE001
         print(f"[office] module unavailable — the Office tab is disabled ({_OFFICE_ERR})",
               flush=True)
 
+# LOffice TIER 2 — the vendored ONLYOFFICE static editors (bridge/oo.py). Same
+# defensive import, same reason: a snapshot that predates this file must still boot,
+# it just loses /oo/*, /oo-edit and the rich-editor button — which then SAYS so
+# instead of being a dead click.
+_OO_ERR = ""
+try:
+    from . import oo as _oo
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import oo as _oo
+    except Exception as _e:                      # noqa: BLE001
+        _oo, _OO_ERR = None, str(_e)[:200]
+        print(f"[office] oo module unavailable — the rich editor is off ({_OO_ERR})",
+              flush=True)
+
 # NAV — the sidebar/tab-strip customization model (FABLE-STUDIO-PHASE2-SPEC §A). Same
 # defensive import for the same reason: without it the panel falls back to its own
 # default layout and the shell keeps its built-in tab order, i.e. exactly the
@@ -9518,3 +9533,136 @@ def office_download(name: str) -> Response:
         target,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=os.path.basename(target))
+
+
+# ══ LOFFICE TIER 2 — the vendored ONLYOFFICE editors ════════════════════════════
+#
+# Still not a component: `scripts/install_onlyoffice.sh` unzips two sha256-pinned
+# CryptPad release zips into data/onlyoffice/ and this serves them read-only. No
+# port, no daemon, no manifest key. bridge/oo.py owns every decision; these four
+# routes are wiring.
+#
+# ⚠️ EVERY response below carries oo.ISOLATION_HEADERS. Without cross-origin
+# isolation the spreadsheet editor hangs at "Loading spreadsheet" forever with zero
+# console errors — measured in a real WKWebView on 2026-08-27. That includes the
+# GLUE PAGE itself: a COEP document is the only kind that may embed the COEP editor
+# frame, and `crossOriginIsolated` is a property of the whole page tree.
+
+def _oo_unavailable() -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "installed": False,
+         "reason": f"the rich-editor module failed to load: {_OO_ERR}",
+         "installer": "scripts/install_onlyoffice.sh"},
+        status_code=503, headers=dict(_OO_FALLBACK_HEADERS))
+
+
+# Used only when oo.py itself did not import; the literal is duplicated ONCE, here,
+# so a broken oo.py cannot serve a page without the headers that make it work.
+_OO_FALLBACK_HEADERS = {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+
+
+def _oo_headers(extra: dict | None = None) -> dict:
+    h = dict(_oo.ISOLATION_HEADERS if _oo is not None else _OO_FALLBACK_HEADERS)
+    if extra:
+        h.update(extra)
+    return h
+
+
+@app.get("/api/oo/status")
+def oo_status() -> JSONResponse:
+    """Is the rich editor installed, at which pins, and how do I install it?
+
+    The page and the LOffice button BOTH branch on this, which is why "not
+    installed" always carries a reason and the installer path: the button must never
+    be a dead click.
+    """
+    if _oo is None:
+        return _oo_unavailable()
+    body = _oo.install_state(ROOT)
+    return JSONResponse({"ok": True, **body},
+                        headers=_oo_headers({"Cache-Control": _oo.NO_CACHE}))
+
+
+@app.get("/oo-edit")
+def oo_edit_page() -> Response:
+    """The glue page — OUR integration, at /oo-edit?doc=<name>.
+
+    A full-page navigation, not an iframe inside the LOffice page. Two reasons, and
+    the second is the deciding one: (a) it is simpler, and the "Back to LOffice"
+    button is a plain link; (b) an iframe would force the LOffice page ITSELF to
+    carry COEP, and that page loads /assets/* — a cross-origin-isolated document
+    refuses any subresource without CORP, so the tier-1 grid would have to be
+    re-plumbed to gain nothing.
+    """
+    if _oo is None:
+        return _oo_unavailable()
+    return FileResponse(
+        PANEL / "oo.html",
+        headers=_oo_headers({"Cache-Control": _oo.NO_CACHE, "Pragma": "no-cache"}))
+
+
+@app.get("/oo/{rel:path}")
+def oo_asset(rel: str, request: Request) -> Response:
+    """The bundle, read-only. Containment + forced MIME + immutable cache + brotli.
+
+    Deliberately NOT a StaticFiles mount: a mount cannot add per-response headers
+    without a middleware wrapper (the /assets precedent), and three of the four
+    things this route does are per-response.
+    """
+    if _oo is None:
+        return _oo_unavailable()
+    target, reason = _oo.bundle_target(ROOT, rel)
+    if not target:
+        # 404 for everything, including a refused traversal. Telling a caller which
+        # of its guesses was "outside the bundle" is free reconnaissance.
+        return JSONResponse({"ok": False, "error": reason}, status_code=404,
+                            headers=_oo_headers())
+    headers = _oo_headers({"Cache-Control": _oo.cache_control_for(rel)})
+    media = _oo.media_type_for(target)
+    # A Range request must never be answered with the .br sibling: FileResponse would
+    # slice the COMPRESSED bytes and still claim Content-Encoding: br, which is a
+    # corrupt response rather than a slow one. Ranges get the plain file.
+    br = ("" if request.headers.get("range")
+          else _oo.brotli_sibling(target, request.headers.get("accept-encoding", "")))
+    if br:
+        # The `.br` sibling shipped inside the zip. Content-Type stays that of the
+        # UNCOMPRESSED file — brotli is a transfer encoding, not a format.
+        headers["Content-Encoding"] = "br"
+        headers["Vary"] = "Accept-Encoding"
+        return FileResponse(br, media_type=media, headers=headers)
+    return FileResponse(target, media_type=media, headers=headers)
+
+
+@app.post("/api/office/writeback/{name}")
+async def office_writeback(name: str, req: Request) -> JSONResponse:
+    """RAW .xlsx body → OVERWRITE that workbook. This is Save, not import.
+
+    `?mtime=<float>` is the fence: the mtime the editor saw when it opened. A
+    workbook that changed underneath gets a 409 and no write, unless `?force=1`.
+    A daily .bak is taken first and the write is temp-file + os.replace — see
+    oo.writeback, which owns all of that.
+    """
+    if _oo is None:
+        return _oo_unavailable()
+    if _office is None:
+        return _office_unavailable()
+    raw = await req.body()
+    q = req.query_params
+    mtime = q.get("mtime")
+    force = q.get("force") in ("1", "true", "yes")
+    report, err = await asyncio.to_thread(
+        _oo.writeback, _office, ROOT, name, raw,
+        mtime if mtime not in (None, "") else None, force)
+    if report is None:
+        status, reason = err
+        _office_log(f"oo-writeback reject {name!r}: {status} {reason}")
+        return JSONResponse({"ok": False, "error": reason}, status_code=status,
+                            headers=_oo_headers())
+    _office_log(f"oo-writeback saved {report['name']} ({report['bytes']} bytes"
+                + (f", .bak {report['backup']}" if report["backup"] else "")
+                + (", FORCED" if report["forced"] else "") + ")")
+    return JSONResponse({"ok": True, **report}, headers=_oo_headers())
