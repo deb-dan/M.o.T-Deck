@@ -235,3 +235,44 @@ touched — no component, no port, no manifest key, no venv, no `vendor/`, and n
   its log rather than trusting a green line.
 - **One run, one machine, one document.** This measures feasibility, not throughput.
 - **Nothing here is adoption.** No component entry, no port, no manifest key, no registry row.
+
+---
+
+## ✅ RESULTS — 2026-08-27, run by Fable 5 in a REAL WKWebView (stronger instrument than Safari)
+
+**Instrument:** not Safari — a purpose-built headless `WKWebView` harness (1440×900, console-error
+hook injected at documentStart, JS checks, PNG snapshots). This is literally the engine the
+harness's tabs use, so the go/no-go is measured on the real thing. Snapshots reviewed by Fable.
+
+**THE HEADLINE FINDING — `OO_ISOLATE=1` is REQUIRED, not optional.** Without COOP/COEP the
+spreadsheet editor renders its full frame and then hangs at "Loading spreadsheet" forever
+(`SharedArrayBuffer` absent; zero console errors — it fails silently). With
+`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` +
+`Cross-Origin-Resource-Policy: same-origin` it loads completely. **Adoption consequence: the
+bridge must serve the editor bundle with those three headers — and everything embedded in
+that page must be same-origin** (a COEP page refuses cross-origin subresources without CORP).
+WKWebView honors all of it (`crossOriginIsolated === true` measured in-page).
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Real ribbon renders | **PASS** — File/Home/Insert/Draw/Layout/Formula/Data/Collaboration/Protection/View, formula bar, name box, styles gallery, sheet tabs, zoom |
+| 2 | Formulas calculate | **PASS** — `=SUM(B2:B5)`/`=SUM(C2:C5)` in the imported file computed to 22200/13100 on open |
+| 3 | Save/export .xlsx | **NOT PROVEN headless** — the probe harness has no download delegate (same gap our tabs already solved for VoiceStudio); queue for the adoption slice or a 2-min Safari click |
+| 4 | Import a real .xlsx | **PASS, high fidelity** — bold+gold-fill header, `#,##0.00` number formats, italic, merged+centered A8:C8, column width, BOTH sheets (Budget/Notes), all values. Served via `docConfig.document.url`; x2t.wasm did the conversion client-side |
+| 5 | .docx editor | **PASS** — Word editor loads: full ribbon, page canvas, rulers, styles gallery, page/word count. (Slides untested, same bundle.) |
+| 6 | x2t instantiates | **PASS de facto** — check 4 IS x2t doing a real xlsx→editor conversion (stronger than the discovery page) |
+| 7 | Load time | Frame ~5s; fully interactive grid 40–75s COLD (includes first wasm compile + AllFonts.js over localhost, no HTTP cache). Warm-cache + precompiled expectations much lower — measure in the adoption slice |
+| 8 | Console errors | **ZERO** across landing, spreadsheet (cold+warm), rich import, and docx runs |
+
+**Recorded pins:** OnlyofficePersonal commit `0cb5e083cf7de6078c6230a2abacaf9447e6ff68` ·
+editor `cryptpad/onlyoffice-editor @ v9.2.0.119+3` (sha256 `68ae8f0f…30f`, sha512 recorded in
+CHECKSUMS.txt — ⚠️ **NOT FOUND in CryptPad's live install-onlyoffice.sh**, the runbook's
+predicted pin drift; the recorded hashes ARE the pin now) · x2t `v7.3+1` · 3.2 GB on disk
+unzipped · Mac: Debi's Apple-Silicon MacBook Pro, macOS 25.6.0.
+
+**VERDICT per the pre-ruled decision rule: PASS → adopt the ONLYOFFICE static bundle as
+LOffice tier 2, replacing the Univer lazy-loader; tier-1 grid stays; x2t.wasm becomes the
+converter for both.** Still open before shipping, exactly as the runbook fenced: (a) the
+AGPL-3.0-served-from-our-page ruling — Fable call, NOT yet made; (b) save-back proof (check 3);
+(c) Track B (CryptPad zips) is what gets vendored — Track A was the measurement vehicle only;
+(d) RAM under a real tab; (e) the COOP/COEP serving requirement lands in the bridge.
