@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-27c">
+<meta name="harness-build" content="loffice-2026-08-27d">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -420,8 +420,13 @@
       display:inline-block}
   body.aioff #ai-tab:hover{color:var(--gold)}
   #ai-panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-  #ai-hd{flex:none;display:flex;align-items:center;gap:6px;padding:9px 10px;
-         border-bottom:1px solid var(--line)}
+  /* ⚠️ `flex-wrap` ARRIVED WITH THE LANE TOGGLE and it is the only CSS this slice
+     added. The header now carries two lane chips as well as the model pill, and this
+     pane is draggable down to 260px: without a wrap the pill would squeeze the chips'
+     text into ellipses, i.e. a control whose label is the thing you must read to use
+     it. Wrapping costs one row at narrow widths and never lies. */
+  #ai-hd{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+         padding:9px 10px;border-bottom:1px solid var(--line)}
   #ai-log{flex:1 1 auto;min-height:0;overflow:auto;padding:10px;
           display:flex;flex-direction:column;gap:12px}
   #ai-empty{color:var(--dim);font-size:11.5px;line-height:1.6}
@@ -772,7 +777,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-27c</code>.</div>
+  Build <code>loffice-2026-08-27d</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -1116,6 +1121,17 @@
     <button id="ai-tab" title="Ask the model about this sheet"><span>Ask the model</span></button>
     <div id="ai-panel">
       <div id="ai-hd">
+        <!-- THE LANE TOGGLE (spec §4). Two chips, the same grammar as the `sheet` chip
+             below, and REAL MARKUP so the choice is visible even if the script never
+             runs. Quick is the default and is marked `on` here, not by JS: a page whose
+             boot failed must not look like it is in the Agent lane. The Agent chip's
+             `disabled` + `title` are the grey-not-hide contract — lanePaint() rewrites
+             the title with the actual reason, and the one in the markup is the reason
+             that holds before anything has been probed. -->
+        <button id="lane-quick" class="chip on"
+                title="The direct lane: one question, one answer, and an Apply card for any change it proposes. Works on every model.">Quick</button>
+        <button id="lane-agent" class="chip" disabled
+                title="Hermes with the real Office tools — checking whether it is available…">Agent</button>
         <span class="pill" id="ai-model">checking…</span>
         <span class="grow"></span>
         <button id="ai-clear" class="ghost" title="Clear this conversation">clear</button>
@@ -1213,14 +1229,21 @@ function say(text, kind, action) {
     const t = document.createElement('span');
     t.textContent = text;
     m.appendChild(t);
-    if (action && action.label && action.run) {
+    // ⚠️ ONE ACTION OR SEVERAL, AND THE SECOND ONE ARRIVED WITH THE AGENT LANE. The
+    // external-change banner (docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §3.3) states a
+    // dilemma with TWO answers — Reload, or Keep mine — and the whole reason this
+    // argument exists is that a message stating a dilemma should be able to resolve
+    // it. A single `{label, run}` behaves exactly as before; an ARRAY adds the buttons
+    // in order. No new element, no new class, no new CSS.
+    (Array.isArray(action) ? action : [action]).forEach(a => {
+      if (!(a && a.label && a.run)) return;
       const b = document.createElement('button');
       b.className = 'lnk';
       b.style.marginLeft = '10px';
-      b.textContent = action.label;
-      b.onclick = action.run;
+      b.textContent = a.label;
+      b.onclick = a.run;
       m.appendChild(b);
-    }
+    });
   }
   m.classList.toggle('on', !!text);
   m.style.color = kind === 'ok' ? 'var(--ok)' : (kind === 'dim' ? 'var(--faint)' : 'var(--bad)');
@@ -1288,6 +1311,14 @@ function paint() {
   el('empty').classList.toggle('off', !!current);
   if (el('filemenu').classList.contains('on')) fileMenuPaint();
   if (openMenu > 0) menuPaint(openMenu);
+  // ⚠️ THE OPEN-FILE HEARTBEAT RIDES HERE, and the argument for that is written out in
+  // full above hbPlan(). Short version: this is the ONE funnel every change of `dirty`
+  // and of `current` already goes through — it is where the dot and the "unsaved
+  // changes" line are drawn from the same flag — so the bridge learns about an unsaved
+  // edit at the same instant the user does, with no new timer and no call bolted onto
+  // each of the eleven places that set the flag. hbPlan() dedupes: a repaint that
+  // changed nothing posts nothing.
+  hbSync();
   // ⚠️ AND THE TOOLBAR, EVERY TIME, for the same reason the open menu is repainted here:
   // it is a surface showing the same state, and a stale toolbar is a button that lies.
   toolbarPaint();
@@ -3774,6 +3805,12 @@ function showWorkbook(data, name) {
   activeSid = sheetIds(snap)[0] || null;
   viewRows = 0; viewCols = 0;
   current = name; dirty = false;
+  // ⚠️ THE MTIME BASELINE BELONGS TO THE DOCUMENT TOO, and it is CLEARED rather than
+  // guessed: `files` may hold a row read seconds ago, and a stale-old mtime would make
+  // extCheck accuse the agent of editing a file the user merely opened. Zero means
+  // "establish it from disk on the next check", which extPlan calls `baseline` and
+  // which openDoc triggers immediately below rather than a beat later.
+  extSeen = 0;
   // ⚠️ THE HISTORY BELONGS TO THE DOCUMENT AND DIES WITH IT. Keeping the stack across
   // an open would let ⌘Z restore a clone of ANOTHER workbook into this one — the exact
   // class of silent corruption this page refuses to make possible.
@@ -3817,7 +3854,7 @@ async function openDoc(name) {
                + '200,000 cells. Saving would write back only what you can see, so this '
                + 'copy is best treated as read-only.', 'dim');
   } catch (e) { bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
-  finally { busy = false; renderFiles(); paint(); }
+  finally { busy = false; renderFiles(); paint(); extCheck(); }
 }
 
 function truncatedSheets(s) {
@@ -3899,12 +3936,16 @@ async function save() {
     say('Saved ' + j.name + ' — ' + j.cells + ' cells'
         + (j.backup ? ' (a copy of the previous file is kept as ' + j.backup + ')' : ''), 'ok');
     await loadFiles();
+    // OUR write moved the mtime. Clearing the baseline makes the next check re-read it
+    // instead of reporting our own save as somebody else's edit.
+    extSeen = 0;
   } catch (e) { bx('save-fail', 'threw: ' + e); say('save failed: ' + e); }
   finally { busy = false; paint(); }
 }
 
 function clearWorkbook() {
   current = null; dirty = false; snap = null; activeSid = null;
+  extSeen = 0; extAsking = false;
   histClear('close');
   if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
   univer = null; api = null;
@@ -4094,7 +4135,7 @@ const AI_CTX_COLS = 30;               // …and columns
 const AI_CTX_CHARS = 20000;           // …and a hard character ceiling over the lot
 const AI_Q_MAX = 4000;                // the question itself (matches the textarea)
 const AI_POLL_MS = 15000;             // how often the model pill re-checks, when open
-let aiBusy = false, aiSel = '', aiModel = '', aiCtxOn = true, aiTimer = null;
+let aiBusy = false, aiSel = '', aiModel = '', aiCtxOn = true;
 
 function a1(r, c) {
   return (isFinite(r) && isFinite(c) && r >= 0 && c >= 0) ? colName(c) + (r + 1) : '';
@@ -4141,6 +4182,10 @@ function aiPaint(recount) {
   const c = aiCtxOn ? aiNote : null;
   el('ai-ctxnote').textContent = !aiCtxOn ? 'sheet not sent'
     : (c ? (c.rows + '×' + c.cols + (c.truncated ? ' (truncated)' : '')) : 'no sheet open');
+  // The lane chips are chrome showing the same state, so they are repainted from the
+  // same place, for the same reason the open menu and the toolbar are: a stale toggle
+  // is a control that lies about what it will do.
+  lanePaint();
 }
 
 function aiStatus(text, bad) {
@@ -4158,11 +4203,17 @@ async function aiRefreshModel() {
     const was = aiModel;
     aiModel = officeModelLabel(c && c.pin, !!(c && c.running), '');
     if (aiModel !== was) bx('ai-model', aiModel || 'none');
+    // ⚠️ THE AGENT LANE'S FIRST GATE COMES OFF THIS SAME RESPONSE — is Hermes running —
+    // so it costs nothing at all. The other two gates are agentProbe's job.
+    const h = j && j.components && j.components.hermes;
+    agentEnv.hermes = !!(h && h.running);
+    agentProbe(aiModel);
     if (!aiModel) aiStatus('No model is loaded. Open MOT Main → Models and '
                            + 'load one — this panel uses the same model the Chat lane does.');
     else if (!aiBusy) aiStatus('');
   } catch (e) {
     aiModel = '';
+    agentEnv.hermes = false;
     bx('ai-model', 'status fetch failed: ' + e);
     aiStatus('The bridge did not answer, so the model is unknown: ' + e, true);
   }
@@ -5440,6 +5491,10 @@ function aiAdd(role, text, ctx) {
 
 async function aiSend() {
   if (aiBusy) return;
+  // ⚠️ THE LANE FORK IS ONE LINE AND IT IS THE FIRST ONE, so the Quick lane below is
+  // byte-for-byte the lane that shipped: same endpoint, same body, same reader, same
+  // cards. The Agent lane is a sibling, never a wrapper.
+  if (aiLane === LANE_AGENT) return agentSend();
   const q = (el('ai-in').value || '').trim().slice(0, AI_Q_MAX);
   if (!q) return;
   if (!aiModel) { aiStatus('No model is loaded — load one in Models first.', true); return; }
@@ -5544,13 +5599,725 @@ function aiGrow() {
   t.style.height = Math.min(t.scrollHeight, 150) + 'px';
 }
 
+// ══ THE AGENT LANE — Hermes over the loffice MCP toolset (slice S2) ═══════════
+// docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §3.2–§4. S1 shipped the other half: the
+// bridge hosts an MCP server at /mcp/office with seven office tools, Hermes consumes
+// it with `trust: untrusted`, and the three read tools carry `readOnlyHint: true` so
+// HERMES'S OWN approval card gates the four write tools. Nothing below re-implements
+// any of that.
+//
+// ⚠️ THE ONE ARCHITECTURAL RULE IS THE SAME ONE THE QUICK LANE ALREADY OBEYS: this
+// page invents NOTHING on the wire. The Agent lane speaks the harness's EXISTING
+// Hermes lane — `POST /api/hermes/chat` with `{session_id, message, stored_sid}` and
+// the SAME `data: {...}` SSE frames the main panel's Hermes mode reads — plus
+// `POST /api/hermes/approve` `{session_id, choice}` to answer a card. There is no
+// /api/office/agent and there must never be one.
+//
+// ⚠️ AND THE OTHER RULE, WHICH IS THE WHOLE SAFETY STORY: THE AGENT LANE ADDS NO
+// PAGE-SIDE WRITER. Hermes's writes land on DISK, through office_ops.py, behind its
+// own approval card, with a `<stem>.pre-agent.xlsx` copy taken first. This page finds
+// out the same way it would find out about any other program editing the file — by
+// noticing the mtime moved — and then reloads through its EXISTING load path
+// (openDoc). Not one function in this section puts a cell anywhere, and
+// bridge/tests/test_office_ai.js's writer-set fence is what makes that a fact.
+//
+// WHY FULL SSE AND NOT A TRANSCRIPT POLL: because streaming is the CHEAPER of the two
+// here, not the more ambitious. `/api/hermes/chat` is a POST returning
+// `text/event-stream`, i.e. exactly the shape aiSend() already reads by hand off
+// /api/chat/direct — the same `r.body.getReader()`, the same `data: ` split, the same
+// `[DONE]`. A poll would mean `/api/hermes/history/{sid}` (live-sid only), a second
+// idea of what a turn looks like, and NO route at all for an approval card, which
+// arrives as a frame and must be answered while the agent thread is blocked. So the
+// poll is the bigger change and the worse one.
+
+const LANE_QUICK = 'quick', LANE_AGENT = 'agent';
+const AGENT_SESSION_NAME = 'loffice';          // spec §4: ONE dedicated session
+const LS_LANE = 'harness-office-lane';
+const LS_AGENT_SID = 'harness-office-agent-sid';
+const LS_AGENT_STORED = 'harness-office-agent-stored';
+// ⚠️ TWO VARIABLES, NOT ONE, AND THE SECOND ONE IS A BUG FIX FOUND ON THE REAL PAGE.
+// `aiLane` is the lane IN EFFECT; `laneWant` is the lane Debi ASKED for. They have to be
+// separate because the gate is probed ASYNCHRONOUSLY: for the first few hundred
+// milliseconds of every page load Hermes has not been checked yet, so the gate is shut,
+// so a remembered Agent lane fell back to Quick — and, when the fallback also PERSISTED
+// itself, the preference was destroyed on every single reload. The fallback now changes
+// what is in effect and never what was asked for, and lanePaint re-adopts the wanted
+// lane the moment the gate opens.
+let aiLane = LANE_QUICK, laneWant = LANE_QUICK;
+let agentSid = '', agentStored = '', agentNamed = false;
+// What the last probe found. `tools` is TRUE / FALSE / NULL and the third value is the
+// point — see agentGate.
+let agentEnv = { hermes: false, mcpRegistered: false, mcpInSync: false,
+                 tools: null, model: '' };
+let agentToolsPin = '';            // the model the `tools` verdict above belongs to
+
+// ── the gate (PURE) ──────────────────────────────────────────────────────────
+// GREY-NOT-HIDE, as everywhere on this page: the Agent chip is always THERE, and when
+// it cannot be used it is disabled with the reason in its own title. Three refusals
+// and one warning, in the order a person would fix them.
+//
+// ⚠️ THE MODEL CHECK IS TWO-VALUED, NOT THREE, AND THAT IS THE ONE JUDGEMENT CALL IN
+// THIS FUNCTION. The bridge reports tool-calling as true / false / NULL, where null
+// means "this model's chat template could not be read" (bridge/modeltools.py, surfaced
+// on GET /api/models as `installed[].tools`; the panel's own `modelHasTools` and the
+// green `tools` pill read the same field). An explicit FALSE is a hard gate — the lane
+// genuinely cannot work. A NULL is NOT: the absent-not-greyed rule the Sampling fields
+// and the tools pill both follow says an unknown must never be drawn as a "no", and
+// refusing the lane on an unknown would today refuse it on EVERY model Debi has
+// installed, because llama.cpp GGUFs on this machine all report null. So a null opens
+// the lane with the requirement stated as a WARNING in the title. Measured, not
+// assumed: `curl :8700/api/models` → sixteen entries, `tools` null on all sixteen.
+function agentGate(g) {
+  const e = g || {};
+  const model = String(e.model || '').trim();
+  if (!e.hermes) {
+    return { ok: false, warn: '',
+             why: 'Hermes is not running, and the Agent lane IS Hermes. Start it in '
+                + 'MOT Main → Capabilities, then reopen this panel.' };
+  }
+  if (!e.mcpRegistered) {
+    return { ok: false, warn: '',
+             why: 'the loffice tool server is not registered with Hermes, so Hermes has '
+                + 'no Office tools to call. MOT Main → Capabilities → Connected tools '
+                + '(MCP) is where it is turned on.' };
+  }
+  if (!e.mcpInSync) {
+    return { ok: false, warn: '',
+             why: 'the loffice entry in Hermes’s config does not match what this '
+                + 'bridge serves (out of sync) — Adopt it in MOT Main → Capabilities → '
+                + 'Connected tools (MCP), then reopen this panel.' };
+  }
+  if (e.tools === false) {
+    return { ok: false, warn: '',
+             why: 'the loaded model ' + (model || 'on the runner') + ' has NO '
+                + 'tool-calling support, and every Office tool is a tool call. Load a '
+                + 'model with the green `tools` pill in Models.' };
+  }
+  const warn = (e.tools === true) ? ''
+    : 'the loaded model ' + (model || 'on the runner') + ' does not SAY whether it can '
+    + 'call tools — its chat template could not be read. If the Agent lane answers in '
+    + 'prose without touching a tool, that is why: look for the green `tools` pill in '
+    + 'Models.';
+  return { ok: true, warn: warn,
+           why: 'Hermes, with the real Office tools: it can read and write your '
+              + 'workbooks itself, over several steps, and every write asks you first.'
+              + (warn ? ' ⚠ ' + warn : '') };
+}
+
+// ── what the agent is told it has (PURE) ─────────────────────────────────────
+// Rides on TOP of aiPreamble(), which is reused verbatim so the workbook and sheet
+// names travel exactly as they do in the Quick lane. This note is the difference
+// between the two lanes, and it is deliberately short.
+//
+// ⚠️ IT TELLS THE MODEL TO PREFER THE TOOLS OVER THE ACTION BLOCK, because aiPreamble
+// ends with actHelp() and therefore teaches the ```loffice block on this lane too.
+// That is not a bug worth "fixing" by splitting the preamble: a tool-less model landing
+// in this lane (the null verdict above) can still get work done through the block, and
+// a block that does arrive is rendered by the Quick lane's own preview card — one
+// click, one preview, one Undo. Two engines, one grammar (spec §4).
+function agentToolNote() {
+  return '\n\nYOU ALSO HAVE REAL TOOLS on this workspace, from the `loffice` tool '
+       + 'server: office_list, office_read and office_sheet_stats read workbooks, and '
+       + 'office_write_cells, office_sort, office_insert_delete and office_create '
+       + 'change them. PREFER THE TOOLS: call them instead of emitting a loffice block, '
+       + 'and work in steps — read, then compute, then write, then read back to check. '
+       + 'Every tool takes the workbook NAME, never a path. Each write asks Debi to '
+       + 'approve it first and keeps a copy of the file as it was beforehand, so say '
+       + 'plainly what you are about to change before you call a write tool.';
+}
+
+// `<stem>.pre-agent.xlsx` — the copy office_ops.take_pre_agent leaves beside the file
+// before any agent write. PURE. Mirrors bridge/office_ops.py PRE_AGENT_SUFFIX, and a
+// test pins the two strings equal across the two languages.
+const PRE_AGENT_SUFFIX = '.pre-agent.xlsx';
+function preAgentName(name) {
+  const n = String(name == null ? '' : name).trim();
+  if (!n) return '';
+  const stem = n.replace(/\.xlsx$/i, '').replace(/\.pre-agent$/i, '');
+  return stem + PRE_AGENT_SUFFIX;
+}
+
+// ── the toggle ───────────────────────────────────────────────────────────────
+function lanePaint() {
+  const st = agentGate(agentEnv);
+  // A lane that stopped being available while you were in it does not silently keep
+  // pretending: it falls back to Quick, which works on every model. It does NOT forget
+  // that Agent was asked for — see laneWant.
+  if (aiLane === LANE_AGENT && !st.ok) laneApply(LANE_QUICK, 'gate closed');
+  // …and the moment the gate opens, the lane that was asked for is adopted. This is what
+  // makes the preference survive a reload, whose first paint always happens before the
+  // probe has answered.
+  if (aiLane !== LANE_AGENT && laneWant === LANE_AGENT && st.ok) laneApply(LANE_AGENT, 'gate opened');
+  const q = el('lane-quick'), a = el('lane-agent');
+  if (!q || !a) return;
+  q.classList.toggle('on', aiLane === LANE_QUICK);
+  a.classList.toggle('on', aiLane === LANE_AGENT);
+  a.disabled = !st.ok;
+  a.title = st.why;
+  el('ai-in').placeholder = aiLane === LANE_AGENT
+    ? 'Ask Hermes to do it…' : 'Ask about this sheet…';
+  return st;
+}
+
+// A CHOICE: it is remembered, and it is refused when the gate is shut.
+function laneSet(lane, why) {
+  const want = lane === LANE_AGENT ? LANE_AGENT : LANE_QUICK;
+  if (want === LANE_AGENT && !agentGate(agentEnv).ok) return false;
+  laneWant = want;
+  try { localStorage.setItem(LS_LANE, want); } catch (e) { /* private mode */ }
+  laneApply(want, why);
+  return true;
+}
+
+// A FACT: which lane is in effect right now. Never persisted — the fallback uses this,
+// and a fallback that wrote to localStorage is exactly the bug laneWant exists to fix.
+function laneApply(lane, why) {
+  const was = aiLane;
+  aiLane = lane === LANE_AGENT ? LANE_AGENT : LANE_QUICK;
+  if (was !== aiLane) bx('lane', aiLane + ' · ' + (why || ''));
+  const q = el('lane-quick'), a = el('lane-agent');
+  if (q && a) { q.classList.toggle('on', aiLane === LANE_QUICK);
+                a.classList.toggle('on', aiLane === LANE_AGENT); }
+}
+
+// ── the probe ────────────────────────────────────────────────────────────────
+// Two cheap reads and one cached one, all on the beat that already existed:
+//   · Hermes running  — comes off the /api/status response aiRefreshModel ALREADY
+//                       fetched, so it costs nothing at all.
+//   · the MCP entry   — GET /api/office/mcp, one small yaml round-trip; the same
+//                       surface the Capabilities pane's Adopt reconciliation reads.
+//   · tool-calling    — GET /api/models is 75 KB and re-seeds the registry when
+//                       data/models.json is missing, so it is fetched ONLY when the
+//                       live model changed. Cached by pin.
+async function agentProbe(pin) {
+  const model = String(pin || '').trim();
+  agentEnv.model = model;
+  try {
+    const r = await fetch('/api/office/mcp', { cache: 'no-store' });
+    const j = await r.json();
+    agentEnv.mcpRegistered = !!(j && j.registered);
+    agentEnv.mcpInSync = !!(j && j.in_sync);
+  } catch (e) {
+    agentEnv.mcpRegistered = false; agentEnv.mcpInSync = false;
+    bx('agent-mcp-fail', String((e && e.message) || e).slice(0, 120));
+  }
+  if (model && model !== agentToolsPin) {
+    agentToolsPin = model;
+    agentEnv.tools = null;
+    try {
+      const r = await fetch('/api/models', { cache: 'no-store' });
+      const j = await r.json();
+      const live = ((j && j.installed) || []).filter(m => m && m.id === model)[0];
+      // The panel's own predicate, byte-for-byte: true only on an explicit yes.
+      agentEnv.tools = live
+        ? (live.tools === true || ((live.capabilities || []).indexOf('tools') >= 0)
+             ? true : (live.tools === false ? false : null))
+        : null;
+      bx('agent-tools', model + ' → ' + String(agentEnv.tools));
+    } catch (e) { bx('agent-tools-fail', String((e && e.message) || e).slice(0, 120)); }
+  } else if (!model) {
+    agentToolsPin = ''; agentEnv.tools = null;
+  }
+  lanePaint();
+}
+
+// ── the turn ─────────────────────────────────────────────────────────────────
+// The SAME reader aiSend() has, over the SAME frame vocabulary the main panel's Hermes
+// mode reads (bridge/app.py hermes_event_to_frames): {delta,thinking?}, tool_start,
+// tool_output, approval, ask_expire, hermes_session, hermes_status, hermes_ping,
+// proxy_error, status, [DONE]. `ask` (the clarify tool) is rendered as a note rather
+// than a picker — see the honest limit on agentFrame.
+async function agentSend() {
+  if (aiBusy) return;
+  const q = (el('ai-in').value || '').trim().slice(0, AI_Q_MAX);
+  if (!q) return;
+  if (!agentGate(agentEnv).ok) { aiStatus(agentGate(agentEnv).why, true); return; }
+  const ctx = aiCtxOn ? aiContext() : null;
+  const message = aiPreamble(current, aiSheetName()) + agentToolNote() + '\n\n'
+                + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
+                + '---\n\n' + q;
+  const shown = { text: message,
+                  label: (ctx && ctx.text)
+                    ? (ctx.rows + '×' + ctx.cols + (ctx.truncated ? ' (truncated)' : ''))
+                    : 'grounding only — the sheet was not sent' };
+  bx('agent-send', 'chars=' + message.length + ' sid=' + (agentSid || 'new'));
+  el('ai-in').value = ''; aiGrow();
+  aiAdd('user', q, shown);
+  aiBusy = true; aiStatus('Hermes is working…'); aiPaint();
+  const turn = aiAdd('assistant', '', null);
+  // ⚠️ THE CARD OWNS THE SESSION IT WAS BORN IN, captured per turn — the same rule the
+  // main panel's chatApproval follows, and for the same reason: approvals carry no
+  // request id on the wire (the gateway resolves them FIFO per session), so the sid IS
+  // the whole address, and reading a global at click time would let a card answer for
+  // a session it never belonged to.
+  const held = { sid: agentSid };
+  let out = '', think = '', steps = [], failed = '';
+  try {
+    const r = await fetch('/api/hermes/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: agentSid || '', message: message,
+                             stored_sid: agentStored || '' }),
+    });
+    if (!r.ok || !r.body) throw new Error('the bridge answered ' + r.status);
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') { buf = ''; break; }
+        let j = null;
+        try { j = JSON.parse(payload); } catch (e) { continue; }
+        const st = agentFrame(j, turn, held, steps);
+        if (st.error) failed = st.error;
+        if (st.thinking) { think += st.thinking; aiStatus('thinking… ' + think.length + ' chars'); }
+        if (st.delta) { out += st.delta; turn.body.textContent = out;
+                        el('ai-log').scrollTop = el('ai-log').scrollHeight; }
+      }
+    }
+  } catch (e) {
+    failed = String((e && e.message) || e);
+  }
+  aiBusy = false;
+  // Every card left open when the turn ends stops pretending it is answerable.
+  agentExpire(turn.wrap);
+  if (failed) {
+    bx('agent-fail', failed.slice(0, 160));
+    const d = document.createElement('div');
+    d.className = 'err';
+    d.textContent = 'That did not work: ' + failed;
+    turn.wrap.appendChild(d);
+  } else if (!out.trim()) {
+    bx('agent-empty', 'steps=' + steps.length + ' thinking=' + think.length);
+    turn.body.textContent = '';
+    const d = document.createElement('div');
+    d.className = 'err';
+    d.textContent = steps.length
+      ? 'Hermes used ' + steps.join(', ') + ' and then said nothing. Whatever the tools '
+        + 'did is on disk — the sheet reloads itself if the file changed.'
+      : 'Hermes returned an empty answer.';
+    turn.wrap.appendChild(d);
+  } else {
+    bx('agent-ok', 'chars=' + out.length + ' steps=' + steps.length);
+    // The SAME renderer the Quick lane uses, so a fenced formula is still a copy card
+    // and an action block is still the preview-and-Apply card. One grammar.
+    aiRenderBody(turn.body.parentNode, out);
+    if (think) {
+      const det = actDet('thinking · ' + think.length + ' chars', think);
+      turn.wrap.insertBefore(det, turn.wrap.firstChild.nextSibling);
+    }
+  }
+  if (steps.length) {
+    const d = actDet('tools used · ' + steps.length, steps.join('\n'));
+    turn.wrap.appendChild(d);
+  }
+  aiStatus('');
+  aiPaint(true);
+  el('ai-log').scrollTop = el('ai-log').scrollHeight;
+  // A write tool that ran has changed the FILE, not this page's snapshot. Ask now
+  // rather than waiting up to a beat for it.
+  extCheck();
+}
+
+// ONE frame → what it means for the turn. Kept separate from the reader so the frame
+// vocabulary can be tested without a network: PURE except for the DOM it is handed.
+function agentFrame(j, turn, held, steps) {
+  const t = (j && j.type) || '';
+  if (typeof (j && j.delta) === 'string' && j.delta) {
+    return j.thinking ? { thinking: j.delta } : { delta: j.delta };
+  }
+  if (t === 'hermes_session') {
+    // The bridge minted (or replaced) the gateway session and announced it BEFORE any
+    // token — persist it here so the next question continues the same conversation,
+    // and so does the next page load.
+    held.sid = String((j && j.id) || '');
+    agentSid = held.sid;
+    agentStored = String((j && j.stored_id) || agentStored || '');
+    try { localStorage.setItem(LS_AGENT_SID, agentSid);
+          localStorage.setItem(LS_AGENT_STORED, agentStored); } catch (e) { /* private */ }
+    bx('agent-session', agentSid + ' stored=' + (agentStored || 'none'));
+    agentName();
+    return {};
+  }
+  if (t === 'approval') {
+    agentCard(turn.wrap, (j && j.request) || {}, held.sid);
+    return {};
+  }
+  if (t === 'ask') {
+    // ⚠️ AN HONEST LIMIT, STATED ON SCREEN RATHER THAN SWALLOWED. Hermes's `clarify`
+    // tool blocks the agent thread on a picker; answering it needs
+    // POST /api/hermes/answer {request_id, answer}. This lane has a one-line composer
+    // and no picker, so it does not pretend to render one: it prints the question and
+    // says where to answer it. The main panel's Hermes lane has the full card.
+    const d = document.createElement('div');
+    d.className = 'err';
+    d.style.marginTop = '6px';
+    d.textContent = 'Hermes is asking: ' + String((j.request && j.request.question) || '?')
+                  + '\nThis lane cannot answer a question card — answer it in MOT Main → '
+                  + 'Chat (Hermes), or press Escape there to end the turn.';
+    turn.wrap.appendChild(d);
+    return {};
+  }
+  if (t === 'tool_start') { steps.push(String((j && j.tool) || 'tool'));
+                            aiStatus('Hermes is using ' + String((j && j.tool) || 'a tool') + '…');
+                            return {}; }
+  if (t === 'tool_output') {
+    const s = String((j && j.summary) || '').trim();
+    // A tool_output with no tool_start before it (a frame lost to a reconnect) starts
+    // its own step rather than writing to index -1.
+    if (s && steps.length) steps[steps.length - 1] += ' — ' + s;
+    else if (s) steps.push(String((j && j.tool) || 'tool') + ' — ' + s);
+    return {};
+  }
+  if (t === 'hermes_status' || t === 'status') {
+    const s = String((j && j.text) || '').trim();
+    if (s) aiStatus(s);
+    return {};
+  }
+  if (t === 'proxy_error') return { error: String((j && j.error) || 'the turn failed') };
+  return {};                       // hermes_ping, file_card, guard_flag, ask_expire
+}
+
+// Name the session `loffice` (spec §4) — once, best effort, and never load-bearing.
+// The rename is a stored-session title, so it needs the DURABLE id; the gateway has no
+// live-session rename for a session it does not own.
+async function agentName() {
+  if (agentNamed || !agentStored) return;
+  agentNamed = true;
+  try {
+    await fetch('/api/hermes/session/' + encodeURIComponent(agentStored) + '/rename', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: AGENT_SESSION_NAME }),
+    });
+    bx('agent-named', AGENT_SESSION_NAME + ' ' + agentStored);
+  } catch (e) { bx('agent-name-fail', String((e && e.message) || e).slice(0, 120)); }
+}
+
+// ── the approval card ────────────────────────────────────────────────────────
+// ONE VISUAL GRAMMAR, TWO ENGINES (spec §4): this is built from the same .aicode /
+// .bar / .lang / .grow / .aidet / .err pieces actCard uses, so "the AI wants to write
+// cells" looks the same whether the Quick lane parsed a block or Hermes asked to call
+// office_write_cells. ZERO new CSS.
+//
+// ⚠️ WHAT THIS CARD CANNOT SHOW, AND WHY IT SAYS SO. The Quick lane's card lists every
+// cell, because the page parsed the ops itself. Hermes's trust gate does NOT put the
+// tool's ARGUMENTS on the wire: it calls request_elicitation_consent with a fixed
+// sentence naming the tool and the server (vendor/hermes/tools/mcp_tool.py:4035-4046),
+// and the bridge forwards exactly that as {command, description}. So this card states
+// the tool, what class of change it makes, and the two guarantees that hold whatever
+// the arguments were — the pre-write copy, and the refusal on an unsaved workbook. It
+// does not invent an op list it was not given.
+const AGENT_AP_LABELS = { once: 'Approve once', session: 'This session',
+                          always: 'Always', deny: 'Deny' };
+const AGENT_TOOLS = {
+  office_write_cells: 'write cells into a workbook',
+  office_sort: 'sort a sheet',
+  office_insert_delete: 'insert or delete rows/columns',
+  office_create: 'create a new workbook',
+};
+// The tool name out of Hermes's fixed sentence, or ''. PURE.
+function agentToolOf(text) {
+  const m = String(text == null ? '' : text).match(/MCP tool '([A-Za-z0-9_]+)'/);
+  return m ? m[1] : '';
+}
+// What the card says, given the frame. PURE, so the wording is testable.
+function agentCardText(req) {
+  const cmd = String((req && req.command) || '');
+  const tool = agentToolOf(cmd) || agentToolOf(String((req && req.description) || ''));
+  const what = AGENT_TOOLS[tool] || '';
+  const head = tool
+    ? ('Hermes wants to run ' + tool + (what ? ' — it would ' + what : '') + '.')
+    : 'Hermes wants to run a write-capable Office tool.';
+  return head + ' Nothing is written until you approve it. The workbook as it is now '
+       + 'is copied to ' + (current ? preAgentName(current) : '<name>.pre-agent.xlsx')
+       + ' first, and that copy — not this page’s Undo — is how an agent write is '
+       + 'taken back. A workbook with unsaved edits open here is refused outright.';
+}
+function agentCard(host, req, sid) {
+  const card = document.createElement('div');
+  card.className = 'aicode';
+  const head = document.createElement('div');
+  head.style.padding = '8px 9px';
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  card.appendChild(head); card.appendChild(bar);
+  card._sid = String(sid || '');
+  card._head = head; card._bar = bar;
+  const lang = document.createElement('span');
+  lang.className = 'lang';
+  lang.textContent = '⚠ approval required';
+  bar.appendChild(lang);
+  const line = document.createElement('div');
+  line.textContent = agentCardText(req);
+  head.appendChild(line);
+  const cmd = String((req && req.command) || '');
+  const why = String((req && req.description) || '').trim();
+  head.appendChild(actDet('what Hermes asked', cmd + (why && why !== cmd ? '\n\n' + why : '')));
+  const grow = document.createElement('span');
+  grow.className = 'grow';
+  bar.appendChild(grow);
+  const choices = (Array.isArray(req && req.choices) && req.choices.length)
+    ? req.choices : ['once', 'deny'];
+  choices.forEach(c => {
+    const b = actChip(bar, AGENT_AP_LABELS[c] || String(c), c === 'deny' ? 'lnk' : '');
+    b.onclick = () => agentApprove(card, String(c));
+  });
+  host.appendChild(card);
+  bx('agent-approval', agentToolOf(cmd) || 'unknown');
+  el('ai-log').scrollTop = el('ai-log').scrollHeight;
+  return card;
+}
+
+async function agentApprove(card, choice) {
+  if (card._done) return;
+  const btns = [].slice.call(card._bar.querySelectorAll('button'));
+  btns.forEach(b => { b.disabled = true; });
+  try {
+    const r = await fetch('/api/hermes/approve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: card._sid, choice: choice }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    if (!j.resolved) {
+      // Nothing was pending gateway-side — the card raced upstream's own timeout or an
+      // interrupt. Stamp it honestly; never claim a choice that was not recorded.
+      agentStamp(card, 'that card had already expired — nothing was approved');
+      return;
+    }
+    card._done = true;
+    agentStamp(card, choice === 'deny' ? '✗ denied'
+                                       : '✓ approved · ' + choice);
+    bx('agent-approved', choice + ' sid=' + card._sid);
+  } catch (e) {
+    actNote(card, 'approve failed: ' + ((e && e.message) || e));
+    btns.forEach(b => { b.disabled = false; });
+    bx('agent-approve-fail', String((e && e.message) || e).slice(0, 120));
+  }
+}
+
+function agentStamp(card, text) {
+  card._done = true;
+  card._bar.innerHTML = '';
+  const lang = document.createElement('span');
+  lang.className = 'lang';
+  lang.textContent = text;
+  card._bar.appendChild(lang);
+}
+
+// Turn over: freeze anything still waiting. A button that would post into a finished
+// turn is a button that lies.
+function agentExpire(wrap) {
+  [].forEach.call(wrap.querySelectorAll('.aicode'), c => {
+    if (c._sid && !c._done) agentStamp(c, 'the turn ended — no longer answerable');
+  });
+}
+
+// ══ THE OPEN-FILE HEARTBEAT (spec §3 rule 2) ═════════════════════════════════
+// While a workbook is open the page registers {name, dirty} with the bridge so
+// office_write_cells can REFUSE a workbook with unsaved edits in it. Advisory, TTL'd
+// bridge-side (office_ops.HEARTBEAT_TTL = 15s), never a lock file: no heartbeat means
+// ALLOWED, which is the correct reading of a page that is closed or crashed.
+//
+// ⚠️ NO NEW TIMER, AND NO NEW WRITER-ADJACENT HOOK EITHER. The beat rides the ONE
+// interval this page already has (see aiSetOpen), and the DIRTY-FLIP rides paint() —
+// the page's existing "state changed, repaint the chrome" funnel, which every one of
+// the eleven places that touches `dirty` already calls, and which already reads `dirty`
+// to draw the dot and the "unsaved changes" line. hbPlan dedupes, so paint() being
+// called on every keystroke costs at most one POST per ACTUAL change of state. The
+// alternative — a call at each of the eleven sites — would have to be re-added by hand
+// every time a twelfth appears, and would be missed exactly once.
+const HB_TICK_MS = 5000;              // must stay well under office_ops.HEARTBEAT_TTL
+let hbLast = null;                    // the last {name, dirty} actually POSTed
+
+// The posts to make, given what is open and what was last sent. PURE.
+//   · a workbook that is no longer the open one is CLOSED explicitly, so the bridge
+//     forgets it now rather than in fifteen seconds;
+//   · a change of name or of dirtiness posts immediately (force=false);
+//   · the keepalive beat re-posts the same state (force=true) so the TTL never expires
+//     under a page that is still sitting there.
+function hbPlan(name, dirty, prev, force) {
+  const open = String(name || '');
+  const out = [];
+  if (prev && prev.name && prev.name !== open) out.push({ name: prev.name, close: true });
+  if (!open) return out;
+  const now = { name: open, dirty: !!dirty };
+  if (force || !prev || prev.name !== now.name || !!prev.dirty !== now.dirty) out.push(now);
+  return out;
+}
+
+async function hbPost(body) {
+  try {
+    await fetch('/api/office/heartbeat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) { bx('hb-fail', String((e && e.message) || e).slice(0, 100)); }
+}
+
+function hbRun(force) {
+  const plan = hbPlan(current, dirty, hbLast, force);
+  if (!plan.length) return plan;
+  plan.forEach(b => hbPost(b));
+  const live = plan.filter(b => !b.close);
+  hbLast = live.length ? { name: live[0].name, dirty: !!live[0].dirty } : null;
+  if (!force) bx('heartbeat', plan.map(b => b.name + (b.close ? ':closed'
+                                                              : (b.dirty ? ':dirty' : ':clean'))).join(' '));
+  return plan;
+}
+
+// Called from paint(): the dirty flip and the open/close, immediately.
+function hbSync() { return hbRun(false); }
+
+// ══ THE EXTERNAL-CHANGE BANNER (spec §3 rule 3) ══════════════════════════════
+// The agent's write lands on DISK. This page's copy is in memory. The two sentences
+// below are the whole contract, and they are pinned by test:
+//   clean page → auto-reload, naming the .pre-agent copy;
+//   dirty page → two buttons, and the plain sentence that says which version survives
+//                where — "saving will overwrite the agent's changes".
+//
+// The mtime comes off /api/office/files, which already carries `modified` for every
+// workbook (bridge/office.py list_docs) — no new route, and the check rides the same
+// interval as the model pill, not a timer of its own.
+const EXT_EPS = 0.5;            // seconds of mtime slack: a filesystem, not a clock
+let extSeen = 0;                // the mtime this page believes it is showing
+let extAsking = false;          // a banner is up; do not stack a second one
+
+// The decision, given four numbers and a flag. PURE — this is the state machine the
+// tests execute.
+function extPlan(s) {
+  const name = String((s && s.name) || '');
+  const seen = Number((s && s.seen) || 0);
+  const mt = Number((s && s.mtime) || 0);
+  if (!name) return { act: 'none', why: 'no workbook open' };
+  if (!(mt > 0)) return { act: 'none', why: 'no mtime for that workbook' };
+  if (!(seen > 0)) return { act: 'baseline', why: 'first sight — remember this mtime' };
+  if (!(mt > seen + EXT_EPS)) return { act: 'none', why: 'unchanged on disk' };
+  if (!(s && s.dirty)) {
+    return { act: 'reload', why: 'changed on disk, nothing unsaved here',
+             text: 'the agent edited this file — reloaded (pre-edit copy kept as '
+                 + preAgentName(name) + ')' };
+  }
+  return { act: 'ask', why: 'changed on disk, unsaved edits here',
+           text: '“' + name + '” was changed on disk by the agent, and you have unsaved '
+               + 'edits here. Reload discards your unsaved edits and shows the agent’s '
+               + 'version. Keep mine keeps yours on screen, and saving will overwrite the '
+               + 'agent\'s changes. Either way the file as it was BEFORE the agent touched '
+               + 'it is kept as ' + preAgentName(name) + '.' };
+}
+
+async function extCheck() {
+  // A banner that was wiped off the message line by some OTHER say() must not leave
+  // this latch stuck ON for the rest of the session — that would silently retire the
+  // whole mechanism after one dismissed banner.
+  if (extAsking && !el('msg').textContent) { extAsking = false; bx('ext-banner-lost', ''); }
+  if (!current || busy || extAsking) return null;
+  const name = current;
+  let row = null;
+  try {
+    const r = await fetch('/api/office/files', { cache: 'no-store' });
+    const j = await r.json();
+    if (!j || !j.ok) return null;
+    row = ((j.files) || []).filter(f => f && f.name === name)[0] || null;
+  } catch (e) { bx('ext-check-fail', String((e && e.message) || e).slice(0, 100)); return null; }
+  if (!row) return null;             // deleted or renamed under us: not this banner's job
+  if (name !== current) return null; // the user opened something else mid-flight
+  const plan = extPlan({ name: name, dirty: dirty, seen: extSeen, mtime: row.modified });
+  if (plan.act === 'none') return plan;
+  // ⚠️ THE BASELINE MOVES BEFORE THE BANNER IS DRAWN, and that is what makes this
+  // fire ONCE per external change instead of every beat for ever.
+  const was = extSeen;
+  extSeen = Number(row.modified) || extSeen;
+  if (plan.act === 'baseline') { bx('ext-base', name + ' mtime=' + extSeen); return plan; }
+  bx('ext-change', name + ' act=' + plan.act + ' seen=' + was + ' → ' + extSeen);
+  extAct(plan, name);
+  return plan;
+}
+
+function extAct(plan, name) {
+  if (plan.act === 'reload') {
+    // ⚠️ THE SENTENCE IS SAID AFTER THE OPEN, NOT BEFORE IT, and that is a bug found by
+    // reading rather than by testing: openDoc's FIRST act is `say('')`, so a message
+    // set beforehand flashes and vanishes — the spec's one required sentence, gone.
+    // And only if the open left the box EMPTY: a read failure, or the very-large-
+    // workbook warning, is a bigger thing to say than "reloaded".
+    openDoc(name).then(() => { if (!el('msg').textContent) say(plan.text, 'dim'); });
+    return;
+  }
+  extAsking = true;
+  say(plan.text, null, [
+    // ⚠️ CLEARING `dirty` HERE IS THE POINT OF THE BUTTON, not a way round a guard.
+    // Reload MEANS "discard my in-memory edits" — exactly the question confirmDiscard
+    // would otherwise ask a second time, having already been answered.
+    { label: 'Reload', run: () => {
+        extAsking = false; say('');
+        dirty = false; paint();
+        bx('ext-reload', name);
+        openDoc(name);
+      } },
+    { label: 'Keep mine', run: () => {
+        extAsking = false;
+        bx('ext-keep-mine', name);
+        say('Keeping your version. ⌘S will overwrite the agent\'s changes; the file as '
+            + 'it was before the agent touched it stays in ' + preAgentName(name) + '.',
+            'dim');
+      } },
+  ]);
+}
+
 function aiSetOpen(open, why) {
   document.body.classList.toggle('aioff', !open);
   try { localStorage.setItem('harness-office-ai', open ? '1' : '0'); } catch (e) { /* private mode */ }
   bx(open ? 'ai-open' : 'ai-collapse', why || '');
   if (open) { aiEmpty(); aiPaint(true); aiRefreshModel(); }
-  clearInterval(aiTimer);
-  aiTimer = open ? setInterval(() => { if (!document.hidden) aiRefreshModel(); }, AI_POLL_MS) : null;
+  aiPaint();
+}
+
+// ══ THE ONE PAGE TICK ════════════════════════════════════════════════════════
+// ⚠️ THIS IS THE SAME INTERVAL, WIDENED — NOT A NEW ONE, and the widening is the
+// decision worth reading. It used to be armed and disarmed by aiSetOpen and to do one
+// thing: re-check the model pill, every AI_POLL_MS, while the AI panel was open.
+//
+// Two of this slice's three duties cannot live on a timer the user can switch off by
+// collapsing a panel:
+//   · the open-file HEARTBEAT decides whether an agent write is refused. A page whose
+//     AI panel is collapsed still has your unsaved edits in it, and a heartbeat that
+//     stopped when the panel closed would hand the agent a "no page here, go ahead" on
+//     the exact workbook you are typing into. That is a data-loss bug, not a cadence
+//     preference.
+//   · the mtime WATCH is what tells you the agent edited the file under you.
+// So the interval is now the page's, armed ONCE at boot, and the model pill — which
+// really is only worth refreshing while it is on screen — is the thing gated on the
+// panel being open, inside the tick.
+//
+// TWO CADENCES, ONE TIMER: the heartbeat needs to beat well inside the bridge's 15s
+// TTL, and the model/gate/mtime reads are three HTTP calls that have no business
+// running at that rate. So the tick is HB_TICK_MS and the slow work runs every
+// SLOW_EVERY-th beat — which lands on 15s, i.e. exactly the AI_POLL_MS this page has
+// always used for the pill. A test pins that arithmetic.
+const SLOW_EVERY = AI_POLL_MS / HB_TICK_MS;      // 3
+let tickN = 0, pageTimer = null;
+
+function pageTick() {
+  if (document.hidden) return;
+  // The heartbeat's keepalive: the same {name, dirty} again, so the bridge's TTL never
+  // expires under a page that is still open. The CHANGES come through paint().
+  hbRun(true);
+  tickN++;
+  if (tickN % SLOW_EVERY) return;
+  if (aiPaneOpen()) aiRefreshModel();
+  extCheck();
+}
+
+function pageTickStart() {
+  clearInterval(pageTimer);
+  pageTimer = setInterval(pageTick, HB_TICK_MS);
 }
 
 // ══ PANE GEOMETRY — drag to resize, collapse to a reopener ═══════════════════
@@ -5660,9 +6427,23 @@ el('ai-resize').ondblclick = () => paneReset('ai');
 el('ai-tab').onclick = () => aiSetOpen(true, 'tab');
 el('ai-hide').onclick = () => aiSetOpen(false, 'button');
 // Clear removes the TURNS, never the placeholder markup that lives in the log.
+// ⚠️ IT ALSO FORGETS THE HERMES SESSION, because on the Agent lane the conversation is
+// not only on screen: Hermes is holding it. Clearing the log and keeping the session
+// would leave the model answering out of a history the user has been shown the back of.
 el('ai-clear').onclick = () => {
   [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
   aiEmpty(); aiStatus('');
+  agentSid = ''; agentStored = ''; agentNamed = false;
+  try { localStorage.removeItem(LS_AGENT_SID); localStorage.removeItem(LS_AGENT_STORED); }
+  catch (e) { /* private mode */ }
+  bx('agent-session-cleared', '');
+};
+// THE LANE TOGGLE. Quick always works; Agent refuses itself when its gate is shut, and
+// laneSet is the one place that decides — a disabled button is belt, this is braces.
+el('lane-quick').onclick = () => { laneSet(LANE_QUICK, 'click'); aiPaint(); };
+el('lane-agent').onclick = () => {
+  if (!laneSet(LANE_AGENT, 'click')) { aiStatus(agentGate(agentEnv).why, true); return; }
+  aiPaint();
 };
 el('ai-send').onclick = aiSend;
 // Per-document, in memory, on purpose — see the note in showWorkbook(). There is no
@@ -5961,6 +6742,14 @@ async function boot() {
   try {
     railWant = localStorage.getItem(LS_RAIL) !== '0';
     aiWant = localStorage.getItem('harness-office-ai') !== '0';
+    // ⚠️ THE LANE IS REMEMBERED BUT NEVER TRUSTED: it is only ADOPTED once agentProbe
+    // has said the gate is open (lanePaint drops back to Quick otherwise), so a
+    // remembered Agent lane on a machine where Hermes has since stopped lands you in
+    // the lane that works instead of in a dead composer.
+    if (localStorage.getItem(LS_LANE) === LANE_AGENT) laneWant = LANE_AGENT;
+    agentSid = localStorage.getItem(LS_AGENT_SID) || '';
+    agentStored = localStorage.getItem(LS_AGENT_STORED) || '';
+    agentNamed = !!agentStored;   // an id we already had was already named
   } catch (e) { /* private mode: the defaults stand */ }
   railSetOpen(railWant, 'boot');
   // The AI panel is OPEN unless it was closed on purpose. A capability nobody can see
@@ -5970,11 +6759,15 @@ async function boot() {
   await loadFiles();
   bx('tier1-ready', 'files=' + files.length);
   await autoOpen();
+  // ONE interval for the whole page (see pageTickStart) — armed after the first open so
+  // the heartbeat's very first beat already names the workbook that is on screen.
+  pageTickStart();
   aiPaint(true);      // the context note only means something once a sheet is open
   bx('landed', 'file=' + (current || 'none') + ' mode=' + mode
      + ' rail=' + (railIsOpen() ? railW : 'collapsed')
      + ' ai=' + (document.body.classList.contains('aioff') ? 'collapsed' : aiW)
-     + ' model=' + (aiModel || 'none'));
+     + ' model=' + (aiModel || 'none')
+     + ' lane=' + aiLane);
 }
 // The script is at the END of the body, so the document is usually already
 // interactive by the time it runs — waiting for an event that has FIRED would hang

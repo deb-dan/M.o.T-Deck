@@ -497,8 +497,15 @@ check('…handling the lane\'s proxy_error frame rather than hanging on it',
 check('the page defines and calls NO office-specific chat endpoint',
       code.indexOf('/api/office/chat') < 0 && code.indexOf('/api/office/ask') < 0);
 const urls = Array.from(new Set(code.match(/'\/api\/[^']*'/g) || []));
-check('…and the only chat URL anywhere in the page is the shared lane',
-      urls.filter(u => /chat|ask|complet/.test(u)).join() === "'/api/chat/direct'", urls);
+/* ⚠️⚠️ TWO CHAT URLS AS OF loffice-2026-08-27d, AND THE SECOND ONE IS THE POINT OF THE
+   SLICE. The Agent lane speaks the harness's EXISTING Hermes lane — the same endpoint,
+   body and SSE frames the main panel's Hermes mode uses — so it is a SHARED lane, not
+   an office-specific one. The negative that actually matters is unchanged and is
+   asserted above: there is no /api/office/chat and no /api/office/ask. */
+eq('…and the only chat URLs anywhere in the page are the two SHARED lanes — the direct '
+   + 'one for Quick and the Hermes one for Agent',
+   urls.filter(u => /chat|ask|complet/.test(u)).sort(),
+   ["'/api/chat/direct'", "'/api/hermes/chat'"]);
 check('every URL the page calls is one of the endpoints that already existed',
       urls.every(u => ["'/api/chat/direct'", "'/api/status'", "'/api/office/files'",
                        "'/api/office/new'", "'/api/office/save'", "'/api/office/delete'",
@@ -510,7 +517,14 @@ check('every URL the page calls is one of the endpoints that already existed',
                        // before navigating, so the button is never a dead click. The
                        // editor page itself is /oo-edit, not an /api/ URL — this page
                        // does not talk to the editor, it hands the file over to it.
-                       "'/api/oo/status'"].indexOf(u) >= 0), urls);
+                       "'/api/oo/status'",
+                       // SLICE S2 (loffice-2026-08-27d) — the Agent lane. FIVE URLs,
+                       // and not one of them is new to the harness: three are the
+                       // Hermes lane the main panel already drives, and two are the
+                       // office surfaces slice S1 shipped for exactly this page.
+                       "'/api/hermes/chat'", "'/api/hermes/approve'",
+                       "'/api/hermes/session/'", "'/api/office/mcp'",
+                       "'/api/office/heartbeat'", "'/api/models'"].indexOf(u) >= 0), urls);
 check('the session is deliberately EMPTY, so a spreadsheet question can never appear '
       + 'in — or retitle — a chat in Mission Control',
       /session: ''/.test(send));
@@ -600,9 +614,22 @@ check('a localStorage that throws (private mode) does not stop the boot',
       /catch \(e\) \{ \/\* private mode/.test(grab('boot')));
 check('Enter asks and Shift+Enter is a newline, as everywhere else in the harness',
       /ev\.key === 'Enter' && !ev\.shiftKey/.test(html));
-check('the model pill re-checks itself while the panel is open',
-      /setInterval\(\(\) => \{ if \(!document\.hidden\) aiRefreshModel\(\); \}, AI_POLL_MS\)/.test(grab('aiSetOpen')));
-check('…and stops when it is collapsed', /clearInterval\(aiTimer\)/.test(grab('aiSetOpen')));
+/* ⚠️⚠️ REWRITTEN AT loffice-2026-08-27d, AND THE REWRITE IS THE ARGUMENT. The interval
+   used to belong to the AI PANEL: aiSetOpen armed it and clearInterval'd it, and its one
+   job was the model pill. Slice S2 gave the page two duties that CANNOT be switched off
+   by collapsing a panel — the open-file heartbeat (which decides whether an agent write
+   is refused on a workbook with unsaved edits in it) and the mtime watch. So the timer
+   is now the PAGE's, armed once at boot, and the model pill is what is gated on the
+   panel being open — inside the tick. Still exactly ONE interval on this page. */
+check('the page has exactly ONE recurring interval, and it is the page tick',
+      (code.match(/setInterval\(/g) || []).length === 1
+      && /setInterval\(pageTick, HB_TICK_MS\)/.test(grab('pageTickStart')));
+check('…armed once at boot, not by the AI panel', /pageTickStart\(\)/.test(grab('boot'))
+      && !/setInterval/.test(grab('aiSetOpen')));
+check('the model pill still re-checks itself only while the panel is open',
+      /if \(aiPaneOpen\(\)\) aiRefreshModel\(\);/.test(grab('pageTick')));
+check('…and the tick does nothing at all on a hidden page, as the old one did',
+      /if \(document\.hidden\) return;/.test(grab('pageTick')));
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 3 — ROUND 3: the model was not sheet-aware, there was no way out of the page,
@@ -738,7 +765,13 @@ check('…and does NOT open when the save failed — its reason is already on sc
 check('a DOUBLE-CLICK on a file row can no longer arm and confirm a discard between two '
       + 'halves of one gesture', /DISCARD_MIN_MS/.test(cd) && num('DISCARD_MIN_MS') >= 250);
 const sayFn = grab('say');
-check('say() renders an inline action as a real button…', /b\.textContent = action\.label/.test(sayFn));
+check('say() renders an inline action as a real button…', /b\.textContent = a\.label/.test(sayFn));
+/* ⚠️ ONE ACTION OR AN ARRAY OF THEM, as of loffice-2026-08-27d. The external-change
+   banner (spec §3.3) states a dilemma with TWO answers, and the whole reason this
+   argument exists is that a message stating a dilemma should be able to resolve it. The
+   single-object form is unchanged — PART 6 EXECUTES both shapes against a stub DOM. */
+check('…and several of them, in order, for the two-button banner',
+      /Array\.isArray\(action\) \? action : \[action\]/.test(sayFn));
 check('…and STILL puts every string in through textContent — innerHTML is only ever '
       + 'used to clear', !/innerHTML = text/.test(sayFn) && /m\.innerHTML = '';/.test(sayFn)
       && /t\.textContent = text/.test(sayFn));
@@ -804,9 +837,9 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27c');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27d');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-27c/g) || []).length === 2);
+      (html.match(/loffice-2026-08-27d/g) || []).length === 2);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
@@ -1796,6 +1829,728 @@ check('…and that the FILE is only written on ⌘S',
 check('the block header no longer claims the panel is advisory only, because it is not',
       html.indexOf('AND IT IS ADVISORY ONLY') < 0
       && /NO LONGER ADVISORY ONLY/.test(html));
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   PART 6 — SLICE S2: THE AGENT LANE, THE HEARTBEAT AND THE EXTERNAL-CHANGE BANNER
+   (docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §3.2–§4, build loffice-2026-08-27d)
+
+   S1 shipped the other half and is not re-tested here: the bridge hosts an MCP server
+   at /mcp/office, Hermes consumes it with `trust: untrusted`, the three read tools
+   carry readOnlyHint so only the four write tools get a card, every agent write leaves
+   a `<stem>.pre-agent.xlsx`, and a workbook registered OPEN-AND-DIRTY is refused.
+   bridge/tests/test_office_mcp.py and test_office_lane.py own all of that.
+
+   WHAT THIS PART PINS is the PAGE side, and it is four claims:
+     1. the lane toggle greys with the REASON in its title, one reason per cause;
+     2. the Agent lane reuses the harness's existing Hermes lane and its cards, and
+        leaves the Quick lane byte-for-byte alone;
+     3. the heartbeat is accurate the INSTANT the dirty flag flips, and rides no timer
+        of its own;
+     4. the banner's two sentences, exactly as the spec words them.
+   And one negative, which is the one that matters most: THE AGENT LANE ADDS NO
+   PAGE-SIDE WRITER.
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+// The python half, read for the cross-language pins below. A page-side constant that
+// drifted from office_ops.py would break the lane in the one way nobody would look at
+// the page for.
+const opsPy = fs.readFileSync(path.join(ROOT, 'bridge', 'office_ops.py'), 'utf8');
+function pyNum(name) {
+  const m = opsPy.match(new RegExp('^' + name + '\\s*=\\s*(\\d+(?:\\.\\d+)?)', 'm'));
+  if (!m) throw new Error('constant ' + name + ' not found in office_ops.py');
+  return parseFloat(m[1]);
+}
+// Constants the extracted functions close over are READ OUT OF THE PAGE, never written
+// down here — and the one that crosses the language boundary is pinned against
+// office_ops.py in §4 below, which is the pin that actually matters.
+const PRE_AGENT_SUFFIX = (code.match(/PRE_AGENT_SUFFIX = '([^']+)'/) || [])[1];
+
+// ── 1. THE LANE TOGGLE ──────────────────────────────────────────────────────
+// GREY-NOT-HIDE. The chip is always on screen; when it cannot be used it is disabled
+// with the reason in its own title. There is deliberately no third state.
+check('the AI panel has both lane chips, as REAL MARKUP',
+      /id="lane-quick"/.test(html) && /id="lane-agent"/.test(html)
+      && />Quick</.test(html) && />Agent</.test(html));
+check('…Quick is the default and is marked `on` in the MARKUP, not by JS — a page whose '
+      + 'boot failed must not look like it is in the Agent lane',
+      /id="lane-quick" class="chip on"/.test(html));
+check('…and the Agent chip ships DISABLED with a reason already in its title, so the '
+      + 'pre-probe state is honest too',
+      /id="lane-agent"[\s\S]{0,120}disabled/.test(html)
+      && /id="lane-agent"[\s\S]{0,300}title="[^"]+"/.test(html));
+check('the chips reuse the existing .chip grammar (the `sheet` chip\'s), so there is no '
+      + 'new control vocabulary on this page',
+      /id="lane-quick" class="chip/.test(html) && /id="lane-agent" class="chip/.test(html));
+check('…and a disabled chip is greyed by the stylesheet rule that already covers every '
+      + 'button in this pane, which is why this slice added no CSS for it',
+      /button:disabled\{opacity:\.45;cursor:default\}/.test(css));
+eq('the ONLY CSS this slice added is the header wrap the two extra chips need',
+   (css.match(/#ai-hd\{[^}]*\}/) || [''])[0].indexOf('flex-wrap:wrap') >= 0, true);
+
+// THE GATE, EXECUTED — one case per grey reason, in the order a person would fix them.
+eval(grab('agentGate'));
+{
+  const shut = [
+    ['hermes is down', {}, /Hermes is not running/],
+    ['the MCP server is not registered', { hermes: true }, /not registered with Hermes/],
+    ['…or is registered but out of sync',
+     { hermes: true, mcpRegistered: true }, /out of sync/],
+    ['…or the model explicitly cannot tool-call',
+     { hermes: true, mcpRegistered: true, mcpInSync: true, tools: false, model: 'M-4B' },
+     /NO tool-calling support/],
+  ];
+  shut.forEach(([label, env, re]) => {
+    const st = agentGate(env);
+    check('the Agent lane is refused when ' + label, st.ok === false);
+    check('…with that reason in the title: ' + label, re.test(st.why), st.why);
+    check('…and no warning, because a refusal is not a warning: ' + label, st.warn === '');
+  });
+  eq('every refusal reason is a whole sentence, not a word',
+     shut.every(([, env]) => agentGate(env).why.length > 40), true);
+  check('the refusal for a tool-less model NAMES the model, so "which one?" is not the '
+        + 'next question',
+        /M-4B/.test(agentGate({ hermes: true, mcpRegistered: true, mcpInSync: true,
+                                tools: false, model: 'M-4B' }).why));
+  check('…and every refusal names WHERE to fix it',
+        shut.every(([, env]) => /MOT Main|Models/.test(agentGate(env).why)));
+
+  const open = { hermes: true, mcpRegistered: true, mcpInSync: true, tools: true,
+                 model: 'M-4B' };
+  const st = agentGate(open);
+  check('all three gates open on a tool-calling model', st.ok === true && st.warn === '');
+  check('…and the title then says what the lane IS for', /real Office tools/.test(st.why));
+
+  /* ⚠️⚠️ THE THIRD VALUE IS THE WHOLE JUDGEMENT CALL OF THIS FUNCTION, AND IT IS PINNED
+     HERE RATHER THAN ARGUED IN A COMMENT ALONE. The bridge reports tool-calling as
+     true / false / NULL, where null means "this model's chat template could not be
+     read" (bridge/modeltools.py; surfaced as installed[].tools on GET /api/models, the
+     same field the green `tools` pill and the panel's own modelHasSTools read). An
+     explicit FALSE is a hard gate. A NULL is NOT one: the absent-not-greyed rule says
+     an unknown must never be drawn as a "no", and — measured on this machine, sixteen
+     installed models, `tools` null on all sixteen — gating on null would refuse the
+     lane on EVERY model Debi owns. So null opens the lane with the requirement stated
+     as a warning, which the spec's "the reason in its title" still satisfies. */
+  const unk = agentGate(Object.assign({}, open, { tools: null }));
+  check('an UNKNOWN tool-calling verdict opens the lane rather than refusing it',
+        unk.ok === true);
+  check('…but says so, by name, as a warning', unk.warn.length > 40 && /M-4B/.test(unk.warn));
+  check('…and the warning is carried in the TITLE too, because the title is the only '
+        + 'place a person reads before clicking', unk.why.indexOf(unk.warn) > 0);
+  check('…and it points at the same green pill the Models page uses',
+        /`tools` pill/.test(unk.warn));
+  [undefined, null, {}, 0, 'x'].forEach((v, i) => {
+    let threw = null, r = null;
+    try { r = agentGate(v); } catch (e) { threw = e; }
+    check('agentGate survives junk input and fails CLOSED (case ' + i + ')',
+          !threw && r && r.ok === false);
+  });
+}
+
+// The paint side: the gate's verdict is what disables the chip and writes the title,
+// and a lane that stopped being available does not sit there pretending.
+{
+  const lp = grab('lanePaint');
+  check('lanePaint disables the Agent chip from the gate and puts the gate\'s reason in '
+        + 'its title', /a\.disabled = !st\.ok/.test(lp) && /a\.title = st\.why/.test(lp));
+  check('…and falls back to Quick if the gate shuts while you are in the Agent lane, '
+        + 'because a dead composer is worse than a lane change',
+        /aiLane === LANE_AGENT && !st\.ok/.test(lp) && /laneApply\(LANE_QUICK/.test(lp));
+  /* ⚠️⚠️ AND THE FALLBACK DOES NOT FORGET WHAT WAS ASKED FOR — A BUG FOUND ON THE REAL
+     PAGE, NOT IN A TEST. The gate is probed asynchronously, so for the first few hundred
+     ms of EVERY page load Hermes has not been checked yet and the gate reads shut. When
+     the fallback also PERSISTED itself, a remembered Agent lane was destroyed on every
+     single reload. `laneWant` is the choice (persisted, only ever set by laneSet);
+     `aiLane` is what is in effect (never persisted, set by laneApply). */
+  check('…and the fallback writes NOTHING to localStorage, which is what makes a '
+        + 'remembered Agent lane survive a reload past the async probe',
+        !/localStorage/.test(grab('laneApply')) && /localStorage\.setItem\(LS_LANE/.test(grab('laneSet')));
+  check('…and the wanted lane is re-adopted the moment the gate opens',
+        /laneWant === LANE_AGENT && st\.ok/.test(lp) && /laneApply\(LANE_AGENT/.test(lp));
+  check('…and the boot restores the WANT, not the effect — the gate still has the last '
+        + 'word', /getItem\(LS_LANE\) === LANE_AGENT\) laneWant = LANE_AGENT/.test(grab('boot')));
+  check('laneSet refuses the Agent lane on a shut gate itself — the disabled attribute '
+        + 'is belt, this is braces',
+        /want === LANE_AGENT && !agentGate\(agentEnv\)\.ok/.test(grab('laneSet')));
+  check('…and remembers the choice, so the lane survives a reload',
+        /localStorage\.setItem\(LS_LANE/.test(grab('laneSet'))
+        && /getItem\(LS_LANE\) === LANE_AGENT/.test(grab('boot')));
+  check('…and a REFUSED click is not remembered either — laneWant is only written after '
+        + 'the gate has said yes',
+        /if \(want === LANE_AGENT && !agentGate\(agentEnv\)\.ok\) return false;[\s\S]{0,40}laneWant = want;/
+          .test(grab('laneSet')));
+  check('…which the boot only ADOPTS, never trusts: the gate still has the last word',
+        /lanePaint\(\)/.test(grab('aiPaint')));
+  check('the chips are repainted from aiPaint, the same funnel the model pill and the '
+        + 'context note use', /lanePaint\(\);/.test(grab('aiPaint')));
+  check('clicking the greyed chip says why, rather than doing nothing',
+        /aiStatus\(agentGate\(agentEnv\)\.why, true\)/.test(code));
+}
+
+// The probe: three gates, and only one of them costs a request of its own.
+{
+  const pr = grab('agentProbe');
+  check('the Hermes gate is read off the /api/status response aiRefreshModel ALREADY '
+        + 'fetches, so it costs nothing',
+        /components\.hermes/.test(grab('aiRefreshModel'))
+        && /agentEnv\.hermes = !!\(h && h\.running\)/.test(grab('aiRefreshModel')));
+  check('…and a bridge that did not answer closes the gate rather than leaving it open',
+        /agentEnv\.hermes = false/.test(grab('aiRefreshModel')));
+  check('the MCP gate reads GET /api/office/mcp — the S1 surface, not a new one',
+        /fetch\('\/api\/office\/mcp'/.test(pr));
+  check('…and reads BOTH registered and in_sync, because an out-of-sync entry points at '
+        + 'a server this bridge does not serve',
+        /j\.registered/.test(pr) && /j\.in_sync/.test(pr));
+  check('the tools verdict is CACHED BY MODEL, because /api/models is 75 KB and can '
+        + 're-seed the registry — it must never ride a fast poll',
+        /model !== agentToolsPin/.test(pr) && /agentToolsPin = model/.test(pr));
+  check('…and it is the panel\'s own predicate: true ONLY on an explicit yes',
+        /live\.tools === true/.test(pr) && /indexOf\('tools'\) >= 0/.test(pr)
+        && /live\.tools === false \? false : null/.test(pr));
+  check('…and the panel it mirrors still derives it the same way, so the two agree '
+        + 'about what a green pill means',
+        /if \(m\.tools === true\) return true;/.test(panel)
+        && /\(m\.capabilities \|\| \[\]\)\.indexOf\('tools'\) >= 0/.test(panel));
+}
+
+// ── 2. THE AGENT LANE ON THE WIRE ───────────────────────────────────────────
+// It invents nothing: the harness's existing Hermes lane, the same frames, the same
+// approve call. The negative that no /api/office/chat exists is asserted in PART 2 and
+// covers this lane too.
+const asend = grab('agentSend');
+check('the fork between the lanes is ONE line, and it is the FIRST line of aiSend — so '
+      + 'the Quick lane below it is the lane that shipped',
+      /^\s*if \(aiLane === LANE_AGENT\) return agentSend\(\);$/m
+        .test(stripComments(send).split('\n').slice(0, 6).join('\n')));
+check('the Quick lane still posts to /api/chat/direct with an EMPTY session',
+      /fetch\('\/api\/chat\/direct'/.test(send) && /session: ''/.test(send));
+check('…and the Quick lane never touches the Hermes lane',
+      !/api\/hermes/.test(stripComments(send)));
+check('the Agent lane posts to the harness\'s EXISTING Hermes lane',
+      /fetch\('\/api\/hermes\/chat'/.test(asend));
+check('…with the SAME body the main panel sends, session_id / message / stored_sid',
+      /session_id: agentSid \|\| ''/.test(asend) && /message: message/.test(asend)
+      && /stored_sid: agentStored \|\| ''/.test(asend));
+check('…and the main panel really does send that body, so this is a REUSE and not a '
+      + 'second protocol', /session_id: chatPane\.hermesSid \|\| ''/.test(panel)
+      && /stored_sid: chatPane\.hermesStoredSid \|\| ''/.test(panel));
+check('…reading the same `data: ` frames and the same [DONE]',
+      /startsWith\('data: '\)/.test(asend) && /\[DONE\]/.test(asend));
+check('the session is created LAZILY — no session id on the first message, and the '
+      + 'bridge mints one; the page never calls session/new',
+      /agentSid \|\| ''/.test(asend) && code.indexOf("'/api/hermes/session/new'") < 0);
+check('the sheet-grounding preamble rides EVERY agent message, reusing aiPreamble',
+      /aiPreamble\(current, aiSheetName\(\)\)/.test(asend));
+check('…with the tool note on top of it, not instead of it',
+      /aiPreamble\(current, aiSheetName\(\)\) \+ agentToolNote\(\)/.test(asend));
+check('…and the sheet chip still governs the sheet exactly as it does in Quick',
+      /aiCtxOn \? aiContext\(\) : null/.test(asend));
+check('the reply is rendered by the Quick lane\'s OWN renderer, so a formula is still a '
+      + 'copy card and an action block is still a preview-and-Apply card — one grammar, '
+      + 'two engines', /aiRenderBody\(turn\.body\.parentNode, out\)/.test(asend));
+check('a write tool that ran means the FILE moved, so the turn ends by asking',
+      /extCheck\(\);/.test(asend));
+
+// The session is the ONE dedicated `loffice` session the spec asks for.
+eq('the dedicated session is named exactly `loffice`',
+   (code.match(/AGENT_SESSION_NAME = '([^']+)'/) || [])[1], 'loffice');
+check('…renamed through the EXISTING rename route, on the DURABLE id (the gateway has '
+      + 'no rename for a live session it does not own)',
+      /'\/api\/hermes\/session\/' \+ encodeURIComponent\(agentStored\)/.test(grab('agentName')));
+check('…once, and never load-bearing: a rename that fails costs a beacon, not the lane',
+      /if \(agentNamed \|\| !agentStored\) return;/.test(grab('agentName'))
+      && /agent-name-fail/.test(code));
+check('the session id is persisted, so the next question — and the next page load — '
+      + 'continue the same conversation',
+      /localStorage\.setItem\(LS_AGENT_SID/.test(code)
+      && /getItem\(LS_AGENT_SID\)/.test(grab('boot')));
+check('…and `clear` forgets it, because on this lane the history is not only on screen '
+      + '— Hermes is holding it',
+      /agentSid = ''; agentStored = ''; agentNamed = false;/.test(code)
+      && /removeItem\(LS_AGENT_SID\)/.test(code));
+
+// THE FRAME VOCABULARY, EXECUTED against the exact frames bridge/app.py's
+// hermes_event_to_frames emits. A frame this page silently dropped would be a turn that
+// looked dead.
+{
+  let named = 0, cards = [], status = '', beacons = [];
+  let agentSid = '', agentStored = '';         // the fn assigns to these
+  const store = {};
+  const localStorage = { setItem: (k, v) => { store[k] = v; }, getItem: k => store[k] };
+  const bx = (s, d) => beacons.push(s + ':' + d);
+  const aiStatus = t => { status = t; };
+  const agentName = () => { named++; };
+  const agentCard = (host, req, s) => { cards.push({ req: req, sid: s }); };
+  const LS_AGENT_SID = 'k1', LS_AGENT_STORED = 'k2';
+  const document = { createElement: () => ({ style: {}, appendChild() {} }) };
+  eval(grab('agentFrame'));
+  const turn = { wrap: { appendChild() {} } };
+  const held = { sid: 'S0' };
+  const steps = [];
+  eq('a prose delta is prose', agentFrame({ delta: 'hi' }, turn, held, steps), { delta: 'hi' });
+  eq('a thinking delta is kept apart from the answer',
+     agentFrame({ delta: 'mm', thinking: true }, turn, held, steps), { thinking: 'mm' });
+  eq('an empty delta is nothing at all', agentFrame({ delta: '' }, turn, held, steps), {});
+  agentFrame({ type: 'hermes_session', id: 'S9', stored_id: 'D9' }, turn, held, steps);
+  eq('the hermes_session frame is where the sid comes from — announced BEFORE any token',
+     [held.sid, store.k1, store.k2], ['S9', 'S9', 'D9']);
+  eq('…and it is what triggers the one rename', named, 1);
+  agentFrame({ type: 'approval', request: { command: 'c', choices: ['once', 'deny'] } },
+             turn, held, steps);
+  eq('an approval frame draws a card, in the session THAT TURN owns',
+     [cards.length, cards[0].sid], [1, 'S9']);
+  agentFrame({ type: 'tool_start', tool: 'office_read' }, turn, held, steps);
+  eq('a tool_start is recorded as a step and said on the status line',
+     [steps.slice(), /office_read/.test(status)], [['office_read'], true]);
+  agentFrame({ type: 'tool_output', tool: 'office_read', summary: '12 cells' },
+             turn, held, steps);
+  eq('…and its summary joins the step it belongs to', steps, ['office_read — 12 cells']);
+  eq('a proxy_error ends the turn with its reason, rather than hanging on it',
+     agentFrame({ type: 'proxy_error', error: 'boom' }, turn, held, steps),
+     { error: 'boom' });
+  ['hermes_ping', 'file_card', 'guard_flag', 'ask_expire', 'session.info', ''].forEach(t => {
+    eq('the ' + (t || 'typeless') + ' frame is inspect-only noise and is dropped',
+       agentFrame({ type: t }, turn, held, steps), {});
+  });
+  eq('a hermes_status is shown as status, not as an answer',
+     agentFrame({ type: 'hermes_status', text: 'working' }, turn, held, steps), {});
+  eq('…on the status line', status, 'working');
+  [null, undefined, {}, 'x', 0].forEach((v, i) => {
+    let threw = null;
+    try { agentFrame(v, turn, held, steps); } catch (e) { threw = e; }
+    check('agentFrame survives junk input (case ' + i + ')', !threw);
+  });
+  // The ONE frame this lane deliberately does not render as a control, said out loud.
+  const askOut = [];
+  const turn2 = { wrap: { appendChild: n => askOut.push(n) } };
+  agentFrame({ type: 'ask', request: { question: 'which sheet?' } }, turn2, held, steps);
+  eq('a clarify/ask card is NOT faked: the question is printed and the user is told '
+     + 'where it can actually be answered', askOut.length, 1);
+  check('…and the page never posts an answer it has no picker for',
+        code.indexOf("'/api/hermes/answer'") < 0);
+}
+
+// The frames the page handles are the frames the BRIDGE emits — pinned across the file
+// boundary so a mapper change cannot silently strip this lane.
+{
+  const app = fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8');
+  const mapper = app.slice(app.indexOf('def hermes_event_to_frames'),
+                           app.indexOf('class _HermesWS'));
+  check('the bridge mapper really emits every type this lane branches on',
+        ['tool_start', 'tool_output', 'approval', 'ask', 'ask_expire', 'proxy_error',
+         'hermes_session', 'status'].every(t => mapper.indexOf('"' + t + '"') > 0
+                                              || app.indexOf('"type": "' + t + '"') > 0
+                                              || app.indexOf('"type":"' + t + '"') > 0));
+  check('…and the approval frame really carries {command, description, choices}',
+        /"command": p\.get\("command"\)/.test(mapper)
+        && /"choices": \[str\(c\) for c in ch\]/.test(mapper));
+}
+
+// ── THE TOOL NOTE ───────────────────────────────────────────────────────────
+eval(grab('agentToolNote'));
+{
+  const note = agentToolNote();
+  ['office_list', 'office_read', 'office_sheet_stats', 'office_write_cells',
+   'office_sort', 'office_insert_delete', 'office_create'].forEach(t =>
+    check('the agent is told it has ' + t, note.indexOf(t) >= 0));
+  check('…and that the tools are the PREFERRED route over the taught block, because '
+        + 'aiPreamble teaches that block on this lane too',
+        /PREFER THE TOOLS/.test(note) && /instead of emitting a loffice block/.test(note));
+  check('…that the work is multi-step, which is the whole reason this lane exists',
+        /read, then compute, then write, then read back/.test(note));
+  check('…that a tool takes a NAME and never a path, which is the containment rule S1 '
+        + 'enforces by construction', /NAME, never a path/.test(note));
+  check('…and that a write asks Debi first and keeps a copy',
+        /approve it first/.test(note) && /keeps a copy/.test(note));
+  check('the tool names are EXACTLY the seven the MCP server serves',
+        (() => {
+          const mcp = fs.readFileSync(path.join(ROOT, 'bridge', 'office_mcp.py'), 'utf8');
+          const served = Array.from(new Set(mcp.match(/"name": "(office_[a-z_]+)"/g) || [])
+            .values()).map(s => s.split('"')[3]).sort();
+          const told = Array.from(new Set(note.match(/office_[a-z_]+/g) || [])).sort();
+          return served.length === 7 && JSON.stringify(served) === JSON.stringify(told);
+        })());
+}
+
+// ── THE APPROVAL CARD ───────────────────────────────────────────────────────
+// ONE VISUAL GRAMMAR, TWO ENGINES (spec §4).
+eval(grab('agentToolOf'));
+{
+  /* ⚠️ THE SENTENCE PARSED HERE IS HERMES'S OWN, COPIED FROM THE PIN — the trust gate
+     builds it at vendor/hermes/tools/mcp_tool.py:4035-4046 and the bridge forwards it
+     verbatim as the card's `command`. Pinning the real string is what makes the parse
+     a contract rather than a hope. */
+  const real = "MCP tool 'office_write_cells' on UNTRUSTED server 'loffice' wants to "
+             + "run. This tool is write-capable (no readOnlyHint=true annotation) and "
+             + "may modify external state.";
+  eq('the tool name is read out of Hermes\'s own approval sentence',
+     agentToolOf(real), 'office_write_cells');
+  const hermesSrc = fs.readFileSync(
+    path.join(ROOT, 'vendor', 'hermes', 'tools', 'mcp_tool.py'), 'utf8');
+  check('…and that sentence is still the one the pin builds — if upstream rewords it, '
+        + 'this test fails instead of the card going vague in silence',
+        /f"MCP tool '\{tool_name\}' on UNTRUSTED server "/.test(hermesSrc));
+  eq('an unparseable command yields no tool name rather than a guess',
+     [agentToolOf(''), agentToolOf('something else'), agentToolOf(null)], ['', '', '']);
+}
+{
+  // agentCardText reads `current`; the wording is what is under test.
+  let current = 'Budget.xlsx';
+  eval(grab('preAgentName')); eval(grab('agentToolOf'));
+  const AGENT_TOOLS = eval('(' + (code.match(/const AGENT_TOOLS = (\{[\s\S]*?\});/) || [])[1] + ')');
+  eval(grab('agentCardText'));
+  const t = agentCardText({ command: "MCP tool 'office_write_cells' on UNTRUSTED server 'loffice' wants to run." });
+  check('the card names the tool', /office_write_cells/.test(t));
+  check('…and says in English what that tool does', /write cells into a workbook/.test(t));
+  check('…and that nothing is written until it is approved',
+        /Nothing is written until you approve it/.test(t));
+  check('…and names the pre-write copy BY FILENAME, because "a copy is kept" is not an '
+        + 'answer to "kept where?"', t.indexOf('Budget.pre-agent.xlsx') > 0);
+  check('…and states the agent-lane undo honestly: the copy, NOT this page\'s Undo — '
+        + 'the in-memory stack cannot cover a server-side write and must not pretend to',
+        /not this page’s Undo/.test(t));
+  check('…and that an unsaved workbook is refused outright, which is the S1 rule the '
+        + 'heartbeat exists to make true', /unsaved edits open here is refused/.test(t));
+  const four = ['office_write_cells', 'office_sort', 'office_insert_delete',
+                'office_create'];
+  check('every tool Hermes will put behind a card has a plain-English line here',
+        four.every(n => typeof AGENT_TOOLS[n] === 'string' && AGENT_TOOLS[n].length > 5));
+  eq('…and ONLY those four: a read tool with a card line would be describing a card '
+     + 'that never appears', Object.keys(AGENT_TOOLS).sort(), four.slice().sort());
+  check('…and they are exactly the four the bridge reports as gated, so the page and '
+        + 'the server agree about which calls stop for a person',
+        (() => {
+          const mcp = fs.readFileSync(path.join(ROOT, 'bridge', 'office_mcp.py'), 'utf8');
+          return four.every(n => mcp.indexOf('"' + n + '"') > 0)
+                 && /def write_tool_names/.test(mcp);
+        })());
+  const t2 = agentCardText({});
+  check('an approval whose command could not be parsed still says what class of thing '
+        + 'is about to happen', /write-capable Office tool/.test(t2));
+}
+{
+  /* ZERO NEW CSS, computed the same way PART 5 computes it for the Quick lane's card:
+     every class the agent card uses must already have a rule. A class the card invented
+     would have to be styled to be worth having, and there is no rule for one. */
+  const cardSrc = ['agentCard', 'agentStamp', 'agentExpire'].map(grab).join('\n');
+  const cls = Array.from(new Set((cardSrc.match(/className = '([\w-]+)'/g) || [])
+    .map(s => s.split("'")[1])));
+  check('the agent card is built from several existing classes', cls.length >= 3);
+  check('…and EVERY one of them is already in the stylesheet',
+        cls.every(c => rules.some(r => new RegExp('\\.' + c + '(?![\\w-])').test(r.sel))), cls);
+  check('…and they are the SAME pieces the Quick lane\'s preview card is built from, '
+        + 'which is what "one visual grammar" means',
+        ['aicode', 'bar', 'lang'].every(c => cls.indexOf(c) >= 0));
+  check('…and the shared card helpers are REUSED, not copied',
+        /actDet\(/.test(grab('agentCard')) && /actChip\(/.test(grab('agentCard'))
+        && /actNote\(/.test(grab('agentApprove')));
+}
+{
+  const ap = grab('agentApprove');
+  check('approving posts the EXISTING route with {session_id, choice}',
+        /fetch\('\/api\/hermes\/approve'/.test(ap)
+        && /session_id: card\._sid, choice: choice/.test(ap));
+  check('…addressed to the session THE CARD was born in, captured at render time — '
+        + 'approvals carry no request id on the wire, so the sid is the whole address',
+        /card\._sid = String\(sid \|\| ''\)/.test(grab('agentCard'))
+        && /const held = \{ sid: agentSid \}/.test(asend));
+  check('…and the main panel captures it the same way, for the same reason',
+        /card\._sid = String\(sid \|\| ''\)/.test(panel));
+  check('no double-fire: every button dies the instant one is clicked',
+        /btns\.forEach\(b => \{ b\.disabled = true; \}\)/.test(ap));
+  check('a card that resolved NOTHING gateway-side is stamped honestly, never as '
+        + '"approved"', /if \(!j\.resolved\)/.test(ap) && /already expired/.test(ap));
+  check('…and a failed approve re-arms the buttons, because the approval is still '
+        + 'pending upstream', /btns\.forEach\(b => \{ b\.disabled = false; \}\)/.test(ap));
+  check('the choices come from the frame, defaulting to once/deny — never OFFERING a '
+        + 'persistence scope upstream did not declare',
+        /\['once', 'deny'\]/.test(grab('agentCard')));
+  check('a card still open when the turn ends stops pretending it is answerable',
+        /agentExpire\(turn\.wrap\)/.test(asend)
+        && /no longer answerable/.test(grab('agentExpire')));
+}
+
+// ── 3. THE HEARTBEAT ────────────────────────────────────────────────────────
+eval(grab('hbPlan'));
+{
+  eq('nothing open, nothing sent', hbPlan('', false, null, false), []);
+  eq('nothing open on the keepalive beat either', hbPlan('', false, null, true), []);
+  eq('opening a workbook registers it', hbPlan('A.xlsx', false, null, false),
+     [{ name: 'A.xlsx', dirty: false }]);
+  eq('…and nothing changing sends nothing at all — this is what makes it safe to hang '
+     + 'the beat off paint(), which fires on every keystroke',
+     hbPlan('A.xlsx', false, { name: 'A.xlsx', dirty: false }, false), []);
+  eq('THE DIRTY FLIP IS IMMEDIATE, which is the whole point: the S1 refusal is only '
+     + 'accurate if the bridge knows about the unsaved edit now, not in five seconds',
+     hbPlan('A.xlsx', true, { name: 'A.xlsx', dirty: false }, false),
+     [{ name: 'A.xlsx', dirty: true }]);
+  eq('…and so is a SAVE, in the other direction — a stale dirty flag would refuse a '
+     + 'write the user is perfectly happy with',
+     hbPlan('A.xlsx', false, { name: 'A.xlsx', dirty: true }, false),
+     [{ name: 'A.xlsx', dirty: false }]);
+  eq('switching workbooks CLOSES the old one explicitly, so the bridge forgets it now '
+     + 'rather than in fifteen seconds — and registers the new one in the same beat',
+     hbPlan('B.xlsx', false, { name: 'A.xlsx', dirty: true }, false),
+     [{ name: 'A.xlsx', close: true }, { name: 'B.xlsx', dirty: false }]);
+  eq('closing the last workbook closes the registration and registers nothing',
+     hbPlan('', false, { name: 'A.xlsx', dirty: true }, false),
+     [{ name: 'A.xlsx', close: true }]);
+  eq('the keepalive beat re-sends the SAME state, so the TTL never expires under a page '
+     + 'that is still sitting there',
+     hbPlan('A.xlsx', true, { name: 'A.xlsx', dirty: true }, true),
+     [{ name: 'A.xlsx', dirty: true }]);
+  eq('the dirty flag is always a real boolean on the wire',
+     hbPlan('A.xlsx', 'yes', null, false), [{ name: 'A.xlsx', dirty: true }]);
+  [null, undefined, 0].forEach((v, i) => {
+    let threw = null;
+    try { hbPlan(v, v, v, v); } catch (e) { threw = e; }
+    check('hbPlan survives junk input (case ' + i + ')', !threw);
+  });
+}
+check('the beat posts the S1 route, and only that route',
+      /fetch\('\/api\/office\/heartbeat'/.test(grab('hbPost')));
+check('…with the {name, dirty} the bridge documents, and {name, close} to forget one',
+      /close: true/.test(grab('hbPlan')));
+check('…and a heartbeat that fails costs a beacon, never the page: it is ADVISORY',
+      /bx\('hb-fail'/.test(grab('hbPost')));
+check('THE DIRTY FLIP RIDES paint(), the one funnel every change of `dirty` already '
+      + 'goes through — so there is no new hook to forget at a twelfth call site',
+      /hbSync\(\);/.test(grab('paint')));
+/* ⚠️ AND THIS IS THE ASSERTION THAT MAKES "paint() IS THE FUNNEL" A FACT RATHER THAN AN
+   INTENTION: every single place that assigns `dirty` either paints within a few lines,
+   or lives in one of THREE functions whose callers paint in their own `finally`. The
+   three are named here, not hand-waved, so a fourth appearing fails this test. */
+{
+  const lines = code.split('\n');
+  const at = [];
+  lines.forEach((l, i) => { if (/\bdirty = (true|false)\b/.test(l)) at.push(i); });
+  const viaCaller = ['showWorkbook', 'save', 'clearWorkbook'].map(grab);
+  const orphans = at.filter(i => {
+    const l = lines[i];
+    if (/^let files = /.test(l.trim())) return false;              // the declaration
+    if (/paint\(\)/.test(lines.slice(i, i + 6).join('\n'))) return false;
+    return !viaCaller.some(b => b.indexOf(l.trim()) >= 0);
+  });
+  check('the page really has a dozen places that set `dirty` — a vacuous scan is no '
+        + 'scan', at.length >= 12);
+  eq('…and every one of them paints, so the heartbeat rides a funnel nothing can slip '
+     + 'past', orphans.map(i => lines[i].trim()), []);
+  check('…and the three that paint through their CALLER really are painted for, in that '
+        + 'caller\'s own finally',
+        /finally \{ busy = false; renderFiles\(\); paint\(\); extCheck\(\); \}/.test(grab('openDoc'))
+        && /finally \{ busy = false; paint\(\); \}/.test(grab('save'))
+        && /paint\(\); aiPaint\(true\)/.test(grab('mi_close')));
+}
+check('the keepalive rides the page tick, not a timer of its own',
+      /hbRun\(true\)/.test(grab('pageTick')) && /hbSync\(\)/.test(grab('paint'))
+      && /hbRun\(false\)/.test(grab('hbSync')));
+eq('the beat is comfortably inside the bridge\'s own TTL — a beat AT the TTL would go '
+   + 'stale on the boundary and refuse nothing',
+   num('HB_TICK_MS') / 1000 <= pyNum('HEARTBEAT_TTL') / 2, true);
+eq('…and the slow work still lands on the AI_POLL_MS this page has always used for the '
+   + 'model pill', num('AI_POLL_MS') / num('HB_TICK_MS'), 3);
+check('a closed workbook stops the registration — mi_close goes through the same paint',
+      /paint\(\); aiPaint\(true\)/.test(grab('mi_close')));
+
+// ── 4. THE EXTERNAL-CHANGE BANNER ───────────────────────────────────────────
+// THE TWO SENTENCES ARE THE CONTRACT (spec §3 rule 3), and they are pinned literally.
+eval(grab('preAgentName'));
+{
+  const PRE_AGENT_SUFFIX_JS = (code.match(/PRE_AGENT_SUFFIX = '([^']+)'/) || [])[1];
+  eq('the pre-agent suffix is the one office_ops.py actually writes — pinned ACROSS the '
+     + 'two languages, because a page naming a file that does not exist is worse than a '
+     + 'page saying nothing', PRE_AGENT_SUFFIX_JS,
+     (opsPy.match(/PRE_AGENT_SUFFIX = "(\.pre-agent)" \+ office\.DOC_EXT/) || [])[1] + '.xlsx');
+  eq('preAgentName mirrors office_ops.pre_agent_for', preAgentName('Budget.xlsx'),
+     'Budget.pre-agent.xlsx');
+  eq('…on a name given without its extension too', preAgentName('Budget'),
+     'Budget.pre-agent.xlsx');
+  eq('…and never doubles the suffix, exactly as the python refuses to',
+     preAgentName('Budget.pre-agent.xlsx'), 'Budget.pre-agent.xlsx');
+  check('…which is the rule the python states in its own words',
+        /never \.pre-agent\.pre-agent\.xlsx/.test(opsPy));
+  eq('a nameless workbook yields nothing rather than ".pre-agent.xlsx"',
+     [preAgentName(''), preAgentName(null)], ['', '']);
+}
+const EXT_EPS = num('EXT_EPS');
+eval(grab('extPlan'));
+{
+  eq('no workbook, no banner', extPlan({}).act, 'none');
+  eq('a workbook with no mtime is not an accusation',
+     extPlan({ name: 'A.xlsx', seen: 5, mtime: 0 }).act, 'none');
+  eq('THE FIRST SIGHT IS A BASELINE, NEVER A BANNER — a page that has not yet learned '
+     + 'the mtime must not report the file as changed',
+     extPlan({ name: 'A.xlsx', seen: 0, mtime: 100 }).act, 'baseline');
+  eq('an unchanged file says nothing',
+     extPlan({ name: 'A.xlsx', seen: 100, mtime: 100 }).act, 'none');
+  eq('…and neither does a filesystem\'s own jitter under the slack',
+     extPlan({ name: 'A.xlsx', seen: 100, mtime: 100 + EXT_EPS / 2 }).act, 'none');
+  eq('an OLDER mtime is not a change either', 
+     extPlan({ name: 'A.xlsx', seen: 200, mtime: 100 }).act, 'none');
+
+  // CLEAN PAGE → AUTO-RELOAD, with the spec's sentence.
+  const clean = extPlan({ name: 'Budget.xlsx', dirty: false, seen: 100, mtime: 200 });
+  eq('a clean page reloads itself', clean.act, 'reload');
+  eq('…and the message is the spec\'s sentence, character for character', clean.text,
+     'the agent edited this file — reloaded (pre-edit copy kept as '
+     + 'Budget.pre-agent.xlsx)');
+
+  // DIRTY PAGE → TWO BUTTONS, and the sentence that says which version survives where.
+  const dirtyP = extPlan({ name: 'Budget.xlsx', dirty: true, seen: 100, mtime: 200 });
+  eq('a dirty page asks instead of discarding your work', dirtyP.act, 'ask');
+  check('…the banner names the file', dirtyP.text.indexOf('Budget.xlsx') > 0);
+  check('…says what Reload does', /Reload discards your unsaved edits/.test(dirtyP.text));
+  check('…says what Keep mine does', /Keep mine keeps yours/.test(dirtyP.text));
+  /* ⚠️⚠️ THE ONE SENTENCE THE SPEC WRITES OUT IN FULL, and it is pinned as a literal
+     substring rather than paraphrased: "the banner must say that plainly". Keeping your
+     version means your next ⌘S overwrites the agent's write, and the agent's write
+     survives in NOTHING — the .pre-agent copy holds the PRE-write state, not the
+     write. A banner that only implied that would be the failure this rule exists for. */
+  check('…AND SAYS PLAINLY THAT SAVING WILL OVERWRITE THE AGENT\'S CHANGES',
+        dirtyP.text.indexOf("saving will overwrite the agent's changes") > 0, dirtyP.text);
+  check('…and names where the PRE-write state is kept, which is the only version the '
+        + 'agent lane can restore', dirtyP.text.indexOf('Budget.pre-agent.xlsx') > 0);
+  check('…and says BEFORE, so the copy is never read as "the agent\'s write is safe"',
+        /BEFORE the agent touched/.test(dirtyP.text));
+  [null, undefined, 0, 'x', { name: 1 }].forEach((v, i) => {
+    let threw = null, r = null;
+    try { r = extPlan(v); } catch (e) { threw = e; }
+    check('extPlan survives junk input and does nothing (case ' + i + ')',
+          !threw && r && r.act === 'none');
+  });
+}
+{
+  const ea = grab('extAct');
+  check('the reload path goes through the page\'s EXISTING load path — openDoc, not a '
+        + 'second loader', /openDoc\(name\)\.then/.test(ea));
+  /* ⚠️ AND IT SAYS THE SENTENCE **AFTER** THE OPEN. openDoc's first act is say(''), so a
+     message set beforehand flashes and vanishes — i.e. the spec's one required sentence
+     would never be read. Found by reading the code, and pinned here so it cannot come
+     back the obvious way round. */
+  check('…and says the sentence AFTER it, because openDoc clears the message line first',
+        /openDoc\(name\)\.then\(\(\) => \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\); \}\)/
+          .test(ea)
+        && /busy = true; say\(''\); paint\(\);/.test(grab('openDoc')));
+  check('…and never over the top of something openDoc had to say — a read failure or a '
+        + 'truncation warning is the bigger sentence', /!el\('msg'\)\.textContent/.test(ea));
+  check('the dirty path is a TWO-BUTTON banner, in the message box that already exists',
+        /label: 'Reload'/.test(ea) && /label: 'Keep mine'/.test(ea)
+        && /say\(plan\.text, null, \[/.test(ea));
+  check('…Reload discards the in-memory edits explicitly, rather than tripping over the '
+        + 'discard guard that would ask the same question twice',
+        /dirty = false; paint\(\);/.test(ea) && /openDoc\(name\)/.test(ea));
+  // The apostrophe is BACKSLASH-ESCAPED in the page's single-quoted string, so the
+  // source form is matched with a tolerant class; the sentence itself is pinned as a
+  // literal against extPlan's real output above, which is the pin that counts.
+  check('…and Keep mine repeats the overwrite warning, because the banner it replaces '
+        + 'is gone the moment it is clicked',
+        /will overwrite the agent.?.s changes/.test(ea));
+  check('both answers beacon, so "it reloaded my file" is answerable from the boot log',
+        /bx\('ext-reload'/.test(ea) && /bx\('ext-keep-mine'/.test(ea));
+  const ec = grab('extCheck');
+  check('the mtime comes off the EXISTING file list, which already carries `modified` — '
+        + 'no new route', /fetch\('\/api\/office\/files'/.test(ec) && /row\.modified/.test(ec));
+  check('…and office.py really does put it there',
+        /"modified": st\.st_mtime/.test(
+          fs.readFileSync(path.join(ROOT, 'bridge', 'office.py'), 'utf8')));
+  check('the check rides the page tick, not a timer of its own',
+        /extCheck\(\);/.test(grab('pageTick')) && !/setInterval/.test(ec));
+  check('the baseline moves BEFORE the banner is drawn, which is what makes it fire '
+        + 'once per change instead of every beat for ever',
+        /extSeen = Number\(row\.modified\)[\s\S]{0,200}extAct\(plan, name\)/.test(ec));
+  check('a workbook that was opened, saved or closed gets a FRESH baseline rather than '
+        + 'a stale one — a stale-old mtime would accuse the agent of the user\'s own save',
+        /extSeen = 0;/.test(grab('showWorkbook')) && /extSeen = 0;/.test(grab('save'))
+        && /extSeen = 0/.test(grab('clearWorkbook')));
+  check('…and an open establishes it at once rather than a beat later',
+        /renderFiles\(\); paint\(\); extCheck\(\)/.test(grab('openDoc')));
+  check('a banner wiped off the message line by some other say() does not leave the '
+        + 'latch stuck ON, silently retiring the whole mechanism',
+        /if \(extAsking && !el\('msg'\)\.textContent\) \{ extAsking = false;/.test(ec));
+  check('one banner at a time, and it does not race the load it asked for',
+        /if \(!current \|\| busy \|\| extAsking\) return/.test(ec)
+        && /if \(name !== current\) return null/.test(ec));
+  check('a workbook that vanished is not this banner\'s business',
+        /if \(!row\) return null/.test(ec));
+}
+// say() with one action and with two, EXECUTED against a stub DOM — the two-button
+// banner is load-bearing and a regex would not notice a second button being dropped.
+{
+  const made = [];
+  const mk = tag => { const n = { tag: tag, kids: [], style: {},
+                                  set textContent(v) { this._t = v; },
+                                  get textContent() { return this._t; },
+                                  appendChild(c) { this.kids.push(c); } };
+                      made.push(n); return n; };
+  const msg = mk('div');
+  msg.classList = { toggle() {} };
+  const document = { createElement: mk };
+  const el = () => msg;
+  eval(grab('say'));
+  msg.kids = [];
+  say('one', null, { label: 'A', run() {} });
+  eq('say() with a single action draws the text and one button',
+     msg.kids.map(k => k.textContent), ['one', 'A']);
+  msg.kids = [];
+  say('two', null, [{ label: 'Reload', run() {} }, { label: 'Keep mine', run() {} }]);
+  eq('…and an ARRAY draws them in order — the banner\'s two answers',
+     msg.kids.map(k => k.textContent), ['two', 'Reload', 'Keep mine']);
+  msg.kids = [];
+  say('none', null, null);
+  eq('…and no action is still just the sentence', msg.kids.length, 1);
+  msg.kids = [];
+  say('bad', null, [{ label: 'x' }, null, { run() {} }]);
+  eq('a malformed action is skipped rather than drawn as a dead button',
+     msg.kids.length, 1);
+}
+
+// ── 5. THE WRITER FENCE — THE NEGATIVE THAT MATTERS MOST ────────────────────
+/* ⚠️⚠️ THE AGENT LANE ADDS ZERO PAGE-SIDE WRITERS, AND THAT IS THE WHOLE SAFETY STORY
+   OF THIS SLICE. Hermes's writes land on DISK — through office_ops.py, behind Hermes's
+   own approval card, with a .pre-agent copy taken first. This page finds out the way it
+   would find out about any other program editing the file (the mtime moved) and reloads
+   through its EXISTING load path. The writer-set fence in PART 4 is unchanged and still
+   lists exactly seven functions; what is added here is the per-function assertion that
+   nothing in the new lane writes anything at all. */
+{
+  const S2 = ['agentGate', 'agentToolNote', 'preAgentName', 'lanePaint', 'laneSet',
+              'laneApply', 'agentProbe', 'agentSend', 'agentFrame', 'agentName',
+              'agentToolOf',
+              'agentCardText', 'agentCard', 'agentApprove', 'agentStamp', 'agentExpire',
+              'hbPlan', 'hbPost', 'hbRun', 'hbSync', 'extPlan', 'extCheck', 'extAct',
+              'pageTick', 'pageTickStart'];
+  check('every function this slice added is actually IN the page — a vacuous fence is '
+        + 'no fence', S2.every(n => fnNames.indexOf(n) >= 0), S2.filter(n => fnNames.indexOf(n) < 0));
+  check('and NOT ONE of them writes a cell, moves one, or sets the dirty flag',
+        S2.every(n => !writers.test(stripComments(grab(n)))),
+        S2.filter(n => writers.test(stripComments(grab(n)))));
+  /* ⚠️ THE ONE DELIBERATE EXCEPTION, NAMED RATHER THAN HIDDEN: extAct's Reload button
+     sets `dirty = false`. That is not a write — it is the ANSWER to the question the
+     button asked ("discard my in-memory edits"), and clearing it is what stops
+     confirmDiscard asking the same question a second time. It can only ever LOSE
+     in-memory edits the user just chose to lose, and it never touches a cell. */
+  eq('…with exactly one flag touched anywhere in the new lane, in the one place the '
+     + 'user asked for it',
+     S2.filter(n => /\bdirty = (true|false)\b/.test(stripComments(grab(n)))), ['extAct']);
+  check('…and it is `false`, never `true`: nothing in this lane can make the page dirty',
+        !/\bdirty = true\b/.test(stripComments(grab('extAct'))));
+  check('nothing in the new lane can apply a Quick-lane action plan either',
+        S2.every(n => !/actApply|actRunOps|replaceWrite|gridRemap/
+          .test(stripComments(grab(n)))));
+  check('…and the reload really is the page\'s existing load path, not a new one',
+        /openDoc\(name\)/.test(grab('extAct'))
+        && (code.match(/async function openDoc\(/g) || []).length === 1);
+}
+
+// BEACONS — the diagnostic contract, extended to the new capability.
+['lane', 'agent-send', 'agent-session', 'agent-approval', 'agent-approved', 'heartbeat',
+ 'ext-base', 'ext-change', 'ext-reload', 'ext-keep-mine']
+  .forEach(st => check('the page beacons ' + st, code.indexOf("bx('" + st + "'") > 0));
+check('…and every failure of the new lane beacons its reason, so "it did nothing" is '
+      + 'answerable from the boot log alone',
+      ['agent-mcp-fail', 'agent-tools-fail', 'agent-fail', 'agent-approve-fail',
+       'hb-fail', 'ext-check-fail'].every(st => code.indexOf("bx('" + st + "'") > 0));
+check('the landing beacon says which lane the page came up in',
+      /lane=' \+ aiLane/.test(grab('boot')));
 
 // ── report ──
 console.log('');

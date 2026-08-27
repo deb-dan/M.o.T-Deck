@@ -645,7 +645,7 @@ check('the boot restores the rail state alongside the AI one',
       /localStorage\.getItem\(LS_RAIL\) !== '0'/.test(grab('boot'))
       && /railSetOpen\(railWant, 'boot'\)/.test(grab('boot')));
 check('…and the widths are applied BEFORE anything is drawn into the panes',
-      /loadPaneWidths\(\);[\s\S]{0,600}railSetOpen\(railWant/.test(grab('boot')));
+      /loadPaneWidths\(\);[\s\S]{0,1400}railSetOpen\(railWant/.test(grab('boot')));
 check('the rail toggle goes through railSetOpen — a raw classList.toggle would flip '
       + 'the pane without remembering it, which is how a preference gets lost',
       /btn-rail'\)\.onclick = \(\) => railSetOpen\(!railIsOpen\(\)/.test(html)
@@ -839,7 +839,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27c');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27d');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
