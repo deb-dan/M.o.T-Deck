@@ -220,7 +220,46 @@ fr, _ = F({"type": "tool.complete",
                        "result": {"error": "Refusing to write"},
                        "args": {"path": "/Users/d/x.txt"}}})
 check("write_file error → NO file_card",
-      fr == [{"type": "tool_output", "tool": "write_file"}])
+      [f for f in fr if f.get("type") == "file_card"] == [])
+# ⚠️ AND THE FAILURE IS NOW ON THE WIRE, which is the half of the 2026-08-27 LOffice
+# consent incident that was not about consent at all: a tool returned an error, the panel
+# rendered nothing, and the model's "Done" stood unchallenged. Every failure path lands
+# in ONE shape — tool_error() returns {"error": …} (tools/registry.py:1282) and an MCP
+# result with isError:true is converted to exactly that (tools/mcp_tool.py:5442) — so a
+# single test on the parsed result covers native tools and every MCP server alike.
+check("…but the ERROR is forwarded, so a failed tool cannot render as a silent success",
+      fr[0] == {"type": "tool_output", "tool": "write_file",
+                "is_error": True, "error": "Refusing to write"})
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "office_stage_changes", "summary": "refused",
+                       "result": '{"error": "no such workbook"}'}})
+check("a STRING result that is a JSON error object is read as an error too — the MCP "
+      "path can hand back either",
+      fr == [{"type": "tool_output", "tool": "office_stage_changes",
+              "summary": "refused", "is_error": True,
+              "error": "no such workbook"}])
+# ⚠️ THE DOUBLE-ENCODED CASE, WHICH IS WHAT THE REAL MCP LANE PRODUCES. Our server
+# answers isError with its OWN json body; Hermes takes the text off the content block and
+# passes it to tool_error(), which wraps it again. Without the unwrap the panel's ✗ chip
+# is a wall of braces instead of the tool's sentence — seen live on 2026-08-28.
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "office_stage_changes",
+                       "result": {"error": '{"ok": false, "error": "operation 3: '
+                                           '\\"values\\" is not a row-major grid"}'}}})
+check("a double-encoded MCP refusal is unwrapped to the tool's own sentence",
+      fr == [{"type": "tool_output", "tool": "office_stage_changes", "is_error": True,
+              "error": 'operation 3: "values" is not a row-major grid'}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "shell", "result": {"error": "{not json at all"}}})
+check("…and an error that only LOOKS like json is left exactly as it is",
+      fr[0]["error"] == "{not json at all")
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "office_read", "result": {"ok": True, "cells": []}}})
+check("…and a result with no error field says nothing about errors",
+      fr == [{"type": "tool_output", "tool": "office_read"}])
+fr, _ = F({"type": "tool.complete",
+           "payload": {"name": "shell", "result": "plain text, not json"}})
+check("…nor does a plain string result", fr == [{"type": "tool_output", "tool": "shell"}])
 fr, _ = F({"type": "tool.complete",
            "payload": {"name": "write_file", "args": {"path": "~/Desktop/rel.txt"},
                        "result": {"bytes_written": 3}}})

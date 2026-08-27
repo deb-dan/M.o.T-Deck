@@ -666,6 +666,51 @@ function applyOps(list, sheetName) {
   return {ok: true, done: done};
 }
 
+/* ══ READ BACK WHAT THE EDITOR COMPUTED ═══════════════════════════════════════
+   ⚠️ THE ONLY PLACE IN THIS SYSTEM WITH A FORMULA ENGINE, and that is the whole point of
+   this function. The bridge writes `=SUM(B2:B12)` as TEXT into the .xlsx and openpyxl
+   reads it back as text; nothing on our side can say what it EVALUATES to. The editor
+   can, because it just recalculated the document it loaded — so after an apply that wrote
+   formulas, the panel asks here and puts the answer on the receipt: "computed: B13=2500 ✓"
+   rather than "13 cells written" and a hope.
+
+   Verified present in the vendored sdkjs/cell bundle (`ApiRange.prototype.GetValue`,
+   `.GetText`, `.GetFormula`, `.GetNumberFormat`), grepped, not assumed.
+   TOTAL: one unreadable cell costs that cell's row, never the call — a receipt that
+   throws would turn a successful apply into an error, which is the incident's shape
+   inside out. */
+function readCells(refs, sheetName) {
+  if (!ready) return {ok: false, error: 'the editor is not ready'};
+  const api = innerEditor();
+  if (!api || typeof api.GetActiveSheet !== 'function') {
+    return {ok: false, error: 'this editor build does not expose the builder API'};
+  }
+  if (!Array.isArray(refs) || !refs.length) {
+    return {ok: false, error: 'there were no cells to read'};
+  }
+  let ws;
+  try {
+    ws = (sheetName && typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+         || api.GetActiveSheet();
+  } catch (e) { ws = null; }
+  if (!ws) return {ok: false, error: 'the editor has no sheet to read from'};
+  const out = [];
+  refs.slice(0, 200).forEach((ref) => {
+    const row = {ref: String(ref), value: null, text: '', formula: '', error: ''};
+    try {
+      const rg = ws.GetRange(String(ref));
+      if (!rg) { row.error = 'the editor did not accept that range'; }
+      else {
+        if (typeof rg.GetValue === 'function') row.value = rg.GetValue();
+        if (typeof rg.GetText === 'function') row.text = String(rg.GetText());
+        if (typeof rg.GetFormula === 'function') row.formula = String(rg.GetFormula());
+      }
+    } catch (e) { row.error = String((e && e.message) || e).slice(0, 120); }
+    out.push(row);
+  });
+  return {ok: true, cells: out};
+}
+
 // ── boot / open / swap ───────────────────────────────────────────────────────
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -929,11 +974,16 @@ function reloadDoc() { return openDoc(DOC); }
 
 // ── the API the parent gets, i.e. the contract ────────────────────────────────
 window.LOfficeEmbed = {
-  contract: 1,
+  // ⚠️ BUMPED 1 → 2 AT 2026-08-28: `readCells` is a new member of this contract, and the
+  // parent probes for the FUNCTION rather than the number (a version check that gates a
+  // capability the object plainly has is a way to break a working page), so an older
+  // frame degrades to "the computed check is unavailable" and says so.
+  contract: 2,
   open: openDoc,
   save: save,
   reload: reloadDoc,
   applyOps: applyOps,
+  readCells: readCells,
   probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
                  editorTag: editorTag}),
   destroy: () => {

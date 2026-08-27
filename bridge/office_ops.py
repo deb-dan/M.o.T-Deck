@@ -484,7 +484,14 @@ def validate_ops(raw):
             if budget > ACT_MAX_CELLS:
                 return None, None, (f"that is more than {ACT_MAX_CELLS} cells in one "
                                     "change — ask for it in a few smaller pieces")
-            ops.append({"op": "set", "r": rg[0], "c": rg[1], "values": grid})
+            # ⚠️ `as_text` IS THE OP'S OWN INTENT FLAG (Debi's 2026-08-28 ruling): every
+            # value in this op is stored as the raw string, so a column of ids or price
+            # bands is not coerced into numbers. It is only carried when it is TRUE, so
+            # the op dicts of every existing test stay byte-identical.
+            entry = {"op": "set", "r": rg[0], "c": rg[1], "values": grid}
+            if o.get("as_text") is True or o.get("as_text") == "true":
+                entry["as_text"] = True
+            ops.append(entry)
         elif kind == "style":
             rg = act_range(o.get("at"))
             if rg is None:
@@ -867,21 +874,408 @@ def rc_apply(sh, kind, axis, at, n):
             "formulas": sheet_formulas(sh)}
 
 
+# ═══ 5b. NUMERIC COERCION — THE ROOT FIX (2026-08-28) ═══════════════════════
+# ⚠️ THE INCIDENT THIS EXISTS FOR. Debi asked the agent for a budget; the agent staged
+# `"$2,500"`, `"$400"`, … and this module accepted every one of them VERBATIM as text.
+# Her next request — "sum it up" — produced a perfectly correct `=SUM(B2:B12)` over
+# twelve TEXT cells, which computes 0. Nothing lied and nothing crashed: three layers
+# were simply silent. THIS is the first of the three, and it is the root: a value that a
+# spreadsheet would store as a NUMBER is stored as a number here, with the number FORMAT
+# that keeps it looking like what the model wrote.
+#
+# THE RULE IS ONE RULE, IMPLEMENTED TWICE (here and in office.html's `coerceNumeric`)
+# AND PINNED EQUAL BY bridge/tests/test_office_journey.py + test_office_ai.js. A second
+# idea of "what looks like money" would drift, and a drifting coercion is a document
+# where the same value is a number on one lane and text on the other.
+#
+# ═══ WHAT IS ACCEPTED, EXACTLY — AND WHAT IS NOT ═══
+#   · a PLAIN number: "1234", "-12.5", ".5"        → 1234 / -12.5 / 0.5, format General
+#   · COMMA THOUSANDS: "2,500", "1,234,567.89"     → 2500 / 1234567.89, "#,##0[.00]"
+#   · a DOLLAR amount: "$2,500", "$400.50", "-$5", "$-5", "$ 2,500"
+#                                                  → 2500 / 400.5 / -5, "$#,##0[.00]"
+#   · a PERCENT: "50%", "12.5%", "-3%", "1,000%"   → 0.5 / 0.125 / -0.03 / 10, "0[.0]%"
+#
+# ═══ INTENT WINS, AND THERE ARE TWO WAYS TO SAY IT (Debi's ruling, 2026-08-28) ═══
+# "$2,500" is a number in every spreadsheet anybody has ever used — typing it into Excel
+# yields 2500 with a currency format, so coercing it is the EXPECTED behaviour, not a
+# trick. But it can also be a LABEL ("$2,500-B", a price band, a column header), and a
+# writer that decides that for you is a writer you cannot argue with. So:
+#   1. EVERY COERCION IS VISIBLE BEFORE CONSENT. The changeset card's before → after
+#      prints `"$2,500" → 2500 ($#,##0)` for each one (face_display + the `coerced` flag),
+#      and a coercion the card did not show must not exist. Tier-1 typing coerces on
+#      COMMIT, exactly as Excel does, so it is visible in the cell immediately. Nothing
+#      is ever retroactive: existing files are NOT rewritten.
+#   2. TWO EXPLICIT ESCAPE HATCHES, both taught in the grounding:
+#        · a LEADING APOSTROPHE — `'$2,500` → the text `$2,500`, verbatim, apostrophe
+#          stripped. The convention every spreadsheet user already knows, honoured by
+#          both writers. (A value that really starts with an apostrophe doubles it.)
+#        · `"as_text": true` on a `set` OPERATION — every value in that op is stored as
+#          the raw string. Op-level rather than per-value because a parallel grid of
+#          booleans is a second thing to get wrong; a mixed row is two `set` ops.
+#
+# DELIBERATELY OUT OF SCOPE, and the honesty matters more than the coverage:
+#   · EVERY OTHER CURRENCY SYMBOL AND EVERY OTHER LOCALE. "€1.234,56" is 1234.56 in
+#     Germany and an unparseable mess elsewhere; "1 234,56", "£5", "¥500", "2500 USD",
+#     "R$ 5" and "CHF 5" are all left as TEXT. Guessing a locale off one string is how a
+#     thousands separator becomes a decimal point and a budget is off by a factor of a
+#     thousand — silently, in a document. If Debi needs those, the rule gets extended
+#     with a locale we are TOLD, not one we inferred.
+#   · ACCOUNTING NEGATIVES in parentheses ("(2,500)"), because "(2)" is also a footnote.
+#   · "1e5", "0x10", "007" and any other leading-zero integer — the existing tier-1
+#     ruling, unchanged: those are far more often a part code than a number, and a
+#     silently renumbered part code is a corrupted document.
+#   · MALFORMED GROUPING ("1,23", "12,3456") — left as text rather than repaired.
+#   · ANY LEADING OR TRAILING RESIDUE. "(555) 010-1234", "$2,500-B", "2500 kr",
+#     "2500 USD" — the match is ANCHORED at both ends, so a phone number, an id, a price
+#     band and a unit-suffixed quantity are all text and stay text. (The ONE space that is
+#     tolerated is the one inside the symbol pair: "$ 2,500" and "12.5 %".)
+#
+# THE FORMAT MIRRORS THE INPUT'S DECIMAL PLACES (clamped to 6) rather than forcing money
+# to two: "$400" asked for no cents and showing "$400.00" would be us editing her
+# document's appearance on a guess. The VALUE is always exact; only the pattern is a
+# choice, and it is the least surprising one available.
+COERCE_MAX_LEN = 32              # past this it is prose, not a number
+COERCE_MAX_DP = 6                # zeros in a generated pattern; the VALUE keeps them all
+
+# `\d{1,3}(,\d{3})+` is grouped thousands; `\d+` is an ungrouped run. Both are accepted
+# after a `$` or before a `%`; only the GROUPED one is a number on its own (a bare
+# "1234" is the plain shape, and it must keep General rather than gain "#,##0").
+_CO_GROUPED = r"\d{1,3}(?:,\d{3})+"
+_CO_RUN = r"\d+"
+_CO_DEC = r"(?:\.\d+)?"
+_CO_CURRENCY = re.compile(
+    r"^(?:(?P<pre>-)\s?)?\$[ ]?(?P<post>-)?"
+    rf"(?P<num>(?:{_CO_GROUPED}|{_CO_RUN}){_CO_DEC})$")
+_CO_THOUSANDS = re.compile(rf"^(?P<sign>-)?(?P<num>{_CO_GROUPED}{_CO_DEC})$")
+_CO_PERCENT = re.compile(
+    rf"^(?P<sign>-)?(?P<num>(?:{_CO_GROUPED}|{_CO_RUN}){_CO_DEC})[ ]?%$")
+_CO_PLAIN = re.compile(r"^-?(?:\d+\.?\d*|\.\d+)$")
+_CO_LEADING_ZERO = re.compile(r"^0\d")
+
+
+def _co_num(digits: str):
+    """The digits of an accepted shape → a float, or None. Commas are separators here
+    and nothing else, which is exactly why no other locale is accepted above."""
+    return _fin(digits.replace(",", ""))
+
+
+def _co_dp(digits: str) -> int:
+    """How many decimal places the input SHOWED. Drives the generated pattern."""
+    bit = digits.split(".", 1)
+    return min(len(bit[1]) if len(bit) == 2 else 0, COERCE_MAX_DP)
+
+
+def _co_pattern(head: str, dp: int, tail: str = "") -> str:
+    return head + ("." + "0" * dp if dp else "") + tail
+
+
+def coerce_numeric(text):
+    """A value string → {"v": number, "n": pattern-or-None, "shape": name}, or None when
+    the string is not one of the accepted shapes and must stay TEXT.
+
+    PURE and TOTAL. `n` is None for the plain shape (General is already right for a bare
+    number, and writing "0" over it would flatten a cell Debi had formatted herself).
+    """
+    s = ("" if text is None else str(text)).strip()
+    if not s or len(s) > COERCE_MAX_LEN:
+        return None
+    m = _CO_CURRENCY.match(s)
+    if m:
+        if m.group("pre") and m.group("post"):
+            return None                              # "-$-5" is not a number, it is noise
+        digits = m.group("num")
+        if _CO_LEADING_ZERO.match(digits):
+            return None
+        f = _co_num(digits)
+        if f is None:
+            return None
+        neg = bool(m.group("pre") or m.group("post"))
+        dp = _co_dp(digits)
+        return {"v": _numeric(-f if neg else f), "n": _co_pattern("$#,##0", dp),
+                "shape": "currency"}
+    m = _CO_PERCENT.match(s)
+    if m:
+        digits = m.group("num")
+        if _CO_LEADING_ZERO.match(digits):
+            return None
+        f = _co_num(digits)
+        if f is None:
+            return None
+        dp = _co_dp(digits)
+        v = (-f if m.group("sign") else f) / 100.0
+        return {"v": _numeric(v), "n": _co_pattern("0", dp, "%"), "shape": "percent"}
+    m = _CO_THOUSANDS.match(s)
+    if m:
+        digits = m.group("num")
+        if _CO_LEADING_ZERO.match(digits):
+            return None
+        f = _co_num(digits)
+        if f is None:
+            return None
+        dp = _co_dp(digits)
+        return {"v": _numeric(-f if m.group("sign") else f),
+                "n": _co_pattern("#,##0", dp), "shape": "thousands"}
+    if _CO_PLAIN.match(s) and not re.match(r"^-?0\d", s):
+        f = _fin(s)
+        if f is not None:
+            return {"v": _numeric(f), "n": None, "shape": "plain"}
+    return None
+
+
+def text_numeric(cell):
+    """Is this cell TEXT THAT LOOKS NUMERIC — the trap itself? Returns the coercion that
+    WOULD have applied, or None. A formula is never this; a real number is never this."""
+    if not isinstance(cell, dict):
+        return None
+    if isinstance(cell.get("f"), str) and cell["f"]:
+        return None
+    v = cell.get("v")
+    if not isinstance(v, str) or not v:
+        return None
+    if cell.get("t") not in (None, CV_STRING) and cell.get("t") != CV_STRING:
+        # a FORCE_STRING cell is text ON PURPOSE (a part code) — not the trap
+        return None
+    return coerce_numeric(v)
+
+
+# ═══ 5c. CONTEXTUAL INFERENCE — THE AUTOMATIC BACKSTOP ═════════════════════
+# ⚠️ THE MODEL IS THE FIRST LAYER, NOT THIS (Debi's ruling, amendment 2). The staging
+# grammar already carries types — a JSON `2500` is a number and `"$2,500"` is a string —
+# and office_mcp's tool description now teaches typed emission with examples, because a
+# model that knows "Planned, in a budget" means money is a far better disambiguator than
+# any list of shapes could ever be. THIS function is what happens when a numeric-shaped
+# STRING arrives anyway, and its whole design brief is: DECIDE, SILENTLY, LIKE
+# AUTOCORRECT. It never asks Debi anything. It is not allowed to.
+#
+# IT DECIDES PER COLUMN, not per cell, because a column is the unit of type intent in
+# every spreadsheet ever made — a "Phone" column is text all the way down and an "Amount"
+# column is money all the way down, and a per-cell decision would produce a column that
+# is half one and half the other, which is worse than either.
+#
+# THE SIGNALS, in the priority Debi set, weighted so that any ONE strong signal decides
+# and a lone header hint cannot be outvoted by the shape's default lean:
+#   A. THE OP'S OWN COLUMN (±2) — do the other values this same op writes into this
+#      column read as numeric, or as prose? The most local evidence there is.
+#   B. THE SHEET'S EXISTING COLUMN (±2) — what type do the cells already in that column,
+#      outside the rows being written, actually hold?
+#   C. THE HEADER WORD (±2) — a HINT, matched on whole words, and combined rather than
+#      obeyed: "Amount"/"Planned"/"Price" lean numeric, "Phone"/"ID"/"SKU" lean text, and
+#      a header carrying both (an "Invoice number") nets out to no signal at all.
+#   D. THE VALUE'S OWN SHAPE (+1) — LAST, and it is the DEFAULT LEAN: a currency or
+#      percent shape is a number unless something says otherwise, because that is what
+#      typing it into Excel does. A tie therefore coerces.
+# The explicit intents (`as_text`, a leading apostrophe) and the hard never-coerce guards
+# inside coerce_numeric are checked BEFORE this ever runs, and always win.
+NUM_HEADER_WORDS = (
+    "amount", "amounts", "planned", "actual", "budget", "budgeted", "price", "prices",
+    "cost", "costs", "total", "totals", "subtotal", "sum", "spend", "spending",
+    "revenue", "income", "expense", "expenses", "salary", "wage", "wages", "value",
+    "qty", "quantity", "rate", "rates", "fee", "fees", "balance", "variance", "tax",
+    "discount", "sales", "payment", "payments", "profit", "loss", "margin", "usd",
+    "dollars", "percent", "pct", "share", "weight", "hours", "units", "count")
+TEXT_HEADER_WORDS = (
+    "phone", "phones", "mobile", "tel", "telephone", "fax", "ext", "extension",
+    "id", "ids", "code", "codes", "sku", "skus", "ref", "reference", "serial",
+    "account", "acct", "zip", "postcode", "postal", "band", "bands", "tier", "isbn",
+    "ssn", "pin", "tracking", "license", "licence", "plate", "barcode", "upc", "ean",
+    "number", "no", "num", "invoice", "order", "ticket", "case", "batch", "lot",
+    "version", "revision", "part", "model", "range", "label", "tag", "notes")
+_WORD_RE = re.compile(r"[A-Za-z]+")
+INFER_W_OP_COL = 2
+INFER_W_SHEET_COL = 2
+INFER_W_HEADER = 2
+INFER_W_SHAPE = 1
+
+
+def header_lean(text) -> int:
+    """A header string → +1 numeric / -1 text / 0 no signal. PURE. Whole words only, so
+    'Bandwidth' is not 'band' and 'Identifier' is not 'id'."""
+    words = [w.lower() for w in _WORD_RE.findall("" if text is None else str(text))]
+    if not words:
+        return 0
+    num = sum(1 for w in words if w in NUM_HEADER_WORDS)
+    txt = sum(1 for w in words if w in TEXT_HEADER_WORDS)
+    if num > txt:
+        return 1
+    if txt > num:
+        return -1
+    return 0
+
+
+def _shape_lean(v) -> int:
+    """What ONE staged value says about its column, FOR SIGNAL A. +1 numeric, -1 text,
+    0 nothing.
+
+    ⚠️ A COERCIBLE STRING IS WORTH ZERO HERE, AND THAT IS THE WHOLE CORRECTNESS ARGUMENT.
+    Counting `"$2,500"` as evidence that its column is numeric would be circular: the
+    question being decided is precisely whether strings of that shape are numbers, so a
+    column of nothing but such strings would always vote to coerce itself and signal A
+    would be a rubber stamp. Only an UNAMBIGUOUS neighbour speaks: a JSON number the
+    model typed as a number (+1), or prose that cannot be a number at all (-1).
+    """
+    if isinstance(v, bool) or v is None or v == "":
+        return 0
+    if isinstance(v, (int, float)):
+        return 1                                  # a JSON number: the model was explicit
+    if not isinstance(v, str):
+        return 0
+    s, marked = strip_text_mark(v)
+    if marked:
+        return -1                                 # explicitly text: it says text
+    if s[:1] == "=":
+        return 0                                  # a formula types itself
+    if coerce_numeric(s) is not None:
+        return 0                                  # see the warning above
+    return -1                                     # prose in the column: a text column
+
+
+def _sheet_col_lean(sh, col, skip_rows, styles=None) -> int:
+    """What the cells ALREADY in that column say. Row 0 is skipped (it is a header, not
+    data) and so are the rows this op is about to overwrite."""
+    nums = txt = 0
+    cd = (sh or {}).get("cellData")
+    if not isinstance(cd, dict):
+        return 0
+    for rk, row in cd.items():
+        try:
+            r = int(rk)
+        except (TypeError, ValueError):
+            continue
+        if r == 0 or r in skip_rows or not isinstance(row, dict):
+            continue
+        cell = row.get(str(col))
+        if not isinstance(cell, dict):
+            continue
+        if isinstance(cell.get("f"), str) and cell["f"]:
+            continue
+        v = cell.get("v")
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            nums += 1
+        elif isinstance(v, str) and v:
+            txt += 1 if coerce_numeric(v) is None else 0
+    if nums > txt:
+        return 1
+    if txt > nums:
+        return -1
+    return 0
+
+
+def set_context(sh, op, styles=None) -> dict:
+    """A validated `set` op → {column index: {"numeric": bool, "why": str}}.
+
+    PURE over the snapshot it is handed. Called ONCE PER OP, before that op writes
+    anything, so the "existing column" signal describes the sheet as it was.
+    """
+    grid = op.get("values") or []
+    if not grid:
+        return {}
+    r0, c0 = op.get("r", 0), op.get("c", 0)
+    rows = len(grid)
+    width = max((len(r) for r in grid), default=0)
+    span = set(range(r0, r0 + rows))
+    out = {}
+    for i in range(width):
+        col = c0 + i
+        column = [row[i] for row in grid if i < len(row)]
+        # A first row that reads as prose while the rest reads numeric is a HEADER the op
+        # is writing; it must not be counted as data, and it IS the header signal.
+        own_header = ""
+        body = column
+        if (len(column) > 1 and isinstance(column[0], str)
+                and _shape_lean(column[0]) == -1):
+            own_header, body = column[0], column[1:]
+        leans = [_shape_lean(v) for v in body]
+        pos, neg = leans.count(1), leans.count(-1)
+        a = 0 if pos == neg else (1 if pos > neg else -1)
+        b = _sheet_col_lean(sh, col, span, styles)
+        head = own_header or display_text(cell_at(sh, 0, col))
+        c = header_lean(head)
+        score = a * INFER_W_OP_COL + b * INFER_W_SHEET_COL + c * INFER_W_HEADER \
+            + INFER_W_SHAPE
+        why = []
+        if a:
+            why.append("the other values this change writes into column "
+                       + col_name(col) + (" read as numbers" if a > 0 else " read as text"))
+        if b:
+            why.append("column " + col_name(col) + " already holds mostly "
+                       + ("numbers" if b > 0 else "text"))
+        if c:
+            why.append("the header " + repr(str(head)[:24]) + " reads as "
+                       + ("an amount" if c > 0 else "an identifier"))
+        if not why:
+            why.append("nothing in the column says otherwise, and a currency or percent "
+                       "shape is a number in every spreadsheet")
+        out[col] = {"numeric": score >= 0, "why": "; ".join(why), "score": score}
+    return out
+
+
+def cell_format(cell, styles=None) -> str:
+    """The number-format pattern actually on a cell, or ''. Reads through the shared
+    style id, WITHOUT copying: this one only looks."""
+    if not isinstance(cell, dict):
+        return ""
+    s = cell.get("s")
+    if isinstance(s, str):
+        s = (styles or {}).get(s) if isinstance(styles, dict) else None
+    if not isinstance(s, dict):
+        return ""
+    n = s.get("n")
+    pat = n.get("pattern") if isinstance(n, dict) else n
+    return pat if isinstance(pat, str) else ""
+
+
 # ═══ 6. VALUE COERCION (office.html:2992-3010, 4851-4867, mirrored) ═════════
-def parse_input(text, prev=None):
+TEXT_MARK = "'"                  # the apostrophe convention, one place, both languages
+
+
+def strip_text_mark(s):
+    """('the text', True) when a string carried the leading apostrophe, else (s, False).
+
+    ONE apostrophe is stripped, never two: `''x` is the text `'x`, which is how a person
+    writes a value that genuinely starts with an apostrophe."""
+    t = "" if s is None else str(s)
+    return (t[1:], True) if t[:1] == TEXT_MARK else (t, False)
+
+
+def parse_input(text, prev=None, styles=None, as_text=False):
     """The SAME converter a typed cell goes through, so a value the agent wrote and one
     Debi typed become the same cell. A leading '=' is a formula; 'true'/'false' is a
-    boolean; a PLAIN number is a number — and '1e5', '0x10' and '007' deliberately stay
-    TEXT, because those are things a person typed as text far more often than as a
-    number, and a silently renumbered part code is a corrupted document."""
+    boolean; and anything `coerce_numeric` accepts is stored as the NUMBER with its
+    number format — see that function for the exact list and for what stays text.
+
+    INTENT OVERRIDES ALL OF IT: `as_text=True` (the op's own flag) or a LEADING
+    APOSTROPHE stores the string verbatim — no formula, no boolean, no number. Both are
+    the caller SAYING "this is text", and a writer that overrode that would be back to
+    deciding what Debi meant.
+
+    `styles` is the SNAPSHOT'S style table, and it is needed for one reason only: when a
+    coercion has a format to write, the cell's existing style has to be MERGED with it,
+    and a style held as a shared string id must be RESOLVED AND COPIED first (the
+    resolve_style trap — mutating the shared entry would reformat half the workbook).
+    Without it a shared-id cell keeps its id and forgoes the format, which loses a
+    pattern and never loses a value.
+    """
     s = ("" if text is None else str(text)).replace("\r", "")
     style = prev.get("s") if isinstance(prev, dict) and "s" in prev else None
     has_style = isinstance(prev, dict) and "s" in prev
+    s, marked = strip_text_mark(s)
     if s == "":
+        # ⚠️ A BARE APOSTROPHE IS AN EMPTY TEXT CELL, NOT AN EMPTIED ONE. Excel's own
+        # behaviour, and the distinction matters: `'` must not clear a cell.
+        if marked:
+            out = {"v": "", "t": CV_STRING}
+            if has_style:
+                out["s"] = style
+            return out
         return {"s": style} if has_style else None
     out = {}
     if has_style:
         out["s"] = style
+    if marked or as_text:
+        out["v"], out["t"] = s, CV_STRING
+        return out
     if s[:1] == "=":
         out["f"] = s
         return out
@@ -889,18 +1283,38 @@ def parse_input(text, prev=None):
     if low in ("true", "false"):
         out["v"], out["t"] = (low == "true"), CV_BOOLEAN
         return out
-    if re.match(r"^-?(\d+\.?\d*|\.\d+)$", s) and not re.match(r"^-?0\d", s):
-        f = _fin(s)
-        if f is not None:
-            out["v"], out["t"] = _numeric(f), CV_NUMBER
-            return out
+    co = coerce_numeric(s)
+    if co is not None:
+        out["v"], out["t"] = co["v"], CV_NUMBER
+        if co["n"]:
+            merged = _merge_format(style, co["n"], styles)
+            if merged is not None:
+                out["s"] = merged
+        return out
     out["v"], out["t"] = s, CV_STRING
     return out
 
 
-def act_cell(v, prev=None):
+def _merge_format(style, pattern, styles=None):
+    """The cell's style + this number format, as an INLINE dict — or None when the
+    existing style is a shared id we cannot resolve (see parse_input's docstring)."""
+    if isinstance(style, str):
+        base = (styles or {}).get(style) if isinstance(styles, dict) else None
+        if not isinstance(base, dict):
+            return None
+        return dict(base, n={"pattern": pattern})
+    if isinstance(style, dict):
+        return dict(style, n={"pattern": pattern})
+    return {"n": {"pattern": pattern}}
+
+
+def act_cell(v, prev=None, styles=None, as_text=False):
     """A value the MODEL wrote → a cell, keeping the previous cell's STYLE. Writing a
-    number into a bold red cell must not strip the bold red."""
+    number into a bold red cell must not strip the bold red.
+
+    `as_text` is the `set` op's own flag and it reaches strings only: a JSON NUMBER sent
+    under as_text is still a number (the model typed 2500, not "2500" — there is no text
+    intent to honour), and the flag's whole job is to stop the string branch coercing."""
     has_style = isinstance(prev, dict) and "s" in prev
     style = prev.get("s") if has_style else None
     if v is None or v == "":
@@ -918,7 +1332,7 @@ def act_cell(v, prev=None):
         if has_style:
             out["s"] = style
         return out
-    return parse_input(str(v), prev)
+    return parse_input(str(v), prev, styles, as_text)
 
 
 def resolve_style(snapshot, cell):
@@ -1016,19 +1430,52 @@ def run_ops(snapshot, sid, ops):
     """
     done = {"cells": 0, "cleared": 0, "styled_cells": 0, "sheets": [], "renamed": "",
             "skipped": 0, "sorted": 0, "inserted": 0, "deleted": 0, "created": False,
-            "notes": []}
+            "notes": [], "coerced": [], "kept_text": []}
     sheets = (snapshot or {}).get("sheets")
     sh = sheets.get(sid) if isinstance(sheets, dict) else None
     if not isinstance(sh, dict) or not isinstance(ops, list):
         return None
     seq = 0
+    styles = (snapshot or {}).get("styles")
+    styles = styles if isinstance(styles, dict) else {}
     for o in ops:
         kind = o.get("op")
         if kind == "set":
+            raw_text = o.get("as_text") is True
+            # ⚠️ THE COLUMN CONTEXT IS READ BEFORE THE OP WRITES A SINGLE CELL, so the
+            # "what does this column already hold" signal describes the sheet as it was
+            # rather than as this op is making it.
+            ctx = {} if raw_text else set_context(sh, o, styles)
             for r, row in enumerate(o["values"]):
                 for c, val in enumerate(row):
                     rr, cc = o["r"] + r, o["c"] + c
-                    cell = act_cell(val, cell_at(sh, rr, cc))
+                    keep_text = raw_text
+                    co = None
+                    if isinstance(val, str) and not raw_text:
+                        marked_txt, was_marked = strip_text_mark(val)
+                        co = None if was_marked else coerce_numeric(marked_txt)
+                        if co is not None and co["n"]:
+                            # THE ONE DECISION POINT, and it is automatic: a numeric-shaped
+                            # string in a column the context reads as TEXT stays text.
+                            # Nobody is asked; the reason is recorded so the card can say
+                            # what happened without turning it into a question.
+                            seat = ctx.get(cc) or {}
+                            if seat and not seat.get("numeric"):
+                                keep_text = True
+                                done["kept_text"].append(
+                                    {"ref": a1(rr, cc), "raw": val,
+                                     "why": seat.get("why", "")})
+                                co = None
+                    cell = act_cell(val, cell_at(sh, rr, cc), styles, keep_text)
+                    # ⚠️ THE COERCION IS RECORDED WHERE IT HAPPENS, not inferred from the
+                    # diff afterwards: the diff cannot tell "the model wrote $2,500 and
+                    # we made it a number" apart from "the model wrote 2500", and the
+                    # first is the sentence Debi's card has to be able to say.
+                    if co is not None and co["n"]:
+                        done["coerced"].append(
+                            {"ref": a1(rr, cc), "raw": val, "v": co["v"],
+                             "n": co["n"], "shape": co["shape"],
+                             "why": (ctx.get(cc) or {}).get("why", "")})
                     put_cell(sh, rr, cc, cell)
                     if cell and ("v" in cell or "f" in cell):
                         done["cells"] += 1
@@ -1451,13 +1898,47 @@ def cell_face(cell) -> str:
     return display_text(cell)
 
 
+def face_display(cell, styles=None) -> str:
+    """What a cell says, WITH ITS TYPE VISIBLE — the card's own column, and the second
+    half of the incident's fix.
+
+    `cell_face` renders `"$2,500"` (text) and `2500` (a number formatted as $2,500)
+    the SAME, which is exactly why nobody could see the trap. So:
+      · TEXT THAT LOOKS NUMERIC is QUOTED — "$2,500" — the way a spreadsheet's own
+        left-aligned-with-a-warning-triangle says it;
+      · a NUMBER WITH A FORMAT names the format — 2500 ($#,##0) — so a coercion reads as
+        a coercion on Debi's card instead of as the model having changed the value.
+    Anything else is its plain face.
+    """
+    if not isinstance(cell, dict):
+        return ""
+    face = cell_face(cell)
+    if text_numeric(cell) is not None:
+        return '"' + face + '"'
+    v = cell.get("v")
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        pat = cell_format(cell, styles)
+        if pat:
+            return face + " (" + pat + ")"
+    return face
+
+
 def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
-    """[{sheet, ref, before, after}, …], total. EVERY cell whose face changed, in
-    reading order, across every sheet — a sheet the ops ADDED included."""
+    """[{sheet, ref, before, after, before_display, after_display, coerced}, …], total.
+    EVERY cell whose face changed, in reading order, across every sheet — a sheet the ops
+    ADDED included.
+
+    ⚠️ `before`/`after` stay the RAW faces because `_verify` re-reads the file and
+    compares against `after` — a receipt has to compare like with like. The `*_display`
+    pair is what the CARD prints, and `coerced` is true when a text-shaped value became a
+    real number, which is the one thing Debi most needs to see happen.
+    """
     rows, total = [], 0
-    seen_sheets = []
+    sb = (before or {}).get("styles")
+    sa = (after or {}).get("styles")
+    sb = sb if isinstance(sb, dict) else {}
+    sa = sa if isinstance(sa, dict) else {}
     for sid in sheet_ids(after):
-        seen_sheets.append(sid)
         a = (after.get("sheets") or {}).get(sid) or {}
         b = ((before or {}).get("sheets") or {}).get(sid) or {}
         nm = a.get("name") or "?"
@@ -1475,12 +1956,16 @@ def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
                     except (TypeError, ValueError):
                         continue
         for r, c in sorted(coords):
-            fb, fa = cell_face(cell_at(b, r, c)), cell_face(cell_at(a, r, c))
+            cb, ca = cell_at(b, r, c), cell_at(a, r, c)
+            fb, fa = cell_face(cb), cell_face(ca)
             if fb == fa:
                 continue
             total += 1
             if len(rows) < max(int(limit or 0), 0):
-                rows.append({"sheet": nm, "ref": a1(r, c), "before": fb, "after": fa})
+                rows.append({"sheet": nm, "ref": a1(r, c), "before": fb, "after": fa,
+                             "before_display": face_display(cb, sb),
+                             "after_display": face_display(ca, sa),
+                             "coerced": False})
     return rows, total
 
 
@@ -1492,7 +1977,7 @@ def op_summary(op) -> str:
         h, w = len(grid), max((len(r) for r in grid), default=0)
         span = a1(op["r"], op["c"]) if h * w == 1 else (
             a1(op["r"], op["c"]) + ":" + a1(op["r"] + h - 1, op["c"] + w - 1))
-        return f"set {span}"
+        return f"set {span}" + (" (as TEXT, verbatim)" if op.get("as_text") else "")
     if k == "style":
         keys = ", ".join(sorted((op.get("set") or {}).keys()))
         return (f"format {a1(op['r0'], op['c0'])}:{a1(op['r1'], op['c1'])}"
@@ -1518,6 +2003,126 @@ def op_summary(op) -> str:
     if k == "create_workbook":
         return "create the workbook (it does not exist yet)"
     return str(k)
+
+
+# ═══ 13b. THE AGGREGATE-OVER-TEXT WARNING (the second silent layer) ═════════
+# ⚠️ WHY A WARNING AND NOT A REFUSAL. `=SUM(B2:B12)` over twelve text cells is a VALID
+# formula: Excel, LibreOffice and ONLYOFFICE all accept it and all compute 0, because
+# every one of them ignores text inside an aggregate. So there is nothing to refuse —
+# there is only something nobody was TOLD. The dry-run already runs the ops on a copy of
+# the real workbook, which means it is the one place in the system that can see both the
+# formula being staged AND the type of every cell it will read. It says so, LOUDLY, in
+# three directions at once: on Debi's card, in the tool result the model reads, and
+# (through office_mcp's grounding) with the fix spelled out.
+#
+# IT CHECKS THE *AFTER* SNAPSHOT, and that is the whole reason the fix composes: when a
+# changeset writes the amounts AND the total in one call, the amounts are already real
+# numbers by the time the formula is examined, so NO warning fires. The warning is
+# therefore precisely "this SUM will read text", never "this SUM looks risky".
+AGG_FUNCS = ("SUM", "AVERAGE", "COUNT", "MIN", "MAX")
+# What each function actually DOES with text it was handed. Not a guess: text inside an
+# aggregate is skipped by every engine, so SUM/MIN/MAX see an empty set (0) and AVERAGE
+# divides by zero. COUNT counts numbers, and there are none.
+AGG_RESULT = {"SUM": "compute 0", "MIN": "compute 0", "MAX": "compute 0",
+              "COUNT": "count none of them", "AVERAGE": "compute #DIV/0!"}
+_AGG_CALL = re.compile(r"\b(" + "|".join(AGG_FUNCS) + r")\s*\(([^()]*)\)",
+                       re.IGNORECASE)
+_AGG_RANGE = re.compile(r"^\$?[A-Za-z]{1,3}\$?\d{1,7}(?::\$?[A-Za-z]{1,3}\$?\d{1,7})?$")
+# ⚠️ TWO AUDIENCES, TWO SENTENCES, AND NEITHER ONE ASKS DEBI A QUESTION (Debi's ruling,
+# 2026-08-28, amendment 2). A type decision is not hers to make in a dialog box: the
+# MODEL is told, inside its own turn, and fixes it before the card ever exists. If a
+# stale changeset still carries the condition when the card renders, the card states it
+# as INFORMATION — no button, no question, Apply stays one click.
+AGG_TEXT_SENTENCE = ("⚠ {range} hold text that looks numeric, so this {fn} will {result} "
+                     "as written. The agent has been told, and can restage those cells "
+                     "as real numbers.")
+# The sentence that goes to the MODEL, in the tool result, so the fix happens in the
+# same turn. IT IS AN INSTRUCTION, not a menu: the model already knows from context
+# whether a column is money or ids, and that judgement is the layer that resolves this.
+AGG_TEXT_FIX = ("FIX IT NOW, IN THIS TURN: if those cells are AMOUNTS, stage ONE new "
+                "change that re-sets each of them as a JSON NUMBER (2500, not \"$2,500\") "
+                "with a {\"op\":\"style\",...,\"set\":{\"n\":{\"pattern\":\"$#,##0\"}}} for "
+                "the money format, AND re-states the formula — all in the SAME "
+                "office_stage_changes call. If they are ids, codes or phone numbers that "
+                "only look numeric, they are text on purpose: leave them (write such a "
+                "column with \"as_text\": true) and drop the aggregate, saying in one "
+                "sentence why. Do not ask Debi which it is — you have the column header "
+                "and her request; decide.")
+
+
+def agg_ranges(formula):
+    """A formula's text → [(FN, 'B2:B12'), …] for every aggregate over a plain range.
+
+    PURE and DELIBERATELY NARROW. It reads only what it can read honestly:
+      · no nesting — `[^()]*` stops at the first inner paren, so `=SUM(A1:A9)/COUNT(...)`
+        yields both and `=SUM(IF(...))` yields nothing rather than a guess;
+      · no cross-sheet references (`Sheet2!B1:B9` is skipped) — this checker holds ONE
+        sheet's cells and would be checking the wrong ones;
+      · no named ranges, no whole-column `B:B`, no structured references.
+    A shape it cannot read produces NO warning, which is the right failure: a warning
+    that names the wrong cells is worse than the silence this replaces.
+    """
+    out = []
+    src = formula if isinstance(formula, str) else ""
+    for m in _AGG_CALL.finditer(src):
+        fn = m.group(1).upper()
+        for token in re.split(r"[,;]", m.group(2)):
+            t = token.strip()
+            if t and _AGG_RANGE.match(t):
+                out.append((fn, t.upper().replace("$", "")))
+    return out
+
+
+def aggregate_warnings(after, sid, ops):
+    """The staged formulas that will read text-that-looks-numeric → [warning, …].
+
+    `after` is the POST-op snapshot and `sid` the sheet the ops ran on; `ops` is the
+    VALIDATED list, so a formula is found where run_ops put it and the reference on the
+    card is the cell the formula will actually live in.
+    """
+    sheets = (after or {}).get("sheets")
+    sh = sheets.get(sid) if isinstance(sheets, dict) else None
+    if not isinstance(sh, dict) or not isinstance(ops, list):
+        return []
+    nm = sh.get("name") or "?"
+    out, seen = [], set()
+    for o in ops:
+        if o.get("op") != "set":
+            continue
+        for r, row in enumerate(o.get("values") or []):
+            for c, val in enumerate(row):
+                if not (isinstance(val, str) and val[:1] == "="):
+                    continue
+                ref = a1(o["r"] + r, o["c"] + c)
+                for fn, rng in agg_ranges(val):
+                    rect = act_range(rng)
+                    if rect is None:
+                        continue
+                    bad = []
+                    for rr in range(rect[0], rect[2] + 1):
+                        for cc in range(rect[1], rect[3] + 1):
+                            if text_numeric(cell_at(sh, rr, cc)) is not None:
+                                bad.append(a1(rr, cc))
+                    if not bad:
+                        continue
+                    key = (ref, fn, rng)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({
+                        "kind": "aggregate_over_text", "sheet": nm, "ref": ref,
+                        "formula": val, "fn": fn, "range": rng,
+                        "cells": bad[:64], "count": len(bad),
+                        "sentence": AGG_TEXT_SENTENCE.format(
+                            range=rng, fn=fn,
+                            result=AGG_RESULT.get(fn, "not read them")),
+                        "instruction": (
+                            f"{rng} hold text that looks numeric, so {ref} "
+                            f"({val}) will {AGG_RESULT.get(fn, 'not read them')}. If they "
+                            f"are amounts, restage them as JSON numbers with a currency "
+                            f"format together with your formula."),
+                    })
+    return out
 
 
 # ═══ 14. THE CHANGESET STORE — bridge-held, one pending per workbook ════════
@@ -1647,6 +2252,9 @@ def public_changeset(cs) -> dict:
             "cells_changed": cs["preview_total"],
             "planned": dict(cs["planned"]), "notes": list(cs["notes"]),
             "creates_workbook": cs["creates_workbook"],
+            "warnings": [dict(w) for w in cs.get("warnings") or []],
+            "coerced": [dict(c) for c in cs.get("coerced") or []],
+            "kept_text": [dict(c) for c in cs.get("kept_text") or []],
             "applied": False, "staged": True}
 
 
@@ -1691,12 +2299,59 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     if done is None:
         return None, "refused: those operations could not be applied to that sheet"
     preview, total = snapshot_diff(snap, after)
+    # THE COERCION, MARKED ON THE ROWS IT HAPPENED ON, so the card's before → after
+    # column can say `"$2,500" → 2500 ($#,##0)` on exactly those cells and nowhere else.
+    co_refs = {c["ref"]: c for c in done["coerced"]}
+    sheet_now = (after["sheets"][sid] or {}).get("name")
+    for p in preview:
+        c = co_refs.get(p["ref"]) if p["sheet"] == sheet_now else None
+        if c:
+            p["coerced"] = True
+            # THE RAW STRING TRAVELS TO THE CARD. The `before` face is what the CELL said
+            # (usually nothing, on a new row), which is not the same question as "what did
+            # the agent send" — and Debi's ruling is that the second one is on the card.
+            p["coerced_from"] = c["raw"]
+            p["coerced_format"] = c["n"]
+    warnings = aggregate_warnings(after, sid, parsed)
     op_list = [op_summary(o) for o in parsed]
     if not exists:
         op_list.insert(0, op_summary({"op": "create_workbook"}))
     notes = list(done["notes"])
     if not exists:
         notes.insert(0, f"{base!r} does not exist yet — applying this creates it.")
+    if done["coerced"]:
+        # ⚠️ SAID OUT LOUD, EVERY TIME. A writer that quietly changes what the model sent
+        # is a writer nobody can debug, and Debi is entitled to know her document holds a
+        # number where the agent typed a string.
+        shown = ", ".join(f"{c['ref']} {c['raw']!r} → {c['v']} ({c['n']})"
+                          for c in done["coerced"][:8])
+        more = len(done["coerced"]) - 8
+        notes.append(
+            f"{len(done['coerced'])} value(s) sent as a numeric-shaped STRING are stored "
+            f"as real NUMBERS with a matching number format — the same thing typing them "
+            f"into Excel does, and every one of them is listed on Debi's card: " + shown
+            + (f", +{more} more" if more > 0 else "")
+            + ". SEND TYPED VALUES AND THIS STEP DISAPPEARS: a JSON number 2500 plus a "
+              "style op with \"n\":{\"pattern\":\"$#,##0\"} says exactly what you mean. If "
+              "any of those were meant as TEXT, re-stage that op with \"as_text\": true. "
+              "Currency other than $ and non-US locales are never converted — those stay "
+              "text.")
+    if done["kept_text"]:
+        shown = ", ".join(f"{c['ref']} {c['raw']!r}" for c in done["kept_text"][:8])
+        more = len(done["kept_text"]) - 8
+        notes.append(
+            f"{len(done['kept_text'])} numeric-looking value(s) were kept as TEXT because "
+            f"the column reads as text, not as amounts: " + shown
+            + (f", +{more} more" if more > 0 else "")
+            + " — " + (done["kept_text"][0].get("why") or "") + ". If those ARE amounts, "
+            "re-stage them as JSON numbers.")
+    if warnings:
+        # ⚠️ FIRST, AND IN THE MODEL'S FACE. This note is the whole difference between a
+        # =SUM that silently reads 0 and a =SUM the model fixes before Debi ever sees it.
+        for w in warnings:
+            notes.insert(0, w["instruction"] + " (" + str(w["count"])
+                         + " text cell(s): " + ", ".join(w["cells"][:12]) + ")")
+        notes.insert(len(warnings), AGG_TEXT_FIX)
     st = open_state(base)
     if st["dirty"]:
         notes.append("Debi has UNSAVED edits in that workbook right now. Apply will "
@@ -1717,6 +2372,8 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
                                                        if v},
         "preview": preview, "preview_total": total, "summary": summary,
         "notes": notes, "staged_at": t, "status": "pending",
+        "warnings": warnings, "coerced": list(done["coerced"]),
+        "kept_text": list(done["kept_text"]),
         "creates_workbook": not exists,
         "file_mtime": (os.path.getmtime(target) if exists else 0.0),
     }

@@ -513,10 +513,10 @@ except Exception as _e:                                          # noqa: BLE001
 # silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28a")
+   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28c")
 check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
       "document cannot claim to be this build",
-      "loffice-2026-08-28a</code>" in PAGE)
+      "loffice-2026-08-28c</code>" in PAGE)
 
 # ── the embed itself ──
 check("the editor is EMBEDDED: the page carries a stage and an iframe for it",
@@ -618,7 +618,11 @@ check("the Quick lane's Apply routes into the editor when the editor owns the do
       "if (editorActive()) { return ooActApply(card, plan); }" in PAGE)
 check("…and the routing decision is a PURE function, so the card can print it BEFORE "
       "anything is applied",
-      "function ooOpPlan(ops)" in PAGE and "function ooEditorOps(ops)" in PAGE)
+      # ⚠️ `ooEditorOps(ops, sh)` AS OF loffice-2026-08-28c: the sheet arrives as a
+      # PARAMETER precisely so this function stays pure. It now decides, per column,
+      # whether a numeric-shaped string is meant as a number (setContext), and reading
+      # the page's `snap` to do that would have made the card's own preview impure.
+      "function ooOpPlan(ops)" in PAGE and "function ooEditorOps(ops, sh)" in PAGE)
 check("…and it is ALL-OR-NOTHING: one op the editor cannot do sends the WHOLE plan "
       "through the file, never half of each",
       "route: bridge ? 'bridge' : 'api'" in PAGE)
@@ -748,12 +752,33 @@ check("the parent↔child contract is ONE object each way and is documented in t
       and "THE PARENT ↔ CHILD CONTRACT" in OO)
 check("…it is DIRECT same-origin property access, and the file says why not postMessage",
       "NO postMessage" in OO and "no origin boundary to cross" in OO)
+# ⚠️ THE CHILD'S VERSION MOVED 1 → 2 AT loffice-2026-08-28c (readCells was added) WHILE
+# THE HOST'S STAYED 1 — and that asymmetry is correct, not a slip: they are two separate
+# contracts. `LOfficeEmbed.contract` is what the CHILD publishes to the parent, and it
+# gained a member; `LOfficeHost.contract` is what the PARENT publishes to the child, and
+# it did not change. Pinning them as one number was the shortcut that had to go.
 check("…both sides carry a contract VERSION, so a signature change is a visible one",
-      "contract: 1," in OO and "contract: 1," in PAGE)
+      "contract: 2," in OO and "contract: 1," in PAGE)
+check("…and the child's version is the one that moved, because the child is the side "
+      "that gained a member (readCells)",
+      "readCells: readCells," in OO and "readCells" not in
+      PAGE.split("register: (embed)")[0].split("contract: 1,")[-1])
 check("…and the child never has to wait for the host, because the host created it",
       "HOST.register(window.LOfficeEmbed)" in OO)
-for verb in ("open:", "save:", "reload:", "applyOps:", "probe:", "destroy:"):
+for verb in ("open:", "save:", "reload:", "applyOps:", "readCells:", "probe:",
+             "destroy:"):
     check(f"the contract publishes {verb.rstrip(':')}()", verb in OO)
+# THE POST-APPLY COMPUTED CHECK's own half of the contract: the editor is the only thing
+# in this system with a formula engine, so it is the only thing that can say what a
+# staged =SUM actually comes to. It must READ and never write.
+check("readCells is a GETTER — GetValue/GetText/GetFormula and no setter anywhere in it",
+      "function readCells(refs, sheetName)" in OO
+      and all(g in OO for g in ("GetValue()", "GetText()", "GetFormula()"))
+      and "SetValue" not in OO.split("function readCells(")[1].split("\nfunction ")[0])
+check("…it is capped, so a huge changeset cannot turn a receipt into a thousand editor "
+      "calls", "refs.slice(0, 200)" in OO)
+check("…and one unreadable cell costs that ROW, never the call",
+      "row.error = String" in OO)
 check("a child with no host still runs as a standalone page",
       "return null;" in OO.split("const HOST = (function ()")[1].split("})();")[0])
 

@@ -1057,6 +1057,48 @@ check("…and it says the caps, and that going over refuses the WHOLE change rat
       and "never half-staged" in OPSDOC)
 check("…and that ONE call is the unit, because two calls are two cards for one "
       "intention", "two calls are two cards" in OPSDOC)
+
+# ══ TYPES ON THE TOOL SURFACE (loffice-2026-08-28c) ═══════════════════════════
+# ⚠️ THE MODEL IS THE FIRST LAYER OF THIS FIX, NOT THE BRIDGE'S INFERENCE (Debi's ruling,
+# amendment 2). The 2026-08-28 incident was a budget staged as "$2,500" strings and a
+# =SUM over them computing 0 — and the grammar ALREADY carried the type. So the tool
+# surface has to make typed emission the obvious path, with examples a model can copy,
+# and these assertions are what keep it there.
+check("the ops grammar teaches TYPES first-class, and says what the mistake costs",
+      "TYPES MATTER MORE THAN ANYTHING ELSE" in OPSDOC
+      and "computes 0" in OPSDOC and "silently" in OPSDOC)
+check("…with the RIGHT shape spelled out as an example: the number AND the number "
+      "format, in the same change",
+      '"values":[[2500],[400]]' in OPSDOC and '"n":{"pattern":"$#,##0"}' in OPSDOC)
+check("…and the WRONG shape named explicitly, because 'do it right' without 'not this' "
+      "is advice a model can satisfy while still getting it wrong",
+      'NOT [["$2,500"],["$400"]]' in OPSDOC)
+check("…percentages too, which are the same trap with a different symbol",
+      '"n":{"pattern":"0.0%"}' in OPSDOC)
+check("…and the OTHER direction: ids, phones, codes and SKUs are STRINGS",
+      "IDs, PHONE NUMBERS, CODES, SKUs" in OPSDOC and "STRINGS" in OPSDOC)
+check("…with the two explicit escape hatches, so intent can always win over any rule",
+      '"as_text": true' in OPSDOC and "leading apostrophe" in OPSDOC)
+check("…and the bridge's contextual inference is described as a SAFETY NET rather than "
+      "as the plan — a model told 'send whatever, it gets fixed' will send whatever",
+      "safety net for a mistake" in OPSDOC
+      and "not a substitute for typing the value" in OPSDOC)
+check("the stage tool's own description repeats the type rule where the model is "
+      "deciding what to send",
+      "SEND AMOUNTS AS JSON NUMBERS" in STAGE
+      and "a formula over text computes 0" in STAGE)
+check("…and tells it to READ the result's warnings and fix them IN THE SAME TURN, which "
+      "is what makes the SUM-over-text condition self-heal with Debi never in the loop",
+      "READ THE RESULT'S `notes` AND `warnings` BEFORE YOU ANSWER" in STAGE
+      and "fix it in THIS turn" in STAGE)
+check("…including the other outcome — dropping the aggregate when the column really is "
+      "ids — so it is not taught to reflexively renumber a document",
+      "drop the aggregate and say why" in STAGE)
+check("⚠️ AND IT IS TOLD NOT TO PUT THE TYPE DECISION TO DEBI. A dialog asking her "
+      "whether a cell is a number is exactly the interrogation her amendment forbids: "
+      "the model has the column header and her request, and deciding is its job",
+      "Do not ask Debi to decide a cell's type" in STAGE)
+
 eq("negotiate() echoes a protocol it knows and names its own for one it does not",
    [office_mcp.negotiate("2025-06-18"), office_mcp.negotiate("1999-01-01"),
     office_mcp.negotiate(None)],

@@ -172,13 +172,30 @@ def test_odysseus_app_entrypoint_exists():
 # a chat turn six weeks later.
 
 def test_odysseus_mcp_register_form_contract():
-    routes = ROOT / "vendor" / "odysseus" / "routes" / "mcp_routes.py"
+    # 2026-08-28 (dev@c9dd68d): upstream slice 2o (#4082/#4071) MOVED this module to
+    # routes/mcp/mcp_routes.py and left routes/mcp_routes.py as a sys.modules shim, so
+    # the legacy path still IMPORTS fine but no longer contains the source we grep.
+    # Prefer the canonical file, fall back to the legacy one. A grep target that
+    # quietly stops containing the routes is how a contract test stops being one.
+    vendor = ROOT / "vendor" / "odysseus"
+    if not vendor.exists():
+        return
+    canonical = vendor / "routes" / "mcp" / "mcp_routes.py"
+    legacy = vendor / "routes" / "mcp_routes.py"
+    routes = canonical if canonical.exists() else legacy
     if not routes.exists():
         return
     src = routes.read_text(errors="replace")
     assert '@router.post("/servers")' in src, (
         "POST /api/mcp/servers is gone — bridge voice_toggle / browse_toggle / "
-        "ody_mcp_add all register through it")
+        "ody_mcp_add all register through it "
+        f"(grepped {routes.relative_to(vendor)}; if upstream moved the module again, "
+        "re-point this test at the new canonical path)")
+    if canonical.exists() and legacy.exists():
+        shim = legacy.read_text(errors="replace")
+        assert "sys.modules" in shim.replace("_sys", "sys") and "routes.mcp" in shim, (
+            "routes/mcp_routes.py is neither the real module nor the documented import "
+            "shim — anything importing the legacy path is now silently broken")
     assert '@router.delete("/servers/{server_id}")' in src, (
         "DELETE /api/mcp/servers/{id} is gone — it is how we UNregister a server")
     assert 'APIRouter(prefix="/api/mcp"' in src, (

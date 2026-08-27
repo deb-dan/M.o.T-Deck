@@ -159,6 +159,28 @@ _OPS_ARG = {
         "  — row-major; a leading = is a formula; null or \"\" empties a cell but KEEPS "
         "its formatting. \"at\" is an ANCHOR, not a clip: values larger than the range "
         "write past it.\n"
+        # ═══ TYPES. THE ONE THING TO GET RIGHT, AND THE INCIDENT THAT PROVES IT ═══
+        # 2026-08-28: an agent staged a budget as "$2,500", "$400", … — strings — and the
+        # =SUM over them computed 0, correctly and silently, because every spreadsheet
+        # engine skips text inside an aggregate. THE GRAMMAR ALREADY CARRIES THE TYPE (a
+        # JSON number is a number; a JSON string is text), so the fix that actually holds
+        # is teaching this here, emphatically, with examples. The bridge's contextual
+        # inference is a backstop, not the plan.
+        "★ TYPES MATTER MORE THAN ANYTHING ELSE IN THIS GRAMMAR. A JSON NUMBER is stored "
+        "as a number; a JSON STRING is stored as text; and a formula that aggregates TEXT "
+        "computes 0 — silently, in a document Debi will trust. So:\n"
+        '  · MONEY → the NUMBER plus the format, in the same change:\n'
+        '      {"op":"set","at":"B2","values":[[2500],[400]]},\n'
+        '      {"op":"style","at":"B2:B3","set":{"n":{"pattern":"$#,##0"}}}\n'
+        "    NOT [[\"$2,500\"],[\"$400\"]]. Same for percentages (0.125 with "
+        '"n":{"pattern":"0.0%"}) and for any quantity a total will ever be taken over.\n'
+        "  · IDs, PHONE NUMBERS, CODES, SKUs, PART NUMBERS, price bands → STRINGS, and "
+        'when the string looks like a number add "as_text": true to that set op (or send '
+        "it with a leading apostrophe, '007) so nothing can second-guess it.\n"
+        "  · A numeric-shaped STRING that arrives anyway is decided from CONTEXT — the "
+        "column's other values, what that column already holds, and its header — and the "
+        "result is listed on Debi's card either way. That is a safety net for a mistake, "
+        "not a substitute for typing the value.\n"
         '  {"op":"style","at":"A1:C1","set":{"bl":1}}'
         "  — bl bold · it italic · ul underline · st strikethrough · ff font · fs size "
         "· cl text colour · bg fill (both #rrggbb) · ht/vt align (left/center/right, "
@@ -249,7 +271,15 @@ def tool_specs() -> list:
                 "REPLACES the first proposal, so a change sent in pieces loses the "
                 "earlier pieces. Then say in one short sentence what you staged, and "
                 "stop. Never say a workbook was changed unless a system line tells you "
-                "the changeset was applied. A proposal expires after "
+                "the changeset was applied. "
+                # ═══ THE TWO THINGS THE RESULT WILL TELL YOU, AND WHAT TO DO ═══
+                "SEND AMOUNTS AS JSON NUMBERS with a number-format style op, never as "
+                "\"$2,500\" — a formula over text computes 0. READ THE RESULT'S `notes` "
+                "AND `warnings` BEFORE YOU ANSWER: if one says a range holds text that "
+                "looks numeric, fix it in THIS turn by staging one new change that "
+                "re-sets those cells as numbers AND re-states the formula together, or — "
+                "if the column really is ids or codes — drop the aggregate and say why. "
+                "Do not ask Debi to decide a cell's type. A proposal expires after "
                 f"{int(office_ops.CHANGESET_TTL // 60)} minutes."),
             "schema": {"type": "object", "properties": {
                 "name": _NAME_ARG, "sheet": _SHEET_ARG, "ops": _OPS_ARG,

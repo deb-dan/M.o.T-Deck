@@ -80,6 +80,24 @@ function num(name) {
   if (!m) throw new Error('constant ' + name + ' not found in office.html');
   return parseInt(m[1], 10);
 }
+// A contiguous RUN of const declarations, first..last inclusive, taken verbatim out of
+// the page. Added at loffice-2026-08-28c for the coercion rule, whose constants are
+// regexes built over several lines — restating them here would be a second copy of the
+// exact thing this test exists to pin.
+function grabConsts(first, last) {
+  const a = html.indexOf('const ' + first);
+  const c = html.indexOf('const ' + last);
+  if (a < 0 || c < 0) throw new Error('const run ' + first + '..' + last + ' not found');
+  const b = html.indexOf('\n', c);
+  if (b < a) throw new Error('const run ' + first + '..' + last + ' is out of order');
+  // ⚠️ `const` → `var`, AND IT IS NOT COSMETIC: a `const` declared inside eval() is
+  // block-scoped to the eval and does NOT leak into this module, so the functions
+  // eval'd next would throw ReferenceError on every one of these names. `var` in a
+  // direct sloppy-mode eval does leak, which is the same mechanism `grab`'s function
+  // declarations already rely on. The VALUES are still the page's, verbatim.
+  return html.slice(a, b).replace(/(^|\n)(\s*)const /g, '$1$2var ');
+}
+
 const CV_STRING = num('CV_STRING'), CV_NUMBER = num('CV_NUMBER'), CV_BOOLEAN = num('CV_BOOLEAN');
 const TIER1_MAX_CELLS = num('TIER1_MAX_CELLS');
 const TIER1_MIN_ROWS = num('TIER1_MIN_ROWS'), TIER1_MIN_COLS = num('TIER1_MIN_COLS');
@@ -96,6 +114,18 @@ eval(grab('putCell'));
 eval(grab('valueText'));
 eval(grab('displayText'));
 eval(grab('editText'));
+// ⚠️ THE COERCION RULE'S OWN FUNCTIONS, added at loffice-2026-08-28c. parseInput is no
+// longer self-contained: it delegates "is this string a number, and in what format" to
+// coerceNumeric, and the apostrophe convention to stripTextMark.
+eval(grabConsts('CO_MAX_LEN', 'CO_LEADING_ZERO'));
+eval(grab('stripTextMark'));
+eval(grab('coDp'));
+eval(grab('coPattern'));
+eval(grab('coNum'));
+eval(grab('coerceNumeric'));
+eval(grab('textNumeric'));
+eval(grab('cellFormat'));
+eval(grab('mergeFormat'));
 eval(grab('parseInput'));
 eval(grab('usedExtent'));
 eval(grab('planView'));
@@ -944,7 +974,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28b');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28c');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);

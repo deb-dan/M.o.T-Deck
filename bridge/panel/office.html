@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-28b">
+<meta name="harness-build" content="loffice-2026-08-28c">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -813,7 +813,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-28b</code>.</div>
+  Build <code>loffice-2026-08-28c</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -3133,23 +3133,177 @@ function valueText(v, t) {
 // diverge later (a formatted number would show formatted and edit raw).
 function editText(cell) { return displayText(cell); }
 
+/* ══ NUMERIC COERCION — THE PAGE'S HALF OF THE ONE RULE (2026-08-28) ═══════════
+   ⚠️ THE SAME RULE AS bridge/office_ops.py::coerce_numeric, IMPLEMENTED TWICE AND
+   PINNED EQUAL BY A TEST (bridge/tests/test_office_ai.js walks a shared table of
+   shapes; bridge/tests/test_office_journey.py walks the SAME table in Python). Two
+   ideas of "what looks like money" would drift, and a drifting coercion is a document
+   where one lane stores a number and the other stores a string.
+
+   WHY IT EXISTS: on 2026-08-28 Debi's budget arrived as "$2,500", "$400", … — text —
+   and her "sum it up" produced a correct =SUM over text, which computes 0. Storing what
+   a spreadsheet would store is the root fix, and typing $2,500 into Excel has always
+   produced the number 2500 with a currency format, so this is the EXPECTED behaviour
+   rather than a liberty.
+
+   ACCEPTED: a plain number ("1234", "-12.5", ".5" → General); comma thousands ("2,500",
+   "1,234,567.89" → "#,##0[.00]"); a DOLLAR amount ("$2,500", "$400.50", "-$5", "$-5",
+   "$ 2,500" → "$#,##0[.00]"); a percent ("50%", "12.5%", "-3%" → value/100, "0[.0]%").
+   The pattern mirrors the input's decimal places (capped at 6) — "$400" asked for no
+   cents and showing "$400.00" would be editing her document's look on a guess.
+
+   NOT ACCEPTED, on purpose: every other currency symbol and every non-US locale
+   ("€1.234,56", "1 234,56", "£5", "¥500", "2500 USD"); accounting parens ("(2,500)");
+   "1e5"/"0x10"/leading-zero integers; malformed grouping ("1,23"); and ANYTHING with
+   leading or trailing residue ("(555) 010-1234", "$2,500-B", "2500 kr") — the match is
+   anchored at both ends.
+
+   INTENT ALWAYS WINS: a LEADING APOSTROPHE ('$2,500 → the text $2,500, apostrophe
+   stripped) or an op's "as_text": true stores the string verbatim. */
+const CO_MAX_LEN = 32;
+const CO_MAX_DP = 6;
+const TEXT_MARK = "'";
+const CO_GROUPED = '\\d{1,3}(?:,\\d{3})+';
+const CO_RUN = '\\d+';
+const CO_DEC = '(?:\\.\\d+)?';
+const CO_CURRENCY = new RegExp('^(?:(-)\\s?)?\\$[ ]?(-)?((?:' + CO_GROUPED + '|'
+                               + CO_RUN + ')' + CO_DEC + ')$');
+const CO_THOUSANDS = new RegExp('^(-)?(' + CO_GROUPED + CO_DEC + ')$');
+const CO_PERCENT = new RegExp('^(-)?((?:' + CO_GROUPED + '|' + CO_RUN + ')'
+                              + CO_DEC + ')[ ]?%$');
+const CO_PLAIN = /^-?(?:\d+\.?\d*|\.\d+)$/;
+const CO_LEADING_ZERO = /^0\d/;
+
+// ('the text', true) when a string carried the leading apostrophe. ONE is stripped,
+// never two: `''x` is the text `'x`. PURE.
+function stripTextMark(s) {
+  const t = String(s == null ? '' : s);
+  return t.charAt(0) === TEXT_MARK ? { text: t.slice(1), marked: true }
+                                   : { text: t, marked: false };
+}
+function coDp(digits) {
+  const bit = String(digits).split('.');
+  return Math.min(bit.length === 2 ? bit[1].length : 0, CO_MAX_DP);
+}
+function coPattern(head, dp, tail) {
+  return head + (dp ? '.' + new Array(dp + 1).join('0') : '') + (tail || '');
+}
+function coNum(digits) {
+  const n = Number(String(digits).split(',').join(''));
+  return isFinite(n) ? n : null;
+}
+// A value string → {v, n, shape} or null. PURE and TOTAL. `n` is null for the plain
+// shape: General is already right for a bare number, and writing a pattern over it
+// would flatten a cell Debi had formatted herself.
+function coerceNumeric(text) {
+  const s = String(text == null ? '' : text).trim();
+  if (!s || s.length > CO_MAX_LEN) return null;
+  let m = CO_CURRENCY.exec(s);
+  if (m) {
+    if (m[1] && m[2]) return null;              // "-$-5" is noise, not a number
+    if (CO_LEADING_ZERO.test(m[3])) return null;
+    const f = coNum(m[3]);
+    if (f === null) return null;
+    return { v: (m[1] || m[2]) ? -f : f, n: coPattern('$#,##0', coDp(m[3])),
+             shape: 'currency' };
+  }
+  m = CO_PERCENT.exec(s);
+  if (m) {
+    if (CO_LEADING_ZERO.test(m[2])) return null;
+    const f = coNum(m[2]);
+    if (f === null) return null;
+    return { v: (m[1] ? -f : f) / 100, n: coPattern('0', coDp(m[2]), '%'),
+             shape: 'percent' };
+  }
+  m = CO_THOUSANDS.exec(s);
+  if (m) {
+    if (CO_LEADING_ZERO.test(m[2])) return null;
+    const f = coNum(m[2]);
+    if (f === null) return null;
+    return { v: m[1] ? -f : f, n: coPattern('#,##0', coDp(m[2])), shape: 'thousands' };
+  }
+  if (CO_PLAIN.test(s) && !/^-?0\d/.test(s)) {
+    const n = Number(s);
+    if (isFinite(n)) return { v: n, n: null, shape: 'plain' };
+  }
+  return null;
+}
+
+// Is this cell TEXT THAT LOOKS NUMERIC — the trap itself? The coercion that WOULD have
+// applied, or null. A formula is never this; a real number is never this. PURE.
+function textNumeric(cell) {
+  if (!cell || typeof cell !== 'object') return null;
+  if (typeof cell.f === 'string' && cell.f) return null;
+  const v = cell.v;
+  if (typeof v !== 'string' || !v) return null;
+  if (cell.t !== undefined && cell.t !== CV_STRING) return null;
+  return coerceNumeric(v);
+}
+
+// The number-format pattern actually on a cell, or ''. Reads THROUGH a shared style id
+// without copying — this one only looks. PURE (over `snap` for the shared table).
+function cellFormat(cell) {
+  let s = cell && cell.s;
+  if (typeof s === 'string' && snap && snap.styles) s = snap.styles[s];
+  if (!s || typeof s !== 'object') return '';
+  const n = s.n;
+  const pat = (n && typeof n === 'object') ? n.pattern : n;
+  return typeof pat === 'string' ? pat : '';
+}
+
+// The cell's style + this number format, as an INLINE dict — or null when the existing
+// style is a shared id we cannot resolve. ⚠️ THE SHARED-STYLE TRAP: the shared entry is
+// COPIED, never mutated, or one number format would reformat half the workbook.
+function mergeFormat(style, pattern) {
+  let base = style;
+  if (typeof base === 'string') {
+    base = (snap && snap.styles) ? snap.styles[base] : null;
+    if (!base || typeof base !== 'object') return null;
+  }
+  const out = (base && typeof base === 'object') ? Object.assign({}, base) : {};
+  out.n = { pattern: pattern };
+  return out;
+}
+
 // Text typed into a cell → a Univer cell object. The previous cell's STYLE survives:
 // typing a new number into a bold red cell must not strip the bold red.
-function parseInput(text, prev) {
-  const s = String(text == null ? '' : text).replace(/\r/g, '');
+//
+// COERCION HAPPENS ON COMMIT, exactly as Excel does it, so it is visible in the cell the
+// instant you press Enter and nothing is ever retroactive. `asText` (the op flag) and a
+// leading apostrophe both store the string verbatim — intent overrides everything.
+function parseInput(text, prev, asText) {
+  let s = String(text == null ? '' : text).replace(/\r/g, '');
   const style = (prev && prev.s !== undefined) ? prev.s : undefined;
-  if (s === '') return style === undefined ? null : { s: style };
+  const mark = stripTextMark(s);
+  s = mark.text;
   const out = {};
+  if (s === '') {
+    // ⚠️ A BARE APOSTROPHE IS AN EMPTY TEXT CELL, NOT AN EMPTIED ONE (Excel's own
+    // behaviour): `'` must not clear a cell.
+    if (mark.marked) {
+      out.v = ''; out.t = CV_STRING;
+      if (style !== undefined) out.s = style;
+      return out;
+    }
+    return style === undefined ? null : { s: style };
+  }
   if (style !== undefined) out.s = style;
+  if (mark.marked || asText === true) { out.v = s; out.t = CV_STRING; return out; }
   if (s.charAt(0) === '=') { out.f = s; return out; }
   const low = s.toLowerCase();
   if (low === 'true' || low === 'false') { out.v = (low === 'true'); out.t = CV_BOOLEAN; return out; }
-  // A number, but only a plain one: "1e5" and "0x10" are things a person typed as
-  // TEXT far more often than as a number, and Number() would swallow both. A leading
-  // zero ("007") stays text for the same reason — it is almost always an id.
-  if (/^-?(\d+\.?\d*|\.\d+)$/.test(s) && !/^-?0\d/.test(s)) {
-    const n = Number(s);
-    if (isFinite(n)) { out.v = n; out.t = CV_NUMBER; return out; }
+  // Anything coerceNumeric accepts becomes the NUMBER with its format. "1e5", "0x10" and
+  // a leading zero ("007") are NOT accepted and stay text — they are things a person
+  // typed as text far more often than as a number, and a renumbered part code is a
+  // corrupted document.
+  const co = coerceNumeric(s);
+  if (co) {
+    out.v = co.v; out.t = CV_NUMBER;
+    if (co.n) {
+      const merged = mergeFormat(style, co.n);
+      if (merged) out.s = merged;
+    }
+    return out;
   }
   out.v = s; out.t = CV_STRING;
   return out;
@@ -4086,12 +4240,116 @@ function ooOpPlan(ops) {
 // A1 because that is the address the editor's own API speaks, and because doing the
 // translation HERE means the preview the user read and the ops that run come out of
 // one place.
-function ooEditorOps(ops) {
+/* ⚠️ THE COERCION IS DONE HERE, NOT LEFT TO THE EDITOR (2026-08-28). ApiRange.SetValue
+   is given a NUMBER for every value this page's own rule would coerce, and the matching
+   number format follows as an explicit `style` op — so the cell holds 2500 with $#,##0
+   whatever the editor's own SetValue happens to do with the string "$2,500". That was
+   measured, not assumed (see the live-proof note in docs/), and it is done this way even
+   where the editor agrees, for one reason: the editor's behaviour is a vendored pin that
+   can move under us, and "the number the card showed is the number that was stored" must
+   not depend on it.
+   THE FORMAT OPS ARE GROUPED INTO RECTANGLES, greedily, so a column of twelve amounts is
+   one SetNumberFormat call and not twelve. */
+function ooRects(cells) {
+  // [{r,c}, …] → the fewest A1 rectangles that cover them. Greedy: take the longest
+  // horizontal run from the top-left cell left, then extend it DOWN while whole
+  // identical runs exist. PURE.
+  const left = {};
+  cells.forEach(p => { left[p.r + ':' + p.c] = true; });
+  const keys = Object.keys(left).sort((a, b) => {
+    const A = a.split(':').map(Number), B = b.split(':').map(Number);
+    return A[0] - B[0] || A[1] - B[1];
+  });
+  const out = [];
+  keys.forEach(key => {
+    if (!left[key]) return;
+    const p = key.split(':').map(Number);
+    const r = p[0], c = p[1];
+    let w = 0;
+    while (left[r + ':' + (c + w)]) w++;
+    let h = 1;
+    for (;;) {
+      let full = true;
+      for (let i = 0; i < w; i++) if (!left[(r + h) + ':' + (c + i)]) { full = false; break; }
+      if (!full) break;
+      h++;
+    }
+    for (let dr = 0; dr < h; dr++) for (let dc = 0; dc < w; dc++) {
+      delete left[(r + dr) + ':' + (c + dc)];
+    }
+    // ⚠️ `r + h`, NOT `r + h - 1`: `h` is a COUNT of rows and the A1 row number is
+    // 1-based, so the last row of an h-row block starting at 0-based r is r + h.
+    out.push(w === 1 && h === 1 ? colName(c) + (r + 1)
+      : colName(c) + (r + 1) + ':' + colName(c + w - 1) + (r + h));
+  });
+  return out;
+}
+
+/* Does this string need the editor's Text format to survive SetValue? PURE.
+   NARROW ON PURPOSE: a label like "Rent" or "AB-100" is in no danger from the editor's
+   parser and does not want its number format rewritten, so the test is "contains a digit
+   AND no letters" — which catches "007", "(555) 010-1234", "1,23", "(2,500)" and an
+   as_text "$2,500" — plus the two letter-bearing numeric forms the editor also swallows,
+   exponent ("1e5") and hex ("0x10"). Everything else is left alone. */
+function ooTextForce(s) {
+  const t = String(s == null ? '' : s);
+  if (!/\d/.test(t)) return false;
+  if (/^-?(?:\d+\.?\d*|\.\d+)[eE][-+]?\d+$/.test(t)) return true;   // 1e5
+  if (/^0[xX][0-9a-fA-F]+$/.test(t)) return true;                   // 0x10
+  return !/[A-Za-z]/.test(t);
+}
+
+// ⚠️ `sh` IS A PARAMETER AND NOT A READ OF `snap`, DELIBERATELY: this function must stay
+// PURE (a fence in test_office_ai.js asserts it touches no page state), because the card
+// prints its answer before anything is applied. ooApplyApi hands it the sheet.
+function ooEditorOps(ops, sh) {
   const out = [];
   (Array.isArray(ops) ? ops : []).forEach(o => {
     const k = (o && o.op) || '';
     if (k === 'set') {
-      out.push({ k: 'set', at: colName(o.c) + (o.r + 1), values: o.values });
+      const rawText = o.as_text === true;
+      const ctx = rawText ? {} : setContext(sh || null, o);
+      const byPattern = {};
+      const asText = [];
+      const values = (o.values || []).map((row, r) => (row || []).map((v, c) => {
+        if (typeof v !== 'string') return v;
+        const here = { r: o.r + r, c: o.c + c };
+        if (rawText) { if (ooTextForce(v)) asText.push(here); return v; }
+        const m = stripTextMark(v);
+        // apostrophe: verbatim text, stripped — and PROTECTED from the editor's own
+        // parser, which is the whole reason ooTextForce exists.
+        if (m.marked) { if (ooTextForce(m.text)) asText.push(here); return m.text; }
+        const co = coerceNumeric(m.text);
+        const seat = ctx[o.c + c];
+        if (!co || !co.n || (seat && !seat.numeric)) {
+          if (ooTextForce(m.text)) asText.push(here);
+          return v;
+        }
+        (byPattern[co.n] = byPattern[co.n] || []).push(here);
+        return co.v;
+      }));
+      /* ⚠️ THE "@" OPS COME FIRST, AND THEY ARE THE FINDING OF THE 2026-08-28 LIVE
+         MEASUREMENT. ApiRange.SetValue in the vendored ONLYOFFICE (v9.2.0.119+3) runs its
+         OWN parser over a string, measured in the real editor:
+             SetValue("$2,500") → 2500, shown "$2,500"   (agrees with us)
+             SetValue("50%")    → 0.5,  shown "50%"      (agrees with us)
+             SetValue("2,500")  → 2500, shown "2,500"    (agrees with us)
+             SetValue("007")    → 7                      ⚠️ IT DESTROYS THE LEADING ZERO
+         The last one is a silent data loss on a column of ids, and it is exactly what our
+         own rule refuses to do. Measured fix, also in the real editor: SETTING THE TEXT
+         FORMAT ("@") ON THE CELL FIRST makes SetValue store the string verbatim — "007"
+         stays "007", "(555) 010-1234" survives, and an as_text "$2,500" stays text.
+         So every string we are storing AS TEXT that the editor might parse gets "@"
+         before the write. */
+      ooRects(asText).forEach(at => {
+        out.push({ k: 'style', at: at, set: { n: { pattern: '@' } } });
+      });
+      out.push({ k: 'set', at: colName(o.c) + (o.r + 1), values: values });
+      Object.keys(byPattern).forEach(pat => {
+        ooRects(byPattern[pat]).forEach(at => {
+          out.push({ k: 'style', at: at, set: { n: { pattern: pat } } });
+        });
+      });
     } else if (k === 'style') {
       out.push({ k: 'style',
                  at: colName(o.c0) + (o.r0 + 1) + ':' + colName(o.c1) + (o.r1 + 1),
@@ -4122,7 +4380,10 @@ function ooApplyApi(plan) {
   if (!ooChild || typeof ooChild.applyOps !== 'function') {
     return { ok: false, error: 'the full editor is not ready' };
   }
-  const list = ooEditorOps(plan.ops);
+  // The sheet the plan is about, for the type inference inside ooEditorOps — which is
+  // pure and therefore has to be HANDED it.
+  const list = ooEditorOps(plan.ops, (snap && snap.sheets)
+    ? snap.sheets[actTargetSid(plan && plan.sheet)] : null);
   if (!list.length) {
     return { ok: false, error: 'nothing in that change has an equivalent in the '
                              + 'full editor' };
@@ -4852,6 +5113,17 @@ function actHelp() {
        + 'a sheet that has merged cells. "insert" and "delete_rc" take "what":"row" or '
        + '"col", "at" as a row NUMBER or a column LETTER, and "n" for how many; merged '
        + 'ranges are renumbered but FORMULA REFERENCES ARE NOT — say so if you use them.\n'
+       /* ⚠️ TYPES, TAUGHT FIRST-CLASS (2026-08-28). The incident was a budget staged as
+          "$2,500" strings and a =SUM over them computing 0 — silently, correctly. The
+          grammar already carries the type; this is where the model learns to use it. */
+       + '★ TYPES: a JSON NUMBER is stored as a number, a JSON STRING as text, and SUM / '
+       + 'AVERAGE / COUNT SKIP TEXT — a total over text cells computes 0. So write money '
+       + 'as the number plus its format ({"op":"set","at":"B2","values":[[2500]]} with '
+       + '{"op":"style","at":"B2","set":{"n":{"pattern":"$#,##0"}}}), not as "$2,500". '
+       + 'Write ids, phone numbers, codes and SKUs as strings, and add "as_text": true to '
+       + 'that set op (or a leading apostrophe, \'007) when the string looks like a '
+       + 'number. A numeric-shaped string sent anyway is decided from the column\'s own '
+       + 'context and the result is shown on the preview card either way.\n'
        + 'Nothing is written until the user presses Apply, so propose the whole change '
        + 'in a single block. For a QUESTION, answer in prose and emit no loffice block.';
 }
@@ -4861,9 +5133,17 @@ function actHelp() {
 // "context sent" disclosure on their own turn (which now carries the whole message,
 // preamble included) — because a model answering about data you cannot see is a guess
 // you cannot check.
+/* ⚠️ TYPE-HONEST, AS OF 2026-08-28, AND IT IS CHEAP AND LOAD-BEARING. `displayText`
+   renders the TEXT "$2,500" and the NUMBER 2500-formatted-as-$2,500 identically, which
+   means the model reading this grounding could not see the difference either — the third
+   silent layer of the incident. A text cell that LOOKS numeric is therefore QUOTED here,
+   and a real number is bare, so the model can spot a =SUM that will compute 0 without
+   being told. One line of the legend explains it (see buildContext). */
 function ctxCellText(sh, r, c) {
+  const cell = cellAt(sh, r, c);
   // tabs and newlines would break the row shape the model is told to expect
-  return String(displayText(cellAt(sh, r, c))).replace(/[\t\r\n]+/g, ' ');
+  const t = String(displayText(cell)).replace(/[\t\r\n]+/g, ' ');
+  return textNumeric(cell) ? '"' + t + '"' : t;
 }
 function buildContext(s, sid, sel, name) {
   const out = { text: '', rows: 0, cols: 0, truncated: false };
@@ -4888,6 +5168,9 @@ function buildContext(s, sid, sel, name) {
              + 'first field of every row is its row number, so B3 is the field under '
              + 'the B header on the row numbered 3. A cell holding a formula is shown '
              + 'as its formula text.');
+  lines.push('A field in "double quotes" is stored as TEXT even though it looks like a '
+             + 'number — SUM, AVERAGE and COUNT skip such cells, so a total over them '
+             + 'computes 0. A real number is shown bare.');
   const hdr = [''];
   for (let c = 0; c < cols; c++) hdr.push(colName(c));
   lines.push(hdr.join('\t'));
@@ -5239,7 +5522,12 @@ function actValidate(obj) {
         return no('that is more than ' + ACT_MAX_CELLS + ' cells in one change — ask '
                   + 'for it in a few smaller pieces');
       }
-      ops.push({ op: 'set', r: rg.r0, c: rg.c0, values: grid });
+      // ⚠️ `as_text` IS THE OP'S OWN INTENT FLAG, and it is only CARRIED when true so
+      // every existing op dict stays byte-identical (the tests compare them literally).
+      // Mirrors bridge/office_ops.py::validate_ops.
+      const asTextOp = { op: 'set', r: rg.r0, c: rg.c0, values: grid };
+      if (o.as_text === true || o.as_text === 'true') asTextOp.as_text = true;
+      ops.push(asTextOp);
     } else if (kind === 'style') {
       const rg = actRange(o.at);
       if (!rg) return no(at + '"at" is not a cell or a range (' + JSON.stringify(o.at) + ')');
@@ -5453,7 +5741,126 @@ function actCellList(plan) {
 // through `parseInput`, the SAME converter a typed cell uses — so "=SUM(A1:A2)" is a
 // formula, "120" is a number and "007" stays text, exactly as if the user had typed
 // it. There is no second set of rules for what a value means.
-function actCell(v, prev) {
+/* ── CONTEXTUAL INFERENCE — the page's mirror of office_ops.set_context ───────
+   ⚠️ MIRRORED, NOT SHARED, AND MIRRORED ON PURPOSE (the same call this page already
+   makes for parseInput, actValidate and actRunOps): the Quick lane's ```loffice``` block
+   is written by the same models that call the staging tool, so a numeric-shaped string
+   arriving here must be decided the same way it would be decided bridge-side. The pin is
+   a shared table walked by BOTH bridge/tests/test_office_ai.js and
+   bridge/tests/test_office_journey.py.
+
+   IT DECIDES PER COLUMN, weights and signals identical to the Python:
+     A. the op's own column (±2) — and a COERCIBLE STRING IS WORTH ZERO here, because
+        counting "$2,500" as evidence that its column is numeric is circular;
+     B. what that column already holds (±2);   C. the header word (±2, a hint);
+     D. the value's own shape (+1) — the default lean, so a tie coerces.
+   `as_text`, a leading apostrophe, and the never-coerce guards inside coerceNumeric are
+   all checked BEFORE this and always win. */
+const NUM_HEADER_WORDS = ['amount', 'amounts', 'planned', 'actual', 'budget', 'budgeted',
+  'price', 'prices', 'cost', 'costs', 'total', 'totals', 'subtotal', 'sum', 'spend',
+  'spending', 'revenue', 'income', 'expense', 'expenses', 'salary', 'wage', 'wages',
+  'value', 'qty', 'quantity', 'rate', 'rates', 'fee', 'fees', 'balance', 'variance',
+  'tax', 'discount', 'sales', 'payment', 'payments', 'profit', 'loss', 'margin', 'usd',
+  'dollars', 'percent', 'pct', 'share', 'weight', 'hours', 'units', 'count'];
+const TEXT_HEADER_WORDS = ['phone', 'phones', 'mobile', 'tel', 'telephone', 'fax', 'ext',
+  'extension', 'id', 'ids', 'code', 'codes', 'sku', 'skus', 'ref', 'reference', 'serial',
+  'account', 'acct', 'zip', 'postcode', 'postal', 'band', 'bands', 'tier', 'isbn', 'ssn',
+  'pin', 'tracking', 'license', 'licence', 'plate', 'barcode', 'upc', 'ean', 'number',
+  'no', 'num', 'invoice', 'order', 'ticket', 'case', 'batch', 'lot', 'version',
+  'revision', 'part', 'model', 'range', 'label', 'tag', 'notes'];
+const INFER_W_OP_COL = 2, INFER_W_SHEET_COL = 2, INFER_W_HEADER = 2, INFER_W_SHAPE = 1;
+
+// A header string → +1 numeric / -1 text / 0 no signal. Whole words only, so
+// 'Bandwidth' is not 'band' and 'Identifier' is not 'id'. PURE.
+function headerLean(text) {
+  const words = String(text == null ? '' : text).toLowerCase().match(/[a-z]+/g) || [];
+  let num = 0, txt = 0;
+  words.forEach(w => {
+    if (NUM_HEADER_WORDS.indexOf(w) >= 0) num++;
+    if (TEXT_HEADER_WORDS.indexOf(w) >= 0) txt++;
+  });
+  return num > txt ? 1 : (txt > num ? -1 : 0);
+}
+// What ONE staged value says about its column, FOR SIGNAL A. PURE.
+function shapeLean(v) {
+  if (v === null || v === undefined || v === '' || typeof v === 'boolean') return 0;
+  if (typeof v === 'number') return 1;            // a JSON number: the model was explicit
+  if (typeof v !== 'string') return 0;
+  const m = stripTextMark(v);
+  if (m.marked) return -1;
+  if (m.text.charAt(0) === '=') return 0;
+  return coerceNumeric(m.text) ? 0 : -1;          // 0 == circular, see the block comment
+}
+// What the cells ALREADY in that column say. Row 0 is a header, not data, and the rows
+// this op is about to overwrite are skipped. PURE over the sheet.
+function sheetColLean(sh, col, skipRows) {
+  const cd = (sh && sh.cellData) || null;
+  if (!cd || typeof cd !== 'object') return 0;
+  let nums = 0, txt = 0;
+  for (const rk in cd) {
+    const r = Number(rk);
+    if (!isFinite(r) || r === 0 || skipRows.indexOf(r) >= 0) continue;
+    const row = cd[rk];
+    if (!row || typeof row !== 'object') continue;
+    const cell = row[String(col)];
+    if (!cell || typeof cell !== 'object') continue;
+    if (typeof cell.f === 'string' && cell.f) continue;
+    const v = cell.v;
+    if (typeof v === 'boolean') continue;
+    if (typeof v === 'number') nums++;
+    else if (typeof v === 'string' && v && !coerceNumeric(v)) txt++;
+  }
+  return nums > txt ? 1 : (txt > nums ? -1 : 0);
+}
+// A validated `set` op → {column: {numeric, why, score}}. Called ONCE PER OP, before it
+// writes anything, so signal B describes the sheet as it was. PURE.
+function setContext(sh, op) {
+  const grid = (op && op.values) || [];
+  if (!grid.length) return {};
+  const r0 = op.r || 0, c0 = op.c || 0;
+  const span = [];
+  for (let i = 0; i < grid.length; i++) span.push(r0 + i);
+  let width = 0;
+  grid.forEach(r => { if (r.length > width) width = r.length; });
+  const out = {};
+  for (let i = 0; i < width; i++) {
+    const col = c0 + i;
+    const column = [];
+    grid.forEach(r => { if (i < r.length) column.push(r[i]); });
+    // A first row that reads as prose while the rest does not is a HEADER this op is
+    // writing: it is the header SIGNAL, and it is not data.
+    let ownHeader = '';
+    let body = column;
+    if (column.length > 1 && typeof column[0] === 'string' && shapeLean(column[0]) === -1) {
+      ownHeader = column[0];
+      body = column.slice(1);
+    }
+    let pos = 0, neg = 0;
+    body.forEach(v => { const l = shapeLean(v); if (l > 0) pos++; else if (l < 0) neg++; });
+    const a = pos === neg ? 0 : (pos > neg ? 1 : -1);
+    const b = sheetColLean(sh, col, span);
+    const head = ownHeader || displayText(cellAt(sh, 0, col));
+    const c = headerLean(head);
+    const score = a * INFER_W_OP_COL + b * INFER_W_SHEET_COL + c * INFER_W_HEADER
+                + INFER_W_SHAPE;
+    const why = [];
+    if (a) why.push('the other values this change writes into column ' + colName(col)
+                    + (a > 0 ? ' read as numbers' : ' read as text'));
+    if (b) why.push('column ' + colName(col) + ' already holds mostly '
+                    + (b > 0 ? 'numbers' : 'text'));
+    if (c) why.push('the header ' + JSON.stringify(String(head).slice(0, 24))
+                    + ' reads as ' + (c > 0 ? 'an amount' : 'an identifier'));
+    if (!why.length) why.push('nothing in the column says otherwise, and a currency or '
+                            + 'percent shape is a number in every spreadsheet');
+    out[col] = { numeric: score >= 0, why: why.join('; '), score: score };
+  }
+  return out;
+}
+
+// `asText` is the set op's own intent flag: it reaches STRINGS only — a JSON number
+// under as_text is still a number, because the model typed 2500 and not "2500" and
+// there is no text intent there to honour.
+function actCell(v, prev, asText) {
   const style = (prev && prev.s !== undefined) ? prev.s : undefined;
   if (v === null || v === undefined || v === '') {
     return style === undefined ? null : { s: style };
@@ -5469,7 +5876,7 @@ function actCell(v, prev) {
     if (style !== undefined) out.s = style;
     return out;
   }
-  return parseInput(String(v), prev);
+  return parseInput(String(v), prev, asText === true);
 }
 
 /* ── the impure half: apply, and the undo that makes it safe to try ───────────
@@ -5546,16 +5953,36 @@ function actRunOps(sid, ops) {
   // two different names — one `styled` meaning both would be a report nobody can read.
   const done = { cells: 0, cleared: 0, styledCells: 0, sheets: [], renamed: '',
                  skipped: 0, wantRows: 0, wantCols: 0,
-                 sorted: 0, inserted: 0, deleted: 0, notes: [] };
+                 sorted: 0, inserted: 0, deleted: 0, notes: [],
+                 coerced: [], keptText: [] };
   const sh = (snap && snap.sheets) ? snap.sheets[sid] : null;
   if (!sh || !Array.isArray(ops)) return null;
   ops.forEach(o => {
     if (o.op === 'set') {
+      const rawText = o.as_text === true;
+      // The column context is read BEFORE this op writes a cell — see setContext.
+      const ctx = rawText ? {} : setContext(sh, o);
       for (let r = 0; r < o.values.length; r++) {
         for (let c = 0; c < o.values[r].length; c++) {
           const rr = o.r + r, cc = o.c + c;
           const prev = cellAt(sh, rr, cc);
-          const cell = actCell(o.values[r][c], prev);
+          const val = o.values[r][c];
+          let keepText = rawText;
+          if (!rawText && typeof val === 'string') {
+            const m = stripTextMark(val);
+            const co = m.marked ? null : coerceNumeric(m.text);
+            const seat = ctx[cc];
+            // THE ONE DECISION POINT, and it is automatic: a numeric-shaped string in a
+            // column the context reads as TEXT stays text. Nobody is asked.
+            if (co && co.n && seat && !seat.numeric) {
+              keepText = true;
+              done.keptText.push({ ref: colName(cc) + (rr + 1), raw: val, why: seat.why });
+            } else if (co && co.n) {
+              done.coerced.push({ ref: colName(cc) + (rr + 1), raw: val, v: co.v,
+                                  n: co.n, shape: co.shape });
+            }
+          }
+          const cell = actCell(val, prev, keepText);
           putCell(sh, rr, cc, cell);
           if (cell && (cell.v !== undefined || cell.f !== undefined)) done.cells++;
           else done.cleared++;
@@ -5645,6 +6072,23 @@ function actRunOps(sid, ops) {
   // is the same sentence the manual gestures print, from the same constant.
   if ((done.sorted || done.inserted || done.deleted) && sheetFormulas(sh)) {
     done.notes.push(RC_FORMULA_NOTE);
+  }
+  // ⚠️ THE TYPE OUTCOMES ARE SAID, EVERY TIME. A writer that quietly changes what it was
+  // handed is a writer nobody can debug, and the whole 2026-08-28 incident is what
+  // silence here costs.
+  if (done.coerced.length) {
+    done.notes.push(done.coerced.length + ' numeric-shaped text value(s) were stored as '
+      + 'real NUMBERS with a matching number format, so totals over them add up: '
+      + done.coerced.slice(0, 8).map(c => c.ref + ' "' + c.raw + '" → ' + c.v
+        + ' (' + c.n + ')').join(', ')
+      + (done.coerced.length > 8 ? ', +' + (done.coerced.length - 8) + ' more' : '') + '.');
+  }
+  if (done.keptText.length) {
+    done.notes.push(done.keptText.length + ' numeric-looking value(s) were kept as TEXT '
+      + 'because the column reads as text rather than as amounts: '
+      + done.keptText.slice(0, 8).map(c => c.ref + ' "' + c.raw + '"').join(', ')
+      + (done.keptText.length > 8 ? ', +' + (done.keptText.length - 8) + ' more' : '')
+      + ' — ' + done.keptText[0].why + '.');
   }
   return done;
 }
@@ -6421,6 +6865,22 @@ function agentToolNote(file) {
        + 'every cell\'s before and after on it, and an Apply button.\n'
        + 'A SECOND office_stage_changes call REPLACES the first proposal, so a change '
        + 'sent in pieces LOSES the earlier pieces. One request, one staging call.\n'
+       /* ⚠️ THE TYPE RULE AND THE SELF-HEAL, on the lane where the incident happened.
+          The staging result carries `warnings` and `notes` for exactly this; a model that
+          does not read them repeats 2026-08-28. */
+       + '★ TYPES ARE THE THING TO GET RIGHT. A JSON NUMBER is stored as a number, a '
+       + 'JSON STRING as text, and SUM / AVERAGE / COUNT SKIP TEXT CELLS — a total over '
+       + 'text computes 0, silently. Stage amounts as NUMBERS with the format in the same '
+       + 'call ({"op":"set","at":"B2","values":[[2500],[400]]} plus {"op":"style","at":'
+       + '"B2:B3","set":{"n":{"pattern":"$#,##0"}}}), never as "$2,500". Stage ids, phone '
+       + 'numbers, codes and SKUs as strings with "as_text": true on that op.\n'
+       + 'READ THE STAGING RESULT before you answer: if its warnings or notes say a range '
+       + 'holds TEXT that looks numeric, FIX IT IN THIS TURN — stage one new change that '
+       + 're-sets those cells as numbers AND re-states the formula together — or, if that '
+       + 'column really is ids or codes, drop the aggregate and say why in one sentence. '
+       + 'Do not ask Debi to decide a cell\'s type; you have the header and her request.\n'
+       + 'In the sheet you are shown, a field in "double quotes" is stored as TEXT even '
+       + 'though it looks like a number. A bare field is a real number.\n'
        + 'YOU CANNOT APPLY CHANGES. There is no apply tool. Only Debi can press Apply. '
        + 'So after staging, say in one short sentence what you staged and stop — do not '
        + 'ask "OK?", do not stage it again, and NEVER claim a change was made, a row '
@@ -6940,19 +7400,64 @@ function csPrefix(lines) {
 }
 
 // ── the card's words (PURE, so they are testable without a DOM) ──────────────
+/* ⚠️ THE TYPE IS ON THE ROW, AND THAT IS DEBI'S RULING (2026-08-28): "never a coercion
+   the card didn't show". The bridge sends three extra fields per preview row —
+   `before_display` / `after_display` (text-that-looks-numeric QUOTED, a formatted number
+   naming its format) and, on a coerced cell, `coerced_from` (the exact string the agent
+   staged). So a coercion renders as `B2  "$2,500"  →  2500 ($#,##0)` — the staged string
+   on the left, the stored number and its format on the right — and a kept-as-text value
+   renders quoted, which is how you can tell the two apart at a glance. Older bridges (or
+   a replayed changeset) simply have no *_display fields; the raw faces are the fallback,
+   so this can never render blank. */
+function csRow(p) {
+  const q = p || {};
+  const rawB = String(q.before == null ? '' : q.before);
+  const rawA = String(q.after == null ? '' : q.after);
+  let b = String(q.before_display == null ? rawB : q.before_display);
+  const a = String(q.after_display == null ? rawA : q.after_display);
+  if (q.coerced && q.coerced_from != null) b = '"' + String(q.coerced_from) + '"';
+  return String(q.ref || '?') + '  ' + (b === '' ? '(empty)' : b.slice(0, 60))
+       + '  →  ' + (a === '' ? '(empty)' : a.slice(0, 60));
+}
+
 function csRows(cs) {
   const out = { lines: [], more: 0 };
   const pv = (cs && Array.isArray(cs.preview)) ? cs.preview : [];
   pv.forEach(p => {
     if (out.lines.length >= CS_LIST_MAX) { out.more++; return; }
-    const b = String(p.before == null ? '' : p.before);
-    const a = String(p.after == null ? '' : p.after);
-    out.lines.push(String(p.ref || '?') + '  ' + (b === '' ? '(empty)' : b.slice(0, 60))
-                   + '  →  ' + (a === '' ? '(empty)' : a.slice(0, 60)));
+    out.lines.push(csRow(p));
   });
   const total = Number((cs && cs.preview_total) || pv.length);
   if (total > pv.length) out.more += total - pv.length;
   return out;
+}
+
+// The type outcomes as their own short list, so a reader does not have to spot them among
+// sixty before → after rows. PURE. Empty when nothing was retyped, and the card then
+// draws nothing — a "0 values converted" line is noise.
+function csTypeLines(cs) {
+  const c = cs || {};
+  const out = [];
+  (Array.isArray(c.coerced) ? c.coerced : []).forEach(x => {
+    out.push(String(x.ref) + '  "' + String(x.raw) + '"  →  ' + String(x.v)
+             + ' (' + String(x.n) + ')  · stored as a number');
+  });
+  (Array.isArray(c.kept_text) ? c.kept_text : []).forEach(x => {
+    out.push(String(x.ref) + '  "' + String(x.raw) + '"  · kept as text — '
+             + String(x.why || 'the column reads as text'));
+  });
+  return out;
+}
+
+/* ⚠️ ONE INFO LINE, NO QUESTION, NO EXTRA BUTTON — Debi's amendment 2. A =SUM staged over
+   text-typed numbers is something the MODEL is told about in its own tool result and is
+   expected to fix inside its own turn; if a changeset still carries the condition when
+   the card renders, Debi is INFORMED, not interrogated, and Apply stays one click. The
+   sentence is the bridge's own (office_ops.AGG_TEXT_SENTENCE), because two wordings of
+   the same fact is how one of them goes stale. */
+function csWarnLines(cs) {
+  const w = (cs && Array.isArray(cs.warnings)) ? cs.warnings : [];
+  return w.map(x => String((x && x.sentence) || '').trim()).filter(s => s);
 }
 
 function csCardText(cs) {
@@ -7004,12 +7509,32 @@ function csCard(host, cs) {
   ops.style.fontSize = '11px';
   ops.textContent = (cs.op_list || []).map((s, i) => (i + 1) + '. ' + s).join('  ·  ');
   head.appendChild(ops);
+  // ⚠️ THE INFO LINE GOES ABOVE THE FOLD, before the collapsed detail blocks: a =SUM
+  // that will read text is the one thing on this card that changes what the change MEANS,
+  // and it must not be something you had to expand a disclosure to find.
+  csWarnLines(cs).forEach(s => {
+    const w = document.createElement('div');
+    w.className = 'txt';
+    w.style.marginTop = '6px';
+    w.style.padding = '5px 7px';
+    // --gold is defined in BOTH themes (see the :root blocks), so this line reads in
+    // light mode too — a warning that vanishes on one theme is not a warning.
+    w.style.borderLeft = '3px solid var(--gold)';
+    w.style.background = 'var(--card2)';
+    w.textContent = s;
+    head.appendChild(w);
+  });
   const rows = csRows(cs);
   head.appendChild(actDet('what it will change · ' + rows.lines.length
                           + (rows.more ? ' of ' + (rows.lines.length + rows.more) : '')
                           + ' cell' + (rows.lines.length === 1 ? '' : 's'),
                           rows.lines.join('\n')
                           + (rows.more ? '\n… and ' + rows.more + ' more' : '')));
+  const types = csTypeLines(cs);
+  if (types.length) {
+    head.appendChild(actDet('values retyped on the way in · ' + types.length,
+                            types.join('\n')));
+  }
   if ((cs.notes || []).length) {
     head.appendChild(actDet('what the tool said about it', (cs.notes || []).join('\n\n')));
   }
@@ -7069,7 +7594,98 @@ async function csApply(card) {
      + ' cells=' + j.cells_written);
   // The FILE moved. The page's copy did not — reload the document the existing way.
   extSeen = 0;
-  ooExtReload(j.name);
+  await ooExtReload(j.name);
+  // ⚠️ AND ONLY NOW CAN THE RECEIPT SAY WHAT THE FORMULAS COME TO. See csComputed.
+  const comp = await csComputed(card, j);
+  // ⚠️ RE-LABEL, DO NOT RE-STAMP. csStamp() empties the bar, which would take the "Undo
+  // this change" chip added above with it — a receipt that grew a computed line and lost
+  // the undo would be a strictly worse card.
+  if (comp) csRelabel(card, csReceiptText(j) + ' · ' + comp.line);
+}
+
+/* ══ THE POST-APPLY COMPUTED CHECK — the fourth silent layer ═══════════════════
+   ⚠️ NOTHING ON THE BRIDGE SIDE HAS A FORMULA ENGINE. `=SUM(B2:B12)` is written into the
+   .xlsx as text, openpyxl reads it back as text, and the receipt's re-read can therefore
+   only say "the formula is in the cell" — which is exactly what it said on 2026-08-28
+   while the cell displayed 0. THE EDITOR HAS AN ENGINE: it has just recalculated the
+   document it reloaded. So after an apply that wrote formulas, the panel asks the editor
+   what those cells now COMPUTE TO (bridge/panel/oo.html::readCells) and appends the
+   answer to the receipt: "computed: B13=2500 ✓" or "computed: B13=0 ⚠".
+
+   THE ORDER MATTERS AND IS THE WHOLE CORRECTNESS ARGUMENT: this runs AFTER
+   `await ooExtReload(...)`, i.e. after onDocumentReady for the NEW file. Reading before
+   that would report the OLD document's values as the new ones — a confident wrong number,
+   which is worse than no number.
+
+   HONEST LIMITS, said on the card rather than hidden:
+     · tier-1 only (the editor not up) → no engine to ask; the line says so.
+     · an older embed frame with no readCells → the same.
+     · a cell the editor refuses → that ROW says so; the others still report. */
+const CS_NO_ENGINE = 'computed: not checked — the full editor is not open, and nothing '
+                   + 'else here computes a formula';
+
+// PURE. The editor's readCells answer + what was staged → the receipt suffix and whether
+// anything looks wrong. Split out so the wording is testable with no editor at all.
+function csComputedText(cells, warned) {
+  const rows = Array.isArray(cells) ? cells : [];
+  const bits = [];
+  let bad = 0;
+  rows.forEach(c => {
+    const t = String((c && c.text) || '');
+    const v = c ? c.value : null;
+    const num = (typeof v === 'number') ? v : Number(t);
+    const isErr = t.indexOf('#') === 0;
+    // A ZERO IS FLAGGED, not silently accepted: a total that came out 0 is the incident's
+    // own signature. It may be legitimately 0 — hence ⚠ and not ✗ — but it is never
+    // something this receipt lets past without a mark.
+    const zero = !isErr && isFinite(num) && num === 0;
+    const ok = !isErr && !zero && !(c && c.error);
+    if (!ok) bad++;
+    bits.push(String((c && c.ref) || '?') + '='
+              + (c && c.error ? 'unreadable' : (t || String(v)))
+              + (ok ? ' ✓' : ' ⚠'));
+  });
+  let line = 'computed: ' + bits.join(', ');
+  if (bad && warned) {
+    line += ' — the staged change was warned that this range holds text that looks '
+          + 'numeric, and that is what a 0 here means';
+  } else if (bad) {
+    line += ' — check that, a 0 or an error from a fresh formula is usually a type '
+          + 'problem in the cells it reads';
+  }
+  return { line: line, bad: bad };
+}
+
+async function csComputed(card, j) {
+  const refs = ((j && j.verify) || [])
+    .filter(v => String((v && v.expected) || '').charAt(0) === '=');
+  if (!refs.length) return null;              // nothing computed: nothing to say
+  if (!editorActive() || !ooChild || typeof ooChild.readCells !== 'function') {
+    actNote(card, CS_NO_ENGINE);
+    bx('cs-computed-skip', 'no engine');
+    return { line: 'computed: not checked (no engine)', bad: 0 };
+  }
+  let r = null;
+  try {
+    r = ooChild.readCells(refs.map(v => v.ref), refs[0].sheet || '');
+  } catch (e) {
+    r = { ok: false, error: String((e && e.message) || e) };
+  }
+  if (!r || !r.ok) {
+    const why = 'computed: could not be read back — ' + ((r && r.error) || 'unknown');
+    actNote(card, why);
+    bx('cs-computed-fail', String((r && r.error) || '').slice(0, 120));
+    return { line: why, bad: 0 };
+  }
+  const warned = !!((card._cs && card._cs.warnings || []).length);
+  const out = csComputedText(r.cells, warned);
+  card._head.appendChild(actDet('what the editor computes for those formulas'
+                                + (out.bad ? ' · ' + out.bad + ' to look at' : ' · all ✓'),
+                                (r.cells || []).map(c => c.ref + '  ' + (c.formula || '')
+                                  + '  =  ' + (c.error ? 'unreadable: ' + c.error
+                                                       : String(c.text))).join('\n')));
+  bx('cs-computed', out.line.slice(0, 160));
+  return out;
 }
 
 async function csDismiss(card) {
@@ -7115,6 +7731,15 @@ async function csUndo(card) {
     csBusy(card, false);
     bx('cs-undo-fail', String((e && e.message) || e).slice(0, 140));
   }
+}
+
+// Change the stamp's WORDS and touch nothing else in the bar. Used by the computed check,
+// which lands after the "Undo this change" chip already exists.
+function csRelabel(card, text) {
+  const lang = card._bar.querySelector('.lang');
+  if (lang) lang.textContent = text;
+  else csStamp(card, text);
+  return lang;
 }
 
 function csStamp(card, text) {

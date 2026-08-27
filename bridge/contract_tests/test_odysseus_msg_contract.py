@@ -85,15 +85,50 @@ def test_fork_keep_count_semantics():
 
 
 def test_unpaged_history_returns_metadata():
+    """The UNPAGED GET /api/history/{sid} must still carry per-message `metadata`.
+
+    ⚠️ Rewritten at the 2026-08-28 bump (dev@25c9e735 → dev@c9dd68d). Until c9dd68d
+    there were TWO handlers for this path: a duplicate in routes/session_routes.py
+    (`/history/{sid}`, returning `msg.to_dict()` unfiltered) and the canonical one in
+    routes/history/history_routes.py. session_routes was mounted FIRST, so the
+    duplicate is the one that actually served us. Upstream deleted the duplicate, so
+    the canonical handler now serves the seam — which is what this test's own previous
+    docstring said to pin at the bump, so that is what it pins now:
+
+      · the canonical `GET /api/history/{session_id}` exists,
+      · `limit is None` takes the in-memory session_manager branch (NOT the paged,
+        100-row-capped DB branch — see test_bridge_never_pages_history), and
+      · that branch still emits `metadata` per entry, so `_db_id` survives.
+
+    KNOWN behaviour delta accepted at this bump (both benign for us):
+      · the canonical branch DROPS messages with `metadata.hidden` (compaction
+        summaries) — the deleted duplicate returned them, and Odysseus's own UI
+        hides them anyway;
+      · it collapses multimodal content to text via `_history_display_content`,
+        which is already what bridge/app.py assumes (it re-attaches images from its
+        OWN attachment sidecar, see `attach_images`).
+    """
     if not ODY.exists():
         return
-    src = _read(SESS)
-    assert '@router.get("/history/{sid}")' in src, (
-        "the unpaged GET /api/history/{sid} handler is gone — the paged variant "
-        "OMITS metadata._db_id, so the panel's actions would go dark")
-    assert '{"history": [msg.to_dict() for msg in session.history]}' in src, (
-        "GET /history no longer returns msg.to_dict() over the full in-memory "
-        "history (unfiltered + metadata-carrying)")
+    h = _read(HIST)
+    assert '@router.get("/api/history/{session_id}")' in h, (
+        "the canonical GET /api/history/{session_id} handler is gone — the panel's "
+        "whole transcript load rides it")
+    # The unpaged branch must be the in-memory one, and must forward metadata.
+    body = h.split('@router.get("/api/history/{session_id}")')[1].split("@router")[0]
+    assert "if limit is not None:" in body, (
+        "the unpaged/paged split on `limit` is gone — the bridge deliberately never "
+        "sends limit/offset because the paged branch caps at 100 rows")
+    unpaged = body.split("if limit is not None:")[1].split("session_manager.get_session")[1]
+    assert 'entry["metadata"]' in unpaged, (
+        "the unpaged branch no longer emits per-message `metadata` — _db_id and the "
+        "server-written metrics would vanish and the panel's Copy/Edit/Delete/Fork "
+        "chips would go dark")
+    # The old duplicate must not silently come back and shadow the canonical handler.
+    assert '@router.get("/history/{sid}")' not in _read(SESS), (
+        "routes/session_routes.py mounts a SECOND /history/{sid} handler again. It is "
+        "included BEFORE history_routes in app.py, so it would shadow the canonical "
+        "one — re-verify which shape actually serves us before trusting this suite")
     m = _read(MODELS)
     assert 'result["metadata"] = self.metadata' in m, (
         "ChatMessage.to_dict no longer emits `metadata` — _db_id and the "
