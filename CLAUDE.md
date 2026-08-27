@@ -1,5 +1,18 @@
 # New Harness — working memory (canonical project home)
 
+> **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
+> end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
+> full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);
+> component restart `./scripts/ship.sh --restart <name>`; app only: quit with
+> `osascript -e 'quit app "Harness"'` then `open -a Harness`; stale tab = ⌘R in the tab.**
+
+> **🩹 KNOWN ISSUE (2026-08-27, deliberate wontfix): Univer tier-2's selection-stats strip
+> (Max/Sum/Count on select) wraps to two lines and crowds the sheet-tab bar at panel widths.
+> Verified NOT our CSS (all univer-* classes, their fonts). Tier-2 is ruled for REPLACEMENT
+> by the ONLYOFFICE static bundle (probe PASS), so Univer internals get no investment —
+> the fix is the swap. Also by design there: tier-1 menu rows grey with 'the rich editor
+> owns the document' while Univer is mounted — close/reopen the file returns the plain grid.**
+
 > **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the project is at **v1.5.0** (see `VERSION`).
 > Every shipped work slice bumps the patch: 1.5.1, 1.5.2, … up to 1.5.100, then 1.6.0.
 > Bump `VERSION` in the same commit as the slice it names and lead the commit message with
