@@ -837,9 +837,17 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27e');
-check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-27e/g) || []).length === 2);
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28a');
+// ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
+// exactly two, which only held while no comment in the page mentioned the build it was
+// written for — and the one-editor slice writes its own stamp into the comments that
+// explain it (that is a feature: a reader of the CSS can date the fork). What the check
+// is FOR is that the no-script fallback banner cannot claim to be a build the meta tag
+// does not, so it asserts those two by shape instead of by census.
+check('…and the static fallback banner carries the SAME one, so "is the bridge serving '
+      + 'what I shipped?" is answerable by eye with no console',
+      html.includes('<meta name="harness-build" content="' + stamp + '">')
+      && html.includes('Build <code>' + stamp + '</code>'));
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
@@ -2445,14 +2453,33 @@ eval(grab('extPlan'));
 }
 {
   const ea = grab('extAct');
-  check('the reload path goes through the page\'s EXISTING load path — openDoc, not a '
-        + 'second loader', /openDoc\(name\)\.then/.test(ea));
+  /* ⚠️ REWRITTEN AT loffice-2026-08-28a, AND THE DECISION IT GUARDS DID NOT CHANGE. The
+     two sentences above (extPlan) are byte-identical and still pinned. What changed is
+     what "reload" MEANS: in one-editor world the document lives in the embedded
+     ONLYOFFICE editor, so calling openDoc() alone would re-read the file into a snapshot
+     nobody is looking at while the editor went on showing the stale document. So extAct
+     goes through ooExtReload, which is a ONE-LINE fork: the editor re-reads the same
+     workbook in place (keeping the warm frame, the rail, the AI conversation and the
+     pane widths), and when the editor is NOT the editor it is still literally
+     openDoc(name). There is still exactly one loader per surface. */
+  const er = grab('ooExtReload');
+  check('the reload path goes through ooExtReload, the ONE fork between "reload the '
+        + 'document in the editor" and "reload it into the grid"',
+        /ooExtReload\(name\)\.then/.test(ea)
+        && (code.match(/function ooExtReload\(/g) || []).length === 1);
+  check('…and its grid half really is the page\'s EXISTING load path, unchanged',
+        /if \(!editorActive\(\)\) return openDoc\(name\);/.test(er)
+        && (code.match(/async function openDoc\(/g) || []).length === 1);
+  check('…and its editor half reloads the DOCUMENT, not the page — and refreshes the '
+        + 'snapshot the AI panel sends, so the model sees the agent\'s version',
+        /ooReload\('ext-change'\)/.test(er) && /ooRefreshSnapshot\(\)/.test(er)
+        && !/location\.(href|reload)/.test(er));
   /* ⚠️ AND IT SAYS THE SENTENCE **AFTER** THE OPEN. openDoc's first act is say(''), so a
      message set beforehand flashes and vanishes — i.e. the spec's one required sentence
      would never be read. Found by reading the code, and pinned here so it cannot come
      back the obvious way round. */
   check('…and says the sentence AFTER it, because openDoc clears the message line first',
-        /openDoc\(name\)\.then\(\(\) => \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\); \}\)/
+        /ooExtReload\(name\)\.then\(\(\) => \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\); \}\)/
           .test(ea)
         && /busy = true; say\(''\); paint\(\);/.test(grab('openDoc')));
   check('…and never over the top of something openDoc had to say — a read failure or a '
@@ -2462,7 +2489,7 @@ eval(grab('extPlan'));
         && /say\(plan\.text, null, \[/.test(ea));
   check('…Reload discards the in-memory edits explicitly, rather than tripping over the '
         + 'discard guard that would ask the same question twice',
-        /dirty = false; paint\(\);/.test(ea) && /openDoc\(name\)/.test(ea));
+        /dirty = false; paint\(\);/.test(ea) && /ooExtReload\(name\)/.test(ea));
   // The apostrophe is BACKSLASH-ESCAPED in the page's single-quoted string, so the
   // source form is matched with a tolerant class; the sentence itself is pinned as a
   // literal against extPlan's real output above, which is the pin that counts.
@@ -2561,8 +2588,10 @@ eval(grab('extPlan'));
   check('nothing in the new lane can apply a Quick-lane action plan either',
         S2.every(n => !/actApply|actRunOps|replaceWrite|gridRemap/
           .test(stripComments(grab(n)))));
-  check('…and the reload really is the page\'s existing load path, not a new one',
-        /openDoc\(name\)/.test(grab('extAct'))
+  check('…and the reload still resolves to the page\'s existing load path — one openDoc '
+        + 'in the whole page, reached through the one fork',
+        /ooExtReload\(name\)/.test(grab('extAct'))
+        && /openDoc\(name\)/.test(grab('ooExtReload'))
         && (code.match(/async function openDoc\(/g) || []).length === 1);
 }
 
@@ -2576,6 +2605,243 @@ check('…and every failure of the new lane beacons its reason, so "it did nothi
        'hb-fail', 'ext-check-fail'].every(st => code.indexOf("bx('" + st + "'") > 0));
 check('the landing beacon says which lane the page came up in',
       /lane=' \+ aiLane/.test(grab('boot')));
+
+/* ══ 6. THE ONE-EDITOR APPLY — WHERE A QUICK-LANE PLAN ACTUALLY GOES ═══════════
+   (loffice-2026-08-28a, Debi's one-editor ruling, roadmap §8)
+
+   The parse, the caps, the preview and every refusal in PART 4 above did not move a
+   line and are still the tests that guard them. What changed is the BACKEND of one
+   click: when the embedded ONLYOFFICE editor owns the document, Apply runs the SAME
+   validated ops through the editor's own builder API instead of through our tier-1
+   model — which is what makes the EDITOR'S ⌘Z undo an AI apply, and what let this
+   page's own undo stack retire with the grid.
+
+   Two PURE functions carry that whole decision, which is why it is testable at all:
+     · ooOpPlan(ops)     — how each op will be carried out, and the route for the plan.
+     · ooEditorOps(ops)  — the 'api' ops translated into the A1-addressed verbs the
+                           editor speaks.
+   They are executed here against real op lists, because the alternative — grepping the
+   page for the word "sort" — would pass against a function that routed it wrongly. */
+eval(grab('ooOpPlan'));
+eval(grab('ooEditorOps'));
+const OO_STYLE_KEYS = JSON.parse('[' + (code.match(/const OO_STYLE_KEYS = \[([\s\S]*?)\];/)[1]
+  .replace(/'/g, '"').replace(/\s+/g, ' ')) + ']');
+
+// ── the routing decision ──
+{
+  const P = ooOpPlan([{ op: 'set', r: 0, c: 0, values: [['a']] }]);
+  eq('a `set` runs in the editor', [P.route, P.api, P.rows[0].how], ['api', 1, 'api']);
+}
+{
+  const P = ooOpPlan([{ op: 'style', r0: 0, c0: 0, r1: 0, c1: 0,
+                        set: { bl: 1, bg: { rgb: '#ffffff' }, n: { pattern: '0.00' } } }]);
+  eq('a `style` whose every key has an ApiRange setter runs in the editor too',
+     [P.route, P.rows[0].how], ['api', 'api']);
+}
+{
+  // ⚠️ THE FENCE THAT MATTERS: a style key the editor cannot set must not be silently
+  // DROPPED (a formatting change that looks applied and is not), so the whole plan
+  // takes the file route instead.
+  const P = ooOpPlan([{ op: 'style', r0: 0, c0: 0, r1: 0, c1: 0,
+                        set: { bl: 1, zz: 9 } }]);
+  eq('a `style` carrying a key with NO editor setter sends the plan through the file',
+     [P.route, P.rows[0].how], ['bridge', 'bridge']);
+  check('…and says which key it was, so the card can print a reason rather than a shrug',
+        /zz/.test(P.rows[0].why));
+}
+{
+  // Checked against the vendored bundle, not assumed: sdkjs/cell has no ApiRange.Sort
+  // and no ApiWorksheet.Sort. So `sort` is the one op with no honest API equivalent.
+  const P = ooOpPlan([{ op: 'sort', col: 0, desc: false }]);
+  eq('a `sort` has no builder-API equivalent, so it goes through the file',
+     [P.route, P.bridge, P.rows[0].how], ['bridge', 1, 'bridge']);
+  check('…and the reason names the editor rather than blaming the user',
+        /no sort in its API/.test(P.rows[0].why));
+}
+{
+  // A resize sizes TIER 1's render window. The real editor already has every row and
+  // column, so there is nothing to do — and "nothing to do" is reported as a SKIP with
+  // its reason, not counted as a change that happened.
+  const P = ooOpPlan([{ op: 'resize', rows: 500, cols: 40 }]);
+  eq('a `resize` is a SKIP, and it does NOT drag the plan onto the file route',
+     [P.route, P.skip, P.bridge, P.rows[0].how], ['api', 1, 0, 'skip']);
+  check('…with the honest reason', /every row and column/.test(P.rows[0].why));
+}
+{
+  const P = ooOpPlan([{ op: 'sheet', add: 'Q1' },
+                      { op: 'insert', axis: 'row', at: 2, n: 3 },
+                      { op: 'delete_rc', axis: 'col', at: 1, n: 2 }]);
+  eq('sheet / insert / delete_rc all run in the editor',
+     [P.route, P.api, P.rows.map(r => r.how)],
+     ['api', 3, ['api', 'api', 'api']]);
+}
+{
+  // ⚠️ ALL-OR-NOTHING. A plan half-applied through the API and half through a file
+  // round-trip is exactly the silent partial apply this block exists to prevent, so
+  // ONE bridge op takes the WHOLE plan with it.
+  const P = ooOpPlan([{ op: 'set', r: 0, c: 0, values: [['a']] },
+                      { op: 'sort', col: 0, desc: true },
+                      { op: 'set', r: 1, c: 0, values: [['b']] }]);
+  eq('one op the editor cannot do sends the WHOLE plan through the file',
+     [P.route, P.api, P.bridge], ['bridge', 2, 1]);
+}
+eq('an unknown op is routed to the file rather than assumed harmless',
+   ooOpPlan([{ op: 'nonsense' }]).route, 'bridge');
+[undefined, null, 0, '', 'x', {}, [[]], [null], [undefined], [{ op: null }]].forEach((v, i) => {
+  let threw = null, r = null;
+  try { r = ooOpPlan(v); } catch (e) { threw = e; }
+  check('ooOpPlan is TOTAL over junk (case ' + i + ')',
+        !threw && r && (r.route === 'api' || r.route === 'bridge'), threw);
+});
+check('…and it is PURE: no DOM, no page state, nothing but its argument',
+      !/document\.|\bel\(|\bsnap\b|dirty|\bbx\(/.test(grab('ooOpPlan')));
+
+// ── the translation to the editor's own addresses ──
+eq('a `set` becomes an A1 anchor and the same grid of values',
+   ooEditorOps([{ op: 'set', r: 0, c: 5, values: [['x', 1], [null, true]] }]),
+   [{ k: 'set', at: 'F1', values: [['x', 1], [null, true]] }]);
+eq('a `style` becomes an A1 RANGE and the style dict untouched',
+   ooEditorOps([{ op: 'style', r0: 1, c0: 1, r1: 3, c1: 2, set: { bl: 1 } }]),
+   [{ k: 'style', at: 'B2:C4', set: { bl: 1 } }]);
+eq('a one-cell style range is still a range, so the editor gets one shape not two',
+   ooEditorOps([{ op: 'style', r0: 0, c0: 0, r1: 0, c1: 0, set: { it: 1 } }])[0].at,
+   'A1:A1');
+eq('adding a sheet', ooEditorOps([{ op: 'sheet', add: 'Q1' }]),
+   [{ k: 'addSheet', name: 'Q1' }]);
+eq('renaming one carries the target NAME, which is the only handle a model has',
+   ooEditorOps([{ op: 'sheet', rename: 'New', at: 'Old' }]),
+   [{ k: 'renameSheet', name: 'New', at: 'Old' }]);
+eq('…and an unnamed rename means "this sheet"',
+   ooEditorOps([{ op: 'sheet', rename: 'New' }])[0].at, '');
+// Rows are 1-based ranges and columns are letter ranges, because that is what
+// ApiWorksheet.GetRows()/GetCols() take. An off-by-one here inserts in the wrong place
+// and is invisible until somebody's data has moved, so the arithmetic is executed.
+eq('inserting 3 rows at row index 2 is the 1-based range 3:5',
+   ooEditorOps([{ op: 'insert', axis: 'row', at: 2, n: 3 }]),
+   [{ k: 'insertRows', n: 3, at: '3:5' }]);
+eq('inserting 1 row at row index 0 is 1:1',
+   ooEditorOps([{ op: 'insert', axis: 'row', at: 0, n: 1 }])[0].at, '1:1');
+eq('deleting 2 columns at column index 1 is B:C',
+   ooEditorOps([{ op: 'delete_rc', axis: 'col', at: 1, n: 2 }]),
+   [{ k: 'deleteCols', n: 2, at: 'B:C' }]);
+eq('…and the 26 boundary is the same colName the grid draws with',
+   ooEditorOps([{ op: 'insert', axis: 'col', at: 26, n: 1 }])[0].at, 'AA:AA');
+eq('a `resize` produces NOTHING — it was already reported as a skip',
+   ooEditorOps([{ op: 'resize', rows: 9, cols: 9 }]), []);
+check('ooEditorOps is PURE too',
+      !/document\.|\bel\(|\bsnap\b|dirty|\bbx\(/.test(grab('ooEditorOps')));
+// The two must agree about which ops the editor path runs: an op ooOpPlan calls 'api'
+// and ooEditorOps drops would be a change the card promised and nobody made.
+{
+  const ops = [{ op: 'set', r: 0, c: 0, values: [['a']] },
+               { op: 'style', r0: 0, c0: 0, r1: 0, c1: 0, set: { bl: 1 } },
+               { op: 'sheet', add: 'S' },
+               { op: 'insert', axis: 'row', at: 0, n: 1 },
+               { op: 'delete_rc', axis: 'row', at: 5, n: 1 }];
+  eq('every op ooOpPlan routes to the editor is one ooEditorOps can express — the card '
+     + 'must not promise a change nobody makes',
+     ooEditorOps(ops).length, ooOpPlan(ops).api);
+}
+
+// ── the style keys, against the page's own mapper ──
+// ⚠️ THIS IS THE ONE THAT WOULD CATCH A REAL SILENT BUG: actStyleSet decides which keys
+// a plan may carry, ooOpPlan decides which keys the editor can set. If actStyleSet ever
+// grows a key that OO_STYLE_KEYS does not have, every style op quietly starts taking the
+// heavier file route — and if OO_STYLE_KEYS has one the editor cannot set, formatting
+// silently does not happen. So the two lists are compared.
+{
+  const emitted = Object.keys(actStyleSet({
+    bl: 1, it: 1, ul: 1, st: 1, ff: 'Arial', fs: 12, cl: '#112233', bg: '#445566',
+    ht: 'center', vt: 'middle', tb: 3, n: { pattern: '0.00' },
+  }) || {}).sort();
+  eq('actStyleSet emits exactly the keys the editor path knows how to set',
+     emitted, OO_STYLE_KEYS.slice().sort());
+}
+const OOH = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'oo.html'), 'utf8');
+const OOSTYLE = grabFrom(OOH, 'ooStyle', 'oo.html');
+OO_STYLE_KEYS.forEach(k => {
+  check("the editor page really handles the style key '" + k + "'",
+        new RegExp('set\\.' + k + '\\b').test(OOSTYLE));
+});
+
+// ── and the apply itself: no page-side undo, and it says so ──
+{
+  const oa = stripComments(grab('ooActApply'));
+  check('the editor apply takes NO page-side undo entry — histPush clones the tier-1 '
+        + 'snapshot, which is not the document you are looking at, so an Undo built on '
+        + 'it would restore a workbook the editor never had',
+        !/histPush/.test(oa) && /card\._undo = false;/.test(oa)
+        && /actLast = null;/.test(oa));
+  check('…and the card is told WHICH route ran, because the two have different truths '
+        + 'about whether the file is already saved',
+        /card\._viaEditor/.test(oa) && /card\._viaBridge/.test(oa));
+  check('…and a failure names the op and points at the editor\'s own ⌘Z rather than '
+        + 'claiming a rollback this page cannot perform',
+        /r\.error/.test(oa) && /steps back through them/.test(grab('ooActApply')));
+  check('…and it writes no cell of its own: the two routes are the editor\'s API and '
+        + 'the page\'s ONE existing writer',
+        !/\bputCell\s*\(/.test(oa));
+  const ap = stripComments(grab('actApply'));
+  check('actApply hands over to it on the FIRST decision, before it takes an undo '
+        + 'clone or touches the snapshot',
+        ap.indexOf('ooActApply') > 0
+        && ap.indexOf('ooActApply') < ap.indexOf('histPush'));
+  check('…and the interstitial is refused rather than raced: an Apply landing while the '
+        + 'editor is still opening would write into a snapshot it is about to replace',
+        /ooInstalled && ooBooting/.test(ap));
+}
+{
+  // The file route is the one that must not lie: it saves immediately, the editor's ⌘Z
+  // does not cover it, and it round-trips through our own .xlsx mapper.
+  const ob = grab('ooApplyBridge');
+  check('the file route saves the EDITOR first — the file is about to be rewritten '
+        + 'underneath it, and unsaved editor edits would simply vanish',
+        ob.indexOf('ooSave(false)') < ob.indexOf('/api/office/open/'));
+  check('…refuses the whole thing if that save failed, changing nothing',
+        /nothing was changed/.test(ob));
+  check('…runs the ops through actRunOps, the SAME writer the menu gestures use, so '
+        + 'there is no second idea of what a sort means',
+        /actRunOps\(sid, plan\.ops\)/.test(ob));
+  check('…and reloads the DOCUMENT afterwards, not the page',
+        /ooReload\('ai-apply'\)/.test(ob) && !/location\.(href|reload)/.test(ob));
+  check('…and the note it adds names all three ways this route differs: it saves '
+        + 'straight away, the editor\'s ⌘Z does not undo it, and the round-trip drops '
+        + 'charts and images',
+        /saved straight away/.test(ob) && /⌘Z does not/.test(ob)
+        && /charts or images/.test(ob));
+}
+
+// ── the writer fence, extended to the one-editor functions ──
+/* ⚠️ THE FENCE DID NOT GROW, AND THAT IS THE CLAIM. The restructure added a dozen
+   functions and NOT ONE of them writes a cell: the editor path writes through the
+   editor's own API (inside the iframe, in the editor's undo stack), and the file path
+   goes through actRunOps — which was already in the list of seven. So the complete
+   writer set asserted in PART 4 is unchanged, and these are the per-function
+   assertions that make that a fact rather than a hope. */
+{
+  const S3 = ['editorActive', 'ooPaintClass', 'ooEvent', 'ooProbe', 'ooStart', 'ooSave',
+              'ooReload', 'ooRefreshSnapshot', 'ooOpPlan', 'ooEditorOps', 'ooApplyApi',
+              'ooApplyBridge', 'ooActApply', 'ooExtReload', 'upgrade'];
+  check('every function the one-editor slice added is actually IN the page — a vacuous '
+        + 'fence is no fence', S3.every(n => fnNames.indexOf(n) >= 0),
+        S3.filter(n => fnNames.indexOf(n) < 0));
+  check('and NOT ONE of them writes a cell', S3.every(n => !/\bputCell\s*\(/.test(grab(n))),
+        S3.filter(n => /\bputCell\s*\(/.test(grab(n))));
+  eq('…and the ONLY ones that touch the dirty flag are the three that carry the '
+     + 'editor\'s own answer about it',
+     S3.filter(n => /\bdirty = (true|false)\b/.test(stripComments(grab(n)))).sort(),
+     ['ooActApply', 'ooEvent']);
+  check('the two PURE routing functions touch no page state at all, which is why the '
+        + 'route can be printed on the card before anything is applied',
+        ['ooOpPlan', 'ooEditorOps'].every(n => {
+          const b = stripComments(grab(n));
+          return !/document\.|\bel\(|\bsnap\b|dirty|\bbx\(|ooChild/.test(b);
+        }));
+  check('and the predicate is the only thing the hide/show fork reads — no second '
+        + 'version of "is the editor up" anywhere in the page',
+        (code.match(/classList\.toggle\('ooedit'/g) || []).length === 1
+        && (code.match(/function editorActive\(\)/g) || []).length === 1);
+}
 
 // ── report ──
 console.log('');

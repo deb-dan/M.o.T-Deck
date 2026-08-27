@@ -500,9 +500,19 @@ check("rename goes through rename_doc — which puts BOTH names through doc_targ
       "it can no more reach outside data/office than a delete can",
       "_office.rename_doc, ROOT" in APP
       and "asyncio.to_thread(\n        _office.rename_doc" in APP)
+# ⚠️ THE HEADER DICT GAINED A WRAPPER AT loffice-2026-08-28a AND THE ASSERTION FOLLOWED
+# IT RATHER THAN BEING DROPPED. /office is the document that EMBEDS the ONLYOFFICE
+# editor now, so it is served through `_oo_headers(...)` — the same one source of truth
+# as /oo-edit and /oo/* — and no-store is passed through it. Both halves are asserted:
+# the stale-panel lesson (no-store) and the isolation the embed cannot work without.
 check("the page is served no-store (the stale-panel lesson)",
-      re.search(r'PANEL / "office\.html",\s*headers=\{"Cache-Control": "no-store',
-                APP, re.S) is not None)
+      re.search(r'PANEL / "office\.html",\s*headers=_oo_headers\(\{"Cache-Control": '
+                r'"no-store', APP, re.S) is not None)
+check("…and with the three cross-origin-isolation headers, from the ONE place that "
+      "owns them, because it is the document that embeds the editor",
+      "def _oo_headers(" in APP
+      and re.search(r'PANEL / "office\.html",\s*headers=_oo_headers\(', APP, re.S)
+      is not None)
 check("the blocking round-trip runs off the event loop",
       "asyncio.to_thread(_office.open_doc" in APP
       and "asyncio.to_thread(_office.save_doc" in APP)
@@ -634,21 +644,27 @@ check("#newrow is toggled by class too", "newrow').classList" in PAGE)
 # ORDERING instead of a stylesheet fact: `upgrade()` un-hides the container and yields a
 # frame BEFORE it mounts. (The full ordering assertion, over the extracted function
 # body, lives in bridge/tests/test_office_grid.js.)
-# ⚠️ AND IT CHANGED SHAPE AGAIN AT loffice-2026-08-27c, which retires the mount this
-# used to pin. TIER 2 IS ONLYOFFICE NOW and it lives in its OWN page (/oo-edit), so
-# `upgrade()` no longer mounts anything into #sheet — there is no container to measure
-# and no 0x0-canvas trap left to guard. What is pinned instead is the property that
-# replaced it: the navigation only happens after the bridge has confirmed the editor is
-# installed, so the button cannot be a dead click. (The full ordering assertions over
-# the extracted body live in bridge/tests/test_office_grid.js, and the ONLYOFFICE lane
-# itself in bridge/tests/test_oo_lane.py.)
+# ⚠️ AND IT CHANGED SHAPE TWICE MORE. At loffice-2026-08-27c the mount this used to pin
+# was retired: ONLYOFFICE became tier 2 and lived in its OWN page (/oo-edit), so there
+# was no container to measure and no 0x0-canvas trap left to guard. Then Debi's
+# 2026-08-27 ONE-EDITOR ruling (roadmap §8) deleted the navigation too: the editor is
+# EMBEDDED in this page's centre column, in a same-origin iframe, and `upgrade()` is only
+# a way to start it when it is not already up.
+#
+# THE INVARIANT THAT SURVIVED ALL THREE SHAPES, AND IT IS THE ONLY ONE THIS FILE OWNS:
+# the editor is never a dead click — nothing happens until the bridge has said whether
+# the bundle is installed, and a "no" is a sentence with the installer in it. The full
+# ordering assertions over the extracted body live in bridge/tests/test_office_grid.js,
+# and the whole one-editor wiring in bridge/tests/test_oo_lane.py.
 up = PAGE.split("async function upgrade()")[1].split("\n// ⚠️ RETIRED")[0] \
     if "async function upgrade()" in PAGE else ""
-check("upgrade() hands the workbook to the ONLYOFFICE page rather than mounting a "
-      "second engine into this one",
-      bool(up) and "/oo-edit?doc=" in up and "mount(snap)" not in up)
-check("…and it asks the bridge whether that editor exists before navigating",
-      bool(up) and up.index("'/api/oo/status'") < up.index("location.href"))
+check("upgrade() no longer mounts a second engine into this page, and no longer "
+      "navigates away from it either — the editor is embedded here",
+      bool(up) and "mount(snap)" not in up and "location.href" not in up)
+check("…and it asks the bridge whether that editor exists before it starts anything",
+      bool(up) and up.index("ooProbe()") < up.index("ooStart("))
+check("…and the iframe that carries it is real markup in this page",
+      'id="ooframe"' in PAGE and 'id="oostage"' in PAGE)
 check("…and there is still no inline display on it (the class/inline trap)",
       'id="sheet" style' not in PAGE)
 check("the empty state is an OVERLAY over the container, not a replacement for it",
@@ -894,8 +910,16 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
     check(f"{label}: every element the script reaches for exists in the markup "
           f"(missing: {sorted(want - have)})", not (want - have))
 
+# ⚠️ THE CENSUS BECAME A SHAPE CHECK AT loffice-2026-08-28a. `count == 2` only held
+# while no COMMENT in the page named the build it was written for, and the one-editor
+# slice writes its stamp into the comments that explain the fork (deliberately — a
+# reader of that CSS block can date it). What the check is FOR is that the two
+# LOAD-BEARING copies cannot drift: the <meta> the script reads, and the no-script
+# fallback banner a person reads.
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE and PAGE.count(OFFICE_STAMP) == 2)
+      'meta[name="harness-build"]' in PAGE
+      and f'<meta name="harness-build" content="{OFFICE_STAMP}">' in PAGE
+      and f"Build <code>{OFFICE_STAMP}</code>" in PAGE)
 # ⚠️ CHANGED HONESTLY AT 2026-08-21e. There is nothing deferred to wait FOR any more,
 # so the boot no longer hangs on an event: the script sits at the end of the body, and
 # waiting for a DOMContentLoaded that has ALREADY FIRED would never boot at all — the
@@ -1134,7 +1158,7 @@ check("…and it can never throw: a diagnostic may not be the thing that breaks 
 check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
       "second copy could drift, and the stamp exists to be trusted",
       'meta[name="harness-build"]' in BEACON
-      and PAGE.count(OFFICE_STAMP) == 2)
+      and OFFICE_STAMP not in BEACON)
 for _o, name, _c in SCRIPT_TAGS:
     tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]
     check(f"the {name} tag reports BOTH outcomes — the last asset-ok in the trace "

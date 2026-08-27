@@ -3,17 +3,66 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="harness-build" content="oo-2026-08-27a">
-<title>LOffice — rich editor</title>
+<meta name="harness-build" content="oo-2026-08-28a">
+<title>LOffice — editor</title>
 <!--
   ═══════════════════════════════════════════════════════════════════════════════
-  LOffice TIER 2 — OUR OWN first-party integration of the vendored ONLYOFFICE
-  editors. Served by bridge/app.py at /oo-edit?doc=<name>, with the three
+  LOffice — OUR OWN first-party integration of the vendored ONLYOFFICE editors.
+  Served by bridge/app.py at /oo-edit?doc=<name>[&embed=1], with the three
   cross-origin-isolation headers bridge/oo.py stamps on this page AND on every
   /oo/* response. Nothing here is third-party code: this file drives the bundle
   through its published surface and never patches a vendored byte (AGPL ruling #2).
 
-  ── HOW THIS WORKS, AND WHY IT IS SHAPED LIKE THIS ──────────────────────────────
+  ── WHAT CHANGED AT oo-2026-08-28a: THIS IS AN EMBEDDABLE EDITOR NOW ────────────
+  Debi ruled LOffice a ONE-EDITOR app (roadmap §8): this stopped being a separate
+  full page you navigate to and became the editing surface at the CENTRE of the
+  LOffice layout, inside a same-origin iframe, with LOffice's own dark strip, file
+  rail and AI panel around it.
+
+  So the page has TWO shapes, decided by one query parameter:
+    · `embed=1` — the LOffice centre column. Our own header and footer are hidden by
+      CSS (`body.embed`): the strip above and the rail beside it belong to the parent,
+      and two Save buttons stacked on top of each other is exactly the duplicated
+      chrome the ruling removes.
+    · no `embed` — the standalone page, header and footer and all. Kept deliberately:
+      it is the rollback if the embed ever misbehaves, and it is the way to open the
+      editor on a workbook without the rest of LOffice.
+
+  ── THE PARENT ↔ CHILD CONTRACT, AND IT IS THE ONLY ONE ─────────────────────────
+  Parent and child are SAME-ORIGIN (both on the bridge), so this is direct property
+  access, ONE object in each direction, and NO postMessage. Said plainly because
+  "pick one and document it" was the instruction and postMessage is the obvious other
+  candidate: it would buy nothing here (no origin boundary to cross), it would make
+  every call asynchronous and correlation-id-shaped, and it would have to serialise a
+  2000-cell op plan through structured clone for no reason. The one thing it WOULD buy
+  — surviving a cross-origin move — is a move the COEP requirement forbids anyway.
+
+    PARENT → CHILD.  The child, once its editor holds a document, publishes
+      window.LOfficeEmbed = {
+        contract : 1,                        // bumped if any signature below changes
+        open(name)      -> Promise<{ok, error, ms, swap}>   swap the document in place
+        save(force)     -> Promise<{ok, error, status, bytes, backup, mtime}>
+        reload()        -> Promise<{ok, error}>             re-read the CURRENT doc
+        applyOps(list, sheet) -> {ok, error, done}          the builder-API writes
+        probe()         -> {ready, doc, dirty, saving, editorTag}
+        destroy()       -> void
+      }
+    CHILD → PARENT.  The parent, BEFORE it creates the iframe, publishes
+      window.LOfficeHost = {
+        contract : 1,
+        register(embed) -> void              the child hands its API object up
+        event(ev)       -> void              {kind, ...}
+      }
+    EVENT KINDS, and the parent may ignore any of them:
+      boot   {step, pct}      progress while the editor comes up
+      ready  {doc, mtime, ms} the editor holds that document and is interactive
+      state  {dirty}          onDocumentStateChange — THE dirty flag for the strip
+      saved  {bytes, backup, mtime}
+      error  {text, fatal}    fatal = the editor is not usable; fall back to tier 1
+    The parent is ready before the child exists (it creates the iframe), so the child
+    never has to wait for it; a child that finds no host runs standalone.
+
+  ── HOW THE INTEGRATION WORKS, AND WHY IT IS SHAPED LIKE THIS ───────────────────
 
   The vendored bundle is CryptPad's build of ONLYOFFICE. It is a DocumentServer
   client: left alone it loads socket.io and waits forever for a server to answer.
@@ -23,12 +72,6 @@
   present, ZERO console errors, and it sat at "Loading spreadsheet" for 90 seconds
   without ever fetching the workbook. Only 26 requests, one of them socket.io.
 
-  (The probe's earlier PASS was measured against fernfei/OnlyofficePersonal, whose
-  web-apps build is PATCHED — a requirejs alias injecting an `x2t_helper` that does
-  client-side conversion inside the editor. That patch is exactly the unverified
-  modification AGPL ruling #4 forbids us to ship, so its simpler wiring is not
-  available to us. This page pays for that with about 120 lines of glue.)
-
   So the integration has three parts, all of them documented in the bundle's own
   sources (`web-apps/apps/api/documents/api-orig.js` is shipped unminified):
 
@@ -37,6 +80,9 @@
        module (no pthreads, no SharedArrayBuffer) exporting exactly `ccall` and `FS`
        plus one entry point, `main1(paramsXmlPath)`. Measured in WKWebView: an .xlsx
        became an Editor.bin in 20ms and came back out again with rc=0 both ways.
+       ⚠️ IT IS LOADED ONCE PER PAGE, NOT ONCE PER DOCUMENT. That is what makes the
+       document SWAP cheap: `loadX2T()` is idempotent and the 57 MB wasm compile is
+       paid on the first open only.
 
     2. `connectMockServer` — CryptPad's own addition to `api.js`, which is part of
        the bundle we vendor. It answers the editor's collaboration handshake in-page:
@@ -62,11 +108,24 @@
            instance is a property access, not a hack.
        We then run that string back through x2t and POST the .xlsx to the bridge.
 
+    4. THE BUILDER API, added at oo-2026-08-28a for the AI panel's Apply button.
+       The SAME inner instance also carries sdkjs's document-builder surface —
+       `GetActiveSheet()`, `GetRange(a1)`, `SetValue`, `SetBold`, `SetNumberFormat`,
+       `AddSheet`, `GetRows(r).Insert(shift)` and so on (all verified present in the
+       vendored `sdkjs/cell/sdk-all.js`, and `GetActiveSheet().GetRange().SetValue()`
+       was the v1.5.4 proof). Running the AI's validated ops through it rather than
+       through our tier-1 model means THE EDITOR'S OWN UNDO covers an AI apply: ⌘Z
+       inside the editor takes it back, which is the whole point of one editor.
+
   ── WHAT THIS PAGE DELIBERATELY DOES NOT DO ────────────────────────────────────
-  · No autosave. Save is explicit (the Save button or ⌘S) because it OVERWRITES the
-    workbook, and the bridge takes a daily .bak and refuses a save whose file
-    changed underneath it.
+  · No autosave. Save is explicit (the Save button, ⌘S, or the parent's strip) because
+    it OVERWRITES the workbook, and the bridge takes a daily .bak and refuses a save
+    whose file changed underneath it.
   · No co-editing, no comments, no chat, no plugins, no history.
+  · No PRINT. `document.permissions.print: false` — the serverless bundle's Print
+    expects a DocumentServer and throws. It is turned off through the PUBLISHED config
+    (api-orig.js line 49 documents the key), never by patching a vendored byte, and
+    LOffice's Help → About names the limitation.
   · No third-party origin, ever: a COEP page refuses cross-origin subresources, and
     every byte here comes from this bridge.
   ═══════════════════════════════════════════════════════════════════════════════
@@ -133,12 +192,31 @@
          display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
   footer a{color:var(--dim)}
   footer .agpl{color:var(--dim)}
+  /* ══ EMBEDDED: our own chrome gets out of the way ═══════════════════════════
+     ONE class, set once from the query parameter, and every surface the PARENT
+     already provides is hidden by CSS rather than by a script that could half-run.
+     The parent's dark strip carries the name, the save state and the Save button;
+     the parent's Help → About carries the AGPL attribution from the same
+     bridge-side ATTRIBUTION this footer renders. Nothing is duplicated, and the
+     interstitial (#boot) stays: it is what the CENTRE column looks like while the
+     editor comes up, and the parent draws its own read-only grid behind it. */
+  body.embed>header,body.embed>footer{display:none}
+  /* the whole point of the embed: no gap, no border, no second frame */
+  body.embed{background:#fff}
+  body.embed #stage{background:#fff}
+  body.embed #boot{background:transparent}
+  /* A COLD boot in the embed is the ONLY time this overlay is worth seeing: the
+     parent's own grid is behind it, so the overlay is deliberately thin — a status
+     line and a bar, not a wall of text (`#boot p` is the parent's job to say). */
+  body.embed #boot p,body.embed #boot .steps{color:#5b5b5b}
+  body.embed #boot h1{color:#181818;font-size:14px;font-weight:600}
+  body.embed #boot{gap:10px;justify-content:flex-start;padding-top:34px}
 </style>
 </head>
 <body>
 <header>
   <button id="btn-back" title="Back to the LOffice grid">‹ LOffice</button>
-  <span class="tag">rich editor</span>
+  <span class="tag">editor</span>
   <span class="name" id="docname">—</span>
   <span class="sp"></span>
   <span id="state"></span>
@@ -149,14 +227,16 @@
      does not implement the JS-panel delegates shows neither, and confirm() returns
      FALSE without a pixel on screen — recorded in bridge/tests/test_office_ai.js as
      the rule this lane learned the hard way. So every question and every failure is
-     THIS strip: a sentence plus, at most, one button that does the thing. -->
+     THIS strip: a sentence plus, at most, one button that does the thing.
+     EMBEDDED, the strip is still used — it is the one place a 409 can be answered
+     without leaving the editor — and it renders INSIDE the centre column. -->
 <div id="note"><span id="note-text"></span><span id="note-acts"></span>
   <button id="note-x" title="Dismiss">✕</button></div>
 
 <div id="stage">
   <div id="editor"></div>
   <div id="boot">
-    <h1 id="boot-title">Opening the rich editor…</h1>
+    <h1 id="boot-title">Opening the editor…</h1>
     <div id="bar"><i></i></div>
     <p id="boot-msg">The first open compiles a 57 MB WebAssembly converter and a
       large editor bundle. Later opens are cached.</p>
@@ -167,8 +247,11 @@
 
 <footer>
   <!-- ⚖️ AGPL-3.0 attribution, condition #3 of the 2026-08-27 ruling. Rendered from
-       bridge/oo.py's ATTRIBUTION so this and the LOffice About sheet cannot drift. -->
-  <span class="agpl" id="attrib">Rich editing by ONLYOFFICE · AGPL-3.0</span>
+       bridge/oo.py's ATTRIBUTION so this and the LOffice About sheet cannot drift.
+       HIDDEN in the embed — and that is not a licence corner cut: the LOffice page
+       around it renders the SAME ATTRIBUTION in Help → About, from the same route,
+       and test_oo_lane.py pins both. -->
+  <span class="agpl" id="attrib">Editing by ONLYOFFICE · AGPL-3.0</span>
   <span id="attrib-src"></span>
 </footer>
 
@@ -189,20 +272,50 @@ const DOC_TYPES = {xlsx: 'cell', xlsm: 'cell', csv: 'cell',
 
 const el = (id) => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
-const DOC = (qs.get('doc') || '').trim();
+const DOC0 = (qs.get('doc') || '').trim();
+const EMBED = qs.get('embed') === '1';
+
+// ── THE HOST, i.e. the other half of the contract at the top of this file ─────
+// Resolved ONCE, in a try/catch, and never assumed: a standalone page has no parent
+// and an embed whose parent somehow has no LOfficeHost must still work as a page.
+const HOST = (function () {
+  try {
+    if (window.parent && window.parent !== window && window.parent.LOfficeHost) {
+      return window.parent.LOfficeHost;
+    }
+  } catch (e) { /* cross-origin parent: impossible here, but never throw for it */ }
+  return null;
+})();
+
+// Every report to the parent goes through here, so a host that throws (or a parent
+// that navigated away mid-flight) can never take the editor down with it.
+function tell(kind, data) {
+  if (!HOST || typeof HOST.event !== 'function') return;
+  const ev = {kind: kind};
+  if (data) for (const k in data) ev[k] = data[k];
+  try { HOST.event(ev); } catch (e) { console.log('[oo host] ' + e); }
+}
 
 let steps = [];
+let DOC = DOC0;              // the workbook the editor currently holds
 let openedMtime = null;      // the mtime the editor opened — the write-back fence
 let editor = null;           // the DocsAPI.DocEditor (the CryptPad wrapper instance)
 let x2t = null;              // window.Module, once the wasm runtime is up
+let apiLoaded = false;       // api.js has executed (once per page, like x2t)
 let saving = false;
 let ready = false;
+let dirtyNow = false;
+let editorTag = '';
+let openSeq = 0;             // guards a swap that a later swap superseded
+
+if (EMBED) document.body.classList.add('embed');
 
 function step(msg, pct) {
   steps.push(msg);
   if (steps.length > 9) steps = steps.slice(-9);
   el('boot-steps').textContent = steps.join('\n');
   if (typeof pct === 'number') el('bar').firstElementChild.style.width = pct + '%';
+  tell('boot', {step: msg, pct: (typeof pct === 'number' ? pct : null)});
 }
 function state(msg) { el('state').textContent = msg || ''; }
 
@@ -224,13 +337,20 @@ function note(text, kind, acts) {
   box.className = 'on' + (kind ? ' ' + kind : '');
 }
 function noteClear() { el('note').className = ''; el('note-acts').innerHTML = ''; }
+
+// A FATAL failure. The overlay stays up saying why — and the parent is told, so the
+// LOffice page can put its own working grid back rather than leaving a dead frame in
+// the middle of the layout.
 function fail(title, msg, showBack) {
   el('boot').classList.remove('gone');
   el('boot').classList.add('bad');
   el('boot-title').textContent = title;
   el('boot-msg').innerHTML = msg;
   el('bar').style.display = 'none';
-  if (showBack !== false) el('boot-back').style.display = '';
+  if (showBack !== false && !EMBED) el('boot-back').style.display = '';
+  ready = false;
+  tell('error', {text: title + ' — ' + String(msg).replace(/<[^>]*>/g, ''),
+                 fatal: true});
 }
 function goBack() { location.href = '/office'; }
 el('btn-back').addEventListener('click', goBack);
@@ -243,7 +363,12 @@ el('note-x').addEventListener('click', noteClear);
 // `src` ATTRIBUTE via `new URL(...)`. A relative src therefore throws
 // "cannot be parsed as a URL" before anything loads (measured, twice). The src MUST
 // be absolute, and we must NOT set locateFile ourselves: pre-js overwrites it.
+//
+// ⚠️ IDEMPOTENT, AND THAT IS WHAT MAKES THE DOCUMENT SWAP FAST. The 57 MB compile is
+// the expensive half of a cold open; a swap must not pay it again, so a second call
+// returns the module that is already up.
 function loadX2T() {
+  if (x2t) return Promise.resolve(x2t);
   return new Promise((resolve, reject) => {
     window.Module = {
       noInitialRun: true,
@@ -315,6 +440,7 @@ function mockServer() {
     onMessage: (m) => {
       const t = m && m.type;
       if (t === 'auth') return;                      // api.js already answered it
+      if (!editor) return;                           // a swap tore the instance down
       if (t === 'isSaveLock') {
         editor.sendMessageToOO({type: 'saveLock', saveLock: false});
       } else if (t === 'getLock') {
@@ -345,24 +471,29 @@ function innerEditor() {
 }
 
 // ── save ─────────────────────────────────────────────────────────────────────
+// Returns a RESULT rather than only painting one, because the parent's strip Save
+// needs to know what happened — and the two must never disagree about it.
 async function save(force) {
-  if (saving || !ready) return;
+  if (saving) return {ok: false, error: 'a save is already running'};
+  if (!ready) return {ok: false, error: 'the editor is not ready to save yet'};
   const api = innerEditor();
   if (!api || typeof api.asc_nativeGetFile !== 'function') {
     state('the editor is not ready to save yet');
-    return;
+    return {ok: false, error: 'the editor is not ready to save yet'};
   }
+  const name = DOC;
   saving = true;
   el('btn-save').disabled = true;
   state('saving…');
+  let out;
   try {
     // asc_nativeGetFile() is synchronous and returns the live document as the
     // `XLSY;v2;len;base64` text form of Editor.bin.
     const bin = api.asc_nativeGetFile();
     if (!bin || !bin.length) throw new Error('the editor returned an empty document');
-    const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
+    const ext = (name.split('.').pop() || 'xlsx').toLowerCase();
     const bytes = x2tConvert(bin, 'save.bin', ext);
-    const url = '/api/office/writeback/' + encodeURIComponent(DOC)
+    const url = '/api/office/writeback/' + encodeURIComponent(name)
       + (openedMtime !== null ? '?mtime=' + encodeURIComponent(openedMtime) : '')
       + (force ? (openedMtime !== null ? '&' : '?') + 'force=1' : '');
     const r = await fetch(url, {
@@ -383,26 +514,38 @@ async function save(force) {
            [{label: 'Overwrite it', primary: true, run: () => save(true)},
             {label: 'Leave it alone', run: () => state('not saved — the file on disk '
                                                       + 'is newer')}]);
-      return;
+      out = {ok: false, status: 409, error: j.error || 'the file changed on disk'};
+      tell('error', {text: out.error, fatal: false});
+      return out;
     }
     if (!r.ok || !j.ok) throw new Error(j.error || ('the bridge said ' + r.status));
     openedMtime = j.mtime;
+    dirtyNow = false;
     noteClear();
     state('saved · ' + Math.round(j.bytes / 1024) + ' KB'
           + (j.backup ? ' · safety copy ' + j.backup : ''));
+    out = {ok: true, bytes: j.bytes, backup: j.backup || '', mtime: j.mtime,
+           name: j.name};
+    tell('saved', out);
+    tell('state', {dirty: false});
   } catch (e) {
     state('not saved');
-    note('Could not save: ' + (e && e.message ? e.message : e)
+    const why = (e && e.message) ? e.message : String(e);
+    note('Could not save: ' + why
          + ' — the workbook on disk was not changed.', 'bad',
          [{label: 'Try again', run: () => save(false)}]);
+    out = {ok: false, error: why};
+    tell('error', {text: 'could not save: ' + why, fatal: false});
   }
   saving = false;
   el('btn-save').disabled = false;
+  return out;
 }
 el('btn-save').addEventListener('click', () => save(false));
 // ⌘S. The editor's own Save lives inside the iframe and would be handled there, so
-// this only catches the shortcut while our chrome has focus. The Save BUTTON is the
-// documented path; this is a convenience, not the contract.
+// this only catches the shortcut while our chrome has focus. The Save BUTTON — ours
+// standalone, the PARENT'S strip embedded — is the documented path; this is a
+// convenience, not the contract.
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
@@ -410,7 +553,120 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ── boot ─────────────────────────────────────────────────────────────────────
+// ══ THE BUILDER API — the AI panel's Apply, run inside the editor ═════════════
+// The wire format is deliberately NOT the tier-1 op shape: the PARENT translates its
+// validated plan into A1-addressed verbs (bridge/panel/office.html::ooEditorOps,
+// which is pure and unit-tested there) and this executes them. Two reasons, and the
+// second is the one that matters: A1 is the address the editor's own API speaks, and
+// keeping the translation in the parent means the PREVIEW the user read and the ops
+// that run are produced by the same pure function.
+//
+// ⚠️ THE POINT OF DOING IT THIS WAY AT ALL: every write below lands in the EDITOR'S
+// OWN UNDO STACK, so ⌘Z inside the editor takes an AI apply back. That is what let
+// the page-side undo stack retire with the grid.
+const OO_UNDERLINE = 'single';
+function ooRange(ws, at) {
+  const rg = ws.GetRange(at);
+  if (!rg) throw new Error('the editor did not accept the range ' + at);
+  return rg;
+}
+// One style dict (tier-1 keys, which bridge/office.py also speaks) → builder calls.
+// Every key here is present on ApiRange in the vendored sdkjs/cell bundle; the
+// parent refuses to route a plan through this path if it holds a key that is not.
+function ooStyle(api, rg, set) {
+  if (!set) return;
+  if (set.bl) rg.SetBold(true);
+  if (set.it) rg.SetItalic(true);
+  if (set.ul) rg.SetUnderline(OO_UNDERLINE);
+  if (set.st) rg.SetStrikeout(true);
+  if (set.ff) rg.SetFontName(set.ff);
+  if (set.fs) rg.SetFontSize(set.fs);
+  if (set.cl && set.cl.rgb) rg.SetFontColor(ooColour(api, set.cl.rgb));
+  if (set.bg && set.bg.rgb) rg.SetFillColor(ooColour(api, set.bg.rgb));
+  if (set.ht) rg.SetAlignHorizontal(['', 'left', 'center', 'right'][set.ht]);
+  if (set.vt) rg.SetAlignVertical(['', 'top', 'center', 'bottom'][set.vt]);
+  if (set.tb === 3) rg.SetWrap(true);
+  if (set.n && set.n.pattern) rg.SetNumberFormat(set.n.pattern);
+}
+function ooColour(api, hex) {
+  const h = String(hex || '').replace('#', '');
+  const n = parseInt(h, 16);
+  return api.CreateColorFromRGB((n >> 16) & 255, (n >> 8) & 255, n & 255);
+}
+
+// SYNCHRONOUS and ALL-OR-NOTHING as far as the report goes: the first op that throws
+// stops the run and says which one it was. A partial apply is possible (the editor
+// has already taken the earlier ops) — and that is exactly why the answer names the
+// op number and tells the caller to use the editor's ⌘Z, rather than claiming a
+// rollback it cannot perform.
+function applyOps(list, sheetName) {
+  if (!ready) return {ok: false, error: 'the editor is not ready'};
+  const api = innerEditor();
+  if (!api || typeof api.GetActiveSheet !== 'function') {
+    return {ok: false, error: 'this editor build does not expose the builder API'};
+  }
+  if (!Array.isArray(list) || !list.length) {
+    return {ok: false, error: 'there were no operations to run'};
+  }
+  let ws;
+  try {
+    ws = (sheetName && typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+         || api.GetActiveSheet();
+  } catch (e) { ws = null; }
+  if (!ws) return {ok: false, error: 'the editor has no sheet to write into'};
+  const done = {cells: 0, styled: 0, sheets: [], renamed: '', inserted: 0, deleted: 0};
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i] || {};
+    try {
+      if (o.k === 'set') {
+        ooRange(ws, o.at).SetValue(o.values);
+        (o.values || []).forEach((row) => { done.cells += (row || []).length; });
+      } else if (o.k === 'style') {
+        ooStyle(api, ooRange(ws, o.at), o.set);
+        done.styled++;
+      } else if (o.k === 'addSheet') {
+        api.AddSheet(o.name);
+        done.sheets.push(o.name);
+        // A new sheet becomes the active one in the editor, and the rest of the plan
+        // was written for the sheet the user was LOOKING at. Point ws back at it.
+        try { ws = api.GetSheet(o.at || ws.GetName()) || ws; } catch (e) { /* keep */ }
+      } else if (o.k === 'renameSheet') {
+        const t = o.at ? (api.GetSheet(o.at) || ws) : ws;
+        t.SetName(o.name);
+        done.renamed = o.name;
+      } else if (o.k === 'insertRows') {
+        ws.GetRows(o.at).Insert('down');
+        done.inserted += o.n || 1;
+      } else if (o.k === 'insertCols') {
+        ws.GetCols(o.at).Insert('right');
+        done.inserted += o.n || 1;
+      } else if (o.k === 'deleteRows') {
+        ws.GetRows(o.at).Delete('up');
+        done.deleted += o.n || 1;
+      } else if (o.k === 'deleteCols') {
+        ws.GetCols(o.at).Delete('left');
+        done.deleted += o.n || 1;
+      } else {
+        return {ok: false, done: done,
+                error: 'operation ' + (i + 1) + ': the editor path does not implement '
+                     + JSON.stringify(String(o.k))};
+      }
+    } catch (e) {
+      return {ok: false, done: done,
+              error: 'operation ' + (i + 1) + ' (' + String(o.k) + ' at '
+                   + String(o.at) + ') was refused by the editor: '
+                   + ((e && e.message) || e)};
+    }
+  }
+  // The editor raises onDocumentStateChange for its own edits; a builder-API write
+  // does not always, so the dirty flag is set here and reported the same way.
+  dirtyNow = true;
+  state('unsaved changes');
+  tell('state', {dirty: true});
+  return {ok: true, done: done};
+}
+
+// ── boot / open / swap ───────────────────────────────────────────────────────
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
@@ -423,147 +679,269 @@ function loadScript(src) {
 
 function renderAttribution(a) {
   if (!a) return;
-  el('attrib').textContent = 'Rich editing by ' + a.name + ' · ' + a.licence;
+  el('attrib').textContent = 'Editing by ' + a.name + ' · ' + a.licence;
   const links = (a.sources || []).slice(0, 2).map(
     (s) => '<a href="' + s.url + '" target="_blank" rel="noreferrer">'
            + s.url.replace('https://github.com/', '') + '</a>').join(' · ');
   el('attrib-src').innerHTML = links ? 'source: ' + links : '';
 }
 
-async function boot() {
-  if (!DOC) {
-    fail('No workbook named', 'Open this page from LOffice — it needs '
-         + '<code>?doc=&lt;file name&gt;</code>.');
-    return;
-  }
-  el('docname').textContent = DOC;
-  document.title = DOC + ' — LOffice rich editor';
-
+// Everything that has to happen ONCE per page: the status check, the attribution, the
+// 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
+// repeat it — that split IS the "keep one editor instance alive" requirement.
+let onceDone = false;
+async function once() {
+  if (onceDone) return true;
   step('checking the editor bundle…', 4);
   let status;
   try {
     status = await (await fetch('/api/oo/status')).json();
   } catch (e) {
     fail('The bridge did not answer', 'Could not reach <code>/api/oo/status</code>.');
-    return;
+    return false;
   }
   renderAttribution(status.attribution);
   if (!status.installed) {
-    fail('The rich editor is not installed',
+    fail('The editor is not installed',
          (status.reason || 'The ONLYOFFICE bundle is missing.')
          + '<br><br>Install it once with<br><code>./'
          + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>');
-    return;
+    return false;
   }
-  step('bundle ' + (status.editor_tag || '?') + ' · x2t ' + (status.x2t_tag || '?'), 8);
-
-  // The mtime fence. Taken BEFORE the bytes, so a change between the two makes the
-  // fence pessimistic (a refused save) rather than optimistic (a lost edit).
-  try {
-    const files = await (await fetch('/api/office/files')).json();
-    const row = (files.files || []).find((f) => f.name === DOC);
-    if (row) openedMtime = row.modified;
-  } catch (e) { /* the fence is a safety net, not a precondition */ }
-
-  step('reading ' + DOC + '…', 12);
-  let raw;
-  try {
-    const r = await fetch('/api/office/download/' + encodeURIComponent(DOC));
-    if (!r.ok) throw new Error('the bridge said ' + r.status);
-    raw = new Uint8Array(await r.arrayBuffer());
-  } catch (e) {
-    fail('Could not read that workbook', String(e.message || e));
-    return;
-  }
-  step('read ' + Math.round(raw.length / 1024) + ' KB', 16);
+  editorTag = status.editor_tag || '';
+  step('bundle ' + (editorTag || '?') + ' · x2t ' + (status.x2t_tag || '?'), 8);
 
   step('loading the converter (57 MB wasm, first time only)…', 20);
   try {
     await loadX2T();
   } catch (e) {
     fail('The converter did not load', String(e.message || e));
-    return;
+    return false;
   }
-  step('converter ready', 45);
+  step('converter ready', 40);
 
-  let bin;
-  try {
-    bin = x2tConvert(raw, DOC.replace(/[^A-Za-z0-9._-]/g, '_'),
-                     'bin');
-  } catch (e) {
-    fail('Could not convert that workbook',
-         String(e.message || e) + '<br><br>The file on disk was not touched.');
-    return;
-  }
-  step('converted to the editor format (' + Math.round(bin.length / 1024) + ' KB)', 55);
-
-  step('loading the editor…', 60);
-  try {
-    await loadScript(API_JS);
-  } catch (e) {
-    fail('The editor did not load', String(e.message || e));
-    return;
+  step('loading the editor…', 48);
+  if (!apiLoaded) {
+    try {
+      await loadScript(API_JS);
+    } catch (e) {
+      fail('The editor did not load', String(e.message || e));
+      return false;
+    }
+    apiLoaded = true;
   }
   if (typeof DocsAPI === 'undefined' || !DocsAPI.DocEditor) {
     fail('The editor did not register', 'api.js loaded but <code>DocsAPI</code> is '
          + 'not there. The vendored bundle may be incomplete — re-run <code>'
          + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>.');
-    return;
+    return false;
   }
-
   // sdkjs reads `window.APP` (connectMockServer installs getImageURL onto it), so it
   // must exist first. Ours is deliberately bare — we serve no editor-side images.
   window.APP = window.APP || {};
-
-  const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
-  const blobUrl = URL.createObjectURL(new Blob([bin]));
-  step('starting the editor…', 68);
-
-  editor = new DocsAPI.DocEditor('editor', {
-    document: {
-      fileType: ext,
-      key: 'harness-' + Date.now(),
-      title: DOC,
-      url: blobUrl,
-      permissions: {download: false, print: true, edit: true}
-    },
-    documentType: DOC_TYPES[ext] || 'cell',
-    width: '100%',
-    height: '100%',
-    editorConfig: {
-      lang: 'en',
-      mode: 'edit',
-      user: {id: 'harness', name: 'You'},
-      customization: {
-        about: false, feedback: false, chat: false, comments: false,
-        help: false, plugins: false, compactHeader: false,
-        hideRightMenu: false, autosave: false, forcesave: false
-      }
-    },
-    events: {
-      onAppReady: () => { step('editor frame ready', 78); },
-      onDocumentReady: () => {
-        ready = true;
-        el('boot').classList.add('gone');
-        el('btn-save').disabled = false;
-        state('ready');
-        // The editor keeps the document; the blob has been read.
-        try { URL.revokeObjectURL(blobUrl); } catch (e) { /* fine */ }
-      },
-      onError: (e) => {
-        const d = e && e.data;
-        fail('The editor reported an error',
-             '<code>' + JSON.stringify(d) + '</code>');
-      },
-      onWarning: (e) => { console.log('[oo warning]', e && e.data); },
-      onDocumentStateChange: (e) => {
-        if (ready && e && e.data) state('unsaved changes');
-      }
-    }
-  });
-  editor.connectMockServer(mockServer());
-  step('waiting for the document…', 82);
+  onceDone = true;
+  return true;
 }
+
+// THE ONE OPEN PATH, and the one SWAP path — they are the same function, because a
+// swap that took a different route from a cold open is a second implementation of the
+// hardest part of this page. `editor.destroyEditor()` (api.js's own published method:
+// it replaces the inner iframe with a fresh placeholder div of the same id) is the
+// only difference, and it is two lines.
+function openDoc(name) {
+  const want = String(name || '').trim();
+  if (!want) {
+    return Promise.resolve({ok: false, error: 'no workbook was named'});
+  }
+  const gen = ++openSeq;
+  const t0 = (window.performance && performance.now()) || Date.now();
+  const swap = !!editor;
+  return (async function () {
+    if (!(await once())) return {ok: false, error: 'the editor could not start'};
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+
+    el('boot').classList.remove('gone', 'bad');
+    el('bar').style.display = '';
+    el('boot-title').textContent = swap ? 'Opening ' + want + '…'
+                                        : 'Opening the editor…';
+    el('btn-save').disabled = true;
+    ready = false;
+    dirtyNow = false;
+    noteClear();
+
+    // The mtime fence. Taken BEFORE the bytes, so a change between the two makes the
+    // fence pessimistic (a refused save) rather than optimistic (a lost edit).
+    openedMtime = null;
+    try {
+      const files = await (await fetch('/api/office/files', {cache: 'no-store'})).json();
+      const row = (files.files || []).find((f) => f.name === want);
+      if (row) openedMtime = row.modified;
+    } catch (e) { /* the fence is a safety net, not a precondition */ }
+
+    step('reading ' + want + '…', 56);
+    let raw;
+    try {
+      const r = await fetch('/api/office/download/' + encodeURIComponent(want));
+      if (!r.ok) throw new Error('the bridge said ' + r.status);
+      raw = new Uint8Array(await r.arrayBuffer());
+    } catch (e) {
+      fail('Could not read that workbook', String(e.message || e));
+      return {ok: false, error: String(e.message || e)};
+    }
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+    step('read ' + Math.round(raw.length / 1024) + ' KB', 62);
+
+    let bin;
+    try {
+      bin = x2tConvert(raw, want.replace(/[^A-Za-z0-9._-]/g, '_'), 'bin');
+    } catch (e) {
+      fail('Could not convert that workbook',
+           String(e.message || e) + '<br><br>The file on disk was not touched.');
+      return {ok: false, error: String(e.message || e)};
+    }
+    step('converted to the editor format (' + Math.round(bin.length / 1024) + ' KB)', 70);
+
+    // ⚠️ THE OLD INSTANCE GOES DOWN HERE AND NOT EARLIER. Everything above can fail,
+    // and a failure that had already destroyed a working editor would turn "could not
+    // open the OTHER file" into "you no longer have an editor".
+    if (editor) {
+      try { editor.destroyEditor(); } catch (e) { console.log('[oo] destroy: ' + e); }
+      editor = null;
+    }
+    DOC = want;
+    el('docname').textContent = want;
+    document.title = want + ' — LOffice editor';
+
+    const ext = (want.split('.').pop() || 'xlsx').toLowerCase();
+    const blobUrl = URL.createObjectURL(new Blob([bin]));
+    step('starting the editor…', 78);
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
+      editor = new DocsAPI.DocEditor('editor', {
+        document: {
+          fileType: ext,
+          key: 'harness-' + Date.now(),
+          title: want,
+          // ⚠️ THE Editor.bin URL, AND IT IS WHAT MAKES THE WHOLE PAGE WORK. api.js's
+          // handleAuth hands this straight to the editor as the document to open; a
+          // config without it produces a page that renders the full ribbon and then
+          // sits on "Loading spreadsheet" for ever with ZERO console errors — the same
+          // silent-hang signature as missing cross-origin isolation, and it cost this
+          // rewrite two 3-minute probe runs to tell the two apart. It is a blob: of
+          // OUR OWN bytes, never a third-party URL (a COEP page refuses those).
+          url: blobUrl,
+          // ⚠️ print: false — the serverless bundle's Print expects a DocumentServer
+          // and throws. Turned off through the PUBLISHED permissions key, never by
+          // patching the vendored bundle; LOffice's Help → About names the limit.
+          permissions: {download: false, print: false, edit: true}
+        },
+        documentType: DOC_TYPES[ext] || 'cell',
+        width: '100%',
+        height: '100%',
+        editorConfig: {
+          lang: 'en',
+          mode: 'edit',
+          user: {id: 'harness', name: 'You'},
+          customization: {
+            about: false, feedback: false, chat: false, comments: false,
+            help: false, plugins: false, compactHeader: false,
+            autosave: false, forcesave: false,
+            // ⚠️ THE RIGHT PANEL STARTS CLOSED, AND THAT IS A LAYOUT DECISION MADE BY
+            // LOOKING AT THE SCREENSHOT. Embedded, this editor is one column of three:
+            // our file rail is on the left and our AI panel is on the right, so the
+            // editor's own right-hand cell-settings panel was taking ~300px out of an
+            // already-shared middle and pushing the grid to about half the window. It
+            // is HIDDEN ON FIRST LOAD, not removed — the ribbon's own toggles still
+            // open it, which is the honest version of "we chose a default for you".
+            hideRightMenu: true,
+            // ⚠️ THE EDITOR IS PINNED TO ITS LIGHT THEME, AND THIS IS NOT A TASTE CALL —
+            // it is the ruling already written into bridge/panel/office.html's own
+            // stylesheet: "THE SEAM IS DELIBERATE. Both tiers render a LIGHT surface — a
+            // spreadsheet is a white page, and every colour inside the file (fills, font
+            // colours) was chosen by somebody looking at a white page; darkening the
+            // sheet would make a pale-yellow fill unreadable and would quietly
+            // misrepresent the document." Left to itself the bundle follows the OS, so on
+            // a dark Mac it came up `theme-night` — a dark grid under our dark chrome,
+            // which reads well and lies about the document. MEASURED SECOND REASON: in
+            // that theme the ribbon rendered with NO ICONS at all in a real WKWebView
+            // (the bundle's dark icon set does not paint; every glyph an empty box),
+            // while the light theme's ribbon is complete. `default-light` is the value
+            // api-orig.js documents, and it is passed as a config parameter — nothing in
+            // the vendored bundle is touched.
+            uiTheme: 'default-light',
+            features: {
+              // The bundle's own "New: Cell text direction" onboarding balloon,
+              // which on a fresh profile opens over the ribbon and sits there. It is
+              // ONLYOFFICE telling a first-time user about ONLYOFFICE; inside LOffice
+              // it is a popover nobody can act on and it landed square across the
+              // formula bar in the first embedded screenshot.
+              featuresTips: false
+            }
+          }
+        },
+        events: {
+          onAppReady: () => { step('editor frame ready', 88); },
+          onDocumentReady: () => {
+            if (gen !== openSeq) return;       // a later open superseded this one
+            ready = true;
+            el('boot').classList.add('gone');
+            el('btn-save').disabled = false;
+            state('ready');
+            // The editor keeps the document; the blob has been read.
+            try { URL.revokeObjectURL(blobUrl); } catch (e) { /* fine */ }
+            const ms = Math.round(((window.performance && performance.now())
+                                   || Date.now()) - t0);
+            tell('ready', {doc: want, mtime: openedMtime, ms: ms, swap: swap,
+                           editorTag: editorTag});
+            finish({ok: true, ms: ms, swap: swap});
+          },
+          onError: (e) => {
+            const d = e && e.data;
+            fail('The editor reported an error',
+                 '<code>' + JSON.stringify(d) + '</code>');
+            finish({ok: false, error: 'the editor reported ' + JSON.stringify(d)});
+          },
+          onWarning: (e) => { console.log('[oo warning]', e && e.data); },
+          onDocumentStateChange: (e) => {
+            // ⚠️ THIS IS THE PAGE'S DIRTY FLAG, AND NOW THE PARENT'S TOO. The LOffice
+            // strip's dot, its "unsaved changes" line and the heartbeat the bridge
+            // uses to refuse an agent write all hang off this one event.
+            if (!ready) return;
+            const d = !!(e && e.data);
+            dirtyNow = d;
+            state(d ? 'unsaved changes' : 'ready');
+            tell('state', {dirty: d});
+          }
+        }
+      });
+      editor.connectMockServer(mockServer());
+      step('waiting for the document…', 92);
+    });
+  })();
+}
+
+// Re-read the CURRENT workbook from disk. The external-change banner in the parent
+// calls this instead of reloading the whole LOffice page — which was the old answer
+// and threw away the warm editor to do it.
+function reloadDoc() { return openDoc(DOC); }
+
+// ── the API the parent gets, i.e. the contract ────────────────────────────────
+window.LOfficeEmbed = {
+  contract: 1,
+  open: openDoc,
+  save: save,
+  reload: reloadDoc,
+  applyOps: applyOps,
+  probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
+                 editorTag: editorTag}),
+  destroy: () => {
+    openSeq++;
+    if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }
+    editor = null; ready = false; dirtyNow = false;
+  }
+};
 
 // A page-level guard: any throw here would otherwise leave the boot overlay saying
 // "Opening…" forever, which is the exact failure mode this whole lane keeps hitting.
@@ -571,8 +949,27 @@ window.addEventListener('error', (e) => {
   if (!ready) fail('Something broke while opening',
                    '<code>' + String(e.message || 'unknown') + '</code>');
 });
-boot().catch((e) => fail('Something broke while opening',
-                         '<code>' + String((e && e.message) || e) + '</code>'));
+
+// THE HANDSHAKE. The parent exists before this frame does (it created the iframe), so
+// there is nothing to wait for and no retry loop: register, then open.
+if (HOST && typeof HOST.register === 'function') {
+  try { HOST.register(window.LOfficeEmbed); }
+  catch (e) { console.log('[oo host register] ' + e); }
+}
+
+if (DOC0) {
+  openDoc(DOC0).catch((e) => fail('Something broke while opening',
+                                  '<code>' + String((e && e.message) || e) + '</code>'));
+} else if (!EMBED) {
+  fail('No workbook named', 'Open this page from LOffice — it needs '
+       + '<code>?doc=&lt;file name&gt;</code>.');
+} else {
+  // Embedded with no doc yet: the parent will call open() when it has one. Say so
+  // rather than showing a spinner that will never finish.
+  el('boot-title').textContent = 'No workbook open';
+  el('boot-msg').textContent = 'Pick a spreadsheet in the file list.';
+  el('bar').style.display = 'none';
+}
 </script>
 </body>
 </html>

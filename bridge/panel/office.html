@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-27e">
+<meta name="harness-build" content="loffice-2026-08-28a">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -350,6 +350,42 @@
   #sheet{position:absolute;inset:0;background:#fff;display:none;
          box-shadow:inset 0 1px 0 var(--line2),inset 1px 0 0 var(--line2)}
   #sheet.on{display:block}
+  /* ══ THE EDITOR — THE CENTRE OF THE PAGE (loffice-2026-08-28a) ══════════════
+     Debi's ONE-EDITOR ruling: ONLYOFFICE stopped being a page you navigate to and
+     became the editing surface HERE, inside a same-origin iframe filling the column
+     the grid used to fill, with our dark strip above it, our file rail beside it and
+     our AI panel on the right. /oo-edit already carries the three isolation headers;
+     /office now carries them too (bridge/app.py::office_page explains the audit).
+
+     ⚠️ THE FORK IS ONE PREDICATE, EXPRESSED ONCE, IN CSS. `body.ooedit` is set by
+     exactly one line of script — ooPaintClass(), from editorActive() — and every
+     surface that has to get out of the editor's way is listed below. Scattering
+     `if (editorActive())` through eleven paint functions is how a menu bar ends up
+     visible over a ribbon on one code path nobody tested. */
+  #oostage{position:absolute;inset:0;display:none;background:#fff;z-index:2;
+           box-shadow:inset 0 1px 0 var(--line2),inset 1px 0 0 var(--line2)}
+  body.ooedit #oostage{display:block}
+  /* KEPT MOUNTED WHILE IT BOOTS, and that is deliberate: an iframe created inside a
+     display:none box measures 0x0, and the editor's canvas engine never re-measures.
+     So during the boot it is present, laid out, and simply BEHIND the grid — which is
+     the interstitial the ruling asks for. */
+  body.oowait #oostage{display:block;z-index:0}
+  #ooframe{border:0;width:100%;height:100%;display:block;background:#fff}
+  /* ⚠️ THESE FOUR RULES ARE THE "NO DUPLICATE RIBBONS" CONTRACT, and the specificity
+     was checked rather than assumed: each one adds a TYPE selector (`body`) on top of
+     the id, so it outranks `#menubar{display:flex}`, `#toolbar{display:flex}` and
+     `#findrow.on{display:flex}` further down this stylesheet without depending on
+     source order. (`body.tbaroff #toolbar` ties, and both say display:none, so the
+     tie cannot produce a visible disagreement.) */
+  body.ooedit #menubar{display:none}
+  body.ooedit #toolbar{display:none}
+  body.ooedit #findrow{display:none}
+  body.ooedit #gridwrap{display:none}
+  /* The interstitial is READ-ONLY. Tier 1 is interactive only when it IS the editor
+     (the not-installed case) — never as a preview of a document the real editor is
+     about to take over, because an edit made there would be silently dropped the
+     moment it did. */
+  body.oowait #gridwrap{pointer-events:none;opacity:.62}
   /* ⚠️ #empty IS THE START SCREEN NOW — same element, same overlay, same `.off`
      class, because "no document is open" and "the start screen" are the same state
      and a spreadsheet app should have exactly one of them. It stopped being a
@@ -777,7 +813,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-27e</code>.</div>
+  Build <code>loffice-2026-08-28a</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -793,7 +829,18 @@
   <span id="dot" title="unsaved changes"></span>
   <span class="grow"></span>
   <span class="hsep"></span>
-  <button id="btn-rich" title="Open this workbook in the full ONLYOFFICE editor (real ribbon, high-fidelity .xlsx)">Rich editor</button>
+  <!-- ⚠️ THESE TWO ARRIVED AT loffice-2026-08-28a AND THEY ARE NOT DECORATION. The
+       one-editor ruling hides the whole white menu bar while the editor is up, and two
+       of its rows had no other door: File → ⌂ LOffice home (which is also Close — it
+       shuts the workbook and brings the start screen forward) and the Help menu, which
+       is where the AGPL attribution lives (condition #3 of the 2026-08-27 ruling) and
+       now the editor's honest limits with it. Every other row of that menu already has
+       a door in this strip or in the rail: New and Import are here, Rename is the
+       title, Download and Delete are on every file row, Open IS the file list.
+       They live in the DARK strip rather than the rail because the rail collapses. -->
+  <button id="btn-start" class="ghost" title="⌂ LOffice home — close this workbook and show the start screen">⌂</button>
+  <button id="btn-info" class="ghost" title="About this build, what round-trips, and the keyboard shortcuts">?</button>
+  <button id="btn-rich" title="Open this workbook in the full ONLYOFFICE editor">Full editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
   <button id="btn-new2">New</button>
   <button id="btn-save" class="primary" disabled>Save</button>
@@ -887,7 +934,7 @@
           </div>
         </div>
         <div class="msep"></div>
-        <button class="mi" id="mi-rich">Rich editor<span class="mk">ONLYOFFICE</span></button>
+        <button class="mi" id="mi-rich">Full editor<span class="mk">ONLYOFFICE</span></button>
       </div>
     </div>
     <div class="mwrap">
@@ -1082,8 +1129,23 @@
       <div id="gridscroll"><table id="gt"></table></div>
       <div id="gridbar"></div>
     </div>
-    <!-- TIER 2 (opt-in, empty until the bundles are loaded on demand) -->
+    <!-- RETIRED TIER 2 (Univer). Kept as the rollback — see the comment above the
+         VENDOR list. Nothing mounts into it any more. -->
     <div id="sheet"></div>
+    <!-- ══ THE EDITOR ═════════════════════════════════════════════════════════
+         REAL MARKUP, like every other surface on this page, and DELIBERATELY WITHOUT
+         a src: the iframe is a same-origin document that boots a 57 MB wasm module,
+         and pointing it at /oo-edit before we know a workbook is open (and before we
+         know the bundle is installed) would spend that on nothing. ooStart() sets the
+         src exactly once per page; every later file switch is a document SWAP through
+         the child's own open() — no page reload, no second frame, no second x2t.
+         `title` is here for the accessibility tree; `sandbox` is deliberately ABSENT
+         (a sandboxed frame is a unique opaque origin, which would cost the same-origin
+         property access the whole parent↔child contract is built on, and would strip
+         the cross-origin isolation the editor cannot work without). -->
+    <div id="oostage">
+      <iframe id="ooframe" title="ONLYOFFICE spreadsheet editor"></iframe>
+    </div>
     <!-- ══ THE START SCREEN ═══════════════════════════════════════════════════════
          #empty was one centred sentence: "No workbook is open. Pick one on the left…"
          — a page that is working perfectly and reads as broken, because it states a
@@ -1298,16 +1360,35 @@ function paint() {
     : (!current ? 'no workbook open'
                 : (dirty ? 'unsaved changes' : 'all changes saved'));
   el('p-file').className = 'mstat' + ((dirty && !busy) ? ' warn' : '');
-  el('p-state').textContent = current ? (mode === 'univer' ? 'rich editor' : 'grid editor') : '';
+  // ⚠️ THE ONE PREDICATE REACHES THE DOM HERE, ONCE, and everything below reads the
+  // same function rather than re-deriving it. paint() is the page's existing "state
+  // changed, redraw the chrome" funnel, so the class can never lag the state.
+  ooPaintClass();
+  el('p-state').textContent = !current ? ''
+    : (editorActive() ? 'full editor'
+       : (ooInstalled && ooBooting ? 'full editor loading…'
+          : (mode === 'univer' ? 'rich editor' : 'grid editor')));
   el('p-state').className = 'mstat';
-  el('btn-save').disabled = !current || busy || (mode === 'univer' && !api);
+  el('btn-save').disabled = !current || busy
+    || (editorActive() ? false : (mode === 'univer' && !api));
   el('btn-import').disabled = busy;
-  // TIER 2 IS A NAVIGATION NOW (see upgrade()), so the button's only preconditions
-  // are "there is a workbook" and "we are not mid-flight". It is deliberately NOT
-  // disabled when ONLYOFFICE is missing: that case opens and explains, because a
-  // greyed button with no sentence is exactly the dead click this lane keeps
-  // promising not to ship.
-  el('btn-rich').disabled = !current || busy || richLoading;
+  // ⌂ is never disabled for "no workbook": with nothing open it IS the start screen, and
+  // that is the one place a page with nothing open should always be able to get to.
+  el('btn-start').disabled = busy;
+  el('btn-info').disabled = false;
+  // THE STRIP'S "Full editor" BUTTON. It is HIDDEN when the editor is already the
+  // editor — a control that would do nothing is worse than no control — and shown
+  // otherwise, including (deliberately) when ONLYOFFICE is missing: that case opens
+  // and explains, because a greyed button with no sentence is exactly the dead click
+  // this lane keeps promising not to ship.
+  const richOff = editorActive() || (ooInstalled && ooBooting);
+  el('btn-rich').style.display = richOff ? 'none' : '';
+  el('btn-rich').disabled = !current || busy;
+  el('btn-rich').textContent = ooInstalled === false ? 'Full editor…' : 'Full editor';
+  el('btn-rich').title = ooInstalled === false
+    ? 'The full ONLYOFFICE editor is not installed — this says how to install it'
+    : (ooFailed ? 'The full editor failed to start — try again'
+                : 'Open this workbook in the full ONLYOFFICE editor');
   el('empty').classList.toggle('off', !!current);
   if (el('filemenu').classList.contains('on')) fileMenuPaint();
   if (openMenu > 0) menuPaint(openMenu);
@@ -1406,8 +1487,9 @@ const MTOPS = ['btn-file', 'btn-edit', 'btn-view', 'btn-insert', 'btn-format',
 let openMenu = -1;                       // index into MENUS; -1 = nothing open
 
 // The three sentences a disabled row can carry, written once so they cannot drift.
-const T1_ONLY = 'The rich editor owns the document while it is loaded — use its own '
-              + 'toolbar. Close and reopen the file to come back to the plain grid.';
+const T1_ONLY = 'The full editor owns this document — use its own ribbon, which has '
+              + 'the same command and more of them. LOffice’s plain grid is what you '
+              + 'get when the full editor is not installed.';
 const NO_DOC = 'No workbook is open.';
 const NO_CELL = 'Click a cell first — this acts on the cell you last had selected.';
 const NO_AI = 'The AI panel is not available in this build.';
@@ -1590,7 +1672,18 @@ function menuMove(d) {
 // and once Univer has mounted, UNIVER owns the document — a tier-1 write would edit a
 // snapshot nobody is looking at and be lost at the next save. So they are disabled in
 // univer mode, and the row SAYS why rather than silently doing nothing.
-function t1ok() { return !!current && !busy && mode === 'grid'; }
+// ⚠️ THE GATE ON EVERY TIER-1 VERB, AND IT IS WHERE THE ONE-EDITOR RULING BITES.
+// The menu bar and the toolbar are HIDDEN while the editor is up (one CSS block, from
+// one predicate) — but ⌘B, ⌘Z, ⇧F11 and the rest are keyboard shortcuts on the PAGE,
+// and a hidden menu does not disarm them. So they all come through here, and here says
+// no whenever the editor owns the document, or is about to: an edit written into the
+// tier-1 snapshot at that moment would be invisible and then silently lost at the next
+// save. `editorActive()` covers "the editor is up"; the second clause covers the
+// interstitial, which is READ-ONLY for exactly the same reason.
+function t1ok() {
+  return !!current && !busy && mode === 'grid'
+      && !editorActive() && !(ooInstalled && ooBooting);
+}
 function setRow(id, ok, why) {
   const n = el(id);
   if (!n) return;
@@ -1641,10 +1734,11 @@ function menuPaint(i) {
       setRow('mi-z' + z, mode === 'grid', T1_ONLY);
       tick('mi-z' + z, zoomNow === z);
     });
-    // The rich editor OPENS A DIFFERENT PAGE, so the only reasons it can be refused
-    // are "no workbook to open" and "not while the page is busy". "Not installed" is
-    // not one of them — that answer is a sentence, not a grey row.
-    setRow('mi-rich', !el('btn-rich').disabled,
+    // The full editor comes up by itself now, so this row only has work to do when it
+    // is NOT up: it starts it, or (not installed) it explains the installer. "Not
+    // installed" is still not a reason to grey it — that answer is a sentence, not a
+    // grey row. When the editor IS up the whole menu bar is hidden anyway.
+    setRow('mi-rich', !!current && !busy,
            !current ? whyDoc : 'Not while the page is busy.');
   } else if (i === 3) {                                                 // Insert
     ['mi-sheet', 'mi-rows', 'mi-cols'].forEach(id => setRow(id, t1ok(), whyDoc));
@@ -2638,18 +2732,38 @@ async function helpAbout() {
     const st = await (await fetch('/api/oo/status')).json();
     const a = st && st.attribution;
     if (a) {
-      attrib = '\n\nRich editor (tier 2)\n'
+      attrib = '\n\nThe editor\n'
         + '  ' + a.name + ' — ' + a.licence + '\n'
         + (st.installed ? '  vendored: editor ' + st.editor_tag + ' · x2t ' + st.x2t_tag
                           + '\n' : '  not installed on this Mac\n')
         + (a.sources || []).map(sc => '  ' + sc.what + ': ' + sc.url).join('\n')
-        + '\n  ' + a.note;
+        + '\n  ' + a.note
+        // ⚠️ THE HONEST LIMITS OF THE EMBEDDED EDITOR, NAMED WHERE SOMEBODY LOOKING
+        // FOR THEM WILL FIND THEM. Print is the one a user WILL reach for and not
+        // find, so it is first and it says why.
+        + '\n\nKnown limits of the embedded editor\n'
+        + '  Print is turned OFF. This is the serverless build of ONLYOFFICE and its\n'
+        + '  Print expects a document server we do not run, so it would throw. It is\n'
+        + '  disabled through the editor’s own published config — the vendored\n'
+        + '  bundle is never patched. Use File → Download and print the .xlsx.\n'
+        + '  There is no co-editing, no comments, no chat and no plugins.\n'
+        + '  The AI panel sends the sheet AS LAST SAVED — press ⌘S first if you\n'
+        + '  have just typed something the model needs to see.';
     }
-  } catch (e) { attrib = '\n\n(the bridge did not answer about the rich editor)'; }
+  } catch (e) { attrib = '\n\n(the bridge did not answer about the editor)'; }
+  // ⚠️ THE OTHER TWO HELP SHEETS RIDE ALONG AS BUTTONS, and that is what makes ONE
+  // control in the strip enough to replace a three-row menu: say() has taken an
+  // actions list since the external-change banner needed one, so this costs no new
+  // CSS, no popover and no second open/close path.
   say('LOffice ' + BUILD + '\n'
-      + '  editor: plain grid (tier 1) — the rich editor opens in its own page\n'
-      + '  documents: ' + (el('fdir').textContent || 'unknown') + '\n'
-      + '  boot trace: data/logs/loffice-boot.log' + attrib, 'dim');
+      + '  editor: ' + (editorActive() ? 'ONLYOFFICE, embedded in this page'
+                        : (ooInstalled === false
+                           ? 'LOffice’s own grid (ONLYOFFICE is not installed)'
+                           : 'LOffice’s own grid'))
+      + '\n  documents: ' + (el('fdir').textContent || 'unknown') + '\n'
+      + '  boot trace: data/logs/loffice-boot.log' + attrib, 'dim',
+      [{ label: 'What round-trips', run: helpFidelity },
+       { label: 'Keyboard shortcuts', run: helpKeys }]);
 }
 
 // ══ ⌂ LOFFICE HOME — and this is the bug fix ══════════════════════════════════
@@ -3630,87 +3744,482 @@ function mount(data) {
   return true;
 }
 
-// ══ THE UPGRADE — TIER 2 IS ONLYOFFICE AS OF THIS BUILD ════════════════════════
-//
-// It used to lazy-load six Univer bundles into #sheet. That path is RETIRED: the
-// 2026-08-27 WKWebView probe passed the real ONLYOFFICE editors (full ribbon, real
-// formula engine, high-fidelity .xlsx import) and Fable ruled GO for adoption, so
-// tier 2 is now a NAVIGATION to /oo-edit?doc=<name> — our own glue page over the
-// vendored bundle (bridge/panel/oo.html, bridge/oo.py).
-//
-// WHY A NAVIGATION AND NOT AN IFRAME HERE. The editors only work inside a
-// cross-origin-isolated document (COOP/COEP — without it they hang at "Loading
-// spreadsheet" forever with ZERO console errors, measured). Embedding them would
-// force COEP onto THIS page, and a cross-origin-isolated document refuses every
-// subresource that lacks CORP — so the whole tier-1 asset path would have to be
-// re-plumbed to gain nothing. A full page with a "‹ LOffice" button back is simpler
-// and honest about what it is: a different editor, owning the file on disk.
-//
-// TIER 1 STILL OWNS NOTHING IT DID NOT OWN BEFORE. The ownership story changed
-// shape: the rich editor no longer takes over this page, it takes over THE FILE, in
-// another page. So the guard here is about unsaved grid edits, not about `mode`.
-// Everything below is reversible — the only irreversible act is the navigation, and
-// it happens last.
-async function upgrade() {
-  if (busy || richLoading) return;
-  if (!current) {
-    say('Open a workbook first — the rich editor opens the file you are looking at.');
-    return;
-  }
-  richLoading = true; paint();
-  let st = null;
-  try {
-    const r = await fetch('/api/oo/status');
-    st = await r.json();
-  } catch (e) { st = null; }
-  richLoading = false; paint();
+/* ══ THE EDITOR — ONE INSTANCE, EMBEDDED, KEPT ALIVE ═══════════════════════════
+   DEBI'S RULING, 2026-08-27: "we could have only the onlyoffice, but with our ui."
+   So this is not an upgrade path any more. ONLYOFFICE IS the editor, it lives in an
+   iframe filling this page's centre column, and our chrome — the dark strip, the file
+   rail, the AI panel — stays around it. Roadmap §8 is the ruling; bridge/panel/oo.html
+   is the other half of the contract and documents it in full.
 
-  if (!st) {
-    bx('rich-fail', 'status unreachable');
-    say('The bridge did not answer when asked about the rich editor.'
-        + '\n\nThe plain grid is still working, and it is the same file.');
+   ── THE FOUR THINGS THAT MADE THIS WORTH DOING ─────────────────────────────────
+   1. NO NAVIGATION. Opening the editor used to leave LOffice. It now fills the middle
+      of it, so the rail and the AI panel never go away and there is nothing to come
+      "back" from.
+   2. ONE INSTANCE, KEPT ALIVE. The iframe's src is set ONCE per page. Every later file
+      switch is a document SWAP inside the living frame (destroyEditor + re-init, which
+      is what oo.html's openDoc does), so the 57 MB wasm compile and api.js are paid
+      once — that is the whole of Debi's "why is it not instant like Music?".
+      MEASURED (WKWebView, this Mac): see the oo-boot / oo-swap beacons.
+   3. PRELOAD. The editor starts booting the moment a workbook is open, not when a
+      button is pressed. While it boots, the tier-1 grid is what you see — READ-ONLY,
+      with an honest status line — and then the editor takes the centre.
+   4. NO DUPLICATE RIBBONS. `body.ooedit` (one class, one predicate, set in one place)
+      hides our menu bar, our toolbar, our find bar and our grid whenever the editor
+      is up. The stylesheet block by #oostage is the whole of that fork.
+
+   ── AND THE ONE THING THAT DID NOT CHANGE ──────────────────────────────────────
+   TIER 1 IS UNTOUCHED WHEN ONLYOFFICE IS NOT INSTALLED. Same menu bar, same toolbar,
+   same grid, same undo stack, same code paths — `editorActive()` is false and every
+   rule above is inert. That case is not a degraded mode, it is the mode this page
+   shipped with, and it is still guarded by its own tests. */
+
+// The child's API object, once it has handed itself up. `null` until then, and every
+// caller checks: a page whose iframe has not registered yet must not throw.
+let ooChild = null;
+let ooInstalled = null;      // null = not asked yet; false = installer explanation
+let ooStatus = null;         // the /api/oo/status body, for Help → About and the tags
+let ooReady = false;         // the editor holds a document and is interactive
+let ooBooting = false;       // src set (or a swap in flight) and not ready yet
+let ooDoc = '';              // the workbook the editor holds
+let ooFailed = '';           // a FATAL editor failure — tier 1 comes back and says why
+let ooSrcSet = false;        // the iframe's src has been set once
+let ooT0 = 0;                // when the current open started, for the timings
+let ooColdMs = 0, ooSwapMs = 0;
+
+// ══ THE ONE PREDICATE ═════════════════════════════════════════════════════════
+// Everything that shows or hides a surface reads THIS. Not `ooReady` directly, not
+// `mode`, not `ooInstalled` — one function, so "is the editor the editor right now?"
+// has exactly one answer and a new caller cannot invent a seventh version of it.
+function editorActive() { return !!(ooInstalled && ooReady && !!current); }
+// …and the ONE place it reaches the DOM.
+function ooPaintClass() {
+  document.body.classList.toggle('ooedit', editorActive());
+  document.body.classList.toggle('oowait', !!(ooInstalled && ooBooting && !ooReady));
+}
+
+// ══ THE HOST HALF OF THE PARENT↔CHILD CONTRACT ════════════════════════════════
+// Same-origin, so this is direct property access and NOT postMessage — the argument
+// is written out at the top of bridge/panel/oo.html and the two files are the two
+// halves of one decision. Published BEFORE the iframe's src is set, so the child
+// never has to wait, poll or retry to find it.
+window.LOfficeHost = {
+  contract: 1,
+  register: (embed) => { ooChild = embed || null; bx('oo-register', 'contract='
+                          + ((embed && embed.contract) || '?')); },
+  event: (ev) => ooEvent(ev || {}),
+};
+
+// The whole of the inbound half. One switch, and each arm does the smallest honest
+// thing — the editor's own events are the page's state now, so this is where the
+// dirty flag, the heartbeat and the strip all come from.
+function ooEvent(ev) {
+  const kind = String(ev.kind || '');
+  if (kind === 'boot') {
+    if (ev.step) rich('Full editor loading — ' + ev.step);
     return;
   }
-  if (!st.installed) {
-    // NEVER a dead click: the button opens, and this is the sentence.
-    bx('rich-fail', 'not installed: ' + (st.reason || '?'));
-    say('The rich editor is not installed yet.\n\n' + (st.reason || '')
-        + '\n\nInstall it once (about 1 GB on disk, no network if the zips are '
+  if (kind === 'ready') {
+    ooReady = true; ooBooting = false; ooFailed = '';
+    ooDoc = String(ev.doc || '');
+    if (ev.swap) { ooSwapMs = Number(ev.ms) || 0; } else { ooColdMs = Number(ev.ms) || 0; }
+    // ⚠️ THE DIRTY FLAG IS RESET HERE AND NOWHERE ELSE ON THIS PATH: the editor has
+    // just opened the file as it is on disk, so nothing is unsaved.
+    //
+    // ⚠️ AND THE mtime BASELINE IS TAKEN FROM THE EDITOR'S OWN FENCE, NOT CLEARED.
+    // Clearing it (extSeen = 0) was the obvious thing and it was WRONG, found by
+    // probing rather than by reading: zero means "re-baseline from disk on the next
+    // check", and the next check is up to 15 seconds away — so an agent write landing
+    // inside that window became the baseline, and the page went on showing the
+    // pre-write document believing it was current. `ev.mtime` is the mtime the editor
+    // saw when it read the file, which is exactly what "what I am showing" means. A
+    // null (the fence could not be read) still falls back to re-baselining.
+    dirty = false;
+    extSeen = Number(ev.mtime) || 0;
+    rich('');
+    bx(ev.swap ? 'oo-swap' : 'oo-boot', ooDoc + ' ms=' + (ev.ms || '?')
+       + ' tag=' + (ev.editorTag || '?'));
+    ooPaintClass(); paint(); aiPaint(true);
+    return;
+  }
+  if (kind === 'state') {
+    // THE dirty flag. paint() carries it to the dot, to "unsaved changes" and — the
+    // one that matters — to the heartbeat the bridge uses to refuse an agent write.
+    const d = !!ev.dirty;
+    if (d !== dirty) { dirty = d; paint(); }
+    return;
+  }
+  if (kind === 'saved') {
+    // Same argument as 'ready': OUR write moved the mtime, and the mtime it moved TO
+    // is what this page is now showing. Reporting it here rather than clearing it is
+    // what stops our own save being read as somebody else's edit.
+    dirty = false;
+    extSeen = Number(ev.mtime) || 0;
+    paint();
+    bx('oo-saved', ooDoc + ' bytes=' + (ev.bytes || '?')
+       + (ev.backup ? ' bak=' + ev.backup : ''));
+    say('Saved ' + (ooDoc || '') + ' — ' + Math.round((ev.bytes || 0) / 1024) + ' KB'
+        + (ev.backup ? ' (a copy of the previous file is kept as ' + ev.backup + ')'
+                     : ''), 'ok');
+    // The AI panel's context is the tier-1 snapshot, which the editor's own edits do
+    // not touch. A save is the one moment the two are known to agree, so this is when
+    // the snapshot is refreshed — see ooRefreshSnapshot for why it is not more often.
+    loadFiles();
+    ooRefreshSnapshot();
+    return;
+  }
+  if (kind === 'error') {
+    bx('oo-error', String(ev.text || '').slice(0, 160));
+    if (!ev.fatal) { say(String(ev.text || 'the editor reported a problem')); return; }
+    // FATAL. The editor is not usable, so the grid comes back and IS the editor —
+    // the not-installed path, reached from a different direction. Nothing is lost:
+    // the grid holds the same snapshot, read from the same file.
+    ooFailed = String(ev.text || 'the editor could not start');
+    ooReady = false; ooBooting = false;
+    rich('');
+    ooPaintClass(); paint();
+    say('The full editor could not start, so LOffice is using its own grid for this '
+        + 'workbook.\n\n' + ooFailed + '\n\nThe file on disk was not touched.');
+    return;
+  }
+}
+
+// ── is it installed? asked ONCE, and the answer decides the whole page shape ──
+async function ooProbe() {
+  if (ooInstalled !== null) return ooInstalled;
+  try {
+    const r = await fetch('/api/oo/status', { cache: 'no-store' });
+    ooStatus = await r.json();
+  } catch (e) { ooStatus = null; }
+  if (!ooStatus) {
+    ooInstalled = false;
+    bx('oo-status', 'unreachable');
+    return false;
+  }
+  ooInstalled = !!ooStatus.installed;
+  bx('oo-status', ooInstalled ? ('installed ' + (ooStatus.editor_tag || '?'))
+                              : ('not installed: ' + (ooStatus.reason || '?')));
+  return ooInstalled;
+}
+
+// ── START, or SWAP. One entry point, and it is the ONLY caller of the iframe ──
+// ⚠️ THE TWO PATHS ARE MEASURED SEPARATELY AND ON PURPOSE. Setting the iframe's src a
+// second time would also "work" and would be one line shorter — and it would throw
+// away the compiled wasm and the loaded api.js every time you clicked a different
+// file, which is precisely the cost this whole slice exists to stop paying. The
+// beacons name which path ran and how long it took, so the claim is checkable.
+async function ooStart(name, why) {
+  if (!name) return false;
+  if (!(await ooProbe())) return false;
+  if (ooFailed) return false;                 // it already failed fatally this session
+  if (ooDoc === name && ooReady) return true; // already showing it
+  ooBooting = true; ooT0 = Date.now();
+  rich('Full editor loading…');
+  ooPaintClass(); paint();
+  bx('oo-start', name + ' via=' + (ooSrcSet ? 'swap' : 'src') + ' why=' + (why || '?'));
+  if (!ooSrcSet) {
+    ooSrcSet = true;
+    // The child reads ?doc= itself and opens it, then registers and reports 'ready'.
+    el('ooframe').src = '/oo-edit?embed=1&doc=' + encodeURIComponent(name);
+    return true;
+  }
+  if (!ooChild || typeof ooChild.open !== 'function') {
+    // The frame exists but has not registered — it is still in its own cold boot and
+    // will open whatever ?doc= said. Re-point it rather than guessing.
+    el('ooframe').src = '/oo-edit?embed=1&doc=' + encodeURIComponent(name);
+    return true;
+  }
+  const r = await ooChild.open(name);
+  if (!r || !r.ok) {
+    ooBooting = false;
+    ooPaintClass(); paint();
+    if (r && r.error && r.error !== 'superseded') {
+      say('The full editor could not open “' + name + '”: ' + r.error
+          + '\n\nLOffice’s own grid is showing the same file.');
+    }
+    return false;
+  }
+  return true;
+}
+
+// ── SAVE, through the editor, driven by OUR strip ────────────────────────────
+async function ooSave(force) {
+  if (!ooChild || typeof ooChild.save !== 'function') {
+    say('The full editor is not ready to save yet.');
+    return false;
+  }
+  busy = true; paint();
+  let r = null;
+  try { r = await ooChild.save(!!force); }
+  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+  busy = false; paint();
+  if (!r || !r.ok) {
+    // A 409 is answered INSIDE the editor frame (its own note strip already offers
+    // "Overwrite it"), so this must not put a second, competing question on screen.
+    if (r && r.status !== 409) {
+      say('Not saved: ' + ((r && r.error) || 'the editor did not say why')
+          + ' — the workbook on disk was not changed.');
+    }
+    return false;
+  }
+  return true;                                   // the 'saved' event says the rest
+}
+
+// ── RELOAD THE DOCUMENT, not the page ───────────────────────────────────────
+// The agent writes to disk; the editor holds the file in memory. This is the answer
+// the external-change banner reaches for now, and the difference from the old one is
+// the point: it used to reload the whole LOffice page, throwing away the warm editor,
+// the rail, the AI conversation and the panel widths to re-read one file.
+async function ooReload(why) {
+  if (!ooChild || typeof ooChild.reload !== 'function') return false;
+  bx('oo-reload', (ooDoc || '?') + ' why=' + (why || '?'));
+  ooBooting = true; rich('Reloading the file in the editor…');
+  ooPaintClass();
+  const r = await ooChild.reload();
+  if (!r || !r.ok) {
+    ooBooting = false; rich(''); ooPaintClass(); paint();
+    return false;
+  }
+  return true;
+}
+
+// ── THE AI PANEL'S CONTEXT, kept honest ─────────────────────────────────────
+// The panel sends `snap`, which is the tier-1 snapshot read from DISK when the file
+// was opened. The editor's edits live in the editor until they are saved, so between
+// a keystroke and a ⌘S the snapshot is BEHIND — and the composer note says so rather
+// than pretending. It is refreshed at exactly two moments where the two are known to
+// agree: an open, and a save. Not on a timer: re-reading a workbook every few seconds
+// to keep a prompt fresh is a lot of work for a difference the note already states.
+async function ooRefreshSnapshot() {
+  if (!current) return false;
+  const name = current;
+  try {
+    const r = await fetch('/api/office/open/' + encodeURIComponent(name),
+                          { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok || name !== current) return false;
+    snap = j.snapshot;
+    activeSid = sheetIds(snap)[0] || null;
+    aiPaint(true);
+    bx('oo-snap', name + ' sheets=' + sheetIds(snap).length);
+    return true;
+  } catch (e) { bx('oo-snap-fail', String((e && e.message) || e).slice(0, 100)); }
+  return false;
+}
+
+/* ══ THE QUICK LANE'S APPLY, ROUTED INTO THE EDITOR ════════════════════════════
+   Before this build, Apply wrote the tier-1 in-memory model and the page kept its own
+   undo stack to take it back. In one-editor world the tier-1 model is not what you are
+   looking at, so Apply runs the SAME validated ops through the editor's own builder
+   API — which means THE EDITOR'S ⌘Z UNDOES AN AI APPLY. That is the whole reason to
+   do it this way, and it is why the page-side undo stack retires with the grid.
+
+   The preview card, the caps and the refuse-over-cap discipline are OURS and did not
+   move a line: `parseActions` → `actValidate` → the card → Apply. Only the last step
+   changed backend.
+
+   NOT EVERY OP HAS AN HONEST EQUIVALENT, and the two functions below are where that is
+   decided, PURELY, so the card can say it BEFORE you press anything:
+     · set / style / sheet / insert / delete_rc → the builder API. Verified present in
+       the vendored sdkjs/cell bundle (ApiRange.SetValue/SetBold/SetNumberFormat/…,
+       Api.AddSheet, ApiWorksheet.GetRows().Insert()).
+     · sort → THERE IS NO SORT IN THE BUILDER API. Checked, not assumed: the bundle has
+       no ApiRange.Sort and no ApiWorksheet.Sort. So a plan containing a sort takes the
+       BRIDGE route instead — and the card says so, because that route is materially
+       different (it saves the editor first, sorts the FILE through our own .xlsx
+       mapper, and reloads the document), not a silent variation.
+     · resize → nothing to do. It sizes tier-1's render WINDOW; the real editor already
+       has every row and column. Greyed in the preview with that reason rather than
+       counted as done.
+   ⚠️ THE ROUTE IS ALL-OR-NOTHING. One bridge op sends the WHOLE plan through the
+   bridge. A plan half-applied through the API and half through a file round-trip is
+   exactly the silent partial apply this block exists to make impossible. */
+
+// Every style key actStyleSet can emit, and the ApiRange setter it becomes. A key that
+// appeared here without a setter would be a formatting change that looked applied and
+// was not, so the list is a CHECK, not documentation: an unknown key routes the plan
+// through the bridge instead of being dropped.
+const OO_STYLE_KEYS = ['bl', 'it', 'ul', 'st', 'ff', 'fs', 'cl', 'bg', 'ht', 'vt',
+                       'tb', 'n'];
+
+// PURE. A validated plan's ops → how each one will actually be carried out, and the
+// route for the plan as a whole. This is what the card prints.
+function ooOpPlan(ops) {
+  const rows = [];
+  let bridge = 0, api = 0, skip = 0;
+  (Array.isArray(ops) ? ops : []).forEach(o => {
+    const k = (o && o.op) || '';
+    if (k === 'sort') {
+      bridge++;
+      rows.push({ op: k, how: 'bridge',
+                  why: 'the full editor has no sort in its API, so this one goes '
+                     + 'through the file' });
+    } else if (k === 'resize') {
+      skip++;
+      rows.push({ op: k, how: 'skip',
+                  why: 'the full editor already has every row and column — this only '
+                     + 'sized the plain grid’s window' });
+    } else if (k === 'style') {
+      const bad = Object.keys((o && o.set) || {})
+        .filter(x => OO_STYLE_KEYS.indexOf(x) < 0);
+      if (bad.length) {
+        bridge++;
+        rows.push({ op: k, how: 'bridge',
+                    why: 'the editor has no setter for ' + bad.join(', ')
+                       + ', so this one goes through the file' });
+      } else {
+        api++;
+        rows.push({ op: k, how: 'api', why: '' });
+      }
+    } else if (k === 'set' || k === 'sheet' || k === 'insert' || k === 'delete_rc') {
+      api++;
+      rows.push({ op: k, how: 'api', why: '' });
+    } else {
+      bridge++;
+      rows.push({ op: k, how: 'bridge', why: 'this page cannot run that in the editor' });
+    }
+  });
+  return { route: bridge ? 'bridge' : 'api', rows: rows,
+           api: api, skip: skip, bridge: bridge };
+}
+
+// PURE. The 'api' ops of a plan → the A1-addressed verbs bridge/panel/oo.html executes.
+// A1 because that is the address the editor's own API speaks, and because doing the
+// translation HERE means the preview the user read and the ops that run come out of
+// one place.
+function ooEditorOps(ops) {
+  const out = [];
+  (Array.isArray(ops) ? ops : []).forEach(o => {
+    const k = (o && o.op) || '';
+    if (k === 'set') {
+      out.push({ k: 'set', at: colName(o.c) + (o.r + 1), values: o.values });
+    } else if (k === 'style') {
+      out.push({ k: 'style',
+                 at: colName(o.c0) + (o.r0 + 1) + ':' + colName(o.c1) + (o.r1 + 1),
+                 set: o.set });
+    } else if (k === 'sheet') {
+      if (o.add) out.push({ k: 'addSheet', name: o.add });
+      else if (o.rename) out.push({ k: 'renameSheet', name: o.rename, at: o.at || '' });
+    } else if (k === 'insert' || k === 'delete_rc') {
+      const del = k === 'delete_rc';
+      const n = Math.max(1, Number(o.n) || 1);
+      if (o.axis === 'row') {
+        out.push({ k: del ? 'deleteRows' : 'insertRows', n: n,
+                   at: (o.at + 1) + ':' + (o.at + n) });
+      } else {
+        out.push({ k: del ? 'deleteCols' : 'insertCols', n: n,
+                   at: colName(o.at) + ':' + colName(o.at + n - 1) });
+      }
+    }
+    // 'resize' and anything else: deliberately dropped — ooOpPlan already decided it
+    // is a skip or a bridge op, and this function only ever runs on an 'api' route.
+  });
+  return out;
+}
+
+// The API route. Synchronous inside the editor, so there is nothing to await except
+// the round trip through the frame boundary — which is a function call.
+function ooApplyApi(plan) {
+  if (!ooChild || typeof ooChild.applyOps !== 'function') {
+    return { ok: false, error: 'the full editor is not ready' };
+  }
+  const list = ooEditorOps(plan.ops);
+  if (!list.length) {
+    return { ok: false, error: 'nothing in that change has an equivalent in the '
+                             + 'full editor' };
+  }
+  return ooChild.applyOps(list, (plan && plan.sheet) || '');
+}
+
+// The BRIDGE route: for a plan the editor's API cannot honestly carry out. Four steps,
+// in this order, and each one is a way work gets lost if it is skipped:
+//   1. SAVE THE EDITOR FIRST. The file is about to be rewritten underneath it; unsaved
+//      editor edits that were not written first would simply vanish.
+//   2. read the workbook back and run the ops through the SAME actRunOps the grid uses
+//      — one implementation of "sort a sheet", not two.
+//   3. write it, through the normal /api/office/save (daily .bak and all).
+//   4. reload the DOCUMENT in the editor, not the page.
+// ⚠️ AND IT IS SAID ON THE CARD, because this route is not a silent variation: it
+// round-trips the workbook through LOffice's own .xlsx mapper, which does not carry
+// charts or images (Help → What round-trips), and the editor's ⌘Z does not cover it.
+async function ooApplyBridge(plan) {
+  const name = current;
+  if (!name) return { ok: false, error: 'no workbook is open' };
+  if (dirty) {
+    const saved = await ooSave(false);
+    if (!saved) {
+      return { ok: false, error: 'the editor’s own unsaved changes could not be saved '
+                               + 'first, so nothing was changed' };
+    }
+  }
+  let sid = null;
+  try {
+    const r = await fetch('/api/office/open/' + encodeURIComponent(name),
+                          { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) return { ok: false, error: j.error || 'could not read that workbook' };
+    snap = j.snapshot;
+    activeSid = sheetIds(snap)[0] || null;
+    sid = actTargetSid(plan.sheet);
+  } catch (e) {
+    return { ok: false, error: 'could not read that workbook: ' + ((e && e.message) || e) };
+  }
+  const done = actRunOps(sid, plan.ops);
+  if (!done) return { ok: false, error: 'nothing could be written to that sheet' };
+  try {
+    const r = await fetch('/api/office/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, snapshot: snap }),
+    });
+    const j = await r.json();
+    if (!j.ok) return { ok: false, error: j.error || 'the bridge refused the save' };
+    done.notes = (done.notes || []).concat([
+      'this change went through the FILE rather than through the editor (the editor '
+      + 'has no API for it), so it was saved straight away — the previous file is kept '
+      + 'as ' + (j.backup || 'a daily .bak') + ' — and the editor reloaded it. The '
+      + 'editor’s own ⌘Z does not undo this one, and the round-trip does not carry '
+      + 'charts or images (Help → What round-trips).']);
+  } catch (e) {
+    return { ok: false, error: 'the save failed: ' + ((e && e.message) || e) };
+  }
+  await ooReload('ai-apply');
+  return { ok: true, done: done, viaBridge: true };
+}
+
+// ══ THE STRIP'S "FULL EDITOR" BUTTON ═════════════════════════════════════════
+// It is no longer an upgrade — the editor comes up by itself — so this button only
+// has work to do in the two cases where it did not:
+//   · NOT INSTALLED → the installer explanation. Never a dead click, which is the
+//     rule this control has had since it existed.
+//   · installed but not up yet (it failed, or you dismissed it) → start it.
+// When the editor IS up, paint() hides the button: a control that would do nothing is
+// worse than no control. `upgrade` keeps its name because that is what the View-menu
+// row, the header button and three tests all reach for.
+async function upgrade() {
+  if (busy) return;
+  if (!current) {
+    say('Open a workbook first — the editor opens the file you are looking at.');
+    return;
+  }
+  const ok = await ooProbe();
+  if (!ok) {
+    const st = ooStatus || {};
+    bx('oo-not-installed', st.reason || 'status unreachable');
+    say('The full editor is not installed yet.\n\n'
+        + (st.reason || 'The bridge did not answer when asked about it.')
+        + '\n\nInstall it once (about 3 GB on disk, no network if the zips are '
         + 'already cached):\n    ./' + (st.installer || 'scripts/install_onlyoffice.sh')
-        + '\n\nThe plain grid is still working, and it is the same file.');
+        + '\n\nUntil then LOffice’s own grid is the editor — menus, toolbar and all — '
+        + 'and it is the same file.');
     return;
   }
-  // THE UNSAVED-EDITS FENCE. The rich editor opens the file AS IT IS ON DISK, so
-  // grid edits that were never saved would simply not be there. That is the one
-  // thing a navigation can quietly lose, so it is asked IN THE PAGE — never with
-  // window.confirm, which a WKWebView without the JS-panel delegate answers FALSE
-  // without showing anything (the same recorded class as confirmDiscard above).
-  // First click warns and offers the save; a second click, no sooner than a person
-  // can read the sentence, opens anyway.
-  if (dirty && !(richArmed === current && Date.now() - richArmedAt >= DISCARD_MIN_MS)) {
-    richArmed = current; richArmedAt = Date.now();
-    const from = current;
-    say('“' + from + '” has unsaved changes. The rich editor opens the file as it is '
-        + 'on disk, so they would be left behind. Save first, or press Rich editor '
-        + 'again to open without them.', null,
-        { label: 'Save & open the rich editor', run: async () => {
-            await save();
-            if (dirty) return;              // the save failed; its reason is on screen
-            richArmed = null;
-            location.href = '/oo-edit?doc=' + encodeURIComponent(from);
-          } });
-    setTimeout(() => { if (richArmed === from) richArmed = null; }, 6000);
-    return;
-  }
-  richArmed = null;
-  bx('rich-ready', 'onlyoffice ' + (st.editor_tag || '?') + ' file=' + current);
-  location.href = '/oo-edit?doc=' + encodeURIComponent(current);
+  ooFailed = '';                       // an explicit press is a request to try again
+  await ooStart(current, 'button');
 }
 
 // ⚠️ RETIRED, NOT DELETED. `loadVendor` / `mount` / `selfCheck` / the VENDOR list
-// above are the Univer tier-2 path. Nothing calls them any more — `upgrade()` used
-// to be the only caller. They are left in place deliberately: the vendored assets
-// are still on disk (deleting ~11 MB of Apache-2.0 UMD is an ops decision, not a
+// above are the Univer tier-2 path. Nothing calls them any more — `upgrade()` stopped
+// being their caller at 2026-08-27c. They are left in place deliberately: the vendored
+// assets are still on disk (deleting ~11 MB of Apache-2.0 UMD is an ops decision, not a
 // builder's), bridge/contract_tests/test_univer_assets_contract.py still pins the
 // asset set, and if the ONLYOFFICE lane ever has to be rolled back this is the
 // rollback. Do not extend them; do not wire them to a button.
@@ -3835,6 +4344,23 @@ function showWorkbook(data, name) {
   el('sheet').classList.remove('on');
   el('gridwrap').classList.remove('off');
   renderGrid();
+  // ⚠️ AND THIS IS WHERE THE ONE-EDITOR RULING LANDS. The grid above is drawn FIRST,
+  // every time, because it is instant and it is the honest interstitial: something
+  // real and readable is on screen while the editor comes up. Then — if ONLYOFFICE is
+  // installed — the editor takes the centre and `body.ooedit` hides the grid.
+  //
+  // It is fire-and-forget on purpose: showWorkbook is the ONE tier decision point and
+  // is called from paths that cannot await, so making it async would ripple through
+  // its callers to buy nothing. Every outcome — installed, not installed, booted,
+  // failed — arrives through ooEvent and repaints from there.
+  //
+  // ⚠️ IT IS NOT GATED ON A PREVIOUS EDITOR STATE. Opening a SECOND workbook lands
+  // here too, and ooStart's `ooSrcSet` branch turns that into a document SWAP inside
+  // the living frame rather than a fresh boot. That IS the "keep one instance alive"
+  // requirement, and it is one branch because it is one decision.
+  ooReady = false;
+  ooPaintClass();
+  ooStart(name, 'open');
 }
 
 async function openDoc(name) {
@@ -3918,6 +4444,14 @@ function snapshotToSave() {
 
 async function save() {
   if (!current || busy) return;
+  // ⚠️ THE EDITOR OWNS THE DOCUMENT, SO THE EDITOR SAVES IT. Our strip's Save button
+  // and ⌘S both land here, and when the editor is up they become its save path —
+  // asc_nativeGetFile → x2t → /api/office/writeback, with the mtime fence and the
+  // daily .bak. Falling through to the tier-1 save instead would write the SNAPSHOT,
+  // i.e. the file as it was when the editor opened it, straight over the user's edits.
+  // That is the single worst thing this page could do, which is why the branch is the
+  // first line of the function rather than somewhere inside snapshotToSave().
+  if (editorActive()) { await ooSave(false); return; }
   let snapshot = null;
   try { snapshot = snapshotToSave(); }
   catch (e) { bx('save-fail', 'read-back threw: ' + e);
@@ -3947,6 +4481,14 @@ function clearWorkbook() {
   current = null; dirty = false; snap = null; activeSid = null;
   extSeen = 0; extAsking = false;
   histClear('close');
+  // ⚠️ THE EDITOR IS STOOD DOWN, NOT TORN DOWN. `editorActive()` goes false (it reads
+  // `current`), so `body.ooedit` drops, our chrome comes back and the start screen
+  // covers the middle — but the FRAME, the compiled wasm and api.js all stay, so the
+  // next file you open is a swap and not another cold boot. Destroying it here would
+  // undo the one thing this slice is for.
+  ooReady = false; ooBooting = false; ooDoc = '';
+  rich('');
+  ooPaintClass();
   if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
   univer = null; api = null;
   el('sheet').innerHTML = '';
@@ -4180,8 +4722,20 @@ function aiPaint(recount) {
   // ⚠️ the NOTE uses the cached EXTENT, never aiContext(): building 20 000 characters
   // of prompt in order to print "5×2" would be work nobody asked for.
   const c = aiCtxOn ? aiNote : null;
+  // ⚠️ AND IT SAYS WHEN IT IS BEHIND. The context the panel sends is the tier-1
+  // snapshot, read from DISK. In one-editor world the document you are typing into
+  // lives in the editor until you save, so between a keystroke and a ⌘S the sheet the
+  // model sees is the SAVED one. That is a real limit and it is stated on the control
+  // rather than left for the user to discover from a wrong answer.
+  const stale = aiCtxOn && editorActive() && dirty;
   el('ai-ctxnote').textContent = !aiCtxOn ? 'sheet not sent'
-    : (c ? (c.rows + '×' + c.cols + (c.truncated ? ' (truncated)' : '')) : 'no sheet open');
+    : (c ? (c.rows + '×' + c.cols + (c.truncated ? ' (truncated)' : '')
+            + (stale ? ' · as last saved' : ''))
+         : 'no sheet open');
+  el('ai-ctxnote').title = stale
+    ? 'The full editor holds your unsaved edits; the sheet sent with your question is '
+      + 'the file as it was last saved. Press ⌘S to send the latest.'
+    : '';
   // The lane chips are chrome showing the same state, so they are repainted from the
   // same place, for the same reason the open menu and the toolbar are: a stale toggle
   // is a control that lies about what it will do.
@@ -5109,9 +5663,23 @@ function actWhere(plan) {
 async function actApply(card, plan) {
   if (!card || !plan || card._state === 'busy' || card._state === 'applied') return;
   if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
-  // The rich editor OWNS the document once it has mounted, exactly as the Format and
-  // Insert menus say: a tier-1 write would edit a snapshot nobody is looking at and be
-  // lost at the next save. So this refuses, in the same words, rather than pretending.
+  // ⚠️ THE ONE-EDITOR RULING CHANGED THIS FUNCTION'S BACKEND, NOT ITS FRONT. Everything
+  // above — the parse, the caps, the preview, the refusals — is unchanged and still
+  // ours. But the WRITE no longer goes into the tier-1 snapshot when the editor owns
+  // the document: it goes through the editor's own builder API, so the editor's ⌘Z
+  // takes an AI apply back. ooActApply owns that path (and the bridge fallback for the
+  // ops the API cannot honestly carry out); it reports through the same card.
+  if (editorActive()) { return ooActApply(card, plan); }
+  // The interstitial is read-only, so an Apply landing during it would write into a
+  // snapshot the editor is about to replace. Say so instead of racing it.
+  if (ooInstalled && ooBooting) {
+    bx('action-refused', 'editor booting');
+    actNote(card, 'The full editor is still opening this workbook. Try Apply again in '
+                + 'a moment — it will go straight into the editor.');
+    return;
+  }
+  // The retired Univer tier, if it were ever rolled back on: it OWNS the document once
+  // mounted, and a tier-1 write would edit a snapshot nobody is looking at.
   if (mode !== 'grid') {
     bx('action-refused', 'univer');
     actNote(card, T1_ONLY);
@@ -5179,6 +5747,83 @@ async function actApply(card, plan) {
      + ' undo=' + (entry ? 'yes' : 'too-large'));
   say(actSummary(plan, actWhere(plan)) + ' — applied. Press ⌘S to save it to the file.',
       'ok');
+}
+
+/* THE APPLY, WHEN THE FULL EDITOR OWNS THE DOCUMENT. The card, the plan, the caps and
+   every refusal above are unchanged; this is only the write. It picks one of the two
+   routes ooOpPlan decided (and the card already printed), does it, and reports back
+   through the same actPaint — so there is exactly one place that renders "applied".
+
+   ⚠️ NO PAGE-SIDE UNDO ENTRY IS TAKEN, AND THAT IS THE POINT. histPush() clones the
+   tier-1 snapshot, which is not the document you are looking at; an "Undo" built on it
+   would restore a workbook the editor never had. The editor's own ⌘Z is the undo now,
+   the card says so, and `card._undo` stays false so no button claims otherwise. */
+async function ooActApply(card, plan) {
+  card._state = 'busy';
+  actPaint(card);
+  const route = ooOpPlan(plan.ops);
+  bx('action-route', 'route=' + route.route + ' api=' + route.api
+     + ' skip=' + route.skip + ' bridge=' + route.bridge);
+  let r;
+  try {
+    r = route.route === 'bridge' ? await ooApplyBridge(plan) : ooApplyApi(plan);
+  } catch (e) {
+    r = { ok: false, error: String((e && e.message) || e) };
+  }
+  if (!r || !r.ok) {
+    card._state = 'ready';
+    actPaint(card);
+    // A partial run is possible on the API route (the editor has already taken the
+    // earlier ops) — so the note names the op that failed AND the way back, rather
+    // than claiming a rollback this page cannot perform.
+    actNote(card, ((r && r.error) || 'the editor did not say why')
+                + (r && r.done && (r.done.cells || r.done.styled)
+                   ? ' — the operations before it DID go in; ⌘Z inside the editor '
+                     + 'steps back through them.'
+                   : ' — nothing was changed.'));
+    bx('action-refused', 'editor: ' + String((r && r.error) || '?').slice(0, 120));
+    return;
+  }
+  const d = r.done || {};
+  // actPaint reads one shape; the two routes report in two. Normalised HERE rather
+  // than in either producer, so the card has one thing to read.
+  const done = {
+    cells: Number(d.cells) || 0,
+    cleared: Number(d.cleared) || 0,
+    styledCells: Number(d.styledCells) || Number(d.styled) || 0,
+    sheets: Array.isArray(d.sheets) ? d.sheets : [],
+    renamed: d.renamed || '',
+    sorted: Number(d.sorted) || 0,
+    inserted: Number(d.inserted) || 0,
+    deleted: Number(d.deleted) || 0,
+    skipped: Number(d.skipped) || 0,
+    notes: Array.isArray(d.notes) ? d.notes.slice() : [],
+  };
+  route.rows.forEach((row, i) => {
+    if (row.how === 'skip') {
+      done.notes.push('operation ' + (i + 1) + ' (' + row.op + ') was skipped: '
+                      + row.why + '.');
+    }
+  });
+  // ⚠️ paint() IMMEDIATELY, not at the end of the function: it is the funnel the
+  // heartbeat rides (see hbPlan), and the bridge's decision about whether to let an
+  // agent write this workbook is exactly "does a page have unsaved edits in it".
+  if (!r.viaBridge) { dirty = true; paint(); }   // the editor's state event confirms it
+  card._state = 'applied';
+  card._done = done;
+  card._undo = false;                        // the EDITOR's ⌘Z is the undo now
+  card._viaEditor = !r.viaBridge;
+  card._viaBridge = !!r.viaBridge;
+  actLast = null;                            // no page-side entry to point at
+  actPaint(card);
+  paint();
+  bx('action-applied', 'via=' + (r.viaBridge ? 'bridge' : 'editor')
+     + ' cells=' + done.cells + ' styled=' + done.styledCells
+     + ' sheets=' + done.sheets.length + ' sorted=' + done.sorted
+     + ' inserted=' + done.inserted + ' deleted=' + done.deleted);
+  say(actSummary(plan, actWhere(plan)) + ' — applied in the full editor'
+      + (r.viaBridge ? ' (through the file, and already saved).'
+                     : '. Press ⌘S to save it to the file.'), 'ok');
 }
 
 function actUndo(card) {
@@ -5287,9 +5932,20 @@ function actPaint(card) {
       + (done.sorted ? ', sorted' : '')
       + (done.inserted ? ', ' + done.inserted + ' inserted' : '')
       + (done.deleted ? ', ' + done.deleted + ' deleted' : '')
-      + '. The file is NOT saved yet — press ⌘S.'
-      + (card._undo ? '' : ' This workbook is too large to hold an undo copy, so this '
-                         + 'change cannot be taken back from here.');
+      // ⚠️ THREE DIFFERENT TRUTHS, AND THE CARD TELLS THE RIGHT ONE. Through the
+      // EDITOR: not saved yet, and the editor's own ⌘Z takes it back. Through the FILE
+      // (the bridge route): already saved, and the editor's ⌘Z does not. Tier 1: not
+      // saved yet, and this page's undo stack takes it back if it could clone the
+      // workbook.
+      + (card._viaEditor
+         ? '. It is in the editor and NOT saved to the file yet — press ⌘S. ⌘Z inside '
+           + 'the editor takes it back.'
+         : (card._viaBridge
+            ? '. This one went through the file, so it is ALREADY SAVED and the editor '
+              + 'has reloaded it.'
+            : '. The file is NOT saved yet — press ⌘S.'
+              + (card._undo ? '' : ' This workbook is too large to hold an undo copy, '
+                                 + 'so this change cannot be taken back from here.')));
     head.appendChild(d);
     // ⚠️ EVERY NOTE actRunOps CAME BACK WITH IS PRINTED, and they are the honest-limits
     // ones: a sort refused for merges, an insert that hit the right-hand edge, and the
@@ -5346,8 +6002,32 @@ function actPaint(card) {
                + ' ignored: only the first change is offered, so nothing can be '
                + 'applied that you did not read.');
   }
-  notes.push('Nothing is written until you press Apply, and the file is only saved '
-             + 'when you press ⌘S.');
+  // ⚠️ HOW IT WILL BE CARRIED OUT, SAID BEFORE THE CLICK. In one-editor world Apply
+  // runs inside the full editor, and two things about that are the user's business:
+  // an op the editor's API cannot do sends the WHOLE change through the file instead
+  // (a different, heavier, immediately-saved route), and an op that means nothing in
+  // the real editor is greyed out here rather than counted as done.
+  const route = editorActive() ? ooOpPlan(plan.ops) : null;
+  if (route) {
+    route.rows.forEach((r, i) => {
+      if (r.how !== 'api') {
+        notes.push('Operation ' + (i + 1) + ' (' + r.op + ') '
+                   + (r.how === 'skip' ? 'will be SKIPPED' : 'cannot run in the editor')
+                   + ': ' + r.why + '.');
+      }
+    });
+    notes.push(route.route === 'bridge'
+      ? 'Because of that, the WHOLE change goes through the file: your editor changes '
+        + 'are saved first, the change is made in the .xlsx, and the editor reloads it. '
+        + 'That route saves immediately (a daily .bak is kept), the editor’s ⌘Z does '
+        + 'not undo it, and it does not carry charts or images — Help → What '
+        + 'round-trips.'
+      : 'It runs inside the full editor, so the editor’s own ⌘Z undoes it and nothing '
+        + 'is written to the file until you save.');
+  } else {
+    notes.push('Nothing is written until you press Apply, and the file is only saved '
+               + 'when you press ⌘S.');
+  }
   const n = document.createElement('div');
   n.style.marginTop = '5px';
   n.style.color = 'var(--dim)';
@@ -6268,6 +6948,21 @@ async function extCheck() {
   return plan;
 }
 
+// ⚠️ RELOAD MEANS THE DOCUMENT NOW, NOT THE PAGE, and that is the one thing this
+// function gained at loffice-2026-08-28a. The DECISION above (extPlan) did not move a
+// line — the two sentences are the same two sentences, pinned by the same test — but
+// carrying it out used to mean openDoc(), which in one-editor world would re-read the
+// file into a snapshot nobody is looking at while the editor kept showing the stale
+// document. So when the editor owns the file, "reload" is ooReload(): the editor
+// re-reads the same workbook from disk, in place, keeping the warm frame, the rail,
+// the AI conversation and the pane widths.
+function ooExtReload(name) {
+  if (!editorActive()) return openDoc(name);
+  // The tier-1 snapshot is refreshed too, so the AI panel's context is the agent's
+  // version and not the one from before the write.
+  return ooReload('ext-change').then(() => ooRefreshSnapshot());
+}
+
 function extAct(plan, name) {
   if (plan.act === 'reload') {
     // ⚠️ THE SENTENCE IS SAID AFTER THE OPEN, NOT BEFORE IT, and that is a bug found by
@@ -6275,7 +6970,7 @@ function extAct(plan, name) {
     // set beforehand flashes and vanishes — the spec's one required sentence, gone.
     // And only if the open left the box EMPTY: a read failure, or the very-large-
     // workbook warning, is a bigger thing to say than "reloaded".
-    openDoc(name).then(() => { if (!el('msg').textContent) say(plan.text, 'dim'); });
+    ooExtReload(name).then(() => { if (!el('msg').textContent) say(plan.text, 'dim'); });
     return;
   }
   extAsking = true;
@@ -6287,7 +6982,7 @@ function extAct(plan, name) {
         extAsking = false; say('');
         dirty = false; paint();
         bx('ext-reload', name);
-        openDoc(name);
+        ooExtReload(name);
       } },
     { label: 'Keep mine', run: () => {
         extAsking = false;
@@ -6491,6 +7186,12 @@ el('ai-in').onkeydown = ev => {
 
 el('btn-save').onclick = save; // ABCDE
 el('btn-rich').onclick = upgrade;
+// ⚠️ THE SAME FUNCTIONS THE MENU ROWS CALL, not copies of them: `mi('mi-start', goStart)`
+// and `mi('mi-about', helpAbout)` are still wired further down, so the strip button and
+// the menu row are one behaviour with two doors — which is exactly the rule the toolbar
+// row was built on ("there is no toolbar-shaped copy of anything").
+el('btn-start').onclick = goStart;
+el('btn-info').onclick = helpAbout;
 el('btn-rail').onclick = () => railSetOpen(!railIsOpen(), 'header');
 const toggleNew = () => nameRow('create');
 el('btn-new').onclick = toggleNew;
@@ -6784,8 +7485,17 @@ async function boot() {
   // is the bug being fixed here, so discoverability wins the default.
   aiSetOpen(aiWant, 'boot');
   aiPaint();
-  await loadFiles();
-  bx('tier1-ready', 'files=' + files.length);
+  // ⚠️ THE TWO ARE ASKED TOGETHER, AND THE PROBE IS AWAITED BEFORE THE FIRST OPEN.
+  // Two reasons, and the second is the one that would have been a bug: (a) both are
+  // one small GET on the same loopback bridge and neither needs the other's answer, so
+  // running them in sequence would just add a round trip to the landing; (b) autoOpen
+  // → showWorkbook decides whether the grid is the interstitial or the editor, and a
+  // page that does not yet know whether ONLYOFFICE is installed would show an
+  // INTERACTIVE grid for a beat and then take it away — i.e. offer an edit it was
+  // about to discard.
+  await Promise.all([loadFiles(), ooProbe()]);
+  bx('tier1-ready', 'files=' + files.length
+     + ' editor=' + (ooInstalled ? 'installed' : 'no'));
   await autoOpen();
   // ONE interval for the whole page (see pageTickStart) — armed after the first open so
   // the heartbeat's very first beat already names the workbook that is on screen.

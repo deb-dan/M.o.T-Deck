@@ -307,40 +307,100 @@ check('…and reports itself either way',
 check('…exactly once per page (a second upgrade attempt must not stack <link> tags)',
       /cssAsked/.test(LV) && /cssAsked = true/.test(LV));
 
-// TIER 2 IS ONLYOFFICE NOW (loffice-2026-08-27c). The five checks below used to pin
-// the Univer lazy-mount inside upgrade(); they pin the navigation that replaced it,
-// and the promise is unchanged in shape — a failure of the optional half may not
-// cost the working half, and nothing may be a dead click.
+// ONE EDITOR NOW (loffice-2026-08-28a). The five checks this block replaced pinned the
+// NAVIGATION to /oo-edit that 2026-08-27c introduced, and Debi's one-editor ruling
+// deleted it: the editor is EMBEDDED in this page's centre column. The promises are
+// unchanged in shape — a failure of the editor may not cost the working grid, and
+// nothing may be a dead click — so every one of them has a successor here.
 // ⚠️ The Univer bundle machinery above (VENDOR / loadVendor / mount) is RETIRED but
-// still present and still pinned, because the vendored assets are still on disk and
-// it is the rollback. What is asserted here is that upgrade() no longer USES it.
+// still present and still pinned, because the vendored assets are still on disk and it
+// is the rollback. What is asserted below is that nothing live USES it.
 const UP = grab('upgrade');
-check('upgrade() navigates to the ONLYOFFICE glue page for the OPEN workbook',
-      /location\.href = '\/oo-edit\?doc=' \+ encodeURIComponent\(current\)/.test(UP));
+check('upgrade() no longer navigates ANYWHERE — the editor is in this page',
+      !/location\.href/.test(UP) && !/oo-edit/.test(UP));
 check('…and no longer touches the retired Univer loader',
       !/loadVendor|mount\(snap\)|selfCheck\(\)/.test(UP));
-check('…and asks the bridge whether the editor is installed FIRST, so a missing '
-      + 'bundle is a sentence rather than a dead click',
-      UP.indexOf("'/api/oo/status'") > 0
-      && UP.indexOf("'/api/oo/status'") < UP.indexOf("location.href")
-      && /st\.installed/.test(UP) && /st\.installer/.test(UP));
+check('…it asks the bridge whether the editor is installed FIRST, so a missing bundle '
+      + 'is a sentence rather than a dead click',
+      /await ooProbe\(\)/.test(UP) && /st\.installer/.test(UP) && /st\.reason/.test(UP));
 check('…and refuses with a reason when there is no workbook to open',
       UP.indexOf('if (!current)') > 0
-      && UP.indexOf('if (!current)') < UP.indexOf("'/api/oo/status'"));
-check('the failure message says the grid still works rather than only naming the error',
-      /plain grid is still working/.test(UP));
-// Unsaved grid edits are the one thing a navigation can quietly leave behind, so it
-// is the one thing upgrade() must ask about.
-check('…and unsaved grid edits are confirmed before navigating away from them',
-      UP.indexOf('if (dirty)') > 0
-      && UP.indexOf('if (dirty)') < UP.indexOf('location.href')
-      && /window\.confirm/.test(UP));
+      && UP.indexOf('if (!current)') < UP.indexOf('ooProbe()'));
+check('the not-installed message says the plain grid is still the editor rather than '
+      + 'only naming the error', /own grid is the editor/.test(UP));
+check('…and an explicit press is treated as a request to TRY AGAIN after a failure, '
+      + 'not as a second dead click', /ooFailed = ''/.test(UP));
 
-// Saving must ask the tier that owns the document. Tier 1 IS the snapshot; Univer owns
-// it once mounted, and reading the stale `snap` after an upgrade would silently save
-// the pre-upgrade workbook over the user's edits.
+// ── THE ONE PREDICATE. This is the fork the whole restructure rests on. ──
+const EA = grab('editorActive');
+check('there is ONE predicate for "is the editor the editor right now", and it is a '
+      + 'pure read of three flags',
+      /return !!\(ooInstalled && ooReady && !!current\);/.test(EA)
+      && !/document\.|\bel\(/.test(EA));
+eq('…defined exactly once',
+   (html.match(/function editorActive\(\)/g) || []).length, 1);
+const OPC = grab('ooPaintClass');
+eq('…and it reaches the DOM in exactly one place',
+   (html.match(/classList\.toggle\('ooedit'/g) || []).length, 1);
+check('…which is a body class, so the hide/show fork is a stylesheet rather than '
+      + 'eleven paint functions each with its own if',
+      /ooedit/.test(OPC) && /oowait/.test(OPC));
+check('paint() calls it, so the class cannot lag the state — paint is the funnel every '
+      + 'change of `current` and `dirty` already goes through',
+      /ooPaintClass\(\);/.test(grab('paint')));
+// The four surfaces that must get out of the editor's way, in the stylesheet, by name.
+['#menubar', '#toolbar', '#findrow', '#gridwrap'].forEach(sel => {
+  check('body.ooedit hides ' + sel + ' — no duplicate ribbons',
+        html.includes('body.ooedit ' + sel + '{display:none}'));
+});
+// ⚠️ AND THE SPECIFICITY IS ASSERTED, NOT ASSUMED. `#menubar{display:flex}` and
+// `#findrow.on{display:flex}` live FURTHER DOWN the same stylesheet, so a hide rule of
+// equal-or-lower weight would lose and the menu bar would sit on top of the ribbon. Each
+// hide rule adds a TYPE selector (`body`) on top of the id, which outranks both without
+// depending on source order — and this check is what would notice if somebody
+// "simplified" `body.ooedit #menubar` down to `.ooedit #menubar`.
+check('…each hide rule carries the `body` type selector that makes it outrank the '
+      + 'display:flex rules further down the stylesheet',
+      ['#menubar', '#toolbar', '#findrow', '#gridwrap'].every(sel => {
+        const rule = 'body.ooedit ' + sel + '{display:none}';
+        return html.includes(rule) && !html.includes('\n  .ooedit ' + sel);
+      }));
+check('the interstitial grid is READ-ONLY: an edit into a snapshot the editor is about '
+      + 'to replace is not offered at all',
+      html.includes('body.oowait #gridwrap{pointer-events:none'));
+// ⚠️ AND THE KEYBOARD, WHICH IS THE HALF A HIDDEN MENU DOES NOT COVER. ⌘B, ⌘Z and
+// ⇧F11 are page-level shortcuts; hiding the menu bar does not disarm one of them.
+const T1 = grab('t1ok');
+check('t1ok — the gate every tier-1 verb goes through — also refuses while the editor '
+      + 'owns the document, and while it is coming up',
+      /!editorActive\(\)/.test(T1) && /!\(ooInstalled && ooBooting\)/.test(T1));
+
+// ── ONE INSTANCE, KEPT ALIVE. This is the "why is it not instant like Music?" half. ──
+const ST = grab('ooStart');
+check('the iframe src is set at most once per page and every later file switch is a '
+      + 'document SWAP through the living child',
+      /ooSrcSet/.test(ST) && /ooChild\.open\(name\)/.test(ST));
+check('…and the swap path is preferred, so the compiled wasm and the loaded api.js are '
+      + 'not thrown away on every click in the file list',
+      ST.indexOf('if (!ooSrcSet)') < ST.indexOf('ooChild.open(name)'));
+check('…and it reports WHICH path ran and how long it took, so the claim is checkable '
+      + 'from the boot log rather than only from a stopwatch',
+      /bx\('oo-start', name \+ ' via=' \+ \(ooSrcSet \? 'swap' : 'src'\)/.test(ST));
+check('closing a workbook stands the editor DOWN without tearing it down',
+      /ooReady = false; ooBooting = false; ooDoc = '';/.test(grab('clearWorkbook'))
+      && !/destroy\(\)/.test(grab('clearWorkbook')));
+
+// Saving must ask whoever owns the document. The EDITOR owns it when it is up; tier 1
+// IS the snapshot otherwise; and reading the stale `snap` while the editor holds the
+// document would write the file as it was when the editor opened it over the user's
+// edits — the single worst thing this page could do.
+const SV = grab('save');
+check('save() branches to the editor FIRST when the editor owns the document',
+      /if \(editorActive\(\)\) \{ await ooSave\(false\); return; \}/.test(SV));
+const SVC = SV.split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+check('…before it reads the snapshot at all', SVC.indexOf('editorActive()') < SVC.indexOf('snapshotToSave'));
 const SS = grab('snapshotToSave');
-check('saving reads the facade in univer mode and the snapshot in grid mode',
+check('the tier-1/Univer read-back is unchanged for the case it still serves',
       /mode === 'univer'/.test(SS) && /return snap;/.test(SS));
 check('…using save() with the deprecated getSnapshot() alias as fallback',
       /wb\.save \? wb\.save\(\) : wb\.getSnapshot\(\)/.test(SS));
@@ -348,12 +408,41 @@ check('…and commits a half-typed cell first, so ⌘S while editing saves what 
       + 'screen rather than the value before the keystroke',
       /activeElement/.test(SS) && /commit\(act\)/.test(SS));
 
-// One place decides which tier draws a workbook, so the two can never both think they
-// own the document.
+// One place decides which surface draws a workbook, so two of them can never both
+// think they own the document. It draws the GRID first — instant, and the honest
+// interstitial — and then hands the centre over.
 const SW = grab('showWorkbook');
-check('showWorkbook is the only tier decision point, and it falls back to the grid '
-      + 'when the rich editor is wanted but cannot mount',
-      /richWanted && richLoaded && mount\(snap\)/.test(SW) && /mode = 'grid'/.test(SW));
+check('showWorkbook is still the one decision point, it still falls back to the grid, '
+      + 'and it is what starts (or swaps) the editor',
+      /richWanted && richLoaded && mount\(snap\)/.test(SW) && /mode = 'grid'/.test(SW)
+      && /ooStart\(name, 'open'\)/.test(SW));
+check('…and the grid is rendered BEFORE the editor is asked for, which is what makes '
+      + 'the interstitial real rather than a spinner',
+      SW.indexOf('renderGrid();') < SW.indexOf('ooStart('));
+
+// ── THE PARENT↔CHILD CONTRACT. One object each way, same-origin, no postMessage. ──
+check('the host half of the contract is published BEFORE the iframe can exist, so the '
+      + 'child never has to poll or retry to find it',
+      /window\.LOfficeHost = \{/.test(html)
+      && html.indexOf('window.LOfficeHost = {') < html.indexOf("el('ooframe').src"));
+check('…it carries a contract VERSION, so a signature change is a visible one',
+      /contract: 1,/.test(html.split('window.LOfficeHost = {')[1].slice(0, 200)));
+check('…and it is exactly two entry points: register (the child hands its API up) and '
+      + 'event (everything else)',
+      /register: \(embed\) =>/.test(html) && /event: \(ev\) => ooEvent/.test(html));
+check('every report to the child is guarded, so a child that throws cannot take the '
+      + 'page down with it', /try \{ HOST\.event\(ev\); \}/.test(
+        fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'oo.html'), 'utf8')));
+const EV = grab('ooEvent');
+['boot', 'ready', 'state', 'saved', 'error'].forEach(k => {
+  check("ooEvent handles the '" + k + "' event", EV.includes("kind === '" + k + "'"));
+});
+check('the editor\'s own state event IS the page\'s dirty flag — one flag, not two',
+      /if \(d !== dirty\) \{ dirty = d; paint\(\); \}/.test(EV));
+check('…and a FATAL editor failure puts the working grid back and says why, rather '
+      + 'than leaving a dead frame in the middle of the layout',
+      /ev\.fatal/.test(EV) && /ooReady = false; ooBooting = false;/.test(EV)
+      && /using its own grid/.test(EV));
 
 // Editing is delegated, not per-cell: 20 000 cells x 3 closures is 60 000 closures that
 // a re-render would leak.
@@ -401,7 +490,14 @@ check('…and normalises the non-breaking spaces contenteditable inserts, so a s
 ['script-start', 'boot-inline', 'dom-ready', 'tier1-ready', 'grid-render', 'files-ok',
  'files-fail', 'open-start', 'open-ok', 'open-fail', 'save-ok', 'save-fail',
  'create-fail', 'import-fail', 'auto-open', 'landed',
- 'rich-start', 'rich-loaded', 'rich-ready', 'rich-fail',
+ // ⚠️ THE RETIRED UNIVER LOADER'S BEACONS, KEPT because loadVendor is still the
+ // rollback path and still emits them. `rich-ready` / `rich-fail` went with the
+ // navigation that Debi's one-editor ruling deleted; the EDITOR's own beacons are
+ // asserted as their own group below, and they are what a boot log is read for now.
+ 'rich-start', 'rich-loaded',
+ // the embedded editor (loffice-2026-08-28a)
+ 'oo-status', 'oo-start', 'oo-boot', 'oo-swap', 'oo-register', 'oo-saved', 'oo-error',
+ 'oo-reload', 'oo-snap', 'oo-not-installed', 'action-route',
  'pane-resize', 'pane-reset', 'rail-open', 'rail-collapse',
  'asset-ok', 'asset-error', 'asset-timeout', 'selfcheck-pass', 'selfcheck-fail',
  'mount-start', 'mount-fail', 'mount-raf', 'mount-settled', 'page-error', 'rejection',
@@ -804,8 +900,17 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           /el\('h-blank'\)\.onclick = newBlank/.test(html)
           && /await create\(\)/.test(grab('newBlank'))
           && !/create\(['"]/.test(grab('newBlank')));
-    check('boot() runs the landing, and only AFTER the file list is in',
-          /await loadFiles\(\);[\s\S]{0,200}await autoOpen\(\);/.test(grab('boot')));
+    // ⚠️ WIDENED AT loffice-2026-08-28a, AND THE REASON IS THE POINT OF THE WIDENING:
+    // the file list and the "is the editor installed?" probe are now asked TOGETHER
+    // (one Promise.all — two small GETs on the same loopback bridge, neither needing
+    // the other's answer), and BOTH are awaited before the landing. The second half is
+    // not a nicety: autoOpen → showWorkbook decides whether the grid is an interactive
+    // editor or a read-only interstitial, and a page that did not yet know would offer
+    // an edit it was about to discard.
+    check('boot() runs the landing, and only AFTER the file list AND the editor probe '
+          + 'are both in',
+          /await Promise\.all\(\[loadFiles\(\), ooProbe\(\)\]\);[\s\S]{0,400}await autoOpen\(\);/
+            .test(grab('boot')));
 
     // ── create(): the empty name used to be a silent no-op ──
     const src = grab('create');
@@ -839,7 +944,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27e');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28a');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
@@ -1917,6 +2022,12 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
         let snap = null, activeSid = 's1', current = 'Book.xlsx', busy = false,
             mode = 'grid', dirty = false, openMenu = -1, lastRC = null,
             histBack = [], histFwd = [];
+        // ⚠️ ADDED AT loffice-2026-08-28a. t1ok() now also reads the editor's state,
+        // because a HIDDEN menu bar does not disarm ⌘B / ⌘Z / ⇧F11 — so the stub has
+        // to carry the same three flags the page does, and the default here is the
+        // NOT-INSTALLED case, which is exactly the tier-1 world every assertion below
+        // was written for.
+        let ooInstalled = false, ooReady = false, ooBooting = false;
         const T1_ONLY = 'rich editor', NO_DOC = 'no workbook', NO_CELL = 'click a cell';
         const LS_TOOLBAR = (html.match(/const LS_TOOLBAR = '([^']+)'/) || [])[1];
         function activeSheet() { return (snap && snap.sheets) ? (snap.sheets[activeSid] || null) : null; }
@@ -1929,6 +2040,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
         eval(grab('cellStyle'));
         eval(grab('setRow'));
         eval(grab('tick'));
+        eval(grab('editorActive'));
         eval(grab('t1ok'));
         eval(grab('histCan'));
         eval(grab('histTop'));

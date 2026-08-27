@@ -9350,12 +9350,43 @@ def _office_log(msg: str) -> None:
 
 @app.get("/office")
 def office_page() -> FileResponse:
-    """The Office tab's own document — deliberately not the panel: it loads ~10MB of
-    Univer UMD and must not carry the panel's poll loops (the /aider precedent)."""
+    """The Office tab's own document — deliberately not the panel: it must not carry
+    the panel's poll loops (the /aider precedent).
+
+    ⚠️ THIS PAGE IS CROSS-ORIGIN ISOLATED AS OF loffice-2026-08-28a, AND THAT IS THE
+    CONSEQUENCE OF DEBI'S ONE-EDITOR RULING. The ONLYOFFICE editor now lives in a
+    same-origin iframe filling this page's centre column instead of behind a
+    navigation to /oo-edit. `crossOriginIsolated` is a property of the WHOLE frame
+    tree — a COEP child inside a non-COEP parent is embedded but NOT isolated, and an
+    un-isolated spreadsheet editor hangs for ever at "Loading spreadsheet" with zero
+    console errors (measured, 2026-08-27). So the three headers move UP to the
+    embedder as well.
+
+    THE SUBRESOURCE AUDIT THAT MADE THIS SAFE (a require-corp document refuses any
+    CROSS-ORIGIN subresource that does not opt in; same-origin ones are unaffected):
+      · office.html contains NO external script or link tag at all — bridge/tests/
+        test_office_grid.js pins that, and it is the whole reason this is a one-line
+        change rather than a re-plumbing.
+      · every fetch it makes is same-origin (/api/office/*, /api/oo/status,
+        /api/chat/direct, /api/hermes/*, /api/models, /api/status).
+      · the retired Univer loader's /assets/vendor/* URLs are same-origin too, so even
+        the rollback path is unaffected.
+      · the nested document, /oo-edit, already carries CORP: same-origin.
+      · Download is `window.location.href = /api/office/download/...` — a NAVIGATION,
+        not a subresource, and COEP does not gate those.
+    ⚠️ COOP: same-origin also severs any window.opener relationship. This page never
+    opens one: `goHome()` talks to the shell's message handler and otherwise sets
+    location.href. Nothing here calls window.open.
+    ⚠️ AND IT MUST STAY A TOP-LEVEL DOCUMENT. app/main.swift gives LOffice its own
+    HarnessTab and bridge/panel/index.html marks the entry `view:null`, which makes it
+    ineligible for the ⧉ peek overlay (peekEligible requires a view) — the one place
+    that would otherwise put /office inside an iframe of the panel and silently cost
+    it isolation.
+    """
     return FileResponse(
         PANEL / "office.html",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate",
-                 "Pragma": "no-cache"},
+        headers=_oo_headers({"Cache-Control": "no-store, no-cache, must-revalidate",
+                             "Pragma": "no-cache"}),
     )
 
 
@@ -9713,14 +9744,23 @@ def oo_status() -> JSONResponse:
 
 @app.get("/oo-edit")
 def oo_edit_page() -> Response:
-    """The glue page — OUR integration, at /oo-edit?doc=<name>.
+    """The glue page — OUR integration, at /oo-edit?doc=<name>[&embed=1].
 
-    A full-page navigation, not an iframe inside the LOffice page. Two reasons, and
-    the second is the deciding one: (a) it is simpler, and the "Back to LOffice"
-    button is a plain link; (b) an iframe would force the LOffice page ITSELF to
-    carry COEP, and that page loads /assets/* — a cross-origin-isolated document
-    refuses any subresource without CORP, so the tier-1 grid would have to be
-    re-plumbed to gain nothing.
+    ⚠️ THE OLD DOCSTRING HERE ARGUED FOR A NAVIGATION AND AGAINST AN IFRAME, AND
+    DEBI'S 2026-08-27 ONE-EDITOR RULING REVERSED IT. Its second (deciding) reason was
+    that embedding "would force the LOffice page ITSELF to carry COEP, and that page
+    loads /assets/*". That premise was already stale when it was written: the Univer
+    tier had been retired in the same wave, so office.html loads no subresource at
+    all. See the audit in office_page() above — COEP on /office costs nothing.
+
+    So this page is now BOTH:
+      · `?embed=1` — the editing surface inside LOffice's centre column. Its own
+        header/footer are hidden and the LOffice chrome around it does that job.
+      · no `embed` — the standalone page, unchanged, kept as the rollback and as the
+        way to open the editor on its own when something about the embed goes wrong.
+    Parent and child are same-origin, so the contract between them is direct property
+    access (window.LOfficeHost / window.LOfficeEmbed) rather than postMessage — the
+    whole of it is documented at the top of bridge/panel/oo.html.
     """
     if _oo is None:
         return _oo_unavailable()

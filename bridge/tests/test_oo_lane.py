@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""LOFFICE TIER 2 — the ONLYOFFICE lane (2026-08-27, loffice-2026-08-27c).
+"""LOFFICE — the ONLYOFFICE lane (2026-08-28, loffice-2026-08-28a).
+
+⚠️ IT IS NOT "TIER 2" ANY MORE. Debi ruled LOffice a ONE-EDITOR app on 2026-08-27
+(roadmap §8): ONLYOFFICE stopped being a page you navigate to and became the editing
+surface inside the LOffice layout, in a same-origin iframe, with our dark strip, file
+rail and AI panel around it. Group 6 below is where that ruling is pinned.
 
 What each group guards, and why it is worth a test rather than a comment:
 
@@ -27,9 +32,18 @@ What each group guards, and why it is worth a test rather than a comment:
    mtime fence (409) and its force override, traversal, oversize, and bytes that are
    not a workbook at all.
 
-6. THE TIER-2 WIRING in bridge/panel/office.html: the button and the menu row open
-   the ONLYOFFICE page for the OPEN workbook, ask whether it is installed first, and
-   never use window.confirm (a silent no-op in a WKWebView).
+6. THE ONE-EDITOR WIRING, across BOTH halves of it:
+   · /office now carries the three isolation headers too. It has to: crossOriginIsolated
+     is a property of the whole frame tree, so a COEP editor inside a non-COEP embedder
+     is embedded and NOT isolated — which is the silent-hang case in group 2.
+   · bridge/panel/office.html embeds the editor (#oostage / #ooframe), forks on ONE
+     predicate (editorActive → body.ooedit), hides its own menu bar / toolbar / find bar
+     / grid while the editor is up, routes Save and the AI panel's Apply into the
+     editor, and reloads the DOCUMENT rather than the page on an external change.
+   · bridge/panel/oo.html is embeddable, keeps ONE editor instance and swaps documents
+     into it, publishes the contract (window.LOfficeEmbed) and reads the other half
+     (window.LOfficeHost), and disables Print through the published config.
+   · and NEITHER page uses window.confirm (a silent no-op in a WKWebView).
 
 7. ⚖️ THE AGPL ATTRIBUTION — condition #3 of the 2026-08-27 ruling. Named on the
    editor page's footer AND in LOffice's Help → About, single-sourced from
@@ -398,9 +412,25 @@ try:
           body["installed"] or bool(body["reason"]))
 
     r = cl.get("/oo-edit?doc=x.xlsx")
-    check("GET /oo-edit serves the glue page", r.status_code == 200 and len(r.text) > 3000)
+    check("GET /oo-edit serves the editor page", r.status_code == 200 and len(r.text) > 3000)
     check("…AND carries the three headers — a COEP frame may only be embedded by a "
           "COEP document, so the page needs them as much as the bundle does",
+          iso_ok(r), dict(r.headers))
+    check("…and is never cached", "no-store" in (r.headers.get("cache-control") or ""))
+    r = cl.get("/oo-edit?embed=1&doc=x.xlsx")
+    check("GET /oo-edit?embed=1 — the EMBEDDED shape — serves the same page with the "
+          "same headers", r.status_code == 200 and iso_ok(r), dict(r.headers))
+
+    # ⚠️ THE ONE THAT MADE THE ONE-EDITOR RULING POSSIBLE AT ALL, AND THE ONE MOST
+    # LIKELY TO BE REMOVED BY SOMEBODY TIDYING UP. /office is the EMBEDDER now.
+    # `crossOriginIsolated` is a property of the whole frame tree: a COEP editor frame
+    # inside a parent WITHOUT these headers loads, renders its entire ribbon, and then
+    # hangs for ever at "Loading spreadsheet" with zero console errors. Measured in a
+    # real WKWebView, twice, on two different causes with the same signature.
+    r = cl.get("/office")
+    check("GET /office serves the LOffice page", r.status_code == 200 and len(r.text) > 3000)
+    check("…AND carries the three headers, because it is the document that EMBEDS the "
+          "editor and isolation is a property of the whole frame tree",
           iso_ok(r), dict(r.headers))
     check("…and is never cached", "no-store" in (r.headers.get("cache-control") or ""))
 
@@ -475,36 +505,203 @@ try:
 except Exception as _e:                                          # noqa: BLE001
     print(f"  (live route checks SKIPPED: {type(_e).__name__}: {_e})")
 
-# ══ 6. THE TIER-2 WIRING in the LOffice page ═════════════════════════════════
+# ══ 6. THE ONE-EDITOR WIRING in the two pages ════════════════════════════════
+# ⚠️ REWRITTEN AT loffice-2026-08-28a. The checks this replaced pinned a NAVIGATION —
+# "upgrade() sets location.href = /oo-edit?doc=…" — and Debi's one-editor ruling
+# deleted the navigation. They are not relaxed: every promise they carried has a
+# successor below (never a dead click; the installer named; unsaved work not lost
+# silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-27c")
+   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28a")
+check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
+      "document cannot claim to be this build",
+      "loffice-2026-08-28a</code>" in PAGE)
+
+# ── the embed itself ──
+check("the editor is EMBEDDED: the page carries a stage and an iframe for it",
+      'id="oostage"' in PAGE and 'id="ooframe"' in PAGE)
+check("…as REAL MARKUP with no src, so a 92 MB editor is not started before we know "
+      "there is a workbook to open and a bundle to open it with",
+      '<iframe id="ooframe"' in PAGE
+      and 'src=' not in PAGE.split('<iframe id="ooframe"')[1].split(">")[0])
+check("…and NOT sandboxed: a sandboxed frame is a unique opaque origin, which would "
+      "cost both the same-origin contract and the cross-origin isolation",
+      "sandbox" not in PAGE.split('<iframe id="ooframe"')[1].split(">")[0])
+check("the ONE place the iframe's src is ever set is ooStart",
+      PAGE.count("el('ooframe').src") == 2                # the two branches of ooStart
+      and PAGE.count("el('ooframe').src") == PAGE.split("async function ooStart")[1]
+          .split("\n// ── SAVE")[0].count("el('ooframe').src"))
+check("…and it points at the EMBEDDED shape of the editor page",
+      "'/oo-edit?embed=1&doc=' + encodeURIComponent(name)" in PAGE)
+
+# ── THE ONE PREDICATE ──
+check("there is exactly ONE predicate for is-the-editor-the-editor, and it is a "
+      "function rather than a flag read in eleven places",
+      PAGE.count("function editorActive()") == 1
+      and "return !!(ooInstalled && ooReady && !!current);" in PAGE)
+check("…and exactly ONE place where it reaches the DOM",
+      PAGE.count("function ooPaintClass()") == 1
+      and PAGE.count("classList.toggle('ooedit'") == 1)
+check("…and paint() — the page's existing repaint funnel — is what calls it, so the "
+      "class can never lag the state",
+      "ooPaintClass();" in PAGE.split("function paint()")[1].split("\n}")[0])
+
+# ── NO DUPLICATE RIBBONS ──
+for sel in ("body.ooedit #menubar{display:none}", "body.ooedit #toolbar{display:none}",
+            "body.ooedit #findrow{display:none}", "body.ooedit #gridwrap{display:none}"):
+    check(f"the stylesheet hides our own chrome while the editor is up: {sel}",
+          sel in PAGE)
+check("…and the interstitial grid is READ-ONLY, so an edit made into a snapshot the "
+      "editor is about to replace is not offered at all",
+      "body.oowait #gridwrap{pointer-events:none" in PAGE)
+check("…and every tier-1 verb is gated on the same predicate, because a HIDDEN menu "
+      "does not disarm ⌘B / ⌘Z / ⇧F11",
+      "!editorActive() && !(ooInstalled && ooBooting)"
+      in PAGE.split("function t1ok()")[1].split("}")[0])
+
+# ── the state integration ──
+SAVE = PAGE.split("async function save()")[1].split("\nfunction clearWorkbook")[0]
+# ⚠️ ORDER MATTERS AND IS ASSERTED OVER THE CODE, NOT THE COMMENTS: this function's own
+# comment names snapshotToSave() while explaining why the branch is above it, so a naive
+# index() comparison over the raw text measures the prose instead of the code.
+SAVE_CODE = "\n".join(l for l in SAVE.splitlines() if not l.strip().startswith("//"))
+check("Save goes to the EDITOR when the editor owns the document, and it BRANCHES "
+      "BEFORE reading the snapshot — falling through would write the file as it was "
+      "when the editor opened it straight over the user's edits",
+      "if (editorActive()) { await ooSave(false); return; }" in SAVE_CODE
+      and SAVE_CODE.index("editorActive()") < SAVE_CODE.index("snapshotToSave"))
+EV = PAGE.split("function ooEvent(ev)")[1].split("\n// ── is it installed?")[0]
+check("the editor's onDocumentStateChange drives THE dirty flag — the same one the dot, "
+      "the 'unsaved changes' line and the heartbeat already read",
+      "if (kind === 'state')" in EV and "dirty = d; paint();" in EV)
+check("…and a save clears it and refreshes the file list",
+      "if (kind === 'saved')" in EV and "dirty = false" in EV and "loadFiles()" in EV)
+# ⚠️ FOUND BY PROBING, NOT BY READING, so it gets a test rather than a comment. Clearing
+# the mtime baseline (extSeen = 0) on an open means "re-baseline from disk on the next
+# check", and the next check is up to 15 seconds away — so an agent write landing inside
+# that window BECAME the baseline and the page went on showing the pre-write document
+# believing it was current. The editor reports the mtime it actually read, and that is
+# what "what I am showing" means.
+check("the mtime baseline is taken from the mtime the EDITOR read, on both the open and "
+      "the save — never cleared to zero, which would swallow a write that landed inside "
+      "the check interval",
+      EV.count("extSeen = Number(ev.mtime) || 0;") == 2
+      and "extSeen = 0;" not in EV)
+check("…and a FATAL editor failure puts the working grid back rather than leaving a "
+      "dead frame in the middle of the layout",
+      "if (kind === 'error')" in EV and "ev.fatal" in EV
+      and "ooReady = false" in EV and "using its own grid" in EV)
+check("an external change reloads the DOCUMENT, not the page",
+      "function ooExtReload(" in PAGE
+      and "ooExtReload(name)" in PAGE.split("function extAct(")[1].split("\nfunction ")[0]
+      and "ooChild.reload" in PAGE)
+check("…and the DECISION (extPlan) did not move: it is still the same pure state "
+      "machine with the same two sentences",
+      "function extPlan(s)" in PAGE and "act: 'ask'" in PAGE and "act: 'reload'" in PAGE)
+
+# ── ONE INSTANCE, KEPT ALIVE ──
+check("closing a workbook stands the editor DOWN but does not tear it down, so the "
+      "next open is a swap and not another cold boot",
+      "ooReady = false; ooBooting = false; ooDoc = '';"
+      in PAGE.split("function clearWorkbook()")[1].split("\n}")[0])
+check("opening a workbook always goes through the ONE tier decision point, which "
+      "draws the grid FIRST and then hands the centre to the editor",
+      "ooStart(name, 'open');" in PAGE.split("function showWorkbook(")[1].split("\n}")[0])
+check("the editor is probed ONCE and the answer is awaited BEFORE the first open, so "
+      "the page never offers an interactive grid it is about to take away",
+      "Promise.all([loadFiles(), ooProbe()])" in PAGE
+      and PAGE.count("async function ooProbe()") == 1)
+
+# ── the AI panel's Apply ──
+check("the Quick lane's Apply routes into the editor when the editor owns the document",
+      "if (editorActive()) { return ooActApply(card, plan); }" in PAGE)
+check("…and the routing decision is a PURE function, so the card can print it BEFORE "
+      "anything is applied",
+      "function ooOpPlan(ops)" in PAGE and "function ooEditorOps(ops)" in PAGE)
+check("…and it is ALL-OR-NOTHING: one op the editor cannot do sends the WHOLE plan "
+      "through the file, never half of each",
+      "route: bridge ? 'bridge' : 'api'" in PAGE)
+check("…the sort is the op that has no builder-API equivalent, and it says so rather "
+      "than being dropped",
+      "the full editor has no sort in its API" in PAGE)
+check("…a resize is a SKIP with its reason, because the real editor already has every "
+      "row and column",
+      "already has every row and column" in PAGE)
+check("…and no page-side undo entry is taken on the editor path: the EDITOR's ⌘Z is "
+      "the undo now, and the card says so",
+      "card._undo = false;" in PAGE
+      and "⌘Z inside " in PAGE)
+check("the preview card names the route and, for the bridge route, the fact that it "
+      "saves immediately and does not carry charts or images",
+      "route.route === 'bridge'" in PAGE
+      and "does not carry charts or images" in PAGE)
+
+# ── the honest limits, where a user will look for them ──
+check("Help → About names the Print limitation and says it is disabled through the "
+      "editor's own config rather than by patching the vendored bundle",
+      "Print is turned OFF" in PAGE and "bundle is never patched" in PAGE)
+check("…and that the AI panel sends the sheet AS LAST SAVED",
+      "AS LAST SAVED" in PAGE)
+check("…and the composer's own note says it too, on the control, when it is true",
+      "as last saved" in PAGE and "editorActive() && dirty" in PAGE)
+
+# ── THE SURVIVORS. The menu bar is hidden while the editor is up, so every row of it
+#    that is NOT a duplicate of the ribbon needs another door — and a row with no door is
+#    a capability the restructure quietly deleted. This is the audit, as a test.
+check("⌂ LOffice home has a door in the dark strip, because the File menu that used to "
+      "carry it is hidden while the editor is up (and it is also Close: it shuts the "
+      "workbook and brings the start screen forward)",
+      'id="btn-start"' in PAGE and "el('btn-start').onclick = goStart;" in PAGE)
+check("…and it is never disabled for 'no workbook open', because with nothing open it "
+      "IS the start screen", "el('btn-start').disabled = busy;" in PAGE)
+check("Help has a door there too — it is where the AGPL attribution lives (condition "
+      "#3) and now the editor's honest limits with it",
+      'id="btn-info"' in PAGE and "el('btn-info').onclick = helpAbout;" in PAGE)
+check("…and one click reaches all THREE Help sheets, because say() has taken an actions "
+      "list since the external-change banner needed one — no new popover, no new CSS",
+      "run: helpFidelity" in PAGE and "run: helpKeys" in PAGE)
+check("…and both strip buttons call the SAME functions the menu rows call, so there is "
+      "one behaviour with two doors rather than a copy",
+      "mi('mi-start', goStart)" in PAGE and "mi('mi-about', helpAbout)" in PAGE)
+# Every other File-menu verb already had a door before this slice, and this is the list:
+check("New and Import are in the strip", 'id="btn-new2"' in PAGE and 'id="btn-import"' in PAGE)
+check("Rename is the document title itself", 'id="doctitle"' in PAGE
+      and "Click to rename" in PAGE)
+check("Save is in the strip", 'id="btn-save"' in PAGE)
+check("Open, Download and Delete are on every row of the file rail",
+      "row.onclick = () => openDoc(f.name)" in PAGE
+      and "dl.textContent = 'download'" in PAGE and "del.textContent = armed" in PAGE)
+
+# ── the controls that survived ──
 check("the header button and the View-menu row are both still there",
       'id="btn-rich"' in PAGE and 'id="mi-rich"' in PAGE)
 BTN = [l for l in PAGE.splitlines() if 'id="btn-rich"' in l or 'id="mi-rich"' in l]
-eq("…and there are exactly those two rich-editor controls", len(BTN), 2)
-check("…and neither LABEL advertises Univer or a megabyte count any more",
+eq("…and there are exactly those two full-editor controls", len(BTN), 2)
+check("…and neither LABEL advertises Univer or a megabyte count",
       not any("Univer" in l or "MB" in l for l in BTN), BTN)
 check("the button's tooltip names ONLYOFFICE", "ONLYOFFICE" in PAGE)
+check("…and the button HIDES itself once the editor is up: a control that would do "
+      "nothing is worse than no control",
+      "el('btn-rich').style.display = richOff ? 'none' : ''" in PAGE)
 UP = PAGE.split("async function upgrade()")[1].split("\n// ⚠️ RETIRED")[0]
-check("upgrade() navigates to /oo-edit for the OPEN workbook",
-      "location.href = '/oo-edit?doc=' + encodeURIComponent(current)" in UP)
-check("…and asks /api/oo/status BEFORE navigating, so a missing bundle is a sentence",
-      UP.index("'/api/oo/status'") < UP.index("location.href"))
-check("…and names the installer in that sentence", "st.installer" in UP)
-check("…and no longer calls the retired Univer loader",
-      "loadVendor" not in UP and "mount(snap)" not in UP)
-check("…and refuses with a reason when no workbook is open", "if (!current)" in UP)
-check("…and arms before discarding unsaved grid edits",
-      "if (dirty" in UP and "richArmed" in UP and "DISCARD_MIN_MS" in UP)
+check("upgrade() no longer navigates anywhere — the editor is IN this page",
+      "location.href" not in UP and "/oo-edit" not in UP)
+check("…it asks the bridge whether the editor is installed and, when it is not, names "
+      "the reason AND the installer: never a dead click",
+      "ooProbe()" in UP and "st.reason" in UP and "st.installer" in UP)
+check("…and says the plain grid is still the editor in that case",
+      "own grid is the editor" in UP)
+check("…and refuses with a reason when there is no workbook open", "if (!current)" in UP)
 check("NO window.confirm / prompt / alert anywhere on the LOffice page — a WKWebView "
       "without the JS-panel delegate shows none of them and confirm() returns FALSE",
       not any(f"window.{fn}(" in PAGE for fn in ("confirm", "prompt", "alert")))
 check("the Univer machinery is retired but still present, and SAYS it is the rollback",
       "RETIRED, NOT DELETED" in PAGE and "const VENDOR = [" in PAGE)
 
+# ══ 6b. THE EDITOR PAGE ══════════════════════════════════════════════════════
 OO = (ROOT / "bridge" / "panel" / "oo.html").read_text()
-check("the glue page is first-party and loads the vendored api.js from /oo",
+check("the editor page is first-party and loads the vendored api.js from /oo",
       "const OO_BASE  = '/oo/dist/v9'" in OO
       and "OO_BASE + '/web-apps/apps/api/documents/api.js'" in OO)
 check("…and the x2t module from the vendored bundle too",
@@ -513,6 +710,13 @@ check("…points document.url at a blob of OUR OWN bytes, never a third-party UR
       "(a COEP page refuses cross-origin subresources)",
       "URL.createObjectURL" in OO
       and "'/api/office/download/'" in OO)
+# ⚠️ THIS ONE IS HERE BECAUSE THE REWRITE LOST IT AND THE SYMPTOM WAS A THREE-MINUTE
+# SILENT HANG. api.js hands `document.url` straight to the editor; a config without it
+# renders the whole ribbon and then waits for ever, with ZERO console errors — the same
+# signature as missing isolation, which is what made it expensive to find.
+check("…AND the config really carries that blob as document.url, without which the "
+      "editor renders its whole ribbon and then hangs for ever, silently",
+      "url: blobUrl," in OO)
 check("…drives x2t with the one exported entry point and CryptPad's params.xml shape",
       "'main1'" in OO and "TaskQueueDataConvert" in OO and "m_sFileTo" in OO)
 check("…loads x2t.js with an ABSOLUTE src (its own pre-js does new URL() on the src "
@@ -532,6 +736,76 @@ check("NO window.confirm / prompt / alert on the editor page either",
       not any(f"window.{fn}(" in OO for fn in ("confirm", "prompt", "alert")))
 check("…and there is a way back to LOffice that is not the browser's back button",
       "'/office'" in OO and "btn-back" in OO)
+
+# ── the embed, and the contract ──
+check("the page has an EMBEDDED shape decided by one query parameter",
+      "qs.get('embed') === '1'" in OO and "document.body.classList.add('embed')" in OO)
+check("…and embedded, its own header and footer are hidden by CSS rather than by a "
+      "script that could half-run — the parent's strip does that job",
+      "body.embed>header,body.embed>footer{display:none}" in OO)
+check("the parent↔child contract is ONE object each way and is documented in the file",
+      "window.LOfficeEmbed = {" in OO and "window.parent.LOfficeHost" in OO
+      and "THE PARENT ↔ CHILD CONTRACT" in OO)
+check("…it is DIRECT same-origin property access, and the file says why not postMessage",
+      "NO postMessage" in OO and "no origin boundary to cross" in OO)
+check("…both sides carry a contract VERSION, so a signature change is a visible one",
+      "contract: 1," in OO and "contract: 1," in PAGE)
+check("…and the child never has to wait for the host, because the host created it",
+      "HOST.register(window.LOfficeEmbed)" in OO)
+for verb in ("open:", "save:", "reload:", "applyOps:", "probe:", "destroy:"):
+    check(f"the contract publishes {verb.rstrip(':')}()", verb in OO)
+check("a child with no host still runs as a standalone page",
+      "return null;" in OO.split("const HOST = (function ()")[1].split("})();")[0])
+
+# ── one instance, kept alive ──
+check("x2t is loaded ONCE PER PAGE and the loader is idempotent — that is what makes "
+      "the document swap cheap",
+      "if (x2t) return Promise.resolve(x2t);" in OO
+      and "IDEMPOTENT, AND THAT IS WHAT MAKES THE DOCUMENT SWAP FAST" in OO)
+check("…and so is api.js", "if (!apiLoaded)" in OO and "apiLoaded = true;" in OO)
+check("the open path and the swap path are the SAME function — a swap on its own route "
+      "would be a second implementation of the hardest part of the page",
+      "function openDoc(name)" in OO and "const swap = !!editor;" in OO
+      and "editor.destroyEditor()" in OO)
+check("…and the old instance is destroyed LAST, after everything that can fail has "
+      "succeeded: a failure that had already torn the editor down would turn 'could "
+      "not open the other file' into 'you no longer have an editor'",
+      OO.index("fail('Could not convert that workbook'")
+      < OO.index("try { editor.destroyEditor(); }"))
+check("…and a superseded open cannot report itself ready over the top of a later one",
+      "openSeq" in OO and "if (gen !== openSeq) return;" in OO)
+check("reload re-reads the CURRENT document rather than reloading a page",
+      "function reloadDoc() { return openDoc(DOC); }" in OO)
+
+# ── the builder API ──
+check("the AI panel's ops run through the editor's own builder API, which is what puts "
+      "them in the EDITOR's undo stack",
+      "function applyOps(list, sheetName)" in OO and "api.GetActiveSheet()" in OO
+      and "ws.GetRange(at)" in OO)
+for setter in ("SetValue", "SetBold", "SetItalic", "SetUnderline", "SetStrikeout",
+               "SetFontName", "SetFontSize", "SetFontColor", "SetFillColor",
+               "SetAlignHorizontal", "SetAlignVertical", "SetWrap", "SetNumberFormat",
+               "AddSheet", "SetName"):
+    check(f"…using ApiRange/Api.{setter}, which the vendored sdkjs/cell bundle really has",
+          setter in OO)
+check("…and it REPORTS the op that failed rather than claiming a rollback it cannot "
+      "perform (the editor's ⌘Z is the way back)",
+      "was refused by the editor" in OO)
+check("…and it sets the dirty flag and tells the parent, because a builder-API write "
+      "does not always raise onDocumentStateChange",
+      "dirtyNow = true;" in OO and "tell('state', {dirty: true});" in OO)
+
+# ── the honest limits, in the config, never in the bundle ──
+check("PRINT is disabled through the editor's PUBLISHED permissions key",
+      "print: false" in OO and "expects a DocumentServer and throws" in OO)
+check("…and the right-hand panel starts closed, because embedded this editor is one "
+      "column of three",
+      "hideRightMenu: true" in OO)
+check("…and the bundle's own new-feature balloon is off",
+      "featuresTips: false" in OO)
+check("nothing in the editor page patches a vendored byte — condition #2 of the AGPL "
+      "ruling — and it says so",
+      "never patches a vendored byte" in OO)
 
 # ══ 7. ⚖️ THE AGPL ATTRIBUTION ═══════════════════════════════════════════════
 eq("oo.ATTRIBUTION names the licence", oo.ATTRIBUTION["licence"], "AGPL-3.0")
