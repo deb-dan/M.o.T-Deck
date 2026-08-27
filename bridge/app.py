@@ -474,12 +474,48 @@ def _display_model(name):
 # MC (/api/status) and the Models pane (/api/models) key off this so they agree.
 def _runner_loaded_id(port: int) -> "str | None":
     """Probe the runner for the model it is actually serving. Returns the loaded
-    model id, or None if the runner is down / has nothing loaded. Short timeout;
-    /v1/models needs no api-key on llama-server or the loopback MLX servers."""
+    model id, or None if the runner is down / has nothing loaded. Short timeout.
+
+    ⚠️ THE API KEY IS NOT OPTIONAL HERE (fixed 2026-08-28, llama.cpp b10427 → b10662).
+    This function used to send no Authorization header, and said in this docstring that
+    "/v1/models needs no api-key on llama-server". That was TRUE at b10427 and became
+    FALSE at b10662 — measured, not guessed, by running both binaries model-less with
+    `--api-key testkey`:
+
+        b10427   GET /v1/models with no key → 200
+        b10662   GET /v1/models with no key → 401
+
+    start_component.sh always passes `--api-key` when the binary supports it, so on
+    b10662 the keyless probe 401s every time, returns None here, and `_reconcile_live`
+    reads that as "nothing is loaded". Mission Control then showed `running: false,
+    loaded: false` for a runner that was serving generations at 14 tok/s — a
+    LIE-TO-USER, and it also filled data/logs/runner.log with one
+    "unauthorized: Invalid API Key" per status poll.
+
+    The key is sent unconditionally: llama-server ignores a bearer it does not require,
+    and the loopback MLX servers ignore it too, so one code path covers every engine.
+    Which key is chosen is decided BY PORT rather than assuming the runner's: every
+    caller today passes runner.port, but aux serves on its own port with its own key,
+    and hard-coding runner.api_key here would plant exactly the same 401 for whoever
+    first probes aux.
+    """
     import json as _json
-    from urllib.request import urlopen
+    from urllib.request import Request, urlopen
     try:
-        with urlopen(f"http://127.0.0.1:{int(port)}/v1/models", timeout=0.8) as resp:
+        req = Request(f"http://127.0.0.1:{int(port)}/v1/models")
+        _c = cfg()
+        _rc = _c.get("runner", {}) or {}
+        _ax = _c.get("aux", {}) or {}
+        key = _rc.get("api_key") or ""
+        try:
+            if _ax.get("port") and int(_ax["port"]) == int(port) \
+                    and int(_rc.get("port") or 0) != int(port):
+                key = _ax.get("api_key") or key
+        except (TypeError, ValueError):
+            pass
+        if key:
+            req.add_header("Authorization", f"Bearer {key}")
+        with urlopen(req, timeout=0.8) as resp:
             data = _json.loads(resp.read().decode() or "{}").get("data") or []
         return (data[0].get("id") or None) if data else None
     except Exception:
@@ -7612,8 +7648,14 @@ async def browse_toggle(req: Request) -> JSONResponse:
 # rather than copy-pasted twice.
 #
 # The `tools` lists are DISPLAY ONLY (each host discovers the real list itself over
-# MCP). VoiceStudio's are read from vendor backend/mcp_server.py @v0.4.2; Voicebox's
-# come from the Phase-0 recon notes. ⚠️ PENDING FABLE QA.
+# MCP). VoiceStudio's are read from vendor backend/mcp_server.py — RE-VERIFIED at the
+# 2026-08-28 v0.4.2 → v0.5.0 bump: all seven tool names still defined, and the mount is
+# byte-for-byte the same shape (`streamable_http_path = "/"` + `app.mount("/mcp", …)`),
+# so the registered `<base>/mcp` url is unchanged. The only MCP-side difference is the
+# FastMCP server's own display name ("OmniVoice Studio" → "VoiceStudio"), which nothing
+# of ours keys off. A live `initialize` handshake against POST <base>/mcp/ returns
+# protocolVersion 2025-06-18 + tools capability. Voicebox's list still comes from the
+# Phase-0 recon notes. ⚠️ PENDING FABLE QA.
 VOICE_MCP = {
     "voicestudio": {
         "label": "VoiceStudio",
@@ -9508,7 +9550,12 @@ def office_files() -> JSONResponse:
     err = _office.openpyxl_error()
     return JSONResponse({"ok": True, "dir": _office.office_dir(ROOT),
                          "files": _office.list_docs(ROOT),
+                         # ⚠️ TWO SENTENCES AS OF loffice-2026-08-28d, one per SAVE PATH
+                         # (live finding L3): the editor's x2t save is materially higher
+                         # fidelity than the openpyxl mapper, and the page used to print
+                         # the mapper's limits over both of them.
                          "fidelity": _office.FIDELITY_NOTE,
+                         "fidelity_editor": _office.FIDELITY_EDITOR_NOTE,
                          "ext": _office.DOC_EXT,
                          "roundtrip": not err,
                          "roundtrip_error": err})
@@ -9522,8 +9569,21 @@ async def office_new(req: Request) -> JSONResponse:
         body = await req.json()
     except Exception:                                            # noqa: BLE001
         body = {}
-    name, reason = await asyncio.to_thread(
-        _office.create_doc, ROOT, ((body or {}).get("name") or ""))
+    # ⚠️ `step` IS THE TEMPLATE CARDS' OWN FLAG (live finding B2), AND IT DOES NOT WEAKEN
+    # THE NEVER-CLOBBER RULING. A name the USER TYPED is still honoured literally and a
+    # collision is still REFUSED, because quietly making `budget (2).xlsx` when somebody
+    # asked for `budget.xlsx` hides the thing they need to know. A TEMPLATE CARD is a
+    # different request — "give me one of these" — and refusing it left the card
+    # PERMANENTLY DEAD after one use, with a red line offering no way forward, on a screen
+    # listing the existing file two inches below. So the caller SAYS which of the two it
+    # is, and a template takes the same ' (n)' walk import and the blank name already take.
+    want = (body or {}).get("name") or ""
+    if bool((body or {}).get("step")) and str(want).strip():
+        safe, reason = await asyncio.to_thread(_office.free_name, ROOT, want)
+        if not safe:
+            return JSONResponse({"ok": False, "error": reason}, status_code=400)
+        want = safe
+    name, reason = await asyncio.to_thread(_office.create_doc, ROOT, want)
     if not name:
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     _office_log(f"created {name}")

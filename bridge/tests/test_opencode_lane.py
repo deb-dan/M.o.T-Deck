@@ -55,7 +55,16 @@ def test_manifest_entry():
         "opencode must not be a dependency edge: it is usable against any provider it "
         "has configured, and our runner fan-out is best-effort")
     assert c["port"] == 4096
-    assert MANIFEST["build"]["opencode_pin"] == "1.18.19"
+    # ⚠️ NOT a frozen literal any more (2026-08-28, bumping 1.18.19 → 1.18.23): a
+    # hard-coded version here just breaks on every bump and teaches nothing. The REAL
+    # invariant — the one the manifest comment warns about — is that the TWO pins move
+    # TOGETHER: components.opencode.pin exists only so the manifest is self-describing,
+    # while the installer reads build.opencode_pin. Bump one without the other and the
+    # card advertises a version the tab is not running.
+    assert str(c["pin"]) == str(MANIFEST["build"]["opencode_pin"]), (
+        f"components.opencode.pin ({c['pin']!r}) and build.opencode_pin "
+        f"({MANIFEST['build']['opencode_pin']!r}) disagree — the installer reads the "
+        "build one and the card shows the component one. Both pins move together.")
 
 
 def test_pin_is_an_npm_version_not_a_git_ref():
