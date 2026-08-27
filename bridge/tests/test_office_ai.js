@@ -497,7 +497,7 @@ check('…handling the lane\'s proxy_error frame rather than hanging on it',
 check('the page defines and calls NO office-specific chat endpoint',
       code.indexOf('/api/office/chat') < 0 && code.indexOf('/api/office/ask') < 0);
 const urls = Array.from(new Set(code.match(/'\/api\/[^']*'/g) || []));
-/* ⚠️⚠️ TWO CHAT URLS AS OF loffice-2026-08-27d, AND THE SECOND ONE IS THE POINT OF THE
+/* ⚠️⚠️ TWO CHAT URLS AS OF loffice-2026-08-27e, AND THE SECOND ONE IS THE POINT OF THE
    SLICE. The Agent lane speaks the harness's EXISTING Hermes lane — the same endpoint,
    body and SSE frames the main panel's Hermes mode uses — so it is a SHARED lane, not
    an office-specific one. The negative that actually matters is unchanged and is
@@ -518,7 +518,7 @@ check('every URL the page calls is one of the endpoints that already existed',
                        // editor page itself is /oo-edit, not an /api/ URL — this page
                        // does not talk to the editor, it hands the file over to it.
                        "'/api/oo/status'",
-                       // SLICE S2 (loffice-2026-08-27d) — the Agent lane. FIVE URLs,
+                       // SLICE S2 (loffice-2026-08-27e) — the Agent lane. FIVE URLs,
                        // and not one of them is new to the harness: three are the
                        // Hermes lane the main panel already drives, and two are the
                        // office surfaces slice S1 shipped for exactly this page.
@@ -614,7 +614,7 @@ check('a localStorage that throws (private mode) does not stop the boot',
       /catch \(e\) \{ \/\* private mode/.test(grab('boot')));
 check('Enter asks and Shift+Enter is a newline, as everywhere else in the harness',
       /ev\.key === 'Enter' && !ev\.shiftKey/.test(html));
-/* ⚠️⚠️ REWRITTEN AT loffice-2026-08-27d, AND THE REWRITE IS THE ARGUMENT. The interval
+/* ⚠️⚠️ REWRITTEN AT loffice-2026-08-27e, AND THE REWRITE IS THE ARGUMENT. The interval
    used to belong to the AI PANEL: aiSetOpen armed it and clearInterval'd it, and its one
    job was the model pill. Slice S2 gave the page two duties that CANNOT be switched off
    by collapsing a panel — the open-file heartbeat (which decides whether an agent write
@@ -766,7 +766,7 @@ check('a DOUBLE-CLICK on a file row can no longer arm and confirm a discard betw
       + 'halves of one gesture', /DISCARD_MIN_MS/.test(cd) && num('DISCARD_MIN_MS') >= 250);
 const sayFn = grab('say');
 check('say() renders an inline action as a real button…', /b\.textContent = a\.label/.test(sayFn));
-/* ⚠️ ONE ACTION OR AN ARRAY OF THEM, as of loffice-2026-08-27d. The external-change
+/* ⚠️ ONE ACTION OR AN ARRAY OF THEM, as of loffice-2026-08-27e. The external-change
    banner (spec §3.3) states a dilemma with TWO answers, and the whole reason this
    argument exists is that a message stating a dilemma should be able to resolve it. The
    single-object form is unchanged — PART 6 EXECUTES both shapes against a stub DOM. */
@@ -837,9 +837,9 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27d');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27e');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-27d/g) || []).length === 2);
+      (html.match(/loffice-2026-08-27e/g) || []).length === 2);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
@@ -1832,7 +1832,7 @@ check('the block header no longer claims the panel is advisory only, because it 
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 6 — SLICE S2: THE AGENT LANE, THE HEARTBEAT AND THE EXTERNAL-CHANGE BANNER
-   (docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §3.2–§4, build loffice-2026-08-27d)
+   (docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §3.2–§4, build loffice-2026-08-27e)
 
    S1 shipped the other half and is not re-tested here: the bridge hosts an MCP server
    at /mcp/office, Hermes consumes it with `trust: untrusted`, the three read tools
@@ -2038,10 +2038,16 @@ check('…reading the same `data: ` frames and the same [DONE]',
 check('the session is created LAZILY — no session id on the first message, and the '
       + 'bridge mints one; the page never calls session/new',
       /agentSid \|\| ''/.test(asend) && code.indexOf("'/api/hermes/session/new'") < 0);
-check('the sheet-grounding preamble rides EVERY agent message, reusing aiPreamble',
-      /aiPreamble\(current, aiSheetName\(\)\)/.test(asend));
-check('…with the tool note on top of it, not instead of it',
-      /aiPreamble\(current, aiSheetName\(\)\) \+ agentToolNote\(\)/.test(asend));
+// ⚠️ rewritten 2026-08-27 (was "preamble rides EVERY agent message"): Debi's live
+// transcript showed the model re-reading the full grammar N times by turn N — the
+// Hermes session keeps its history, so the full grounding now rides the FIRST message
+// only, and later turns send agentBrief (the one thing that can change between turns:
+// which workbook is open).
+check('full grounding (preamble + tool note WITH the open file named) rides the FIRST '
+      + 'message of a session',
+      /aiPreamble\(current, aiSheetName\(\)\) \+ agentToolNote\(current\)/.test(asend));
+check('…and later turns send agentBrief instead, gated on agentSid',
+      /agentSid\s*[\s\S]{0,20}\?\s*agentBrief\(current, aiSheetName\(\)\)/.test(asend));
 check('…and the sheet chip still governs the sheet exactly as it does in Quick',
       /aiCtxOn \? aiContext\(\) : null/.test(asend));
 check('the reply is rendered by the Quick lane\'s OWN renderer, so a formula is still a '
@@ -2147,8 +2153,24 @@ check('…and `clear` forgets it, because on this lane the history is not only o
 
 // ── THE TOOL NOTE ───────────────────────────────────────────────────────────
 eval(grab('agentToolNote'));
+eval(grab('agentBrief'));
 {
-  const note = agentToolNote();
+  const note = agentToolNote('Untitled (4).xlsx');
+  check('with a workbook open, the note names it EXACTLY as the file argument',
+        note.indexOf('THE OPEN WORKBOOK IS NAMED EXACTLY "Untitled (4).xlsx"') >= 0);
+  check('…and forbids office_create while a workbook is open (the tool the model '
+        + 'actually reached for in Debi\'s live transcript)',
+        /NEVER call office_create while a workbook is open/.test(note));
+  check('…and says the approval card IS the consent — no asking in prose first',
+        /Calling a write tool IS the consent step/.test(note)
+        && /do NOT ask "OK\?"/.test(note)
+        && /CALL THE TOOL in the same turn/.test(note));
+  check('with NO workbook open, the note points at create/list instead',
+        /No workbook is open right now/.test(agentToolNote('')));
+  check('agentBrief names the open workbook exactly, and covers the no-file case',
+        agentBrief('B.xlsx', 'S1').indexOf('Open workbook: "B.xlsx", sheet "S1"') === 0
+        && /tools take this exact name/.test(agentBrief('B.xlsx', 'S1'))
+        && /No workbook is open/.test(agentBrief('', '')));
   ['office_list', 'office_read', 'office_sheet_stats', 'office_write_cells',
    'office_sort', 'office_insert_delete', 'office_create'].forEach(t =>
     check('the agent is told it has ' + t, note.indexOf(t) >= 0));
@@ -2159,8 +2181,11 @@ eval(grab('agentToolNote'));
         /read, then compute, then write, then read back/.test(note));
   check('…that a tool takes a NAME and never a path, which is the containment rule S1 '
         + 'enforces by construction', /NAME, never a path/.test(note));
-  check('…and that a write asks Debi first and keeps a copy',
-        /approve it first/.test(note) && /keeps a copy/.test(note));
+  // ⚠️ rewritten 2026-08-27: the old sentence ("say plainly what you are about to
+  // change before you call a write tool") made the model ask consent in PROSE and stall
+  // — the approval card is the consent, so the note now says call-in-the-same-turn.
+  check('…and that a write shows an approval card and keeps a pre-write copy',
+        /approval card/.test(note) && /pre-write copy/.test(note));
   check('the tool names are EXACTLY the seven the MCP server serves',
         (() => {
           const mcp = fs.readFileSync(path.join(ROOT, 'bridge', 'office_mcp.py'), 'utf8');

@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-27d">
+<meta name="harness-build" content="loffice-2026-08-27e">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -777,7 +777,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-27d</code>.</div>
+  Build <code>loffice-2026-08-27e</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -5715,15 +5715,38 @@ function agentGate(g) {
 // in this lane (the null verdict above) can still get work done through the block, and
 // a block that does arrive is rendered by the Quick lane's own preview card — one
 // click, one preview, one Undo. Two engines, one grammar (spec §4).
-function agentToolNote() {
+function agentToolNote(file) {
+  const f = String(file == null ? '' : file).trim();
   return '\n\nYOU ALSO HAVE REAL TOOLS on this workspace, from the `loffice` tool '
        + 'server: office_list, office_read and office_sheet_stats read workbooks, and '
        + 'office_write_cells, office_sort, office_insert_delete and office_create '
        + 'change them. PREFER THE TOOLS: call them instead of emitting a loffice block, '
        + 'and work in steps — read, then compute, then write, then read back to check. '
-       + 'Every tool takes the workbook NAME, never a path. Each write asks Debi to '
-       + 'approve it first and keeps a copy of the file as it was beforehand, so say '
-       + 'plainly what you are about to change before you call a write tool.';
+       + 'Every tool takes the workbook NAME, never a path.\n'
+       + (f
+          ? ('THE OPEN WORKBOOK IS NAMED EXACTLY "' + f + '" — when the user says '
+             + '"this sheet", names a cell, or gives no file, that name is the `file` '
+             + 'argument. NEVER call office_create while a workbook is open unless the '
+             + 'user explicitly asks for a NEW workbook by name.\n')
+          : ('No workbook is open right now — office_create (or office_list to find '
+             + 'one) is the right first move.\n'))
+       + 'Calling a write tool IS the consent step: it shows Debi an approval card '
+       + 'before anything is written, and a pre-write copy of the file is kept. So do '
+       + 'NOT ask "OK?" or wait for permission in prose — state in one short sentence '
+       + 'what you are changing and CALL THE TOOL in the same turn.';
+}
+
+// Turns after the first do NOT re-send the whole preamble: the Hermes session keeps
+// its history, so re-teaching per message made the model re-read the entire grammar
+// N times by turn N (Debi's transcript showed it verbatim, twice). One line carries
+// the only thing that can CHANGE between turns — which workbook is open.
+function agentBrief(file, sheet) {
+  const f = String(file == null ? '' : file).trim();
+  const sh = String(sheet == null ? '' : sheet).trim();
+  return f
+    ? ('Open workbook: "' + f + '"' + (sh ? (', sheet "' + sh + '"') : '')
+       + ' — tools take this exact name.')
+    : 'No workbook is open right now.';
 }
 
 // `<stem>.pre-agent.xlsx` — the copy office_ops.take_pre_agent leaves beside the file
@@ -5833,7 +5856,12 @@ async function agentSend() {
   if (!q) return;
   if (!agentGate(agentEnv).ok) { aiStatus(agentGate(agentEnv).why, true); return; }
   const ctx = aiCtxOn ? aiContext() : null;
-  const message = aiPreamble(current, aiSheetName()) + agentToolNote() + '\n\n'
+  // Full grounding rides the FIRST message of a session only — the session keeps its
+  // history, so later turns need just the one line that can change (agentBrief).
+  const grounding = agentSid
+    ? agentBrief(current, aiSheetName())
+    : (aiPreamble(current, aiSheetName()) + agentToolNote(current));
+  const message = grounding + '\n\n'
                 + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
                 + '---\n\n' + q;
   const shown = { text: message,
