@@ -359,7 +359,9 @@ check('Enter/Tab/Escape are handled; the ARROW keys are deliberately left to the
       /k === 'Enter'/.test(GT_KD) && /k === 'Tab'/.test(GT_KD) && /k === 'Escape'/.test(GT_KD)
       && !/Arrow(Down|Up|Left|Right)/.test(GT_KD)
       // …and the menubar's arrow handling exists only inside the open-menu guard
-      && /if \(openMenu >= 0\) \{[\s\S]{0,400}'ArrowRight'/.test(html));
+      // (the window widened at 2026-08-27b: the submenu ruling is written between the
+      // guard and the ArrowRight branch it explains)
+      && /if \(openMenu >= 0\) \{[\s\S]{0,900}'ArrowRight'/.test(html));
 // ⚠️ REGRESSION FENCE FOR A DATA-CORRUPTING DEFECT. A contenteditable puts the caret
 // where you clicked, so clicking a cell holding `10` and typing `99` produced `9910` —
 // the typed value INSERTED into the old one, silently, and then saved into the .xlsx.
@@ -393,7 +395,9 @@ check('…and normalises the non-breaking spaces contenteditable inserts, so a s
  'watchdog',
  // the menu bar and the start screen, added at 2026-08-21j
  'menu-open', 'menu-row', 'home-start', 'home-render', 'find-open', 'find-close',
- 'zoom', 'add-sheet', 'template'].forEach(stage => {
+ 'zoom', 'add-sheet', 'template',
+ // the toolbar row and the submenus, added at 2026-08-27b
+ 'toolbar', 'toolbar-show', 'toolbar-hide', 'submenu'].forEach(stage => {
   check(`the page beacons '${stage}'`, html.includes("'" + stage + "'"));
 });
 check('the boot runs immediately when the document is already parsed — this script is '
@@ -822,7 +826,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27a');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27b');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
@@ -888,11 +892,18 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     const ZLIST = ((html.match(/const ZOOMS = \[([^\]]*)\]/) || [, ''])[1])
       .split(',').map(s => s.trim()).filter(Boolean);
     check('the zoom steps are declared as data', ZLIST.length >= 3);
+    // the submenu PARENT rows are the one live row shape that is deliberately not wired
+    // through mi() — mi() closes the whole bar after running a row, which is right for a
+    // leaf and wrong for a row whose whole job is to open something inside the menu
+    const SUBROWS = [...html.matchAll(/\{ row: '(mi-[\w-]+)', pop: '(m-[\w-]+)' \}/g)]
+      .map(m => ({ row: m[1], pop: m[2] }));
     function wired(id) {
       if (new RegExp("mi\\('" + id + "'").test(html)) return true;
       // the zoom rows are wired by a loop over ZOOMS rather than one call each
-      return /^mi-z\d+$/.test(id) && ZLIST.indexOf(id.slice(4)) >= 0
-             && /ZOOMS\.forEach\(z => mi\('mi-z' \+ z/.test(html);
+      if (/^mi-z\d+$/.test(id) && ZLIST.indexOf(id.slice(4)) >= 0
+          && /ZOOMS\.forEach\(z => mi\('mi-z' \+ z/.test(html)) return true;
+      return SUBROWS.some(s => s.row === id)
+             && /row\.onclick = ev => \{ ev\.stopPropagation\(\); subGo\('open', s\.pop/.test(html);
     }
     const dead = ROWS.filter(r => /^\s+disabled\b/.test(r.attrs));
     const live = ROWS.filter(r => !/^\s+disabled\b/.test(r.attrs));
@@ -936,9 +947,12 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // ── keyboard + hover, the behaviour that makes it a BAR ──
     check('click to open, then HOVER to switch — without the second half it is eight '
           + 'unrelated popovers', /onmouseenter = \(\) => \{ if \(openMenu >= 0/.test(html));
+    // ⚠️ RESHAPED AT 2026-08-27b, and only in the ← → half: → now ENTERS a submenu when
+    // the focused row has one, and falls through to walking the bar when it does not, so
+    // the old behaviour is what happens whenever submenus are not involved.
     check('← → walk the bar and ↑ ↓ walk the open menu',
-          /ArrowRight'\) \{ ev\.preventDefault\(\); menuStep\(1\)/.test(html)
-          && /ArrowLeft'\) \{ ev\.preventDefault\(\); menuStep\(-1\)/.test(html)
+          /ArrowRight'\) \{ ev\.preventDefault\(\); if \(!subEnter\(\)\) menuStep\(1\)/.test(html)
+          && /ArrowLeft'\) \{ ev\.preventDefault\(\); if \(!subLeave\(\)\) menuStep\(-1\)/.test(html)
           && /ArrowDown'\) \{ ev\.preventDefault\(\); menuMove\(1\)/.test(html)
           && /ArrowUp'\) \{ ev\.preventDefault\(\); menuMove\(-1\)/.test(html));
     check('…and the walk SKIPS disabled rows rather than focusing one that will refuse',
@@ -1167,6 +1181,9 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
       function findPaint() {}
       function aiPaint() {}
       function menuPaint() {}
+      // the toolbar is a SECOND surface over this same state (section 13 executes its
+      // derivation properly); here it only has to exist, because histPaint repaints it
+      function toolbarPaint() {}
       function t1ok() { return !!current && !busy && mode === 'grid'; }
       function activeSheet() { return (snap && snap.sheets) ? (snap.sheets[activeSid] || null) : null; }
       function commitFocused() {}
@@ -1758,6 +1775,453 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           + 'disable themselves instead of throwing into a page that must keep working',
           /typeof aiSetOpen === 'function'/.test(grab('aiAvail'))
           && /setRow\(id, aiAvail\(\), NO_AI\)/.test(html));
+
+    /* ══ 12. THE TOOLBAR ROW (2026-08-27b) ══════════════════════════════════════
+       §7.3 of docs/research/2026-08-21-office-ui-reference.md: "A real toolbar (the icon
+       row under the menu bar). The Format menu is the same commands; the toolbar is the
+       fast path."
+
+       THE PROPERTY THIS SECTION EXISTS TO PIN, and it is the whole reason a toolbar was
+       cheap enough to add at all: THE ROW ADDS NO COMMAND. Every button mirrors a menu
+       row by id, its click is that row's own click, and its disabled state, its reason
+       and its pressed state are READ OFF the row after menuPaint has decided them. So
+       the assertion that matters is not "the button works" — it is "there is only one of
+       everything", and it is asserted by construction. */
+    {
+      const TBAR = [...html.matchAll(/<button class="tb" id="(tb-[\w-]+)"([^>]*)>/g)]
+        .map(m => {
+          const a = m[2];
+          const at = k => (a.match(new RegExp(k + '="([^"]*)"')) || [])[1];
+          return { id: m[1], row: at('data-row'), tip: at('data-tip'),
+                   on: at('data-on'), title: at('title'), aria: at('aria-label') };
+        });
+      check('there IS a third row, white and flush with the sheet like the menu bar, and '
+            + 'it is its own row UNDER the menus',
+            /<div id="toolbar">/.test(html)
+            && html.indexOf('<div id="toolbar">') > html.indexOf('</nav>')
+            && html.indexOf('<div id="toolbar">') < html.indexOf('<div id="findrow">')
+            && /#toolbar\{[^}]*background:#fff/.test(CSS));
+      check('…in BOTH themes, like the strip above it: neither theme axis repaints it',
+            !/data-theme="light"\]\)\s*#toolbar/.test(CSS)
+            && !/data-chrome="studio"\]\)\s*#toolbar/.test(CSS));
+      check('…and it is HIDDEN BY A CLASS, never by an inline display — the recorded #msg '
+            + 'trap, and the rule the whole page follows',
+            /body\.tbaroff #toolbar\{display:none\}/.test(CSS)
+            && /classList\.toggle\('tbaroff'/.test(html));
+      eq('the row carries the commands the brief named — undo, redo, the four text '
+         + 'styles, three alignments, wrap, clear formatting, and a Find toggle',
+         TBAR.map(t => t.id),
+         ['tb-undo', 'tb-redo', 'tb-bold', 'tb-italic', 'tb-underline', 'tb-strike',
+          'tb-alignl', 'tb-alignc', 'tb-alignr', 'tb-wrap', 'tb-clearfmt', 'tb-find']);
+      eq('EVERY button names the menu row it mirrors, and every one of those rows exists '
+         + 'in the markup', TBAR.filter(t => !t.row
+           || !new RegExp('id="' + t.row + '"').test(html)).map(t => t.id), []);
+      eq('…and every one of those rows is itself WIRED — so a toolbar button can only '
+         + 'ever resolve to a handler that already existed. This is the "zero new '
+         + 'writers" claim, made by construction rather than by grep',
+         TBAR.filter(t => !wired(t.row)).map(t => t.id), []);
+      check('…and the click really is the row\'s own click, not a copy of its body',
+            /const row = el\(b\.dataset\.row\);/.test(html)
+            && /if \(row\) row\.click\(\);/.test(html));
+      eq('exactly ONE button has a handler of its own, and it is the Find TOGGLE — a row '
+         + 'that is a verb ("Find…") against a button that is a state',
+         Object.keys(JSON.parse(JSON.stringify({}))).concat(
+           (html.match(/const TB_TOGGLE = \{([^}]*)\}/) || [, ''])[1]
+             .match(/'([\w-]+)'/g) || []).map(s => s.replace(/'/g, '')),
+         ['tb-find']);
+      check('…and that handler is findOpen — the SAME function the menu row calls, in its '
+            + 'own toggle form', /'tb-find': \(\) => findOpen\(\)/.test(html));
+      check('the icons are inline SVG and letterforms IN THE MARKUP — no font, no sprite, '
+            + 'no external asset, and the row is complete in the served document',
+            (html.match(/<svg viewBox="0 0 16 16" aria-hidden="true">/g) || []).length >= 8
+            && /<span class="g gb">B<\/span>/.test(html)
+            && /<span class="g gi">I<\/span>/.test(html)
+            && /<span class="g gu">U<\/span>/.test(html)
+            && /<span class="g gs">S<\/span>/.test(html));
+      eq('…and every button says what it is, before any script runs and to a screen '
+         + 'reader', TBAR.filter(t => !t.title || !t.aria || t.title !== t.tip).map(t => t.id),
+         []);
+      check('the groups are separated by the same hairline the dropdowns use, not by gaps',
+            /#toolbar \.tbsep\{/.test(CSS)
+            && (html.match(/<span class="tbsep"><\/span>/g) || []).length >= 3);
+      check('a pressed button has its own ground, and a disabled one greys rather than '
+            + 'vanishing — the grey-not-hide grammar, one row down',
+            /#toolbar \.tb\.on\{/.test(CSS) && /#toolbar \.tb:disabled\{/.test(CSS));
+      check('the row does not scroll or clip: an overflow here would be the same defect '
+            + 'as one on #menubar', !/#toolbar\{[^}]*overflow/.test(CSS));
+      check('View → Show toolbar is a real menu row with a tick, and it is wired',
+            /id="mi-toolbar"><span class="mtick"><\/span>Show toolbar/.test(html)
+            && /mi\('mi-toolbar', \(\) => toolbarSetOpen\(!toolbarOn\(\), 'menu'\)\)/.test(html)
+            && /tick\('mi-toolbar', toolbarOn\(\)\)/.test(html));
+
+      /* ── THE DERIVATION, EXECUTED. The pressed state of B / I / U / S has to come from
+         the SAME place the Format menu's ticks come from — the focused cell's RESOLVED
+         style, which may be an inline dict or a shared style id — or the two surfaces
+         will disagree about a bold cell, which is exactly the report this row could
+         produce. So the real menuPaint and the real toolbarPaint are run together, over
+         a real snapshot, with a stub DOM underneath. */
+      (function () {
+        function mkNode(id, isRow) {
+          const cls = {};
+          const n = { id: id, disabled: false, title: '', dataset: {},
+                      _tick: isRow ? { textContent: '' } : null,
+                      classList: {
+                        toggle(c, on) { cls[c] = on === undefined ? !cls[c] : !!on; return !!cls[c]; },
+                        contains(c) { return !!cls[c]; },
+                        add(c) { cls[c] = true; },
+                        remove(c) { cls[c] = false; } },
+                      querySelector(sel) { return sel === '.mtick' ? n._tick : null; },
+                      click() { n._clicks = (n._clicks || 0) + 1; } };
+          return n;
+        }
+        const nodes = {};
+        const el = id => nodes[id] || null;
+        // the rows the toolbar mirrors, plus the find bar it reads its own state from
+        TBAR.forEach(t => { nodes[t.row] = mkNode(t.row, true); });
+        ['mi-replace', 'mi-clearcell'].forEach(id => { nodes[id] = mkNode(id, true); });
+        nodes.findrow = mkNode('findrow', false);
+        const buttons = TBAR.map(t => {
+          const b = mkNode(t.id, false);
+          b.dataset.row = t.row;
+          b.dataset.tip = t.tip;
+          if (t.on) b.dataset.on = t.on;
+          nodes[t.id] = b;
+          return b;
+        });
+        const bodyCls = {};
+        const document = {
+          body: { classList: { toggle(c, on) { bodyCls[c] = on === undefined ? !bodyCls[c] : !!on; },
+                               contains: c => !!bodyCls[c] } },
+          querySelectorAll: sel => (sel === '#toolbar .tb' ? buttons : []),
+          activeElement: null
+        };
+        const store = {};
+        const localStorage = { getItem: k => (k in store ? store[k] : null),
+                               setItem: (k, v) => { store[k] = String(v); } };
+        const beacons = [];
+        function bx(stage, detail) { beacons.push(stage + ':' + (detail || '')); }
+        // the page's own module state, and the two constants menuPaint reads
+        let snap = null, activeSid = 's1', current = 'Book.xlsx', busy = false,
+            mode = 'grid', dirty = false, openMenu = -1, lastRC = null,
+            histBack = [], histFwd = [];
+        const T1_ONLY = 'rich editor', NO_DOC = 'no workbook', NO_CELL = 'click a cell';
+        const LS_TOOLBAR = (html.match(/const LS_TOOLBAR = '([^']+)'/) || [])[1];
+        function activeSheet() { return (snap && snap.sheets) ? (snap.sheets[activeSid] || null) : null; }
+        function lastCellNow() { return (lastRC && activeSheet()) ? lastRC : null; }
+        function railIsOpen() { return true; }
+        function aiAvail() { return false; }
+        function aiPaneOpen() { return false; }
+        function sheetMerges() { return 0; }
+        eval(grab('cellAt'));
+        eval(grab('cellStyle'));
+        eval(grab('setRow'));
+        eval(grab('tick'));
+        eval(grab('t1ok'));
+        eval(grab('histCan'));
+        eval(grab('histTop'));
+        eval(grab('menuPaint'));
+        eval(grab('toolbarButtons'));
+        eval(grab('toolbarOn'));
+        eval(grab('toolbarSetOpen'));
+        eval(grab('toolbarPaint'));
+
+        eq('the localStorage key is this page\'s own namespace, like every other pref',
+           LS_TOOLBAR, 'harness-office-toolbar');
+        // ── the View toggle and its persistence ──
+        check('the toolbar is on by default — a fast path nobody can see is not one',
+              toolbarOn());
+        toolbarSetOpen(false, 'test');
+        check('hiding it puts the class on the body…', !toolbarOn());
+        eq('…and persists the choice under that key', store[LS_TOOLBAR], '0');
+        toolbarSetOpen(true, 'test');
+        eq('…and showing it again persists that', store[LS_TOOLBAR], '1');
+        check('both transitions are beaconed, so "my toolbar vanished" is answerable from '
+              + 'the boot log', beacons.some(b => /^toolbar-hide:/.test(b))
+              && beacons.some(b => /^toolbar-show:/.test(b)));
+
+        // ── the state the buttons show, derived from the sheet ──
+        const styled = { sheets: { s1: { id: 's1', name: 'Sheet1', rowCount: 20,
+          columnCount: 8, cellData: {
+            '0': { '0': { v: 'plain', t: 1 },
+                   '1': { v: 'bold', t: 1, s: { bl: 1 } },
+                   '2': { v: 'shared', t: 1, s: 'S1' },
+                   '3': { v: 'right', t: 1, s: { ht: 3, tb: 3 } } } } } },
+          sheetOrder: ['s1'], styles: { S1: { it: 1 } } };
+        const lit = () => buttons.filter(b => b.classList.contains('on')).map(b => b.id);
+        const off = () => buttons.filter(b => b.disabled).map(b => b.id);
+
+        snap = null; current = null; lastRC = null;
+        toolbarPaint();
+        eq('with NO WORKBOOK OPEN every button greys — and none of them lights',
+           [off().length, lit()], [buttons.length, []]);
+        eq('…and each one carries the menu row\'s own REASON rather than its cheerful '
+           + 'tooltip', nodes['tb-bold'].title, NO_DOC);
+
+        snap = styled; current = 'Book.xlsx';
+        lastRC = { r: 0, c: 0 };
+        toolbarPaint();
+        eq('a plain cell lights nothing', lit(), []);
+        check('…and the style buttons are live again, with their own sentences back',
+              !nodes['tb-bold'].disabled
+              && /Bold/.test(nodes['tb-bold'].title));
+        check('…while UNDO and REDO stay grey, because the stack is empty — the toolbar '
+              + 'greys live with the stack because it is READ OFF the Edit rows',
+              nodes['tb-undo'].disabled && nodes['tb-redo'].disabled);
+        eq('…and they carry the Edit rows\' own reasons, word for word',
+           [nodes['tb-undo'].title, nodes['tb-redo'].title],
+           [nodes['mi-undo'].title, nodes['mi-redo'].title]);
+
+        histBack.push({ label: 'typing in B2' });
+        toolbarPaint();
+        check('one entry on the stack and UNDO comes alive on both surfaces at once',
+              !nodes['tb-undo'].disabled && !nodes['mi-undo'].disabled
+              && nodes['tb-redo'].disabled);
+        eq('…and the live title NAMES the gesture, exactly as the Edit row does',
+           nodes['tb-undo'].title, 'Undo typing in B2');
+
+        lastRC = { r: 0, c: 1 };
+        toolbarPaint();
+        eq('a BOLD cell lights B and nothing else', lit(), ['tb-bold']);
+        lastRC = { r: 0, c: 2 };
+        toolbarPaint();
+        eq('A CELL WHOSE STYLE IS A SHARED ID LIGHTS TOO — the toolbar resolves the style '
+           + 'the same way the Format ticks do, because it reads the tick they set',
+           lit(), ['tb-italic']);
+        lastRC = { r: 0, c: 3 };
+        toolbarPaint();
+        eq('align-right + wrap light together, and left/centre stay dark',
+           lit().sort(), ['tb-alignr', 'tb-wrap']);
+        eq('…and the menu ticks say the same thing, because they ARE the same decision',
+           ['mi-alignr', 'mi-wrap', 'mi-alignl'].map(id => nodes[id]._tick.textContent),
+           ['✓', '✓', '']);
+
+        nodes.findrow.classList.add('on');
+        toolbarPaint();
+        check('the Find button lights while the find bar is open — the one button whose '
+              + 'state is not a menu tick, and it names the element that holds it',
+              nodes['tb-find'].classList.contains('on'));
+        nodes.findrow.classList.remove('on');
+        toolbarPaint();
+        check('…and goes dark when it closes', !nodes['tb-find'].classList.contains('on'));
+
+        mode = 'univer';
+        toolbarPaint();
+        eq('once the RICH EDITOR owns the document every button greys with the tier-1 '
+           + 'reason — a toolbar write into a snapshot Univer is not reading would be '
+           + 'lost at the next save', [off().length, nodes['tb-bold'].title],
+           [buttons.length, T1_ONLY]);
+        mode = 'grid';
+
+        // A hidden row does not paint, and showing it repaints — the pair matters,
+        // because the first half is only safe if the second half holds.
+        current = null;                               // → every row greys at the next paint
+        nodes['tb-bold'].disabled = false;
+        toolbarSetOpen(false, 'test');
+        toolbarPaint();
+        check('a HIDDEN toolbar paints nothing at all — there is nothing on screen to be '
+              + 'wrong, and painting it would be work per keystroke for no one',
+              nodes['tb-bold'].disabled === false);
+        toolbarSetOpen(true, 'test');
+        check('…and showing it repaints in the same breath, so it can never come back '
+              + 'stale — which is what makes the line above safe',
+              nodes['tb-bold'].disabled === true);
+        current = 'Book.xlsx';
+      })();
+    }
+
+    /* ══ 13. SUBMENUS — ONE NESTING LEVEL (2026-08-27b) ══════════════════════════
+       §7.2: "Google nests with ▸; we ship one flat level with separators. Zoom is five
+       sibling rows rather than a Zoom ▸. Worth revisiting when a menu passes ~14 rows."
+       The View menu was at fourteen. This is that revisit, and the state machine is
+       EXECUTED — every report this page has had about menus was about a menu that stayed
+       open or one that closed under the cursor, which is a state machine, and a state
+       machine buried in DOM handlers can only be tested by driving a browser. */
+    {
+      const PAIRS = [...html.matchAll(/\{ row: '(mi-[\w-]+)', pop: '(m-[\w-]+)' \}/g)]
+        .map(m => ({ row: m[1], pop: m[2] }));
+      eq('the two submenus the slice asked for, declared as DATA like the bar itself',
+         PAIRS, [{ row: 'mi-zoom', pop: 'm-zoom' }, { row: 'mi-text', pop: 'm-text' }]);
+      PAIRS.forEach(p => {
+        check(p.pop + ' is a real flyout in the markup, nested inside a .msubwrap next to '
+              + 'its own parent row',
+              new RegExp('<div class="msubwrap">\\s*<button class="mi" id="' + p.row
+                         + '" aria-haspopup="true">[^<]*<span class="marrow">▸</span>'
+                         + '</button>\\s*<div id="' + p.pop + '" class="mpop mfly">')
+                .test(html));
+      });
+      check('the flyout IS a .mpop — same white card, same hairline, same 30px rows, same '
+            + 'reserved tick gutter, same shortcut column — moved to the right of its row',
+            /\.mpop\.mfly\{[^}]*left:100%/.test(CSS)
+            && /\.mpop\.mfly\.flip\{[^}]*right:100%/.test(CSS));
+      check('the ▸ marker rides the shortcut column, so a submenu row and a shortcut row '
+            + 'have the same silhouette', /\.mpop \.marrow\{[^}]*margin-left:auto/.test(CSS)
+            && /\.mpop \.mi:disabled \.marrow\{/.test(CSS));
+      check('the parent row stays lit while its child is open', /\.mpop \.mi\.on\{/.test(CSS));
+      // ⚠️ THE RULE THE WHOLE FEATURE STANDS ON, and it is why it is asserted over the
+      // WHOLE ancestor chain rather than #menus alone: a flyout is absolutely positioned
+      // five levels deep, and any ONE of those ancestors with an overflow clips it into
+      // nothing — a whole-feature failure with no error message.
+      ['#menubar', '#menus', '.mwrap', '.mpop', '.msubwrap']
+        .forEach(sel => check('no `overflow` on ' + sel + ' — it would clip the flyouts',
+          !new RegExp(sel.replace('.', '\\.') + '\\{[^}]*overflow').test(CSS)));
+      check('the five zoom rows MOVED, they were not rewritten: the ids are the ones the '
+            + 'wiring loop and the tick loop already used',
+            /<div id="m-zoom" class="mpop mfly">[\s\S]{0,700}id="mi-z150"/.test(html)
+            && /ZOOMS\.forEach\(z => mi\('mi-z' \+ z/.test(html)
+            && /tick\('mi-z' \+ z, zoomNow === z\)/.test(html));
+      check('…and so did the four text rows, shortcut column intact',
+            /<div id="m-text" class="mpop mfly">[\s\S]{0,900}id="mi-strike"/.test(html)
+            && /id="mi-bold"><span class="mtick"><\/span>Bold<span class="mk">⌘B<\/span>/
+                 .test(html));
+      check('opening on HOVER waits a short delay AND a click opens immediately, which is '
+            + 'Google\'s pair', /const SUB_DELAY_MS = \d+/.test(html)
+            && /setTimeout\(\(\) => \{ subTimer = null; subGo\('open', s\.pop, 'hover'\)/.test(html)
+            && /row\.onclick = ev => \{ ev\.stopPropagation\(\); subGo\('open', s\.pop/.test(html));
+      check('…and the delay is short enough not to feel stuck and long enough that '
+            + 'sweeping past a row does not fling a card out', num('SUB_DELAY_MS') >= 120
+            && num('SUB_DELAY_MS') <= 400);
+      check('switching or closing a top-level menu takes the flyout with it, and the '
+            + 'flyout closes FIRST — ahead of menuClose\'s early return, or a card could '
+            + 'be left floating over the sheet',
+            /subApply\(null, 'menu-switch'\)/.test(grab('menuOpen'))
+            && grab('menuClose').indexOf("subApply(null, why || 'menu')")
+               < grab('menuClose').indexOf('if (openMenu < 0) return;'));
+      check('Esc closes ALL of it, through the one close path',
+            /k === 'Escape' && openMenu > 0/.test(html));
+      check('an outside mousedown still closes the whole bar, and the flyouts live INSIDE '
+            + '#menubar so a click in one is not "outside"',
+            /const w = el\('menubar'\) \|\| el\('filewrap'\)/.test(html)
+            && html.indexOf('<div id="m-zoom"') > html.indexOf('<nav id="menubar">')
+            && html.indexOf('<div id="m-zoom"') < html.indexOf('</nav>'));
+
+      // ── the transition function, executed event by event ──
+      (function () {
+        eval(grab('subNext'));
+        eq('a click or a survived hover on a row OPENS its flyout',
+           subNext(null, 'open', 'm-zoom'), 'm-zoom');
+        eq('…and opening the one that is already open is idempotent, not a toggle: '
+           + 'Google\'s submenu parent has no "close" gesture of its own',
+           subNext('m-zoom', 'open', 'm-zoom'), 'm-zoom');
+        eq('opening the OTHER one closes the first, because only one is ever open',
+           subNext('m-zoom', 'open', 'm-text'), 'm-text');
+        eq('an `open` with no id leaves what is open alone (a stale timer must not close '
+           + 'a card the user has just entered)', subNext('m-text', 'open', null), 'm-text');
+        eq('hovering a PEER row of the same dropdown takes the flyout away — without this '
+           + 'half a nested menu reads as two unrelated cards',
+           subNext('m-zoom', 'peer', null), null);
+        eq('…but the parent row is not its own peer', subNext('m-zoom', 'peer', 'm-zoom'),
+           'm-zoom');
+        ['left', 'esc', 'outside', 'menu'].forEach(ev =>
+          eq('`' + ev + '` closes', subNext('m-zoom', ev, null), null));
+        eq('AND SO DOES ANYTHING UNRECOGNISED — an event this function has never heard of '
+           + 'must not be able to leave a card open over the sheet',
+           subNext('m-zoom', 'something-new', 'm-text'), null);
+      })();
+
+      // ── the flip, which is arithmetic and therefore testable ──
+      (function () {
+        eval(grab('subFlip'));
+        check('a flyout with room opens to the RIGHT of its row',
+              subFlip(200, 400, 176, 1200, 8) === false);
+        check('…and flips LEFT when opening right would leave the window',
+              subFlip(900, 1100, 176, 1200, 8) === true);
+        check('…counting the padding, so it flips just BEFORE it would touch the edge',
+              subFlip(900, 1017, 176, 1200, 8) === true
+              && subFlip(900, 1016, 176, 1200, 8) === false);
+        /* ⚠️ THE CASE FOUND BY DRIVING THE REAL PAGE AT 362px, which is a width this tab
+           really gets: the right side overflows AND the left side has no room either. A
+           rule that asked only the first question flipped the card to x = -87 — entirely
+           off the screen, strictly worse than a clipped right edge. */
+        check('…but it does NOT flip when flipping would not help — a card off the left '
+              + 'edge is worse than one clipped on the right',
+              subFlip(91, 335, 176, 362, 8) === false);
+        check('…and it does flip the moment the left side can actually hold it',
+              subFlip(184, 335, 176, 362, 8) === true);
+        check('an unmeasurable layout does not flip — the default side is the right one',
+              subFlip(200, 400, 0, 0, 8) === false
+              && subFlip(200, 400, 176, 0, 8) === false);
+      })();
+
+      // ── what the ↑ ↓ walk may land on, once there are two cards ──
+      (function () {
+        let openSub = null;
+        const MENUS = ['m-view'];
+        function mkRow(id, fly, disabled) {
+          return { id: id, disabled: !!disabled,
+                   closest: sel => (sel === '.mfly' ? (fly || null) : null),
+                   focus() { this.focused = true; } };
+        }
+        const flyOn = {};
+        const fly = { classList: { contains: c => !!flyOn[c] },
+                      querySelectorAll: () => flyRows };
+        const flyRows = [mkRow('mi-z50', fly), mkRow('mi-z75', fly),
+                         mkRow('mi-z100', fly)];
+        const topRows = [mkRow('mi-lines', null), mkRow('mi-zoom', null),
+                         mkRow('mi-freeze', null, true)];
+        const pop = { contains: n => n === fly,
+                      querySelectorAll: () => topRows.concat(flyRows) };
+        const el = id => (id === 'm-view' ? pop : (id === 'm-zoom' ? fly : null));
+        eval(grab('subHidden'));
+        eval(grab('menuRows'));
+
+        eq('with the flyout CLOSED the walk sees the parent menu only — a row inside a '
+           + 'closed flyout is in the document but not on screen, and a walk that stopped '
+           + 'on one would focus something invisible',
+           menuRows(0).map(r => r.id), ['mi-lines', 'mi-zoom']);
+        openSub = 'm-zoom'; flyOn.on = true;
+        eq('with it OPEN the walk belongs to the FLYOUT, not to both cards at once — '
+           + 'Google\'s arrows always walk the innermost open menu',
+           menuRows(0).map(r => r.id), ['mi-z50', 'mi-z75', 'mi-z100']);
+        openSub = null; flyOn.on = false;
+        eq('and a disabled row is still skipped either way, as it always was',
+           menuRows(0).filter(r => r.id === 'mi-freeze').length, 0);
+      })();
+
+      // ── the apply half: one open at a time, the parent lit, one beacon per change ──
+      (function () {
+        const SUBS = PAIRS;
+        const beacons = [];
+        function bx(stage, detail) { beacons.push(stage + ':' + (detail || '')); }
+        function mkNode() {
+          const cls = {};
+          return { classList: {
+            toggle(c, on) { cls[c] = on === undefined ? !cls[c] : !!on; return !!cls[c]; },
+            contains: c => !!cls[c], add(c) { cls[c] = true; }, remove(c) { cls[c] = false; } } };
+        }
+        const nodes = {};
+        SUBS.forEach(s => { nodes[s.row] = mkNode(); nodes[s.pop] = mkNode(); });
+        const el = id => nodes[id] || null;
+        let openSub = null, subTimer = null;
+        const clearTimeout = () => {};
+        eval(grab('subNext'));
+        eval(grab('subApply'));
+        eval(grab('subGo'));
+        // ⚠️ the placement half is measured against a real window, so it is stubbed here
+        // and its arithmetic is tested above, on its own, where it can be.
+        function subPlace() { nodes._placed = (nodes._placed || 0) + 1; }
+
+        subGo('open', 'm-zoom', 'click');
+        check('opening puts the card on screen and LIGHTS its parent row',
+              nodes['m-zoom'].classList.contains('on')
+              && nodes['mi-zoom'].classList.contains('on'));
+        check('…and positions it, once', nodes._placed === 1);
+        subGo('open', 'm-text', 'hover');
+        check('opening the other one closes the first and moves the light with it',
+              nodes['m-text'].classList.contains('on')
+              && !nodes['m-zoom'].classList.contains('on')
+              && !nodes['mi-zoom'].classList.contains('on'));
+        subGo('peer', null, 'peer');
+        check('a peer hover closes everything', !nodes['m-text'].classList.contains('on')
+              && !nodes['mi-text'].classList.contains('on') && openSub === null);
+        beacons.length = 0;
+        subGo('peer', null, 'peer');
+        eq('…and a close that changes nothing is NOT beaconed: hover fires this dozens of '
+           + 'times a sweep, and the boot beacon\'s 80-send budget is the reason the bar '
+           + 'reports its first open only', beacons.length, 0);
+        subGo('open', 'm-zoom', 'click');
+        eq('…while a real change is', beacons.filter(b => /^submenu:m-zoom/.test(b)).length, 1);
+      })();
+    }
 
     // ── report ──
     console.log('');

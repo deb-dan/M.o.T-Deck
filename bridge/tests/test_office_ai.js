@@ -794,9 +794,9 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27a');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27b');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-27a/g) || []).length === 2);
+      (html.match(/loffice-2026-08-27b/g) || []).length === 2);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
@@ -1594,6 +1594,47 @@ check('…and neither of them touches view state, a dirty flag or the DOM, which
         const s = stripComments(grab(fn));
         return !/dirty/.test(s) && !/renderGrid/.test(s) && !/viewRows|viewCols/.test(s)
                && !/document\./.test(s) && !/\bel\(/.test(s);
+      }));
+/* ⚠️⚠️ AND AT 2026-08-27b THE FENCE DID NOT MOVE, WHICH IS THE POINT OF THAT SLICE.
+   The toolbar row (§7.3 of the reference) put twelve buttons on screen for commands that
+   already existed, and the way it stayed out of the list above IS the design ruling: a
+   toolbar button's click is `el(b.dataset.row).click()` — the menu row's own click — so
+   the write path is the menu's write path and there is nothing new here to fence. The
+   assertions below are what make that a fact rather than a claim. */
+check('THE TOOLBAR ADDED NO WRITER, and it could not have: its handler contains no write '
+      + 'of any kind, only the row\'s own click',
+      (() => {
+        // lastIndexOf: the first use of this iterator is inside toolbarPaint (asserted
+        // separately below); the WIRING is the last one, at the bottom of the page
+        const at = code.lastIndexOf('toolbarButtons().forEach');
+        if (at < 0) return false;
+        const body = code.slice(at, code.indexOf('\n});', at) + 4);
+        return /row\.click\(\)/.test(body) && !writers.test(body)
+               && !/styleWrite|fmtToggle|fmtAlign|fmtClear|histGo/.test(body);
+      })());
+check('…nor does the thing that paints it: toolbarPaint reads `disabled`, `title` and the '
+      + 'menu TICK off the rows, and writes nothing anywhere',
+      (() => {
+        const tp = stripComments(grab('toolbarPaint'));
+        return !writers.test(tp) && !/\bsnap\b/.test(tp)
+               && /menuPaint\(1\)/.test(tp) && /menuPaint\(4\)/.test(tp)
+               && /row\.disabled/.test(tp) && /mtick/.test(tp);
+      })());
+check('…and the ONE button with a handler of its own calls an EXISTING page function, '
+      + 'findOpen, in its own toggle form',
+      /'tb-find': \(\) => findOpen\(\)/.test(code) && fnNames.indexOf('findOpen') >= 0);
+check('the submenu engine writes nothing either — it moves ONE variable and toggles a '
+      + 'class, which is why its transition function can be executed on its own',
+      ['subNext', 'subFlip', 'subApply', 'subGo', 'subHidden', 'subEnter', 'subLeave']
+        .every(fn => {
+          const s = stripComments(grab(fn));
+          return !writers.test(s) && !/\bsnap\b/.test(s);
+        }));
+check('…and its two PURE halves really are pure — no DOM, no page state, nothing but '
+      + 'their arguments — which is the property the state-machine tests stand on',
+      ['subNext', 'subFlip'].every(fn => {
+        const s = stripComments(grab(fn));
+        return !/document\.|\bel\(|\bbx\(|openSub/.test(s);
       }));
 check('…and the fence would notice a new writer appearing', (() => {
   const faked = code.replace('function aiGrow(', 'function aiGrow(){putCell(1,2,3,4)}\nfunction aiGrowX(');

@@ -246,3 +246,28 @@ The AI action block gained `sort` / `insert` / `delete_rc` riding the same stack
 disabled as listed: cut/copy/paste, freeze, number-format rendering, merge UI, colour pickers,
 filters, data validation. §7.3's toolbar row = the next slice. Details: test suites 491+491
 and the 2026-08-27 session notes.
+
+## ⟳ UPDATE 2026-08-27b — §7.2 and §7.3 are DONE; §7.1, §7.5 are what remain
+
+**§7.3 the toolbar row** shipped: a third white row flush with the sheet (`#toolbar`),
+twelve icon buttons — undo · redo │ **B** *I* U S │ align left/centre/right · wrap │ clear
+formatting · find. It adds NO command: each button carries `data-row` (the id of the menu
+row it mirrors) and its click is `el(data-row).click()`, so the handler, the enable rule,
+the disabled REASON and the pressed state are all read off the menu after `menuPaint` has
+decided them. The writer-set fence in `test_office_ai.js` still names exactly seven
+writers — the toolbar added none. `View → Show toolbar` toggles it
+(`harness-office-toolbar`, default ON).
+
+**§7.2 submenus** shipped, one nesting level with Google's `▸`: `View → Zoom ▸` (the five
+sibling rows moved in, ids unchanged) and `Format → Text ▸` (bold/italic/underline/
+strikethrough, shortcut column intact). Opens on click and on hover after 220 ms, `→`
+enters, `←` closes, Esc/outside-click closes all, and the flyout flips to the left of its
+parent row — but **only when flipping helps**: driving the real page at 362 px showed a
+one-sided rule putting the card at x = -87, off the screen entirely. The `overflow` ban
+now covers the whole ancestor chain (`#menubar`, `#menus`, `.mwrap`, `.mpop`, `.msubwrap`)
+and a test walks it.
+
+Suites: 577 (grid) + 496 (AI) green, plus the Python lane. Still open from §7: (1) Univer
+Facade command ids — moot, the tier-2 loader is being replaced by ONLYOFFICE; (5) Docs and
+Slides. Still shipped disabled, unchanged: cut/copy/paste, freeze, number-format
+rendering, merge UI, colour pickers, filters, data validation.

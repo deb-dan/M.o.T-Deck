@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-27a">
+<meta name="harness-build" content="loffice-2026-08-27b">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -528,7 +528,7 @@
   /* the two new regions are not in the sheet's shared box-sizing list at the top (that
      list is pinned by a test and names the regions that existed then), so they say it
      for themselves rather than reaching back up and editing it */
-  #menubar,#menubar *,#findrow,#findrow *{box-sizing:border-box}
+  #menubar,#menubar *,#toolbar,#toolbar *,#findrow,#findrow *{box-sizing:border-box}
   #menubar{flex:none;display:flex;align-items:stretch;gap:6px;padding:0 8px;
       background:#fff;border-bottom:1px solid #d7d9dd;min-height:31px}
   /* ⚠️ NO `overflow` HERE, EVER. The dropdowns are absolutely positioned inside
@@ -548,6 +548,10 @@
   #menubar .mstat{align-self:center;font:11.5px/1 -apple-system,BlinkMacSystemFont,
       sans-serif;color:#5f6368;white-space:nowrap;padding:0 2px}
   #menubar .mstat.warn{color:#9a3412}
+  /* narrow panes: #menus may shrink (min-width:0) but must not clip (overflow would
+     eat the dropdowns), so its labels PAINT OVER the save state. Below 880px the save
+     state yields — the header's dirty dot still carries the signal. */
+  @media (max-width:880px){ #menubar .mstat{display:none} }
 
   /* ── the dropdowns, all eight ────────────────────────────────────────────── */
   .mpop{display:none;position:absolute;top:100%;left:0;z-index:40;min-width:246px;
@@ -575,6 +579,71 @@
   .mpop .mtick{position:absolute;left:13px;top:0;height:30px;width:12px;
       display:flex;align-items:center;color:#12305e;font-size:11px}
   .mpop .mi:disabled .mtick{color:#9aa0a6}
+
+  /* ── ONE NESTING LEVEL: the submenus (§7.2 of the reference) ────────────────
+     Google nests with a `▸` in the shortcut column and flies the child card out to the
+     RIGHT of its parent row. The child IS a `.mpop` — same white, same hairline, same
+     30px rows, same reserved tick gutter, same right-aligned shortcut column — which is
+     the whole reason the grammar was written as classes rather than per-menu ids: a
+     second level costs two rules and inherits everything else.
+
+     ⚠️⚠️ THE STANDING `overflow` RULE NOW HAS A SECOND, HARDER REASON. A flyout is
+     absolutely positioned inside .msubwrap, which is inside .mpop, which is inside
+     .mwrap, which is inside #menubar — FIVE ancestors, and ONE of them with an
+     `overflow` of any kind clips the flyout to its parent card and the submenu opens
+     into nothing. None of them may ever declare one; a test walks the chain. */
+  .msubwrap{position:relative;display:flex;flex-direction:column}
+  /* the ▸ marker rides the shortcut column, so a submenu row and a shortcut row have
+     the same silhouette and the labels still line up */
+  .mpop .marrow{margin-left:auto;padding-left:22px;color:#6b7280;
+      font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .mpop .mi:disabled .marrow{color:#9aa0a6}
+  /* the parent row stays lit while its child is open — without it the eye loses which
+     row the flyout belongs to the moment the cursor is inside the child */
+  .mpop .mi.on{background:#eef1f5}
+  /* -7px, not 0: the parent card pays 6px of top padding plus its own 1px border, and
+     the first flyout row has to line up with the row that opened it. */
+  .mpop.mfly{top:-7px;left:100%;margin-left:2px;min-width:176px}
+  /* the flip, for a menu near the right edge of the window. Nothing measures anything
+     in CSS — subFlip() does the arithmetic and adds this class. */
+  .mpop.mfly.flip{left:auto;right:100%;margin-left:0;margin-right:2px}
+
+  /* ── row 3: THE TOOLBAR (§7.3 of the reference) ─────────────────────────────
+     "A real toolbar (the icon row under the menu bar). The Format menu is the same
+     commands; the toolbar is the fast path." — which is the whole design ruling: this
+     row adds NO capability. Every button clicks the menu row it mirrors, so there is
+     one handler, one enable rule and one active state per command, and the keyboard,
+     the menu and the toolbar cannot disagree about any of them.
+
+     White and flush with the sheet, exactly like #menubar above it, for the same
+     reason: it belongs to the DOCUMENT, not to the app chrome. Colours are literal hex
+     for that same reason. Measured on #fff: icon ink #1f2328 15.0:1; the pressed state
+     is Google's own #0b57d0 on #d3e3fd (4.9:1 against its own ground); a DISABLED
+     button is #9aa0a6, the same deliberate ~2.6:1 the greyed menu rows carry (WCAG
+     1.4.3 exempts inactive controls, and a dead button that reads live is worse). */
+  #toolbar{flex:none;display:flex;align-items:center;gap:1px;padding:3px 8px;
+      background:#fff;border-bottom:1px solid #d7d9dd;min-height:33px}
+  body.tbaroff #toolbar{display:none}
+  #toolbar .tb{width:27px;height:27px;flex:none;display:inline-flex;
+      align-items:center;justify-content:center;padding:0;border:0;border-radius:5px;
+      background:none;color:#1f2328;cursor:pointer;
+      font:13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  #toolbar .tb:hover{background:#eef1f5}
+  #toolbar .tb.on{background:#d3e3fd;color:#0b57d0}
+  #toolbar .tb:disabled{color:#9aa0a6;background:none;cursor:default}
+  /* the icons are inline SVG in the MARKUP — no font, no sprite, no external asset,
+     and they are there before a single line of script has run. `currentColor` is what
+     makes one rule paint the resting, pressed and disabled states. */
+  #toolbar .tb svg{width:15px;height:15px;fill:none;stroke:currentColor;
+      stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  /* B / I / U / S are LETTERFORMS, not icons, on Google's own bar and on every office
+     toolbar there has ever been: the glyph is the meaning. */
+  #toolbar .tb .g{font-size:13.5px;line-height:1}
+  #toolbar .tb .g.gb{font-weight:700}
+  #toolbar .tb .g.gi{font-style:italic;font-family:Georgia,"Times New Roman",serif}
+  #toolbar .tb .g.gu{text-decoration:underline}
+  #toolbar .tb .g.gs{text-decoration:line-through}
+  #toolbar .tbsep{flex:none;width:1px;height:17px;background:#e0e2e6;margin:0 5px}
 
   /* ── row 1: the document title, click to rename ───────────────────────────── */
   #doctitle{font-family:Georgia,"Times New Roman",serif;font-size:15.5px;
@@ -703,7 +772,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-27a</code>.</div>
+  Build <code>loffice-2026-08-27b</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -791,14 +860,27 @@
         <button class="mi" id="mi-aipane"><span class="mtick"></span>AI panel</button>
         <button class="mi" id="mi-fullwidth">Full width<span class="mk">hide both</span></button>
         <div class="msep"></div>
+        <!-- the toolbar row is VIEW state, like the gridlines and the panes: one tick,
+             one localStorage key, default ON. -->
+        <button class="mi" id="mi-toolbar"><span class="mtick"></span>Show toolbar</button>
         <button class="mi" id="mi-lines"><span class="mtick"></span>Gridlines</button>
         <button class="mi" id="mi-freeze" disabled title="Freezing needs a second sticky axis the plain grid does not have. The rich editor freezes rows and columns.">Freeze rows or columns</button>
         <div class="msep"></div>
-        <button class="mi" id="mi-z50"><span class="mtick"></span>Zoom 50%</button>
-        <button class="mi" id="mi-z75"><span class="mtick"></span>Zoom 75%</button>
-        <button class="mi" id="mi-z100"><span class="mtick"></span>Zoom 100%</button>
-        <button class="mi" id="mi-z125"><span class="mtick"></span>Zoom 125%</button>
-        <button class="mi" id="mi-z150"><span class="mtick"></span>Zoom 150%</button>
+        <!-- ⚠️ ZOOM WAS FIVE SIBLING ROWS AND IS NOW A SUBMENU, which is what the
+             reference says Google ships ("Zoom ▸") and what §7.2 asked for. The five row
+             IDS ARE UNCHANGED — mi-z50…mi-z150 — so the loop that wires them
+             (ZOOMS.forEach) and the loop that ticks them (menuPaint) did not have to know
+             that a level of nesting appeared underneath them. -->
+        <div class="msubwrap">
+          <button class="mi" id="mi-zoom" aria-haspopup="true">Zoom<span class="marrow">▸</span></button>
+          <div id="m-zoom" class="mpop mfly">
+            <button class="mi" id="mi-z50"><span class="mtick"></span>50%</button>
+            <button class="mi" id="mi-z75"><span class="mtick"></span>75%</button>
+            <button class="mi" id="mi-z100"><span class="mtick"></span>100%</button>
+            <button class="mi" id="mi-z125"><span class="mtick"></span>125%</button>
+            <button class="mi" id="mi-z150"><span class="mtick"></span>150%</button>
+          </div>
+        </div>
         <div class="msep"></div>
         <button class="mi" id="mi-rich">Rich editor<span class="mk">~11 MB</span></button>
       </div>
@@ -831,10 +913,19 @@
     <div class="mwrap">
       <button class="mtop" id="btn-format">Format</button>
       <div id="m-format" class="mpop">
-        <button class="mi" id="mi-bold"><span class="mtick"></span>Bold<span class="mk">⌘B</span></button>
-        <button class="mi" id="mi-italic"><span class="mtick"></span>Italic<span class="mk">⌘I</span></button>
-        <button class="mi" id="mi-underline"><span class="mtick"></span>Underline<span class="mk">⌘U</span></button>
-        <button class="mi" id="mi-strike"><span class="mtick"></span>Strikethrough</button>
+        <!-- ⚠️ THE FOUR TEXT ROWS MOVED INTO A SUBMENU (§7.2, "Format → Text ▸" on the
+             reference bar) AND KEPT THEIR IDS AND THEIR SHORTCUT COLUMN. Everything that
+             reaches for mi-bold — the wiring, the ticks in menuPaint, ⌘B, and now the
+             toolbar's own B button — is untouched by the nesting. -->
+        <div class="msubwrap">
+          <button class="mi" id="mi-text" aria-haspopup="true">Text<span class="marrow">▸</span></button>
+          <div id="m-text" class="mpop mfly">
+            <button class="mi" id="mi-bold"><span class="mtick"></span>Bold<span class="mk">⌘B</span></button>
+            <button class="mi" id="mi-italic"><span class="mtick"></span>Italic<span class="mk">⌘I</span></button>
+            <button class="mi" id="mi-underline"><span class="mtick"></span>Underline<span class="mk">⌘U</span></button>
+            <button class="mi" id="mi-strike"><span class="mtick"></span>Strikethrough</button>
+          </div>
+        </div>
         <div class="msep"></div>
         <button class="mi" id="mi-alignl"><span class="mtick"></span>Align left</button>
         <button class="mi" id="mi-alignc"><span class="mtick"></span>Align centre</button>
@@ -890,6 +981,46 @@
   <span class="mstat" id="p-file">no workbook open</span>
   <span class="mstat" id="p-state">—</span>
 </nav>
+<!-- ══ ROW 3 — THE TOOLBAR ═════════════════════════════════════════════════════════
+     §7.3 of docs/research/2026-08-21-office-ui-reference.md, verbatim: "A real toolbar
+     (the icon row under the menu bar: bold/italic/fill/align/number). The Format menu is
+     the same commands; the toolbar is the fast path."
+
+     THE DESIGN RULING, and it is the reason this row is safe to add at all: THE TOOLBAR
+     IS NOT A SECOND SET OF COMMANDS. Every button below carries `data-row`, the id of the
+     menu row it mirrors, and its click does exactly `el(data-row).click()` — so the
+     handler, the enable rule, the disabled REASON and the pressed state all come from the
+     one place they already came from (menuPaint). There is no toolbar-shaped copy of
+     anything, and the page gained ZERO new functions that write a cell.
+
+     ⚠️ REAL MARKUP, INCLUDING THE ICONS, like every other surface on this page: the
+     glyphs are inline SVG and letterforms, so the row is complete in the served document
+     — no font, no sprite, no external asset, nothing to 404. `title` is in the markup too
+     (self-describing before any script runs); toolbarPaint() replaces it with the menu
+     row's own reason when the command is unavailable, and puts `data-tip` back when it is
+     available again.
+
+     The three groups are Google's: history · text · alignment · document, separated by
+     the same hairline the dropdowns use. -->
+<div id="toolbar">
+  <button class="tb" id="tb-undo" data-row="mi-undo" data-tip="Undo the last change to the sheet (⌘Z)" title="Undo the last change to the sheet (⌘Z)" aria-label="Undo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8h6.3a3.4 3.4 0 0 1 0 6.8H6.2"/><path d="M6.2 5 3.2 8l3 3"/></svg></button>
+  <button class="tb" id="tb-redo" data-row="mi-redo" data-tip="Redo the change you just undid (⇧⌘Z)" title="Redo the change you just undid (⇧⌘Z)" aria-label="Redo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 8H6.5a3.4 3.4 0 0 0 0 6.8h3.3"/><path d="M9.8 5l3 3-3 3"/></svg></button>
+  <span class="tbsep"></span>
+  <button class="tb" id="tb-bold" data-row="mi-bold" data-tip="Bold (⌘B)" title="Bold (⌘B)" aria-label="Bold"><span class="g gb">B</span></button>
+  <button class="tb" id="tb-italic" data-row="mi-italic" data-tip="Italic (⌘I)" title="Italic (⌘I)" aria-label="Italic"><span class="g gi">I</span></button>
+  <button class="tb" id="tb-underline" data-row="mi-underline" data-tip="Underline (⌘U)" title="Underline (⌘U)" aria-label="Underline"><span class="g gu">U</span></button>
+  <button class="tb" id="tb-strike" data-row="mi-strike" data-tip="Strikethrough" title="Strikethrough" aria-label="Strikethrough"><span class="g gs">S</span></button>
+  <span class="tbsep"></span>
+  <button class="tb" id="tb-alignl" data-row="mi-alignl" data-tip="Align left" title="Align left" aria-label="Align left"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h7M2.5 12h9"/></svg></button>
+  <button class="tb" id="tb-alignc" data-row="mi-alignc" data-tip="Align centre" title="Align centre" aria-label="Align centre"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M4.5 8h7M3.5 12h9"/></svg></button>
+  <button class="tb" id="tb-alignr" data-row="mi-alignr" data-tip="Align right" title="Align right" aria-label="Align right"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M6.5 8h7M4.5 12h9"/></svg></button>
+  <button class="tb" id="tb-wrap" data-row="mi-wrap" data-tip="Wrap text in this cell" title="Wrap text in this cell" aria-label="Wrap text"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h8.2a2.4 2.4 0 0 1 0 4.8H8.2"/><path d="M9.7 11 8.2 12.8l1.5 1.8"/><path d="M2.5 12.8h3"/></svg></button>
+  <span class="tbsep"></span>
+  <button class="tb" id="tb-clearfmt" data-row="mi-clearfmt" data-tip="Clear formatting from this cell" title="Clear formatting from this cell" aria-label="Clear formatting"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 3.6h7.6M6.4 3.6v8.8"/><path d="M10.4 10.2l4 4M14.4 10.2l-4 4"/></svg></button>
+  <!-- data-on: this one button's pressed state is not a menu tick but "the find bar is
+       open", so it names the element that says so rather than inventing a second flag. -->
+  <button class="tb" id="tb-find" data-row="mi-find" data-on="findrow" data-tip="Find and replace in this sheet (⌘F)" title="Find and replace in this sheet (⌘F)" aria-label="Find"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg></button>
+</div>
 <!-- Edit → Find. A light strip under the menus, and it is the one genuinely NEW
      capability in this slice: it scans the open sheet's own cell data. -->
 <div id="findrow">
@@ -1152,6 +1283,9 @@ function paint() {
   el('empty').classList.toggle('off', !!current);
   if (el('filemenu').classList.contains('on')) fileMenuPaint();
   if (openMenu > 0) menuPaint(openMenu);
+  // ⚠️ AND THE TOOLBAR, EVERY TIME, for the same reason the open menu is repainted here:
+  // it is a surface showing the same state, and a stale toolbar is a button that lies.
+  toolbarPaint();
 }
 
 // ══ THE FILE MENU ═════════════════════════════════════════════════════════════
@@ -1259,6 +1393,9 @@ function menuOpen(i) {
     if (b) b.classList.toggle('on', k === i);
   });
   openMenu = i;
+  // switching top-level menus takes any open flyout with it — a child of the menu you
+  // just left has nothing to be a child of
+  subApply(null, 'menu-switch');
   if (i === 0) fileMenuPaint(); else menuPaint(i);
   if (!menuTraced) {
     menuTraced = true;
@@ -1266,6 +1403,10 @@ function menuOpen(i) {
   }
 }
 function menuClose(why) {
+  // ⚠️ THE FLYOUT CLOSES FIRST AND UNCONDITIONALLY, ahead of the early return below: a
+  // submenu left open over a closed menu is a card floating on the sheet with nothing
+  // attached to it, and it would swallow the next click.
+  subApply(null, why || 'menu');
   if (openMenu < 0) return;
   MENUS.forEach((id, k) => {
     const p = el(id), b = el(MTOPS[k]);
@@ -1274,12 +1415,131 @@ function menuClose(why) {
   });
   openMenu = -1;
 }
+
+/* ══ SUBMENUS — ONE NESTING LEVEL, AND NO SECOND ENGINE ════════════════════════
+   §7.2 of the reference: "Google nests with ▸; we ship one flat level with separators.
+   Zoom is five sibling rows rather than a Zoom ▸. Worth revisiting when a menu passes
+   ~14 rows." The View menu was at fourteen, so this is that revisit.
+
+   THE SHAPE, and it is deliberately the same shape as the bar above it: the pairs are
+   DATA (`SUBS`), the child card is a `.mpop` like every other dropdown, and the state is
+   ONE variable — `openSub`, the id of the flyout that is open, or null. At most one
+   flyout is open at a time anywhere in the page, which is what makes the whole thing a
+   two-line reducer instead of a tree walk.
+
+   ⚠️ THE TRANSITION FUNCTION IS PURE AND SEPARATE (`subNext`) FOR ONE REASON: every
+   report this page has ever had about menus was about a menu that stayed open, or one
+   that closed under the cursor. That is a state machine, and a state machine that lives
+   inside DOM handlers can only be tested by driving a browser. This one is executed
+   directly by bridge/tests/test_office_grid.js, event by event. */
+const SUBS = [{ row: 'mi-zoom', pop: 'm-zoom' },      // View → Zoom ▸
+               { row: 'mi-text', pop: 'm-text' }];    // Format → Text ▸
+// Google's own hover delay is a short one: long enough that sweeping the cursor DOWN a
+// menu past a submenu row does not fling a card out, short enough not to feel stuck.
+const SUB_DELAY_MS = 220;
+let openSub = null, subTimer = null;
+
+/* PURE, and it is the whole state machine. Given the flyout open NOW, one event, and the
+   flyout the event is about, which flyout should be open?
+
+     open    a click on a submenu row, a hover that survived SUB_DELAY_MS, or → on it
+     peer    the cursor entered a DIFFERENT row of the same dropdown
+     left    ← was pressed inside the flyout
+     esc     Escape — "closes all", which for one nesting level is this
+     outside a mousedown outside the bar
+     menu    the top-level menu closed or switched underneath it
+
+   Anything unrecognised closes, on purpose: an event this function has never heard of
+   must not be able to leave a card open over the sheet. */
+function subNext(now, ev, id) {
+  if (ev === 'open') return id || now;
+  if (ev === 'peer') return (id && id === now) ? now : null;
+  return null;
+}
+/* PURE. Which side does the flyout open on? Google flips it to the LEFT of the parent
+   row when opening right would push it past the window edge, and that decision is
+   arithmetic — measured once, by the caller, and handed in — rather than layout.
+
+   ⚠️ IT ASKS TWO QUESTIONS, NOT ONE, AND THE SECOND ONE WAS FOUND BY DRIVING THE REAL
+   PAGE RATHER THAN BY READING IT: in a narrow window — 362px, which is a width this tab
+   really gets when the panel is docked — the right side overflows AND the left side has
+   no room either, and a rule that asked only the first question put the card at
+   x = -87: entirely off the screen, which is strictly worse than a card whose right edge
+   is clipped. So it flips only when flipping actually HELPS. */
+function subFlip(rowLeft, rowRight, popW, viewW, pad) {
+  if (!(viewW > 0) || !(popW > 0)) return false;
+  const p = pad || 0;
+  return ((rowRight + popW + p) > viewW) && ((rowLeft - popW - p) >= 0);
+}
+// Put `want` (an id, or null) on screen. The ONE place a flyout's class is touched.
+function subApply(want, why) {
+  if (subTimer) { clearTimeout(subTimer); subTimer = null; }
+  const changed = openSub !== want;
+  SUBS.forEach(s => {
+    const p = el(s.pop), r = el(s.row);
+    if (p) p.classList.toggle('on', s.pop === want);
+    // the parent row stays lit while its child is open
+    if (r) r.classList.toggle('on', s.pop === want);
+  });
+  openSub = want || null;
+  if (openSub) subPlace(openSub);
+  if (changed) bx('submenu', (openSub || 'closed') + ' · ' + (why || ''));
+  return openSub;
+}
+function subGo(ev, id, why) { return subApply(subNext(openSub, ev, id), why || ev); }
+// The flip, measured against the real window and applied through subFlip's arithmetic.
+function subPlace(pop) {
+  const p = el(pop);
+  const row = (p && p.parentNode) ? p.parentNode.querySelector('.mi') : null;
+  if (!p || !row) return;
+  p.classList.remove('flip');
+  try {
+    const r = row.getBoundingClientRect();
+    if (subFlip(r.left, r.right, p.offsetWidth, window.innerWidth, 8)) p.classList.add('flip');
+  } catch (e) { /* no layout to measure: it opens to the right, which is the default */ }
+}
+// Is this row inside a flyout that is CLOSED? Such a row is in the document but not on
+// screen, so the ↑ ↓ walk must not stop on it.
+function subHidden(n) {
+  const f = (n && n.closest) ? n.closest('.mfly') : null;
+  return !!f && !f.classList.contains('on');
+}
+// → enters a submenu when the focused row has one; it returns false when there is
+// nothing to enter, and the caller then walks the BAR, which is what → always did.
+function subEnter() {
+  const a = document.activeElement;
+  const own = SUBS.filter(s => a && s.row === a.id)[0];
+  if (!own) return false;
+  subGo('open', own.pop, 'key');
+  const rows = menuRows(openMenu);
+  if (rows.length) try { rows[0].focus(); } catch (e) { /* nothing focusable */ }
+  return true;
+}
+// ← closes the flyout and puts the caret back on the row that owns it.
+function subLeave() {
+  if (!openSub) return false;
+  const own = SUBS.filter(s => s.pop === openSub)[0];
+  subGo('left', null, 'key');
+  if (own) { const r = el(own.row); if (r) try { r.focus(); } catch (e) { /* gone */ } }
+  return true;
+}
 // ← / → walk the bar, ↑ / ↓ walk the open menu, Enter is the button's own. Disabled
 // rows are skipped by the walk rather than focused and refused.
 function menuStep(d) { if (openMenu >= 0) menuOpen((openMenu + d + MENUS.length) % MENUS.length); }
+/* The rows the ↑ ↓ walk may land on, and submenus made this three rules rather than one:
+     · a disabled row is skipped (it would only refuse),
+     · a row inside a CLOSED flyout is in the document but not on screen, so it is not
+       walkable — that is subHidden's whole job,
+     · and when a flyout IS open the walk belongs to IT, not to both cards at once.
+       Google's arrows always walk the innermost open menu; mixing the two lists would
+       make ↓ jump between cards, which is the exact "feels off" class. */
 function menuRows(i) {
   const p = (i >= 0) ? el(MENUS[i]) : null;
-  return p ? [].filter.call(p.querySelectorAll('.mi'), n => !n.disabled) : [];
+  if (!p) return [];
+  const fly = openSub ? el(openSub) : null;
+  const host = (fly && p.contains(fly)) ? fly : p;
+  return [].filter.call(host.querySelectorAll('.mi'),
+                        n => !n.disabled && !subHidden(n));
 }
 function menuMove(d) {
   const rows = menuRows(openMenu);
@@ -1337,6 +1597,10 @@ function menuPaint(i) {
     tick('mi-aipane', aiPaneOpen());
     setRow('mi-lines', mode === 'grid', T1_ONLY);
     tick('mi-lines', !el('gt').classList.contains('nolines'));
+    // The toolbar row is view state and stays live in both tiers — hiding a row of
+    // greyed buttons is a thing you may legitimately want to do while Univer owns the
+    // document, and the tick states what IS rather than what clicking would do.
+    tick('mi-toolbar', toolbarOn());
     ZOOMS.forEach(z => {
       setRow('mi-z' + z, mode === 'grid', T1_ONLY);
       tick('mi-z' + z, zoomNow === z);
@@ -1391,6 +1655,11 @@ let lastRC = null;
 el('gt').addEventListener('focusin', ev => {
   const td = tdOf(ev);
   if (td) lastRC = { r: parseInt(td.dataset.r, 10), c: parseInt(td.dataset.c, 10) };
+  // ⚠️ AND REPAINT THE TOOLBAR HERE, which is not optional: the pressed state of B / I /
+  // U / S is a property of THIS cell, so moving the selection has to move the buttons.
+  // paint() is not called on a mere selection change (nothing about the document
+  // changed), so this is the one place that knows.
+  if (td) toolbarPaint();
 });
 function lastCellNow() { return (lastRC && activeSheet()) ? lastRC : null; }
 // ⌘B while a cell is being edited has to bank the typing first — the style write reads
@@ -1531,6 +1800,9 @@ function histGo(dir) {
 // The Edit rows, kept truthful whenever the stack moves and whenever the menu opens.
 function histPaint() {
   if (openMenu === 1) menuPaint(1);
+  // …and the two toolbar buttons that mirror those rows, which grey and un-grey with the
+  // stack exactly as the rows do because they are READ OFF the rows.
+  toolbarPaint();
 }
 // Is the caret inside TEXT that is being typed? If it is, ⌘Z belongs to the browser and
 // this page must not take it — and that is true of the cell being edited, of the find
@@ -1685,6 +1957,71 @@ function fullWidth() {
   if (aiAvail()) { try { aiSetOpen(false, 'menu'); } catch (e) { /* their panel, their call */ } }
 }
 
+/* ══ ROW 3 — THE TOOLBAR ═══════════════════════════════════════════════════════
+   §7.3: "A real toolbar (the icon row under the menu bar). The Format menu is the same
+   commands; the toolbar is the fast path."
+
+   THE RULING THAT MAKES IT SAFE, and it is worth stating in code rather than in prose:
+   THE TOOLBAR ADDS NO COMMAND, NO HANDLER AND NO WRITER. Each button carries `data-row`
+   — the id of the menu row it mirrors — and its click is literally that row's own click.
+   So:
+
+     · the WRITE path is the menu's (styleWrite / histGo / findOpen); the writer-set
+       fence in test_office_ai.js pins seven writers and this row adds none;
+     · the ENABLE rule and the disabled REASON are the menu's, copied off the row by
+       toolbarPaint after menuPaint has decided them — one source of truth, two surfaces,
+       so the toolbar cannot offer something the menu greys or grey something ⌘B does;
+     · the PRESSED state is the menu's TICK. The Format ticks are already derived from the
+       focused cell's RESOLVED style (menuPaint → cellStyle, which follows a shared style
+       id), so reading the tick means the toolbar reads the cell the same way — rather
+       than a second, subtly different idea of what "this cell is bold" means.
+
+   ⚠️ THE BUTTONS ARE NOT LISTED HERE. The markup is the list — `#toolbar .tb` in
+   document order — because two lists of the same twelve things is one list too many, and
+   the one in the markup is the one that has to be right for the row to look right. */
+const LS_TOOLBAR = 'harness-office-toolbar';
+/* ⚠️ ONE DOCUMENTED EXCEPTION to "the button clicks the row", and it is a genuine
+   difference in kind rather than a shortcut: `Edit → Find…` is a VERB (open the find
+   bar), while a toolbar button that LIGHTS while the bar is open is a STATE, so pressing
+   it again has to close it. It calls findOpen() with no argument — that function's own
+   toggle form, the same function the menu row calls. No new handler, no new writer, and
+   nothing else on the row gets an exception. */
+const TB_TOGGLE = { 'tb-find': () => findOpen() };
+function toolbarButtons() {
+  return [].slice.call(document.querySelectorAll('#toolbar .tb'));
+}
+function toolbarOn() { return !document.body.classList.contains('tbaroff'); }
+function toolbarSetOpen(open, why) {
+  document.body.classList.toggle('tbaroff', !open);
+  try { localStorage.setItem(LS_TOOLBAR, open ? '1' : '0'); } catch (e) { /* private mode */ }
+  bx(open ? 'toolbar-show' : 'toolbar-hide', why || '');
+  toolbarPaint();
+  if (openMenu === 2) menuPaint(2);        // the View tick, if that menu is open
+}
+/* Repaint the row FROM THE MENU. menuPaint(1) and menuPaint(4) are called first on
+   purpose: they are the functions that decide what Edit and Format may do right now, and
+   calling them here is what makes "derive both from the same state" true rather than
+   aspirational. They only ever set `disabled`, `title` and a tick — no visibility, no
+   focus — so running them while the menus are shut is free and side-effect-free. */
+function toolbarPaint() {
+  if (!toolbarOn()) return;               // hidden: there is nothing on screen to paint
+  menuPaint(1);                           // Edit  → undo / redo / find
+  menuPaint(4);                           // Format → the styles
+  toolbarButtons().forEach(b => {
+    const row = el(b.dataset.row);
+    if (!row) return;
+    b.disabled = !!row.disabled;
+    // the row's title is its REASON when it is disabled and empty when it is live, so
+    // the button's own sentence comes back the moment the command does
+    b.title = row.title || b.dataset.tip || '';
+    const tk = row.querySelector('.mtick');
+    const lit = b.dataset.on ? !!(el(b.dataset.on)
+                                  && el(b.dataset.on).classList.contains('on'))
+                             : !!(tk && tk.textContent === '✓');
+    b.classList.toggle('on', lit && !b.disabled);
+  });
+}
+
 // ── Edit → Find (2026-08-21k) and Find and replace (2026-08-27a) ─────────────
 // It scans the OPEN SHEET'S OWN cellData, not the DOM, so it finds a match that is
 // outside the rendered window and then grows the window to reach it. Replace rides the
@@ -1702,6 +2039,7 @@ function findOpen(on) {
   const want = on === undefined ? !row.classList.contains('on') : !!on;
   row.classList.toggle('on', want);
   bx(want ? 'find-open' : 'find-close', current || 'no workbook');
+  toolbarPaint();                // the toolbar's ⌕ lights while the bar is open
   if (!want) { findClear(); return; }
   const q = el('find-q');
   try { q.focus(); q.select(); } catch (e) { /* nothing to select */ }
@@ -2229,7 +2567,12 @@ const KEYS_TEXT = [
   '  Tab · ⇧Tab     commit and move right · left',
   '  Esc            cancel the cell, close a menu, dismiss a message',
   '  ⏎ · ⇧⏎         in the find bar: next · previous match',
-  '  ← → ↑ ↓        in a menu: walk it. In a cell: move the caret.',
+  '  ← → ↑ ↓        in a menu: walk it. → opens a ▸ submenu, ← closes it.',
+  '                 In a cell: move the caret.',
+  '',
+  '  The icon row under the menus is the same commands as the menus — every button',
+  '  is the menu row it mirrors, so it greys when the row does. View → Show toolbar',
+  '  hides it.',
 ].join('\n');
 function helpKeys() { say(KEYS_TEXT, 'dim'); }
 function helpFidelity() {
@@ -2412,6 +2755,37 @@ MTOPS.forEach((id, i) => {
   b.onclick = ev => { ev.stopPropagation(); if (openMenu === i) menuClose('toggle'); else menuOpen(i); };
   b.onmouseenter = () => { if (openMenu >= 0 && openMenu !== i) menuOpen(i); };
 });
+
+/* ── the submenus' own wiring: hover-after-a-delay AND click, per Google ────────
+   ⚠️ A SUBMENU PARENT IS THE ONE `.mi` ROW THAT IS NOT WIRED THROUGH mi(), and it has to
+   be: mi() closes the whole bar after running its row, which is exactly right for a leaf
+   ("do the thing and get out of the way") and exactly wrong for a row whose entire job is
+   to OPEN something inside the menu. The rows INSIDE the flyout are ordinary mi() rows. */
+SUBS.forEach(s => {
+  const row = el(s.row);
+  if (!row) return;
+  row.onclick = ev => { ev.stopPropagation(); subGo('open', s.pop, 'click'); };
+  row.onmouseenter = () => {
+    if (subTimer) clearTimeout(subTimer);
+    subTimer = setTimeout(() => { subTimer = null; subGo('open', s.pop, 'hover'); },
+                          SUB_DELAY_MS);
+  };
+  // leaving the row before the delay elapses cancels it, but does NOT close a flyout that
+  // is already open — the cursor is on its way INTO the child, which is the whole gesture
+  row.onmouseleave = () => { if (subTimer) { clearTimeout(subTimer); subTimer = null; } };
+});
+// Hovering any OTHER row of the same dropdown takes the flyout away. Without this half a
+// nested menu reads as two unrelated cards, which is the same defect the bar's
+// hover-to-switch fixes one level up.
+MENUS.forEach(id => {
+  const p = el(id);
+  if (!p) return;
+  [].forEach.call(p.querySelectorAll('.mi'), r => {
+    if (r.closest && r.closest('.mfly')) return;          // a child row is not a peer
+    if (SUBS.filter(s => s.row === r.id).length) return;  // the parent has its own
+    r.addEventListener('mouseenter', () => subGo('peer', null, 'peer'));
+  });
+});
 el('find-q').oninput = findRun;
 el('find-q').onkeydown = ev => {
   if (ev.key === 'Enter') { ev.preventDefault(); findGo(ev.shiftKey ? -1 : 1); }
@@ -2441,8 +2815,12 @@ window.addEventListener('keydown', ev => {
     // named `nk` rather than `k` so it cannot be read as shadowing the `k` below —
     // legal either way, but a reader should not have to work that out
     const nk = ev.key;
-    if (nk === 'ArrowRight') { ev.preventDefault(); menuStep(1); return; }
-    if (nk === 'ArrowLeft') { ev.preventDefault(); menuStep(-1); return; }
+    // → ENTERS a submenu when the focused row has one and walks the BAR otherwise;
+    // ← CLOSES an open submenu and walks the bar otherwise. The two helpers return
+    // false when there was nothing to enter or leave, so the old behaviour is what
+    // happens whenever submenus are not involved.
+    if (nk === 'ArrowRight') { ev.preventDefault(); if (!subEnter()) menuStep(1); return; }
+    if (nk === 'ArrowLeft') { ev.preventDefault(); if (!subLeave()) menuStep(-1); return; }
     if (nk === 'ArrowDown') { ev.preventDefault(); menuMove(1); return; }
     if (nk === 'ArrowUp') { ev.preventDefault(); menuMove(-1); return; }
     if (nk === 'Escape' && openMenu > 0) { menuClose('esc'); return; }
@@ -2495,14 +2873,19 @@ window.addEventListener('keydown', ev => {
 // Zoom and gridlines are restored HERE rather than in boot(): they are pure view state,
 // the elements they touch already exist (this script is at the end of the body), and
 // doing it now means the first paint of the grid is already at the right zoom.
+// The toolbar joins them: same kind of state, same restore point, and DEFAULT ON — a
+// fast path nobody can see is not a fast path, which is the same argument the AI panel's
+// default-open makes.
 (function () {
-  let z = 100, lines = true;
+  let z = 100, lines = true, tbar = true;
   try {
     z = Number(localStorage.getItem(LS_ZOOM)) || 100;
     lines = localStorage.getItem(LS_LINES) !== '0';
+    tbar = localStorage.getItem(LS_TOOLBAR) !== '0';
   } catch (e) { /* private mode: the defaults stand */ }
   setZoom(z);
   el('gt').classList.toggle('nolines', !lines);
+  toolbarSetOpen(tbar, 'boot');
 })();
 
 // ══ TIER 1 — the plain-DOM grid ═══════════════════════════════════════════════
@@ -5324,8 +5707,29 @@ mi('mi-aipane', () => {
 });
 mi('mi-fullwidth', fullWidth);
 mi('mi-lines', toggleLines);
+mi('mi-toolbar', () => toolbarSetOpen(!toolbarOn(), 'menu'));
 ZOOMS.forEach(z => mi('mi-z' + z, () => setZoom(z)));
 mi('mi-rich', upgrade);
+
+/* ── THE TOOLBAR'S WIRING, AND IT IS THE WHOLE OF THE TOOLBAR'S BEHAVIOUR ──────
+   Twelve buttons, one handler, and the handler's body is `row.click()`. Read that as the
+   design ruling it is: the fast path is the SAME path. A toolbar with its own copy of
+   `fmtToggle('bl')` would be a second place for "bold" to mean something, and the first
+   time the two drifted the report would be "the button and ⌘B disagree" — which is
+   unrepresentable here, because there is only one of them.
+
+   A disabled button is a no-op by the browser's own rules, and toolbarPaint has already
+   copied the row's disabled state onto it, so a click can never reach a row that would
+   have refused. */
+toolbarButtons().forEach(b => {
+  const own = TB_TOGGLE[b.id];
+  b.onclick = () => {
+    bx('toolbar', b.id + ' → ' + (own ? 'toggle' : b.dataset.row));
+    if (own) { own(); return; }
+    const row = el(b.dataset.row);
+    if (row) row.click();        // ⚠️ the reuse, literally
+  };
+});
 
 mi('mi-sheet', addSheet);
 mi('mi-rows', growRows);
