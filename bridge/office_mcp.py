@@ -56,39 +56,40 @@ which is a worse outcome than a stateless server — and this server IS stateles
 call resolves the workbook off disk by name. Same judgment as the office_ops heartbeat:
 never invent state whose loss breaks the lane.
 
-═══ APPROVAL: WHAT HERMES ACTUALLY OFFERS, AND WHAT WE DO WITH IT ═══
+═══ APPROVAL IN v2: THERE IS NOTHING LEFT TO APPROVE ═══
 
-The spec asked for the write tools to be registered "approval-required". Read out of the
-pin (v2026.8.13) rather than assumed, THERE IS NO PER-TOOL APPROVAL FIELD in a Hermes
-`mcp_servers` entry. What exists is a TWO-FACTOR gate
-(vendor/hermes/tools/mcp_tool.py:3929-4070):
+docs/FABLE-AGENT-CHANGESET-SPEC.md §1 retired the four write tools. THE CATALOG IS NOW
+FOUR READ TOOLS, all annotated `readOnlyHint: true`, and one of them —
+`office_stage_changes` — records a PROPOSAL the bridge holds. None of them can touch a
+workbook, so Hermes's per-call trust gate has nothing to fire on: ZERO approval cards on
+this lane, ever.
 
-  1. PER SERVER, operator-set: `mcp_servers.<name>.trust: full | untrusted`. Default is
-     `full`, i.e. the gate is OFF. `_normalize_server_trust` (:3963) fails CLOSED — any
-     unrecognised value becomes `untrusted`.
-  2. PER TOOL, server-declared: a tool is WRITE-CAPABLE unless its discovery-time
-     `annotations.readOnlyHint` is exactly `True` (`_annotation_read_only_hint`, :3985 —
-     "missing/malformed annotations fail closed to write-capable").
+That is not a hole; it is the ruling. The 2026-08-27 incident (docs/research/
+2026-08-27-agent-consent-incident.md) was per-CALL consent applied to a document edit
+that was ONE intention: three writes, three cards, one missed, and a model narrating
+"Done" over a failure nothing in the UI contradicted. Hermes's card cannot show tool
+ARGUMENTS (the message is built from the tool and server NAME literals —
+vendor/hermes/tools/mcp_tool.py:4035-4046) and its trust gate remembers nothing
+(`request_elicitation_consent` passes allow_permanent=False, approval.py:4909). So the
+consent moved to the surface that CAN show the change: the LOffice panel renders the
+staged changeset as ONE card with before → after per cell, and Apply is a button.
 
-`_trust_gate_check` (:4017) then routes every write-capable call on an untrusted server
-through `tools.approval.request_elicitation_consent` (approval.py:4830) BEFORE any
-transport work happens (`_handler`, mcp_tool.py:5349) — which in our lane is Hermes's
-own gateway approval card, the same surface `write_file` uses.
+WHAT THE ANNOTATIONS MEAN NOW, and it is still a security boundary — just a simpler one:
 
-SO WE GET THE PER-TOOL GRANULARITY THE SPEC WANTED, just declared from this side of the
-wire instead of configured on that side:
+  · `readOnlyHint: true` on all four is HONEST. Three of them read a file; the fourth
+    reads a file, runs the ops on an in-memory COPY, and stores the diff. `bridge/tests/
+    test_office_mcp.py` asserts the file's mtime is UNCHANGED by staging, which is the
+    assertion that makes the annotation a fact rather than a claim.
+  · The `loffice` entry still carries `trust: untrusted`. Redundant today (nothing on
+    the server is write-capable) and kept anyway: it costs nothing, and it means that a
+    tool which ever DOES gain the ability to write gets a card the moment it drops the
+    hint, instead of shipping unattended because someone also had to remember the config.
 
-  · the bridge writes `trust: untrusted` into the `loffice` entry (arming the gate), and
-  · THIS FILE declares `readOnlyHint: true` on the three read tools and NOT on the four
-    write tools.
-
-⚠️ WHICH MEANS THE ANNOTATIONS BELOW ARE A SECURITY BOUNDARY, NOT DOCUMENTATION. Putting
-`readOnlyHint: true` on a tool that writes would silently remove its approval card.
-bridge/tests/test_office_mcp.py asserts the exact split, and it must fail if a tool
-changes side.
-
-⚠️ AND THE APPROVAL IS PER CALL, NEVER REMEMBERED: `request_elicitation_consent` passes
-`allow_permanent=False` (approval.py:4909), so there is no "always allow" to leak.
+⚠️ SO THE ONE RULE FOR ANYONE EDITING THIS FILE: A TOOL THAT WRITES A WORKBOOK MUST NOT
+BE ADDED HERE. Apply lives on POST /api/office/changeset/{id}/apply, which is reachable
+from the panel and from nowhere else. `bridge/tests/test_office_mcp.py` pins the catalog
+as an exact list of four and pins every one of them read-only, and the contract test
+pins the upstream facts that make the annotation load-bearing.
 """
 from __future__ import annotations
 
@@ -150,8 +151,10 @@ _SHEET_ARG = {"type": "string",
 _OPS_ARG = {
     "type": "array",
     "description": (
-        "the change, as a list of operations (max 60, and max 2000 cells across all of "
-        "them — over either cap the WHOLE change is refused, never half-applied):\n"
+        "the WHOLE change, as a list of operations (max 60, and max 2000 cells across "
+        "all of them — over either cap the whole change is refused, never half-staged). "
+        "Send every operation the request needs in ONE call: Debi sees one card per "
+        "call, so two calls are two cards for one intention.\n"
         '  {"op":"set","at":"A1","values":[["Month","Planned"],["Jan",900]]}'
         "  — row-major; a leading = is a formula; null or \"\" empties a cell but KEEPS "
         "its formatting. \"at\" is an ANCHOR, not a clip: values larger than the range "
@@ -161,20 +164,32 @@ _OPS_ARG = {
         "· cl text colour · bg fill (both #rrggbb) · ht/vt align (left/center/right, "
         "top/middle/bottom) · tb wrap · n number format. Those are exactly the keys the "
         ".xlsx round-trip carries; anything else is dropped.\n"
-        '  {"op":"sheet","add":"Notes"} / {"op":"sheet","rename":"2026"}\n'
+        '  {"op":"sort","col":"B","desc":false}  — sorts the WHOLE sheet by that '
+        "column, ROW 1 INCLUDED (nothing here guesses at a header row), and is REFUSED "
+        "on a sheet with any merged range.\n"
+        '  {"op":"insert","what":"row","at":7,"n":1}  — blank rows ABOVE row 7 / '
+        "columns LEFT of the column named.\n"
+        '  {"op":"delete_rc","what":"row","at":7,"n":1}  — deletes rows/columns AND '
+        "the data in them.\n"
+        '  {"op":"add_sheet","name":"Notes"} / {"op":"sheet","rename":"2026"}\n'
+        '  {"op":"create_workbook"}  — makes the workbook named in `name`, when it does '
+        "not exist yet. It takes no name of its own: a change is about ONE workbook.\n"
         '  {"op":"resize","rows":500,"cols":40}  — grows the sheet; clamped, not '
         "refused.\n"
-        "Use office_sort and office_insert_delete for sorting and for inserting or "
-        "deleting rows and columns."),
+        "Merged ranges are renumbered on an insert or a delete, but FORMULA REFERENCES "
+        "ARE NEVER REWRITTEN — a formula travels as text, and the result says so."),
     "items": {"type": "object"},
 }
 
 
 def tool_specs() -> list:
-    """The tool catalog. PURE, so the test can read the split without a server.
+    """The tool catalog: EXACTLY FOUR TOOLS, ALL READ-ONLY. PURE, so the test can read
+    the whole surface without a server.
 
-    ⚠️ `read_only` here becomes `annotations.readOnlyHint`, which is what arms or
-    disarms Hermes's approval card for that tool. See the module docstring.
+    ⚠️ `read_only` here becomes `annotations.readOnlyHint`. In v2 it is True on every
+    row, because no tool on this server writes a workbook. Adding a fifth tool that
+    does — or dropping the hint on one of these — is the one change this file must not
+    take: see the module docstring.
     """
     return [
         {
@@ -220,82 +235,25 @@ def tool_specs() -> list:
             }, "required": ["name"], "additionalProperties": False},
         },
         {
-            "name": "office_write_cells",
-            "read_only": False,
+            "name": "office_stage_changes",
+            "read_only": True,
             "description": (
                 _ADDRESSING +
-                "Write values and formatting into a workbook, add or rename a sheet, or "
-                "grow one. The workbook as it was first goes to "
-                "<name>.pre-agent.xlsx beside it — that is the only undo for this, "
-                "because LOffice's in-page undo cannot see a write it did not make. "
-                "REFUSED while Debi has unsaved edits in that workbook."),
+                "PROPOSE a change to a workbook. THIS WRITES NOTHING. It checks the "
+                "operations, reads the workbook, works out what each cell would say "
+                "before and after, and hands Debi ONE card in LOffice with the whole "
+                "list on it and an Apply button. "
+                + office_ops.NOT_APPLIED_SENTENCE + " "
+                "You cannot apply it: there is no apply tool and there never will be. "
+                "Stage the COMPLETE change for the request in ONE call — a second call "
+                "REPLACES the first proposal, so a change sent in pieces loses the "
+                "earlier pieces. Then say in one short sentence what you staged, and "
+                "stop. Never say a workbook was changed unless a system line tells you "
+                "the changeset was applied. A proposal expires after "
+                f"{int(office_ops.CHANGESET_TTL // 60)} minutes."),
             "schema": {"type": "object", "properties": {
                 "name": _NAME_ARG, "sheet": _SHEET_ARG, "ops": _OPS_ARG,
             }, "required": ["name", "ops"], "additionalProperties": False},
-        },
-        {
-            "name": "office_sort",
-            "read_only": False,
-            "description": (
-                _ADDRESSING +
-                "Sort the WHOLE sheet by one column — ROW 1 INCLUDED, because LOffice "
-                "never guesses at a header row. Blank cells go to the bottom in both "
-                "directions; numbers sort before text before booleans; equal keys keep "
-                "their order. REFUSED on a sheet that has ANY merged range (a sort "
-                "moves whole rows and a merge does not move with them). Formula "
-                "references are NOT rewritten — a formula travels as text and the "
-                "result says so."),
-            "schema": {"type": "object", "properties": {
-                "name": _NAME_ARG, "sheet": _SHEET_ARG,
-                "col": {"type": "string",
-                        "description": "the column LETTER to sort by, e.g. 'B'. A bare "
-                                       "number is refused: it is ambiguous between "
-                                       "'column 2' and 'column B'."},
-                "desc": {"type": "boolean",
-                         "description": "true for Z→A / largest first. Default false."},
-            }, "required": ["name", "col"], "additionalProperties": False},
-        },
-        {
-            "name": "office_insert_delete",
-            "read_only": False,
-            "description": (
-                _ADDRESSING +
-                "Insert blank rows/columns, or DELETE rows/columns and the data in "
-                "them. An insert goes ABOVE the row / to the LEFT of the column named. "
-                "Merged ranges are renumbered properly (a merge that straddles the line "
-                "grows on an insert and shrinks on a delete, which is what Excel does), "
-                "but formula references are NOT rewritten and the result says so. An "
-                "insert of more than "
-                f"{office_ops.RC_MAX} is clamped; a DELETE of more than "
-                f"{office_ops.RC_MAX} is refused, because a clamped delete would "
-                "destroy exactly as much data as it felt like."),
-            "schema": {"type": "object", "properties": {
-                "name": _NAME_ARG, "sheet": _SHEET_ARG,
-                "action": {"type": "string", "enum": ["insert", "delete"],
-                           "description": "insert blank rows/columns, or delete them"},
-                "what": {"type": "string", "enum": ["row", "col"],
-                         "description": "rows or columns"},
-                "at": {"description": "for rows: the 1-based row number (or a cell "
-                                      "reference like 'A3'). For columns: the column "
-                                      "LETTER."},
-                "n": {"type": "integer",
-                      "description": "how many. Default 1."},
-            }, "required": ["name", "action", "what", "at"],
-                "additionalProperties": False},
-        },
-        {
-            "name": "office_create",
-            "read_only": False,
-            "description": (
-                _ADDRESSING +
-                "Create a new, empty spreadsheet. It NEVER overwrites: a name already "
-                "taken comes back stepped — 'budget.xlsx' → 'budget (2).xlsx' — and the "
-                "result says which name it actually got. Use that name for every "
-                "following call."),
-            "schema": {"type": "object", "properties": {
-                "name": {"type": "string",
-                         "description": "what to call it; the .xlsx is added for you"},
-            }, "required": ["name"], "additionalProperties": False},
         },
     ]
 
@@ -306,19 +264,24 @@ def tool_list_payload() -> list:
     for t in tool_specs():
         ent = {"name": t["name"], "description": t["description"],
                "inputSchema": t["schema"]}
-        # ⚠️ ONLY the read tools carry readOnlyHint, and only `true` disarms Hermes's
-        # gate (`hint is True`, mcp_tool.py:3999). A write tool carries NO hint at all
-        # rather than `false`, so that a client which ignores annotations entirely still
-        # sees no claim of read-onlyness anywhere.
+        # ⚠️ ONLY `readOnlyHint: true` (the literal True — Hermes tests `hint is True`,
+        # mcp_tool.py:3999) disarms the trust gate, and in v2 every tool earns it: not
+        # one of them opens a workbook for writing. The mtime assertion in
+        # bridge/tests/test_office_mcp.py is what keeps that honest.
         if t["read_only"]:
             ent["annotations"] = {"readOnlyHint": True, "title": t["name"]}
-        else:
+        else:                                                    # pragma: no cover
+            # Unreachable in v2 and kept as the fence: a write tool added here would
+            # carry NO read-only claim, so Hermes would card it rather than run it.
             ent["annotations"] = {"destructiveHint": True, "title": t["name"]}
         out.append(ent)
     return out
 
 
 def write_tool_names() -> list:
+    """Empty in v2, and that is the headline. Kept as a function because /api/office/mcp
+    reports the approval split and "nothing is gated because nothing writes" is the
+    honest answer to give a reader, not a missing key."""
     return [t["name"] for t in tool_specs() if not t["read_only"]]
 
 
@@ -337,7 +300,9 @@ def call_tool(root, name, params):
 
     A refusal comes back as `isError` with the SENTENCE in it, never as a JSON-RPC
     error: a model that gets a transport error learns nothing, and a model that gets
-    "refused: a workbook is addressed by name, not by path" learns the rule.
+    "refused: a workbook is addressed by name, not by path" learns the rule. The panel
+    renders every isError result as a red ✗ chip, so a refusal is no longer something
+    only the model sees (that silence is half of the 2026-08-27 incident).
     """
     a = _args(params)
     try:
@@ -348,18 +313,16 @@ def call_tool(root, name, params):
                                             a.get("range")))
         if name == "office_sheet_stats":
             return _pair(office_ops.op_sheet_stats(root, a.get("name"), a.get("sheet")))
-        if name == "office_write_cells":
-            return _pair(office_ops.op_write_cells(root, a.get("name"), a.get("sheet"),
-                                                   a.get("ops")))
-        if name == "office_sort":
-            return _pair(office_ops.op_sort(root, a.get("name"), a.get("sheet"),
-                                            a.get("col"), a.get("desc")))
-        if name == "office_insert_delete":
-            return _pair(office_ops.op_insert_delete(
-                root, a.get("name"), a.get("sheet"), a.get("action"), a.get("what"),
-                a.get("at"), 1 if a.get("n") is None else a.get("n")))
-        if name == "office_create":
-            return _pair(office_ops.op_create(root, a.get("name")))
+        if name == "office_stage_changes":
+            # ⚠️ THE SESSION IS RESOLVED HERE, NOT PASSED. An MCP tools/call carries the
+            # MCP TRANSPORT's session id and Hermes keeps ONE MCP client per process, so
+            # the transport id is the same for every Hermes conversation and is useless
+            # as a key. office_ops.active_session() is the honest correlation: the
+            # Hermes session whose turn is running right now, recorded by the bridge's
+            # own /api/hermes/chat relay. See its docstring for what that costs.
+            return _pair(office_ops.stage_changes(
+                root, office_ops.active_session(), a.get("name"), a.get("sheet"),
+                a.get("ops")))
     except office.OfficeError as e:                               # a refusal with words
         return json.dumps({"ok": False, "error": str(e)}), True
     except Exception as e:                                        # noqa: BLE001
@@ -419,13 +382,17 @@ def handle(root, message):
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION,
                            "title": "LOffice spreadsheets"},
             "instructions": (
-                "These tools read and write the spreadsheets in Debi's Office folder. "
-                "Call office_list first — every other tool takes a NAME from it, and "
-                "none of them can reach a file outside that folder. Nothing here "
-                "computes a formula: office_read returns formulas as text plus the "
-                "value cached in the file, and says which is which. Before every "
-                "write the workbook is copied to <name>.pre-agent.xlsx, which is the "
-                "only way back; say so when you report a write."),
+                "These tools read the spreadsheets in Debi's Office folder and PROPOSE "
+                "changes to them. Call office_list first — every other tool takes a "
+                "NAME from it, and none of them can reach a file outside that folder. "
+                "Nothing here computes a formula: office_read returns formulas as text "
+                "plus the value cached in the file, and says which is which. "
+                "NOTHING HERE WRITES A WORKBOOK. office_stage_changes records ONE "
+                "proposal per workbook — send the complete change in a single call — "
+                "and Debi applies it with a button in LOffice, which also keeps a "
+                "checkpoint she can undo from. You cannot apply it, and you must never "
+                "report a change as made unless a system line says the changeset was "
+                "applied."),
         })
     if method == "ping":
         return _res(rid, {})
@@ -551,10 +518,13 @@ def hermes_entry(port=8700) -> dict:
                (`_is_http`, mcp_tool.py:2174), and without `transport: sse` that is
                Streamable HTTP (`_run_http`, :3018). Loopback, always.
       trust  — `untrusted` ARMS the approval gate for every write-capable tool on this
-               server (`_trust_gate_check`, mcp_tool.py:4017). Without it the default is
-               `full` and our write tools would run with NO card. This one word is the
-               whole approval story on the config side; the per-tool half is the
-               readOnlyHint annotations in tool_list_payload().
+               server (`_trust_gate_check`, mcp_tool.py:4017). In v2 NO tool here is
+               write-capable, so this fires on nothing and Debi sees no card — which is
+               the ruling, not an oversight (see the module docstring). It is written
+               anyway, deliberately: the day a tool on this server does gain a write,
+               the gate is already armed and the tool gets a card by dropping its
+               readOnlyHint alone, instead of shipping unattended because a config key
+               also had to be remembered. Without it the default is `full`.
       timeout— a full-workbook read + snapshot + save of a large .xlsx is seconds, not
                milliseconds, and the default per-call timeout is 300s. 120 is generous
                for this and fails faster than the default when something is truly stuck.

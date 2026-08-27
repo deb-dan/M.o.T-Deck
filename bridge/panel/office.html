@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-28a">
+<meta name="harness-build" content="loffice-2026-08-28b">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -813,7 +813,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-28a</code>.</div>
+  Build <code>loffice-2026-08-28b</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -6398,22 +6398,35 @@ function agentGate(g) {
 function agentToolNote(file) {
   const f = String(file == null ? '' : file).trim();
   return '\n\nYOU ALSO HAVE REAL TOOLS on this workspace, from the `loffice` tool '
-       + 'server: office_list, office_read and office_sheet_stats read workbooks, and '
-       + 'office_write_cells, office_sort, office_insert_delete and office_create '
-       + 'change them. PREFER THE TOOLS: call them instead of emitting a loffice block, '
-       + 'and work in steps — read, then compute, then write, then read back to check. '
-       + 'Every tool takes the workbook NAME, never a path.\n'
+       + 'server: office_list, office_read and office_sheet_stats READ workbooks, and '
+       + 'office_stage_changes PROPOSES a change to one. PREFER THE TOOLS: call them '
+       + 'instead of emitting a loffice block. Every tool takes the workbook NAME, '
+       + 'never a path.\n'
        + (f
           ? ('THE OPEN WORKBOOK IS NAMED EXACTLY "' + f + '" — when the user says '
-             + '"this sheet", names a cell, or gives no file, that name is the `file` '
-             + 'argument. NEVER call office_create while a workbook is open unless the '
-             + 'user explicitly asks for a NEW workbook by name.\n')
-          : ('No workbook is open right now — office_create (or office_list to find '
-             + 'one) is the right first move.\n'))
-       + 'Calling a write tool IS the consent step: it shows Debi an approval card '
-       + 'before anything is written, and a pre-write copy of the file is kept. So do '
-       + 'NOT ask "OK?" or wait for permission in prose — state in one short sentence '
-       + 'what you are changing and CALL THE TOOL in the same turn.';
+             + '"this sheet", names a cell, or gives no file, that name is the `name` '
+             + 'argument.\n')
+          : ('No workbook is open right now — office_list is the right first move, and '
+             + 'a {"op":"create_workbook"} operation is how a new one gets made.\n'))
+       /* ⚠️ THE SHAPE OF A TURN, AND IT IS THE WHOLE POINT OF v2 (spec §4). The
+          2026-08-27 incident was ONE intention arriving as three write calls: three
+          approval cards, one of them missed, a failed write, and a model saying "Done"
+          anyway. Staging makes the grain the model's business too — one call carries the
+          whole change, or Debi gets a card that is missing half of it. */
+       + 'HOW TO DO A CHANGE, and there is only one way: READ the workbook first '
+       + '(office_read / office_sheet_stats), work out every cell that has to change, '
+       + 'then call office_stage_changes ONCE with the COMPLETE list of operations for '
+       + 'the whole request — including the totals and formulas that have to follow — '
+       + 'and STOP. Staging writes NOTHING: it puts one card in front of Debi with '
+       + 'every cell\'s before and after on it, and an Apply button.\n'
+       + 'A SECOND office_stage_changes call REPLACES the first proposal, so a change '
+       + 'sent in pieces LOSES the earlier pieces. One request, one staging call.\n'
+       + 'YOU CANNOT APPLY CHANGES. There is no apply tool. Only Debi can press Apply. '
+       + 'So after staging, say in one short sentence what you staged and stop — do not '
+       + 'ask "OK?", do not stage it again, and NEVER claim a change was made, a row '
+       + 'was added or a total was updated unless a system line in this conversation '
+       + 'confirms that changeset was applied. If a tool result says it was refused, '
+       + 'say that plainly instead.';
 }
 
 // Turns after the first do NOT re-send the whole preamble: the Hermes session keeps
@@ -6541,9 +6554,17 @@ async function agentSend() {
   const grounding = agentSid
     ? agentBrief(current, aiSheetName())
     : (aiPreamble(current, aiSheetName()) + agentToolNote(current));
-  const message = grounding + '\n\n'
+  // ⚠️ THE OUTCOME LINES RIDE IN FRONT, AND THAT IS THE WHOLE ANTI-HALLUCINATION SEAM
+  // (spec §2). Apply and Dismiss each queue one system line; it goes into the model's
+  // context BEFORE it answers, so the next turn cannot invent the state of the workbook
+  // — it has been TOLD, in the record, whether the change landed. Drained as it is
+  // sent, never before: a line that never reached a message is a line still owed.
+  const carried = csLines.slice();
+  csLines = [];
+  const message = csPrefix(carried) + grounding + '\n\n'
                 + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
                 + '---\n\n' + q;
+  if (carried.length) bx('cs-lines-sent', String(carried.length));
   const shown = { text: message,
                   label: (ctx && ctx.text)
                     ? (ctx.rows + '×' + ctx.cols + (ctx.truncated ? ' (truncated)' : ''))
@@ -6616,6 +6637,9 @@ async function agentSend() {
     // The SAME renderer the Quick lane uses, so a fenced formula is still a copy card
     // and an action block is still the preview-and-Apply card. One grammar.
     aiRenderBody(turn.body.parentNode, out);
+    // ⚠️ AND THE ✗ CHIPS COME BACK, because that render replaced everything in the
+    // wrap. A failed tool must not be deleted by the model's own prose arriving.
+    (held.errors || []).forEach(e => csErrChip(turn.wrap, e.tool, e.why));
     if (think) {
       const det = actDet('thinking · ' + think.length + ' chars', think);
       turn.wrap.insertBefore(det, turn.wrap.firstChild.nextSibling);
@@ -6626,10 +6650,15 @@ async function agentSend() {
     turn.wrap.appendChild(d);
   }
   aiStatus('');
+  // ⚠️ THE CARD IS DRAWN FROM THE BRIDGE'S STORE, NOT FROM THE REPLY, and it is drawn
+  // whether the turn "succeeded" or not — a model that staged a change and then errored
+  // out mid-sentence still staged it, and Debi is owed the card.
+  await csAfterTurn(turn);
   aiPaint(true);
   el('ai-log').scrollTop = el('ai-log').scrollHeight;
-  // A write tool that ran has changed the FILE, not this page's snapshot. Ask now
-  // rather than waiting up to a beat for it.
+  // Nothing on this lane writes a workbook any more, so the file only moves when SHE
+  // applies. This still asks, because something else (the editor, another apply) may
+  // have moved it while the turn was running.
   extCheck();
 }
 
@@ -6681,6 +6710,23 @@ function agentFrame(j, turn, held, steps) {
     // its own step rather than writing to index -1.
     if (s && steps.length) steps[steps.length - 1] += ' — ' + s;
     else if (s) steps.push(String((j && j.tool) || 'tool') + ' — ' + s);
+    // ⚠️ A TOOL THAT FAILED GETS A RED ✗ CHIP WITH ITS OWN SENTENCE, and this is half of
+    // the fix for the 2026-08-27 incident. There, a write returned an error, the panel
+    // rendered nothing at all, and the model's "Done" was the only thing on screen. Now
+    // the failure is on screen next to it, in every lane the bridge maps (the frame
+    // field comes off hermes_event_to_frames, so native tools and MCP tools alike).
+    if (j && j.is_error) {
+      // Drawn NOW, and remembered — because aiRenderBody() re-renders the whole reply
+      // from scratch at the end of the turn, which would otherwise silently delete a
+      // chip drawn mid-turn. agentSend re-draws these after that render.
+      const chip = { tool: (j && j.tool) || 'tool', why: (j && j.error) || '' };
+      held.errors = (held.errors || []).concat([chip]);
+      csErrChip(turn.wrap, chip.tool, chip.why);
+      steps[Math.max(steps.length - 1, 0)] = String((j && j.tool) || 'tool')
+        + ' — ✗ ' + String((j && j.error) || 'refused').slice(0, 120);
+      bx('tool-error', String((j && j.tool) || '?') + ': '
+         + String((j && j.error) || '').slice(0, 120));
+    }
     return {};
   }
   if (t === 'hermes_status' || t === 'status') {
@@ -6723,12 +6769,17 @@ async function agentName() {
 // does not invent an op list it was not given.
 const AGENT_AP_LABELS = { once: 'Approve once', session: 'This session',
                           always: 'Always', deny: 'Deny' };
-const AGENT_TOOLS = {
-  office_write_cells: 'write cells into a workbook',
-  office_sort: 'sort a sheet',
-  office_insert_delete: 'insert or delete rows/columns',
-  office_create: 'create a new workbook',
-};
+/* ⚠️ EMPTY AS OF loffice-2026-08-28b, AND THE EMPTINESS IS THE FEATURE. Every tool on
+   the loffice server is read-only now (bridge/office_mcp.py), so Hermes has nothing here
+   to put behind a card: an office tool CANNOT produce an approval card any more, and the
+   consent for a change lives on the changeset card below instead. A line in this map
+   would be describing a card that never appears — the exact kind of stale reassurance
+   this file keeps deleting.
+   The card itself STAYS, and that is not dead code: the loffice session is a normal
+   Hermes session, so if Debi's toolset gives that model `shell` or `write_file`, those
+   still card and this lane must render it rather than hang on a decision it never
+   showed her. bridge/tests/test_office_ai.js pins both halves. */
+const AGENT_TOOLS = {};
 // The tool name out of Hermes's fixed sentence, or ''. PURE.
 function agentToolOf(text) {
   const m = String(text == null ? '' : text).match(/MCP tool '([A-Za-z0-9_]+)'/);
@@ -6741,11 +6792,18 @@ function agentCardText(req) {
   const what = AGENT_TOOLS[tool] || '';
   const head = tool
     ? ('Hermes wants to run ' + tool + (what ? ' — it would ' + what : '') + '.')
-    : 'Hermes wants to run a write-capable Office tool.';
-  return head + ' Nothing is written until you approve it. The workbook as it is now '
-       + 'is copied to ' + (current ? preAgentName(current) : '<name>.pre-agent.xlsx')
-       + ' first, and that copy — not this page’s Undo — is how an agent write is '
-       + 'taken back. A workbook with unsaved edits open here is refused outright.';
+    : 'Hermes wants to run a write-capable tool.';
+  return head + ' Nothing happens until you answer this. '
+       /* THE HONEST NEGATIVE, ON THE CARD ITSELF: this is NOT an Office card. No
+          spreadsheet tool can reach this surface any more, so a card here is some other
+          tool in the model's toolset, and this page cannot show its arguments (Hermes's
+          gate builds the sentence from the tool and server names alone). Saying so is
+          the difference between "approve this" and "approve you don't know what". */
+       + 'This is NOT a spreadsheet change: no Office tool can write, so none of them '
+       + 'ever asks here — a change to a workbook arrives as a card of its own with '
+       + 'every cell listed and an Apply button. Whatever this is, this panel cannot '
+       + 'show its arguments (Hermes’s gate does not put them on the wire), so approve '
+       + 'it only if you know what asked.';
 }
 function agentCard(host, req, sid) {
   const card = document.createElement('div');
@@ -6825,6 +6883,322 @@ function agentExpire(wrap) {
   [].forEach.call(wrap.querySelectorAll('.aicode'), c => {
     if (c._sid && !c._done) agentStamp(c, 'the turn ended — no longer answerable');
   });
+}
+
+// ══ THE CHANGESET CARD — ONE INTENTION, ONE CARD ═════════════════════════════
+// docs/FABLE-AGENT-CHANGESET-SPEC.md §2. This is the surface the 2026-08-27 consent
+// incident was missing, and everything about it is a reaction to a specific failure in
+// that transcript:
+//
+//   · "add a new row called purchases…" produced TWO approval cards, because consent
+//     was per CALL. → The MCP write tools are gone. A change is now ONE staged
+//     changeset, and this renders ONE card for it, in the Quick lane's exact visual
+//     grammar: a summary line, the op list, before → after per cell, Apply / Dismiss.
+//   · the model said "Done … new planned total 1,635" while the sheet said 1,435, and
+//     NOTHING in the panel contradicted it. → Three rules here, and they are the
+//     product:
+//       1. csStatusLine() is HARNESS-AUTHORED and goes under EVERY agent reply that
+//          staged something: "⏳ staged — nothing is written until you press Apply."
+//          Narration never stands alone.
+//       2. a success badge renders ONLY from a receipt — an actual apply response with
+//          cells_written and a re-read verify in it. Never from model text, and never
+//          from "the POST returned 200".
+//       3. a tool result carrying isError renders as a red ✗ chip with the tool's own
+//          sentence (agentFrame). A failure is no longer something only the model sees.
+//
+// ⚠️ AND THE WRITER FENCE IS UNTOUCHED. Not one function in this section puts a value in
+// a cell. Apply happens BRIDGE-side (POST /api/office/changeset/{id}/apply → office_ops,
+// atomically, behind a checkpoint); this page POSTs, renders the receipt, and RELOADS
+// the document through the existing ooExtReload path. bridge/tests/test_office_ai.js's
+// writer-set fence lists every function below and asserts exactly that.
+const CS_STAGED_LINE = '⏳ staged — nothing is written until you press Apply';
+const CS_LIST_MAX = 60;             // rows drawn in the before→after list, then a count
+let csPolls = 0;                    // beacon-only: how many times we asked the bridge
+
+// The outcome lines the bridge is holding for this session (applied / dismissed /
+// undone). THE HONEST FALLBACK for the spec's "inject one system line into the Hermes
+// session": the vendored gateway has no way to append a message to an idle session
+// (session.steer only lands on the next TOOL RESULT, i.e. after the next turn has
+// already started thinking, and it fakes a user bubble on the way — see
+// bridge/office_ops.push_session_line for the reading). So the bridge queues the line
+// and THIS PAGE PREPENDS IT to Debi's next agent message, which puts it in the model's
+// context BEFORE it answers. Nothing is silently dropped: the queue is drained only
+// when a message that carries it is actually sent.
+let csLines = [];
+
+function csNote(line) {
+  const s = String(line == null ? '' : line).trim();
+  if (s && csLines.indexOf(s) < 0) csLines.push(s);
+}
+
+// What rides in front of the next agent message, and what is left over. PURE.
+function csPrefix(lines) {
+  const rows = (Array.isArray(lines) ? lines : []).filter(l => String(l || '').trim());
+  if (!rows.length) return '';
+  return 'SYSTEM — what happened in LOffice since your last turn (this is the record, '
+       + 'not the user speaking):\n' + rows.join('\n') + '\n\n';
+}
+
+// ── the card's words (PURE, so they are testable without a DOM) ──────────────
+function csRows(cs) {
+  const out = { lines: [], more: 0 };
+  const pv = (cs && Array.isArray(cs.preview)) ? cs.preview : [];
+  pv.forEach(p => {
+    if (out.lines.length >= CS_LIST_MAX) { out.more++; return; }
+    const b = String(p.before == null ? '' : p.before);
+    const a = String(p.after == null ? '' : p.after);
+    out.lines.push(String(p.ref || '?') + '  ' + (b === '' ? '(empty)' : b.slice(0, 60))
+                   + '  →  ' + (a === '' ? '(empty)' : a.slice(0, 60)));
+  });
+  const total = Number((cs && cs.preview_total) || pv.length);
+  if (total > pv.length) out.more += total - pv.length;
+  return out;
+}
+
+function csCardText(cs) {
+  const c = cs || {};
+  const n = Number(c.op_count || 0);
+  return 'Hermes proposes ' + n + ' operation' + (n === 1 ? '' : 's') + ' on “'
+       + String(c.name || '?') + '”. ' + String(c.summary || '')
+       + ' Nothing has been written: this is a proposal, and Apply is the only thing '
+       + 'that touches the file. Apply keeps a checkpoint first, so this exact change '
+       + 'can be undone.';
+}
+
+// The badge, from a RECEIPT and from nothing else. PURE.
+function csReceiptText(r) {
+  const c = r || {};
+  const bits = [];
+  if (c.cells_written) bits.push(c.cells_written + ' cell'
+                                + (c.cells_written === 1 ? '' : 's') + ' written');
+  if (c.cells_emptied) bits.push(c.cells_emptied + ' emptied');
+  if (c.cells_formatted) bits.push(c.cells_formatted + ' formatted');
+  if (c.sorted) bits.push('sheet sorted');
+  if (c.rows_or_columns_inserted) bits.push(c.rows_or_columns_inserted + ' inserted');
+  if (c.rows_or_columns_deleted) bits.push(c.rows_or_columns_deleted + ' DELETED');
+  if (c.created_workbook) bits.push('workbook created');
+  return '✓ applied · ' + (bits.length ? bits.join(', ') : 'no cell changed')
+       + ' · receipt ' + String(c.receipt || '?');
+}
+
+// ── the card ─────────────────────────────────────────────────────────────────
+function csCard(host, cs) {
+  const card = document.createElement('div');
+  card.className = 'aicode';
+  const head = document.createElement('div');
+  head.style.padding = '8px 9px';
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  card.appendChild(head); card.appendChild(bar);
+  card._head = head; card._bar = bar; card._cs = cs;
+  const lang = document.createElement('span');
+  lang.className = 'lang';
+  lang.textContent = 'proposed change · not applied';
+  bar.appendChild(lang);
+  const line = document.createElement('div');
+  line.textContent = csCardText(cs);
+  head.appendChild(line);
+  const ops = document.createElement('div');
+  ops.style.marginTop = '5px';
+  ops.style.color = 'var(--dim)';
+  ops.style.fontSize = '11px';
+  ops.textContent = (cs.op_list || []).map((s, i) => (i + 1) + '. ' + s).join('  ·  ');
+  head.appendChild(ops);
+  const rows = csRows(cs);
+  head.appendChild(actDet('what it will change · ' + rows.lines.length
+                          + (rows.more ? ' of ' + (rows.lines.length + rows.more) : '')
+                          + ' cell' + (rows.lines.length === 1 ? '' : 's'),
+                          rows.lines.join('\n')
+                          + (rows.more ? '\n… and ' + rows.more + ' more' : '')));
+  if ((cs.notes || []).length) {
+    head.appendChild(actDet('what the tool said about it', (cs.notes || []).join('\n\n')));
+  }
+  const grow = document.createElement('span');
+  grow.className = 'grow';
+  bar.appendChild(grow);
+  const no = actChip(bar, 'Dismiss', 'lnk');
+  const yes = actChip(bar, 'Apply');
+  no.onclick = () => csDismiss(card);
+  yes.onclick = () => csApply(card);
+  host.appendChild(card);
+  bx('cs-card', cs.changeset_id + ' ops=' + cs.op_count + ' cells=' + cs.preview_total);
+  el('ai-log').scrollTop = el('ai-log').scrollHeight;
+  return card;
+}
+
+function csBusy(card, on) {
+  [].forEach.call(card._bar.querySelectorAll('button'), b => { b.disabled = !!on; });
+}
+
+async function csApply(card) {
+  if (card._done) return;
+  const cs = card._cs;
+  csBusy(card, true);
+  let j = null;
+  try {
+    const r = await fetch('/api/office/changeset/'
+                          + encodeURIComponent(cs.changeset_id) + '/apply',
+                          { method: 'POST' });
+    j = await r.json().catch(() => ({}));
+    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  } catch (e) {
+    // ⚠️ A FAILED APPLY IS SAID, AND THE CARD STAYS ANSWERABLE. The one thing that must
+    // never happen here is the incident's shape: something looking applied when it is
+    // not.
+    actNote(card, 'That was NOT applied: ' + ((e && e.message) || e));
+    csBusy(card, false);
+    bx('cs-apply-fail', String((e && e.message) || e).slice(0, 140));
+    return;
+  }
+  // ⚠️ THE BADGE COMES OFF THE RECEIPT — cells_written, the re-read verify, the receipt
+  // hash — and off nothing else. A 200 with no receipt in it is not a success.
+  card._done = true;
+  card._receipt = j;
+  csStamp(card, csReceiptText(j));
+  const det = actDet('re-read from the file after saving · ' + String(j.verify_note || ''),
+                     (j.verify || []).map(v => v.ref + '  ' + (v.match ? '✓' : '✗ ')
+                       + '  ' + String(v.found === '' ? '(empty)' : v.found)).join('\n')
+                     || '(nothing to re-read)');
+  card._head.appendChild(det);
+  if (j.checkpoint) {
+    const u = actChip(card._bar, 'Undo this change', 'lnk');
+    u.onclick = () => csUndo(card);
+  }
+  csNote(j.session_line);
+  bx('cs-applied', cs.changeset_id + ' receipt=' + j.receipt
+     + ' cells=' + j.cells_written);
+  // The FILE moved. The page's copy did not — reload the document the existing way.
+  extSeen = 0;
+  ooExtReload(j.name);
+}
+
+async function csDismiss(card) {
+  if (card._done) return;
+  const cs = card._cs;
+  csBusy(card, true);
+  try {
+    const r = await fetch('/api/office/changeset/'
+                          + encodeURIComponent(cs.changeset_id) + '/dismiss',
+                          { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    card._done = true;
+    csStamp(card, '✗ dismissed — nothing was written');
+    csNote(j.session_line);
+    bx('cs-dismissed', cs.changeset_id);
+  } catch (e) {
+    actNote(card, 'dismiss failed: ' + ((e && e.message) || e));
+    csBusy(card, false);
+    bx('cs-dismiss-fail', String((e && e.message) || e).slice(0, 140));
+  }
+}
+
+async function csUndo(card) {
+  const cs = card._cs;
+  csBusy(card, true);
+  try {
+    const r = await fetch('/api/office/changeset/'
+                          + encodeURIComponent(cs.changeset_id) + '/undo',
+                          { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    csStamp(card, '↩ undone — restored from the checkpoint taken before Apply');
+    csNote(j.session_line);
+    bx('cs-undone', cs.changeset_id);
+    extSeen = 0;
+    ooExtReload(j.name);
+  } catch (e) {
+    // The mtime fence lands here, and its sentence is the bridge's — "that workbook
+    // changed on disk after the change was applied…". A refused undo must read as a
+    // refusal, never as an undo that quietly did nothing.
+    actNote(card, 'Not undone: ' + ((e && e.message) || e));
+    csBusy(card, false);
+    bx('cs-undo-fail', String((e && e.message) || e).slice(0, 140));
+  }
+}
+
+function csStamp(card, text) {
+  card._bar.innerHTML = '';
+  const lang = document.createElement('span');
+  lang.className = 'lang';
+  lang.textContent = text;
+  card._bar.appendChild(lang);
+  const grow = document.createElement('span');
+  grow.className = 'grow';
+  card._bar.appendChild(grow);
+}
+
+// THE HARNESS-AUTHORED STATUS LINE. It is not the model's sentence and it is not
+// optional: every turn that staged something carries it, under the reply.
+function csStatusLine(wrap) {
+  const d = document.createElement('div');
+  d.className = 'txt';
+  d.style.marginTop = '6px';
+  d.style.color = 'var(--dim)';
+  d.textContent = CS_STAGED_LINE;
+  wrap.appendChild(d);
+  return d;
+}
+
+// A red ✗ chip for a tool result that carried isError. The tool's OWN sentence, because
+// "a tool failed" is not an answer to "what went wrong".
+function csErrChip(wrap, tool, why) {
+  const d = document.createElement('div');
+  d.className = 'err';
+  d.style.marginTop = '6px';
+  d.textContent = '✗ ' + String(tool || 'tool') + ' — '
+                + String(why || 'it refused, and said nothing about why');
+  wrap.appendChild(d);
+  return d;
+}
+
+// ── after the turn: is there a proposal? ─────────────────────────────────────
+// ⚠️ THE PANEL ASKS THE BRIDGE, IT DOES NOT BELIEVE THE MODEL. Whether something was
+// staged is a fact about the bridge's changeset store, not about what the reply said —
+// so a model that CLAIMS it staged nothing still gets the card, and one that claims it
+// staged something when it did not gets no card and no status line.
+let csShown = '';                   // the changeset id already on screen
+
+async function csRead() {
+  csPolls++;
+  try {
+    const r = await fetch('/api/office/changeset?file=' + encodeURIComponent(current || '')
+                          + '&session=' + encodeURIComponent(agentSid || ''),
+                          { cache: 'no-store' });
+    const j = await r.json();
+    (j && j.session_lines || []).forEach(csNote);
+    return j;
+  } catch (e) {
+    bx('cs-fetch-fail', String((e && e.message) || e).slice(0, 120));
+    return null;
+  }
+}
+
+async function csAfterTurn(turn) {
+  const j = await csRead();
+  const cs = j && j.changeset;
+  if (!cs) return null;
+  csStatusLine(turn.wrap);
+  csShown = cs.changeset_id;
+  csCard(turn.wrap, cs);
+  return cs;
+}
+
+// RECOVERY, on the page tick that already exists. A proposal outlives the page: reload
+// LOffice with one pending and the card must come back, because the alternative is a
+// changeset Debi can neither apply nor dismiss and no longer knows about. Also how the
+// outcome lines are recovered after a reload, so the next turn is still told the truth.
+async function csTick() {
+  if (aiLane !== LANE_AGENT || aiBusy) return null;
+  const j = await csRead();
+  const cs = j && j.changeset;
+  if (!cs || cs.changeset_id === csShown) return null;
+  csShown = cs.changeset_id;
+  const wrap = aiAdd('assistant', 'A change staged earlier in this conversation is '
+                                + 'still waiting for you.', null);
+  csCard(wrap.wrap, cs);
+  bx('cs-recovered', cs.changeset_id);
+  return cs;
 }
 
 // ══ THE OPEN-FILE HEARTBEAT (spec §3 rule 2) ═════════════════════════════════
@@ -7036,6 +7410,7 @@ function pageTick() {
   if (tickN % SLOW_EVERY) return;
   if (aiPaneOpen()) aiRefreshModel();
   extCheck();
+  csTick();
 }
 
 function pageTickStart() {

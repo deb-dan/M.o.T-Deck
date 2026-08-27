@@ -378,8 +378,15 @@ eq("an unreadable merge entry is DROPPED, not guessed at",
 
 
 # ══ 3. THE SEMANTICS TABLE, EXECUTED AGAINST REAL WORKBOOKS ═════════════════
+# ⚠️ EVERY TABLE BELOW NOW RUNS THROUGH stage → apply, AND THAT IS THE POINT OF THE
+# REWRITE. In v1 each of these called an op_* MCP tool that wrote the file directly;
+# those tools are gone (docs/FABLE-AGENT-CHANGESET-SPEC.md §1). The semantics did not
+# change — the same run_ops, the same merge refusal, the same caps — but the ROUTE did,
+# so testing the semantics through the route is strictly better: it proves the change a
+# model proposes is the change a person's Apply carries out.
 TMP = tempfile.mkdtemp(prefix="harness-office-mcp-")
 D = office.office_dir(TMP)
+SESS = "test-session"
 
 
 def make(name, rows, merges=(), styles=None):
@@ -409,6 +416,20 @@ def read(name, sheet=0):
     return grid, merges, ws
 
 
+def stage(name, ops, sheet=None, session=SESS):
+    """(staged, None) or (None, reason) — what an MCP office_stage_changes call does."""
+    return office_ops.stage_changes(TMP, session, name, sheet, ops)
+
+
+def run(name, ops, sheet=None, session=SESS):
+    """stage → apply. THE ONLY WAY A WORKBOOK IS WRITTEN in v2, and the apply half is
+    reachable from a button and from no tool at all."""
+    st, reason = stage(name, ops, sheet, session)
+    if st is None:
+        return None, reason
+    return office_ops.apply_changeset(TMP, st["changeset_id"])
+
+
 if HAVE_XL:
     print("\n── 3a. THE SORT MERGE-REFUSAL, on a real workbook ──")
     # ⚠️ THE MERGE IS AT D1:E1, AWAY FROM THE SORTED DATA, AND THAT IS THE POINT:
@@ -418,23 +439,27 @@ if HAVE_XL:
     # have destroyed the values the assertion reads.)
     make("merged.xlsx", [["b", 30, None, "x", None], ["a", 10], ["c", 20]],
          merges=["D1:E1"])
-    out, reason = office_ops.op_sort(TMP, "merged.xlsx", None, "B")
+    out, reason = run("merged.xlsx", [{"op": "sort", "col": "B"}])
     grid, merges, _ = read("merged.xlsx")
     eq("A SORT ON A MERGED SHEET IS REFUSED, and no cell moved",
        [row[1] for row in grid[:3]], [30, 10, 20])
     eq("…the merge itself is untouched", merges, ["D1:E1"])
-    check("…it is REPORTED as skipped rather than swallowed — the tool result says so, "
-          "so the MODEL learns it and not only the user",
+    check("…it is REPORTED as skipped rather than swallowed — the receipt says so, and "
+          "the STAGING said so before that, so the model learns it and the card shows it",
           out is not None and out["operations_skipped"] == 1 and out["sorted"] == 0)
-    check("…in words that name what would have gone wrong",
+    st, _r = stage("merged.xlsx", [{"op": "sort", "col": "B"}])
+    check("…in words that name what would have gone wrong, ON THE CARD, before anybody "
+          "presses Apply",
           any("merged range" in n and "never belonged together" in n
-              for n in out["notes"]))
+              for n in st["notes"]))
+    eq("…and a refused op is a change with NOTHING in it, so the card says so instead of "
+       "offering an Apply that would do nothing visible", st["cells_changed"], 0)
     check("…and the pre-agent copy was still taken, because a refused OP is not a "
           "refused CALL", out["pre_agent_copy"] == "merged.pre-agent.xlsx")
 
     print("\n── 3b. A SORT THAT RUNS, on a real workbook ──")
     make("plain.xlsx", [["b", 30], ["a", 10], ["c", 20]])
-    out, reason = office_ops.op_sort(TMP, "plain.xlsx", None, "B")
+    out, reason = run("plain.xlsx", [{"op": "sort", "col": "B"}])
     grid, _m, _ws = read("plain.xlsx")
     eq("the rows really sorted, and column A came with them",
        [(row[0], row[1]) for row in grid[:3]], [("a", 10), ("c", 20), ("b", 30)])
@@ -442,20 +467,20 @@ if HAVE_XL:
           out["sorted"] == 1
           and any("ROW 1 INCLUDED" in n for n in out["notes"]))
     make("plainz.xlsx", [["b", 30], ["a", 10], ["c", 20]])
-    office_ops.op_sort(TMP, "plainz.xlsx", None, "B", True)
+    run("plainz.xlsx", [{"op": "sort", "col": "B", "desc": True}])
     grid, _m, _ws = read("plainz.xlsx")
     eq("Z→A is the same sort the other way up",
        [row[1] for row in grid[:3]], [30, 20, 10])
 
     print("\n── 3c. A SORT MOVES A FORMULA AS TEXT AND SAYS SO ──")
     make("fx.xlsx", [["b", 30], ["a", 10], ["c", 20, "=B3*2"]])
-    out, reason = office_ops.op_sort(TMP, "fx.xlsx", None, "B")
+    out, reason = run("fx.xlsx", [{"op": "sort", "col": "B"}])
     grid, _m, _ws = read("fx.xlsx")
     eq("the formula moved with its row and STILL SAYS WHAT IT SAID — no reference was "
        "rewritten, which is the honest half of the bound",
        grid[1][2], "=B3*2")
-    check("…and the tool RESULT carries the page's own sentence about it, so the model "
-          "is told rather than only the user",
+    check("…and the RECEIPT carries the page's own sentence about it, so the model is "
+          "told rather than only the user",
           office_ops.RC_FORMULA_NOTE in out["notes"])
 
     print("\n── 3d. AN INSERT SHIFTS MERGES AND LEAVES FORMULA TEXT ──")
@@ -463,7 +488,7 @@ if HAVE_XL:
     # a merge), so the formula assertion below reads a real formula and not a hole.
     make("ins.xlsx", [["top", None, None, None], [None, None, None, None],
                       ["below", "=A1", "m", None]], merges=["C3:D3"])
-    out, reason = office_ops.op_insert_delete(TMP, "ins.xlsx", None, "insert", "row", 3)
+    out, reason = run("ins.xlsx", [{"op": "insert", "what": "row", "at": 3}])
     grid, merges, _ws = read("ins.xlsx")
     eq("the rows below the line moved down, once", grid[3][0], "below")
     eq("…the inserted row is blank", grid[2][:2], [None, None])
@@ -475,22 +500,22 @@ if HAVE_XL:
 
     print("\n── 3e. A DELETE PULLS THE REST UP ──")
     make("del.xlsx", [["b", 30], ["a", 10], ["c", 20]])
-    out, reason = office_ops.op_insert_delete(TMP, "del.xlsx", None, "delete", "row", 1)
+    out, reason = run("del.xlsx", [{"op": "delete_rc", "what": "row", "at": 1}])
     grid, _m, _ws = read("del.xlsx")
     eq("'at': 1 is ROW 1, the way a person says it, so the first row is the one that "
        "goes — and the tail is cleared rather than left duplicated",
        [row[0] for row in grid], ["a", "c"])
     eq("…counted as a delete", out["rows_or_columns_deleted"], 1)
-    out, reason = office_ops.op_insert_delete(TMP, "del.xlsx", None, "delete", "row",
-                                             1, 9999)
-    check("…and a delete past the cap is REFUSED with the cap in the sentence, not "
-          "quietly clamped", out is None and str(office_ops.RC_MAX) in reason)
+    out, reason = stage("del.xlsx", [{"op": "delete_rc", "what": "row", "at": 1,
+                                     "n": 9999}])
+    check("…and a delete past the cap is REFUSED AT STAGING, with the cap in the "
+          "sentence — the refusal now happens before there is anything to approve",
+          out is None and str(office_ops.RC_MAX) in reason)
 
-    print("\n── 3f. THE SHARED-STYLE-ID TRAP, through a real write ──")
+    print("\n── 3f. THE SHARED-STYLE-ID TRAP, through a real apply ──")
     make("style.xlsx", [["a", "b"]],
          styles={"A1": Font(italic=True), "B1": Font(italic=True)})
-    out, reason = office_ops.op_write_cells(
-        TMP, "style.xlsx", None, [{"op": "style", "at": "A1", "set": {"bl": 1}}])
+    out, reason = run("style.xlsx", [{"op": "style", "at": "A1", "set": {"bl": 1}}])
     _g, _m, ws = read("style.xlsx")
     check("the style write bolded A1 and KEPT its italic — the base was resolved and "
           "COPIED, not replaced", ws["A1"].font.bold and ws["A1"].font.italic)
@@ -517,7 +542,7 @@ if HAVE_XL:
 
     print("\n── 3g. WRITE VALUES, and the cells nobody mentioned ──")
     make("w.xlsx", [["keep", None], [None, None]])
-    out, reason = office_ops.op_write_cells(TMP, "w.xlsx", None, [
+    out, reason = run("w.xlsx", [
         {"op": "set", "at": "B1", "values": [["Month", "Planned"], ["January", 900]]},
         {"op": "set", "at": "B4", "values": [["=SUM(C1:C3)"]]},
         {"op": "set", "at": "D1", "values": [[None]]}])
@@ -527,7 +552,7 @@ if HAVE_XL:
        [grid[0][1], grid[0][2], grid[1][1], grid[1][2], grid[3][1]],
        ["Month", "Planned", "January", 900, "=SUM(C1:C3)"])
     eq("THE CELL NOBODY MENTIONED IS UNTOUCHED", grid[0][0], "keep")
-    eq("…and the report counts written and emptied apart",
+    eq("…and the receipt counts written and emptied apart",
        (out["cells_written"], out["cells_emptied"]), (5, 1))
 
     print("\n── 3h. READ: formulas as TEXT plus a value LABELLED cached ──")
@@ -558,35 +583,60 @@ if HAVE_XL:
     eq("row 1 is reported as it IS — no header guessing anywhere in this lane",
        colb["first_row_value"], "Planned")
 
-    print("\n── 3j. CREATE never clobbers ──")
-    out, reason = office_ops.op_create(TMP, "brand new")
-    eq("a create returns the name it actually got", out["name"], "brand new.xlsx")
-    out2, reason = office_ops.op_create(TMP, "brand new")
-    eq("…and a second create of the same name STEPS rather than overwriting",
-       out2["name"], "brand new (2).xlsx")
-    check("…and says so, so the model uses the right name next turn",
-          any("already existed" in n for n in out2["notes"]))
-    out3, reason = office_ops.op_create(TMP, "../escape")
-    check("a create cannot escape the folder either",
-          out3 is None or out3["name"] == "escape.xlsx")
+    print("\n── 3j. create_workbook: the retired office_create, absorbed ──")
+    # ⚠️ A DELIBERATE BEHAVIOUR CHANGE, ARGUED. office_create stepped a taken name
+    # ('budget.xlsx' → 'budget (2).xlsx') because a create was its own call and the
+    # model's intent survived a rename. A changeset is about ONE workbook, named once,
+    # and every other op in it addresses that name — so silently retargeting the whole
+    # change at a DIFFERENT file would be the worst kind of helpful. It refuses instead.
+    st, reason = stage("fresh book.xlsx", [{"op": "create_workbook"},
+                                           {"op": "set", "at": "A1",
+                                            "values": [["hello"]]}])
+    check("a workbook that does not exist can be staged, and the card SAYS it will be "
+          "created", st is not None and st["creates_workbook"] is True
+          and any("does not exist yet" in n for n in st["notes"])
+          and any("create the workbook" in o for o in st["op_list"]))
+    check("…and NOTHING is on disk yet, because staging never writes",
+          not os.path.exists(os.path.join(D, "fresh book.xlsx")))
+    rc, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
+    check("…applying it creates the workbook and writes the cells in one gesture",
+          rc is not None and rc["created_workbook"] is True
+          and read("fresh book.xlsx")[0][0][0] == "hello")
+    st, reason = stage("fresh book.xlsx", [{"op": "create_workbook"}])
+    check("a create_workbook aimed at a workbook that ALREADY EXISTS is refused rather "
+          "than stepped to a new name — a changeset addresses one file",
+          st is None and "already exists" in reason)
+    st, reason = stage("fresh book.xlsx", [{"op": "create_workbook"},
+                                           {"op": "set", "at": "A2",
+                                            "values": [["more"]]}])
+    check("…but the same op alongside real work is simply DROPPED, and the rest stages "
+          "against the existing file", st is not None
+          and st["creates_workbook"] is False)
+    st, reason = stage("../escape.xlsx", [{"op": "create_workbook"}])
+    check("a create cannot escape the folder either", st is None)
+    st, reason = stage("nothing here.xlsx", [{"op": "set", "at": "A1",
+                                              "values": [["x"]]}])
+    check("…and staging against a workbook that does not exist WITHOUT a create says so, "
+          "naming the two ways forward",
+          st is None and "office_list" in reason and "create_workbook" in reason)
 
     print("\n── 3k. SHEETS ──")
     make("sheets.xlsx", [["x"]])
-    out, reason = office_ops.op_write_cells(TMP, "sheets.xlsx", None, [
-        {"op": "sheet", "add": "Notes"}, {"op": "sheet", "add": "Notes"}])
+    out, reason = run("sheets.xlsx", [{"op": "sheet", "add": "Notes"},
+                                      {"op": "add_sheet", "name": "Notes"}])
     wb = openpyxl.load_workbook(os.path.join(D, "sheets.xlsx"))
     eq("two sheets asked for by the same name do not collide — the second is renamed, "
-       "never dropped and never a duplicate",
-       wb.sheetnames, ["Sheet1", "Notes", "Notes 2"])
-    out, reason = office_ops.op_write_cells(TMP, "sheets.xlsx", "Nope", [
-        {"op": "set", "at": "A1", "values": [["landed"]]}])
+       "never dropped and never a duplicate; and `add_sheet` is the same op spelled the "
+       "way the spec names it", wb.sheetnames, ["Sheet1", "Notes", "Notes 2"])
+    out, reason = run("sheets.xlsx", [{"op": "set", "at": "A1",
+                                      "values": [["landed"]]}], sheet="Nope")
     check("a sheet the model named that does not exist falls back to the first one AND "
           "THE RESULT SAYS SO — a write on a different sheet than the model believed "
           "must never read as a plain success",
           out is not None and any("there is no sheet called" in n for n in out["notes"]))
 
 
-# ══ 4. THE WRITE-SAFETY RULES S1 OWNS ═══════════════════════════════════════
+# ══ 4. THE WRITE-SAFETY RULES ═══════════════════════════════════════════════
 print("\n── 4a. the pre-agent copy: it exists, and it holds the PRE-write content ──")
 eq("the name is <stem>.pre-agent.xlsx, beside the file and distinct from the daily .bak",
    os.path.basename(office_ops.pre_agent_for("/x/Sales.xlsx")), "Sales.pre-agent.xlsx")
@@ -595,9 +645,8 @@ check("…and it can never become .pre-agent.pre-agent.xlsx",
       == "/x/Sales.pre-agent.xlsx")
 if HAVE_XL:
     make("undo.xlsx", [["before"]])
-    out, reason = office_ops.op_write_cells(TMP, "undo.xlsx", None, [
-        {"op": "set", "at": "A1", "values": [["after"]]}])
-    eq("the write reports the copy it took", out["pre_agent_copy"],
+    out, reason = run("undo.xlsx", [{"op": "set", "at": "A1", "values": [["after"]]}])
+    eq("the apply reports the copy it took", out["pre_agent_copy"],
        "undo.pre-agent.xlsx")
     check("the daily .bak is taken as well — the two are not substitutes: the .bak "
           "answers 'the way it was this morning', the pre-agent copy answers 'the way "
@@ -605,20 +654,19 @@ if HAVE_XL:
           bool(out["daily_backup"]))
     check("the copy EXISTS on disk",
           os.path.isfile(os.path.join(D, "undo.pre-agent.xlsx")))
-    eq("…and it holds what the cell said BEFORE the write — this is the agent lane's "
-       "whole undo, so its CONTENT is the assertion, not its existence",
+    eq("…and it holds what the cell said BEFORE the write — this is the convenience "
+       "undo, so its CONTENT is the assertion, not its existence",
        read("undo.pre-agent.xlsx")[0][0][0], "before")
     eq("…while the workbook itself holds the write", read("undo.xlsx")[0][0][0], "after")
-    out, reason = office_ops.op_write_cells(TMP, "undo.xlsx", None, [
-        {"op": "set", "at": "A1", "values": [["again"]]}])
-    eq("a SECOND agent write overwrites the copy — it is one level, and it answers "
-       "'put it back the way it was before the agent touched it'",
+    out, reason = run("undo.xlsx", [{"op": "set", "at": "A1", "values": [["again"]]}])
+    eq("a SECOND apply overwrites the copy — it is one level, and it answers 'put it "
+       "back the way it was before the last apply'",
        read("undo.pre-agent.xlsx")[0][0][0], "after")
     check("…and the note in the result NAMES the file, because a model that reports a "
           "write must be able to say how to undo it",
           any("undo.pre-agent.xlsx" in n for n in out["notes"]))
-    check("every write result also carries the fidelity contract, because an agent "
-          "write re-saves the whole workbook the way ⌘S does",
+    check("every apply also carries the fidelity contract, because it re-saves the "
+          "whole workbook the way ⌘S does",
           any(office.FIDELITY_NOTE in n for n in out["notes"]))
 
 print("\n── 4b. the open-dirty refusal, and why NO heartbeat means ALLOWED ──")
@@ -640,41 +688,326 @@ check("a junk name cannot register a heartbeat",
 office_ops.heartbeat_clear()
 
 if HAVE_XL:
+    # ⚠️ THE REFUSAL MOVED FROM THE AGENT TO THE BUTTON, AND IT STAYED. In v1 it stopped
+    # an UNATTENDED agent write. In v2 the only caller left is Debi's own Apply — and
+    # applying over her unsaved edits would destroy them just as silently, so the rule
+    # holds and the sentence now tells the person at the keyboard what clears it.
     make("busy.xlsx", [["mine"]])
     office_ops.heartbeat("busy.xlsx", True)
-    out, reason = office_ops.op_write_cells(TMP, "busy.xlsx", None, [
-        {"op": "set", "at": "A1", "values": [["agent"]]}])
-    eq("a write to a workbook with UNSAVED EDITS is refused, in the spec's own words",
-       (out, reason), (None, office_ops.DIRTY_REFUSAL))
+    st, reason = stage("busy.xlsx", [{"op": "set", "at": "A1", "values": [["agent"]]}])
+    check("STAGING a workbook with unsaved edits is ALLOWED — a proposal harms nothing "
+          "and refusing to even show one would be theatre", st is not None)
+    check("…and the card warns that Apply will refuse until she saves",
+          any("UNSAVED edits" in n for n in st["notes"]))
+    out, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
+    eq("…but APPLYING is refused, and the sentence names the one thing that clears it",
+       (out, reason), (None, office_ops.APPLY_DIRTY_REFUSAL))
+    check("…and it says ⌘S, because 'unsaved edits' is not an instruction",
+          "⌘S" in office_ops.APPLY_DIRTY_REFUSAL)
     eq("…and nothing was written", read("busy.xlsx")[0][0][0], "mine")
     check("…and no pre-agent copy was made either — the refusal is BEFORE the copy",
           not os.path.exists(os.path.join(D, "busy.pre-agent.xlsx")))
     office_ops.heartbeat("busy.xlsx", False)
-    out, reason = office_ops.op_write_cells(TMP, "busy.xlsx", None, [
-        {"op": "set", "at": "A1", "values": [["agent"]]}])
-    eq("open-and-CLEAN is allowed", read("busy.xlsx")[0][0][0], "agent")
+    out, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
+    eq("open-and-CLEAN is allowed, and the SAME changeset applies — a refusal does not "
+       "consume the proposal", read("busy.xlsx")[0][0][0], "agent")
     check("…and the result warns that the page will reload under her",
           any("OPEN in LOffice" in n for n in out["notes"]))
     office_ops.heartbeat_clear()
 
 
+# ══ 4c. THE CHANGESET LANE ITSELF (the spec §6 bar) ═════════════════════════
+# ⚠️ THIS IS THE GROUP THE WHOLE SLICE EXISTS FOR. Each block below answers one line of
+# docs/FABLE-AGENT-CHANGESET-SPEC.md §6, and between them they are the technical form of
+# "the model can propose and only a person can write".
+if HAVE_XL:
+    print("\n── 4c-1. STAGING PURITY: it computes a whole change and touches nothing ──")
+    office_ops.changeset_clear()
+    make("purity.xlsx", [["Category", "Amount"], ["Rent", 1000], ["Food", 300],
+                         ["Transport", 135], ["Total", "=SUM(B2:B4)"]])
+    path = os.path.join(D, "purity.xlsx")
+    before_mtime, before_size = os.path.getmtime(path), os.path.getsize(path)
+    before_bytes = open(path, "rb").read()
+    st, reason = stage("purity.xlsx", [
+        {"op": "insert", "what": "row", "at": 5},
+        {"op": "set", "at": "A5", "values": [["purchases", 200]]},
+        {"op": "set", "at": "B6", "values": [["=SUM(B2:B5)"]]}])
+    check("the incident's own request stages in ONE call", st is not None, )
+    # ⚠️⚠️ THE ASSERTION THE `readOnlyHint: true` ANNOTATION RESTS ON. If staging ever
+    # touches the file, the annotation becomes a lie and Hermes's gate is disarmed for a
+    # tool that writes. mtime AND bytes, because a same-size rewrite would pass on size.
+    eq("THE FILE'S MTIME IS UNCHANGED BY STAGING", os.path.getmtime(path), before_mtime)
+    eq("…and so is every byte of it — this is what makes readOnlyHint honest",
+       open(path, "rb").read(), before_bytes)
+    eq("…and its size", os.path.getsize(path), before_size)
+    check("…and no sibling was created either: no .pre-agent, no .bak, no checkpoint",
+          not os.path.exists(os.path.join(D, "purity.pre-agent.xlsx"))
+          and not os.path.isdir(os.path.join(D, office_ops.CHECKPOINT_DIR, "purity")))
+
+    print("\n── 4c-2. BEFORE VALUES, computed from the file for every touched cell ──")
+    pv = {p["ref"]: p for p in st["preview"]}
+    eq("every touched cell carries its BEFORE and its AFTER, read out of the workbook",
+       [(r, pv[r]["before"], pv[r]["after"]) for r in ("A5", "B5", "A6", "B6")],
+       [("A5", "Total", "purchases"), ("B5", "=SUM(B2:B4)", "200"),
+        ("A6", "", "Total"), ("B6", "", "=SUM(B2:B5)")])
+    check("…INCLUDING the two cells nobody named, which the INSERT pushed down. This is "
+          "the class of change Hermes's own approval card could not show at all: it "
+          "cannot put tool arguments on the wire, let alone their consequences.",
+          "A6" in pv and pv["A6"]["before"] == "" and pv["A6"]["after"] == "Total")
+    eq("a formula is shown as its FORMULA on both sides, never as a cached number — the "
+       "cell that changed is the formula", pv["B5"]["before"], "=SUM(B2:B4)")
+    eq("the op list is one human line per operation, in the order they will run",
+       st["op_list"], ["insert 1 blank row(s) above row 5", "set A5:B5", "set B6"])
+    check("the summary line says what will change and how much",
+       "purchases" not in st["summary"] and "4 cells would change" in st["summary"])
+    check("every staging result carries the spec's own sentence, so the MODEL reads it",
+          st["message"] == office_ops.NOT_APPLIED_SENTENCE
+          and office_ops.NOT_APPLIED_SENTENCE in st["notes"])
+    check("…and the sentence that forbids the false 'Done': you cannot apply, and you do "
+          "not claim without a system line",
+          any("there is no apply tool" in n and "system line" in n for n in st["notes"]))
+    eq("…and it never reports itself as applied", (st["applied"], st["staged"]),
+       (False, True))
+    check("the private ops list is NOT shipped to the panel — how a change is carried "
+          "out is the bridge's business, and a page that had the ops would grow a writer "
+          "around them", "ops" not in st)
+
+    print("\n── 4c-3. ONE PENDING CHANGESET PER (SESSION, WORKBOOK): REPLACED ──")
+    first = st["changeset_id"]
+    st2, _r = stage("purity.xlsx", [{"op": "set", "at": "A9", "values": [["second"]]}])
+    check("a second staging call REPLACES the first — one intention, one card, which is "
+          "the entire ruling", st2["replaced"] is True
+          and office_ops.get_changeset(first) is None)
+    eq("…and there is exactly ONE pending changeset for that workbook",
+       office_ops.pending_changeset(SESS, "purity.xlsx")["id"], st2["changeset_id"])
+    check("…so the replaced one can no longer be applied by anybody",
+          office_ops.apply_changeset(TMP, first)[0] is None)
+    other, _r = stage("undo.xlsx", [{"op": "set", "at": "A1", "values": [["x"]]}])
+    eq("a DIFFERENT workbook keeps its own pending changeset — the key is (session, "
+       "workbook), not one slot for the whole bridge",
+       (office_ops.pending_changeset(SESS, "purity.xlsx")["id"],
+        office_ops.pending_changeset(SESS, "undo.xlsx")["id"]),
+       (st2["changeset_id"], other["changeset_id"]))
+    third, _r = stage("purity.xlsx", [{"op": "set", "at": "A9", "values": [["s3"]]}],
+                      session="another-session")
+    check("…and so does a different SESSION, which is what the spec's key says",
+          office_ops.pending_changeset("another-session", "purity.xlsx")["id"]
+          == third["changeset_id"])
+
+    print("\n── 4c-4. TTL: a proposal expires rather than waiting for ever ──")
+    office_ops.changeset_clear()
+    st, _r = stage("purity.xlsx", [{"op": "set", "at": "A9", "values": [["late"]]}])
+    cid = st["changeset_id"]
+    check("it is pending now", office_ops.get_changeset(cid) is not None)
+    late = time.time() + office_ops.CHANGESET_TTL - 1
+    check("…and still pending one second inside the TTL",
+          office_ops.get_changeset(cid, now=late) is not None)
+    late = time.time() + office_ops.CHANGESET_TTL + 1
+    check("…gone one second past it", office_ops.get_changeset(cid, now=late) is None)
+    out, reason = office_ops.apply_changeset(TMP, cid, now=late)
+    check("…and applying an expired changeset is REFUSED, in words, naming the minutes",
+          out is None and "expired" in reason and "10 minutes" in reason)
+    eq("the TTL is the spec's ~10 minutes", office_ops.CHANGESET_TTL, 600.0)
+    check("…and nothing was written by the attempt",
+          read("purity.xlsx")[0][8] if False else
+          len(read("purity.xlsx")[0]) == 5)
+
+    print("\n── 4c-5. APPLY: atomic, all-or-nothing, with a receipt that RE-READS ──")
+    office_ops.changeset_clear()
+    st, _r = stage("purity.xlsx", [
+        {"op": "insert", "what": "row", "at": 5},
+        {"op": "set", "at": "A5", "values": [["purchases", 200]]},
+        {"op": "set", "at": "B6", "values": [["=SUM(B2:B5)"]]}])
+    rc, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
+    grid, _m, _ws = read("purity.xlsx")
+    eq("the incident's exact change lands, whole: the row AND the total that had to "
+       "follow it", [row[0] for row in grid] + [grid[4][1], grid[5][1]],
+       ["Category", "Rent", "Food", "Transport", "purchases", "Total",
+        200, "=SUM(B2:B5)"])
+    check("the receipt is the spec's shape",
+          all(k in rc for k in ("changeset_id", "applied_at", "cells_written",
+                                "verify")))
+    eq("…it counts what was written", rc["cells_written"], 3)
+    check("…it carries a receipt hash, which is what the panel's badge quotes",
+          isinstance(rc["receipt"], str) and len(rc["receipt"]) >= 8)
+    # ⚠️⚠️ `verify` IS A RE-READ FROM DISK, NOT A RESTATEMENT. This is the difference
+    # between a receipt and a claim, and it is the assertion that answers the incident's
+    # second failure: a save that silently did nothing cannot look like a success.
+    check("VERIFY IS A RE-READ OF THE TOUCHED CELLS FROM THE SAVED FILE, and every one "
+          "matches", rc["verify"] and all(v["match"] for v in rc["verify"])
+          and len(rc["verify"]) == 4)
+    eq("…and it says so in a sentence a person can read", rc["verify_note"],
+       "4 of 4 re-read cell(s) hold what the change said they would.")
+    check("…the verify names the cell, what was expected and what was FOUND, so a "
+          "mismatch is legible rather than a boolean",
+          all({"ref", "expected", "found", "match"} <= set(v) for v in rc["verify"]))
+    check("a changeset can only be applied ONCE — the second press is refused, not a "
+          "second write", office_ops.apply_changeset(TMP, st["changeset_id"])[0] is None)
+    eq("…and it is no longer pending for the panel to draw",
+       office_ops.pending_changeset(SESS, "purity.xlsx"), None)
+    # ATOMICITY, executed: an op list whose LAST op is impossible must leave the file
+    # exactly as it was, not two-thirds changed.
+    make("atomic.xlsx", [["a", 1], ["b", 2]], merges=["D1:E1"])
+    keep = open(os.path.join(D, "atomic.xlsx"), "rb").read()
+    st, _r = stage("atomic.xlsx", [{"op": "set", "at": "A1", "values": [["z"]]},
+                                   {"op": "sort", "col": "B"}])
+    rc2, _r = office_ops.apply_changeset(TMP, st["changeset_id"])
+    grid, _m, _ws = read("atomic.xlsx")
+    check("a change whose sort is refused still applies its OTHER ops and SAYS the sort "
+          "was skipped — the page's own ruling, carried over: the rest of the plan is "
+          "still what was approved",
+          grid[0][0] == "z" and rc2["operations_skipped"] == 1 and rc2["sorted"] == 0)
+    check("…and the ONE save is what makes it atomic: the file is written once, at the "
+          "end, so there is no half-applied state to explain",
+          keep != open(os.path.join(D, "atomic.xlsx"), "rb").read())
+
+    print("\n── 4c-6. DISMISS: nothing written, and the session is TOLD ──")
+    office_ops.changeset_clear()
+    make("dismissed.xlsx", [["keep me"]])
+    keep = open(os.path.join(D, "dismissed.xlsx"), "rb").read()
+    st, _r = stage("dismissed.xlsx", [{"op": "set", "at": "A1",
+                                       "values": [["clobbered"]]}])
+    out, reason = office_ops.dismiss_changeset(TMP, st["changeset_id"])
+    check("dismiss answers ok", out is not None and out["ok"])
+    eq("…and NOT ONE BYTE of the workbook changed",
+       open(os.path.join(D, "dismissed.xlsx"), "rb").read(), keep)
+    check("…the changeset is gone from the store, so it cannot be applied afterwards",
+          office_ops.get_changeset(st["changeset_id"]) is None
+          and office_ops.apply_changeset(TMP, st["changeset_id"])[0] is None)
+    check("…and dismissing twice is refused rather than pretending",
+          office_ops.dismiss_changeset(TMP, st["changeset_id"])[0] is None)
+
+    print("\n── 4c-7. THE SESSION LINE, on BOTH outcomes ──")
+    # ⚠️ THE SPEC ASKED FOR AN INJECTION INTO THE HERMES SESSION AND NAMED THE FALLBACK.
+    # The vendored gateway has no method that appends a message to an IDLE session; the
+    # nearest thing (session.steer) stashes text that drains onto the next TOOL RESULT,
+    # i.e. after the next turn has already started answering, and records a fake user
+    # bubble on the way. So the bridge QUEUES the line and the panel prepends it to the
+    # next agent message — which puts it in the model's context BEFORE it thinks. What is
+    # pinned here is that both outcomes produce one and that it cannot be lost.
+    office_ops.changeset_clear()
+    lines = office_ops.drain_session_lines("L")
+    st, _r = stage("purity.xlsx", [{"op": "set", "at": "A9", "values": [["x"]]}],
+                   session="L")
+    rc, _r = office_ops.apply_changeset(TMP, st["changeset_id"])
+    lines = office_ops.peek_session_lines("L")
+    check("APPLY queues exactly one line for that session",
+          len(lines) == 1 and lines[0] == rc["session_line"])
+    check("…and it says APPLIED, names the changeset, quotes the receipt and the cell "
+          "count, and names the workbook",
+          "APPLIED" in lines[0] and st["changeset_id"] in lines[0]
+          and rc["receipt"] in lines[0] and "purity.xlsx" in lines[0])
+    st2, _r = stage("undo.xlsx", [{"op": "set", "at": "A1", "values": [["y"]]}],
+                    session="L")
+    d, _r = office_ops.dismiss_changeset(TMP, st2["changeset_id"])
+    lines = office_ops.peek_session_lines("L")
+    check("DISMISS queues one too, and it says the change was NEVER applied and tells "
+          "the model not to claim otherwise",
+          len(lines) == 2 and "DISMISSED" in lines[1]
+          and "NEVER applied" in lines[1] and "do not claim" in lines[1].lower()
+          + lines[1])
+    check("peek does not consume — a line the panel has not SENT yet is still owed",
+          len(office_ops.peek_session_lines("L")) == 2)
+    check("…and drain does, exactly once",
+          len(office_ops.drain_session_lines("L")) == 2
+          and office_ops.drain_session_lines("L") == [])
+    check("a session with no outcomes has no lines, rather than an empty ceremony",
+          office_ops.peek_session_lines("nobody") == [])
+
+    print("\n── 4c-8. CHECKPOINTS: push, prune, restore, and the mtime FENCE ──")
+    office_ops.changeset_clear()
+    make("cp.xlsx", [["v0"]])
+    ids = []
+    for i in range(1, 14):
+        st, _r = stage("cp.xlsx", [{"op": "set", "at": "A1",
+                                    "values": [["v" + str(i)]]}])
+        rc, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
+        assert rc is not None, reason
+        ids.append(st["changeset_id"])
+    stack = office_ops.list_checkpoints(TMP, "cp.xlsx")
+    eq("the stack keeps the last 10 per workbook and prunes the rest (spec §3)",
+       len(stack), office_ops.CHECKPOINT_KEEP)
+    eq("…the ten it kept are the ten NEWEST",
+       [e["changeset_id"] for e in stack], list(reversed(ids[-10:])))
+    check("…and the pruned ones are really off disk",
+          not os.path.exists(office_ops.checkpoint_path(TMP, "cp.xlsx", ids[0])))
+    eq("the path is the spec's: data/office/.checkpoints/<stem>/<changeset_id>.xlsx",
+       os.path.relpath(office_ops.checkpoint_path(TMP, "cp.xlsx", "abc"),
+                       office.office_dir(TMP)),
+       os.path.join(".checkpoints", "cp", "abc.xlsx"))
+    check("…and a checkpoint is taken on EVERY apply, not only the first",
+          all(os.path.isfile(office_ops.checkpoint_path(TMP, "cp.xlsx", c))
+              for c in ids[-10:]))
+    eq("the workbook itself holds the last apply", read("cp.xlsx")[0][0][0], "v13")
+    # RESTORE, and it is byte-exact: a checkpoint is a copy of the file, not a replay.
+    cp13 = office_ops.checkpoint_path(TMP, "cp.xlsx", ids[-1])
+    want = open(cp13, "rb").read()
+    out, reason = office_ops.undo_changeset(TMP, ids[-1])
+    check("'Undo this change' restores that apply's checkpoint",
+          out is not None and out["restored_from"] == ids[-1] + ".xlsx")
+    eq("…and the workbook is what it was BEFORE that apply", read("cp.xlsx")[0][0][0],
+       "v12")
+    eq("…BYTE FOR BYTE, because a checkpoint is a copy and not a replay",
+       open(os.path.join(D, "cp.xlsx"), "rb").read(), want)
+    check("…the fence was checked, and the undo says so",
+          out["fenced"] is True)
+    check("…and the restored file is stamped NOW, so every 'did this change under me?' "
+          "check on this bridge can SEE the undo (copy2 would have restored an OLD "
+          "mtime, which reads as no change at all)",
+          os.path.getmtime(os.path.join(D, "cp.xlsx")) > out["at"] - 5)
+    check("…and the file as it was a moment before the undo is kept, so undoing the "
+          "undo is a question with an answer",
+          read("cp.pre-agent.xlsx")[0][0][0] == "v13")
+    # ⚠️⚠️ THE MTIME FENCE. The whole reason one-click Apply is responsible is that it
+    # can be taken back — and an undo that silently threw away work done SINCE the apply
+    # would be a worse bug than the one it fixes.
+    office_ops.changeset_clear()
+    make("fence.xlsx", [["original"]])
+    st, _r = stage("fence.xlsx", [{"op": "set", "at": "A1", "values": [["applied"]]}])
+    rc, _r = office_ops.apply_changeset(TMP, st["changeset_id"])
+    time.sleep(0.05)
+    make("fence.xlsx", [["Debi typed this afterwards"]])       # the file moves
+    out, reason = office_ops.undo_changeset(TMP, st["changeset_id"])
+    check("AN UNDO OF A WORKBOOK THAT CHANGED SINCE THE APPLY IS REFUSED",
+          out is None and "changed on disk after the change was applied" in reason)
+    check("…in words that say nothing was restored and where the checkpoint still is",
+          "Nothing was restored" in reason
+          and st["changeset_id"] + ".xlsx" in reason)
+    eq("…and the later work is untouched", read("fence.xlsx")[0][0][0],
+       "Debi typed this afterwards")
+    out, reason = office_ops.undo_changeset(TMP, "0" * 16)
+    check("an undo of a changeset nobody applied is refused rather than guessed at",
+          out is None and "no checkpoint" in reason)
+    st, _r = stage("fence.xlsx", [{"op": "set", "at": "A1", "values": [["x"]]}])
+    check("…and an undo of a changeset that was never APPLIED is refused too",
+          office_ops.undo_changeset(TMP, st["changeset_id"])[0] is None)
+
+
 # ══ 5. THE MCP SURFACE, through the MOUNTED app ═════════════════════════════
 print("\n── 5. the MCP surface ──")
 SPECS = office_mcp.tool_specs()
-eq("the six spec rows are these seven tool names — office_sort and "
-   "office_insert_delete share a row in the spec table but are separate tools",
-   [t["name"] for t in SPECS],
-   ["office_list", "office_read", "office_sheet_stats", "office_write_cells",
-    "office_sort", "office_insert_delete", "office_create"])
-# ⚠️ THE APPROVAL FENCE. `readOnlyHint: true` is what DISARMS Hermes's approval card
-# (vendor/hermes/tools/mcp_tool.py:3999 — `hint is True`). A write tool that gained it
-# would lose its card silently, which is why this is asserted as a SET on both sides
-# rather than spot-checked.
-eq("exactly the three read tools are declared read-only", office_mcp.read_tool_names(),
-   ["office_list", "office_read", "office_sheet_stats"])
-eq("exactly the four write tools are NOT — these are the ones Hermes puts behind an "
-   "approval card", office_mcp.write_tool_names(),
-   ["office_write_cells", "office_sort", "office_insert_delete", "office_create"])
+# ⚠️⚠️ THE CATALOG IS AN EXACT LIST OF FOUR, AND THE FOUR RETIRED NAMES ARE ASSERTED
+# ABSENT BY NAME. docs/FABLE-AGENT-CHANGESET-SPEC.md §1 retired office_write_cells,
+# office_sort, office_insert_delete and office_create: "S1 is a day old; tests updated,
+# not appeased". A catalog test that only checked the four survivors were PRESENT would
+# pass with a fifth, write-capable tool sitting next to them.
+eq("THE CATALOG IS EXACTLY THESE FOUR TOOLS", [t["name"] for t in SPECS],
+   ["office_list", "office_read", "office_sheet_stats", "office_stage_changes"])
+eq("…and not one of the four retired write tools is served any more",
+   [n for n in ("office_write_cells", "office_sort", "office_insert_delete",
+                "office_create")
+    if n in [t["name"] for t in SPECS]], [])
+# ⚠️ THE ANNOTATION FENCE, THE OTHER WAY ROUND FROM v1. `readOnlyHint: true` is what
+# DISARMS Hermes's approval card (vendor/hermes/tools/mcp_tool.py:3999 — `hint is True`),
+# so in v1 it had to be absent from four tools. In v2 EVERY tool carries it, and what
+# makes that honest is the mtime assertion in group 4c-1: staging does not touch the
+# file. A tool added here that writes would make the annotation a lie AND remove its
+# card in one move — hence the set assertion on both sides.
+eq("EVERY tool is declared read-only", office_mcp.read_tool_names(),
+   ["office_list", "office_read", "office_sheet_stats", "office_stage_changes"])
+eq("…so NOTHING is write-capable, which is why no Hermes approval card can fire on this "
+   "lane at all — the consent moved to the panel's changeset card",
+   office_mcp.write_tool_names(), [])
 PAYLOAD = office_mcp.tool_list_payload()
 check("every read tool carries annotations.readOnlyHint TRUE (not 'truthy' — Hermes "
       "tests `hint is True`)",
@@ -693,11 +1026,37 @@ check("no tool takes a path-shaped argument — containment is BY CONSTRUCTION, 
 check("every schema is a closed object — an argument we do not read must not be "
       "silently accepted",
       all(t["inputSchema"].get("additionalProperties") is False for t in PAYLOAD))
-eq("the write tools' descriptions say the pre-agent copy is the undo",
-   sorted(t["name"] for t in PAYLOAD
-          if "pre-agent" in t["description"] or "pre-agent" in
-          json.dumps(t["inputSchema"])),
-   ["office_write_cells"])
+# ⚠️ THE STAGING TOOL'S DESCRIPTION IS PART OF THE FIX, not documentation: it is the
+# only place a model reads the rule before it acts. Each sentence pinned separately.
+STAGE = [t for t in PAYLOAD if t["name"] == "office_stage_changes"][0]["description"]
+check("office_stage_changes SAYS it writes nothing", "THIS WRITES NOTHING" in STAGE)
+check("…carries the spec's own NOT-applied sentence verbatim",
+      office_ops.NOT_APPLIED_SENTENCE in STAGE)
+check("…says the model cannot apply it and that there will never be an apply tool",
+      "You cannot apply it" in STAGE and "there never will be" in STAGE)
+check("…tells it to send the COMPLETE change in ONE call, and says what a second call "
+      "costs — the direct answer to three write calls for one intention",
+      "in ONE call" in STAGE and "REPLACES the first proposal" in STAGE)
+check("…and forbids the false 'Done' in the tool description itself",
+      "Never say a workbook was changed unless a system line" in STAGE)
+check("…and names the TTL, so a model that comes back in an hour is not surprised",
+      "expires after 10 minutes" in STAGE)
+OPSDOC = [t for t in PAYLOAD if t["name"] == "office_stage_changes"][0][
+    "inputSchema"]["properties"]["ops"]["description"]
+check("the ops grammar teaches every op the changeset grammar accepts, create_workbook "
+      "and add_sheet included (absorbed from the retired office_create)",
+      all(k in OPSDOC for k in ('"op":"set"', '"op":"style"', '"op":"sort"',
+                                '"op":"insert"', '"op":"delete_rc"',
+                                '"op":"add_sheet"', '"op":"create_workbook"')))
+check("…and it still says the honest bound: formula references are never rewritten",
+      "FORMULA REFERENCES\nARE NEVER REWRITTEN" in OPSDOC
+      or "FORMULA REFERENCES ARE NEVER REWRITTEN" in OPSDOC.replace("\n", " "))
+check("…and it says the caps, and that going over refuses the WHOLE change rather than "
+      "half-staging it",
+      str(office_ops.ACT_MAX_OPS) in OPSDOC and str(office_ops.ACT_MAX_CELLS) in OPSDOC
+      and "never half-staged" in OPSDOC)
+check("…and that ONE call is the unit, because two calls are two cards for one "
+      "intention", "two calls are two cards" in OPSDOC)
 eq("negotiate() echoes a protocol it knows and names its own for one it does not",
    [office_mcp.negotiate("2025-06-18"), office_mcp.negotiate("1999-01-01"),
     office_mcp.negotiate(None)],
@@ -745,10 +1104,13 @@ try:
           and j["result"]["serverInfo"]["name"] == "loffice")
     check("…and handing back an Mcp-Session-Id for a client that wants to echo one",
           bool(r.headers.get("mcp-session-id")))
-    check("the instructions tell the model the three things it cannot discover by "
-          "trying: name-addressing, no formula engine, and the pre-agent copy",
+    check("the instructions tell the model the things it cannot discover by trying: "
+          "name-addressing, no formula engine, and — the one that matters most now — "
+          "that NOTHING here writes and it cannot apply",
           all(s in j["result"]["instructions"]
-              for s in ("office_list", "pre-agent", "computes a formula")))
+              for s in ("office_list", "computes a formula",
+                        "NOTHING HERE WRITES A WORKBOOK", "You cannot apply it",
+                        "system line")))
 
     r = cl.post(office_mcp.MOUNT_PATH,
                 json={"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -807,10 +1169,130 @@ try:
           "never read a tool description still learns it",
           any("outside data/office" in n
               for n in json.loads(res["content"][0]["text"])["notes"]))
-    for tool in office_mcp.write_tool_names():
-        res = rpc("tools/call", {"name": tool,
-                                 "arguments": {"name": "../x.xlsx"}}).json()["result"]
-        check(f"…and {tool} refuses a path just as hard", res["isError"] is True)
+    res = rpc("tools/call", {"name": "office_stage_changes",
+                             "arguments": {"name": "../x.xlsx",
+                                           "ops": [{"op": "set", "at": "A1",
+                                                    "values": [["x"]]}]}}
+              ).json()["result"]
+    check("…and office_stage_changes refuses a path just as hard — containment does not "
+          "get looser because a tool only PROPOSES", res["isError"] is True)
+    res = rpc("tools/call", {"name": "office_stage_changes",
+                             "arguments": {"name": "whatever.xlsx",
+                                           "ops": "not a list"}}).json()["result"]
+    check("…and a junk ops list is a refusal WITH A SENTENCE, which the panel renders as "
+          "a ✗ chip, so a model's bad call is visible to Debi too",
+          res["isError"] is True
+          and len(json.loads(res["content"][0]["text"])["error"]) > 8)
+    check("no tool named apply/write/save exists over the wire at all — apply is a "
+          "route, reachable from a button, and this is the assertion that keeps it "
+          "that way",
+          all(not any(w in t["name"] for w in ("apply", "write", "save", "delete",
+                                              "create"))
+              for t in tools))
+
+    # ── THE CHANGESET ROUTES, through the mounted app (spec §2) ──
+    # ⚠️ THE WHOLE CONSENT STORY IS THESE FOUR ROUTES PLUS ONE MCP TOOL, so it is worth
+    # exercising over HTTP and not only in-process: this is the shape the panel actually
+    # speaks, and a route that 404s is a card whose buttons do nothing.
+    if HAVE_XL:
+        import bridge.app as _bapp
+        _saved_root = _bapp.ROOT
+        try:
+            _bapp.ROOT = TMP
+            office_mcp.configure(TMP)
+            office_ops.changeset_clear()
+            office_ops.heartbeat_clear()
+            make("wire.xlsx", [["Category", "Amount"], ["Rent", 1000],
+                               ["Total", "=SUM(B2:B2)"]])
+            wpath = os.path.join(D, "wire.xlsx")
+            wmtime = os.path.getmtime(wpath)
+            office_ops.mark_session("wire-session")
+            res = rpc("tools/call", {
+                "name": "office_stage_changes",
+                "arguments": {"name": "wire.xlsx", "ops": [
+                    {"op": "insert", "what": "row", "at": 3},
+                    {"op": "set", "at": "A3", "values": [["purchases", 200]]},
+                    {"op": "set", "at": "B4", "values": [["=SUM(B2:B3)"]]}]}}
+                     ).json()["result"]
+            body = json.loads(res["content"][0]["text"])
+            check("staging over MCP is NOT an error and comes back staged, not applied",
+                  res["isError"] is False and body["staged"] is True
+                  and body["applied"] is False)
+            eq("…and the file did not move — asserted over the WIRE this time, because "
+               "the readOnlyHint on this tool is a claim about exactly this",
+               os.path.getmtime(wpath), wmtime)
+            eq("…and the tool call is attributed to the Hermes session the bridge saw "
+               "running, which is what makes the panel's lookup find it",
+               body["session"], "wire-session")
+            cid = body["changeset_id"]
+            g = cl.get("/api/office/changeset?file=wire.xlsx&session=wire-session").json()
+            eq("GET /api/office/changeset hands the panel that ONE changeset",
+               g["changeset"]["changeset_id"], cid)
+            check("…with the op list and the before→after preview on it, which is what "
+                  "the card renders",
+                  len(g["changeset"]["op_list"]) == 3
+                  and any(p["ref"] == "A3" and p["before"] == "Total"
+                          and p["after"] == "purchases"
+                          for p in g["changeset"]["preview"]))
+            eq("…and nothing for a workbook that has no proposal",
+               cl.get("/api/office/changeset?file=nothing.xlsx").json()["changeset"],
+               None)
+            r = cl.post(f"/api/office/changeset/{cid}/apply").json()
+            check("POST …/apply answers with the receipt",
+                  r["ok"] and r["receipt"] and r["cells_written"] == 3
+                  and all(v["match"] for v in r["verify"]))
+            eq("…and the workbook on disk holds the row AND the updated total",
+               [row[0] for row in read("wire.xlsx")[0]],
+               ["Category", "Rent", "purchases", "Total"])
+            check("…and a checkpoint exists for it",
+                  os.path.isfile(office_ops.checkpoint_path(TMP, "wire.xlsx", cid)))
+            eq("…which the checkpoints route reports",
+               [e["changeset_id"] for e in
+                cl.get("/api/office/checkpoints/wire.xlsx").json()["checkpoints"]],
+               [cid])
+            g = cl.get("/api/office/changeset?file=wire.xlsx&session=wire-session").json()
+            check("…the pending changeset is gone, and the outcome line is waiting for "
+                  "the next turn",
+                  g["changeset"] is None and len(g["session_lines"]) == 1
+                  and "APPLIED" in g["session_lines"][0])
+            check("applying twice over HTTP is a 400 with a sentence, not a second write",
+                  cl.post(f"/api/office/changeset/{cid}/apply").status_code == 400)
+            r = cl.post(f"/api/office/changeset/{cid}/undo").json()
+            check("POST …/undo restores the checkpoint",
+                  r["ok"] and [row[0] for row in read("wire.xlsx")[0]]
+                  == ["Category", "Rent", "Total"])
+            # dismiss, over the wire, with the file watched byte for byte
+            keep = open(wpath, "rb").read()
+            res = rpc("tools/call", {"name": "office_stage_changes",
+                                     "arguments": {"name": "wire.xlsx", "ops": [
+                                         {"op": "set", "at": "A9",
+                                          "values": [["dismiss me"]]}]}}
+                      ).json()["result"]
+            cid2 = json.loads(res["content"][0]["text"])["changeset_id"]
+            r = cl.post(f"/api/office/changeset/{cid2}/dismiss").json()
+            check("POST …/dismiss answers ok and NOT ONE BYTE changed",
+                  r["ok"] and open(wpath, "rb").read() == keep)
+            g = cl.get("/api/office/changeset?file=wire.xlsx&session=wire-session").json()
+            check("…and the DISMISSED line is queued for the session, so the next turn "
+                  "cannot claim it landed",
+                  any("DISMISSED" in ln and "NEVER applied" in ln
+                      for ln in g["session_lines"]))
+            check("a changeset id that never existed is a 400 on every route, never a "
+                  "500 and never a silent ok",
+                  all(cl.post(f"/api/office/changeset/deadbeef/{a}").status_code == 400
+                      for a in ("apply", "dismiss", "undo")))
+            check("…and a junk workbook name on the checkpoints route is a 400",
+                  cl.get("/api/office/checkpoints/..%2Fetc").status_code in (400, 404))
+            st2 = cl.get("/api/office/mcp").json()
+            check("/api/office/mcp says WHERE consent now happens, because 'gated: []' "
+                  "on its own reads like a missing fence rather than a moved one",
+                  st2["consent"]["apply_route"]
+                  == "POST /api/office/changeset/{id}/apply"
+                  and "read-only" in st2["consent"]["why"])
+        finally:
+            _bapp.ROOT = _saved_root
+            office_mcp.configure(_saved_root)
+            office_ops.clear_sessions()
 
     # ── the heartbeat endpoint, which is the seam S2 plugs into ──
     r = cl.post("/api/office/heartbeat", json={"name": "hb.xlsx", "dirty": True})

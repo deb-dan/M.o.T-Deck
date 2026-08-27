@@ -58,11 +58,13 @@ person can read, never the workbook and never a traceback.
 """
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import math
 import os
 import re
+import secrets
 import shutil
 import time
 
@@ -129,8 +131,60 @@ FIDELITY_WRITE_NOTE = ("this write re-saved the whole workbook from LOffice's sn
 HEARTBEAT_TTL = 15.0
 DIRTY_REFUSAL = ("Debi has unsaved edits in that workbook — ask her to save or close "
                  "first.")
+# ⚠️ THE SAME RULE, WORDED FOR THE PERSON PRESSING THE BUTTON. In v2 nothing an agent
+# does can write, so the only caller left is Debi's own Apply — and she is looking at
+# the workbook. Applying over her unsaved edits would destroy them silently, so the
+# refusal STAYS and tells her the one thing that clears it.
+APPLY_DIRTY_REFUSAL = ("you have unsaved edits in that workbook — save it (⌘S) or close "
+                       "it, then press Apply again. Applying now would overwrite what "
+                       "you have not saved.")
 
 PRE_AGENT_SUFFIX = ".pre-agent" + office.DOC_EXT
+
+# ═══ THE CHANGESET LANE (docs/FABLE-AGENT-CHANGESET-SPEC.md) ═════════════════
+# ⚠️ THE MCP WRITE TOOLS STOPPED WRITING. Everything below this line is v2's answer to
+# the 2026-08-27 consent incident: one intention → one staged changeset → ONE card in
+# LOffice → a human's Apply. Nothing in this module writes a workbook except
+# apply_changeset (which no MCP tool can reach) and restore_checkpoint.
+CHANGESET_TTL = 600.0            # spec §1: "TTL ~10 min"
+CHANGESET_MAX = 24               # a cheap bound on the bridge-held store
+PREVIEW_MAX_CELLS = 400          # the card lists this many before→after rows, then says
+                                 # how many more there are — never a silent truncation
+CHECKPOINT_DIR = ".checkpoints"  # under data/office/, one folder per workbook stem
+CHECKPOINT_KEEP = 10             # spec §3: "keep last 10 per workbook, prune oldest"
+
+# THE SENTENCE THAT TRAVELS IN EVERY STAGING RESULT, so the MODEL reads it and not only
+# the user. Spec §1 quotes it; the test pins it character for character.
+NOT_APPLIED_SENTENCE = ("NOT applied — Debi reviews and applies this in LOffice.")
+STAGED_NOTE = ("You cannot apply this yourself: there is no apply tool, and Apply is a "
+               "button in LOffice that only Debi can press. Say in one short sentence "
+               "what you staged and STOP. Do not claim anything was changed unless a "
+               "system line tells you the changeset was applied.")
+
+# The two outcome lines (spec §2). One of these reaches the session after every human
+# decision, so the next turn cannot hallucinate the state of the workbook.
+APPLIED_LINE = ("[LOffice] changeset {cid} was APPLIED by the user at {when} — receipt "
+                "{receipt}: {cells} cell(s) written to \"{name}\". The workbook on disk "
+                "now holds that change.")
+DISMISSED_LINE = ("[LOffice] changeset {cid} was DISMISSED by the user at {when} — it "
+                  "was NEVER applied and \"{name}\" is unchanged. Do not claim "
+                  "otherwise.")
+UNDONE_LINE = ("[LOffice] changeset {cid} was UNDONE by the user at {when} — \"{name}\" "
+               "was restored to the checkpoint taken before that apply.")
+
+# The undo's mtime fence (spec §3). An honest refusal, never a silent clobber.
+# ⚠️ THE SLACK IS 2ms, NOT THE HALF-SECOND THE PAGE'S POLLING USES, AND THE DIFFERENCE
+# MATTERS. The page compares an mtime it read minutes ago against one it reads now, over
+# a filesystem, so it needs slack. This compares an mtime the bridge recorded off the
+# file IT JUST WROTE against the same file now: any real difference is somebody else's
+# save, including one that landed in the same second. A half-second window here would
+# let the undo throw away work Debi did immediately after pressing Apply — which is
+# exactly when she is most likely to do some.
+FENCE_EPS = 0.002
+UNDO_FENCE_REFUSAL = ("that workbook changed on disk after the change was applied, so "
+                      "restoring the checkpoint would throw away whatever happened "
+                      "since. Nothing was restored — the checkpoint is still there as "
+                      "{checkpoint} if you want it.")
 
 # Read caps. The 2000 is the write cap reused deliberately: one number for "how much of
 # a spreadsheet fits in one exchange", so a model that can write a block can read it back.
@@ -390,7 +444,7 @@ def validate_ops(raw):
     ops = []
     count = {"cells": 0, "cleared": 0, "formulas": 0, "styled": 0, "sheets": 0,
              "renames": 0, "resizes": 0, "lines": 0, "sorts": 0, "inserts": 0,
-             "deletes": 0}
+             "deletes": 0, "creates": 0}
     budget = 0
     for i, o in enumerate(raw):
         at = f"operation {i + 1}: "
@@ -452,7 +506,16 @@ def validate_ops(raw):
             count["lines"] += 1
             ops.append({"op": "style", "r0": rg[0], "c0": rg[1], "r1": rg[2],
                         "c1": rg[3], "set": st})
-        elif kind == "sheet":
+        elif kind == "create_workbook":
+            # ⚠️ ABSORBED FROM THE RETIRED office_create (spec §1). It takes NO name: the
+            # workbook a changeset is about is the changeset's own `name`, so a create
+            # cannot address a second file and there is nothing here to escape with.
+            count["creates"] += 1
+            count["lines"] += 1
+            ops.append({"op": "create_workbook"})
+        elif kind in ("sheet", "add_sheet"):
+            if kind == "add_sheet" and isinstance(o.get("name"), str):
+                o = dict(o, add=o["name"])       # `add_sheet` is `sheet`+`add`, spelled
             add = o["add"].strip() if isinstance(o.get("add"), str) else ""
             ren = o["rename"].strip() if isinstance(o.get("rename"), str) else ""
             if add:
@@ -952,7 +1015,8 @@ def run_ops(snapshot, sid, ops):
     what carry it, and the MCP layer puts both in the tool RESULT so the MODEL sees them.
     """
     done = {"cells": 0, "cleared": 0, "styled_cells": 0, "sheets": [], "renamed": "",
-            "skipped": 0, "sorted": 0, "inserted": 0, "deleted": 0, "notes": []}
+            "skipped": 0, "sorted": 0, "inserted": 0, "deleted": 0, "created": False,
+            "notes": []}
     sheets = (snapshot or {}).get("sheets")
     sh = sheets.get(sid) if isinstance(sheets, dict) else None
     if not isinstance(sh, dict) or not isinstance(ops, list):
@@ -1036,6 +1100,18 @@ def run_ops(snapshot, sid, ops):
                     "the insert reached the right-hand edge of this grid (column "
                     + col_name(TIER1_MAX_COLS - 1) + "), so the last column fell off "
                     "it.")
+        elif kind == "create_workbook":
+            # ⚠️ NOTHING TO DO HERE, DELIBERATELY. A create is not a mutation of a
+            # snapshot — apply_changeset makes the empty workbook BEFORE loading one,
+            # and staging shows the same empty snapshot the create would produce. The
+            # branch exists so a reader sees the op is handled rather than ignored.
+            done["created"] = True
+    # THE SORT'S OWN SENTENCE, moved here from the retired op_sort so that one place
+    # says it whichever way a sort arrives.
+    if done["sorted"]:
+        done["notes"].insert(0, "this sorted the whole sheet, ROW 1 INCLUDED: LOffice "
+                                "does not guess at a header row. Blank cells went to "
+                                "the bottom in both directions.")
     # ⚠️ THE FORMULA NOTE, ONCE PER CHANGE AND NOT ONCE PER OPERATION, and only when the
     # sheet STILL holds a formula. Same sentence as the page, from the same constant.
     if (done["sorted"] or done["inserted"] or done["deleted"]) and sheet_formulas(sh):
@@ -1294,15 +1370,24 @@ def op_sheet_stats(root, name, sheet=None):
             "columns": cols, "notes": notes}, None
 
 
-def _write(root, name, sheet, ops, count, label):
-    """The ONE write path every write tool goes through: dirty-refusal, pre-agent copy,
-    run, save. Nothing else in this module writes a workbook."""
+# ═══ 12. THE APPLY ENGINE — the ONE place a workbook is written ══════════════
+# ⚠️ NO MCP TOOL REACHES ANY OF THIS. `_apply` is called by apply_changeset, which is
+# called by POST /api/office/changeset/{id}/apply, which is called by a BUTTON. That is
+# the whole of v2's consent story: the model can propose, and only a person can write.
+
+def _apply(root, name, sheet, ops, count, label):
+    """dirty-refusal → checkpoint + pre-agent copy → run ALL ops → ONE save.
+
+    ATOMIC, ALL-OR-NOTHING (spec §2): every op runs against an in-memory snapshot and
+    the file is written ONCE at the end, so a changeset either lands whole or the file
+    is untouched. There is no half-applied state to explain to anybody.
+    """
     target, reason = office.doc_target(root, name)
     if not target:
         return None, reason
     st = open_state(name)
     if st["dirty"]:
-        return None, DIRTY_REFUSAL
+        return None, APPLY_DIRTY_REFUSAL
     try:
         snap = office.snapshot_from_path(target)
     except office.OfficeError as e:
@@ -1343,64 +1428,657 @@ def _write(root, name, sheet, ops, count, label):
     return out, None
 
 
-def op_write_cells(root, name, sheet=None, ops=None):
-    """The `set`/`style`/`sheet`/`resize` grammar, same caps, refuse-over-cap."""
+# ═══ 13. THE STAGING DRY RUN — before → after, computed, never guessed ══════
+# ⚠️ THE PREVIEW IS A REAL EXECUTION ON A COPY. The alternative was to describe each op
+# in words ("a sort would reorder rows"), which is a SECOND idea of what an op does and
+# would drift from the one that applies. So staging deep-copies the snapshot it read off
+# disk, runs the SAME run_ops the apply runs, and DIFFS the two. Every before→after row
+# on Debi's card is therefore what will actually happen, including the rows a sort or an
+# insert moved that nobody named — which is exactly the class of change the incident's
+# per-call approval cards could never show.
+
+def cell_face(cell) -> str:
+    """What a cell SAYS, as one string: its formula if it has one, else its text.
+
+    Formula-first because a formula is the thing that changed when a formula changed,
+    and comparing cached values would call `=SUM(B1:B7)` unchanged after the row it
+    sums moved."""
+    if not isinstance(cell, dict):
+        return ""
+    f = cell.get("f")
+    if isinstance(f, str) and f:
+        return f
+    return display_text(cell)
+
+
+def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
+    """[{sheet, ref, before, after}, …], total. EVERY cell whose face changed, in
+    reading order, across every sheet — a sheet the ops ADDED included."""
+    rows, total = [], 0
+    seen_sheets = []
+    for sid in sheet_ids(after):
+        seen_sheets.append(sid)
+        a = (after.get("sheets") or {}).get(sid) or {}
+        b = ((before or {}).get("sheets") or {}).get(sid) or {}
+        nm = a.get("name") or "?"
+        coords = set()
+        for src in (a, b):
+            cd = src.get("cellData")
+            if not isinstance(cd, dict):
+                continue
+            for r, row in cd.items():
+                if not isinstance(row, dict):
+                    continue
+                for c in row:
+                    try:
+                        coords.add((int(r), int(c)))
+                    except (TypeError, ValueError):
+                        continue
+        for r, c in sorted(coords):
+            fb, fa = cell_face(cell_at(b, r, c)), cell_face(cell_at(a, r, c))
+            if fb == fa:
+                continue
+            total += 1
+            if len(rows) < max(int(limit or 0), 0):
+                rows.append({"sheet": nm, "ref": a1(r, c), "before": fb, "after": fa})
+    return rows, total
+
+
+def op_summary(op) -> str:
+    """One human line per operation, for the card's op list. PURE."""
+    k = op.get("op")
+    if k == "set":
+        grid = op.get("values") or []
+        h, w = len(grid), max((len(r) for r in grid), default=0)
+        span = a1(op["r"], op["c"]) if h * w == 1 else (
+            a1(op["r"], op["c"]) + ":" + a1(op["r"] + h - 1, op["c"] + w - 1))
+        return f"set {span}"
+    if k == "style":
+        keys = ", ".join(sorted((op.get("set") or {}).keys()))
+        return (f"format {a1(op['r0'], op['c0'])}:{a1(op['r1'], op['c1'])}"
+                + (f" ({keys})" if keys else ""))
+    if k == "sheet":
+        if op.get("add"):
+            return f"add a sheet called {op['add']!r}"
+        return f"rename a sheet to {op.get('rename')!r}"
+    if k == "resize":
+        return (f"grow the sheet to {op.get('rows') or '—'} rows × "
+                f"{op.get('cols') or '—'} columns")
+    if k == "sort":
+        return (f"sort the whole sheet by column {col_name(op['col'])}"
+                + (" (Z→A)" if op.get("desc") else " (A→Z)"))
+    if k == "insert":
+        return (f"insert {op['n']} blank "
+                + (f"row(s) above row {op['at'] + 1}" if op["axis"] == "row"
+                   else f"column(s) left of column {col_name(op['at'])}"))
+    if k == "delete_rc":
+        return (f"DELETE {op['n']} "
+                + (f"row(s) from row {op['at'] + 1}" if op["axis"] == "row"
+                   else f"column(s) from column {col_name(op['at'])}"))
+    if k == "create_workbook":
+        return "create the workbook (it does not exist yet)"
+    return str(k)
+
+
+# ═══ 14. THE CHANGESET STORE — bridge-held, one pending per workbook ════════
+# Keyed by (hermes session, workbook name) exactly as spec §1 rules. PROCESS-LOCAL and
+# deliberately not durable, for the heartbeat's reason: a proposal that survived a
+# bridge restart would be a card offering to write a file from a conversation nobody
+# remembers. A restart loses pending proposals, which costs one re-ask.
+_CHANGESETS: dict = {}           # changeset_id → the changeset dict
+_PENDING: dict = {}              # (session, name) → changeset_id
+_SESSION_LINES: dict = {}        # session → [outcome line, …] not yet shown to a model
+_ACTIVE_SESSION: dict = {}       # session → last-seen-alive timestamp
+ACTIVE_SESSION_TTL = 900.0
+
+
+def _now(now=None) -> float:
+    return float(now) if isinstance(now, (int, float)) else time.time()
+
+
+def _sesskey(session) -> str:
+    """A session id we can key on. '-' is the honest name for "we do not know which
+    Hermes session this came from", NOT a wildcard: it is one bucket like any other."""
+    s = str(session or "").strip()
+    return s if s else "-"
+
+
+def mark_session(session, now=None) -> str:
+    """A Hermes turn is starting (or running) on this session. bridge/app.py's
+    /api/hermes/chat relay calls this, which is the ONLY correlation available: an MCP
+    tools/call carries the MCP TRANSPORT's session, never the Hermes one (Hermes keeps a
+    single MCP client for the whole process). See active_session()."""
+    key = _sesskey(session)
+    if key == "-":
+        return key
+    _ACTIVE_SESSION[key] = _now(now)
+    if len(_ACTIVE_SESSION) > 64:
+        for k in sorted(_ACTIVE_SESSION, key=lambda k: _ACTIVE_SESSION[k])[:32]:
+            _ACTIVE_SESSION.pop(k, None)
+    return key
+
+
+def active_session(now=None) -> str:
+    """The Hermes session a staging call most likely belongs to: the most recently
+    marked one, inside a generous TTL, else ''.
+
+    ⚠️ AN HONEST APPROXIMATION, STATED AS ONE. Two Hermes turns running at the same
+    moment would both look like "the newest", and the newer would win. That is survivable
+    here and nowhere near the worst option: the changeset key is (session, NAME), the
+    panel asks for a pending changeset BY NAME and prefers its own session, and a
+    mismatch shows Debi a card for a workbook she can read on it — never a write.
+    """
+    t = _now(now)
+    live = [(v, k) for k, v in _ACTIVE_SESSION.items() if t - v <= ACTIVE_SESSION_TTL]
+    return max(live)[1] if live else ""
+
+
+def clear_sessions() -> None:
+    _ACTIVE_SESSION.clear()
+
+
+def expire_changesets(now=None) -> int:
+    """Drop every changeset past CHANGESET_TTL. Returns how many went."""
+    t = _now(now)
+    gone = [cid for cid, cs in _CHANGESETS.items() if t - cs["staged_at"] > CHANGESET_TTL]
+    for cid in gone:
+        _drop(cid)
+    return len(gone)
+
+
+def _drop(cid) -> None:
+    cs = _CHANGESETS.pop(cid, None)
+    if cs is not None and _PENDING.get(cs["key"]) == cid:
+        _PENDING.pop(cs["key"], None)
+
+
+def changeset_clear() -> None:
+    _CHANGESETS.clear()
+    _PENDING.clear()
+    _SESSION_LINES.clear()
+
+
+def get_changeset(cid, now=None):
+    """The live changeset, or None. Expiry is checked on every read, so a card that sat
+    on screen for twenty minutes cannot apply."""
+    expire_changesets(now)
+    cs = _CHANGESETS.get(str(cid or ""))
+    return cs if isinstance(cs, dict) and cs.get("status") == "pending" else None
+
+
+def pending_changeset(session=None, name=None, now=None):
+    """The ONE pending changeset for (session, workbook), with two fallbacks that are
+    about the honest limits of session correlation and nothing else:
+      · asked for a session and a name and there is none → the pending changeset for
+        that NAME under any session (there is one loffice session; a bridge restart or a
+        re-minted sid must not orphan a proposal Debi can see the workbook of);
+      · asked for no name → the newest pending changeset for that session.
+    """
+    expire_changesets(now)
+    key = (_sesskey(session), str(name or ""))
+    if name:
+        cid = _PENDING.get(key)
+        if cid and cid in _CHANGESETS:
+            return _CHANGESETS[cid]
+        for (sk, nm), cid in _PENDING.items():
+            if nm == str(name) and cid in _CHANGESETS:
+                return _CHANGESETS[cid]
+        return None
+    rows = [cs for cs in _CHANGESETS.values()
+            if cs["status"] == "pending"
+            and (not session or cs["key"][0] == _sesskey(session))]
+    return max(rows, key=lambda cs: cs["staged_at"]) if rows else None
+
+
+def public_changeset(cs) -> dict:
+    """The changeset as the PANEL and the MODEL see it. The validated ops list stays
+    private: it is the bridge's business how it will be carried out, and shipping it to
+    the page would invite a page-side writer to grow around it."""
+    if not isinstance(cs, dict):
+        return {}
+    return {"changeset_id": cs["id"], "name": cs["name"], "sheet": cs["sheet"],
+            "session": cs["key"][0], "staged_at": cs["staged_at"],
+            "staged_at_text": time.strftime("%H:%M:%S",
+                                            time.localtime(cs["staged_at"])),
+            "expires_at": cs["staged_at"] + CHANGESET_TTL,
+            "op_count": len(cs["ops"]), "op_list": list(cs["op_list"]),
+            "summary": cs["summary"], "preview": list(cs["preview"]),
+            "preview_total": cs["preview_total"],
+            "cells_changed": cs["preview_total"],
+            "planned": dict(cs["planned"]), "notes": list(cs["notes"]),
+            "creates_workbook": cs["creates_workbook"],
+            "applied": False, "staged": True}
+
+
+def stage_changes(root, session, name, sheet=None, ops=None, now=None):
+    """(result, None) or (None, reason). THE ONLY WRITE-SHAPED TOOL, AND IT WRITES
+    NOTHING (spec §1).
+
+    It validates the ops, reads the workbook, runs them on a COPY, diffs, and records
+    the proposal in the bridge's store. A new request REPLACES the pending changeset for
+    that (session, workbook) — never accumulates, because "one intention, one card" is
+    the whole ruling and a second card is the incident.
+    """
     parsed, count, reason = validate_ops(ops)
     if parsed is None:
         return None, reason
-    return _write(root, name, sheet, parsed, count, "write_cells")
-
-
-def op_sort(root, name, sheet=None, col=None, desc=False):
-    """Sort the WHOLE sheet by one column, row 1 included. Refuses on merges."""
-    parsed, count, reason = validate_ops([{"op": "sort", "col": col, "desc": desc}])
-    if parsed is None:
-        return None, reason
-    out, reason = _write(root, name, sheet, parsed, count, "sort")
-    if out is not None and not out["sorted"] and not out["operations_skipped"]:
-        out["notes"].insert(0, "the rows were already in that order — nothing moved.")
-    if out is not None:
-        out["notes"].insert(0, "this sorted the whole sheet, ROW 1 INCLUDED: LOffice "
-                               "does not guess at a header row. Blank cells went to "
-                               "the bottom in both directions.")
-    return out, reason
-
-
-def op_insert_delete(root, name, sheet=None, action=None, what=None, at=None, n=1):
-    """Insert blank rows/columns, or delete them. Merges shift/grow/shrink; formula
-    references are NOT rewritten and the result says so."""
-    kind = ("" if action is None else str(action)).strip().lower()
-    if kind in ("insert", "add"):
-        op = "insert"
-    elif kind in ("delete", "delete_rc", "remove"):
-        op = "delete_rc"
-    else:
-        return None, ('"action" must be "insert" or "delete"'
-                      f" (got {json.dumps(action)})")
-    parsed, count, reason = validate_ops([{"op": op, "what": what, "at": at, "n": n}])
-    if parsed is None:
-        return None, reason
-    return _write(root, name, sheet, parsed, count, op)
-
-
-def op_create(root, name):
-    """A new, empty workbook. NEVER clobbers: office.free_name's ' (n)' walk, so a name
-    already taken comes back stepped rather than refused — a create is the one gesture
-    where the model's intent ("give me a workbook") survives a renamed result."""
-    stem = act_doc_name(name)
-    final, reason = office.free_name(root, stem or office.DEFAULT_DOC_STEM)
-    if not final:
-        return None, reason
-    target, reason = office.doc_target(root, final, must_exist=False)
+    target, reason = office.doc_target(root, name, must_exist=False)
     if not target:
         return None, reason
+    base = os.path.basename(target)
+    creating = any(o.get("op") == "create_workbook" for o in parsed)
+    exists = os.path.isfile(target)
+    if not exists and not creating:
+        return None, (f"there is no workbook called {base!r}. Call office_list to see "
+                      "the real names, or stage a {\"op\":\"create_workbook\"} "
+                      "operation first if you mean to make it.")
+    if exists and creating:
+        parsed = [o for o in parsed if o.get("op") != "create_workbook"]
+        count = dict(count, creates=0)
+        if not parsed:
+            return None, (f"{base!r} already exists, so there is nothing to create and "
+                          "the change asked for nothing else.")
     try:
-        office.write_snapshot(office.empty_snapshot(final), target)
+        snap = (office.snapshot_from_path(target) if exists
+                else office.empty_snapshot(os.path.splitext(base)[0]))
     except office.OfficeError as e:
         return None, str(e)
-    notes = ["it holds one empty sheet called Sheet1 — use office_write_cells to put "
-             "something in it."]
-    if stem and final != (stem + office.DOC_EXT):
-        notes.insert(0, f"a workbook called {stem + office.DOC_EXT!r} already existed, "
-                        f"so this one is {final!r} — nothing was overwritten.")
-    return {"ok": True, "action": "create", "name": final, "notes": notes}, None
+    sid = target_sid(snap, sheet)
+    if not sid:
+        return None, "that workbook has no readable sheets"
+    after = copy.deepcopy(snap)
+    done = run_ops(after, sid, parsed)
+    if done is None:
+        return None, "refused: those operations could not be applied to that sheet"
+    preview, total = snapshot_diff(snap, after)
+    op_list = [op_summary(o) for o in parsed]
+    if not exists:
+        op_list.insert(0, op_summary({"op": "create_workbook"}))
+    notes = list(done["notes"])
+    if not exists:
+        notes.insert(0, f"{base!r} does not exist yet — applying this creates it.")
+    st = open_state(base)
+    if st["dirty"]:
+        notes.append("Debi has UNSAVED edits in that workbook right now. Apply will "
+                     "refuse until she saves or closes it — say so if she asks why.")
+    summary = _summary_line(base, done, total, exists)
+    t = _now(now)
+    key = (_sesskey(session), base)
+    cid = secrets.token_hex(8)
+    old = _PENDING.get(key)
+    if old:
+        _drop(old)                       # REPLACED, never accumulated (spec §1)
+    if len(_CHANGESETS) >= CHANGESET_MAX:
+        for dead in sorted(_CHANGESETS, key=lambda c: _CHANGESETS[c]["staged_at"])[:4]:
+            _drop(dead)
+    _CHANGESETS[cid] = {
+        "id": cid, "key": key, "name": base, "sheet": sheet or "",
+        "ops": parsed, "op_list": op_list, "planned": {k: v for k, v in count.items()
+                                                       if v},
+        "preview": preview, "preview_total": total, "summary": summary,
+        "notes": notes, "staged_at": t, "status": "pending",
+        "creates_workbook": not exists,
+        "file_mtime": (os.path.getmtime(target) if exists else 0.0),
+    }
+    _PENDING[key] = cid
+    out = public_changeset(_CHANGESETS[cid])
+    out["replaced"] = bool(old)
+    out["message"] = NOT_APPLIED_SENTENCE
+    out["notes"] = list(notes) + [NOT_APPLIED_SENTENCE, STAGED_NOTE]
+    return out, None
+
+
+def _summary_line(name, done, cells, exists) -> str:
+    """The card's first line, and the model's own summary. PURE-ish."""
+    bits = []
+    if not exists:
+        bits.append("create the workbook")
+    if done["cells"]:
+        bits.append(f"{done['cells']} cell{'' if done['cells'] == 1 else 's'} written")
+    if done["cleared"]:
+        bits.append(f"{done['cleared']} emptied")
+    if done["styled_cells"]:
+        bits.append(f"{done['styled_cells']} formatted")
+    if done["sorted"]:
+        bits.append("the sheet sorted")
+    if done["inserted"]:
+        bits.append(f"{done['inserted']} row/column(s) inserted")
+    if done["deleted"]:
+        bits.append(f"{done['deleted']} row/column(s) DELETED")
+    if done["sheets"]:
+        bits.append("sheet " + ", ".join(repr(s) for s in done["sheets"]) + " added")
+    if done["renamed"]:
+        bits.append(f"a sheet renamed to {done['renamed']!r}")
+    what = ", ".join(bits) if bits else "no visible change"
+    return (f"{name}: {what} — {cells} cell{'' if cells == 1 else 's'} would change.")
+
+
+# ═══ 15. CHECKPOINTS (spec §3) ══════════════════════════════════════════════
+# data/office/.checkpoints/<stem>/<changeset_id>.xlsx, last 10 per workbook. The
+# `<stem>.pre-agent.xlsx` sibling STAYS (existing name, existing visibility ruling) as
+# the most-recent-apply convenience copy; the stack is what makes "Undo this change" an
+# answer about a SPECIFIC apply rather than about the last one.
+
+def checkpoint_dir(root, name) -> str:
+    stem = os.path.splitext(os.path.basename(str(name)))[0]
+    return os.path.join(office.office_dir(root), CHECKPOINT_DIR, stem)
+
+
+def checkpoint_path(root, name, cid) -> str:
+    return os.path.join(checkpoint_dir(root, name),
+                        str(cid) + office.DOC_EXT)
+
+
+def list_checkpoints(root, name) -> list:
+    """Newest first: [{changeset_id, path, at, size_bytes}, …]."""
+    d = checkpoint_dir(root, name)
+    out = []
+    try:
+        entries = os.listdir(d)
+    except OSError:
+        return out
+    for f in entries:
+        if not f.endswith(office.DOC_EXT):
+            continue
+        p = os.path.join(d, f)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        out.append({"changeset_id": f[: -len(office.DOC_EXT)], "path": p,
+                    "at": st.st_mtime, "size_bytes": st.st_size})
+    out.sort(key=lambda e: e["at"], reverse=True)
+    return out
+
+
+def push_checkpoint(root, name, cid):
+    """(entry, None) or (None, reason). Copies the workbook AS IT IS NOW into the stack
+    and prunes to CHECKPOINT_KEEP. Taken BEFORE the apply, like every other copy in this
+    module — a checkpoint of the post-write file would be a checkpoint of nothing."""
+    target, reason = office.doc_target(root, name)
+    if not target:
+        return None, reason
+    d = checkpoint_dir(root, name)
+    dst = checkpoint_path(root, name, cid)
+    try:
+        os.makedirs(d, exist_ok=True)
+        shutil.copy2(target, dst)
+    except OSError as e:
+        return None, f"could not write the checkpoint for that workbook: {e}"
+    pruned = prune_checkpoints(root, name)
+    return {"changeset_id": str(cid), "file": os.path.basename(dst),
+            "rel": os.path.join("data", "office", CHECKPOINT_DIR,
+                                os.path.basename(d), os.path.basename(dst)),
+            "pruned": pruned, "kept": len(list_checkpoints(root, name))}, None
+
+
+def prune_checkpoints(root, name) -> list:
+    """Delete everything past the newest CHECKPOINT_KEEP. Returns what went."""
+    gone = []
+    for e in list_checkpoints(root, name)[CHECKPOINT_KEEP:]:
+        try:
+            os.remove(e["path"])
+            gone.append(e["changeset_id"])
+        except OSError:
+            pass
+    return gone
+
+
+def restore_checkpoint(root, name, cid, applied_mtime=None, now=None):
+    """(report, None) or (None, reason) — "Undo this change".
+
+    ⚠️ THE MTIME FENCE IS THE WHOLE POINT (spec §3). If the workbook moved since the
+    apply — Debi saved over it, another apply landed, the editor wrote back — restoring
+    would throw that away silently. So it REFUSES, in words, and says where the
+    checkpoint still is. `applied_mtime=None` means "no fence recorded", which only
+    happens for a checkpoint restored out of band; that path is allowed and SAYS so.
+    """
+    target, reason = office.doc_target(root, name)
+    if not target:
+        return None, reason
+    src = checkpoint_path(root, name, cid)
+    if not os.path.isfile(src):
+        return None, ("there is no checkpoint for that change any more — the stack keeps "
+                      f"the last {CHECKPOINT_KEEP} per workbook.")
+    st = open_state(name)
+    if st["dirty"]:
+        return None, APPLY_DIRTY_REFUSAL
+    fenced = isinstance(applied_mtime, (int, float)) and applied_mtime > 0
+    try:
+        live = os.path.getmtime(target)
+    except OSError as e:
+        return None, f"could not read that workbook: {e}"
+    if fenced and abs(live - float(applied_mtime)) > FENCE_EPS:
+        return None, UNDO_FENCE_REFUSAL.format(checkpoint=os.path.basename(src))
+    # The file about to be replaced is itself worth keeping: an undo is a change too,
+    # and "undo the undo" must not be a question with no answer.
+    pre = pre_agent_for(target)
+    try:
+        shutil.copy2(target, pre)
+        shutil.copy2(src, target)
+        # ⚠️ AND THE CLOCK IS PUSHED FORWARD, WHICH IS NOT COSMETIC. copy2 preserves the
+        # checkpoint's OWN mtime, which is older than the file it just replaced — and
+        # every "did this file change under me?" check on this bridge (the page's
+        # extPlan, the editor's writeback fence) reads a strictly NEWER mtime as the
+        # change. Restoring an old copy with an old timestamp is a change nobody can
+        # see. So the restored file is stamped NOW.
+        os.utime(target, None)
+    except OSError as e:
+        return None, f"could not restore that checkpoint: {e}"
+    return {"ok": True, "name": os.path.basename(target),
+            "restored_from": os.path.basename(src),
+            "changeset_id": str(cid), "fenced": fenced,
+            "pre_agent_copy": os.path.basename(pre),
+            "at": _now(now),
+            "notes": ([] if fenced else
+                      ["no post-apply mtime was recorded for this change, so the fence "
+                       "could not be checked — the file as it was a moment ago is in "
+                       + os.path.basename(pre) + "."])}, None
+
+
+# ═══ 16. APPLY / DISMISS / UNDO, AND THE SESSION LINE ═══════════════════════
+def push_session_line(session, line) -> None:
+    """Queue one system line for the next turn of that Hermes session.
+
+    ⚠️ WHY A QUEUE AND NOT AN INJECTION, MEASURED RATHER THAN ASSUMED. The vendored
+    gateway (v2026.8.13) has no "append a message to an idle session" method at all. The
+    nearest thing is `session.steer`, and reading AIAgent.steer / _drain_pending_steer
+    (vendor/hermes/run_agent.py:3294, :3442, :3753) settles it: a steer is stashed and
+    drained onto the LAST TOOL RESULT of the next tool batch. On an IDLE session that
+    means the line would arrive AFTER the next turn's first model response — too late to
+    condition the turn it is about — and `session.steer` also records a fake user bubble
+    in the live transcript on the way (methods_session.py:3248). Both are worse than
+    honest. So the outcome line is queued here and the panel PREPENDS it to Debi's next
+    agent message, which puts it in the model's context BEFORE it thinks. Stated in the
+    ship report; the panel's own test pins the prepend.
+    """
+    key = _sesskey(session)
+    if not str(line or "").strip():
+        return
+    _SESSION_LINES.setdefault(key, []).append(str(line))
+    if len(_SESSION_LINES[key]) > 8:
+        del _SESSION_LINES[key][:-8]
+
+
+def peek_session_lines(session) -> list:
+    return list(_SESSION_LINES.get(_sesskey(session)) or [])
+
+
+def drain_session_lines(session) -> list:
+    """Take the queued lines and forget them. The panel calls this once, as it sends."""
+    return _SESSION_LINES.pop(_sesskey(session), [])
+
+
+def apply_changeset(root, cid, now=None):
+    """(receipt, None) or (None, reason). The HUMAN gesture, and the only write path a
+    changeset has.
+
+    The receipt is spec §2's: {changeset_id, applied_at, cells_written, verify}. `verify`
+    is a RE-READ OF THE TOUCHED CELLS FROM DISK after the save — not a restatement of
+    what we meant to do, which is exactly the difference between a receipt and a claim.
+    """
+    cs = get_changeset(cid, now)
+    if cs is None:
+        return None, ("that change is no longer pending — it was already applied, "
+                      "dismissed, or it expired (proposals last "
+                      f"{int(CHANGESET_TTL // 60)} minutes).")
+    name = cs["name"]
+    t = _now(now)
+    created = False
+    if cs["creates_workbook"]:
+        target, reason = office.doc_target(root, name, must_exist=False)
+        if not target:
+            return None, reason
+        if not os.path.isfile(target):
+            try:
+                office.write_snapshot(
+                    office.empty_snapshot(os.path.splitext(name)[0]), target)
+            except office.OfficeError as e:
+                return None, str(e)
+            created = True
+    checkpoint, reason = push_checkpoint(root, name, cs["id"])
+    if checkpoint is None and not created:
+        return None, reason
+    ops = [o for o in cs["ops"] if o.get("op") != "create_workbook"]
+    if ops:
+        out, reason = _apply(root, name, cs["sheet"] or None, ops, cs["planned"],
+                            "changeset")
+        if out is None:
+            return None, reason
+    else:
+        out = {"ok": True, "action": "changeset", "name": name, "sheet": "",
+               "cells_written": 0, "cells_emptied": 0, "cells_formatted": 0,
+               "sorted": 0, "rows_or_columns_inserted": 0,
+               "rows_or_columns_deleted": 0, "sheets_added": [], "sheet_renamed": "",
+               "operations_skipped": 0, "pre_agent_copy": "", "daily_backup": "",
+               "notes": ["this changeset only created the workbook."]}
+    verify, verify_note = _verify(root, name, cs)
+    receipt_hash = secrets.token_hex(4)
+    applied_mtime = 0.0
+    try:
+        tgt, _r = office.doc_target(root, name)
+        applied_mtime = os.path.getmtime(tgt) if tgt else 0.0
+    except OSError:
+        pass
+    cs["status"] = "applied"
+    cs["applied_at"] = t
+    cs["applied_mtime"] = applied_mtime
+    cs["receipt"] = receipt_hash
+    _PENDING.pop(cs["key"], None)
+    line = APPLIED_LINE.format(cid=cs["id"], when=time.strftime(
+        "%H:%M:%S", time.localtime(t)), receipt=receipt_hash,
+        cells=out["cells_written"], name=name)
+    push_session_line(cs["key"][0], line)
+    return {"ok": True, "changeset_id": cs["id"], "receipt": receipt_hash,
+            "applied_at": t,
+            "applied_at_text": time.strftime("%H:%M:%S", time.localtime(t)),
+            "name": name, "created_workbook": created,
+            "cells_written": out["cells_written"],
+            "cells_emptied": out["cells_emptied"],
+            "cells_formatted": out["cells_formatted"],
+            "sorted": out["sorted"],
+            "rows_or_columns_inserted": out["rows_or_columns_inserted"],
+            "rows_or_columns_deleted": out["rows_or_columns_deleted"],
+            "sheets_added": out["sheets_added"],
+            "operations_skipped": out["operations_skipped"],
+            "verify": verify, "verify_note": verify_note,
+            "checkpoint": checkpoint, "pre_agent_copy": out["pre_agent_copy"],
+            "daily_backup": out["daily_backup"],
+            "can_undo": bool(checkpoint), "applied_mtime": applied_mtime,
+            "session_line": line, "notes": out["notes"]}, None
+
+
+def _verify(root, name, cs):
+    """Re-read the touched cells FROM DISK and report what they say now. This is what
+    makes a receipt a receipt: the panel's success badge renders from these numbers, so
+    a save that silently did nothing cannot look like a success."""
+    target, reason = office.doc_target(root, name)
+    if not target:
+        return [], reason
+    try:
+        snap = office.snapshot_from_path(target)
+    except office.OfficeError as e:
+        return [], str(e)
+    by_sheet = {}
+    for i in sheet_ids(snap):
+        by_sheet[(snap["sheets"][i] or {}).get("name")] = snap["sheets"][i]
+    rows, matched = [], 0
+    for p in cs["preview"]:
+        sh = by_sheet.get(p["sheet"])
+        rg = act_range(p["ref"])
+        got = cell_face(cell_at(sh, rg[0], rg[1])) if (sh and rg) else ""
+        ok = got == p["after"]
+        matched += 1 if ok else 0
+        rows.append({"sheet": p["sheet"], "ref": p["ref"], "expected": p["after"],
+                     "found": got, "match": ok})
+    note = (f"{matched} of {len(rows)} re-read cell(s) hold what the change said they "
+            "would" + ("." if matched == len(rows) else
+                       " — the ones that do not are listed above."))
+    if cs["preview_total"] > len(cs["preview"]):
+        note += (f" (the change touched {cs['preview_total']} cells; the first "
+                 f"{len(cs['preview'])} were verified.)")
+    return rows, note
+
+
+def dismiss_changeset(root, cid, now=None):
+    """(report, None) or (None, reason). NOTHING is written, and the session is TOLD."""
+    cs = get_changeset(cid, now)
+    if cs is None:
+        return None, "that change is no longer pending — nothing to dismiss."
+    t = _now(now)
+    cs["status"] = "dismissed"
+    cs["dismissed_at"] = t
+    _PENDING.pop(cs["key"], None)
+    line = DISMISSED_LINE.format(cid=cs["id"], when=time.strftime(
+        "%H:%M:%S", time.localtime(t)), name=cs["name"])
+    push_session_line(cs["key"][0], line)
+    return {"ok": True, "changeset_id": cs["id"], "name": cs["name"],
+            "dismissed_at": t, "session_line": line,
+            "notes": ["nothing was written — this proposal never touched the "
+                      "workbook."]}, None
+
+
+def undo_changeset(root, cid, now=None):
+    """(report, None) or (None, reason). Restores the checkpoint that apply pushed."""
+    cs = _CHANGESETS.get(str(cid or ""))
+    if not isinstance(cs, dict) or cs.get("status") != "applied":
+        # A checkpoint outlives the changeset that made it (the store is process-local,
+        # the files are not), so an undo with no record is still ANSWERED — just without
+        # the mtime fence, and the report says the fence was not checked.
+        cs = None
+    name = ""
+    fence = None
+    if cs is not None:
+        name, fence = cs["name"], cs.get("applied_mtime")
+    else:
+        for entry in _checkpoint_owner(root, cid):
+            name = entry
+            break
+        if not name:
+            return None, ("that change is not one this bridge remembers applying, and "
+                          "no checkpoint for it is on disk.")
+    out, reason = restore_checkpoint(root, name, cid, fence, now)
+    if out is None:
+        return None, reason
+    if cs is not None:
+        cs["status"] = "undone"
+        line = UNDONE_LINE.format(cid=cs["id"], when=time.strftime(
+            "%H:%M:%S", time.localtime(out["at"])), name=name)
+        push_session_line(cs["key"][0], line)
+        out["session_line"] = line
+    return out, None
+
+
+def _checkpoint_owner(root, cid):
+    """Which workbook stems hold a checkpoint with this id. Used only by the
+    no-record undo path above."""
+    base = os.path.join(office.office_dir(root), CHECKPOINT_DIR)
+    try:
+        stems = os.listdir(base)
+    except OSError:
+        return []
+    out = []
+    for stem in stems:
+        if os.path.isfile(os.path.join(base, stem, str(cid) + office.DOC_EXT)):
+            out.append(stem + office.DOC_EXT)
+    return out

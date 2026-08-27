@@ -5181,6 +5181,46 @@ def hermes_event_to_frames(ev):
             fr = {"type": "tool_output", "tool": p.get("name") or "tool"}
             if p.get("summary"):
                 fr["summary"] = p.get("summary")
+            # ⚠️ A TOOL THAT FAILED MUST NOT ARRIVE LOOKING LIKE A TOOL THAT WORKED,
+            # and that silence is half of the 2026-08-27 consent incident: a write
+            # returned an error, the panel rendered nothing, and the model's "Done"
+            # stood unchallenged. Every failure path lands in the same shape — Hermes's
+            # own tool_error() returns `{"error": …}` (tools/registry.py:1282) and an
+            # MCP result with isError:true is converted to exactly that
+            # (tools/mcp_tool.py:5442-5456) — so ONE test on the parsed result covers
+            # native tools and every MCP server alike. The panel renders it as a red ✗
+            # chip carrying the tool's own sentence.
+            _res = p.get("result")
+            _err_text = ""
+            if isinstance(_res, dict) and _res.get("error"):
+                _err_text = str(_res.get("error"))
+            elif isinstance(_res, str) and _res.lstrip().startswith('{"error"'):
+                # The import is INSIDE the branch on purpose: this function is
+                # ast-extracted into a bare namespace by bridge/tests/
+                # test_hermes_sse_map.py, so it must not lean on a module-level alias.
+                try:
+                    import json as _j
+                    _err_text = str((_j.loads(_res) or {}).get("error") or "")
+                except Exception:                                # noqa: BLE001
+                    _err_text = ""
+            # ⚠️ AND ONE UNWRAP, MEASURED ON THE REAL LANE. An MCP tool's refusal arrives
+            # DOUBLE-ENCODED: our server answers isError with a JSON body of its own
+            # ({"ok": false, "error": "…"}), Hermes reads the text off the content block
+            # and hands it to tool_error(), which wraps it AGAIN — so `result.error` is a
+            # JSON string, and the panel's ✗ chip rendered as a wall of braces (seen live,
+            # 2026-08-28). One unwrap turns it back into the tool's own sentence, which is
+            # the entire point of showing the chip.
+            if _err_text.lstrip().startswith("{"):
+                try:
+                    import json as _j2
+                    _inner = _j2.loads(_err_text)
+                    if isinstance(_inner, dict) and _inner.get("error"):
+                        _err_text = str(_inner["error"])
+                except Exception:                                # noqa: BLE001
+                    pass
+            if _err_text:
+                fr["is_error"] = True
+                fr["error"] = _err_text[:600]
             frames = [fr]
             # §F file cards: a SUCCESSFUL write_file/patch also emits one
             # file_card frame per file touched, so the panel can render a
@@ -5594,6 +5634,18 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 # stored_id (Phase 3): lets the rail mark the matching stored row.
                 stored_sid = stored_sid or str(res.get("stored_session_id") or "")
                 yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
+            # ⚠️ WHO IS THE OFFICE CHANGESET FOR. An MCP tools/call carries the MCP
+            # TRANSPORT's session id, and Hermes keeps ONE MCP client per process, so
+            # that id is identical for every conversation and useless as a key. This is
+            # the only correlation available: the Hermes session whose turn is running
+            # right now. Recorded here (and re-recorded on the retry path below, which
+            # mints a new sid), read by office_ops.active_session(). Costs one dict
+            # write per turn and is a no-op when the office modules are absent.
+            if _office_ops is not None:
+                try:
+                    _office_ops.mark_session(sid)
+                except Exception:                        # noqa: BLE001
+                    pass
             # Open the fan-out queue BEFORE submitting so no early event is missed.
             q = _HERMES.open_queue(sid)
             try:
@@ -5610,6 +5662,11 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     raise RuntimeError("session.create returned no id")
                 stored_sid = stored_sid or str(res.get("stored_session_id") or "")
                 yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
+                if _office_ops is not None:
+                    try:
+                        _office_ops.mark_session(sid)     # the sid changed under us
+                    except Exception:                     # noqa: BLE001
+                        pass
                 q = _HERMES.open_queue(sid)
                 await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
             # Relay gateway events until the turn completes. Watchdogs (Phase 1.1):
@@ -9649,14 +9706,27 @@ def office_mcp_status() -> JSONResponse:
         "ok": True, "name": _office_mcp.SERVER_NAME, "path": _office_mcp.MOUNT_PATH,
         "registered": got is not None, "entry": got, "expected": want,
         "in_sync": got == want,
-        # Which tools Hermes will put behind an approval card, and why — the honest
-        # answer to "is this approval-required?", which in Hermes is a property of the
-        # server's `trust` PLUS each tool's readOnlyHint annotation, never a per-tool
-        # config field. See bridge/office_mcp.py's docstring.
+        # Which tools Hermes will put behind an approval card, and why. In Hermes that
+        # is the server's `trust` PLUS each tool's readOnlyHint annotation, never a
+        # per-tool config field (see bridge/office_mcp.py's docstring) — and as of the
+        # changeset ruling the honest answer is NONE OF THEM, because none of them can
+        # write. Consent moved to the panel's changeset card, and `consent` below says
+        # so rather than leaving a reader to infer it from an empty list.
         "approval": {"mechanism": "mcp_servers.loffice.trust=untrusted + per-tool "
                                   "annotations.readOnlyHint",
                      "gated": _office_mcp.write_tool_names(),
                      "ungated": _office_mcp.read_tool_names()},
+        # ⚠️ THE KEY IS `surface`, AND THE OBVIOUS SHORTER NAME FOR IT IS UNAVAILABLE
+        # ON PURPOSE. bridge/tests/test_starter_voices.py asserts that the
+        # datasets-server filter keyword (w-h-e-r-e, in quotes) appears NOWHERE in this
+        # file — it is guarding the HuggingFace /rows call against ever growing that
+        # param. A broad negative, but a real one, and renaming one key here is far
+        # cheaper than weakening someone else's fence. Do not "tidy" this back.
+        "consent": {"surface": "the LOffice panel's changeset card",
+                    "apply_route": "POST /api/office/changeset/{id}/apply",
+                    "why": "every tool on this server is read-only, so Hermes has "
+                           "nothing to card; office_stage_changes records a proposal "
+                           "the bridge holds and only a person can apply it"},
         "tools": [t["name"] for t in _office_mcp.tool_specs()],
     })
 
@@ -9683,6 +9753,106 @@ async def office_mcp_register(req: Request) -> JSONResponse:
     _office_log(f"mcp register on={on} present={present}")
     return JSONResponse({"ok": present is on, "on": on, "registered": bool(present),
                          "gen": hermes_cfg_gen()})
+
+
+# ══ THE CHANGESET SURFACE — the four routes only the PANEL can reach ════════════
+#
+# docs/FABLE-AGENT-CHANGESET-SPEC.md §1/§2: the MCP write tools are gone, staging holds
+# a proposal, and APPLY IS A HUMAN GESTURE. That is what these routes are — the button
+# end of the wire. No MCP method reaches any of them, and the page adds no writer of its
+# own: it POSTs here and then RELOADS the document.
+#
+#   GET  /api/office/changeset            — the ONE pending changeset for
+#                                           ?file=&session=, plus any outcome lines the
+#                                           next agent turn still has to be told about
+#   POST /api/office/changeset/{id}/apply — apply it, atomically, and answer with a
+#                                           RECEIPT (the only thing the panel's success
+#                                           badge renders from)
+#   POST /api/office/changeset/{id}/dismiss — drop it, and tell the session it was never
+#                                           applied
+#   POST /api/office/changeset/{id}/undo  — restore the checkpoint that apply pushed,
+#                                           behind an mtime fence
+#
+# ⚠️ THE ID IS THE WHOLE ADDRESS AND IT IS A 64-BIT SECRET (office_ops.stage_changes →
+# secrets.token_hex(8)). These routes are loopback-only like the rest of this bridge, and
+# an id cannot be guessed into a write of a workbook the caller never staged.
+
+def _changeset_reply(pair, log):
+    out, reason = pair
+    if out is None:
+        _office_log(f"{log} reject: {reason}")
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    _office_log(f"{log} ok")
+    return JSONResponse({"ok": True, **out})
+
+
+@app.get("/api/office/changeset")
+def office_changeset_pending(file: str = "", session: str = "") -> JSONResponse:
+    """The pending proposal for that workbook, or null. The panel polls this after a
+    turn ends; it is also what a reloaded page uses to find the card again."""
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    cs = _office_ops.pending_changeset(session or None, file or None)
+    return JSONResponse({
+        "ok": True,
+        "changeset": (_office_ops.public_changeset(cs) if cs else None),
+        # The honest fallback for the spec's "inject one system line into the Hermes
+        # session": the gateway has no way to append a message to an idle session, so
+        # the bridge queues the line and the PANEL prepends it to the next agent
+        # message. See office_ops.push_session_line for the measured reasoning.
+        "session_lines": _office_ops.peek_session_lines(session or None),
+        "ttl_s": _office_ops.CHANGESET_TTL,
+    })
+
+
+@app.post("/api/office/changeset/{cid}/apply")
+async def office_changeset_apply(cid: str) -> JSONResponse:
+    """APPLY. Atomic, all-or-nothing, checkpointed, and it answers with a receipt."""
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    out, reason = await asyncio.to_thread(_office_ops.apply_changeset, ROOT, cid)
+    if out is None:
+        _office_log(f"changeset apply reject {cid}: {reason}")
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    _office_log(f"changeset applied {cid} → {out['name']} "
+                f"({out['cells_written']} cells, receipt {out['receipt']})")
+    return JSONResponse({"ok": True, **out})
+
+
+@app.post("/api/office/changeset/{cid}/dismiss")
+async def office_changeset_dismiss(cid: str) -> JSONResponse:
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    return _changeset_reply(
+        await asyncio.to_thread(_office_ops.dismiss_changeset, ROOT, cid),
+        f"changeset dismiss {cid}")
+
+
+@app.post("/api/office/changeset/{cid}/undo")
+async def office_changeset_undo(cid: str) -> JSONResponse:
+    """"Undo this change" — the checkpoint back, or an honest refusal if the workbook
+    moved since the apply."""
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    return _changeset_reply(
+        await asyncio.to_thread(_office_ops.undo_changeset, ROOT, cid),
+        f"changeset undo {cid}")
+
+
+@app.get("/api/office/checkpoints/{name}")
+def office_checkpoints(name: str) -> JSONResponse:
+    """The checkpoint stack for one workbook, newest first. Read-only; the panel uses it
+    to say whether an undo is still possible after a page reload."""
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    safe, reason = _office.valid_name(name) if _office is not None else (None, "no office")
+    if not safe:
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    rows = [{"changeset_id": e["changeset_id"], "at": e["at"],
+             "size_bytes": e["size_bytes"]}
+            for e in _office_ops.list_checkpoints(ROOT, safe)]
+    return JSONResponse({"ok": True, "name": safe, "keep": _office_ops.CHECKPOINT_KEEP,
+                         "checkpoints": rows})
 
 
 if _office_mcp is not None:

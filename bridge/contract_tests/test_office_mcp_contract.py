@@ -1,30 +1,37 @@
-"""LOffice MCP toolset contract — the pin-bump gate for the AGENT lane's approval.
+"""LOffice MCP toolset contract — the pin-bump gate for the AGENT lane.
 
-Slice S1 of docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md hands Hermes four tools that WRITE
-Debi's spreadsheets. What stands between those four and an unattended write is not code
-we own — it is two upstream-internal facts inside `vendor/hermes`:
+⚠️ DELIBERATELY REWRITTEN AT loffice-2026-08-28b, AND THE REASON IS THE WHOLE POINT OF
+THE SLICE. This file used to guard four MCP tools that WROTE Debi's spreadsheets, by
+pinning the two upstream-internal facts that put them behind an approval card. Those four
+tools are GONE (docs/FABLE-AGENT-CHANGESET-SPEC.md §1, ruled after the 2026-08-27 consent
+incident): the catalog is now four READ tools, every one annotated `readOnlyHint: true`,
+and the consent for a change lives on a card in the LOffice panel with an Apply button
+that only a person can press.
 
-  1. `mcp_servers.<name>.trust: untrusted` ARMS the gate. Absent (or `full`), Hermes runs
-     every MCP tool with no approval at all.
-  2. A tool is WRITE-CAPABLE, and therefore gated, unless its discovery-time
-     `annotations.readOnlyHint` is **exactly `True`**.
+So what this file guards has INVERTED, and the new negative is the stronger one:
 
-Both are read out of the pin rather than remembered, and BOTH ARE SILENT WHEN THEY MOVE:
-a Hermes release that renames the `trust` key, or that starts treating a truthy
-`readOnlyHint` as read-only, or that stops routing the gate through the approval surface,
-would leave `office_write_cells` firing with no card and NOTHING ELSE WOULD FAIL. There
-is no runtime symptom to notice — the tool just works, which is the problem.
+  BEFORE: "readOnlyHint must be absent from the four write tools, or their card
+           disappears silently."
+  NOW:    "no tool on this server may write at all, and nothing may reach a workbook
+           except the human-only apply route."
 
-So this is a purely STATIC check of the vendored source, in the shape of
-test_hermes_toolsets_contract.py: no network, no build, no running Hermes. It also pins
-the ONE fact our own transport leans on — that the MCP client this Hermes ships accepts
-an `application/json` reply to a request and a bare 202 to a notification, which is why
-bridge/office_mcp.py needs no MCP SDK.
+The upstream facts are still pinned — `trust`, `readOnlyHint is True`,
+`_trust_gate_check`, gate-before-transport — because they are the fence for the day a
+tool here ever DOES need to write again, and because /api/office/mcp still reports that
+mechanism to Debi and that sentence must not become a lie. But they are no longer what
+stands between a model and her files. THAT is now:
 
-⚠️ IF ONE OF THESE FAILS, DO NOT RELAX THE ASSERTION. Re-read the new upstream code and
-decide what the approval story IS at the new pin, then say so in bridge/office_mcp.py's
-docstring and in bridge/app.py's /api/office/mcp `approval.mechanism` string — the panel
-tells Debi which mechanism is protecting her, and that sentence must not become a lie.
+  1. bridge/office_mcp.py serves exactly four tools and every one of them is read-only.
+  2. Apply is `POST /api/office/changeset/{id}/apply` — a bridge route, reachable from
+     the panel, with no MCP method that can call it.
+  3. Staging never touches a workbook (asserted by mtime and by bytes in
+     bridge/tests/test_office_mcp.py group 4c-1), which is what makes the annotation on
+     office_stage_changes honest rather than convenient.
+
+⚠️ IF ONE OF THESE FAILS, DO NOT RELAX THE ASSERTION. Re-read the new upstream code (or
+the new tool), decide what the consent story IS, then say so in bridge/office_mcp.py's
+docstring and in bridge/app.py's /api/office/mcp `approval`/`consent` block — the panel
+tells Debi which mechanism is protecting her, and it must keep being true.
 """
 from pathlib import Path
 
@@ -143,35 +150,38 @@ def test_there_is_still_no_per_tool_approval_field_to_use_instead():
 
 
 # ── 3. our own side of the same contract ────────────────────────────────────
-def test_the_bridge_writes_the_trust_key_and_only_the_read_tools_claim_read_only():
-    """Both halves of the two-factor gate, asserted on OUR side, in the same test as
-    the upstream half — so a reader sees the whole mechanism in one place."""
+def test_the_bridge_writes_the_trust_key_and_every_tool_claims_read_only():
+    """Our side of the same contract — and the assertion that replaced the old one.
+
+    The trust key is still written (it costs nothing and it arms the gate for the day a
+    tool here needs to write). What actually protects the files now is the line below it:
+    EVERY tool is read-only, so write_tool_names() is empty.
+    """
     start = (ROOT / "scripts" / "start_component.sh").read_text(encoding="utf-8")
     assert '"trust": "untrusted"' in start, (
-        "the config-gen step stopped writing trust: untrusted — every LOffice write "
-        "tool would run with no approval card")
+        "the config-gen step stopped writing trust: untrusted — harmless while nothing "
+        "on this server writes, but it is the armed fence for the day one does")
     src = (BRIDGE / "office_mcp.py").read_text(encoding="utf-8")
     assert '"trust": "untrusted"' in src, "hermes_entry() stopped writing the trust key"
-    # The split itself, read out of the module rather than restated here.
     import sys
     sys.path.insert(0, str(ROOT))
     from bridge import office_mcp                                # noqa: E402
     assert office_mcp.read_tool_names() == [
-        "office_list", "office_read", "office_sheet_stats"], (
-        "a tool changed sides in the read-only split. `readOnlyHint: true` DISARMS "
-        "Hermes's approval card — putting it on a tool that writes removes the card "
-        "silently")
-    assert office_mcp.write_tool_names() == [
-        "office_write_cells", "office_sort", "office_insert_delete", "office_create"], (
-        "a write tool left the gated set — see above, and note that Hermes cannot "
-        "gate it for us if we do not declare it")
+        "office_list", "office_read", "office_sheet_stats",
+        "office_stage_changes"], (
+        "the catalog changed. It must be exactly these four, all read-only: three reads "
+        "and one that records a PROPOSAL the bridge holds")
+    assert office_mcp.write_tool_names() == [], (
+        "A WRITE-CAPABLE TOOL APPEARED ON THE LOFFICE MCP SERVER. That is the one change "
+        "docs/FABLE-AGENT-CHANGESET-SPEC.md forbids: a document edit is one intention "
+        "and its consent belongs on the panel's changeset card, not on a per-call "
+        "approval that cannot show what is being written. Apply is "
+        "POST /api/office/changeset/{id}/apply and it must stay human-only")
     payload = office_mcp.tool_list_payload()
     for tool in payload:
-        hint = tool["annotations"].get("readOnlyHint")
-        if tool["name"] in office_mcp.write_tool_names():
-            assert hint is None, f"{tool['name']} writes and must claim nothing"
-        else:
-            assert hint is True, f"{tool['name']} must claim readOnlyHint exactly True"
+        assert tool["annotations"].get("readOnlyHint") is True, (
+            f"{tool['name']} must claim readOnlyHint exactly True (Hermes tests "
+            "`hint is True`) — and must therefore actually be read-only")
     # Containment by construction: no tool may take a path-shaped argument at all.
     for tool in payload:
         props = set((tool["inputSchema"].get("properties") or {}).keys())
@@ -179,6 +189,35 @@ def test_the_bridge_writes_the_trust_key_and_only_the_read_tools_claim_read_only
             f"{tool['name']} grew a path-shaped argument — the whole containment "
             "argument for this toolset is that a tool which takes no path cannot "
             "escape one")
+
+
+def test_apply_is_reachable_from_the_panel_and_from_no_tool():
+    """THE NEGATIVE THIS SLICE LIVES BY, and it is a two-sided one.
+
+    A workbook is written in exactly one place (office_ops.apply_changeset /
+    restore_checkpoint), and the only door to it is an HTTP route the panel POSTs to. If
+    the MCP dispatcher ever gains a branch that reaches an apply, the whole consent model
+    is gone and nothing else in the suite would notice.
+    """
+    mcp = (BRIDGE / "office_mcp.py").read_text(encoding="utf-8")
+    dispatch = mcp[mcp.index("def call_tool("):mcp.index("def _ok(")]
+    for forbidden in ("apply_changeset", "restore_checkpoint", "undo_changeset",
+                      "_apply(", "save_doc", "write_snapshot"):
+        assert forbidden not in dispatch, (
+            f"the MCP tool dispatcher can now reach {forbidden} — an MCP tool call must "
+            "never be able to write a workbook. Apply is a human gesture: "
+            "POST /api/office/changeset/{id}/apply")
+    app = (BRIDGE / "app.py").read_text(encoding="utf-8")
+    assert '@app.post("/api/office/changeset/{cid}/apply")' in app, (
+        "the apply route moved or vanished — the panel's Apply button has nowhere to go")
+    ops = (BRIDGE / "office_ops.py").read_text(encoding="utf-8")
+    # office.save_doc is the ONE writer this module may call, and only from the apply
+    # path. Counting call sites is crude and that is why it works: a second one has to
+    # be argued for here before it can ship.
+    assert ops.count("office.save_doc(") == 1, (
+        "office_ops grew a second workbook writer. There is one apply path, and every "
+        "guarantee this lane makes (checkpoint first, atomic single save, receipt by "
+        "re-read) is a property of that one path")
 
 
 def test_the_toolset_needs_no_manifest_entry_and_no_port():

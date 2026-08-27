@@ -524,7 +524,14 @@ check('every URL the page calls is one of the endpoints that already existed',
                        // office surfaces slice S1 shipped for exactly this page.
                        "'/api/hermes/chat'", "'/api/hermes/approve'",
                        "'/api/hermes/session/'", "'/api/office/mcp'",
-                       "'/api/office/heartbeat'", "'/api/models'"].indexOf(u) >= 0), urls);
+                       "'/api/office/heartbeat'", "'/api/models'",
+                       /* THE CHANGESET LANE (loffice-2026-08-28b). ONE read and three
+                          POSTs, and the POSTs are the whole reason this slice exists:
+                          consent for a spreadsheet change is now a button on this page,
+                          and the WRITE happens bridge-side behind it. The page still
+                          adds no writer of its own — see the writer fence in PART 5. */
+                       "'/api/office/changeset?file='",
+                       "'/api/office/changeset/'"].indexOf(u) >= 0), urls);
 check('the session is deliberately EMPTY, so a spreadsheet question can never appear '
       + 'in — or retitle — a chat in Mission Control',
       /session: ''/.test(send));
@@ -837,7 +844,7 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28a');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28b');
 // ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
 // exactly two, which only held while no comment in the page mentioned the build it was
 // written for — and the one-editor slice writes its own stamp into the comments that
@@ -2159,49 +2166,80 @@ check('…and `clear` forgets it, because on this lane the history is not only o
         && /"choices": \[str\(c\) for c in ch\]/.test(mapper));
 }
 
-// ── THE TOOL NOTE ───────────────────────────────────────────────────────────
+// ── THE TOOL NOTE — THE GROUNDING v2 REWROTE ────────────────────────────────
+/* ⚠️ THIS BLOCK IS THE ONE THAT CHANGED MOST AT loffice-2026-08-28b, AND WHAT IT PINS IS
+   THE INCIDENT'S ROOT CAUSE ON THE MODEL'S SIDE. Debi's 2026-08-27 transcript shows the
+   model turning ONE instruction ("add a purchases row of 200 and update the total") into
+   office_write_cells → office_insert_delete → office_write_cells: three writes, three
+   approval cards, one of them never answered, one tool error, and "Done. … new planned
+   total 1,635" over a sheet that still said 1,435. The tools no longer WRITE, so the
+   grain is enforced rather than requested — but the note still has to teach the shape,
+   and it has to say the two sentences that make a false "Done" a contradiction of its
+   own instructions: you cannot apply, and you do not claim unless a system line says so.
+   docs/FABLE-AGENT-CHANGESET-SPEC.md §4. */
 eval(grab('agentToolNote'));
 eval(grab('agentBrief'));
 {
   const note = agentToolNote('Untitled (4).xlsx');
-  check('with a workbook open, the note names it EXACTLY as the file argument',
+  check('with a workbook open, the note names it EXACTLY as the name argument',
         note.indexOf('THE OPEN WORKBOOK IS NAMED EXACTLY "Untitled (4).xlsx"') >= 0);
-  check('…and forbids office_create while a workbook is open (the tool the model '
-        + 'actually reached for in Debi\'s live transcript)',
-        /NEVER call office_create while a workbook is open/.test(note));
-  check('…and says the approval card IS the consent — no asking in prose first',
-        /Calling a write tool IS the consent step/.test(note)
-        && /do NOT ask "OK\?"/.test(note)
-        && /CALL THE TOOL in the same turn/.test(note));
-  check('with NO workbook open, the note points at create/list instead',
-        /No workbook is open right now/.test(agentToolNote('')));
+  check('with NO workbook open, the note points at office_list and the create op',
+        /No workbook is open right now/.test(agentToolNote(''))
+        && /create_workbook/.test(agentToolNote('')));
   check('agentBrief names the open workbook exactly, and covers the no-file case',
         agentBrief('B.xlsx', 'S1').indexOf('Open workbook: "B.xlsx", sheet "S1"') === 0
         && /tools take this exact name/.test(agentBrief('B.xlsx', 'S1'))
         && /No workbook is open/.test(agentBrief('', '')));
-  ['office_list', 'office_read', 'office_sheet_stats', 'office_write_cells',
-   'office_sort', 'office_insert_delete', 'office_create'].forEach(t =>
-    check('the agent is told it has ' + t, note.indexOf(t) >= 0));
+  ['office_list', 'office_read', 'office_sheet_stats', 'office_stage_changes']
+    .forEach(t => check('the agent is told it has ' + t, note.indexOf(t) >= 0));
   check('…and that the tools are the PREFERRED route over the taught block, because '
         + 'aiPreamble teaches that block on this lane too',
         /PREFER THE TOOLS/.test(note) && /instead of emitting a loffice block/.test(note));
-  check('…that the work is multi-step, which is the whole reason this lane exists',
-        /read, then compute, then write, then read back/.test(note));
-  check('…that a tool takes a NAME and never a path, which is the containment rule S1 '
-        + 'enforces by construction', /NAME, never a path/.test(note));
-  // ⚠️ rewritten 2026-08-27: the old sentence ("say plainly what you are about to
-  // change before you call a write tool") made the model ask consent in PROSE and stall
-  // — the approval card is the consent, so the note now says call-in-the-same-turn.
-  check('…and that a write shows an approval card and keeps a pre-write copy',
-        /approval card/.test(note) && /pre-write copy/.test(note));
-  check('the tool names are EXACTLY the seven the MCP server serves',
+  check('…that a tool takes a NAME and never a path, which is the containment rule the '
+        + 'MCP server enforces by construction', /NAME, never a path/.test(note));
+
+  // THE FOUR SENTENCES THE SPEC'S §4 ASKS FOR, each pinned on its own so a rewrite
+  // cannot quietly drop one.
+  check('1. READ FIRST, then compute — the multi-step shape this lane exists for',
+        /READ the workbook first/.test(note) && /work out every cell/.test(note));
+  check('2. STAGE ONCE, with the COMPLETE op list for the whole request — the direct '
+        + 'answer to three write calls for one intention',
+        /ONCE with the COMPLETE list of operations/.test(note)
+        && /for the whole request/.test(note));
+  check('…and that a second staging call REPLACES the first, so "send it in pieces" is '
+        + 'named as the loss it is',
+        /REPLACES the first proposal/.test(note) && /LOSES the earlier pieces/.test(note));
+  check('3. …then STOP, and do not ask for permission in prose',
+        /and STOP\./.test(note) && /do not ask "OK\?"/.test(note));
+  /* ⚠️⚠️ THE TWO SENTENCES THAT ANSWER THE FALSE "DONE" DIRECTLY. Everything else in
+     this slice makes a lie visible; these make it a violation of the model's own
+     instructions, which is the cheapest place to stop it. */
+  check('4. …and it says PLAINLY that the model cannot apply anything',
+        /YOU CANNOT APPLY CHANGES/.test(note) && /There is no apply tool/.test(note)
+        && /Only Debi can press Apply/.test(note));
+  check('…AND THAT IT MUST NEVER CLAIM A CHANGE WAS MADE WITHOUT A SYSTEM LINE — named '
+        + 'in the model\'s own vocabulary (a row added, a total updated), because that '
+        + 'is the exact sentence the incident produced',
+        /NEVER claim a change was made/.test(note)
+        && /a row\s+was added or a total was updated/.test(note.replace(/\n/g, ' '))
+        && /unless a system line in this conversation\s+confirms/.test(note));
+  check('…and that a refusal is to be repeated, not smoothed over',
+        /says it was refused, say that plainly/.test(note));
+  check('staging is described as writing NOTHING, on the model\'s side of the wire too',
+        /Staging writes NOTHING/.test(note));
+  check('the tool names are EXACTLY the four the MCP server serves — the retired write '
+        + 'tools are not taught, and a fifth tool could not be taught unnoticed',
         (() => {
           const mcp = fs.readFileSync(path.join(ROOT, 'bridge', 'office_mcp.py'), 'utf8');
           const served = Array.from(new Set(mcp.match(/"name": "(office_[a-z_]+)"/g) || [])
             .values()).map(s => s.split('"')[3]).sort();
           const told = Array.from(new Set(note.match(/office_[a-z_]+/g) || [])).sort();
-          return served.length === 7 && JSON.stringify(served) === JSON.stringify(told);
+          return served.length === 4 && JSON.stringify(served) === JSON.stringify(told);
         })());
+  check('…and the retired write tools are named NOWHERE in the page: a grounding that '
+        + 'still offered office_write_cells would teach a tool that does not exist',
+        !/office_write_cells|office_insert_delete|office_create\b/.test(code)
+        && !/office_sort/.test(code));
 }
 
 // ── THE APPROVAL CARD ───────────────────────────────────────────────────────
@@ -2231,34 +2269,43 @@ eval(grab('agentToolOf'));
   eval(grab('preAgentName')); eval(grab('agentToolOf'));
   const AGENT_TOOLS = eval('(' + (code.match(/const AGENT_TOOLS = (\{[\s\S]*?\});/) || [])[1] + ')');
   eval(grab('agentCardText'));
-  const t = agentCardText({ command: "MCP tool 'office_write_cells' on UNTRUSTED server 'loffice' wants to run." });
-  check('the card names the tool', /office_write_cells/.test(t));
-  check('…and says in English what that tool does', /write cells into a workbook/.test(t));
-  check('…and that nothing is written until it is approved',
-        /Nothing is written until you approve it/.test(t));
-  check('…and names the pre-write copy BY FILENAME, because "a copy is kept" is not an '
-        + 'answer to "kept where?"', t.indexOf('Budget.pre-agent.xlsx') > 0);
-  check('…and states the agent-lane undo honestly: the copy, NOT this page\'s Undo — '
-        + 'the in-memory stack cannot cover a server-side write and must not pretend to',
-        /not this page’s Undo/.test(t));
-  check('…and that an unsaved workbook is refused outright, which is the S1 rule the '
-        + 'heartbeat exists to make true', /unsaved edits open here is refused/.test(t));
-  const four = ['office_write_cells', 'office_sort', 'office_insert_delete',
-                'office_create'];
-  check('every tool Hermes will put behind a card has a plain-English line here',
-        four.every(n => typeof AGENT_TOOLS[n] === 'string' && AGENT_TOOLS[n].length > 5));
-  eq('…and ONLY those four: a read tool with a card line would be describing a card '
-     + 'that never appears', Object.keys(AGENT_TOOLS).sort(), four.slice().sort());
-  check('…and they are exactly the four the bridge reports as gated, so the page and '
-        + 'the server agree about which calls stop for a person',
+  const t = agentCardText({ command: "MCP tool 'shell' on UNTRUSTED server 'x' wants to run." });
+  check('the card names the tool it was told about', /shell/.test(t));
+  check('…and that nothing happens until it is answered',
+        /Nothing happens until you answer this/.test(t));
+  /* ⚠️⚠️ THE CARD'S JOB CHANGED COMPLETELY AT loffice-2026-08-28b AND SO DID THESE
+     ASSERTIONS. Every tool on the loffice server is read-only now, so Hermes has nothing
+     here to gate: an Office tool CANNOT produce this card any more. The old checks
+     (which tool it is, the pre-agent copy, the dirty refusal) described a surface that
+     no longer exists, and the honest replacement is the NEGATIVE — the card says out
+     loud that it is not a spreadsheet change, because a card that let Debi think she was
+     approving a cell write would be worse than the two cards the incident produced. */
+  check('…and SAYS PLAINLY that this is not a spreadsheet change, because no Office '
+        + 'tool can ask here any more',
+        /This is NOT a spreadsheet change/.test(t) && /no Office tool can write/.test(t));
+  check('…and points at where a spreadsheet change DOES ask — a card with every cell '
+        + 'listed and an Apply button',
+        /every cell listed and an Apply button/.test(t));
+  check('…and states the limit that has not moved: this panel cannot show the tool\'s '
+        + 'arguments, because Hermes\'s gate does not put them on the wire',
+        /cannot\s+show its arguments/.test(t.replace(/\n/g, ' '))
+        && /approve\s+it only if you know what asked/.test(t.replace(/\n/g, ' ')));
+  eq('AGENT_TOOLS IS EMPTY, and the emptiness is the assertion: a line for '
+     + 'office_write_cells would be describing a card that never appears',
+     Object.keys(AGENT_TOOLS), []);
+  check('…and the bridge agrees that NOTHING on the loffice server is gated any more, '
+        + 'because nothing on it can write',
         (() => {
           const mcp = fs.readFileSync(path.join(ROOT, 'bridge', 'office_mcp.py'), 'utf8');
-          return four.every(n => mcp.indexOf('"' + n + '"') > 0)
-                 && /def write_tool_names/.test(mcp);
+          return /def write_tool_names/.test(mcp)
+                 && mcp.indexOf('"office_write_cells"') < 0
+                 // Every row in the catalog is read-only, so write_tool_names() is []
+                 && (mcp.match(/"read_only": False/g) || []).length === 0
+                 && (mcp.match(/"read_only": True/g) || []).length === 4;
         })());
   const t2 = agentCardText({});
   check('an approval whose command could not be parsed still says what class of thing '
-        + 'is about to happen', /write-capable Office tool/.test(t2));
+        + 'is about to happen', /write-capable tool/.test(t2));
 }
 {
   /* ZERO NEW CSS, computed the same way PART 5 computes it for the Quick lane's card:
@@ -2555,6 +2602,244 @@ eval(grab('extPlan'));
      msg.kids.length, 1);
 }
 
+/* ══ 4b. THE CHANGESET CARD — ONE INTENTION, ONE CARD ═══════════════════════════
+   (loffice-2026-08-28b, docs/FABLE-AGENT-CHANGESET-SPEC.md §2)
+
+   THE INCIDENT THIS BLOCK EXISTS FOR, from docs/research/2026-08-27-agent-consent-
+   incident.md, in its own words: "add a new row called purchases and the amount for it
+   is 200" produced TWO approval cards, one was never answered, a write failed, and the
+   model said "Done. Added Purchases = 200 on row 7 … new planned total 1,635" while the
+   sheet still showed 6 rows and 1,435 — with NOTHING in the panel contradicting it.
+
+   So the assertions below are not "does the card render". They are the four rules that
+   make that transcript impossible:
+     1. ONE card per staged changeset, listing every op and every cell's before → after.
+     2. A harness-authored status line under EVERY staging turn — narration never stands
+        alone.
+     3. A success badge that can ONLY come from a receipt (cells_written + a re-read
+        verify + a receipt hash), never from model text and never from an HTTP 200.
+     4. Whether something was staged is read from the BRIDGE, not from the reply.
+   Plus the outcome line that reaches the model's next turn, and the ✗ chips. */
+{
+  eval(grab('csRows')); eval(grab('csCardText')); eval(grab('csReceiptText'));
+  eval(grab('csPrefix'));
+  const CS_LIST_MAX = num('CS_LIST_MAX');
+
+  // ── the before→after list, which is the review surface (spec §5: no editor-side
+  //    highlight in v2 — this list IS the diff Debi reads) ──
+  const cs = {
+    changeset_id: 'abc123', name: 'ZZ final A.xlsx', op_count: 3,
+    summary: 'ZZ final A.xlsx: 3 cells written, 1 row/column(s) inserted — 4 cells '
+           + 'would change.',
+    op_list: ['insert 1 blank row(s) above row 7', 'set A7:B7', 'set B8'],
+    preview: [{ sheet: 'Sheet1', ref: 'A7', before: 'Total', after: 'purchases' },
+              { sheet: 'Sheet1', ref: 'B7', before: '=SUM(B2:B6)', after: '200' },
+              { sheet: 'Sheet1', ref: 'A8', before: '', after: 'Total' },
+              { sheet: 'Sheet1', ref: 'B8', before: '', after: '=SUM(B2:B7)' }],
+    preview_total: 4, notes: ['formula references were NOT rewritten'],
+  };
+  const rows = csRows(cs);
+  eq('every touched cell is listed as ref, before → after — including the cells the '
+     + 'INSERT moved that nobody named, which is exactly what a per-call approval card '
+     + 'could never show', rows.lines,
+     ['A7  Total  →  purchases',
+      'B7  =SUM(B2:B6)  →  200',
+      'A8  (empty)  →  Total',
+      'B8  (empty)  →  =SUM(B2:B7)']);
+  eq('…and nothing is hidden: a change over the list cap SAYS how many more there are',
+     csRows({ preview: [{ ref: 'A1', before: '', after: 'x' }], preview_total: 900 }).more,
+     899);
+  eq('an empty cell reads as "(empty)" on both sides rather than as a blank gap',
+     csRows({ preview: [{ ref: 'A1', before: 'x', after: '' }] }).lines,
+     ['A1  x  →  (empty)']);
+  check('the list cap is a real number and is not one row',
+        CS_LIST_MAX >= 20 && rows.more === 0);
+  [null, undefined, {}, 0, 'x', { preview: 'no' }].forEach((v, i) => {
+    let threw = null, r = null;
+    try { r = csRows(v); } catch (e) { threw = e; }
+    check('csRows survives junk input (case ' + i + ')', !threw && r && !r.lines.length);
+  });
+
+  // ── the card's words: a PROPOSAL, and the two guarantees behind Apply ──
+  const t = csCardText(cs);
+  check('the card says how many operations, and names the workbook',
+        /3 operations/.test(t) && t.indexOf('ZZ final A.xlsx') > 0);
+  check('…carries the bridge\'s own summary line rather than re-deriving one',
+        t.indexOf(cs.summary) > 0);
+  check('…SAYS NOTHING HAS BEEN WRITTEN, which is the sentence the whole lane rests on',
+        /Nothing has been written/.test(t) && /this is a proposal/.test(t));
+  check('…that Apply is the only thing that touches the file',
+        /Apply is the only thing\s+that touches the file/.test(t.replace(/\n/g, ' ')));
+  check('…and that Apply checkpoints first, so the click is responsible rather than '
+        + 'merely quick (spec §3)',
+        /keeps a checkpoint first/.test(t) && /can be undone/.test(t));
+  eq('one operation is not "1 operations"', /1 operation\b/.test(
+     csCardText({ op_count: 1, name: 'a.xlsx', summary: '' })), true);
+  check('csCardText survives junk', (() => {
+    try { return typeof csCardText(null) === 'string'; } catch (e) { return false; } })());
+
+  /* ⚠️⚠️ 3. THE BADGE COMES FROM THE RECEIPT AND FROM NOTHING ELSE. This is the
+     assertion that answers "the model claimed Done": the only text that can ever say
+     "applied" is built from numbers the bridge measured AFTER saving the file. */
+  const r = { changeset_id: 'abc123', receipt: 'fe2e56d8', cells_written: 3,
+              rows_or_columns_inserted: 1, verify_note: '4 of 4 …' };
+  const badge = csReceiptText(r);
+  eq('the badge states what actually landed and the receipt that proves it', badge,
+     '✓ applied · 3 cells written, 1 inserted · receipt fe2e56d8');
+  check('a receipt with no cell change still says so rather than claiming a write',
+        /no cell changed/.test(csReceiptText({ receipt: 'x' })));
+  check('…and a receipt with no hash does not invent one',
+        /receipt \?$/.test(csReceiptText({ cells_written: 1 })));
+  check('a DELETE is shouted in the badge, because it is the one outcome that cannot be '
+        + 'read off the sheet by eye',
+        /DELETED/.test(csReceiptText({ rows_or_columns_deleted: 2, receipt: 'x' })));
+  const src = grab('csApply');
+  check('THE BADGE IS ONLY REACHED FROM AN APPLY RESPONSE — csReceiptText is called with '
+        + 'the parsed body of the apply POST and with nothing else, and the whole page '
+        + 'calls it exactly once',
+        /csStamp\(card, csReceiptText\(j\)\)/.test(src)
+        && (code.match(/csReceiptText\(/g) || []).length === 2);
+  check('…and a non-ok apply NEVER reaches it: the throw is before the stamp',
+        src.indexOf('throw new Error') < src.indexOf('csReceiptText'));
+  check('…a failed apply says "NOT applied" and leaves the card answerable, rather than '
+        + 'stamping something',
+        /That was NOT applied: /.test(src) && /csBusy\(card, false\)/.test(src));
+  check('…and the receipt\'s RE-READ is shown, so "it says it wrote it" and "the file '
+        + 'says so" are two visible facts',
+        /re-read from the file after saving/.test(src) && /j\.verify/.test(src));
+
+  // ── 2. THE STATUS LINE: harness-authored, on every staging turn ──
+  eq('the status line is the spec\'s sentence, character for character',
+     (code.match(/CS_STAGED_LINE = '([^']+)'/) || [])[1],
+     '⏳ staged — nothing is written until you press Apply');
+  const after = grab('csAfterTurn');
+  check('…and it is drawn for EVERY turn that staged something, before the card and '
+        + 'unconditionally — narration never stands alone',
+        /csStatusLine\(turn\.wrap\);\s*\n\s*csShown = cs\.changeset_id;\s*\n\s*csCard\(/
+          .test(after));
+  check('…and there is exactly one way to draw it',
+        (code.match(/function csStatusLine\(/g) || []).length === 1);
+
+  /* 4. WHETHER SOMETHING WAS STAGED IS A FACT ABOUT THE BRIDGE. A model that says it
+     staged nothing still gets the card; one that claims it staged something when it did
+     not gets neither card nor status line. */
+  check('the panel ASKS THE BRIDGE for the pending changeset instead of parsing the '
+        + 'reply for a claim',
+        /fetch\('\/api\/office\/changeset\?file='/.test(grab('csRead'))
+        && !/out\b|reply|text/.test(grab('csAfterTurn')));
+  check('…keyed by the open workbook AND the session the turn belongs to',
+        /file=' \+ encodeURIComponent\(current \|\| ''\)/.test(grab('csRead'))
+        && /session=' \+ encodeURIComponent\(agentSid \|\| ''\)/.test(grab('csRead')));
+  check('…and it runs after EVERY agent turn, error or not — a model that staged and '
+        + 'then crashed mid-sentence still staged it',
+        /await csAfterTurn\(turn\);/.test(asend)
+        && stripComments(asend).indexOf('await csAfterTurn') >
+           stripComments(asend).lastIndexOf('turn.wrap.appendChild(d)'));
+  check('a proposal outlives the page: the tick re-draws a pending card after a reload, '
+        + 'so a changeset can never be left unapplyable and forgotten',
+        /csTick\(\);/.test(grab('pageTick'))
+        && /cs\.changeset_id === csShown/.test(grab('csTick'))
+        && /aiLane !== LANE_AGENT \|\| aiBusy/.test(grab('csTick')));
+
+  // ── APPLY / DISMISS / UNDO, on the wire ──
+  check('Apply POSTs to the bridge\'s apply route — the write happens THERE, not here',
+        /\/apply'/.test(src)
+        && /'\/api\/office\/changeset\/'\s*\n?\s*\+ encodeURIComponent\(cs\.changeset_id\)/
+             .test(src)
+        && /method: 'POST'/.test(src));
+  check('…and the document is reloaded through the page\'s EXISTING path afterwards, '
+        + 'never re-rendered from what we think we wrote',
+        /ooExtReload\(j\.name\)/.test(src) && /extSeen = 0/.test(src));
+  const dis = grab('csDismiss');
+  check('Dismiss POSTs to the dismiss route and stamps the honest sentence',
+        /\/dismiss'/.test(dis)
+        && /✗ dismissed — nothing was written/.test(dis));
+  check('…and a dismiss that FAILED does not stamp it as dismissed',
+        dis.indexOf('throw new Error') < dis.indexOf('csStamp')
+        && /dismiss failed: /.test(dis));
+  const un = grab('csUndo');
+  check('"Undo this change" is offered ONLY when the apply receipt carried a checkpoint '
+        + '— an undo button with nothing behind it is a lie',
+        /if \(j\.checkpoint\) \{/.test(src) && /'Undo this change'/.test(src));
+  check('…and it POSTs the undo route, then reloads the document',
+        /\/undo'/.test(un) && /ooExtReload\(j\.name\)/.test(un));
+  check('…and a REFUSED undo (the mtime fence) reads as a refusal carrying the bridge\'s '
+        + 'own sentence, never as an undo that quietly did nothing',
+        /Not undone: /.test(un) && /e\.message/.test(un)
+        && un.indexOf('throw new Error') < un.indexOf('Not undone'));
+  check('every one of the three answers beacons, so "I pressed Apply and nothing '
+        + 'happened" is answerable from the boot log alone',
+        ['cs-card', 'cs-applied', 'cs-dismissed', 'cs-undone', 'cs-recovered']
+          .every(b => code.indexOf("bx('" + b + "'") > 0)
+        && ['cs-apply-fail', 'cs-dismiss-fail', 'cs-undo-fail', 'cs-fetch-fail']
+          .every(b => code.indexOf("bx('" + b + "'") > 0));
+
+  /* ⚠️⚠️ THE SESSION LINE — spec §2's "the bridge injects one system line into the
+     Hermes session", shipped as the spec's own named fallback. The vendored gateway has
+     no way to append a message to an IDLE session (session.steer lands on the next TOOL
+     RESULT, i.e. after the next turn has already begun answering, and records a fake
+     user bubble on the way — see bridge/office_ops.push_session_line). So the bridge
+     queues the line and this page prepends it to the next agent message, which puts it
+     in the model's context BEFORE it thinks. What is pinned here is that it cannot be
+     lost and cannot be silently dropped. */
+  const pre = csPrefix(['[LOffice] changeset abc was APPLIED …',
+                        '[LOffice] changeset def was DISMISSED …']);
+  check('the outcome lines ride in front of the next message, labelled as the RECORD '
+        + 'and not as the user speaking',
+        pre.indexOf('SYSTEM — what happened in LOffice since your last turn') === 0
+        && /not the user speaking/.test(pre)
+        && pre.indexOf('APPLIED') > 0 && pre.indexOf('DISMISSED') > 0);
+  eq('…and no lines means no prefix at all — an empty preamble is noise',
+     [csPrefix([]), csPrefix(null), csPrefix(['', '  '])], ['', '', '']);
+  check('the message really carries it, in front of the grounding',
+        /csPrefix\(carried\) \+ grounding/.test(asend));
+  check('…and the queue is drained AS IT IS SENT, so a line that never reached a message '
+        + 'is a line still owed',
+        /const carried = csLines\.slice\(\);\s*\n\s*csLines = \[\];/.test(asend));
+  check('…both outcomes queue one: the bridge hands back session_line on apply AND on '
+        + 'dismiss, and the page records both',
+        /csNote\(j\.session_line\)/.test(src) && /csNote\(j\.session_line\)/.test(dis)
+        && /csNote\(j\.session_line\)/.test(un));
+  check('…and lines the page missed (it was reloaded) are recovered from the bridge',
+        /session_lines \|\| \[\]\)\.forEach\(csNote\)/.test(grab('csRead')));
+  check('a line is never queued twice', /csLines\.indexOf\(s\) < 0/.test(grab('csNote')));
+
+  // ── ✗ CHIPS: the silent-failure gap, closed ──
+  const chip = grab('csErrChip');
+  check('a failed tool result renders as a red chip carrying the TOOL\'S OWN sentence — '
+        + '"a tool failed" is not an answer to "what went wrong"',
+        /className = 'err'/.test(chip) && /'✗ '/.test(chip)
+        && /String\(why \|\| /.test(chip));
+  const fr = grab('agentFrame');
+  check('…driven off the frame the BRIDGE sets when a tool result carries an error, so '
+        + 'it fires for native tools and for every MCP server alike',
+        /if \(j && j\.is_error\)/.test(fr) && /csErrChip\(turn\.wrap/.test(fr));
+  check('…and the bridge really sets it',
+        /fr\["is_error"\] = True/.test(
+          fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8')));
+  check('…and the chip survives the end-of-turn re-render, which would otherwise delete '
+        + 'it the moment the model\'s prose arrived',
+        /held\.errors = \(held\.errors \|\| \[\]\)\.concat/.test(fr)
+        && /\(held\.errors \|\| \[\]\)\.forEach\(e => csErrChip\(turn\.wrap, e\.tool, e\.why\)\)/
+             .test(asend));
+  check('…and the step list says it failed too, so the "tools used" disclosure cannot '
+        + 'read as a clean run', /' — ✗ '/.test(fr));
+
+  // ── ZERO NEW CSS, computed the way PART 5 computes it for the other cards ──
+  const csSrc = ['csCard', 'csStamp', 'csStatusLine', 'csErrChip'].map(grab).join('\n');
+  const csCls = Array.from(new Set((csSrc.match(/className = '([\w-]+)'/g) || [])
+    .map(x => x.split("'")[1])));
+  check('the changeset card is built from several existing classes', csCls.length >= 4);
+  check('…and EVERY one of them is already in the stylesheet — the Quick lane\'s exact '
+        + 'visual grammar, which is what the spec asked for by name',
+        csCls.every(c => rules.some(rr => new RegExp('\\.' + c + '(?![\\w-])').test(rr.sel))),
+        csCls);
+  check('…and it reuses the Quick lane\'s own card helpers rather than a second set',
+        /actChip\(bar, 'Apply'\)/.test(grab('csCard'))
+        && /actChip\(bar, 'Dismiss', 'lnk'\)/.test(grab('csCard'))
+        && /actDet\(/.test(grab('csCard')) && /actNote\(card/.test(src));
+}
+
 // ── 5. THE WRITER FENCE — THE NEGATIVE THAT MATTERS MOST ────────────────────
 /* ⚠️⚠️ THE AGENT LANE ADDS ZERO PAGE-SIDE WRITERS, AND THAT IS THE WHOLE SAFETY STORY
    OF THIS SLICE. Hermes's writes land on DISK — through office_ops.py, behind Hermes's
@@ -2569,7 +2854,16 @@ eval(grab('extPlan'));
               'agentToolOf',
               'agentCardText', 'agentCard', 'agentApprove', 'agentStamp', 'agentExpire',
               'hbPlan', 'hbPost', 'hbRun', 'hbSync', 'extPlan', 'extCheck', 'extAct',
-              'pageTick', 'pageTickStart'];
+              'pageTick', 'pageTickStart',
+              /* ⚠️ AND THE CHANGESET LANE (loffice-2026-08-28b), WHICH IS WHERE THE
+                 FENCE EARNS ITS KEEP. This lane's Apply WRITES A WORKBOOK — so the one
+                 thing that must be provable is that the write does not happen HERE. It
+                 happens bridge-side, in office_ops.apply_changeset, behind a checkpoint;
+                 the page POSTs an id and reloads the document. Every function of it is
+                 listed, and not one of them may touch a cell or the dirty flag. */
+              'csNote', 'csPrefix', 'csRows', 'csCardText', 'csReceiptText', 'csCard',
+              'csBusy', 'csApply', 'csDismiss', 'csUndo', 'csStamp', 'csStatusLine',
+              'csErrChip', 'csRead', 'csAfterTurn', 'csTick'];
   check('every function this slice added is actually IN the page — a vacuous fence is '
         + 'no fence', S2.every(n => fnNames.indexOf(n) >= 0), S2.filter(n => fnNames.indexOf(n) < 0));
   check('and NOT ONE of them writes a cell, moves one, or sets the dirty flag',
