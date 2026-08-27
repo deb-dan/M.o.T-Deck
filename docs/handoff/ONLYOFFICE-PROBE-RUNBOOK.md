@@ -276,3 +276,21 @@ converter for both.** Still open before shipping, exactly as the runbook fenced:
 AGPL-3.0-served-from-our-page ruling — Fable call, NOT yet made; (b) save-back proof (check 3);
 (c) Track B (CryptPad zips) is what gets vendored — Track A was the measurement vehicle only;
 (d) RAM under a real tab; (e) the COOP/COEP serving requirement lands in the bridge.
+
+## ⚖️ THE AGPL RULING (Fable 5, 2026-08-27) — GO for personal use, with distribution conditions
+
+ONLYOFFICE's editors and x2t are AGPL-3.0. The AGPL's obligations attach to **conveying**
+the software or offering it as a **network service to others** — neither of which a
+loopback-only personal harness does. Serving the unmodified bundle from the bridge to the
+same machine's own user is private use; running it is unconditionally permitted.
+
+**Ruling: GO for LOffice tier-2 adoption, on four standing conditions:**
+1. **Vendor Track B only** (CryptPad-lineage zips), UNMODIFIED, with the recorded hashes and
+   upstream source URLs kept beside them — the hashes in CHECKSUMS.txt are the provenance.
+2. **Arm's length**: served as its own static bundle under its own route; no intermixing of
+   its code with ours (the SearXNG conveyance posture, one step closer but same shape).
+3. **If the harness is ever distributed** (the fat dmg to anyone else): the About/Help
+   surface must name ONLYOFFICE + AGPL-3.0 and link the exact source of the vendored
+   version; any modification we ever make to the bundle must be published. This line item
+   goes into the fat-installer checklist NOW so it cannot be forgotten later.
+4. Track A (fernfei) is **never** shipped — measurement vehicle only, provenance unverified.
