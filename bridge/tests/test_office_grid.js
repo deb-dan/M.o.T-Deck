@@ -822,7 +822,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-21k');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-27a');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
@@ -1101,21 +1101,623 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
                            return nodes.hnote.textContent === 'the fidelity sentence'; })());
     })();
 
-    // ── FIND, the one new capability ──
+    // ── FIND ──
+    // ⚠️ TWO OF THESE MOVED AT 2026-08-27a: the scan came OUT of findRun into
+    // `findScan`, so that Replace scans through the same function Find does. Two
+    // scanners could disagree about how many matches there are, and "Replace all
+    // replaced 7 when the bar said 6" is the kind of report that costs a day.
     check('Find scans the SHEET, not the DOM, so it can match a row that is not drawn '
-          + 'yet', /cellAt\(sh, r, c\)/.test(grab('findRun'))
-          && /usedExtent\(sh\)/.test(grab('findRun')));
+          + 'yet', /cellAt\(sh, r, c\)/.test(grab('findScan'))
+          && /usedExtent\(sh\)/.test(grab('findScan')));
+    check('…through ONE scanner, which Replace uses too, so the count in the bar and the '
+          + 'count Replace all reports cannot disagree',
+          /findHits = findScan\(sh, q\)/.test(grab('findRun'))
+          && /findScan\(sh, q\)/.test(grab('findReplaceAll'))
+          && /findScan\(sh, q\)/.test(grab('findReplaceOne')));
     check('…and then GROWS the render window to reach the match, terminating even when '
           + 'the column cap is hit',
           /while \(h\.r >= viewRows\)/.test(grab('findGo'))
           && /viewCols < TIER1_MAX_COLS/.test(grab('findGo')));
     check('…is capped, so a one-letter query on a huge sheet cannot hang the tab',
-          num('FIND_MAX') > 0 && /findHits\.length < FIND_MAX/.test(grab('findRun')));
+          num('FIND_MAX') > 0 && /hits\.length < FIND_MAX/.test(grab('findScan')));
     check('…says how many and where you are, and admits when a match sits under a merge',
           /' of ' \+ findHits\.length/.test(grab('findGo'))
           && /merged cell/.test(grab('findGo')));
     check('…and Enter / ⇧Enter walk the matches',
           /findGo\(ev\.shiftKey \? -1 : 1\)/.test(html));
+
+    /* ══ 11. THE UNDO STACK, AND THE THREE GESTURES THAT WERE BLOCKED ON IT ═════
+       (2026-08-27a) Everything in this section is EXECUTED against bare snapshots,
+       because every one of these operations MOVES OR DESTROYS cells and a regex over
+       the source cannot tell a correct row insert from one that duplicates a row.
+
+       The reference doc listed exactly these four as "want an undo stack first"
+       (docs/research/2026-08-21-office-ui-reference.md §7.4), so the stack is tested
+       first and the gestures are tested through it. */
+    (function () {
+      // A const whose value is an expression (4 * 1024 * 1024) rather than a literal,
+      // read out of the page like every other constant in this file: a ceiling changed
+      // there must not keep passing against a copy written down here.
+      function constOf(name) {
+        const m = html.match(new RegExp('^const ' + name + ' = ([^;]+);', 'm'));
+        if (!m) throw new Error('const ' + name + ' not found in office.html');
+        return eval(m[1]);                                    // eslint-disable-line
+      }
+      const HIST_MAX = num('HIST_MAX');
+      const HIST_MAX_BYTES = constOf('HIST_MAX_BYTES');
+      const FIND_MAX = num('FIND_MAX');
+      const FIND_CELL_MAX = num('FIND_CELL_MAX');
+      const RC_MAX = num('RC_MAX');
+      const SORT_BLANK = num('SORT_BLANK');
+      const RC_FORMULA_NOTE = constOf('RC_FORMULA_NOTE');
+      check('the stack is bounded by COUNT and each entry by BYTES — a long session and '
+            + 'one enormous workbook are two different ways to leak a tab',
+            HIST_MAX === 50 && HIST_MAX_BYTES === 4 * 1024 * 1024);
+
+      // ── the page's module state, and the stubs the gestures reach for ──
+      let snap = null, activeSid = 's1', dirty = false, current = 'Book.xlsx',
+          busy = false, mode = 'grid', viewRows = 0, viewCols = 0, openMenu = -1;
+      const beacons = [], said = [];
+      let rendered = 0, painted = 0;
+      function bx(stage, detail) { beacons.push(stage + ':' + (detail === undefined ? '' : detail)); }
+      function say(text, kind) { said.push(String(text)); }
+      function renderGrid() { rendered++; }
+      function paint() { painted++; }
+      function findClear() { findHits = []; findAt = -1; }
+      function findPaint() {}
+      function aiPaint() {}
+      function menuPaint() {}
+      function t1ok() { return !!current && !busy && mode === 'grid'; }
+      function activeSheet() { return (snap && snap.sheets) ? (snap.sheets[activeSid] || null) : null; }
+      function commitFocused() {}
+      let lastRC = null;
+      function lastCellNow() { return (lastRC && activeSheet()) ? lastRC : null; }
+      let findHits = [], findAt = -1;
+      const NO_CELL = 'Click a cell first';
+      const el = () => ({ value: '', textContent: '', disabled: false, focus() {} });
+      const lastSaid = () => said.length ? said[said.length - 1] : '';
+
+      eval(grab('colName')); eval(grab('sheetIds')); eval(grab('cellAt'));
+      eval(grab('putCell')); eval(grab('valueText')); eval(grab('displayText'));
+      eval(grab('parseInput')); eval(grab('usedExtent'));
+      eval(grab('histEntry')); eval(grab('histPush')); eval(grab('histClear'));
+      eval(grab('histCan')); eval(grab('histTop')); eval(grab('histRestore'));
+      eval(grab('histGo')); eval(grab('histPaint'));
+      eval(grab('findScan')); eval(grab('findReplaceText')); eval(grab('replaceWrite'));
+      eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
+      eval(grab('sortKey')); eval(grab('sortOrder')); eval(grab('sortGo'));
+      eval(grab('rcMerges')); eval(grab('rcApply')); eval(grab('rcGo'));
+      let histBack = [], histFwd = [];
+
+      // A sheet with one of everything the honest limits are about: a formula, a merge,
+      // a number, blanks, and a cell nobody in these tests ever mentions (D9 = the
+      // sentinel, exactly as in test_office_ai.js).
+      function book(opts) {
+        const o = opts || {};
+        const cd = { '0': { '0': { v: 'Region', t: 1 }, '1': { v: 'Sales', t: 1 } },
+                     '1': { '0': { v: 'north', t: 1 }, '1': { v: 120, t: 2 } },
+                     '2': { '0': { v: 'Alps', t: 1 }, '1': { v: 90, t: 2 } },
+                     '3': { '0': { v: 'zulu', t: 1 }, '1': { v: 300, t: 2 } },
+                     '8': { '3': { v: 'keep', t: 1 } } };
+        if (o.formula) cd['4'] = { '1': { f: '=SUM(B2:B4)', v: 510, t: 2 } };
+        const sh = { id: 's1', name: 'Sheet1', cellData: cd, rowCount: 200, columnCount: 26 };
+        if (o.merge) sh.mergeData = o.merge;
+        return { sheets: { s1: sh }, sheetOrder: ['s1'] };
+      }
+      function reset(opts) {
+        snap = book(opts); activeSid = 's1'; dirty = false; busy = false;
+        mode = 'grid'; current = 'Book.xlsx'; lastRC = { r: 1, c: 1 };
+        histBack = []; histFwd = [];
+        said.length = 0; beacons.length = 0;
+      }
+
+      /* ── THE STACK ITSELF: byte-for-byte, both ways ─────────────────────────── */
+      reset();
+      const original = JSON.stringify(snap);
+      check('with nothing pushed there is nothing to undo, and nothing to redo',
+            !histCan('undo') && !histCan('redo'));
+      const e1 = histPush('typing in B2');
+      check('a push returns the entry it pushed, so a caller that needs to recognise it '
+            + 'later (the AI card) can hold on to it', !!e1 && e1.label === 'typing in B2');
+      check('…and the stack now offers an undo but still no redo',
+            histCan('undo') && !histCan('redo'));
+      eq('…and names the gesture, which is what the menu row\'s title says',
+         histTop('undo').label, 'typing in B2');
+      putCell(snap.sheets.s1, 1, 1, { v: 999, t: 2 });
+      dirty = true;
+      const after = JSON.stringify(snap);
+      check('the write really changed the document', after !== original);
+      check('UNDO', histGo('undo') === true);
+      eq('UNDO RESTORES THE WORKBOOK BYTE FOR BYTE — a clone put back, not a list of '
+         + 'operations reversed, because reversing has to GUESS what a cell held',
+         JSON.stringify(snap), original);
+      eq('…including the dirty flag, so a clean document goes back to CLEAN and stops '
+         + 'asking to be saved for a change that no longer exists', dirty, false);
+      check('…and the redo is now available, because the present became its top',
+            histCan('redo') && !histCan('undo'));
+      check('REDO', histGo('redo') === true);
+      eq('REDO PUTS IT BACK BYTE FOR BYTE TOO', JSON.stringify(snap), after);
+      eq('…dirty flag included', dirty, true);
+      check('…and undo is available again: the two stacks are symmetric',
+            histCan('undo') && !histCan('redo'));
+      check('every transition is beaconed, so "⌘Z did nothing" is answerable from the '
+            + 'boot log alone',
+            beacons.some(b => /^hist-push:/.test(b)) && beacons.some(b => /^hist-undo:/.test(b))
+            && beacons.some(b => /^hist-redo:/.test(b)));
+      check('…and each restore redraws the grid and repaints the chrome',
+            rendered > 0 && painted > 0);
+
+      // a NEW gesture ends the redo branch
+      reset();
+      histPush('one');
+      putCell(snap.sheets.s1, 0, 5, { v: 'x', t: 1 });
+      histGo('undo');
+      check('after an undo there is a redo waiting', histCan('redo'));
+      histPush('something else');
+      eq('…and a NEW gesture THROWS IT AWAY. Anything else would let ⇧⌘Z jump to a '
+         + 'future that no longer follows from the present, which is not a redo',
+         histFwd.length, 0);
+
+      // the cap
+      reset();
+      for (let i = 0; i < HIST_MAX + 12; i++) {
+        putCell(snap.sheets.s1, 20 + i, 0, { v: i, t: 2 });
+        histPush('change ' + i);
+      }
+      eq('the stack is capped at HIST_MAX entries', histBack.length, HIST_MAX);
+      eq('…and it is the OLDEST that is dropped, never the newest',
+         histTop('undo').label, 'change ' + (HIST_MAX + 11));
+
+      // an entry that will not fit
+      reset();
+      snap.sheets.s1.cellData['99'] = { '0': { v: 'y'.repeat(HIST_MAX_BYTES), t: 1 } };
+      histPush('a change to a huge workbook');
+      check('a workbook too large to clone CLEARS the stack rather than leaving entries '
+            + 'that no longer describe it — an Undo that restores the wrong thing is '
+            + 'worse than no Undo at all',
+            histBack.length === 0 && histFwd.length === 0
+            && beacons.some(b => /^hist-too-large:/.test(b)));
+      check('…and histPush says so by returning null, so the caller knows this gesture '
+            + 'cannot be taken back', histPush('again') === null);
+
+      // the tier and the busy guard
+      reset();
+      histPush('x');
+      mode = 'univer';
+      check('the stack refuses to act while Univer owns the document — restoring a '
+            + 'tier-1 clone under it would edit a snapshot nobody is reading',
+            !histCan('undo') && histGo('undo') === false);
+      mode = 'grid'; busy = true;
+      check('…and not while the page is busy either', !histCan('undo'));
+      busy = false; current = null;
+      check('…and not with no workbook open', !histCan('undo'));
+      current = 'Book.xlsx';
+
+      // ⌘Z inside a cell stays the BROWSER'S undo — the distinction the old disabled
+      // reason drew, kept honest. Asserted over the handler, because the caret only
+      // exists in a browser.
+      const kd = html.slice(html.indexOf('if (k === \'z\' || k === \'y\')'));
+      check('⌘Z / ⌘Y check histEditing() FIRST and return WITHOUT preventDefault, so '
+            + 'while you are typing in a cell the browser\'s own text undo is untouched',
+            kd.indexOf('if (histEditing()) return;') >= 0
+            && kd.indexOf('if (histEditing()) return;') < kd.indexOf('ev.preventDefault();'));
+      check('…and histEditing covers the cell being edited, the find boxes and the AI '
+            + 'composer — all text, all the browser\'s',
+            /dataset\.editing === '1'/.test(grab('histEditing'))
+            && /INPUT/.test(grab('histEditing')) && /TEXTAREA/.test(grab('histEditing')));
+      check('⇧⌘Z and ⌘Y both redo, which is the pair every editor answers to',
+            /\(k === 'y' \|\| ev\.shiftKey\) \? 'redo' : 'undo'/.test(html));
+      check('the history is CLEARED when a workbook is opened or closed — restoring a '
+            + 'clone of another workbook into this one is the corruption this page '
+            + 'refuses to make possible',
+            /histClear\('open ' \+ name\)/.test(grab('showWorkbook'))
+            && /histClear\('close'\)/.test(grab('clearWorkbook')));
+      check('every mutating gesture pushes an entry BEFORE it writes',
+            ['styleWrite', 'clearCell', 'addSheet', 'growRows', 'growCols', 'commit',
+             'sortGo', 'rcGo', 'findReplaceOne', 'findReplaceAll'].every(fn => {
+               const src = grab(fn);
+               const p = src.indexOf('histPush(');
+               return p > 0;
+             }));
+      check('…and `commit` pushes only AFTER the "nothing actually changed" test, or '
+            + 'clicking through fifty cells would fill the whole stack with identical '
+            + 'clones and ⌘Z would appear to do nothing fifty times',
+            grab('commit').indexOf('if (now === was)') < grab('commit').indexOf('histPush('));
+      check('…while growing the render WINDOW is view state and is not undoable — only '
+            + 'the sheet\'s own rowCount/columnCount change is',
+            /if \(\(Number\(sh\.rowCount\) \|\| 0\) < viewRows\) \{\s*\n\s*histPush\(/.test(grab('growRows')));
+      // ⚠️ AND IT DOES NOT MARK THE DOCUMENT DIRTY, which is a separate fact and a
+      // measured one: bridge/office.py reads rowCount and columnCount into the snapshot
+      // and never writes them back, so the saved .xlsx is byte-identical either way.
+      // Asking somebody to save a change the file cannot carry is a lie on screen.
+      check('growing the sheet does NOT claim the file changed, because office.py does '
+            + 'not carry rowCount or columnCount back into the .xlsx',
+            !/dirty = true/.test(grab('growRows')) && !/dirty = true/.test(grab('growCols'))
+            && (fs.readFileSync(path.join(ROOT, 'bridge', 'office.py'), 'utf8')
+                  .match(/rowCount/g) || []).length === 2);
+
+      /* ── FIND AND REPLACE ────────────────────────────────────────────────────── */
+      eq('replace is case-INSENSITIVE, like the find that feeds it, and replaces every '
+         + 'occurrence inside the one cell',
+         findReplaceText('North by north', 'north', 'south'),
+         { text: 'south by south', n: 2 });
+      eq('…and it is not a regex: a user\'s query is text, so a dot matches a dot',
+         findReplaceText('a.b axb', '.', '-'), { text: 'a-b axb', n: 1 });
+      eq('…a query that is not there changes nothing',
+         findReplaceText('abc', 'zz', 'q'), { text: 'abc', n: 0 });
+      eq('…an EMPTY query is refused rather than inserting the replacement between '
+         + 'every character', findReplaceText('abc', '', 'q'), { text: 'abc', n: 0 });
+      eq('…and an empty REPLACEMENT is a deletion, which is a legitimate thing to want',
+         findReplaceText('a-b-c', '-', ''), { text: 'abc', n: 2 });
+      eq('replace terminates when the replacement CONTAINS the query — the one input '
+         + 'that turns a naive loop into a hung tab',
+         findReplaceText('aaa', 'a', 'aa'), { text: 'aaaaaa', n: 3 });
+      [[null, 'a', 'b'], ['x', null, 'b'], ['x', 'a', null], [undefined, undefined, undefined],
+       [42, 4, 5], [{}, 'o', 'x']].forEach((args, i) => {
+        let threw = null, out = null;
+        try { out = findReplaceText(args[0], args[1], args[2]); } catch (e) { threw = e; }
+        check('findReplaceText is total (case ' + i + ')',
+              !threw && out && typeof out.text === 'string' && typeof out.n === 'number');
+      });
+
+      reset();
+      eq('the scan finds every match, case-insensitively, in reading order — "n" is in '
+         + 'both "Region" and "north", and the capital does not hide it',
+         findScan(snap.sheets.s1, 'n').map(h => colName(h.c) + (h.r + 1)),
+         ['A1', 'A2']);
+      eq('…and an empty query matches nothing rather than everything',
+         findScan(snap.sheets.s1, '  ').length, 0);
+      eq('…and a junk sheet costs the scan, never the page',
+         [findScan(null, 'x').length, findScan({}, 'x').length], [0, 0]);
+
+      // REPLACE ALL, executed, then UNDONE
+      reset();
+      const beforeAll = JSON.stringify(snap);
+      const hits = findScan(snap.sheets.s1, 'n');
+      histPush('replacing n throughout Sheet1');
+      const rep = replaceWrite(snap.sheets.s1, hits, 'n', 'N');
+      eq('replace all reports the cells it touched and the occurrences inside them',
+         [rep.cells, rep.occurrences], [2, 2]);
+      eq('…and the cells really say the new thing', [snap.sheets.s1.cellData['1']['0'].v,
+         snap.sheets.s1.cellData['3']['0'].v], ['North', 'zulu']);
+      eq('THE SENTINEL IS UNTOUCHED — replace writes what it matched and nothing else',
+         snap.sheets.s1.cellData['8']['3'], { v: 'keep', t: 1 });
+      check('UNDO after a replace-all', histGo('undo') === true);
+      eq('…and ONE undo entry puts the WHOLE replace-all back, byte for byte',
+         JSON.stringify(snap), beforeAll);
+
+      // the replaced value goes back through parseInput, so it is TYPED
+      reset();
+      putCell(snap.sheets.s1, 6, 0, { v: 'x12', t: 1 });
+      replaceWrite(snap.sheets.s1, [{ r: 6, c: 0 }], 'x', '');
+      eq('a replaced cell is re-TYPED through parseInput, the same converter a person '
+         + 'typing gets — so "x12" → "12" becomes a NUMBER, not the string 12',
+         snap.sheets.s1.cellData['6']['0'], { v: 12, t: 2 });
+      reset();
+      putCell(snap.sheets.s1, 6, 0, { v: 'keepme', t: 1, s: { bl: 1 } });
+      replaceWrite(snap.sheets.s1, [{ r: 6, c: 0 }], 'keep', 'hold');
+      eq('…and the cell\'s STYLE survives the replacement, exactly as it does when the '
+         + 'value is typed over', snap.sheets.s1.cellData['6']['0'].s, { bl: 1 });
+
+      // a match inside a FORMULA is a match in its TEXT, and that is reported
+      reset({ formula: true });
+      const fx = replaceWrite(snap.sheets.s1, findScan(snap.sheets.s1, 'B2'), 'B2', 'B3');
+      eq('a match inside a FORMULA is a match in the formula TEXT, because that is what '
+         + 'this tier shows and stores — and it is counted separately so the message can '
+         + 'warn about it', [fx.cells, fx.formulas], [1, 1]);
+      eq('…and the formula really was rewritten, as text',
+         snap.sheets.s1.cellData['4']['1'].f, '=SUM(B3:B4)');
+      check('…which the page says out loud, in the message and on the row',
+            /holds a FORMULA and its text was rewritten/.test(grab('findReplaceOne'))
+            && /the formula TEXT was rewritten/.test(grab('findReplaceAll')));
+
+      reset();
+      putCell(snap.sheets.s1, 7, 0, { v: 'q'.repeat(FIND_CELL_MAX - 1), t: 1 });
+      const big = replaceWrite(snap.sheets.s1, [{ r: 7, c: 0 }], 'q', 'qqq');
+      eq('a replacement that would make the cell longer than a cell may be is REFUSED '
+         + 'for that cell rather than truncated — half a value written silently into a '
+         + 'document is the outcome this page will not have',
+         [big.cells, big.skipped], [0, 1]);
+      eq('…and the cell is exactly as it was', snap.sheets.s1.cellData['7']['0'].v.length,
+         FIND_CELL_MAX - 1);
+      check('replaceWrite touches no view state and no dirty flag, which is why it can '
+            + 'be run against a bare snapshot here',
+            !/dirty|renderGrid|viewRows|viewCols|document\.|\bel\(/.test(grab('replaceWrite')));
+      check('Replace all says when Find\'s own cap means there may be more',
+            /Replace all again/.test(grab('findReplaceAll')) && FIND_MAX === 500);
+      // A GESTURE THAT CHANGED NOTHING IS NOT A GESTURE, and all three places that can
+      // no-op say so the same way. A ⌘Z that appears to do nothing is the defect class
+      // this page keeps removing, and it is easiest to reintroduce by accident here.
+      check('a replace, a replace-all and a sort that change nothing all decline to '
+            + 'leave a ⌘Z that would appear to do nothing',
+            /histBack\.pop\(\)/.test(grab('findReplaceAll'))
+            && /histBack\.pop\(\)/.test(grab('findReplaceOne'))
+            && grab('sortGo').indexOf('if (!moved) {')
+                 < grab('sortGo').indexOf('histPush('));
+      {
+        // …executed, for the sort, because it is the one that has to compute it
+        snap = { sheets: { s1: { id: 's1', name: 'Sheet1', rowCount: 200, columnCount: 26,
+          cellData: { '0': { '0': { v: 'a', t: 1 } }, '1': { '0': { v: 'b', t: 1 } },
+                      '2': { '0': { v: 'c', t: 1 } } } } }, sheetOrder: ['s1'] };
+        activeSid = 's1'; lastRC = { r: 0, c: 0 };
+        histBack = []; histFwd = []; said.length = 0;
+        const untouched = JSON.stringify(snap);
+        sortGo(false);
+        eq('an already-sorted sheet is left alone, with no history entry and a message '
+           + 'that says nothing moved',
+           [histBack.length, JSON.stringify(snap) === untouched,
+            /already in that order/.test(lastSaid())], [0, true, true]);
+      }
+
+      /* ── SORT ────────────────────────────────────────────────────────────────── */
+      eq('sortKey puts numbers before text before booleans, and BLANKS LAST',
+         [sortKey({ v: 5, t: 2 }).k, sortKey({ v: 'a', t: 1 }).k,
+          sortKey({ v: true, t: 3 }).k, sortKey(null).k, sortKey({ v: '', t: 1 }).k],
+         [0, 1, 2, 3, 3]);
+      eq('…and a FORMULA sorts as its own TEXT, because this tier has no formula engine '
+         + 'and inventing one would be worse than being honest about it',
+         sortKey({ f: '=SUM(A1:A2)', v: 9, t: 2 }).s, '=sum(a1:a2)');
+      reset();
+      eq('A→Z by a NUMERIC column orders by value, not by the text of the number — and '
+         + 'the header row, being TEXT, sorts after them, because sort SHEET sorts row 1 '
+         + 'with the rest and this page does not guess at a header',
+         sortOrder(snap.sheets.s1, 1, false, 4), [2, 1, 3, 0]);
+      eq('…and Z→A is its exact reverse', sortOrder(snap.sheets.s1, 1, true, 4), [0, 3, 1, 2]);
+      eq('A→Z by a TEXT column is case-INSENSITIVE, so "Alps" does not sort above '
+         + '"north" merely for being capitalised (row 1 is the header "Region", and '
+         + 'sort SHEET sorts it with the rest)',
+         sortOrder(snap.sheets.s1, 0, false, 4).map(r => r), [2, 1, 0, 3]);
+      {
+        // blanks last in BOTH directions, and stability
+        const s = { cellData: { '0': { '0': { v: 'b', t: 1 } }, '1': {},
+                                '2': { '0': { v: 'a', t: 1 } }, '3': {} } };
+        eq('blank rows go to the bottom on A→Z…', sortOrder(s, 0, false, 4), [2, 0, 1, 3]);
+        eq('…AND on Z→A: a sheet whose empty rows climb to the top is not a sort '
+           + 'anybody wanted', sortOrder(s, 0, true, 4), [0, 2, 1, 3]);
+        const t = { cellData: { '0': { '0': { v: 'x', t: 1 } }, '1': { '0': { v: 'x', t: 1 } },
+                                '2': { '0': { v: 'x', t: 1 } } } };
+        eq('equal keys keep the order they were already in — the sort is STABLE, so '
+           + 'sorting twice does not shuffle ties', sortOrder(t, 0, false, 3), [0, 1, 2]);
+      }
+
+      // THE GESTURE, executed: values move WITH their rows.
+      // ⚠️ a sheet of its own, four rows of it, because "sort SHEET" really does sort the
+      // WHOLE used extent — including the D9 sentinel row `book()` carries — and a test
+      // that expected otherwise would be testing a sort this page does not perform.
+      function sortBook(withFormula) {
+        const cd = { '0': { '0': { v: 'Region', t: 1 }, '1': { v: 'Sales', t: 1 } },
+                     '1': { '0': { v: 'north', t: 1 }, '1': { v: 120, t: 2 } },
+                     '2': { '0': { v: 'Alps', t: 1 }, '1': { v: 90, t: 2 } },
+                     '3': { '0': { v: 'zulu', t: 1 }, '1': { v: 300, t: 2 } } };
+        if (withFormula) cd['3']['2'] = { f: '=B4*2', v: 600, t: 2 };
+        return { sheets: { s1: { id: 's1', name: 'Sheet1', cellData: cd,
+                                 rowCount: 200, columnCount: 26 } },
+                 sheetOrder: ['s1'] };
+      }
+      snap = sortBook(true); activeSid = 's1'; dirty = false; histBack = []; histFwd = [];
+      said.length = 0; beacons.length = 0;
+      lastRC = { r: 0, c: 1 };                       // the focused column is B
+      const beforeSort = JSON.stringify(snap);
+      sortGo(false);
+      eq('the sort moved whole ROWS: the sales column is now ascending, with the text '
+         + 'header after the numbers',
+         [0, 1, 2, 3].map(r => snap.sheets.s1.cellData[String(r)]['1'].v),
+         [90, 120, 300, 'Sales']);
+      eq('…and column A came WITH it, row by row, which is the whole of "values with '
+         + 'their rows"',
+         [0, 1, 2, 3].map(r => snap.sheets.s1.cellData[String(r)]['0'].v),
+         ['Alps', 'north', 'zulu', 'Region']);
+      check('the message says which column it sorted by, how many rows moved, that row 1 '
+            + 'went with them, and where the blanks went',
+            /by column B/.test(lastSaid()) && /moved/.test(lastSaid())
+            && /Row 1 was sorted with the rest/.test(lastSaid())
+            && /Blank cells went to the bottom/.test(lastSaid()));
+      check('…and, because this sheet holds a formula, it says the references were NOT '
+            + 'rewritten — the honest half of the old disabled reason',
+            lastSaid().indexOf(RC_FORMULA_NOTE) > 0);
+      eq('the formula moved with its row, as TEXT, and still says exactly what it said: '
+         + 'it was in C4 and is now in C3, and it STILL reads =B4*2',
+         snap.sheets.s1.cellData['2']['2'].f, '=B4*2');
+      check('one gesture, one undo entry', histBack.length === 1);
+      check('UNDO after a sort', histGo('undo') === true);
+      eq('…and the whole sort comes back byte for byte', JSON.stringify(snap), beforeSort);
+
+      // THE MERGE REFUSAL — the honest limit, stated
+      reset({ merge: [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }] });
+      lastRC = { r: 0, c: 1 };
+      const beforeRefuse = JSON.stringify(snap);
+      sortGo(false);
+      eq('A SHEET WITH A MERGED RANGE IS NOT SORTED AT ALL, and nothing was touched',
+         JSON.stringify(snap), beforeRefuse);
+      eq('…and no history entry was pushed for a gesture that did not happen',
+         histBack.length, 0);
+      check('…and the refusal SAYS WHY, in terms of what would go wrong: a sort moves '
+            + 'whole rows and a merge does not move with them',
+            /merged range/.test(lastSaid()) && /will not sort/.test(lastSaid())
+            && /never belonged together/.test(lastSaid()));
+      check('…and it names the way to do it anyway rather than being a dead end',
+            /rich editor/.test(lastSaid()));
+      check('…and it is beaconed with the count', beacons.some(b => /^sort-refused:merges=1/.test(b)));
+      check('the ROW ITSELF greys on a merged sheet, so the refusal arrives BEFORE the '
+            + 'click as well as after it',
+            /sheetMerges\(activeSheet\(\)\)/.test(grab('menuPaint'))
+            && /mi-sortaz/.test(grab('menuPaint')));
+      reset();
+      lastRC = null;
+      sortGo(false);
+      eq('with no cell selected the sort asks for one instead of guessing a column',
+         [lastSaid(), histBack.length], [NO_CELL, 0]);
+
+      /* ── INSERT AND DELETE ───────────────────────────────────────────────────── */
+      // the merge renumbering, on its own, because it is the half that WAS the reason
+      eq('a merge entirely AFTER the insertion line shifts by n',
+         rcMerges([{ startRow: 4, endRow: 5, startColumn: 0, endColumn: 1 }], 'row', 2, 1, false),
+         [{ startRow: 5, endRow: 6, startColumn: 0, endColumn: 1 }]);
+      eq('a merge entirely BEFORE it does not move',
+         rcMerges([{ startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }], 'row', 4, 1, false),
+         [{ startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }]);
+      eq('a merge that STRADDLES the line GROWS, which is what Excel does and the only '
+         + 'answer that leaves the same cells joined together',
+         rcMerges([{ startRow: 1, endRow: 4, startColumn: 0, endColumn: 1 }], 'row', 3, 1, false),
+         [{ startRow: 1, endRow: 5, startColumn: 0, endColumn: 1 }]);
+      eq('COLUMNS are renumbered on their own axis, and rows are left alone',
+         rcMerges([{ startRow: 0, endRow: 2, startColumn: 3, endColumn: 4 }], 'col', 1, 2, false),
+         [{ startRow: 0, endRow: 2, startColumn: 5, endColumn: 6 }]);
+      eq('on a DELETE a merge after the line shifts BACK',
+         rcMerges([{ startRow: 6, endRow: 7, startColumn: 0, endColumn: 0 }], 'row', 2, 1, true),
+         [{ startRow: 5, endRow: 6, startColumn: 0, endColumn: 0 }]);
+      eq('…one that straddles it SHRINKS',
+         rcMerges([{ startRow: 1, endRow: 5, startColumn: 0, endColumn: 0 }], 'row', 3, 2, true),
+         [{ startRow: 1, endRow: 3, startColumn: 0, endColumn: 0 }]);
+      eq('…and one with nothing left of it is DROPPED, not kept as a merge of one cell',
+         rcMerges([{ startRow: 2, endRow: 3, startColumn: 0, endColumn: 0 }], 'row', 2, 2, true),
+         []);
+      eq('an unreadable merge is dropped rather than guessed at',
+         rcMerges([null, { startRow: 'x', endRow: 2 }, 7], 'row', 0, 1, false), []);
+      eq('rcMerges returns a NEW list and leaves the one it was given alone — the caller '
+         + 'decides whether to install it, which is what makes it testable',
+         (() => { const src = [{ startRow: 4, endRow: 5, startColumn: 0, endColumn: 0 }];
+                  rcMerges(src, 'row', 0, 1, false); return src[0].startRow; })(), 4);
+
+      // INSERT A ROW, executed: a merge shifts, a formula does NOT
+      reset({ formula: true, merge: [{ startRow: 3, endRow: 3, startColumn: 0, endColumn: 1 }] });
+      lastRC = { r: 1, c: 0 };                     // insert above row 2
+      const beforeIns = JSON.stringify(snap);
+      rcGo('insert', 'row');
+      eq('the row above the cursor is now BLANK', snap.sheets.s1.cellData['1'], undefined);
+      eq('…and everything from there down moved one row, ONCE (a remap that wrote as it '
+         + 'read would have duplicated it)',
+         [2, 3, 4].map(r => snap.sheets.s1.cellData[String(r)]['0'].v),
+         ['north', 'Alps', 'zulu']);
+      eq('THE MERGE WAS RENUMBERED — the half of the old disabled reason that is now '
+         + 'simply done', snap.sheets.s1.mergeData,
+         [{ startRow: 4, endRow: 4, startColumn: 0, endColumn: 1 }]);
+      eq('THE FORMULA WAS NOT REWRITTEN: it moved as text and still says B2:B4, because '
+         + 'this tier stores a formula as text and has no parser',
+         snap.sheets.s1.cellData['5']['1'].f, '=SUM(B2:B4)');
+      check('…and the page SAYS that, in the message box, on this gesture',
+            lastSaid().indexOf(RC_FORMULA_NOTE) > 0);
+      check('…as well as saying the merged range was renumbered',
+            /merged range was renumbered/.test(lastSaid()));
+      eq('the sentinel nobody mentioned moved with its own row and is otherwise intact',
+         snap.sheets.s1.cellData['9']['3'], { v: 'keep', t: 1 });
+      check('one gesture, one undo entry', histBack.length === 1);
+      check('UNDO after an insert', histGo('undo') === true);
+      eq('…and the sheet, its merges and its formula all come back byte for byte',
+         JSON.stringify(snap), beforeIns);
+
+      // DELETE A ROW
+      reset();
+      lastRC = { r: 1, c: 0 };
+      const beforeDel = JSON.stringify(snap);
+      rcGo('delete', 'row');
+      eq('the row is gone and the rows below it moved up',
+         [1, 2].map(r => snap.sheets.s1.cellData[String(r)]['0'].v), ['Alps', 'zulu']);
+      eq('…and the tail really was cleared rather than left as a duplicate of the last '
+         + 'row', snap.sheets.s1.cellData['4'], undefined);
+      check('the message COUNTS what went with it, before ⌘Z is even pressed — "I '
+            + 'deleted a row and lost data" has to be answerable',
+            /2 cells of data went with it/.test(lastSaid()));
+      check('UNDO after a delete', histGo('undo') === true);
+      eq('…and the deleted row comes back byte for byte', JSON.stringify(snap), beforeDel);
+
+      // COLUMNS, both ways
+      reset();
+      lastRC = { r: 0, c: 0 };
+      rcGo('insert', 'col');
+      eq('inserting a column to the left moves the data right, once',
+         [snap.sheets.s1.cellData['0']['0'], snap.sheets.s1.cellData['0']['1'].v], [undefined, 'Region']);
+      reset();
+      lastRC = { r: 0, c: 0 };
+      rcGo('delete', 'col');
+      eq('deleting a column moves the data left, and clears the last one',
+         [snap.sheets.s1.cellData['0']['0'].v, snap.sheets.s1.cellData['0']['1']],
+         ['Sales', undefined]);
+
+      // rcApply's own bounds
+      reset();
+      eq('rcApply clamps the number of rows or columns in one call to RC_MAX',
+         rcApply(snap.sheets.s1, 'insert', 'row', 0, 99999).n, RC_MAX);
+      reset();
+      eq('…and treats a missing or junk count as one',
+         [rcApply(snap.sheets.s1, 'insert', 'row', 0, undefined).n,
+          rcApply(snap.sheets.s1, 'insert', 'row', 0, 'lots').n], [1, 1]);
+      check('rcApply reports the merge and formula state it left behind, so the caller '
+            + 'does not have to re-derive it', (() => {
+              reset({ formula: true, merge: [{ startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }] });
+              const info = rcApply(snap.sheets.s1, 'insert', 'row', 5, 1);
+              return info.merges === 1 && info.formulas === 1 && info.clipped === false;
+            })());
+      check('a column insert that would reach past the grid\'s own width refuses rather '
+            + 'than pushing the last column off the edge',
+            /already reaches column/.test(grab('rcGo'))
+            && /used\.cols >= TIER1_MAX_COLS/.test(grab('rcGo')));
+      check('gridRemap CAPTURES BEFORE IT WRITES — the source and destination are the '
+            + 'same rectangle, so writing as it went would read cells it had already '
+            + 'overwritten (which shows up as a duplicated row, not as an error)',
+            grab('gridRemap').indexOf('held.push(row)')
+              < grab('gridRemap').indexOf('putCell(sh, r, c, held'));
+      eq('gridRemap refuses a junk rectangle rather than throwing',
+         [gridRemap(null, 1, 1, () => null), gridRemap({}, 0, 5, () => null),
+          gridRemap({}, 5, 5, 'nope')], [0, 0, 0]);
+      check('sortGo, rcGo and the two replace gestures are all refused in the rich '
+            + 'editor, exactly as every other tier-1 write is',
+            [grab('sortGo'), grab('rcGo')].every(f => /t1ok\(\)/.test(f))
+            && /findCanWrite\(\)/.test(grab('findReplaceOne'))
+            && /findCanWrite\(\)/.test(grab('findReplaceAll'))
+            && /t1ok\(\)/.test(grab('findCanWrite')));
+    })();
+
+    // ⚠️ THE NUL-BYTE REPAIR, PINNED SO IT CANNOT COME BACK. This file carried NUL
+    // bytes (U+0000) inside three string literals for two slices; the visible symptom
+    // was that ripgrep refused to search it ("binary file matches"), so every builder
+    // after that had to work on this page without Grep. It is clean now, and one
+    // assertion is cheaper than rediscovering that.
+    eq('office.html contains ZERO NUL bytes, so ripgrep — and therefore the Grep tool — '
+       + 'searches it like any other file',
+       fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'office.html'))
+         .filter(b => b === 0).length, 0);
+
+    /* ── EVERY id THIS PAGE REACHES FOR EXISTS IN THE MARKUP ─────────────────────
+       The page states this rule in a comment ("a rule the test harness enforces, and
+       the reason it can catch a renamed element") and it was NOT actually enforced
+       anywhere. It is now, because this slice added six new ids and the failure mode of
+       getting one wrong is silent: `el('find-repall')` returning null makes the whole
+       script throw at LOAD, before anything is drawn — the blank-rectangle symptom this
+       page has already been debugged for three times. */
+    {
+      const declared = new Set([...html.matchAll(/id="([\w-]+)"/g)].map(m => m[1]));
+      const reached = [...new Set([...html.matchAll(/\bel\('([\w-]+)'\)/g)].map(m => m[1]))];
+      check('the id scan found the page\'s elements — a vacuous fence is no fence',
+            declared.size > 50 && reached.length > 50);
+      eq('EVERY id el() reaches for is declared in the markup. A typo here throws at '
+         + 'LOAD and paints nothing, which is the exact symptom this page has been '
+         + 'debugged for three times', reached.filter(id => !declared.has(id)), []);
+      ['find-r', 'find-rep', 'find-repall', 'mi-undo', 'mi-redo', 'mi-rowdel', 'mi-coldel']
+        .forEach(id => check('…including the new ' + id, declared.has(id)));
+    }
+
+    /* ── the rows that stopped being grey, and the two that arrived ───────────── */
+    ['mi-undo', 'mi-redo', 'mi-replace', 'mi-rowabove', 'mi-colleft', 'mi-sortaz',
+     'mi-sortza'].forEach(id => {
+      check(id + ' is no longer shipped disabled — it does the thing now',
+            new RegExp('id="' + id + '"(?![^>]*disabled)').test(html));
+    });
+    ['mi-rowdel', 'mi-coldel'].forEach(id =>
+      check('the Insert menu grew a ' + id + ' row, because an insert with no delete is '
+            + 'half a capability', html.indexOf('id="' + id + '"') > 0));
+    check('the find bar grew a replace box and its two verbs, in the SAME strip',
+          /id="find-r"/.test(html) && /id="find-rep"/.test(html)
+          && /id="find-repall"/.test(html)
+          && html.indexOf('id="find-r"') > html.indexOf('<div id="findrow">')
+          && html.indexOf('id="find-r"') < html.indexOf('id="find-x"'));
+    check('…and a replace button with nothing to replace GREYS rather than vanishing — '
+          + 'the same grey-not-hide grammar the menu rows follow',
+          /\.fbtn:disabled\{/.test(CSS) && /function findPaint\(\)/.test(html));
+    check('the keyboard cheat sheet lists the new shortcuts, including the one honest '
+          + 'caveat about ⌘Z inside a cell',
+          /⇧⌘H/.test(html) && /undo the last change to the sheet/.test(html)
+          && /browser’s own/.test(html));
 
     // ── Format: the write path, and the trap in it ──
     const SWR = grab('styleWrite');

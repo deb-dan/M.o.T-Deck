@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-21k">
+<meta name="harness-build" content="loffice-2026-08-27a">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -588,12 +588,16 @@
   #findrow{display:none;flex:none;align-items:center;gap:6px;padding:5px 10px;
       background:#f6f7f9;border-bottom:1px solid #d7d9dd}
   #findrow.on{display:flex}
-  #find-q{flex:0 1 320px;min-width:0;font:12.5px -apple-system,sans-serif;color:#1f2328;
+  #find-q,#find-r{flex:0 1 260px;min-width:0;font:12.5px -apple-system,sans-serif;
+      color:#1f2328;
       background:#fff;border:1px solid #c3c7cd;border-radius:6px;padding:4px 8px}
-  #find-q:focus{outline:none;border-color:#1a73e8}
+  #find-q:focus,#find-r:focus{outline:none;border-color:#1a73e8}
   .fbtn{font:12px/1 -apple-system,sans-serif;color:#1f2328;background:#fff;
       border:1px solid #c3c7cd;border-radius:6px;padding:4px 9px;cursor:pointer}
   .fbtn:hover{border-color:#1a73e8}
+  /* a replace button with nothing to replace greys rather than vanishing — the same
+     grey-not-hide grammar the menu rows follow */
+  .fbtn:disabled{opacity:.5;cursor:default;border-color:#d7d9dd}
   #find-n{font:11.5px/1 -apple-system,sans-serif;color:#5f6368;white-space:nowrap}
 
   /* ── two things the View menu needs from the grid ─────────────────────────── */
@@ -699,7 +703,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-21k</code>.</div>
+  Build <code>loffice-2026-08-27a</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -762,15 +766,20 @@
     <div class="mwrap">
       <button class="mtop" id="btn-edit">Edit</button>
       <div id="m-edit" class="mpop">
-        <button class="mi" id="mi-undo" disabled title="⌘Z works inside the cell you are editing — that is the browser's own undo. A whole-sheet history needs the rich editor.">Undo<span class="mk">⌘Z</span></button>
-        <button class="mi" id="mi-redo" disabled title="Same as Undo: the cell you are editing has the browser's history, the sheet does not.">Redo<span class="mk">⇧⌘Z</span></button>
+        <!-- ⚠️ ENABLED AT 2026-08-27a, and the old reason ("a whole-sheet history needs
+             the rich editor") is now HALF true rather than false, which is why the split
+             it described is kept exactly: while you are TYPING IN A CELL, ⌘Z is still the
+             browser's own text undo and this page does not touch it. The stack below is
+             COMMIT-level history — the sheet as it was before each finished gesture. -->
+        <button class="mi" id="mi-undo">Undo<span class="mk">⌘Z</span></button>
+        <button class="mi" id="mi-redo">Redo<span class="mk">⇧⌘Z</span></button>
         <div class="msep"></div>
         <button class="mi" id="mi-cut" disabled title="Use ⌘X in the cell. Opening this menu moves the focus out of it — in this grid the selection IS the focused cell — so a Cut from here would have nothing to cut.">Cut<span class="mk">⌘X</span></button>
         <button class="mi" id="mi-copy" disabled title="Use ⌘C in the cell, for the same reason as Cut.">Copy<span class="mk">⌘C</span></button>
         <button class="mi" id="mi-paste" disabled title="A web page is not allowed to paste for you. Press ⌘V in the cell.">Paste<span class="mk">⌘V</span></button>
         <div class="msep"></div>
         <button class="mi" id="mi-find">Find…<span class="mk">⌘F</span></button>
-        <button class="mi" id="mi-replace" disabled title="Replace is not built yet. Find takes you to each match and you can type over the cell.">Find and replace</button>
+        <button class="mi" id="mi-replace">Find and replace<span class="mk">⇧⌘H</span></button>
         <div class="msep"></div>
         <button class="mi" id="mi-clearcell">Clear this cell<span class="mk">⌫</span></button>
       </div>
@@ -801,8 +810,17 @@
         <div class="msep"></div>
         <button class="mi" id="mi-rows">50 more rows<span class="mk">at the end</span></button>
         <button class="mi" id="mi-cols">10 more columns<span class="mk">at the end</span></button>
-        <button class="mi" id="mi-rowabove" disabled title="Inserting inside the sheet would have to renumber every merged range and every formula reference. The rich editor does that.">Row above</button>
-        <button class="mi" id="mi-colleft" disabled title="Same as Row above: an insert in the middle renumbers merges and formulas.">Column to the left</button>
+        <!-- ⚠️ ENABLED AT 2026-08-27a WITH ONE HALF OF THE OLD REASON STILL TRUE, and it
+             is stated to your face rather than in a tooltip nobody reads: merged ranges
+             ARE renumbered (they shift, and one straddling the line grows, exactly as
+             Excel does it) but FORMULAS ARE NOT — this tier stores a formula as TEXT and
+             has no parser, so `=SUM(B2:B13)` still says B2:B13 after a row goes in above
+             it. Every gesture on a sheet that holds a formula says so in the message box,
+             every time, and ⌘Z is one keystroke away. -->
+        <button class="mi" id="mi-rowabove">Row above<span class="mk">at this cell</span></button>
+        <button class="mi" id="mi-colleft">Column to the left<span class="mk">at this cell</span></button>
+        <button class="mi" id="mi-rowdel">Delete this row<span class="mk">⌘Z undoes it</span></button>
+        <button class="mi" id="mi-coldel">Delete this column<span class="mk">⌘Z undoes it</span></button>
         <div class="msep"></div>
         <button class="mi" id="mi-func" disabled title="Type it straight into the cell, starting with =. LOffice stores the formula as text and Excel recalculates it when you open the file there.">Function</button>
         <button class="mi" id="mi-chart" disabled title="LOffice's .xlsx round-trip does not model charts — see Help → What round-trips.">Chart</button>
@@ -835,8 +853,15 @@
       <div id="m-data" class="mpop">
         <button class="mi" id="mi-stats">Column statistics</button>
         <div class="msep"></div>
-        <button class="mi" id="mi-sortaz" disabled title="Sorting moves cells, and this grid will not risk a merged range or a formula reference until it has an undo stack.">Sort sheet A → Z</button>
-        <button class="mi" id="mi-sortza" disabled title="Same as Sort A → Z: it needs an undo stack first.">Sort sheet Z → A</button>
+        <!-- ⚠️ ENABLED AT 2026-08-27a, and the old reason is honoured rather than
+             discarded: it named TWO risks and they are answered differently. A MERGED
+             RANGE is a REFUSAL — sorting moves whole rows and a merge would end up
+             spanning cells that never belonged together, so a sheet with merges is not
+             sorted at all and the message says why. A FORMULA is a WARNING — it moves as
+             text and a relative reference may then point somewhere else — and the message
+             says that too, after the sort, with ⌘Z right there. -->
+        <button class="mi" id="mi-sortaz">Sort sheet A → Z<span class="mk">by this column</span></button>
+        <button class="mi" id="mi-sortza">Sort sheet Z → A<span class="mk">by this column</span></button>
         <button class="mi" id="mi-filter" disabled title="Filters are not carried by the .xlsx round-trip yet — see Help → What round-trips.">Create a filter</button>
         <button class="mi" id="mi-valid" disabled title="Data validation is not carried by the .xlsx round-trip yet — see Help → What round-trips.">Data validation</button>
         <div class="msep"></div>
@@ -874,6 +899,13 @@
   <button class="fbtn" id="find-next" title="Next match (⏎)">›</button>
   <span id="find-n"></span>
   <span class="grow"></span>
+  <!-- REPLACE, added at 2026-08-27a. It is in the SAME strip rather than a second bar:
+       Find already owns the query, the match list and the render-window growing, and a
+       replace that scanned separately could disagree with the count on screen. -->
+  <input id="find-r" placeholder="Replace with" maxlength="120" autocomplete="off"
+         spellcheck="false">
+  <button class="fbtn" id="find-rep" title="Replace the match you are on, then move to the next">Replace</button>
+  <button class="fbtn" id="find-repall" title="Replace every match in this sheet — one undo entry for the whole lot (⌘Z)">Replace all</button>
   <button class="fbtn" id="find-x" title="Close the find bar (Esc)">✕</button>
 </div>
 <input type="file" id="imp" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
@@ -1284,7 +1316,21 @@ function menuPaint(i) {
   const whyDoc = !has ? NO_DOC : T1_ONLY;
   if (i === 1) {                                                        // Edit
     setRow('mi-find', has && mode === 'grid' && !busy, whyDoc);
+    setRow('mi-replace', has && mode === 'grid' && !busy, whyDoc);
     setRow('mi-clearcell', t1ok() && !!rc, whyCell);
+    // Undo and Redo grey when there is nothing to undo — the grey-not-hide grammar,
+    // and the row still explains itself rather than merely refusing. When it IS live
+    // the title names the gesture, which is the one thing a bare "Undo" cannot tell you.
+    ['undo', 'redo'].forEach(d => {
+      const top = histTop(d), ok = histCan(d);
+      setRow('mi-' + d, ok, !has ? NO_DOC : (mode !== 'grid' ? T1_ONLY
+        : (d === 'redo' ? 'There is nothing to redo — nothing has been undone yet.'
+                        : 'There is nothing to undo yet. While you are TYPING in a cell, '
+                          + '⌘Z is the browser’s own text undo and stays that way; '
+                          + 'this history starts at the first finished change.')));
+      const n = el('mi-' + d);
+      if (n && ok && top) n.title = (d === 'redo' ? 'Redo ' : 'Undo ') + top.label;
+    });
   } else if (i === 2) {                                                 // View
     tick('mi-rail', railIsOpen());
     setRow('mi-aipane', aiAvail(), NO_AI);
@@ -1300,6 +1346,11 @@ function menuPaint(i) {
                              : 'Not while the page is busy.');
   } else if (i === 3) {                                                 // Insert
     ['mi-sheet', 'mi-rows', 'mi-cols'].forEach(id => setRow(id, t1ok(), whyDoc));
+    // The four that arrived at 2026-08-27a. They act on the cell you last selected —
+    // "row above" needs to know above WHAT — so they follow the same NO_CELL rule the
+    // Format rows do, and the row says which of the three reasons applies.
+    ['mi-rowabove', 'mi-colleft', 'mi-rowdel', 'mi-coldel']
+      .forEach(id => setRow(id, t1ok() && !!rc, whyCell));
   } else if (i === 4) {                                                 // Format
     const st = cellStyle(rc), ok = t1ok() && !!rc;
     ['mi-bold', 'mi-italic', 'mi-underline', 'mi-strike', 'mi-alignl', 'mi-alignc',
@@ -1314,6 +1365,17 @@ function menuPaint(i) {
     tick('mi-wrap', !!(st && st.tb === 3));
   } else if (i === 5) {                                                 // Data
     setRow('mi-stats', t1ok() && !!rc, whyCell);
+    // ⚠️ THE MERGE REFUSAL IS SAID ON THE ROW, BEFORE THE CLICK, and not only after it:
+    // a row that is live and then refuses is worse than one that is grey and explains
+    // itself. (sortGo still refuses, because the sheet can change under an open menu.)
+    const merged = (t1ok() && activeSheet()) ? sheetMerges(activeSheet()) : 0;
+    ['mi-sortaz', 'mi-sortza'].forEach(id => setRow(id, t1ok() && !!rc && !merged,
+      merged ? ('This sheet has ' + merged + (merged === 1 ? ' merged range' : ' merged ranges')
+                + '. A sort moves whole rows past each other and a merge does not move '
+                + 'with them, so it would end up spanning cells that never belonged '
+                + 'together — LOffice refuses rather than corrupting it. The rich editor '
+                + 'sorts around merges.')
+             : whyCell));
   } else if (i === 6) {                                                 // AI
     ['mi-ask', 'mi-aishow', 'mi-aiclear'].forEach(id => setRow(id, aiAvail(), NO_AI));
     tick('mi-aishow', aiPaneOpen());
@@ -1357,6 +1419,130 @@ function cellStyle(rc) {
   return (s && typeof s === 'object') ? s : null;
 }
 
+/* ══ THE UNDO STACK ════════════════════════════════════════════════════════════
+   THE FOUNDATION THIS WHOLE SLICE STANDS ON, and the reason four menu rows were
+   greyed until now: Find-and-replace, sort and insert/delete all MOVE OR DESTROY
+   cells, and a spreadsheet that can do that with no way back is not one you would
+   put real data in. The AI panel already had half of this — a single pre-write clone
+   behind its own Undo button — and that half is now this stack's first entry.
+
+   THE SHAPE, and it is deliberately the blunt one: each entry is a FULL JSON CLONE
+   of the workbook as it was BEFORE one finished gesture. Reversing a list of
+   operations has to guess what a cell held before, and a shared style id or a merged
+   range makes that guess wrong in ways nobody notices until the file is saved. The
+   sheets this tier draws are a few thousand cells; 50 clones of one is cheap, and the
+   stack is capped by COUNT and each entry by BYTES, so neither a long session nor one
+   enormous workbook can turn the tab into a memory leak. An entry that will not
+   serialise is not silently skipped: the stack is CLEARED and the rows grey, because
+   an Undo that would restore the wrong thing is worse than no Undo at all.
+
+   ⚠️ ⌘Z INSIDE A CELL YOU ARE EDITING IS STILL THE BROWSER'S OWN TEXT UNDO, and that
+   is not an oversight — it is the distinction the old disabled reason drew, kept
+   honest. While `dataset.editing` is set on the focused td, this stack does not see
+   the key at all and does not preventDefault. Commit the cell (Enter, Tab, click
+   away) and ⌘Z becomes sheet history. One keystroke, two meanings, one of them the
+   browser's — which is what every editor with a text field inside a document does.
+
+   ⚠️ THE STACK IS PER-DOCUMENT and is CLEARED when a workbook is opened or closed
+   (showWorkbook / clearWorkbook). It could have been keyed by file name instead, and
+   that would be worse: restoring a clone into a file that has since been renamed,
+   saved or edited elsewhere is exactly the class of silent corruption this page is
+   built to refuse. */
+const HIST_MAX = 50;                        // entries; the oldest is dropped
+const HIST_MAX_BYTES = 4 * 1024 * 1024;     // one entry; was the AI panel's own ceiling
+let histBack = [], histFwd = [];
+
+// A clone of the document AS IT IS NOW, labelled with the gesture that is about to
+// change it. `null` when it could not be cloned — the caller must treat that as "no
+// history is possible", never as "nothing happened".
+function histEntry(label) {
+  const t = (() => { try { return JSON.stringify(snap); } catch (e) { return null; } })();
+  if (!t || t.length > HIST_MAX_BYTES) return null;
+  let clone = null;
+  try { clone = JSON.parse(t); } catch (e) { return null; }
+  return { label: String(label == null ? 'a change' : label), snap: clone,
+           sid: activeSid, dirty: dirty, at: Date.now() };
+}
+// ⚠️ CALL THIS BEFORE THE WRITE, ALWAYS. It returns the entry it pushed (so a caller
+// that needs to recognise its own entry later — the AI card — can hold on to it), or
+// null, which means this gesture cannot be undone and the stack now says so.
+function histPush(label) {
+  if (!snap) return null;
+  const e = histEntry(label);
+  if (!e) {
+    histBack = []; histFwd = [];
+    bx('hist-too-large', String(label));
+    histPaint();
+    return null;
+  }
+  histBack.push(e);
+  while (histBack.length > HIST_MAX) histBack.shift();
+  // A new gesture ends the redo branch. Anything else would let ⇧⌘Z jump to a future
+  // that no longer follows from the present, which is not a redo, it is a corruption.
+  histFwd = [];
+  histPaint();
+  bx('hist-push', String(label) + ' · depth=' + histBack.length);
+  return e;
+}
+function histClear(why) {
+  if (!histBack.length && !histFwd.length) return;
+  histBack = []; histFwd = [];
+  bx('hist-clear', why || '');
+  histPaint();
+}
+function histCan(dir) {
+  if (!current || busy || mode !== 'grid') return false;
+  return (dir === 'redo' ? histFwd : histBack).length > 0;
+}
+function histTop(dir) {
+  const st = (dir === 'redo' ? histFwd : histBack);
+  return st.length ? st[st.length - 1] : null;
+}
+// Put one entry back. It restores the SHEET SELECTION and the DIRTY FLAG too: a clean
+// document that goes back to clean must not keep asking to be saved for a change that
+// no longer exists.
+function histRestore(e) {
+  snap = e.snap;
+  const ids = sheetIds(snap);
+  activeSid = (e.sid && snap.sheets && snap.sheets[e.sid]) ? e.sid : (ids[0] || null);
+  dirty = e.dirty;
+  viewRows = 0; viewCols = 0;
+  findClear();
+  renderGrid();
+  paint();
+  histPaint();
+  try { aiPaint(true); } catch (err) { /* their panel, their call */ }
+}
+function histGo(dir) {
+  if (!histCan(dir)) return false;
+  const from = (dir === 'redo' ? histFwd : histBack);
+  const to = (dir === 'redo' ? histBack : histFwd);
+  const e = from.pop();
+  // the present becomes the other stack's top, which is what makes redo symmetrical
+  const now = histEntry(e.label);
+  if (now) to.push(now);
+  while (to.length > HIST_MAX) to.shift();
+  histRestore(e);
+  bx('hist-' + dir, e.label + ' · back=' + histBack.length + ' fwd=' + histFwd.length);
+  say((dir === 'redo' ? 'Redone: ' : 'Undone: ') + e.label
+      + (dir === 'redo' ? ' — ⌘Z undoes it again.' : ' — ⇧⌘Z puts it back.'), 'ok');
+  return true;
+}
+// The Edit rows, kept truthful whenever the stack moves and whenever the menu opens.
+function histPaint() {
+  if (openMenu === 1) menuPaint(1);
+}
+// Is the caret inside TEXT that is being typed? If it is, ⌘Z belongs to the browser and
+// this page must not take it — and that is true of the cell being edited, of the find
+// and replace boxes, and of the AI panel's composer, all for the same reason: undoing
+// somebody's typing with a whole-sheet restore is not what they asked for.
+function histEditing() {
+  const a = document.activeElement;
+  if (!a) return false;
+  if (a.tagName === 'TD') return a.dataset && a.dataset.editing === '1';
+  return a.tagName === 'INPUT' || a.tagName === 'TEXTAREA';
+}
+
 // ── Format: the style writes, and the one trap in them ───────────────────────
 // ⚠️ A STYLE ID IS SHARED BETWEEN CELLS. A cell's `s` is either an inline dict or a
 // STRING ID into snap.styles — bridge/office.py::_resolve_style accepts both — so a
@@ -1366,7 +1552,11 @@ function cellStyle(rc) {
 function styleWrite(fn) {
   const sh = activeSheet(), rc = lastCellNow();
   if (!sh || !rc || !t1ok()) return;
+  // ⚠️ commitFocused FIRST, then the history entry: banking the typing is its own
+  // gesture (and pushes its own entry), and a clone taken before it would undo the
+  // typing as well as the formatting — one ⌘Z, two changes gone.
   commitFocused();
+  histPush('formatting ' + colName(rc.c) + (rc.r + 1));
   const prev = cellAt(sh, rc.r, rc.c), base = cellStyle(rc);
   const next = {};
   if (base) for (const k in base) next[k] = base[k];
@@ -1392,6 +1582,7 @@ function clearCell() {
   const sh = activeSheet(), rc = lastCellNow();
   if (!sh || !rc || !t1ok()) return;
   commitFocused();
+  histPush('clearing ' + colName(rc.c) + (rc.r + 1));
   putCell(sh, rc.r, rc.c, null);
   const td = tdFor(rc);
   if (td) paintCell(td, null);
@@ -1405,6 +1596,7 @@ function addSheet() {
   let n = ids.length + 1, name = 'Sheet' + n;
   while (taken.indexOf(name.toLowerCase()) >= 0) { n++; name = 'Sheet' + n; }
   const sid = 'sheet-' + Date.now().toString(36);
+  histPush('adding ' + name);
   snap.sheets[sid] = { id: sid, name: name, cellData: {},
                        rowCount: 200, columnCount: 26 };
   if (!Array.isArray(snap.sheetOrder)) snap.sheetOrder = ids.slice();
@@ -1415,18 +1607,36 @@ function addSheet() {
   say('Added ' + name + ' — Save writes it into the file.', 'ok');
   bx('add-sheet', name);
 }
+/* ⚠️ THESE TWO PUSH A HISTORY ENTRY ONLY WHEN THEY CHANGE THE SNAPSHOT, AND THEY
+   DELIBERATELY DO NOT MARK THE DOCUMENT DIRTY. Three facts, kept apart, because
+   conflating them would put a lie on screen:
+
+     · growing the render WINDOW (viewRows / viewCols) is pure view state. Nothing was
+       lost, so there is nothing to undo.
+     · growing the sheet's own rowCount / columnCount changes the in-memory snapshot the
+       grid draws from, so ⌘Z should put it back — which is what the entry is for.
+     · but bridge/office.py READS rowCount and columnCount into the snapshot and NEVER
+       WRITES THEM BACK (they appear only in its snapshot builder), so the saved .xlsx
+       is byte-identical either way. Setting `dirty` here would ask somebody to save a
+       change the file cannot carry. */
 function growRows() {
   const sh = activeSheet();
   if (!sh || !t1ok()) return;
   viewRows = (viewRows || 0) + ROW_STEP;
-  if ((Number(sh.rowCount) || 0) < viewRows) sh.rowCount = viewRows;
+  if ((Number(sh.rowCount) || 0) < viewRows) {
+    histPush('growing ' + (sh.name || 'the sheet') + ' to ' + viewRows + ' rows');
+    sh.rowCount = viewRows;
+  }
   renderGrid();
 }
 function growCols() {
   const sh = activeSheet();
   if (!sh || !t1ok()) return;
   viewCols = Math.min((viewCols || 0) + COL_STEP, TIER1_MAX_COLS);
-  if ((Number(sh.columnCount) || 0) < viewCols) sh.columnCount = viewCols;
+  if ((Number(sh.columnCount) || 0) < viewCols) {
+    histPush('growing ' + (sh.name || 'the sheet') + ' to ' + viewCols + ' columns');
+    sh.columnCount = viewCols;
+  }
   renderGrid();
 }
 // The one Data item that ships enabled, and the reason it does: it READS. Sorting and
@@ -1475,15 +1685,17 @@ function fullWidth() {
   if (aiAvail()) { try { aiSetOpen(false, 'menu'); } catch (e) { /* their panel, their call */ } }
 }
 
-// ── Edit → Find. The one genuinely new capability in this slice. ─────────────
+// ── Edit → Find (2026-08-21k) and Find and replace (2026-08-27a) ─────────────
 // It scans the OPEN SHEET'S OWN cellData, not the DOM, so it finds a match that is
-// outside the rendered window and then grows the window to reach it.
+// outside the rendered window and then grows the window to reach it. Replace rides the
+// same scan, immediately below.
 const FIND_MAX = 500;
 let findHits = [], findAt = -1;
 function findClear() {
   findHits = []; findAt = -1;
   el('find-n').textContent = '';
   [].forEach.call(el('gt').querySelectorAll('td.hit'), td => td.classList.remove('hit'));
+  findPaint();                 // no matches means nothing to replace, and it SHOWS
 }
 function findOpen(on) {
   const row = el('findrow');
@@ -1495,21 +1707,34 @@ function findOpen(on) {
   try { q.focus(); q.select(); } catch (e) { /* nothing to select */ }
   findRun();
 }
-function findRun() {
-  findClear();
-  const sh = activeSheet();
-  const q = (el('find-q').value || '').trim().toLowerCase();
-  if (!sh || !q) return;
-  commitFocused();
+// PURE, and lifted out of findRun at 2026-08-27a so that Replace scans through the very
+// same function Find does. Two scanners could disagree about how many matches there are,
+// and "Replace all replaced 7 when the bar said 6" is the kind of report that costs a
+// day. Reading order is row-major, which is the order the matches are walked in.
+function findScan(sh, q) {
+  const hits = [];
+  const needle = String(q == null ? '' : q).trim().toLowerCase();
+  if (!sh || !needle) return hits;
   const used = usedExtent(sh);
-  for (let r = 0; r < used.rows && findHits.length < FIND_MAX; r++) {
+  for (let r = 0; r < used.rows && hits.length < FIND_MAX; r++) {
     for (let c = 0; c < used.cols; c++) {
-      if (displayText(cellAt(sh, r, c)).toLowerCase().indexOf(q) >= 0) {
-        findHits.push({ r: r, c: c });
-        if (findHits.length >= FIND_MAX) break;
+      if (displayText(cellAt(sh, r, c)).toLowerCase().indexOf(needle) >= 0) {
+        hits.push({ r: r, c: c });
+        if (hits.length >= FIND_MAX) break;
       }
     }
   }
+  return hits;
+}
+function findRun() {
+  findClear();
+  const sh = activeSheet();
+  const q = (el('find-q').value || '').trim();
+  findPaint();
+  if (!sh || !q) return;
+  commitFocused();
+  findHits = findScan(sh, q);
+  findPaint();
   if (!findHits.length) { el('find-n').textContent = 'no matches'; return; }
   findAt = -1;
   findGo(1);
@@ -1539,6 +1764,452 @@ function findGo(d) {
     + (td ? '' : ' · inside a merged cell');
 }
 
+/* ══ EDIT → FIND AND REPLACE ═══════════════════════════════════════════════════
+   The old disabled reason was "replace is not built yet. Find takes you to each match
+   and you can type over the cell." It is built now, and it rides two things that
+   already existed rather than inventing a second mechanism: FIND's own scan (so the
+   count in the bar and the count Replace all reports can never disagree) and
+   `parseInput` (so a replaced cell is typed exactly as if a person had typed it —
+   "12" becomes a number, "=SUM(…)" becomes a formula, "007" stays text).
+
+   ⚠️ THE ONE THING WORTH SAYING OUT LOUD, AND THE MESSAGE SAYS IT: a match inside a
+   FORMULA is a match in the formula's TEXT, because that is what this tier shows and
+   stores. Replacing "B2" with "B3" across the sheet really does rewrite formulas —
+   which is sometimes exactly what you want and sometimes a disaster, so the count of
+   formulas touched is reported separately and the whole thing is one ⌘Z. */
+const FIND_CELL_MAX = 2000;         // one replaced cell's text; mirrors ACT_STR_MAX
+
+// PURE. Case-insensitive, EVERY occurrence inside the one string, and no regex — a
+// user's query is not a pattern (searching for "." must not match every character) and
+// a double quote inside a regex literal breaks this repo's own test extractor (see the
+// note on actDocName). Returns the new text and how many occurrences it swallowed.
+function findReplaceText(text, q, rep) {
+  const src = String(text == null ? '' : text);
+  const needle = String(q == null ? '' : q);
+  if (!needle) return { text: src, n: 0 };
+  const rp = String(rep == null ? '' : rep);
+  const low = src.toLowerCase(), nl = needle.toLowerCase();
+  let out = '', i = 0, n = 0;
+  for (;;) {
+    const at = low.indexOf(nl, i);
+    if (at < 0) break;
+    out += src.slice(i, at) + rp;
+    i = at + nl.length;                 // always advances: nl is non-empty
+    n++;
+  }
+  out += src.slice(i);
+  return { text: out, n: n };
+}
+
+// ⚠️ ONE OF THE TWO NEW FUNCTIONS IN THIS PAGE THAT MAY WRITE A CELL (the other is
+// gridRemap below), and it is why the writer-set fence in test_office_ai.js grew from
+// five names to seven. It goes through `putCell`, the same door the grid's own commit
+// uses, and it touches no view state and no dirty flag — so it can be run against a
+// bare snapshot in a test, exactly as actRunOps can.
+function replaceWrite(sh, hits, q, rep) {
+  const done = { cells: 0, formulas: 0, occurrences: 0, skipped: 0, emptied: 0 };
+  if (!sh || !Array.isArray(hits)) return done;
+  hits.forEach(h => {
+    const prev = cellAt(sh, h.r, h.c);
+    const was = displayText(prev);
+    const out = findReplaceText(was, q, rep);
+    if (!out.n || out.text === was) return;
+    // A replacement that would make the cell longer than a cell may be is REFUSED for
+    // that cell rather than truncated: half a value written into a document silently is
+    // the outcome this page will not have.
+    if (out.text.length > FIND_CELL_MAX) { done.skipped++; return; }
+    const next = parseInput(out.text, prev);
+    putCell(sh, h.r, h.c, next);
+    done.cells++;
+    done.occurrences += out.n;
+    if (prev && typeof prev.f === 'string' && prev.f) done.formulas++;
+    if (!next || (next.v === undefined && next.f === undefined)) done.emptied++;
+  });
+  return done;
+}
+
+// Can this page write at all right now? Shared by the replace buttons and the rows.
+function findCanWrite() { return t1ok() && !!activeSheet(); }
+function findPaint() {
+  const q = (el('find-q').value || '').trim();
+  const ok = findCanWrite() && !!q;
+  el('find-rep').disabled = !ok || !findHits.length;
+  el('find-repall').disabled = !ok || !findHits.length;
+}
+// The match you are ON. Then the next one, because that is what Replace means in every
+// editor there is — and the scan is re-run because a replacement can create or destroy
+// matches ("a" → "aa" still matches; "aa" → "b" no longer does).
+function findReplaceOne() {
+  const sh = activeSheet();
+  const q = (el('find-q').value || '').trim();
+  if (!findCanWrite() || !q || !findHits.length || findAt < 0) return;
+  const h = findHits[findAt];
+  const at = findAt;
+  histPush('replacing in ' + colName(h.c) + (h.r + 1));
+  const done = replaceWrite(sh, [h], q, el('find-r').value || '');
+  if (!done.cells) {
+    // nothing changed → pop the entry, or ⌘Z would appear to do nothing too
+    histBack.pop();
+    histPaint();
+    say(done.skipped
+          ? ('That cell would be longer than ' + FIND_CELL_MAX + ' characters after the '
+             + 'replacement, so it was left alone.')
+          : 'That cell already says what you asked for.', done.skipped ? null : 'dim');
+    return;
+  }
+  dirty = true;
+  paint();
+  renderGrid();
+  findHits = findScan(sh, q);
+  findPaint();
+  if (!findHits.length) { el('find-n').textContent = 'no matches left'; findAt = -1; }
+  else { findAt = Math.min(at, findHits.length) - 1; findGo(1); }
+  say('Replaced ' + done.occurrences + (done.occurrences === 1 ? ' occurrence' : ' occurrences')
+      + ' in ' + colName(h.c) + (h.r + 1)
+      + (done.formulas ? ' — that cell holds a FORMULA and its text was rewritten' : '')
+      + '. ⌘Z undoes it.', 'ok');
+}
+// EVERY match, and ONE undo entry for the whole lot — which is the only reason this is
+// safe to offer at all.
+function findReplaceAll() {
+  const sh = activeSheet();
+  const q = (el('find-q').value || '').trim();
+  if (!findCanWrite() || !q) return;
+  commitFocused();
+  const hits = findScan(sh, q);
+  if (!hits.length) { say('Nothing matches “' + q + '” in this sheet.', 'dim'); return; }
+  const capped = hits.length >= FIND_MAX;
+  histPush('replacing “' + q + '” throughout ' + (sh.name || 'the sheet'));
+  const done = replaceWrite(sh, hits, q, el('find-r').value || '');
+  if (!done.cells) {
+    say('Nothing changed: every match is already what you asked for'
+        + (done.skipped ? ', or would be too long a cell afterwards' : '') + '.', 'dim');
+    // ⚠️ POP, do not undo: a gesture that changed nothing must not leave a ⌘Z that
+    // appears to do nothing either. (histGo would also print its own message over this
+    // one, which is the second reason it is not the right call here.)
+    histBack.pop();
+    histPaint();
+    return;
+  }
+  dirty = true;
+  paint();
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  findHits = findScan(sh, q);
+  findAt = -1;
+  findPaint();
+  el('find-n').textContent = findHits.length ? (findHits.length + ' still match') : 'no matches left';
+  bx('replace-all', 'cells=' + done.cells + ' occ=' + done.occurrences
+     + ' formulas=' + done.formulas + ' skipped=' + done.skipped);
+  say('Replaced ' + done.occurrences + (done.occurrences === 1 ? ' occurrence' : ' occurrences')
+      + ' across ' + done.cells + (done.cells === 1 ? ' cell' : ' cells') + '.'
+      + (done.formulas ? '\n  ' + done.formulas + (done.formulas === 1 ? ' of them was a FORMULA'
+          : ' of them were FORMULAS') + ' — the formula TEXT was rewritten, because that is '
+          + 'what this tier stores. Check them before you save.' : '')
+      + (done.skipped ? '\n  ' + done.skipped + ' cell(s) were left alone: the replacement '
+          + 'would have made them longer than ' + FIND_CELL_MAX + ' characters.' : '')
+      + (capped ? '\n  Find stops at ' + FIND_MAX + ' matches, so there may be more — run '
+          + 'Replace all again.' : '')
+      + '\n  Nothing is written to the file until you press ⌘S, and ⌘Z undoes the lot.', 'ok');
+}
+
+/* ══ THE CELL REMAP — one writer, four gestures ═════════════════════════════════
+   Sort, insert row/column and delete row/column are all the SAME operation seen from
+   different angles: every destination cell in a rectangle takes its content from some
+   source cell, or from nowhere. Writing them as four loops over putCell would be four
+   chances to get the overlap wrong; writing them as one remap over a source function
+   is one chance, taken once, and tested once.
+
+   ⚠️ IT CAPTURES BEFORE IT WRITES, and that is the whole correctness argument: the
+   source and destination rectangles are the same rectangle, so writing as it goes
+   would read cells it had already overwritten. (That is the bug every hand-rolled
+   "insert a row" has, and it shows up as a duplicated row rather than as an error.)
+
+   ⚠️ THE SECOND OF THE TWO NEW WRITERS. It goes through putCell like everything else. */
+function gridRemap(sh, rows, cols, src) {
+  if (!sh || !(rows > 0) || !(cols > 0) || typeof src !== 'function') return 0;
+  const held = [];
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      const s = src(r, c);
+      row.push(s ? cellAt(sh, s.r, s.c) : null);
+    }
+    held.push(row);
+  }
+  let n = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      putCell(sh, r, c, held[r][c]);
+      if (held[r][c]) n++;
+    }
+  }
+  return n;
+}
+
+// Does this sheet hold a formula? The answer decides whether a gesture carries the
+// "references are NOT rewritten" note, so it is asked per gesture and not guessed at.
+function sheetFormulas(sh) {
+  let n = 0;
+  const cd = (sh && sh.cellData) || {};
+  for (const rk in cd) {
+    const row = cd[rk];
+    if (!row || typeof row !== 'object') continue;
+    for (const ck in row) {
+      const cell = row[ck];
+      if (cell && typeof cell === 'object' && typeof cell.f === 'string' && cell.f) n++;
+    }
+  }
+  return n;
+}
+function sheetMerges(sh) {
+  return (Array.isArray(sh && sh.mergeData) ? sh.mergeData : []).filter(m => !!m).length;
+}
+const RC_FORMULA_NOTE = 'this sheet holds formulas and their references were NOT '
+  + 'rewritten — LOffice stores a formula as TEXT and has no parser, so a relative '
+  + 'reference may now point at the wrong cell. Check them, or ⌘Z.';
+
+/* ══ DATA → SORT SHEET ═════════════════════════════════════════════════════════
+   The old reason: "sorting moves cells, and this grid will not risk a merged range or
+   a formula reference until it has an undo stack." It named two risks and they are
+   answered DIFFERENTLY, on purpose:
+
+     · A MERGED RANGE IS A REFUSAL. Sorting moves whole rows past each other; a merge
+       is a fixed rectangle in sheet coordinates and does not move with them, so after
+       a sort it would span cells that never belonged together — and it would look
+       fine. There is no honest way to sort that, so it is not sorted.
+     · A FORMULA IS A WARNING. It moves with its row, as text, and a relative
+       reference may then point somewhere else. That is visible, checkable, and one
+       ⌘Z away — so the sort happens and the message says exactly this.
+
+   ⚠️ "SORT SHEET" SORTS THE WHOLE SHEET, ROW 1 INCLUDED, which is what the label says
+   and what Google's own Sort sheet does. This page deliberately does NOT sniff for a
+   header row: a heuristic that is right most of the time would move somebody's header
+   into the middle of their data the one time it is wrong, silently. The message says
+   row 1 moved with the rest, every time. */
+const SORT_BLANK = 3;                  // blanks sort last, whichever direction
+function sortKey(cell) {
+  if (!cell) return { k: SORT_BLANK, n: 0, s: '' };
+  if (typeof cell.f === 'string' && cell.f) return { k: 1, n: 0, s: cell.f.toLowerCase() };
+  const v = cell.v;
+  if (v === null || v === undefined || v === '') return { k: SORT_BLANK, n: 0, s: '' };
+  if (typeof v === 'boolean' || cell.t === CV_BOOLEAN) {
+    return { k: 2, n: 0, s: v ? 'true' : 'false' };
+  }
+  if (typeof v === 'number' && isFinite(v)) return { k: 0, n: v, s: '' };
+  const s = displayText(cell);
+  return s === '' ? { k: SORT_BLANK, n: 0, s: '' } : { k: 1, n: 0, s: s.toLowerCase() };
+}
+// PURE: which SOURCE row each destination row takes. Numbers before text before
+// booleans, blanks always last in both directions (a sheet whose empty rows climb to
+// the top on Z→A is not a sort anybody wanted), and STABLE — two equal keys keep the
+// order they were already in, so sorting by one column twice does not shuffle ties.
+function sortOrder(sh, col, desc, rows) {
+  const idx = [];
+  for (let r = 0; r < rows; r++) idx.push(r);
+  const keys = idx.map(r => sortKey(cellAt(sh, r, col)));
+  idx.sort((a, b) => {
+    const ka = keys[a], kb = keys[b];
+    if (ka.k === SORT_BLANK || kb.k === SORT_BLANK) {
+      if (ka.k === kb.k) return a - b;
+      return ka.k === SORT_BLANK ? 1 : -1;
+    }
+    let d = 0;
+    if (ka.k !== kb.k) d = ka.k - kb.k;
+    else if (ka.k === 0) d = ka.n - kb.n;
+    else d = ka.s < kb.s ? -1 : (ka.s > kb.s ? 1 : 0);
+    if (d === 0) return a - b;                       // stable
+    return desc ? -d : d;
+  });
+  return idx;
+}
+// The gesture. Refuses on merges, warns on formulas, one undo entry, and it says which
+// column it sorted by — because the column is the one thing the user did not click.
+function sortGo(desc) {
+  const sh = activeSheet(), rc = lastCellNow();
+  if (!sh || !t1ok()) return;
+  if (!rc) { say(NO_CELL, 'dim'); return; }
+  commitFocused();
+  const merges = sheetMerges(sh);
+  if (merges) {
+    bx('sort-refused', 'merges=' + merges);
+    say('This sheet has ' + merges + (merges === 1 ? ' merged range' : ' merged ranges')
+        + ', so LOffice will not sort it.\n\n'
+        + 'A sort moves whole rows past each other, and a merge is a fixed rectangle '
+        + 'that does NOT move with them — after the sort it would span cells that never '
+        + 'belonged together, and it would look perfectly fine on screen. The rich '
+        + 'editor sorts around merges; this grid refuses rather than corrupting them.');
+    return;
+  }
+  const used = usedExtent(sh);
+  if (used.rows < 2) { say('There is nothing to sort — this sheet has fewer than two '
+                           + 'rows of data.', 'dim'); return; }
+  const order = sortOrder(sh, rc.c, !!desc, used.rows);
+  const moved = order.filter((src, at) => src !== at).length;
+  // ⚠️ A SORT THAT MOVES NOTHING IS NOT A GESTURE. Pushing an entry for it would leave
+  // a ⌘Z that appears to do nothing, which is the defect this page keeps removing.
+  if (!moved) {
+    say('These ' + used.rows + ' rows are already in that order by column '
+        + colName(rc.c) + ' — nothing moved.', 'dim');
+    return;
+  }
+  histPush('sorting by column ' + colName(rc.c) + (desc ? ' Z→A' : ' A→Z'));
+  gridRemap(sh, used.rows, used.cols, (r, c) => ({ r: order[r], c: c }));
+  const fx = sheetFormulas(sh);
+  dirty = true;
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  paint();
+  bx('sort', 'col=' + colName(rc.c) + ' desc=' + (desc ? 1 : 0) + ' rows=' + used.rows
+     + ' moved=' + moved + ' formulas=' + fx);
+  say('Sorted ' + used.rows + ' rows by column ' + colName(rc.c)
+      + (desc ? ' (Z → A)' : ' (A → Z)') + ' — ' + moved + ' of them moved.'
+      + '\n  Row 1 was sorted with the rest: this is “sort SHEET”, and LOffice does not '
+      + 'guess at a header row.'
+      + '\n  Blank cells went to the bottom in both directions.'
+      + (fx ? '\n  ⚠️ ' + RC_FORMULA_NOTE : '')
+      + '\n  ⌘Z undoes the whole sort. Nothing is written to the file until ⌘S.', 'ok');
+}
+
+/* ══ INSERT → ROW ABOVE / COLUMN LEFT, AND THE TWO DELETES ═════════════════════
+   The old reason: "inserting inside the sheet would have to renumber every merged
+   range and every formula reference. The rich editor does that." HALF of it is now
+   done and half of it is now SAID, which is the honest bound:
+
+     · MERGED RANGES ARE RENUMBERED, properly. A merge entirely after the line shifts
+       by n. A merge that STRADDLES the line GROWS by n — which is what Excel does, and
+       the only answer that leaves the same cells joined together. On a DELETE, a merge
+       that straddles shrinks, and one that is wholly inside the deleted band is
+       dropped (there is nothing left of it to merge).
+     · FORMULA REFERENCES ARE NOT REWRITTEN, and every gesture on a sheet that holds
+       one says so, in the message box, every time. Rewriting them means parsing Excel
+       formula syntax — ranges, absolutes, sheet-qualified references, functions with
+       string arguments that merely LOOK like references — and a parser that is 95%
+       right silently corrupts one workbook in twenty. Not rewriting is wrong in a way
+       you can SEE (the formula still says B2) and take back with ⌘Z. */
+const RC_MAX = 200;                    // rows/columns in one gesture (the AI path caps too)
+
+// The merge list, renumbered. PURE-ISH: it returns a NEW array, so the caller decides
+// whether to install it — which is what makes it testable without a workbook.
+function rcMerges(list, axis, at, n, del) {
+  const out = [];
+  const S = axis === 'col' ? 'startColumn' : 'startRow';
+  const E = axis === 'col' ? 'endColumn' : 'endRow';
+  (Array.isArray(list) ? list : []).forEach(m => {
+    if (!m) return;
+    const s = Number(m[S]), e = Number(m[E]);
+    if (!isFinite(s) || !isFinite(e)) return;        // unreadable: dropped, not guessed
+    const copy = {};
+    for (const k in m) copy[k] = m[k];
+    if (!del) {
+      if (s >= at) { copy[S] = s + n; copy[E] = e + n; }
+      else if (e >= at) { copy[E] = e + n; }         // straddles: it GROWS, as Excel does
+    } else {
+      const lastGone = at + n - 1;
+      if (s > lastGone) { copy[S] = s - n; copy[E] = e - n; }
+      else if (e >= at) {
+        // some or all of it is inside the deleted band
+        const cut = Math.min(e, lastGone) - Math.max(s, at) + 1;
+        copy[S] = Math.min(s, at);
+        copy[E] = e - cut;
+        if (Number(copy[E]) <= Number(copy[S])) return;   // nothing left to merge
+      }
+    }
+    out.push(copy);
+  });
+  return out;
+}
+
+// The whole gesture, without the DOM: `kind` is 'insert' or 'delete', `axis` is 'row'
+// or 'col'. Returns what it did, so the caller can report it and the test can read it.
+function rcApply(sh, kind, axis, at, n) {
+  const count = Math.max(1, Math.min(Math.floor(Number(n) || 1), RC_MAX));
+  const del = kind === 'delete';
+  const used = usedExtent(sh);
+  const rows = axis === 'row' ? (del ? used.rows : used.rows + count) : used.rows;
+  const cols = axis === 'col' ? (del ? used.cols : used.cols + count) : used.cols;
+  const capCols = Math.min(cols, TIER1_MAX_COLS);
+  // The source for each destination. Everything before the line stays where it is;
+  // everything at or after it moves by ±count. A read outside the sheet is `null`
+  // through cellAt, which is exactly the "leave it empty" the inserted band wants and
+  // the "clear the tail" the delete wants — one rule, no special cases.
+  const shift = i => {
+    if (i < at) return i;
+    if (del) return i + count;
+    return i < at + count ? -1 : i - count;          // -1 = the new empty band
+  };
+  const src = axis === 'row'
+    ? (r, c) => { const s = shift(r); return s < 0 ? null : { r: s, c: c }; }
+    : (r, c) => { const s = shift(c); return s < 0 ? null : { r: r, c: s }; };
+  const wrote = gridRemap(sh, Math.max(rows, 1), Math.max(capCols, 1), src);
+  sh.mergeData = rcMerges(sh.mergeData, axis, at, count, del);
+  if (axis === 'row') {
+    const rc = Number(sh.rowCount) || 0;
+    sh.rowCount = Math.max(1, del ? Math.max(rc - count, used.rows - count) : rc + count);
+  } else {
+    const cc = Number(sh.columnCount) || 0;
+    sh.columnCount = Math.min(TIER1_MAX_COLS,
+                              Math.max(1, del ? Math.max(cc - count, used.cols - count)
+                                              : cc + count));
+  }
+  return { kind: kind, axis: axis, at: at, n: count, cells: wrote,
+           clipped: capCols < cols,
+           merges: sheetMerges(sh), formulas: sheetFormulas(sh) };
+}
+
+// The four menu rows. One gesture, one undo entry, one message that says what the
+// bound is — and a DELETE reports how many non-empty cells went with the band, because
+// "I deleted a row and lost a column of data" must be answerable before ⌘Z is pressed.
+function rcGo(kind, axis) {
+  const sh = activeSheet(), rc = lastCellNow();
+  if (!sh || !t1ok()) return;
+  if (!rc) { say(NO_CELL, 'dim'); return; }
+  commitFocused();
+  const at = axis === 'row' ? rc.r : rc.c;
+  const where = axis === 'row' ? ('row ' + (at + 1)) : ('column ' + colName(at));
+  const used = usedExtent(sh);
+  if (axis === 'col' && kind === 'insert' && used.cols >= TIER1_MAX_COLS) {
+    say('This sheet already reaches column ' + colName(TIER1_MAX_COLS - 1)
+        + ', which is as wide as this grid draws — inserting another column would push '
+        + 'the last one off the edge, so nothing was inserted.');
+    return;
+  }
+  // What the delete is about to take, counted BEFORE it happens: a number in the
+  // message is worth more than a warning dialog nobody reads.
+  let lost = 0;
+  if (kind === 'delete') {
+    for (let r = 0; r < used.rows; r++) {
+      for (let c = 0; c < used.cols; c++) {
+        if (axis === 'row' ? r !== at : c !== at) continue;
+        if (displayText(cellAt(sh, r, c)) !== '') lost++;
+      }
+    }
+  }
+  const mergesBefore = sheetMerges(sh);
+  histPush((kind === 'insert' ? 'inserting a ' : 'deleting ') + axis + ' at ' + where);
+  const done = rcApply(sh, kind, axis, at, 1);
+  dirty = true;
+  viewRows = 0; viewCols = 0;
+  renderGrid();
+  paint();
+  bx('rc-' + kind, axis + ' at=' + at + ' cells=' + done.cells + ' lost=' + lost
+     + ' merges=' + mergesBefore + '→' + done.merges + ' formulas=' + done.formulas);
+  say((kind === 'insert'
+        ? ('Inserted a blank ' + axis + ' ' + (axis === 'row' ? 'above ' : 'to the left of ')
+           + where + '.')
+        : ('Deleted ' + where + (lost ? ' — ' + lost + (lost === 1 ? ' cell' : ' cells')
+                                        + ' of data went with it' : ' (it was empty)') + '.'))
+      + (mergesBefore
+          ? ('\n  ' + mergesBefore + (mergesBefore === 1 ? ' merged range was' : ' merged ranges were')
+             + ' renumbered — one that straddled the line '
+             + (kind === 'insert' ? 'grew' : 'shrank') + ', which is what Excel does'
+             + (done.merges !== mergesBefore
+                ? ('; ' + (mergesBefore - done.merges) + ' no longer exists') : '') + '.')
+          : '')
+      + (done.formulas ? '\n  ⚠️ ' + RC_FORMULA_NOTE : '')
+      + '\n  ⌘Z undoes it. Nothing is written to the file until ⌘S.', 'ok');
+}
+
 // ── Help ─────────────────────────────────────────────────────────────────────
 // The cheat sheet lists what THIS page implements, not what a spreadsheet usually has.
 const KEYS_TEXT = [
@@ -1548,6 +2219,11 @@ const KEYS_TEXT = [
   '  ⌘O             show the file list',
   '  ⌘\\             show or hide the file list',
   '  ⌘F             find in this sheet',
+  '  ⇧⌘H            find and replace',
+  '  ⌘Z             undo the last change to the sheet',
+  '  ⇧⌘Z · ⌘Y      redo it',
+  '                 (while you are TYPING in a cell, ⌘Z is the browser’s own',
+  '                  text undo — this history starts once the cell is committed)',
   '  ⌘B ⌘I ⌘U      bold / italic / underline the selected cell',
   '  Enter          commit the cell and move down',
   '  Tab · ⇧Tab     commit and move right · left',
@@ -1744,6 +2420,14 @@ el('find-q').onkeydown = ev => {
 el('find-next').onclick = () => findGo(1);
 el('find-prev').onclick = () => findGo(-1);
 el('find-x').onclick = () => findOpen(false);
+el('find-rep').onclick = findReplaceOne;
+el('find-repall').onclick = findReplaceAll;
+// ⏎ in the replace box replaces the match you are on, which is what every find bar in
+// every editor does; Esc closes, exactly as it does from the query box.
+el('find-r').onkeydown = ev => {
+  if (ev.key === 'Enter') { ev.preventDefault(); findReplaceOne(); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); findOpen(false); }
+};
 el('h-blank').onclick = newBlank;
 el('h-budget').onclick = () => newFromTemplate('budget');
 el('h-tasks').onclick = () => newFromTemplate('tasks');
@@ -1764,7 +2448,7 @@ window.addEventListener('keydown', ev => {
     if (nk === 'Escape' && openMenu > 0) { menuClose('esc'); return; }
   }
   if (ev.key === 'Escape' && el('findrow').classList.contains('on')
-      && document.activeElement === el('find-q')) {
+      && (document.activeElement === el('find-q') || document.activeElement === el('find-r'))) {
     findOpen(false);
     return;
   }
@@ -1772,6 +2456,32 @@ window.addEventListener('keydown', ev => {
   if (!meta) return;
   const k = (ev.key || '').toLowerCase();
   if (k === 'f') { ev.preventDefault(); if (current && mode === 'grid') findOpen(true); return; }
+  // ⇧⌘H — Google Sheets' own shortcut for Find and replace.
+  if (k === 'h' && ev.shiftKey) {
+    ev.preventDefault();
+    if (current && mode === 'grid') { findOpen(true); try { el('find-r').focus(); } catch (e) {} }
+    return;
+  }
+  /* ══ ⌘Z / ⇧⌘Z / ⌘Y ═══════════════════════════════════════════════════════════
+     ⚠️ THE GUARD IS THE FEATURE. `histEditing()` is checked FIRST and the handler
+     returns WITHOUT preventDefault, so while the caret is in a cell being typed into
+     — or in the find box, or the AI composer — ⌘Z is still the browser's own text
+     undo and this page never sees it. That is the distinction the Edit menu's old
+     disabled reason drew, and enabling the rows did not get to quietly delete it. */
+  if (k === 'z' || k === 'y') {
+    if (histEditing()) return;                 // the browser's undo, untouched
+    ev.preventDefault();
+    const dir = (k === 'y' || ev.shiftKey) ? 'redo' : 'undo';
+    if (!histGo(dir)) {
+      say(current
+            ? ('There is nothing to ' + dir + '.'
+               + (dir === 'undo' ? ' (While you are typing in a cell, ⌘Z is the browser’s '
+                                 + 'own text undo — this history begins once the cell is '
+                                 + 'committed.)' : ''))
+            : NO_DOC, 'dim');
+    }
+    return;
+  }
   // ⚠️ ⌘B / ⌘I / ⌘U MUST preventDefault. Inside a contenteditable the browser would
   // otherwise apply RICH TEXT bold — a <b> element inside the cell, which this grid
   // reads with textContent and would therefore lose at the next commit, and which
@@ -2131,7 +2841,12 @@ function commit(td) {
   // whose text differs from what was typed only by U+00A0 is not an edit, and saving
   // one into a workbook would put an invisible character in somebody's data.
   const now = td.textContent.replace(/ /g, ' ');
+  // ⚠️ THE EQUALITY CHECK IS ALSO THE HISTORY GATE, and that ordering is load-bearing:
+  // focusout fires on every cell the user merely CLICKS THROUGH, so pushing before this
+  // line would fill all 50 entries with identical clones and ⌘Z would appear to do
+  // nothing, fifty times over. A commit that changed nothing is not a gesture.
   if (now === was) { paintCell(td, prev); return; }
+  histPush('typing in ' + colName(c) + (r + 1));
   const next = parseInput(now, prev);
   putCell(sh, r, c, next);
   paintCell(td, next);
@@ -2605,6 +3320,10 @@ function showWorkbook(data, name) {
   activeSid = sheetIds(snap)[0] || null;
   viewRows = 0; viewCols = 0;
   current = name; dirty = false;
+  // ⚠️ THE HISTORY BELONGS TO THE DOCUMENT AND DIES WITH IT. Keeping the stack across
+  // an open would let ⌘Z restore a clone of ANOTHER workbook into this one — the exact
+  // class of silent corruption this page refuses to make possible.
+  histClear('open ' + name);
   // ⚠️ THE SHEET CHIP GOES BACK ON FOR EVERY WORKBOOK OPENED, and it is deliberately
   // NOT persisted across them any more. It used to be one global sticky flag in
   // localStorage, so a single "ask without the sheet" three sessions ago left it OFF
@@ -2730,6 +3449,7 @@ async function save() {
 
 function clearWorkbook() {
   current = null; dirty = false; snap = null; activeSid = null;
+  histClear('close');
   if (univer) { try { univer.dispose(); } catch (e) { /* gone */ } }
   univer = null; api = null;
   el('sheet').innerHTML = '';
@@ -3054,7 +3774,10 @@ function actHelp() {
        + '{"op":"set","at":"B14","values":[["=SUM(B2:B13)"]]},\n'
        + '{"op":"style","at":"A1:B1","set":{"bl":1}},\n'
        + '{"op":"sheet","add":"Notes"},\n'
-       + '{"op":"resize","rows":200,"cols":12}]}\n'
+       + '{"op":"resize","rows":200,"cols":12},\n'
+       + '{"op":"sort","col":"B","desc":true},\n'
+       + '{"op":"insert","what":"row","at":3,"n":1},\n'
+       + '{"op":"delete_rc","what":"col","at":"D","n":1}]}\n'
        + '```\n'
        + '"at" is where the values START — one array per row, left to right, so a '
        + 'column of twelve months is twelve one-element rows. A string beginning with '
@@ -3064,6 +3787,10 @@ function actHelp() {
        + 'number format) — anything else is dropped, because anything else is not '
        + 'carried by the .xlsx round-trip. Every set and style operation acts on ONE '
        + 'sheet.\n'
+       + '"sort" sorts the WHOLE sheet by one column, row 1 included, and is REFUSED on '
+       + 'a sheet that has merged cells. "insert" and "delete_rc" take "what":"row" or '
+       + '"col", "at" as a row NUMBER or a column LETTER, and "n" for how many; merged '
+       + 'ranges are renumbered but FORMULA REFERENCES ARE NOT — say so if you use them.\n'
        + 'Nothing is written until the user presses Apply, so propose the whole change '
        + 'in a single block. For a QUESTION, answer in prose and emit no loffice block.';
 }
@@ -3240,7 +3967,9 @@ const ACT_STR_MAX = 2000;           // one cell's text
 const ACT_LIST_MAX = 40;            // lines in the preview list before "+N more"
 const ACT_SHEET_MAX = 31;           // Excel's own sheet-name limit (office.py mirrors it)
 const ACT_NAME_MAX = 80;            // office.NAME_MAX
-const ACT_UNDO_MAX_BYTES = 4 * 1024 * 1024;
+// ⚠️ THE OLD `ACT_UNDO_MAX_BYTES` LIVES ON AS `HIST_MAX_BYTES`, up with the undo stack.
+// It moved at 2026-08-27a because the panel stopped keeping its own private clone: the
+// per-entry byte ceiling is now the whole page's, not this block's.
 // The horizontal/vertical alignment words a model actually writes, mapped to the
 // numbers bridge/office.py carries. Accepting the words is not indulgence: `"center"`
 // is what every model emits, and refusing it would make the style op useless.
@@ -3350,6 +4079,31 @@ function actStyleSet(v) {
   return Object.keys(out).length ? out : null;
 }
 
+// "B" / "$b$12" / "AA" → a column index, or -1. Only LETTERS are accepted: a bare
+// number would be ambiguous between "column 2" and "column B" the moment anybody
+// 0-indexes it, and a sort aimed one column over is a silently wrong document.
+function actCol(v) {
+  const m = /^\$?([A-Za-z]{1,3})\$?[0-9]{0,7}$/.exec(String(v == null ? '' : v).trim());
+  if (!m) return -1;
+  const letters = m[1].toUpperCase();
+  let c = 0;
+  for (let i = 0; i < letters.length; i++) c = c * 26 + (letters.charCodeAt(i) - 64);
+  return c - 1;
+}
+// Where an insert or a delete lands. A ROW is a 1-based number (or a cell reference,
+// because a model that has seen a spreadsheet writes "A3"); a COLUMN is a letter.
+function actRcTarget(axis, v) {
+  if (axis === 'col') return actCol(v);
+  const t = String(v == null ? '' : v).trim();
+  const ref = actRef(t);
+  if (ref) return ref.r;
+  if (/^[0-9]{1,7}$/.test(t)) {
+    const n = parseInt(t, 10);
+    return n >= 1 ? n - 1 : -1;
+  }
+  return -1;
+}
+
 // A workbook name the model suggested → something the BRIDGE can be asked for. The
 // bridge owns the name rules (office.valid_name) and the ' (n)' never-clobber walk, so
 // this only removes what could not possibly be a file name and lets the bridge refuse
@@ -3390,7 +4144,8 @@ function actValidate(obj) {
   }
   const ops = [];
   const count = { cells: 0, cleared: 0, formulas: 0, styled: 0,
-                  sheets: 0, renames: 0, resizes: 0, lines: 0 };
+                  sheets: 0, renames: 0, resizes: 0, lines: 0,
+                  sorts: 0, inserts: 0, deletes: 0 };
   let budget = 0;
   for (let i = 0; i < raw.length; i++) {
     const o = raw[i];
@@ -3467,6 +4222,53 @@ function actValidate(obj) {
       if (!R && !C) return no(at + 'a "resize" needs "rows" or "cols"');
       count.resizes++; count.lines++;
       ops.push({ op: 'resize', rows: R, cols: C });
+    } else if (kind === 'sort') {
+      // The manual gesture's twin, and it carries the same two answers: the MERGE
+      // refusal cannot be decided here (this half is pure and has never seen the
+      // workbook), so it is decided at apply time and reported on the card; the FORMULA
+      // warning likewise. What IS decided here is that the column is a real column.
+      const col = actCol(o.col !== undefined ? o.col : o.at);
+      if (!(col >= 0)) {
+        return no(at + '"col" is not a column letter (' + JSON.stringify(o.col === undefined ? o.at : o.col) + ')');
+      }
+      if (col > ACT_MAX_COL) {
+        return no(at + 'column ' + colName(col) + ' is past ' + colName(ACT_MAX_COL));
+      }
+      const word = String(o.order === undefined ? o.dir : o.order).trim().toLowerCase();
+      const desc = o.desc === true || o.desc === 'true' || word === 'desc'
+                || word === 'descending' || word === 'za' || word === 'z-a';
+      count.sorts++; count.lines++;
+      ops.push({ op: 'sort', col: col, desc: !!desc });
+    } else if (kind === 'insert' || kind === 'delete_rc') {
+      const what = String((o.what === undefined ? o.axis : o.what) == null
+                          ? '' : (o.what === undefined ? o.axis : o.what)).trim().toLowerCase();
+      const axis = (what === 'row' || what === 'rows') ? 'row'
+        : ((what === 'col' || what === 'cols' || what === 'column' || what === 'columns')
+            ? 'col' : '');
+      if (!axis) return no(at + 'an "insert" or a "delete_rc" needs "what": row or col');
+      const idx = actRcTarget(axis, o.at);
+      if (!(idx >= 0)) {
+        return no(at + '"at" is not a ' + (axis === 'row' ? 'row number' : 'column letter')
+                  + ' (' + JSON.stringify(o.at) + ')');
+      }
+      const lim = axis === 'row' ? ACT_MAX_ROW : ACT_MAX_COL;
+      if (idx > lim) {
+        return no(at + 'that is past ' + (axis === 'row' ? (ACT_MAX_ROW + 1)
+                                                         : colName(ACT_MAX_COL)));
+      }
+      const asked = Math.floor(Number(o.n === undefined ? 1 : o.n));
+      const want = (isFinite(asked) && asked >= 1) ? asked : 1;
+      // ⚠️ THE SAME ASYMMETRY AS set/resize, for the same reason: an INSERT adds empty
+      // space and is CLAMPED (a model asking for 10 000 rows means "a lot"), a DELETE
+      // destroys data and is REFUSED over the cap rather than quietly doing 200 of it.
+      if (kind === 'delete_rc' && want > RC_MAX) {
+        return no(at + 'deleting ' + want + ' ' + axis + 's at once is past the cap of '
+                  + RC_MAX + ' — ask for it in smaller pieces');
+      }
+      const n = Math.min(want, RC_MAX);
+      if (kind === 'insert') count.inserts += n; else count.deletes += n;
+      count.lines++;
+      ops.push({ op: kind, axis: axis, at: idx, n: n });
     } else {
       return no(at + 'unknown operation ' + JSON.stringify(kind));
     }
@@ -3537,6 +4339,14 @@ function actSummary(plan, where) {
   if (c.sheets) bits.push(c.sheets + (c.sheets === 1 ? ' new sheet' : ' new sheets'));
   if (c.renames) bits.push(c.renames === 1 ? 'a sheet renamed' : c.renames + ' sheets renamed');
   if (c.resizes) bits.push('more rows or columns');
+  // ⚠️ THE STRUCTURAL ONES GO LAST AND ARE NAMED AS WHAT THEY ARE. "a sheet sorted" and
+  // "2 rows deleted" are not the same kind of change as "12 cells" and a summary that
+  // buried them in a cell count would be a preview that hid the destructive half.
+  if (c.sorts) bits.push(c.sorts === 1 ? 'the sheet sorted' : c.sorts + ' sorts');
+  if (c.inserts) bits.push(c.inserts + (c.inserts === 1 ? ' row or column inserted'
+                                                        : ' rows or columns inserted'));
+  if (c.deletes) bits.push(c.deletes + (c.deletes === 1 ? ' row or column DELETED'
+                                                        : ' rows or columns DELETED'));
   return bits.length ? bits.join(' · ') : 'nothing to change';
 }
 
@@ -3562,6 +4372,17 @@ function actCellList(plan) {
       push(o.add ? 'a new sheet called ' + o.add : 'rename a sheet to ' + o.rename);
     } else if (o.op === 'resize') {
       push('grow to ' + (o.rows || '—') + ' rows × ' + (o.cols || '—') + ' columns');
+    } else if (o.op === 'sort') {
+      push('sort the whole sheet by column ' + colName(o.col)
+           + (o.desc ? ' (Z → A)' : ' (A → Z)') + ' — row 1 included');
+    } else if (o.op === 'insert') {
+      push('insert ' + o.n + ' blank ' + o.axis + (o.n === 1 ? '' : 's') + ' '
+           + (o.axis === 'row' ? 'above row ' + (o.at + 1)
+                               : 'to the left of column ' + colName(o.at)));
+    } else if (o.op === 'delete_rc') {
+      push('DELETE ' + o.n + ' ' + o.axis + (o.n === 1 ? '' : 's') + ' from '
+           + (o.axis === 'row' ? 'row ' + (o.at + 1) : 'column ' + colName(o.at))
+           + ' — data in ' + (o.n === 1 ? 'it' : 'them') + ' is lost');
     }
   });
   return out;
@@ -3590,22 +4411,21 @@ function actCell(v, prev) {
   return parseInput(String(v), prev);
 }
 
-// ── the impure half: apply, and the undo that makes it safe to try ───────────
-// `actLast` is the one apply that can still be taken back. It holds a FULL clone of
-// the workbook as it was, which is the only form of undo that cannot be subtly wrong —
-// reversing a list of operations has to guess at what a cell was before, and a merged
-// range or a shared style id makes that guess wrong in ways nobody would notice until
-// the file was saved.
+/* ── the impure half: apply, and the undo that makes it safe to try ───────────
+   ⚠️ CHANGED AT 2026-08-27a, AND IT IS THE POINT OF THE WHOLE SLICE: this panel used
+   to keep its OWN single pre-write clone (`actClone`, now gone) behind its own Undo
+   button, which meant the sheet had two histories that could not see each other — the
+   AI's one clone, and nothing at all for anything the user typed. There is now ONE
+   stack, `histBack`/`histFwd`, and the AI apply is simply an entry on it. The clone
+   mechanism did not change; who owns it did.
+
+   `actLast` is now a POINTER at the entry this card pushed, so the card's Undo can
+   still refuse honestly when a later gesture has buried it: the entry it would restore
+   is no longer the top of the stack, and Edit → Undo (⌘Z) is the thing that walks the
+   stack properly. A button that would restore the wrong state is worse than one that
+   says it cannot. */
 let actLast = null;
 let actSeq = 0;
-
-function actClone(s) {
-  try {
-    const t = JSON.stringify(s);
-    if (!t || t.length > ACT_UNDO_MAX_BYTES) return null;
-    return JSON.parse(t);
-  } catch (e) { return null; }
-}
 
 // A sheet NAME (the only handle a model has) → the sheet id we hold. An unknown name
 // falls back to the open sheet rather than inventing a sheet nobody asked for; the
@@ -3664,7 +4484,8 @@ function actRunOps(sid, ops) {
   // preview says) and this counts the CELLS in them. Two different numbers, so they get
   // two different names — one `styled` meaning both would be a report nobody can read.
   const done = { cells: 0, cleared: 0, styledCells: 0, sheets: [], renamed: '',
-                 skipped: 0, wantRows: 0, wantCols: 0 };
+                 skipped: 0, wantRows: 0, wantCols: 0,
+                 sorted: 0, inserted: 0, deleted: 0, notes: [] };
   const sh = (snap && snap.sheets) ? snap.sheets[sid] : null;
   if (!sh || !Array.isArray(ops)) return null;
   ops.forEach(o => {
@@ -3721,8 +4542,49 @@ function actRunOps(sid, ops) {
         if ((Number(sh.columnCount) || 0) < o.cols) sh.columnCount = o.cols;
         if (done.wantCols < o.cols) done.wantCols = o.cols;
       }
+    } else if (o.op === 'sort') {
+      // ⚠️ THE MERGE REFUSAL IS THE SAME REFUSAL THE MENU MAKES, made here because this
+      // is the first moment anything has seen the workbook. The op is SKIPPED and SAID —
+      // not the whole plan refused — because the rest of the plan is still exactly what
+      // the user read and pressed Apply for, and one honest note beats losing all of it.
+      const merged = sheetMerges(sh);
+      if (merged) {
+        done.skipped++;
+        done.notes.push('the sort was refused: this sheet has ' + merged
+          + (merged === 1 ? ' merged range' : ' merged ranges')
+          + ', and a sort moves whole rows while a merge does not move with them, so it '
+          + 'would end up spanning cells that never belonged together.');
+      } else {
+        const u = usedExtent(sh);
+        if (u.rows > 1) {
+          const order = sortOrder(sh, o.col, o.desc, u.rows);
+          gridRemap(sh, u.rows, u.cols, (r, c) => ({ r: order[r], c: c }));
+          done.sorted++;
+          if (done.wantRows < u.rows) done.wantRows = u.rows;
+          if (done.wantCols < u.cols) done.wantCols = u.cols;
+        } else {
+          done.skipped++;
+          done.notes.push('there was nothing to sort — fewer than two rows of data.');
+        }
+      }
+    } else if (o.op === 'insert' || o.op === 'delete_rc') {
+      const info = rcApply(sh, o.op === 'insert' ? 'insert' : 'delete', o.axis, o.at, o.n);
+      if (o.op === 'insert') done.inserted += info.n; else done.deleted += info.n;
+      if (info.clipped) {
+        done.notes.push('the insert reached the right-hand edge of this grid (column '
+          + colName(TIER1_MAX_COLS - 1) + '), so the last column fell off it.');
+      }
+      const u2 = usedExtent(sh);
+      if (done.wantRows < u2.rows) done.wantRows = u2.rows;
+      if (done.wantCols < u2.cols) done.wantCols = u2.cols;
     }
   });
+  // ⚠️ THE FORMULA NOTE, ONCE PER APPLY AND NOT ONCE PER OPERATION. It is asked here,
+  // after the writes, because only a sheet that STILL holds a formula needs it — and it
+  // is the same sentence the manual gestures print, from the same constant.
+  if ((done.sorted || done.inserted || done.deleted) && sheetFormulas(sh)) {
+    done.notes.push(RC_FORMULA_NOTE);
+  }
   return done;
 }
 
@@ -3771,9 +4633,11 @@ async function actApply(card, plan) {
     actNote(card, 'There is no sheet to write into.');
     return;
   }
-  // BEFORE the first write, and the card tells the truth about whether it worked.
-  const before = actClone(snap);
-  const keep = { before: before, dirty: dirty, sid: activeSid, name: current, card: card };
+  // BEFORE the first write, onto the page's ONE undo stack, and the card tells the
+  // truth about whether it worked. A workbook too large to clone still applies — and
+  // the card says the change cannot be taken back, rather than offering an Undo that
+  // would not work.
+  const entry = histPush('the model’s change to ' + (sh.name || 'the sheet'));
   const done = actRunOps(sid, plan.ops);
   if (!done) {
     card._state = 'ready';
@@ -3796,25 +4660,29 @@ async function actApply(card, plan) {
   dirty = true;                       // ⚠️ the USER saves. Nothing here writes the file.
   paint();
   aiPaint(true);
-  actLast = before ? keep : null;
+  actLast = entry ? { entry: entry, card: card, name: current } : null;
   card._state = 'applied';
   card._done = done;
-  card._undo = !!before;
+  card._undo = !!entry;
   actPaint(card);
   bx('action-applied', 'cells=' + done.cells + ' cleared=' + done.cleared
      + ' styledCells=' + done.styledCells + ' sheets=' + done.sheets.length
-     + ' undo=' + (before ? 'yes' : 'too-large'));
+     + ' sorted=' + done.sorted + ' inserted=' + done.inserted
+     + ' deleted=' + done.deleted + ' skipped=' + done.skipped
+     + ' undo=' + (entry ? 'yes' : 'too-large'));
   say(actSummary(plan, actWhere(plan)) + ' — applied. Press ⌘S to save it to the file.',
       'ok');
 }
 
 function actUndo(card) {
-  // ⚠️ A STALE UNDO SAYS SO. Only the LAST apply is undoable — a second one replaces
-  // the clone — and an older card keeps its button until something repaints it. A
-  // button that does nothing at all is the defect class this page exists to remove.
+  // ⚠️ A STALE UNDO SAYS SO, and the test for staleness is now exact rather than
+  // approximate: this card's entry must still be the TOP of the undo stack. Anything
+  // else — a cell typed since, another apply, a sort — means restoring it would throw
+  // away work the user did after the change they asked to undo. A button that does the
+  // wrong thing quietly is the defect class this page exists to remove.
   if (!actLast || actLast.card !== card) {
-    actNote(card, 'This one can no longer be undone from here: a later change replaced '
-                + 'the copy of the sheet it would have restored.');
+    actNote(card, 'This one can no longer be undone from here: a later change took its '
+                + 'place. Edit → Undo (⌘Z) walks the sheet’s whole history.');
     return;
   }
   if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
@@ -3823,21 +4691,21 @@ function actUndo(card) {
                 + 'open workbook any more.');
     return;
   }
-  snap = actLast.before;
-  const ids = sheetIds(snap);
-  activeSid = (actLast.sid && snap.sheets && snap.sheets[actLast.sid])
-    ? actLast.sid : (ids[0] || null);
-  dirty = actLast.dirty;              // a clean document goes back to clean
-  viewRows = 0; viewCols = 0;
-  renderGrid();
-  paint();
-  aiPaint(true);
+  if (histTop('undo') !== actLast.entry) {
+    actNote(card, 'Something else has changed the sheet since this was applied, so '
+                + 'undoing it from here would take that with it. Edit → Undo (⌘Z) steps '
+                + 'back through the changes one at a time.');
+    return;
+  }
+  if (!histGo('undo')) {          // it says what it did, on the one message line
+    actNote(card, 'The sheet’s history could not restore that change.');
+    return;
+  }
   bx('action-undone', 'file=' + current);
   actLast = null;
   card._state = 'ready';
   card._undone = true;
   actPaint(card);
-  say('Undone — the sheet is back to what it was before that change.', 'ok');
 }
 
 // ── the card ─────────────────────────────────────────────────────────────────
@@ -3909,10 +4777,24 @@ function actPaint(card) {
     d.textContent = 'Applied to ' + where + ' — ' + done.cells + ' written'
       + (done.cleared ? ', ' + done.cleared + ' emptied' : '')
       + (done.sheets && done.sheets.length ? ', sheets added: ' + done.sheets.join(', ') : '')
+      + (done.sorted ? ', sorted' : '')
+      + (done.inserted ? ', ' + done.inserted + ' inserted' : '')
+      + (done.deleted ? ', ' + done.deleted + ' deleted' : '')
       + '. The file is NOT saved yet — press ⌘S.'
       + (card._undo ? '' : ' This workbook is too large to hold an undo copy, so this '
                          + 'change cannot be taken back from here.');
     head.appendChild(d);
+    // ⚠️ EVERY NOTE actRunOps CAME BACK WITH IS PRINTED, and they are the honest-limits
+    // ones: a sort refused for merges, an insert that hit the right-hand edge, and the
+    // formula-references-are-not-rewritten warning. A refusal the card swallowed would
+    // read as a change that happened.
+    (done.notes || []).forEach(t => {
+      const w = document.createElement('div');
+      w.className = 'err';
+      w.style.marginTop = '5px';
+      w.textContent = t;
+      head.appendChild(w);
+    });
     bar.appendChild(grow);
     if (card._undo && actLast && actLast.card === card) {
       const u = actChip(bar, 'Undo');
@@ -3931,6 +4813,26 @@ function actPaint(card) {
   } else if (plan.sheet && !actSheetExists(plan.sheet)) {
     notes.push('There is no sheet called “' + plan.sheet + '” — the change goes to '
                + where + '.');
+  }
+  // The destructive ops are called out BEFORE the click, by name, because the summary
+  // line is a count and a count does not read as "this loses data".
+  if (plan.count && plan.count.deletes) {
+    notes.push('⚠️ This DELETES ' + plan.count.deletes + ' row(s) or column(s) — whatever '
+               + 'is in them goes. ⌘Z brings it back until you close the workbook.');
+  }
+  if (plan.count && plan.count.sorts) {
+    const shs = (snap && snap.sheets) ? snap.sheets[actTargetSid(plan.sheet)] : null;
+    const mg = shs ? sheetMerges(shs) : 0;
+    notes.push(mg
+      ? ('The sort will be REFUSED: ' + where + ' has ' + mg + ' merged range(s), and a '
+         + 'sort moves whole rows while a merge does not move with them. The rest of the '
+         + 'change still applies.')
+      : ('The sort covers the WHOLE sheet, row 1 included, and formulas move as text — '
+         + 'a relative reference may then point elsewhere.'));
+  }
+  if (plan.count && (plan.count.inserts || plan.count.deletes)) {
+    notes.push('Merged ranges are renumbered; FORMULA REFERENCES ARE NOT — this tier '
+               + 'stores a formula as text and has no parser.');
   }
   if (scan.extra) {
     notes.push(scan.extra + (scan.extra === 1 ? ' further block was' : ' further blocks were')
@@ -4352,27 +5254,25 @@ let closeArmed = false;
 mi('mi-download', () => {
   if (current) window.location.href = '/api/office/download/' + encodeURIComponent(current);
 });
-// ⚠⚠ THREE LINES IN THIS HANDLER CARRY A DEAD TAIL AFTER A `//`, AND THAT IS NOT A
-// STYLE CHOICE. A NUL byte (U+0000) got into this block while it was being written —
-// it sits inside what were three `' close'` string literals — and the editor available
-// in that session could not express a NUL in a search string, so those bytes could not
-// be selected or deleted. The lines were therefore neutralised: the working code was
-// written BEFORE the `//` and the corrupted remainder was commented out, where a NUL is
-// legal and inert. The page is correct as it stands.
-// TO FINISH THE JOB with any ordinary editor or shell, from the repo root:
-//     LC_ALL=C tr -d '\000' < bridge/panel/office.html > /tmp/o && mv /tmp/o bridge/panel/office.html
-// then delete the three `// ⚠ dead tail` comments below. Until that is done, ripgrep
-// (and therefore the Grep tool) will refuse to search this file — it reports
-// "binary file matches" — which is the only visible symptom.
+// ✅ THE NUL-BYTE REPAIR IS FINISHED (2026-08-27a). This handler used to carry three
+// DEAD TAILS after a `//`: a NUL byte (U+0000) had got into what were three `' close'`
+// string literals while the block was being written, the editor of that session could
+// not express a NUL in a search string, so the lines were neutralised — the working code
+// before the `//`, the corrupted remainder commented out, where a NUL is legal and inert
+// — and the file was left carrying a recipe for finishing the job.
+//     LC_ALL=C tr -cd '\000' < bridge/panel/office.html | wc -c   →   0
+// The file now holds ZERO NUL bytes, so ripgrep (and therefore the Grep tool) searches
+// it normally again, and the three dead tails have been deleted. The note is kept, past
+// tense, because "why does this handler look like that" was a real question twice.
 mi('mi-close', () => {
   // Closing lands back on the file rail rather than on nothing: #empty says what to do
   // next, and the rail is where doing it lives.
-  if (dirty && !closeArmed) {   // ⚠ dead tail — delete to end of line (see the note above)'close') {
-    closeArmed = true;   // ⚠ dead tail — delete to end of line (see the note above)'close';
+  if (dirty && !closeArmed) {
+    closeArmed = true;
     say('“' + current + '” has unsaved changes. Save it first, or choose Close file '
         + 'again to discard them.', null,
         { label: 'Save & close', run: async () => { await save(); if (!dirty) mi_close(); } });
-    setTimeout(() => { closeArmed = false; }, 6000);   // ⚠ dead tail — delete to end of line (see the note above)'close') discardArmed = null; }, 6000);
+    setTimeout(() => { closeArmed = false; }, 6000);
     return;
   }
   mi_close();
@@ -4406,7 +5306,15 @@ el('doctitle').onclick = () => { if (current && !busy) nameRow('rename'); };
 // ── the other seven menus ────────────────────────────────────────────────────
 // Every row here is wired; every row NOT here is `disabled` in the markup with its
 // reason in its own title. There is deliberately no third state.
+mi('mi-undo', () => histGo('undo'));
+mi('mi-redo', () => histGo('redo'));
 mi('mi-find', () => findOpen(true));
+// Find and replace is the SAME bar with the caret in the replace box — a second bar
+// would have a second scan and a second count, and the two could disagree.
+mi('mi-replace', () => {
+  findOpen(true);
+  try { el('find-r').focus(); } catch (e) { /* nothing to focus */ }
+});
 mi('mi-clearcell', clearCell);
 
 mi('mi-rail', () => railSetOpen(!railIsOpen(), 'menu'));
@@ -4422,6 +5330,10 @@ mi('mi-rich', upgrade);
 mi('mi-sheet', addSheet);
 mi('mi-rows', growRows);
 mi('mi-cols', growCols);
+mi('mi-rowabove', () => rcGo('insert', 'row'));
+mi('mi-colleft', () => rcGo('insert', 'col'));
+mi('mi-rowdel', () => rcGo('delete', 'row'));
+mi('mi-coldel', () => rcGo('delete', 'col'));
 
 mi('mi-bold', () => fmtToggle('bl'));
 mi('mi-italic', () => fmtToggle('it'));
@@ -4434,6 +5346,8 @@ mi('mi-wrap', () => fmtToggle('tb', 3));
 mi('mi-clearfmt', fmtClear);
 
 mi('mi-stats', colStats);
+mi('mi-sortaz', () => sortGo(false));
+mi('mi-sortza', () => sortGo(true));
 
 // The AI rows call ANOTHER surface's functions, so every one of them is guarded: if
 // that panel moves or is not in the build, the row disables itself (menuPaint) rather

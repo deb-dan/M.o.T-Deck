@@ -794,9 +794,9 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-21k');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-27a');
 check('…and the static fallback banner carries the SAME one',
-      (html.match(/loffice-2026-08-21k/g) || []).length === 2);
+      (html.match(/loffice-2026-08-27a/g) || []).length === 2);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PART 4 — THE ACTION BLOCK: the model can change the sheet, on a click
@@ -820,8 +820,12 @@ const officePy = fs.readFileSync(path.join(ROOT, 'bridge', 'office.py'), 'utf8')
 // The constants come out of the page as `var`, because a `const` inside a sloppy-mode
 // direct eval is scoped to the eval and would be lost (function declarations leak,
 // lexical declarations do not — the same reason this file is not 'use strict').
+// ⚠️ `[\s\S]*?` rather than `.*?`: at 2026-08-27a the constants this file needs include
+// one whose value is a multi-line string concatenation (RC_FORMULA_NOTE, the honest note
+// the sort and insert gestures share with the AI path), and `.` does not match a newline
+// — the old pattern simply did not find it and threw.
 function constLine(name) {
-  const m = html.match(new RegExp('^const ' + name + ' = .*?;', 'm'));
+  const m = html.match(new RegExp('^const ' + name + ' = [\\s\\S]*?;', 'm'));
   if (!m) throw new Error('const ' + name + ' not found in office.html');
   return m[0].replace(/^const /, 'var ');
 }
@@ -835,20 +839,35 @@ eval(constLine('ACT_STR_MAX'));
 eval(constLine('ACT_LIST_MAX'));
 eval(constLine('ACT_SHEET_MAX'));
 eval(constLine('ACT_NAME_MAX'));
-eval(constLine('ACT_UNDO_MAX_BYTES'));
 eval(constLine('ACT_HT'));
 eval(constLine('ACT_VT'));
+// ⚠️ `ACT_UNDO_MAX_BYTES` IS GONE ON PURPOSE, and so is `actClone`. At 2026-08-27a this
+// panel stopped keeping its own private pre-write clone: the page grew ONE undo stack
+// and the AI apply became an entry on it. The per-entry byte ceiling moved with it.
+eval(constLine('HIST_MAX_BYTES'));
+eval(constLine('RC_MAX'));
+eval(constLine('SORT_BLANK'));
+eval(constLine('RC_FORMULA_NOTE'));
 var actSeq = 0;                       // page-side module state, mirrored for actAddSheet
+var dirty = false;                    // histEntry records it, so it has to exist here
+var TIER1_MAX_COLS = num('TIER1_MAX_COLS');
 
 eval(grab('parseInput')); eval(grab('putCell'));
 eval(grab('actHelp'));
 eval(grab('actScalar')); eval(grab('actRef')); eval(grab('actRange'));
 eval(grab('actGrid')); eval(grab('actColor')); eval(grab('actStyleSet'));
+eval(grab('actCol')); eval(grab('actRcTarget'));
 eval(grab('actDocName')); eval(grab('actValidate')); eval(grab('actScan'));
 eval(grab('parseActions')); eval(grab('actSummary')); eval(grab('actCellList'));
-eval(grab('actCell')); eval(grab('actClone')); eval(grab('actTargetSid'));
+eval(grab('actCell')); eval(grab('actTargetSid'));
 eval(grab('actSheetExists')); eval(grab('actAddSheet')); eval(grab('actResolveStyle'));
 eval(grab('actRunOps')); eval(grab('actWhere'));
+// the shared machinery the two new ops execute through — the SAME functions the menu
+// gestures use, which is the whole reason the AI path cannot drift from the manual one
+eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
+eval(grab('sortKey')); eval(grab('sortOrder'));
+eval(grab('rcMerges')); eval(grab('rcApply'));
+eval(grab('histEntry'));
 
 check('the caps mirror the grid they write into: the column ceiling is TIER1_MAX_COLS',
       ACT_MAX_COL === num('TIER1_MAX_COLS') - 1);
@@ -1218,7 +1237,9 @@ function fresh() {
   snap = fresh();
   activeSid = 's1';
   const original = JSON.stringify(snap);
-  const before = actClone(snap);            // exactly what actApply keeps
+  // exactly what actApply pushes onto the page's ONE undo stack, through the SAME
+  // function the ⌘Z path uses — the panel no longer has a clone of its own
+  const before = histEntry('the model’s change');
   const p = parseActions(REPLY_OK).plan;
   const done = actRunOps('s1', p.ops);
   check('actRunOps reports what it wrote', !!done && done.cells === 8 && done.cleared === 2);
@@ -1235,11 +1256,14 @@ function fresh() {
   eq('THE CELL THE PLAN DID NOT MENTION IS UNTOUCHED — the apply writes what the '
      + 'preview promised and nothing else',
      snap.sheets.s1.cellData['8']['3'], { v: 'keep', t: CV_STRING });
-  // THE UNDO, performed the way actUndo performs it: assign the clone back.
-  snap = before;
+  // THE UNDO, performed the way histGo performs it: assign the entry's clone back.
+  snap = before.snap;
   eq('UNDO RESTORES THE WORKBOOK EXACTLY — a clone put back, not a list of operations '
      + 'reversed, because reversing has to GUESS what a cell held before',
      JSON.stringify(snap), original);
+  eq('…and the entry carries the sheet selection and the dirty flag with it, so the '
+     + 'restore is of the whole state and not merely of the cells',
+     [before.sid, before.dirty, typeof before.label], ['s1', false, 'string']);
 }
 {
   // a shared style id is the trap styleWrite() records, and actRunOps must not fall in
@@ -1302,11 +1326,223 @@ function fresh() {
 }
 check('a workbook too big to clone still applies, and the card says the change cannot '
       + 'be taken back — an Undo button that would not work is worse than none',
-      actClone({ big: 'x'.repeat(ACT_UNDO_MAX_BYTES) }) === null
+      (() => { snap = { big: 'x'.repeat(HIST_MAX_BYTES) }; return histEntry('x') === null; })()
       && /too large to hold an undo copy/.test(grab('actPaint'))
-      && /card\._undo = !!before/.test(grab('actApply')));
-check('actClone survives a snapshot it cannot serialise at all',
-      (() => { const o = {}; o.self = o; return actClone(o) === null; })());
+      && /card\._undo = !!entry/.test(grab('actApply')));
+check('the cloner survives a snapshot it cannot serialise at all',
+      (() => { const o = {}; o.self = o; snap = o; return histEntry('x') === null; })());
+check('…and one that CAN be cloned comes back as a real entry',
+      (() => { snap = fresh(); const e = histEntry('a label');
+               return !!e && !!e.snap && e.snap !== snap
+                      && JSON.stringify(e.snap) === JSON.stringify(snap); })());
+
+/* ══ PART 5 — THE TWO NEW OPS: sort, and insert / delete_rc ════════════════════
+   (2026-08-27a) The AI path gets the same two gestures the menu just got, through the
+   SAME functions — `sortOrder` + `gridRemap` for a sort, `rcApply` for an insert or a
+   delete — so there is no second idea of what either means. What is NEW here is the
+   caps discipline and the honest-limits reporting, and both are executed. */
+
+check('the help teaches the two new ops, so a model has a way to ask for them',
+      ['"op":"sort"', '"op":"insert"', '"op":"delete_rc"'].every(s => HELP.indexOf(s) >= 0));
+check('…and teaches the two honest limits with them: a sort is REFUSED on merged cells, '
+      + 'and formula references are NOT rewritten',
+      /REFUSED on a sheet that has merged cells/.test(HELP)
+      && /FORMULA REFERENCES ARE NOT/.test(HELP));
+
+// ── a column, and where an insert lands ──
+eq('a sort column is a LETTER, with or without a row and with or without the $',
+   [actCol('B'), actCol('b'), actCol('$B$4'), actCol('AA'), actCol('GR')],
+   [1, 1, 1, 26, 199]);
+eq('…and a bare NUMBER is refused: it is ambiguous between "column 2" and "column B" '
+   + 'the moment anybody 0-indexes it, and a sort aimed one column over is a silently '
+   + 'wrong document',
+   [actCol('2'), actCol(2), actCol(''), actCol(null), actCol('the sales column')],
+   [-1, -1, -1, -1, -1]);
+eq('an insert row target is a 1-based row NUMBER, or a cell reference, because a model '
+   + 'that has seen a spreadsheet writes both',
+   [actRcTarget('row', 3), actRcTarget('row', '3'), actRcTarget('row', 'A3'),
+    actRcTarget('row', 0), actRcTarget('row', 'x')], [2, 2, 2, -1, -1]);
+eq('…and a column target is a letter', [actRcTarget('col', 'D'), actRcTarget('col', 4)],
+   [3, -1]);
+
+// ── the validator on the new ops ──
+{
+  const p = plan({ v: 1, ops: [{ op: 'sort', col: 'B', desc: true }] });
+  check('a sort validates and carries the column and the direction',
+        p.ok === true && p.ops[0].col === 1 && p.ops[0].desc === true);
+  eq('…and counts as a sort, not as cells', [p.count.sorts, p.count.cells], [1, 0]);
+  check('the direction is accepted the several ways a model writes it',
+        plan({ v: 1, ops: [{ op: 'sort', col: 'A', order: 'desc' }] }).ops[0].desc === true
+        && plan({ v: 1, ops: [{ op: 'sort', col: 'A', dir: 'descending' }] }).ops[0].desc === true
+        && plan({ v: 1, ops: [{ op: 'sort', col: 'A' }] }).ops[0].desc === false);
+  check('…and "at" is taken as the column too, because half the models will write that',
+        plan({ v: 1, ops: [{ op: 'sort', at: 'C1' }] }).ops[0].col === 2);
+}
+{
+  const p = plan({ v: 1, ops: [{ op: 'insert', what: 'row', at: 3, n: 2 },
+                               { op: 'delete_rc', what: 'col', at: 'D' }] });
+  check('an insert and a delete both validate', p.ok === true);
+  eq('…as row/column indexes, 0-based inside the page and 1-based on the wire',
+     [p.ops[0].axis, p.ops[0].at, p.ops[0].n, p.ops[1].axis, p.ops[1].at, p.ops[1].n],
+     ['row', 2, 2, 'col', 3, 1]);
+  eq('…and they are counted apart from each other, because one adds and one destroys',
+     [p.count.inserts, p.count.deletes], [2, 1]);
+  check('"rows"/"columns"/"column" are all understood, and "axis" as well as "what"',
+        plan({ v: 1, ops: [{ op: 'insert', what: 'rows', at: 1 }] }).ops[0].axis === 'row'
+        && plan({ v: 1, ops: [{ op: 'insert', what: 'columns', at: 'A' }] }).ops[0].axis === 'col'
+        && plan({ v: 1, ops: [{ op: 'insert', axis: 'column', at: 'A' }] }).ops[0].axis === 'col');
+}
+[['a sort with no column', { v: 1, ops: [{ op: 'sort' }] }],
+ ['a sort whose column is prose', { v: 1, ops: [{ op: 'sort', col: 'the totals' }] }],
+ ['a sort past the last column this grid draws', { v: 1, ops: [{ op: 'sort', col: 'GS' }] }],
+ ['an insert with no axis', { v: 1, ops: [{ op: 'insert', at: 1 }] }],
+ ['an insert with a junk axis', { v: 1, ops: [{ op: 'insert', what: 'diagonal', at: 1 }] }],
+ ['an insert with no target', { v: 1, ops: [{ op: 'insert', what: 'row' }] }],
+ ['an insert past the row ceiling', { v: 1, ops: [{ op: 'insert', what: 'row', at: 99999 }] }],
+ ['a delete of more rows than the cap', { v: 1, ops: [{ op: 'delete_rc', what: 'row', at: 1, n: RC_MAX + 1 }] }]
+].forEach(([label, obj]) => {
+  const p = plan(obj);
+  check('REFUSED, with a reason a person can read — ' + label,
+        p.ok === false && typeof p.why === 'string' && p.why.length > 8);
+});
+// ⚠️ THE ASYMMETRY, AGAIN AND ON PURPOSE — the same one `set` and `resize` carry
+check('an INSERT over the cap is CLAMPED and a DELETE over it is REFUSED: a clamped '
+      + 'insert loses nothing (it is empty space), a clamped delete would destroy '
+      + 'exactly as much data as it felt like',
+      plan({ v: 1, ops: [{ op: 'insert', what: 'row', at: 1, n: 99999 }] }).ops[0].n === RC_MAX
+      && plan({ v: 1, ops: [{ op: 'delete_rc', what: 'row', at: 1, n: 99999 }] }).ok === false);
+check('a missing or junk "n" is one, which is what a model means when it omits it',
+      plan({ v: 1, ops: [{ op: 'insert', what: 'row', at: 1 }] }).ops[0].n === 1
+      && plan({ v: 1, ops: [{ op: 'insert', what: 'row', at: 1, n: 'a few' }] }).ops[0].n === 1);
+
+// ── the preview, which is what the user actually reads before pressing Apply ──
+{
+  const p = plan({ v: 1, ops: [{ op: 'sort', col: 'B', desc: true },
+                               { op: 'insert', what: 'row', at: 3 },
+                               { op: 'delete_rc', what: 'col', at: 'D', n: 2 }] });
+  const list = actCellList(p);
+  check('the preview says the sort covers the WHOLE sheet, row 1 included, and which way',
+        /sort the whole sheet by column B \(Z → A\) — row 1 included/.test(list.lines[0]));
+  check('…names where an insert lands', /insert 1 blank row above row 3/.test(list.lines[1]));
+  check('…and says, in capitals, that a delete LOSES the data in it',
+        /DELETE 2 cols from column D — data in them is lost/.test(list.lines[2]));
+  const s = actSummary(p, 'Sheet1');
+  check('the summary names the structural changes rather than burying them in a cell '
+        + 'count, and shouts the destructive one',
+        /the sheet sorted/.test(s) && /1 row or column inserted/.test(s)
+        && /2 rows or columns DELETED/.test(s));
+  eq('the plan\'s line count still agrees with the list, so "+N more" cannot lie',
+     p.count.lines, list.lines.length + list.more);
+}
+check('the card warns about a delete BEFORE the click, by name, because a count does not '
+      + 'read as "this loses data"',
+      /This DELETES/.test(grab('actPaint')) && /plan\.count\.deletes/.test(grab('actPaint')));
+check('…and says, before the click, that a sort on a merged sheet WILL be refused — the '
+      + 'refusal is not saved up for afterwards',
+      /The sort will be REFUSED/.test(grab('actPaint'))
+      && /sheetMerges\(shs\)/.test(grab('actPaint')));
+check('…and that merged ranges are renumbered while formula references are NOT',
+      /FORMULA REFERENCES ARE NOT/.test(grab('actPaint')));
+
+/* ── EXECUTED: the two ops, against bare snapshots ───────────────────────────── */
+function sortable(opts) {
+  const o = opts || {};
+  const cd = { '0': { '0': { v: 'b', t: CV_STRING }, '1': { v: 30, t: CV_NUMBER } },
+               '1': { '0': { v: 'a', t: CV_STRING }, '1': { v: 10, t: CV_NUMBER } },
+               '2': { '0': { v: 'c', t: CV_STRING }, '1': { v: 20, t: CV_NUMBER } } };
+  if (o.formula) cd['2']['2'] = { f: '=B3*2', v: 40, t: CV_NUMBER };
+  const sh = { id: 's1', name: 'Sheet1', cellData: cd, rowCount: 200, columnCount: 26 };
+  if (o.merge) sh.mergeData = o.merge;
+  return { sheets: { s1: sh }, sheetOrder: ['s1'] };
+}
+{
+  snap = sortable(); activeSid = 's1';
+  const done = actRunOps('s1', plan({ v: 1, ops: [{ op: 'sort', col: 'B' }] }).ops);
+  eq('an AI sort really sorts, through the same sortOrder + gridRemap the menu uses',
+     [0, 1, 2].map(r => snap.sheets.s1.cellData[String(r)]['1'].v), [10, 20, 30]);
+  eq('…and column A came with it', [0, 1, 2].map(r => snap.sheets.s1.cellData[String(r)]['0'].v),
+     ['a', 'c', 'b']);
+  eq('…and it is reported as one sort, not as cells', [done.sorted, done.cells], [1, 0]);
+  eq('…with nothing to warn about on a sheet that holds no formula', done.notes, []);
+}
+{
+  snap = sortable({ formula: true }); activeSid = 's1';
+  const done = actRunOps('s1', plan({ v: 1, ops: [{ op: 'sort', col: 'B' }] }).ops);
+  eq('the formula moved as TEXT and still says what it said',
+     snap.sheets.s1.cellData['1']['2'].f, '=B3*2');
+  eq('…and the card is handed the SAME honest note the menu prints, from the same '
+     + 'constant — one sentence, not two that can drift', done.notes, [RC_FORMULA_NOTE]);
+}
+{
+  // THE MERGE REFUSAL, on the AI path
+  snap = sortable({ merge: [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }] });
+  activeSid = 's1';
+  const was = JSON.stringify(snap);
+  const done = actRunOps('s1', plan({ v: 1, ops: [
+    { op: 'sort', col: 'B' },
+    { op: 'set', at: 'E1', values: [['still applied']] }] }).ops);
+  eq('A SORT ON A MERGED SHEET IS REFUSED HERE TOO, and no cell moved',
+     [0, 1, 2].map(r => snap.sheets.s1.cellData[String(r)]['1'].v), [30, 10, 20]);
+  eq('…it is counted as skipped and SAID, rather than swallowed', done.skipped, 1);
+  check('…in words that name what would have gone wrong',
+        done.notes.length === 1 && /merged range/.test(done.notes[0])
+        && /never belonged together/.test(done.notes[0]));
+  eq('…and the REST of the plan still applied, because that is what the user read and '
+     + 'pressed Apply for — one honest note beats losing all of it',
+     snap.sheets.s1.cellData['0']['4'], { v: 'still applied', t: CV_STRING });
+  check('the merge itself is untouched', JSON.stringify(snap.sheets.s1.mergeData)
+        === JSON.stringify(JSON.parse(was).sheets.s1.mergeData));
+}
+{
+  // INSERT, on the AI path: the merge shifts, the formula does not
+  snap = { sheets: { s1: { id: 's1', name: 'Sheet1', rowCount: 200, columnCount: 26,
+    mergeData: [{ startRow: 2, endRow: 2, startColumn: 0, endColumn: 1 }],
+    cellData: { '0': { '0': { v: 'top', t: CV_STRING } },
+                '2': { '0': { v: 'below', t: CV_STRING },
+                       '1': { f: '=A1', v: 'top', t: CV_STRING } } } } },
+    sheetOrder: ['s1'] };
+  activeSid = 's1';
+  const done = actRunOps('s1', plan({ v: 1,
+    ops: [{ op: 'insert', what: 'row', at: 2 }] }).ops);
+  eq('an AI insert moves the rows below it down, once',
+     snap.sheets.s1.cellData['3']['0'], { v: 'below', t: CV_STRING });
+  eq('…leaving the inserted row blank', snap.sheets.s1.cellData['2'], undefined);
+  eq('THE MERGE WAS RENUMBERED', snap.sheets.s1.mergeData,
+     [{ startRow: 3, endRow: 3, startColumn: 0, endColumn: 1 }]);
+  eq('THE FORMULA WAS NOT: it still says =A1, and the card is told to say so',
+     [snap.sheets.s1.cellData['3']['1'].f, done.notes], ['=A1', [RC_FORMULA_NOTE]]);
+  eq('…and it is counted as an insert', [done.inserted, done.deleted], [1, 0]);
+}
+{
+  snap = sortable(); activeSid = 's1';
+  const done = actRunOps('s1', plan({ v: 1,
+    ops: [{ op: 'delete_rc', what: 'row', at: 1 }] }).ops);
+  eq('an AI delete removes the band and pulls the rest up — "at":1 is ROW 1, the way a '
+     + 'person says it, so the first row is the one that goes',
+     [0, 1].map(r => snap.sheets.s1.cellData[String(r)]['0'].v), ['a', 'c']);
+  eq('…and clears the tail rather than leaving a duplicate',
+     snap.sheets.s1.cellData['2'], undefined);
+  eq('…counted as a delete', done.deleted, 1);
+}
+check('the AI ops go through the SAME rcApply and sortOrder the menu rows do, so a model '
+      + 'cannot reach a sort or an insert the menu does not perform',
+      /sortOrder\(sh, o\.col, o\.desc, u\.rows\)/.test(grab('actRunOps'))
+      && /rcApply\(sh, o\.op === 'insert'/.test(grab('actRunOps')));
+check('actRunOps STILL touches no view state, no dirty flag and no DOM, even with the '
+      + 'two structural ops in it — which is the property that lets everything above '
+      + 'run against a bare snapshot',
+      (() => {
+        const ro = stripComments(grab('actRunOps'));
+        return !/dirty/.test(ro) && !/renderGrid/.test(ro) && !/viewRows|viewCols/.test(ro)
+               && !/document\./.test(ro) && !/\bel\(/.test(ro);
+      })());
+check('the formula note is asked ONCE PER APPLY, after the writes, and only when the '
+      + 'sheet still holds one — not once per operation',
+      /if \(\(done\.sorted \|\| done\.inserted \|\| done\.deleted\) && sheetFormulas\(sh\)\)/
+        .test(grab('actRunOps')));
+check('and every note actRunOps came back with is PRINTED on the applied card — a '
+      + 'refusal the card swallowed would read as a change that happened',
+      /\(done\.notes \|\| \[\]\)\.forEach/.test(grab('actPaint')));
 
 /* ── THE STRUCTURAL FENCES ─────────────────────────────────────────────────── */
 // THE ONE THAT MATTERS MOST, and it replaces the old "the panel never writes": the
@@ -1322,9 +1558,43 @@ const writeFns = fnNames.filter(n => {
   try { body = grabFrom(code, n, 'office.html'); } catch (e) { return false; }
   return /\bputCell\s*\(/.test(body.slice(body.indexOf('{')));
 }).sort();
+/* ⚠️⚠️ THE FENCE GREW FROM FIVE NAMES TO SEVEN AT 2026-08-27a, AND THAT IS A DELIBERATE,
+   ARGUED CHANGE — a writer-set fence is only worth having if widening it is a decision
+   somebody had to write down. The slice added Find-and-replace, sort, and insert/delete
+   row/column, i.e. three gestures that CHANGE CELLS, and they were given exactly TWO new
+   writers rather than five:
+
+     · `replaceWrite`  — the only thing that puts a NEW VALUE in a cell. Both Replace and
+                         Replace all go through it (one hit or many), so there is one
+                         place where a replaced cell is re-typed through parseInput.
+     · `gridRemap`     — the only thing that MOVES cells. Sort, insert row, insert
+                         column, delete row and delete column are all one remap over a
+                         source function, so the capture-before-write rule that makes an
+                         in-place shift correct is written once and tested once.
+
+   Both are shared by the MANUAL gestures and the AI ops, which is the property that
+   matters most: the model cannot reach a code path the menu does not, so there is no
+   second idea of what a sort or an insert means. Anything beyond these seven appearing
+   here is a new writer and needs the same argument made in the same place. */
 eq('EXACTLY these functions may write a cell — the grid\'s own three, the template '
-   + 'builder, and the AI panel\'s ONE writer. Nothing else in the page can.',
-   writeFns, ['actRunOps', 'clearCell', 'commit', 'newFromTemplate', 'styleWrite']);
+   + 'builder, the AI panel\'s ONE writer, and the two this slice added. Nothing else '
+   + 'in the page can.',
+   writeFns, ['actRunOps', 'clearCell', 'commit', 'gridRemap', 'newFromTemplate',
+              'replaceWrite', 'styleWrite']);
+check('…and the two new writers are SHARED by the menu gestures and the AI ops, so the '
+      + 'model cannot reach a code path the menu does not',
+      /gridRemap\(/.test(grab('sortGo')) && /gridRemap\(/.test(grab('rcApply'))
+      && /gridRemap\(/.test(grab('actRunOps')) && /rcApply\(/.test(grab('actRunOps'))
+      && /rcApply\(/.test(grab('rcGo'))
+      && /replaceWrite\(/.test(grab('findReplaceOne'))
+      && /replaceWrite\(/.test(grab('findReplaceAll')));
+check('…and neither of them touches view state, a dirty flag or the DOM, which is why '
+      + 'both are executed against bare snapshots in test_office_grid.js',
+      ['gridRemap', 'replaceWrite'].every(fn => {
+        const s = stripComments(grab(fn));
+        return !/dirty/.test(s) && !/renderGrid/.test(s) && !/viewRows|viewCols/.test(s)
+               && !/document\./.test(s) && !/\bel\(/.test(s);
+      }));
 check('…and the fence would notice a new writer appearing', (() => {
   const faked = code.replace('function aiGrow(', 'function aiGrow(){putCell(1,2,3,4)}\nfunction aiGrowX(');
   let body = '';
@@ -1356,9 +1626,17 @@ check('the parse half touches no global and no DOM at all',
 // comment can defeat is worse than none (the rule stripComments exists for).
 const ap = grab('actApply');
 const apCode = stripComments(ap);
-check('the undo clone is taken BEFORE the first write, or there is nothing to restore',
-      apCode.indexOf('actClone(snap)') > 0
-      && apCode.indexOf('actClone(snap)') < apCode.indexOf('actRunOps('));
+// ⚠️ REWRITTEN AT 2026-08-27a: the clone is still taken before the first write, but it
+// is taken onto the PAGE'S ONE UNDO STACK rather than into this panel's own variable.
+// That is the point of the slice — the sheet had two histories that could not see each
+// other (the AI's single clone, and nothing at all for anything the user typed).
+check('the undo entry is pushed BEFORE the first write, or there is nothing to restore',
+      apCode.indexOf('histPush(') > 0
+      && apCode.indexOf('histPush(') < apCode.indexOf('actRunOps('));
+check('…onto the SAME stack ⌘Z walks, so the AI apply is one entry among the user\'s own '
+      + 'and neither can strand the other',
+      /const entry = histPush\(/.test(apCode)
+      && /actLast = entry \? \{ entry: entry, card: card, name: current \} : null/.test(apCode));
 check('the document is marked dirty and the grid redrawn, so the change is on screen',
       /dirty = true/.test(apCode) && /renderGrid\(\)/.test(apCode));
 // ⚠️ THE RULE THE BRIEF ASKED FOR IN SO MANY WORDS: never auto-save over their file.
@@ -1394,17 +1672,27 @@ check('it goes through the SAME /api/office/new route the New button uses — no
 
 // THE UNDO
 const un = grab('actUndo');
-check('Undo restores the clone, whole', /snap = actLast\.before/.test(un));
-check('…including the dirty flag, so a clean document goes back to CLEAN and does not '
-      + 'ask to be saved for a change that no longer exists',
-      /dirty = actLast\.dirty/.test(un));
+check('the card\'s Undo goes through the page\'s undo stack rather than restoring a clone '
+      + 'of its own — one history, one restore path',
+      /histGo\('undo'\)/.test(un) && !/snap = /.test(un));
+check('…which restores the clone whole, dirty flag included, so a clean document goes '
+      + 'back to CLEAN and stops asking to be saved for a change that no longer exists',
+      /snap = e\.snap/.test(grab('histRestore')) && /dirty = e\.dirty/.test(grab('histRestore')));
 check('…and it will not restore over a DIFFERENT workbook',
       /current !== actLast\.name/.test(un));
 check('…nor silently do nothing when a later change replaced the copy: a dead button '
       + 'is the defect class this page exists to remove',
       /actLast\.card !== card/.test(un) && /can no longer be undone/.test(un));
+// ⚠️ THE STALENESS TEST GOT SHARPER, not looser: it used to mean "a second apply
+// replaced my clone", and it now means "my entry is still the TOP of the stack". A cell
+// typed after the apply would ALSO have made restoring this entry wrong — it would have
+// thrown that typing away — and the old test could not see that at all.
+check('the card refuses when ANYTHING has changed the sheet since it applied, not merely '
+      + 'when another apply has, and it points at ⌘Z which walks the stack properly',
+      /histTop\('undo'\) !== actLast\.entry/.test(un)
+      && /Edit → Undo \(⌘Z\)/.test(un));
 check('only the LAST apply is undoable, and the card only draws the button when it is '
-      + 'the one holding the copy',
+      + 'the one holding the entry',
       /card\._undo && actLast && actLast\.card === card/.test(grab('actPaint')));
 
 // ZERO NEW CSS — the card is built from the grammar the reply renderer already had
@@ -1434,7 +1722,17 @@ check('only the LAST apply is undoable, and the card only draws the button when 
 check('the parse beacon carries the refusal reason, so "it did nothing" is answerable '
       + 'from the boot log alone', /bx\('action-parsed'[\s\S]{0,320}scan\.why/.test(code));
 check('…and the applied beacon says whether an undo copy was kept',
-      /bx\('action-applied'[\s\S]{0,220}too-large/.test(code));
+      /bx\('action-applied'[\s\S]{0,400}too-large/.test(code));
+check('…and counts the structural ops too, so "it sorted my sheet" is answerable from '
+      + 'the boot log', /bx\('action-applied'[\s\S]{0,400}sorted=/.test(code)
+      && /bx\('action-applied'[\s\S]{0,400}deleted=/.test(code));
+check('the stack beacons its own pushes, clears and the too-large case',
+      ['hist-push', 'hist-clear', 'hist-too-large']
+        .every(st => code.indexOf("bx('" + st + "'") > 0));
+// the undo and the redo share ONE call site, named by the direction — which is why
+// test_office_grid.js asserts those two by EXECUTING histGo rather than by grepping
+check('…and the undo and the redo through one call site named by direction',
+      /bx\('hist-' \+ dir/.test(code));
 
 // WHAT THE PANEL PROMISES THE USER, which must match what it does
 check('the placeholder says the model can fill the sheet in',

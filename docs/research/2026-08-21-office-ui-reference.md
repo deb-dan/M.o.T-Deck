@@ -231,3 +231,18 @@ faked** out of `new` + `save`.
 5. Docs and Slides. Gated on the §9 measurement in the alternatives sweep, not on this file.
 </content>
 </invoke>
+
+---
+
+## ⟳ UPDATE 2026-08-27 (v1.5.2) — the undo stack arrived; §5 and §7 are partially stale
+
+§7.4's "want an undo stack first" gate is CLEARED: LOffice now has a page-wide undo/redo
+stack (50 entries, ⌘Z/⇧⌘Z/⌘Y, Edit-menu rows live). Rows listed `—` disabled in §5 that are
+now WIRED: Edit → Undo/Redo, Find **and replace** (replace + replace-all in the find strip);
+Data → Sort sheet A→Z / Z→A (merges refuse, formulas warn, row 1 sorts with the sheet — no
+header guessing); Insert → Row above / Column to the left / Delete this row / Delete this
+column (merges renumbered, formula references deliberately NOT rewritten — stated per gesture).
+The AI action block gained `sort` / `insert` / `delete_rc` riding the same stack. Still
+disabled as listed: cut/copy/paste, freeze, number-format rendering, merge UI, colour pickers,
+filters, data validation. §7.3's toolbar row = the next slice. Details: test suites 491+491
+and the 2026-08-27 session notes.
