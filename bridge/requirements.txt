@@ -19,3 +19,27 @@ pytest>=8.0
 # time. Declared here so bootstrap installs it everywhere and build_app.sh 4b carries
 # it into the fat wheelhouse for free — the same reasoning as the pytest line above.
 openpyxl>=3.1
+# ── NO `fastmcp` AND NO `mcp` LINE, AND THAT IS A DECISION, NOT AN OMISSION ───────────
+# bridge/office_mcp.py serves the LOffice toolset over MCP Streamable HTTP (slice S1 of
+# docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md, which suggested FastMCP). The cost was
+# MEASURED before it was accepted, on this Mac, with this venv:
+#
+#   data/bridge-venv/bin/python -m pip install --dry-run fastmcp
+#     → 49 new packages, incl. cryptography, cffi, rpds-py, watchfiles (COMPILED
+#       wheels) and a SECOND http stack (httpx2) beside the httpx line above.
+#   …--dry-run mcp   (the official SDK on its own)
+#     → 17 new packages, still cryptography/cffi/rpds-py/httpx2.
+#
+# Every line in this file is carried into the fat wheelhouse by build_app.sh 4b, so a
+# compiled dependency tree here becomes a per-architecture provisioning problem on every
+# machine — to serve FIVE JSON-RPC methods (initialize, notifications/initialized,
+# tools/list, tools/call, ping) and one transport rule. The server half of Streamable
+# HTTP for a tools-only server is written by hand instead, against the CLIENT the
+# vendored Hermes actually ships (mcp 1.28.1 in data/hermes-venv — read, not
+# remembered), and bridge/tests/test_office_mcp.py pins the transport rules a real
+# client depends on: a notification answered 202-with-no-body, a request answered
+# application/json, GET answered 405.
+#
+# ⚠️ IF A LATER SLICE NEEDS SAMPLING, ELICITATION, RESOURCES, OAUTH OR SERVER-INITIATED
+# NOTIFICATIONS, REVISIT THIS. Those are the parts of MCP an SDK genuinely earns its
+# weight for. A tools-only server is not.

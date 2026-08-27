@@ -81,6 +81,26 @@ except Exception:                                # noqa: BLE001
         print(f"[office] module unavailable — the Office tab is disabled ({_OFFICE_ERR})",
               flush=True)
 
+# The OFFICE AGENT LANE — the six LOffice tools Hermes calls over MCP
+# (bridge/office_ops.py = every decision, bridge/office_mcp.py = the wire). Same
+# defensive import for the same reason, one step further: a snapshot that predates these
+# files must still boot a bridge with a working Office TAB. It simply has no
+# /mcp/office, and the Capabilities pane then shows the loffice toolset as absent
+# instead of the bridge failing to start.
+_OFFICE_MCP_ERR = ""
+try:
+    from . import office_ops as _office_ops
+    from . import office_mcp as _office_mcp
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import office_ops as _office_ops       # type: ignore
+        from bridge import office_mcp as _office_mcp       # type: ignore
+    except Exception as _e:                      # noqa: BLE001
+        _office_ops = _office_mcp = None         # type: ignore
+        _OFFICE_MCP_ERR = str(_e)[:200]
+        print("[office] agent-lane modules unavailable — the LOffice MCP server is off "
+              f"({_OFFICE_MCP_ERR})", flush=True)
+
 # LOffice TIER 2 — the vendored ONLYOFFICE static editors (bridge/oo.py). Same
 # defensive import, same reason: a snapshot that predates this file must still boot,
 # it just loses /oo/*, /oo-edit and the rich-editor button — which then SAYS so
@@ -9533,6 +9553,110 @@ def office_download(name: str) -> Response:
         target,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=os.path.basename(target))
+
+
+# ══ THE OFFICE AGENT LANE — MCP server + the open-dirty heartbeat ════════════════
+#
+# bridge/office_mcp.py mounts the MCP server itself (POST/GET/DELETE /mcp/office). The
+# three routes here are the surfaces that are NOT MCP:
+#
+#   POST /api/office/heartbeat  — the page tells the bridge "I have <name> open and it
+#                                 is (not) dirty", so a write tool can refuse a
+#                                 workbook with unsaved edits in it. ADVISORY, TTL'd,
+#                                 NEVER a lock file: see office_ops's own comment. S2
+#                                 (the panel lane) is what will call it; until then
+#                                 nothing registers and every write is allowed, which
+#                                 is the correct behaviour for a page that is closed.
+#   GET  /api/office/mcp        — is the loffice server in Hermes's config, does it
+#                                 MATCH what this bridge would write, and which tools
+#                                 need an approval card. The Capabilities pane's
+#                                 out-of-sync/Adopt reconciliation reads this.
+#   POST /api/office/mcp        — {on} → write or remove the entry. The same
+#                                 idempotent yaml round-trip the Browse and voice
+#                                 toggles use (_hermes_write_mcp), so it can never
+#                                 disturb another server in the same map.
+#
+# ⚠️ THE CONFIG ENTRY IS NOT WRITTEN AT IMPORT TIME, and that is deliberate: the
+# config-gen step is scripts/start_component.sh's hermes branch (it runs on every
+# Hermes start, so it survives a pin bump the way the path-guard plugin seed does), and
+# a bridge that wrote ~/.hermes/config.yaml merely by being IMPORTED would also write it
+# during every test run that imports bridge.app — which is exactly what
+# bridge/tests/test_voice_mcp.py's exact-set assertions would trip over.
+
+def _office_mcp_unavailable() -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": "the office agent-lane modules failed to load: "
+                               f"{_OFFICE_MCP_ERR}"}, status_code=503)
+
+
+@app.post("/api/office/heartbeat")
+async def office_heartbeat(req: Request) -> JSONResponse:
+    """{name, dirty} → the advisory open-file registry. {name, close:true} forgets it."""
+    if _office_ops is None:
+        return _office_mcp_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                            # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    name = body.get("name") or ""
+    if body.get("close"):
+        _office_ops.heartbeat_clear(name)
+        return JSONResponse({"ok": True, "name": name, "closed": True})
+    out = _office_ops.heartbeat(name, bool(body.get("dirty")))
+    return JSONResponse(out, status_code=200 if out.get("ok") else 400)
+
+
+@app.get("/api/office/mcp")
+def office_mcp_status() -> JSONResponse:
+    if _office_mcp is None:
+        return _office_mcp_unavailable()
+    want = _office_mcp.hermes_entry(_bridge_port())
+    got = _hermes_get_mcp(_office_mcp.SERVER_NAME)
+    return JSONResponse({
+        "ok": True, "name": _office_mcp.SERVER_NAME, "path": _office_mcp.MOUNT_PATH,
+        "registered": got is not None, "entry": got, "expected": want,
+        "in_sync": got == want,
+        # Which tools Hermes will put behind an approval card, and why — the honest
+        # answer to "is this approval-required?", which in Hermes is a property of the
+        # server's `trust` PLUS each tool's readOnlyHint annotation, never a per-tool
+        # config field. See bridge/office_mcp.py's docstring.
+        "approval": {"mechanism": "mcp_servers.loffice.trust=untrusted + per-tool "
+                                  "annotations.readOnlyHint",
+                     "gated": _office_mcp.write_tool_names(),
+                     "ungated": _office_mcp.read_tool_names()},
+        "tools": [t["name"] for t in _office_mcp.tool_specs()],
+    })
+
+
+@app.post("/api/office/mcp")
+async def office_mcp_register(req: Request) -> JSONResponse:
+    """{on} → add/remove `mcp_servers.loffice`. Idempotent on both sides."""
+    if _office_mcp is None:
+        return _office_mcp_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                            # noqa: BLE001
+        body = {}
+    on = bool((body or {}).get("on", True)) if isinstance(body, dict) else True
+    entry = _office_mcp.hermes_entry(_bridge_port()) if on else None
+    if on and not entry:
+        return JSONResponse({"ok": False, "error": "the bridge port is unusable"},
+                            status_code=500)
+    try:
+        present = _hermes_write_mcp(_office_mcp.SERVER_NAME, entry)
+    except Exception as e:                       # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"could not write Hermes's config: "
+                                                   f"{str(e)[:160]}"}, status_code=500)
+    _office_log(f"mcp register on={on} present={present}")
+    return JSONResponse({"ok": present is on, "on": on, "registered": bool(present),
+                         "gen": hermes_cfg_gen()})
+
+
+if _office_mcp is not None:
+    _office_mcp.configure(ROOT)
+    app.include_router(_office_mcp.build_router())
 
 
 # ══ LOFFICE TIER 2 — the vendored ONLYOFFICE editors ════════════════════════════

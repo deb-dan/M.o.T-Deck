@@ -1333,6 +1333,59 @@ PYGUARD
     else
       echo "[harness] WARNING: guards/harness-path-guard missing — file writes are UNFENCED"
     fi
+    # ── LOFFICE MCP SERVER (S1): register the bridge-hosted office toolset ────────
+    # docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §1. bridge/office_mcp.py mounts the server
+    # on the EXISTING bridge port at /mcp/office; this is the config-gen step that tells
+    # Hermes it is there. It runs on EVERY Hermes start, which is what makes it survive
+    # a pin bump — the same reasoning as the path-guard plugin seed above.
+    #
+    # IDEMPOTENT: an entry that already matches does not rewrite the file at all, so the
+    # yaml round-trip's one cost (comments and key order) is paid once and never again.
+    # Only `mcp_servers.loffice` is touched — browsermcp, the voice servers and anything
+    # Debi added by hand survive the whole-map load/store.
+    #
+    # ⚠️ `trust: untrusted` IS THE APPROVAL SWITCH AND IT IS NOT OPTIONAL. Hermes has no
+    # per-tool approval field for MCP: write-capable tools are gated only on a server
+    # marked untrusted (vendor/hermes/tools/mcp_tool.py:4017, _trust_gate_check), and
+    # "write-capable" means "no annotations.readOnlyHint: true", which
+    # bridge/office_mcp.py declares per tool. Drop this key and the four write tools run
+    # with no approval card at all.
+    BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
+    BR_PORT="${BR_PORT:-8700}"
+    HCFG="$HCFG" BR_PORT="$BR_PORT" python3 - <<'PYLOFFICE'
+import os, tempfile
+cfg, port = os.environ["HCFG"], os.environ["BR_PORT"]
+try:
+    import yaml
+except Exception:
+    print("[harness] WARNING: PyYAML unavailable — LOffice MCP server NOT registered")
+    raise SystemExit(0)
+entry = {"url": "http://127.0.0.1:%s/mcp/office" % port,
+         "trust": "untrusted", "timeout": 120}
+try:
+    data = yaml.safe_load(open(cfg, encoding="utf-8").read()) if os.path.exists(cfg) else {}
+except Exception as exc:
+    print("[harness] WARNING: could not parse %s (%s) - mcp_servers untouched" % (cfg, exc))
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    data = {}
+servers = data.get("mcp_servers")
+if not isinstance(servers, dict):
+    servers = {}
+if servers.get("loffice") == entry:
+    print("[harness] LOffice MCP server: already registered at " + entry["url"])
+    raise SystemExit(0)
+servers["loffice"] = entry
+data["mcp_servers"] = servers
+d = os.path.dirname(cfg) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d)
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
+os.replace(tmp, cfg)
+print("[harness] LOffice MCP server registered at " + entry["url"]
+      + " (trust: untrusted - write tools get an approval card)")
+PYLOFFICE
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
     # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in
