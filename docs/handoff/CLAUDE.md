@@ -740,3 +740,211 @@ Always sync the Mac clone with: `git fetch origin && git reset --hard origin/mai
 > **🎯 THE REAL DIAGNOSIS: BOTH LANES WERE RUNNING — THEY LANDED ON EMPTY STATES (2026-08-21, Opus-5; merged QA 39py+23js, contract 124+4skip; Mac-verify PENDING; uncommitted):** Debi's own logs settled three sessions of "not working": LOffice beacons showed `tier1-ready +4ms` / `files-ok n=0 roundtrip=true` — the page was ALIVE, the bridge fine, and `n=0` meant she had ZERO documents, so it correctly showed its empty state; OpenCode's log read `opencode server listening on http://127.0.0.1:4096` and its own UI rendered ("Nothing here yet — create a session"). **Neither was broken; both demanded a setup step, which reads as broken.** ⚠️ LESSON: an empty state that requires a setup step IS a defect when the tab is the product; every lane must land on something usable. **PART A — LOffice lands on a grid:** `autoOpen()` after boot — non-empty library opens the newest file, EMPTY library creates+opens `Untitled.xlsx` (never-clobber ` (n)`); **the dead end was `create()`'s `if(!name) return;`** — no request, no message, no beacon (an empty name now defaults to Untitled; a TYPED name still refuses on collision — deliberate asymmetry, test-pinned); new `auto-open`/`landed` beacons; skips honestly when openpyxl is missing (its banner owns that case); stamp loffice-2026-08-21f. **BROWSER-VERIFIED in real headless Chromium against the real bridge, fresh empty data/office: 480 editable cells with NO user action, boot→landed in 29ms, type+Save+reload persists, 2-file case opens the newest and creates nothing, blank-name Create yields `Untitled (2)` leaving the original untouched (18/18 checks, 0 page errors).** **PART B — OpenCode lands on a session, and the source explained why it couldn't before:** a project is a git repo that YIELDS AN ID (remote hash / cached id / **root-commit sha**, project.ts:110-122) — `git init` alone is NOT enough (no commits → falls back to the "global" pseudo-project; upstream's own test asserts this) → the installer now `git init`s the workspace + ONE `--allow-empty` commit + README, repo-local git identity, idempotent, inside `post_install` so **re-clicking Install self-heals Debi's copy**. **There is nothing seedable server-side:** the Projects rail is CLIENT localStorage (`opencode.global.dat:server`) and the home session list is filtered BY that rail, so a pre-created session would not clear the screen either. Instead: new bridge route `GET /opencode` → 307 to `http://127.0.0.1:<port>/<base64url(data/opencode-workspace)>/session` (its own documented deep-link shape: DirectoryLayout + new-session composer; an undecodable dir toasts and lands on `/` = today's behaviour, so the downside is bounded), the Swift tab now points at the bridge route (only the bridge knows ROOT and the configured port), and `start_component.sh` fires one `GET /project/current?directory=<ws>` after the health poll to register the project without littering an empty session per Start. ⚠️ accepted: deep-linking a third-party SPA's internal route (contract-pinned so a bump trips); bridge route not a baked Swift URL; no pre-created session; `Untitled (2)` naming convention. **HONEST LIMITS: Part B was never executed (darwin-arm64 binary, Linux sandbox) — source-read + pinned; the git seeder itself WAS run in isolation. All browser verification is Chromium, not WKWebView.**
 
 > **🔬 LOFFICE LEGIBILITY (OUR CSS WAS LEAKING) + OFFICE AI PANEL + OPENCODE PROVIDER WIRING (2026-08-21, 2 Opus builders; merged QA 39py+24js, contract 126+4skip; Mac-verify PENDING; uncommitted):** **(1) LOFFICE GAP 1 — the brief's theme-mismatch hypothesis was WRONG and the truth was worse: OUR OWN STYLESHEET was reaching into Univer's DOM.** Measured in real headless Chromium via getComputedStyle: ribbon `<input>` "Arial"/"11" at **1.08:1**, ten Univer menu rows at **1.21:1** (our `--cream` over their white ground), `headerbar` background painted with our `--bg2`. Two BARE TYPE SELECTORS did it — `header{background:var(--bg2)}` matched Univer's real `<header>`, `button{…}` matched every ribbon button, and `body{color}` inherited into menus portaled into an anonymous `body>div` (no id/class at this pin, so nothing could be scoped after the fact). FIX: our chrome rules now scope via `:where(#boot,body>header,#msg,#richbar,#files,#gridbar,#ai)` — specificity byte-identical (proven: un-`:where`ing regresses `.lnk` to (1,0,1) and boxes the file links). **After: 0 of 15 Univer text nodes below 4.5:1, worst 5.34:1; #sheet ink rgb(0,0,0), headerbar transparent.** The alternative WAS measured: `darkMode:true` is first-class at the pin (ThemeService.darkMode$ → `univer-dark` on <html> → 63 compiled dark rules) and also scores 0-below-AA — REJECTED because it darkens the CELL CANVAS and every fill/font colour in a .xlsx was chosen against a white page (a pale fill would misrepresent the document). ⚠️ design call; a light/dark sheet toggle is one line if Debi wants it. The page now MEASURES its own chrome (`chromeProbe` → beacon `stage=chrome-contrast worst=5.34:1 ok`), skipping disabled controls (WCAG 1.4.3 — Univer greys undo/redo at 2.19:1) and compositing alpha (without it a 30%-alpha grey reads 19:1, i.e. the probe would lie). **(2) OFFICE SLICE 2 — the AI rail is REAL:** collapsible right panel (open by default, 334px — discoverability was the bug), reusing the EXISTING lane verbatim: `POST /api/chat/direct {session:'', message:'<sheet context>\n---\n<question>'}` reading the same SSE frames; **`session:''` is deliberate** — chat_direct's `if sid and user_msg` means no history load and no persistence, so a spreadsheet question can never appear in or retitle a Mission Control chat. Model readout from /api/status runner.{pin,running} via `officeModelLabel` (proven answer-for-answer identical to the panel's `laneModelLabel`); context = used range capped 200×30 / 20k chars cut on a line boundary, shown verbatim in a `context sent · N×M` disclosure; **read-only advisory BY CONSTRUCTION** (negative test: no putCell/commit/renderGrid/dirty anywhere in the panel; formulas get copy, never auto-apply). Browser-verified 46/46 against the real bridge + a stubbed OpenAI-compatible runner that ECHOES what it received — so "the sheet really travelled" is measured (`North\t120`, `cell B6 selected`). Stamp loffice-2026-08-21g; new test_office_ai.js 156 checks, every fence proven to bite. ⚠️ single-shot (no history resent, said in the copy); our own `--faint` measures 3.52-3.69:1 in 8 places (shared token, deliberately unchanged; everything new uses --dim 7.4:1). **(3) OPENCODE — "Big Pickle" + "No connected providers" are ONE FACT, quoted from the pin:** `provider.ts:2002-2006` picks the default from `Object.keys(cfg.provider ?? {})` and falls back to the priority list `["gpt-5","claude-sonnet-4","big-pickle","gemini-3-pro"]` (:2016) — so both symptoms mean **`cfg.provider` was empty for that server**. "Connected" needs NO auth entry (`handlers/provider.ts:51-60`: `Object.keys(providers).filter(id => id in connected || credentials[id])`, and a config-declared provider lands in that map at `provider.ts:1613-1619`), with ONE hard precondition: `provider.ts:1684-1687` DELETES any provider whose `models` map is empty. Our file path/shape were already correct (Global.Path.config = xdgConfig+"opencode", `global.ts:10-13`; upstream's own llama.cpp doc example is byte-for-byte our shape) — so the honest fix is redundancy + decidability, not a claimed one-liner: **the config is now written to TWO homes** (global + the project file `data/opencode-workspace/opencode.json`, merged after the global per `config.ts:406-409`; ⚠️ the project copy deliberately carries NO `model` key because the desktop PATCHes model choices back to the global file and a project key merges last, which would stomp the user's pick every load). **A REAL MLX DEFECT WAS FIXED EN ROUTE: we keyed the models map by the WIRE id** — for MLX that is an absolute path, and `provider-catalog.ts:31-36` splits `provider/model` with a bare `const [p,m] = s.split("/")`, so `llama.cpp//Users/…` destructured to an EMPTY model id. Now key = slash-free registry id, `"id"` = wire id (`provider.ts:1465` apiID = model.id ?? modelID; `:1886` sdk.languageModel(model.api.id)). `tool_call` emitted only when modeltools KNOWS (three-valued); `limit.context` only when the registry has one. **Start now self-checks**: curls `GET /provider` and prints `opencode provider check: llama.cpp CONNECTED, N model(s)` or a loud NOT-CONNECTED block naming the config path + the Big-Pickle symptom; never fails the Start. **Servers-list answer: it is the TAB's own localStorage (`opencode.global.dat`, server.tsx:263-274) — it cannot strand her; the served build seeds from props before merging storage (entry.tsx:156-172), so recovery is ⌘R**; Add server wants only `http://127.0.0.1:4096` with name/username/password EMPTY (`serve` runs `password: Option.none()`). Debi diagnostics doc: docs/research/2026-08-21-opencode-provider-wiring.md. test_opencode_lane 30→47 (13 EXECUTE the real seeding block against temp registries). ⚠️ accepted: second config in the coding workspace; limit.output = min(4096, ctx); slash-sanitised keys for org/name ids; root cause of the original emptiness INFERRED not observed. **HONEST LIMITS: Chromium not WKWebView; no real model used in the office panel (stub runner); nothing executed against the darwin-arm64 opencode binary.**
+
+
+> **🏁 OPENCODE SOLVED BY RUNNING THE REAL BINARY + LOFFICE ERGONOMICS + OFFICE DEEP
+> RESEARCH (2026-08-21, Fable QA over 3 Opus agents; ⚠️ opencode fix UNVALIDATED
+> in-sandbox — VM died; Debi's step-1 command + the ship gate are the validation):**
+> **(1) OPENCODE ROOT CAUSE — observed, not theorized:** npm publishes
+> `opencode-linux-arm64` — the agent RAN 1.18.19 in the sandbox with our exact
+> seeding. Our seeding is CORRECT (provider connected, models listed, MLX key/wire
+> split works, project-config path works, `@ai-sdk/openai-compatible` is BUNDLED so
+> no runtime npm install — offline worry closed). **Debi's failure = TWO things:**
+> (a) her one early "Disconnect" click wrote `disabled_providers:["llama.cpp"]` via
+> their PATCH /global/config, our merge preserved it forever, and upstream DELETES a
+> disabled provider before the models loop (provider.ts:1644) → "No connected
+> providers" + empty picker; (b) we wrote dangling `model:` defaults when
+> runner.model wasn't a registry id — defaultModel() is unvalidated (:1980) and the
+> client fallback priority list contains "big-pickle" (:2017) — THAT is where Big
+> Pickle came from. **FIX in start_component.sh opencode branch:** strip our id from
+> disabled_providers (+ add to non-empty enabled_providers), print `REPAIRED:` lines,
+> never write a default that isn't in our own models map (else deterministic first
+> model, else unset), self-check timeout 8→25s (measured: /provider = 193 providers,
+> 5.2MB). Settings→Providers and the composer picker read the SAME /provider payload
+> (all ∩ connected) — a config provider IS expected to appear tagged "config", so her
+> screenshot was a real fault. Model picks are client-storage, survive restarts.
+> Their pages CAN be iframed (no frame-ancestors/XFO, verified live) — the
+> harness-strip fallback is feasible but cross-origin-blind; parked.
+> **(2) LOFFICE ERGONOMICS (stamp 21h, browser-verified 27/27):** draggable dividers
+> (rail 160-420, AI 260-560, persisted-on-release, dblclick reset, pointer capture,
+> mirrored-axis bug pinned), both panes collapse to 34px labelled reopeners
+> (railSetOpen single writer), header unified to one 28px control token (the 26/22/16
+> mix WAS the "feels off"), ⌘\ toggles rail, Esc clears messages, real hit targets on
+> row actions. test_office_grid 205→247; sweep was green when that agent ran.
+> **(3) OFFICE DEEP RESEARCH (docs/research/2026-08-21-office-alternatives-deep.md):**
+> HEADLINE — the first recon tested the wrong ONLYOFFICE artifact: DocumentServer
+> (Linux server) is dead, but **ONLYOFFICE's EDITORS are 100% client-side static
+> files** (x2t.wasm + sdkjs/web-apps served over plain HTTP — CryptPad has shipped
+> exactly this since 2021; 4 independent backend-free bundles exist). Only option
+> with docx+xlsx+pptx+PDF and the real recognizable ribbon, and it REDUCES owned
+> surface. Gates: AGPL served from our page (closer coupling than SearXNG — Fable
+> preliminary: acceptable for personal use, same conveyance rules) + several hundred
+> MB assets. Also: Univer's import/export ceiling is PROPRIETARY (validates our
+> tier-1 but caps tier-2 permanently); CryptPad itself = encrypted blobs, files
+> invisible to the harness → reject-as-component, harvest its asset pipeline; Grist =
+> Airtable not a spreadsheet (xlsx import discards formulas); Document Builder
+> WATERMARKS without license; Collabora structurally mac-impossible; EtherCalc now
+> Bun/CF-workers (worse); Quadratic went closed 2026-03. **FABLE RULING: the
+> 30-minute measurement decides (music pattern)** — unzip the prebuilt bundle, serve
+> statically, open in a REAL WKWebView, round-trip a real .xlsx; pass → adopt as
+> LOffice tier-2 REPLACING the Univer lazy-loader (tier-1 grid stays as instant boot;
+> x2t.wasm becomes the converter for both); fail → x2t.wasm converter-only. Either
+> way ship "Open in ONLYOFFICE" (brew cask, detect-never-install) as the fidelity
+> escape hatch. Queue the probe as the next office slice.
+> **(4) OPS:** the sandbox VM wedged on a full disk mid-wave (opencode binary runs +
+> a blobless clone) — the ship gate (verify.sh) did its job as the safety net: Debi
+> validates on-Mac before shipping. LOffice "are we writing an app from scratch?"
+> answered honestly: partially yes (SDK-embed vs complete-app was the recon's
+> tradeoff under no-Docker/macOS constraints — now re-examined by the deep research).
+
+> **🏷️ MOT REBRAND + LOFFICE GROUNDING + ONLYOFFICE PROBE KIT + BUZZ/GOOSE RECON
+> (2026-08-21 later, Fable orchestrating 4 Opus agents under a DEAD VM — no bash all
+> turn, file-tools-only builders, Debi's ship gate = the validator):** Debi CONFIRMED
+> OpenCode working (models in picker — the disabled_providers repair validated live;
+> pending-task closed). **(1) MOT REBRAND (visible surfaces only, Fable fence):** app
+> = **MOT Deck**, Mission Control → **MOT Main** (sidebar/tab/hero/⌘K/tooltips/error
+> strings), wordmark MOT + "mixture of tools / local · control", window title +
+> Quit menu + first-run alerts, OpenCode provider name → "MOT Deck (local)",
+> office/aider titles, docs H1s + naming notes (HARNESS-INTERNALS/architecture get a
+> top note, not a rewrite). INTERNALS UNCHANGED by ruling (harness.yaml, HARNESS_*,
+> localStorage keys, paths, bundle id, /Applications/Harness.app) — full internal
+> rename = queued ops slice. 2 test pins updated by inspection; "the harness" as a
+> common noun deliberately left (~25 sites); app.py:1075 session name "Mission
+> Control" KEPT (renaming would orphan the chat session); CFBundleName → MOT Deck
+> takes effect only on a full build_app.sh. ✋ GitHub repo rename = Debi's click.
+> **(2) LOFFICE ROUND 3 (stamp 21i):** the CLEAN-function bug root-caused — sticky
+> global ai-ctx-off + zero grounding → new aiPreamble() ALWAYS prepended (names
+> LOffice/.xlsx/open sheet; "function = SPREADSHEET function, Excel semantics");
+> SHEET chip on-by-default per file (persisted pref deliberately dropped — it pinned
+> the bug; old test assertion was pinning the bug too, rewritten). File ⌄ menu (New/
+> Open ⌘O/Import/Rename/Save ⌘S/Download/Close/⌂ MOT Main), POST /api/office/rename
+> (containment discipline). Theme coherence: page reads panel's harness-theme +
+> harness-chrome from localStorage (same origin), 9 rules, palette rules = the ONE
+> deliberate non-:where() exception (a :where() prefix would lose to :root). Fixed a
+> LATENT DATA-LOSS bug: double-click on a dirty row armed AND confirmed the discard
+> in one gesture (DISCARD_MIN_MS=400). Fable added the Swift branch: loffice+aider
+> webviews get the "harness" script-message handler (first-party bridge-served pages
+> — third-party components still never). ⚠️ ONE-TIME REPAIR: a NUL byte got into
+> office.html (3 string literals, neutralised behind // comments, page syntactically
+> valid; Grep refuses the file until stripped):
+> `LC_ALL=C tr -d '\000' < bridge/panel/office.html > /tmp/o && mv /tmp/o bridge/panel/office.html`
+> **(3) ONLYOFFICE PROBE KIT BUILT** (Debi GO): scripts/probe_onlyoffice.sh (⚠️
+> arrives 644 — chmod +x FIRST or the hygiene fence blocks the gate, as designed) +
+> docs/handoff/ONLYOFFICE-PROBE-RUNBOOK.md. Track A fernfei/OnlyofficePersonal =
+> Safari go/no-go (⚠️ unverified provenance, measurement vehicle only); Track B
+> CryptPad onlyoffice-editor.zip v9.2.0.119+3 + x2t.zip v7.3+1 (hash-verified at run
+> time against CryptPad's own install-onlyoffice.sh; ⚠️ pin unresolved between two
+> readings — script records what it downloads, env overrides exist). Ships its own
+> serve.py (wasm MIME + no-store + threading — three false-fail sources). Sheets-only
+> answer to Debi: v1 was Sheets by design; Docs+Slides ride the probe (the bundle
+> carries all three editors + PDF) — pass = full office in one adoption.
+> **(4) BUZZ/GOOSE RECON (WebSearch-only, VM dead; docs/research/2026-08-21-buzz-
+> goose-recon.md):** block/buzz = REAL but a Nostr hive-mind team workspace needing
+> Postgres+Redis+S3 via Docker Compose → REJECT as component, WATCH (hosted Buzz is
+> just a URL; Hermes→Buzz wiring exists); chidiwilliams/buzz = native Qt Whisper GUI
+> → reject (voice lane covers it). GOOSE UN-REJECTED: moved to the Agentic AI
+> Foundation (aaif-goose/goose, Apache-2.0, v1.46.0, prebuilt darwin-arm64 = the
+> OpenCode installer shape); tool-calling REQUIRED (no text fallback) = fine now via
+> the tools pill + start-plan warning; NO browser UI (goosed = client API; :7681 =
+> ttyd red herring) → shape = PTY lane over a generalized pty_aider.py. 9-item
+> source-verify checklist queued for when the VM returns. Old "Docker-ish" strike
+> was likely an over-read (Docker Model Runner = optional provider).
+> Roadmap updated + grep-verified. NOTHING EXECUTED this turn (no bash anywhere) —
+> ship gate + Debi's smoke tests are the validation. Restart the session for a
+> clean VM before the next heavy round.
+
+> **🧯 REGRESSION REPAIR + LOFFICE BECOMES AN OFFICE APP (2026-08-21 latest, Opus-5
+> builder ×4 in parallel, VM STILL DEAD — file-tools only, nothing executed;
+> ⚠️ ALL OF THIS IS PENDING FABLE QA. THE GOOGLE REFERENCE SCREENSHOTS DEBI SENT
+> (Sheets home + Sheets File/Edit/View/Insert/Format/Data menus, Docs Insert/Format/
+> Tools/Gemini menus, Slides Edit/View/Insert) ARE IN THE CHAT TRANSCRIPT AND ARE
+> TRANSCRIBED ITEM-BY-ITEM IN `docs/research/2026-08-21-office-ui-reference.md` —
+> Fable must read that doc; Debi called seeing them "paramount".**
+> **(1) THE REGRESSION WAS MINE (Fable's own Swift edit last turn): two comment lines
+> written with a SINGLE `/` instead of `//`** → `swiftc` failed → ship.sh copied panel
+> +bridge and moved on → the shell binary stayed OLDER than the panel (topbar still
+> read "Mission Control" while the sidebar read "MOT Main"). Every symptom Debi
+> reported follows from that skew. **STANDING LESSON, third strike class: Grep's
+> `-A/-B` CONTEXT LINES CAN DROP A LEADING CHARACTER** (a healthy `//` renders as `/`)
+> — never diagnose or copy comment syntax from context output; Read to confirm. A
+> whole-file scan for `^\s*/[^/*]` is now the cheap gate for main.swift.
+> **(2) LANE ROW → CHROME, root-caused:** `navOpen` did
+> `if (e.prefersTab && e.tab && switchTab(...)) return;` then `window.open(e.url)`;
+> `switchTab` returns false when the handler is absent (an old shell), and
+> `window.open` in a WKWebView lands in `createWebViewWith` → `NSWorkspace.open` →
+> the DEFAULT BROWSER. Aider/LOffice are `view:null` lanes so nothing else caught it.
+> FIX: new `inNativeApp()` (webkit present, deliberately weaker than `nativeShell()`)
+> + `shellTabs()`/`shellKnowsTab()` reading a NEW shell→page capability record
+> `window.harnessShell = {api:2, tabs:[...every registry id...]}` injected at
+> documentStart on the panel + loffice + aider only. Inside the app a lane can NEVER
+> reach `window.open` — it prints `this build of the app has no such tab — run
+> ./scripts/ship.sh`. **A one-way postMessage was previously silent on failure; it
+> now has a diagnosable answer.** Also fenced: `ensureLoaded`'s `wvById[id] ?? panelWV`
+> could have loaded `/office` INTO THE PANEL'S WEBVIEW (destroying Mission Control and
+> showing the panel in the asking tab — exactly Debi's symptom 2); now a `guard` that
+> logs `BUG:` and refuses. `/office` + `/aider` routes verified registered OUTSIDE the
+> defensive office try/except and unshadowed; office.py audited importable by reading.
+> **(3) LOFFICE MENU BAR — the Google-literal rebuild** (Debi: "did you even care to do
+> research… everything is in the white strip and uniform"): row 1 = dark app chrome
+> (mark · click-to-rename title · dirty dot · Rich/Import/New/Save), **row 2 = a WHITE
+> `<nav id="menubar">` flush with the sheet in BOTH themes: File · Edit · View ·
+> Insert · Format · Data · AI · Help, 63 rows**, uniform metrics, left tick gutter,
+> right-aligned mono shortcut column, hairline groups, click-then-hover switching,
+> ←→↑↓/Esc, **41 rows WIRED · 22 DISABLED WITH THE REASON IN THEIR OWN title** (Google's
+> grey-not-hide grammar; no dead item may look live). New capability: a real **Find**
+> bar (scans cellData, grows the render window, cap 500). Format's bold/italic/
+> underline/strike/align/wrap were chosen because `office.py::apply_style` provably
+> round-trips exactly `bl it ul st ff fs cl bg ht vt tb n`. **⌂ home NO LONGER LEAVES
+> LOFFICE** (Debi's exact complaint): `mi-start` shows LOffice's own **START SCREEN**
+> (Sheets-home shaped: "Start a new spreadsheet" Blank + 2 client-generated templates,
+> then the recent list with Enter/↑/↓/download/two-step delete), and a separate
+> `Back to MOT Main ↗` at the File menu's bottom keeps the switchTab. `autoOpen` no
+> longer auto-creates Untitled on an empty library — it lands on the start screen.
+> CSS: +47 rules in ONE contiguous block, −6 (`#filemenu` row rules) = net +41.
+> **(4) THE AI PANEL CAN NOW WRITE THE SHEET** (Debi: "not possible to do tool
+> functions… maybe even Hermes-like abilities"). **Mechanism ruling: NOT
+> OpenAI function-calling** — most of her local models can't tool-call and the direct
+> lane sends no `tools`, so it would work on some models and silently no-op on the
+> rest. Instead a **taught ACTION BLOCK**: ```loffice {v:1, file?, sheet?, ops:[set|
+> style|sheet|resize]}``` → pure total `parseActions` (caps 60 ops / 2000 cells /
+> GR5000 bounds; `set` REFUSES when over cap, `resize` CLAMPS — asymmetric on purpose)
+> → **a PREVIEW card (summary + exact `A1 → value` list, capped) with Apply/Dismiss;
+> nothing is written until the click** → Apply writes through the grid's OWN
+> putCell/parseInput/renderGrid/dirty path (no second writer) → **Undo restores a
+> pre-write full clone** (reversing ops has to guess what a cell held; a shared style
+> id or a merge makes that guess wrong invisibly). Never auto-saves — the user saves.
+> No-workbook case = `create()` then apply ("Create & apply"). Tier-2 (Univer mounted)
+> REFUSES with an honest message. **The old "this panel can never write" assertions
+> were deliberately rewritten** and replaced by something stronger: a fence computed
+> over every function in the page asserting the complete writer set is exactly
+> `[actRunOps, clearCell, commit, newFromTemplate, styleWrite]` (self-tested — an
+> injected writer trips it). `actRunOps` is EXECUTED in-test against bare snapshots
+> incl. the shared-style-id trap and byte-for-byte undo. Hermes hand-off = a LATER
+> slice, deliberately not started (Hermes has the real tools + approval cards +
+> path-guard). **Stamp loffice-2026-08-21k** (page ×2 + both test files agree).
+> **(5) OPENCODE "degraded while green" — DIAGNOSED, and the expensive-endpoint
+> hypothesis is REFUTED.** The card and the feed read the SAME `c.degraded` in the same
+> loop iteration — they cannot disagree at an instant; the difference is LIFETIME (the
+> card is rebuilt every poll, the feed line is permanent scrollback with no retraction).
+> `degraded` was instantaneous: `expected-up AND not running`, and `running` is a 0.5s
+> TCP handshake OR pid-alive — it never touches `/provider`. Two healthy windows
+> produce it for one poll: **a CLI `--restart` (which Debi ran: `_clear_port` → sleep →
+> new pid, while `.expected` is only written by the PANEL's Start)** and event-loop
+> congestion. FIXES: per-component probe budget (`{opencode: 2.0}`, default 0.5,
+> spent only when expected-up so a stopped component can't slow every poll), a pure
+> `health_verdict` → `ok|transient|lost` with **3 consecutive misses** (mirrors the
+> panel's own BRIDGE-UNREACHABLE rule), ONE derivation `healthOf(c)` feeding feed+card
+> +dot, and the line that makes a stale alarm impossible: **`back online`**. Card reads
+> `Reconnecting…` during a restart. **Deliberately NOT switched to `/global/health`:
+> a TCP handshake is completed by the KERNEL from the listen backlog, an HTTP GET needs
+> the server's event loop — the "cheaper" endpoint would be MORE likely to false-fail.**
+> The six log blocks are six STARTS appended to one log (`>>`, never truncated) — no
+> leak, ownership-checked port clearing, no `opencode` name signature so a stranger on
+> :4096 is never killed; the start log now says so, and annotates the vendored
+> `OPENCODE_SERVER_PASSWORD` warning as expected-on-loopback (setting one would gate
+> the SPA our own tab loads — Add-server asks for it BY HAND, nothing would supply it).
+> ⚠️ QUEUED: probe components concurrently (`asyncio.gather`) — worst-case /api/status
+> latency now +1.5s while opencode is expected-up-and-missing.
+> **(6) DEBI'S OPEN QUESTION, answered honestly: LOffice is Sheets-only today.**
+> Docs + Slides ride the ONLYOFFICE probe (its bundle carries all three editors + PDF);
+> the menu bar and start screen were built so a document-type row slots in.

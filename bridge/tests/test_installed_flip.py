@@ -230,14 +230,20 @@ def test_card_lifecycle_live():
 
     client = TestClient(A.app)
     with tempfile.TemporaryDirectory() as td:
-        # A minimal manifest with a component on a port nothing holds.
+        # A minimal manifest with a component on a port nothing holds — found by
+        # binding port 0, NOT hardcoded 4096: on the dev Mac the real OpenCode is
+        # live on 4096 and `running` would honestly read True there
+        import socket
+        with socket.socket() as _s:
+            _s.bind(("127.0.0.1", 0))
+            free_port = _s.getsockname()[1]
         open(os.path.join(td, "harness.yaml"), "w", encoding="utf-8").write(
             "components:\n"
             "  opencode:\n"
             "    pin: \"1.18.19\"\n"
             "    installed: false          # OPTIONAL\n"
             "    enabled: false\n"
-            "    port: 4096\n"
+            f"    port: {free_port}\n"
             "    depends_on: []\n")
         os.makedirs(os.path.join(td, "data"), exist_ok=True)
         old = A.ROOT
@@ -256,8 +262,8 @@ def test_card_lifecycle_live():
             comp = client.get("/api/status").json()["components"]["opencode"]
             ok(comp["installed"] is True,
                "after the flip the card must read installed — THE FIX")
-            ok(comp["running"] is False, "nothing is listening on 4096 in the sandbox")
-            ok(comp["port"] == 4096, "the card carries the manifest port")
+            ok(comp["running"] is False, "nothing is listening on the free test port")
+            ok(comp["port"] == free_port, "the card carries the manifest port")
 
             # …and the Start path renders a plan (the card's other half).
             r3 = client.get("/api/components/opencode/start-plan")

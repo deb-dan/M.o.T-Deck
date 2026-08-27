@@ -656,7 +656,9 @@ with tempfile.TemporaryDirectory() as td:
     a4 = os.path.join(d, "acestep-20260820-130000.m4a")
     open(a4, "w").write("ftyp")
     check("an .m4a is addressable and listed too",
-          music.library_target(td, os.path.basename(a4))[0] == a4
+          # realpath both sides: macOS tempdirs live under /var -> /private/var,
+          # and library_target answers with the realpath
+          music.library_target(td, os.path.basename(a4))[0] == os.path.realpath(a4)
           and len(music.library_entries(td)) == 3)
     check("a .txt in the same folder is still refused",
           music.library_target(td, "notes.txt")[0] is None)

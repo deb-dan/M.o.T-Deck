@@ -347,11 +347,19 @@ check('showWorkbook is the only tier decision point, and it falls back to the gr
 check('the grid uses delegated listeners on the table, not per-cell handlers',
       (html.match(/el\('gt'\)\.addEventListener/g) || []).length >= 3
       && !/td\.onclick\s*=/.test(html));
+// ⚠️ SCOPED AT 2026-08-21: this used to assert no ArrowDown/ArrowRight anywhere in the
+// page, which was only true while the grid was the sole keyboard consumer. The menubar
+// now navigates with arrows — wanted, and gated behind `openMenu >= 0` so it can never
+// reach an editing cell — and the start screen's file rows arrow within themselves. The
+// invariant that matters is pinned where it lives: the GRID's own keydown handler.
+const GT_KD = (html.split("el('gt').addEventListener('keydown'")[1] || '').split('});')[0];
 check('Enter/Tab/Escape are handled; the ARROW keys are deliberately left to the caret '
       + '(there is no way to tell "next cell" from "editing text" inside a '
       + 'contenteditable, and hijacking them would make cells uneditable)',
-      /k === 'Enter'/.test(html) && /k === 'Tab'/.test(html) && /k === 'Escape'/.test(html)
-      && !/ArrowDown|ArrowRight/.test(html));
+      /k === 'Enter'/.test(GT_KD) && /k === 'Tab'/.test(GT_KD) && /k === 'Escape'/.test(GT_KD)
+      && !/Arrow(Down|Up|Left|Right)/.test(GT_KD)
+      // …and the menubar's arrow handling exists only inside the open-menu guard
+      && /if \(openMenu >= 0\) \{[\s\S]{0,400}'ArrowRight'/.test(html));
 // ⚠️ REGRESSION FENCE FOR A DATA-CORRUPTING DEFECT. A contenteditable puts the caret
 // where you clicked, so clicking a cell holding `10` and typing `99` produced `9910` —
 // the typed value INSERTED into the old one, silently, and then saved into the .xlsx.
@@ -643,8 +651,15 @@ check('⌘\\ toggles the rail — the shortcut every editor with a sidebar uses'
       /ev\.key === '\\\\'[\s\S]{0,160}railSetOpen\(!railIsOpen\(\), 'key'\)/.test(html));
 check('Esc dismisses the message box, which otherwise can only be replaced by the '
       + 'next message', /ev\.key === 'Escape' && el\('msg'\)\.classList\.contains\('on'\)/.test(html));
+// ⚠️ SCOPED AT 2026-08-21: the page-wide "no Escape+preventDefault on one line" sweep
+// broke when the find bar arrived — ITS input legitimately preventDefaults Escape in
+// its OWN keydown handler, which can only fire with focus in the find box and so steals
+// nothing from the grid or the name box. What must stay true is that the WINDOW-level
+// Escape branches (dismiss message, close menubar menu) never preventDefault.
 check('…and Esc does NOT preventDefault, so the name box and the grid keep their own '
-      + 'Escape meanings', !/ev\.key === 'Escape'[^\n]*preventDefault/.test(html));
+      + 'Escape meanings',
+      /=== 'Escape' && el\('msg'\)\.classList\.contains\('on'\)\) say\(''\);/.test(html)
+      && /nk === 'Escape' && openMenu > 0\) \{ menuClose\('esc'\); return; \}/.test(html));
 // ⚠️ ALSO ALREADY RED BEFORE 2026-08-21j: it pinned `'Enter') create()`, and that box
 // stopped being create-only when it learned Rename. `nameRowGo()` is the verb it is
 // currently showing, which is the behaviour that actually matters.

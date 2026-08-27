@@ -91,9 +91,13 @@ with tempfile.TemporaryDirectory() as td:
     has_pytest = subprocess.run([sys.executable, "-c", "import pytest"],
                                 capture_output=True).returncode == 0
     if has_pytest:
-        # put the chosen interpreter where verify.sh looks first
+        # put the chosen interpreter where verify.sh looks first — as a shim that
+        # execs the real path, NOT a symlink: a venv python found via a symlink
+        # loses its pyvenv.cfg (argv0-relative), so pytest would vanish with it
         (fake / "data" / "bridge-venv" / "bin").mkdir(parents=True)
-        (fake / "data" / "bridge-venv" / "bin" / "python").symlink_to(sys.executable)
+        shim = fake / "data" / "bridge-venv" / "bin" / "python"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        os.chmod(shim, 0o755)
         r = subprocess.run(["bash", str(fake / "scripts" / "verify.sh")],
                            capture_output=True, text=True)
         check("passing suite -> exit 0", r.returncode == 0)

@@ -714,7 +714,7 @@ check('…and a rename NEVER throws unsaved edits away — it is not a save',
 check('a rename that fails says why, from the bridge, and beacons it',
       /bx\('rename-fail'/.test(ren) && /the bridge answered/.test(ren));
 check('the rail\'s one name box does both verbs rather than growing a second one',
-      /function nameRow\(want\)/.test(code) && /nameMode === 'rename' \? 'Rename' : 'Create'/.test(code)
+      /function nameRow\(want\)/.test(code) && /(nameMode|mode) === 'rename' \? 'Rename' : 'Create'/.test(code)
       && /function nameRowGo\(\)/.test(code));
 check('…and Enter in that box follows the verb it is showing',
       /if \(ev\.key === 'Enter'\) nameRowGo\(\)/.test(code));

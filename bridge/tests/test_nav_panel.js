@@ -243,8 +243,15 @@ console.log('render (executed)');
   const peekEnd = html.indexOf('function pkFlash(');
   ok(peekStart > 0 && peekEnd > peekStart, 'the peek predicate block is where the test expects it');
   const peekSrc = html.slice(peekStart, peekEnd);
+  // renderSidebar's status dot now goes through healthOf(), the ONE health derivation
+  // (defined later in the page — hoisting covers the live page, but not this slice).
+  // The REAL function is pulled in, not stubbed, for the same reason as the peek block.
+  const healthStart = html.indexOf('function healthOf(c)');
+  const healthEnd = html.indexOf('\n}\n', healthStart) + 3;
+  ok(healthStart > 0 && healthEnd > healthStart, 'the healthOf derivation is where the test expects it');
+  const healthSrc = html.slice(healthStart, healthEnd);
   const run = new Function(...Object.keys(env),
-    srcFull + peekSrc + html.slice(sideStart, sideEnd) + `
+    srcFull + peekSrc + healthSrc + html.slice(sideStart, sideEnd) + `
     NAV_ENTRIES.forEach(e => { if (e.kind === 'component' && e.tab) TAB_FOR_COMPONENT[e.id] = e.tab; });
     renderSidebar();
     return { ws: document.getElementById('sideworkspace').innerHTML,
@@ -282,7 +289,7 @@ console.log('render (executed)');
                                     topbar: [{ id: 'models', pinned: true }] }),
     setItem: () => {} } });
   const run2 = new Function(...Object.keys(env2),
-    srcFull + peekSrc + html.slice(sideStart, sideEnd) + `
+    srcFull + peekSrc + healthSrc + html.slice(sideStart, sideEnd) + `
     renderSidebar();
     return document.getElementById('sideworkspace').innerHTML;`);
   const ws2 = run2(...Object.values(env2));
