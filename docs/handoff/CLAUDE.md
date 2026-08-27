@@ -1,5 +1,18 @@
 # New Harness — working memory (canonical project home)
 
+> **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
+> EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by
+> reference into every builder dispatch and every QA pass.** Short form: build the
+> destination, not the request; WALK the realistic user journeys end-to-end on the real
+> stack before "done"; run an adversarial self-pass (LIES-TO-USER outrank crashes
+> outrank refusals); category conventions + graceful absence are requirements the user
+> never has to write; prefer contextual inference over rule lists and NEVER dump
+> ambiguity on the user as a question (autocorrect standard); every walked journey and
+> fixed finding becomes a permanent gate test; reports end with honest limits + the
+> try-it commands. Lessons are recorded in their GENERAL form with the incident as the
+> example — a narrowly-worded lesson is how "every lane must land on something usable"
+> failed to prevent the sum-over-text incident.
+
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);
