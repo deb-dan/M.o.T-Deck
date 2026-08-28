@@ -211,6 +211,38 @@
   body.embed #boot p,body.embed #boot .steps{color:#5b5b5b}
   body.embed #boot h1{color:#181818;font-size:14px;font-weight:600}
   body.embed #boot{gap:10px;justify-content:flex-start;padding-top:34px}
+  /* ══ THE AI PROGRESS CHIP (v1.5.31) ═════════════════════════════════════════
+     Over the EDITOR IFRAME, not inside it: the thing it has to be legible on top of
+     is the editor's own full-frame block overlay, which lives in the child document.
+     Explicit light colours, deliberately, for the same reason `body.embed` above sets
+     white — the editor is pinned to `default-light` and a spreadsheet is a white page
+     under EVERY harness design, so a chip following our dark tokens would be the one
+     dark object on a white sheet. Verified under Editorial and Studio, light + dark. */
+  /* ⚠️ BOTTOM, NOT TOP, AND THAT IS A SCREENSHOT FINDING. The first draft sat at
+     top:12px and landed square across the ONLYOFFICE ribbon's tab row — it covered
+     Layout/Formula/Data and the document title, i.e. it hid the ribbon the user had
+     just used in order to tell them about the thing they had just started. Above the
+     status bar it is clear of both the ribbon and the editor's own centred block box. */
+  #aichip{position:absolute;bottom:52px;left:50%;transform:translateX(-50%);z-index:6;
+          display:none;align-items:center;gap:10px;max-width:min(560px,86%);
+          padding:8px 10px 8px 12px;border-radius:10px;
+          background:#ffffff;border:1px solid #d9d5cb;
+          box-shadow:0 6px 20px rgba(20,18,12,.16);
+          font:12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+          color:#181818}
+  #aichip.on{display:flex}
+  #aichip .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#c9a44d;
+               animation:aichip-pulse 1.1s ease-in-out infinite}
+  @keyframes aichip-pulse{0%,100%{opacity:.25}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){#aichip .dot{animation:none;opacity:.8}}
+  #aichip .txt{flex:1 1 auto;min-width:0}
+  #aichip-t{display:block;font-weight:600;white-space:nowrap;overflow:hidden;
+            text-overflow:ellipsis}
+  #aichip-n{display:block;color:#6b6658;font-size:11px;white-space:nowrap;
+            overflow:hidden;text-overflow:ellipsis}
+  #aichip-stop{flex:none;height:24px;padding:0 10px;font-size:11px;color:#181818;
+               background:#f3f1ea;border:1px solid #d9d5cb;border-radius:7px}
+  #aichip-stop:hover:not(:disabled){background:#e9e6dc}
 </style>
 </head>
 <body>
@@ -240,6 +272,11 @@
 
 <div id="stage">
   <div id="editor"></div>
+  <!-- The AI progress chip. Empty and hidden until a ribbon AI action is actually
+       streaming; see "TRAP SIX" in the script below for why it exists at all. -->
+  <div id="aichip"><span class="dot"></span><span class="txt"><span id="aichip-t"></span
+    ><span id="aichip-n"></span></span><button id="aichip-stop"
+    title="Stop this AI action — nothing will be written into the document">Stop</button></div>
   <div id="boot">
     <h1 id="boot-title">Opening the editor…</h1>
     <div id="bar"><i></i></div>
@@ -1638,6 +1675,285 @@ setInterval(function () {
   aiChatHandover(DOC, '').catch(() => { /* never fatal */ });
 }, AI_CHAT_AUTOSAVE_MS);
 
+// ══ TRAP SIX: THE RIBBON'S BLOCKING MODAL, AND THE PLUGIN'S OWN CURE FOR IT ══
+//
+// ⚠️ THE OBSERVED DEFECT (Debi, 2026-08-28): press AI → Summarization or AI →
+// Translation and the whole editor goes behind a centred "AI (model)" spinner for the
+// ENTIRE generation — a minute and more on a 27B — with no sign of life and no way
+// out. MEASURED live (WKWebView, real sheet, real runner): the `asc-loadmask` appears
+// 1.5s after the click and is still up 120s later, unchanged.
+//
+// It is NOT a plugin loader and there is no setting. It is the EDITOR's own
+// BlockInteraction long action, which the plugin asks for itself, and the plugin
+// already contains the cure — it just does not use it from the ribbon:
+//
+//   ai/scripts/engine/engine.js:512   chatRequest(content, block, streamFunc)
+//                                     → _wrapRequest(..., block !== false, streamFunc)
+//                             :577    let isStreaming = (undefined !== streamFunc)
+//                             :718    return allChunks   ← the WHOLE answer, streamed
+//   ai/scripts/engine/register.js:186-212   the CHATBOT's pattern: own StartAction,
+//                                     chatRequestAgent(data, /*block*/ false, chunk =>
+//                                     { first chunk → EndAction }) — the modal lasts
+//                                     TTFT and the answer then streams into the panel.
+//   register.js 455/483/501/519/544/563/583/603/635/901 and code.js:1448 — the ribbon
+//                                     and context-menu actions: `chatRequest(prompt)`.
+//                                     No block flag, no streamFunc ⇒ block defaults
+//                                     TRUE and NOTHING releases it until the last token.
+//
+// So this shim gives those call sites the Chatbot's pattern from OUTSIDE the plugin:
+// wrap `AI.Request.prototype.chatRequest` in the plugin's own (same-origin) frame,
+// and for a call that is BLOCKING AND NON-STREAMING — i.e. exactly a ribbon/context
+// action — call through with `block=false` plus a streamFunc of ours, bracketed by
+// our own StartAction/EndAction.
+//
+// ⚠️ NOT ONE VENDORED BYTE IS TOUCHED, and the plugin is pinned at 3.2.2 / commit
+// 799b287, which is upstream master HEAD (docs/research/2026-08-28-onlyoffice-forks-
+// loader.md: no fork and no upstream commit fixes this; we are the only ones who can).
+// This is the same mechanism and the same justification as the chat-state fix above:
+// their runtime, our origin, their published request path.
+//
+// ── AND THE HALF THAT IS NOT IN THE RECON, BECAUSE IT ONLY SHOWS UP IF YOU LOOK AT
+//    WHERE THE ANSWER LANDS ────────────────────────────────────────────────────────
+// "Release the editor at the first token" is the right fix for the CHATBOT because
+// the answer lands in a PANEL. Most ribbon actions do not do that: they write the
+// result into the LIVE DOCUMENT AT THE CURRENT SELECTION the instant it arrives —
+//     register.js:901  result = await requestEngine.chatRequest(prompt);
+//                      result = Asc.Library.getTranslateResult(result, content);
+//                      await Asc.Library.PasteText(result);
+// The Block is what stops the user moving that selection while the model thinks. Take
+// it away for 70 seconds and the user does the obvious thing — clicks another cell —
+// and the translation of the FIRST selection is pasted over the SECOND one, silently
+// destroying it. That is the LIES-TO-USER class the doctrine ranks above a crash, and
+// it would be caused BY the fix. So the release is conditional, and the condition is
+// a fact about the UI rather than a hard-coded list of action names:
+//
+//   RELEASE EARLY only while the editor is showing a PLUGIN MODAL (`.asc-window.modal`
+//   in the editor document AND a plugin window frame with a `windowID`). Then the
+//   document is already unreachable behind the plugin's own dialog, the editor's Block
+//   is pure redundancy, and the result cannot land anywhere the user has moved —
+//   Summarization's result goes into the dialog and is inserted later, by an explicit
+//   click. That is the ribbon's long action, and it is now released at the first chunk.
+//
+//   OTHERWISE the Block is KEPT — but the wait stops being a lie by omission. We are
+//   streaming now, so we know the difference between "nothing has come back" and "the
+//   model is thinking" and "the model is writing, 312 characters so far", and we say
+//   so in a chip of our own over the editor, with a Stop.
+//
+// ⚠️ THE VERSION FENCE, TWICE. Every constant here was read out of plugin 3.2.2 and
+// editor v9.2.0.119+5. If either is not what is installed, this shim does NOTHING and
+// the ribbon behaves exactly as it does today (blocking) — never a half-wrapped
+// request, never a released Block on an editor whose modal we cannot recognise.
+const AI_STREAM_PLUGIN_VER = '3.2.2';                 // the pin the seam was read from
+const AI_STREAM_EDITOR_TAG = 'v9.2.0.119+5';          // …and the pin `.asc-window.modal`
+const AI_STREAM_MODAL_SEL = '.asc-window.modal';      // editor's own modal dialog
+let aiStreamWrapped = false;      // the prototype in the live plugin frame is wrapped
+let aiStreamCalls = 0;            // blocking, non-streaming requests we took over
+let aiStreamReleases = 0;         // …of which released the Block at the first chunk
+let aiStreamStops = 0;            // …of which the user stopped (nothing was written)
+let aiStreamTTFT = 0;             // ms to the first chunk of the last one
+let aiStreamLast = '';            // what the last one did, for a probe to read
+
+// ⚠️ THE TRIM IS NOT COSMETIC — IT IS THE TAIL-INTEGRITY GUARANTEE. Upstream's
+// `processResult` (engine.js:617) passes `isTrim = isStreaming ? false : true`, so the
+// blocking path strips a leading `<think>…</think>` and leading/trailing newlines and
+// the STREAMING path does neither. Left alone, "the same action, streamed" would put a
+// different string into the document than "the same action, blocked" — a silent
+// content difference caused by our own change, which is the worst thing this slice
+// could ship. This reproduces upstream's own two steps (provider.js:263-274,
+// engine.js:617-624) over the accumulated answer, so streamed output === blocked
+// output. Pinned against the vendored bytes in test_oo_ai_lane.py.
+function aiStreamNormalize(text) {
+  if (typeof text !== 'string' || text === '') return text;
+  let s = text;
+  if (0 === s.indexOf('<think>')) {
+    const end = s.indexOf('</think>');
+    if (end !== -1) s = s.substring(end + 8);
+  }
+  let iStart = 0, iEnd = s.length - 1;
+  while (iStart < iEnd && s.charCodeAt(iStart) === 10) iStart++;
+  while (iEnd > iStart && s.charCodeAt(iEnd) === 10) iEnd--;
+  if (iEnd > iStart && (iStart !== 0 || iEnd !== (s.length - 1))) s = s.substring(iStart, iEnd + 1);
+  return s;
+}
+
+// Is the editor showing a plugin MODAL right now? Two independent signals, both
+// same-origin DOM/location reads, because releasing the Block on a wrong answer here
+// is the one way this shim could cost a user their data:
+//   1. the EDITOR's own modal dialog element (this is what makes the document
+//      unreachable — the class pair is read out of the pinned editor build), and
+//   2. a plugin window FRAME, which is what a `PluginWindow` opens (`windowID=` in its
+//      URL; the plugin's background frame and the DOCKED Chatbot are not that).
+// A docked Chatbot alone must NOT count: it leaves the ribbon usable, so a Translation
+// started with the chat open would otherwise look "safe" and would not be.
+function aiStreamModal() {
+  if (editorTag !== AI_STREAM_EDITOR_TAG) return false;   // unknown build ⇒ never release
+  let modal = false;
+  try {
+    const d = window.frames[0] && window.frames[0].document;
+    const n = d && d.querySelectorAll(AI_STREAM_MODAL_SEL);
+    for (let i = 0; n && i < n.length; i++) {
+      const r = n[i].getBoundingClientRect();
+      if (r.width > 2 && r.height > 2) { modal = true; break; }
+    }
+  } catch (e) { return false; }
+  if (!modal) return false;
+  const fr = aiFrames(window);
+  for (let i = 0; i < fr.length; i++) {
+    try {
+      const h = String(fr[i].location.href);
+      if (h.indexOf('/ooplug/') !== -1 && h.indexOf('windowID=') !== -1) return true;
+    } catch (e) { /* cross-origin */ }
+  }
+  return false;
+}
+
+// ── THE CHIP: the only new pixels in this slice ──────────────────────────────
+// It lives in OUR page, over the editor iframe, because the thing it has to be
+// visible ON TOP OF is the editor's own full-frame block overlay. It is styled for a
+// LIGHT surface with explicit colours for the same reason `body.embed` is: the editor
+// is pinned to `default-light` and the sheet is a white page under every harness
+// design, so a chip that followed the panel's dark tokens would be the one dark object
+// on a white sheet. Verified under Editorial and Studio, light and dark.
+let aiStreamTick = null;
+function aiStreamChipHide() {
+  if (aiStreamTick) { clearInterval(aiStreamTick); aiStreamTick = null; }
+  const c = el('aichip');
+  if (c) c.classList.remove('on');
+}
+function aiStreamChipShow(job) {
+  const c = el('aichip');
+  if (!c) return;
+  c.classList.add('on');
+  const paint = function () {
+    const secs = Math.round((Date.now() - job.t0) / 1000);
+    let what;
+    if (job.stopped) what = 'stopping…';
+    else if (!job.chunks) what = 'AI is working — nothing has come back yet';
+    else if (!job.chars) what = 'AI is thinking';
+    else what = 'AI is writing — ' + job.chars + ' characters so far';
+    el('aichip-t').textContent = what + ' · ' + secs + 's';
+    // Honest about the editor, because the two cases look different on screen and a
+    // user who is told "you can keep working" while the editor is blocked is lied to.
+    el('aichip-n').textContent = job.released
+      ? 'the editor is free again'
+      : 'the editor is held until this lands in the document';
+  };
+  paint();
+  if (aiStreamTick) clearInterval(aiStreamTick);
+  aiStreamTick = setInterval(paint, 1000);
+  el('aichip-stop').onclick = function () {
+    job.stopped = true;                     // read by the streamFunc on the next chunk
+    paint();
+  };
+}
+
+// THE WRAP ITSELF. Assigned onto the prototype INSIDE the plugin's frame; `this` is
+// the plugin's own AI.Request, `orig` its own method, and every argument is passed
+// through untouched on every path we do not own.
+function aiStreamWrap(win) {
+  if (aiStreamWrapped) return true;
+  if (!aiStatus || aiStatus.version !== AI_STREAM_PLUGIN_VER) return false;
+  let AIns, proto, Asc;
+  try {
+    AIns = win.AI; Asc = win.Asc;
+    proto = AIns && AIns.Request && AIns.Request.prototype;
+  } catch (e) { return false; }
+  // The structural fence: the exact seam this was written against, or nothing.
+  if (!proto || typeof proto.chatRequest !== 'function'
+      || proto.chatRequest.length !== 3               // (content, block, streamFunc)
+      || typeof proto._wrapRequest !== 'function'
+      || !Asc || !Asc.Editor || typeof Asc.Editor.callMethod !== 'function') return false;
+  const orig = proto.chatRequest;
+  proto.chatRequest = async function (content, block, streamFunc) {
+    // EVERY call that is already streaming, or already non-blocking, is somebody
+    // else's design (the agent loop, the helpers, the annotators) and is passed
+    // through byte for byte. We only take over the shape nothing releases: blocking,
+    // no streamFunc — which is exactly the ribbon and context-menu call sites.
+    if (block === false || streamFunc !== undefined) {
+      return await orig.call(this, content, block, streamFunc);
+    }
+    const label = 'AI (' + ((this.modelUI && this.modelUI.name) || '') + ')';
+    const job = {t0: Date.now(), chunks: 0, chars: 0, released: false, stopped: false};
+    let started = false, ended = false;
+    const end = async function () {
+      if (!started || ended) return;
+      ended = true;
+      try { await Asc.Editor.callMethod('EndAction', ['Block', label]); } catch (e) { }
+    };
+    try { await Asc.Editor.callMethod('StartAction', ['Block', label]); started = true; }
+    catch (e) { /* no block went up; we simply never take one down */ }
+    aiStreamCalls++;
+    aiStreamTTFT = 0;
+    aiStreamLast = 'running';
+    // The release decision is taken ONCE, at the start, from the UI as it is when the
+    // user pressed the button — not re-read later, when a dialog may have closed.
+    const mayRelease = aiStreamModal();
+    aiStreamChipShow(job);
+    try {
+      const out = await orig.call(this, content, false, async function (chunk) {
+        job.chunks++;
+        if (typeof chunk === 'string') job.chars += chunk.length;
+        if (!aiStreamTTFT) {
+          aiStreamTTFT = Date.now() - job.t0;
+          if (mayRelease) { job.released = true; aiStreamReleases++; await end(); }
+        }
+        // The user pressed Stop. Returning true is the plugin's OWN documented way to
+        // abort the read (engine.js:718: `if (isBreak === true) await
+        // readerAsync.abort()`), and we then return '' rather than the partial text —
+        // every ribbon call site does `if (!result) return;`, so nothing is written.
+        // A HALF-TRANSLATION PASTED INTO THE SHEET WOULD BE THE LIE THIS WHOLE SLICE
+        // EXISTS TO AVOID.
+        return job.stopped === true;
+      });
+      if (job.stopped) {
+        aiStreamStops++;
+        aiStreamLast = 'stopped after ' + job.chars + ' chars';
+        return '';
+      }
+      aiStreamLast = (mayRelease ? 'released' : 'held') + ' · ttft '
+                     + aiStreamTTFT + 'ms · ' + job.chars + ' chars in '
+                     + (Date.now() - job.t0) + 'ms';
+      // ⚠️ AND THE ANSWER IS PUT BACK INTO THE SHAPE THE BLOCKING PATH WOULD HAVE
+      // PRODUCED. See aiStreamNormalize: streaming skips upstream's own trim.
+      return aiStreamNormalize(out);
+    } finally {
+      // The Block ALWAYS comes down, on every path — success, upstream's swallowed
+      // provider error, a thrown TypeError, a stop. An editor left blocked for ever
+      // would be strictly worse than the modal this slice is here to shorten.
+      await end();
+      aiStreamChipHide();
+    }
+  };
+  aiStreamWrapped = true;
+  return true;
+}
+
+// ARMING. The plugin frame is created by the editor some time after construction, and
+// it is destroyed and rebuilt on every document swap — so this is the same shape as
+// aiChatArm: a cheap, capped poll that stops the moment it succeeds.
+const AI_STREAM_ARM_MAX = 90;             // ~90s, then give up quietly
+let aiStreamArmIv = null;
+function aiStreamDisarm() {
+  if (aiStreamArmIv) { clearInterval(aiStreamArmIv); aiStreamArmIv = null; }
+  aiStreamWrapped = false;                // the wrapped prototype died with the frame
+  aiStreamChipHide();
+}
+function aiStreamArm() {
+  aiStreamDisarm();
+  if (!aiSeeded) return;                  // no AI tab this session — nothing to wrap
+  let tries = 0;
+  aiStreamArmIv = setInterval(function () {
+    tries++;
+    const fr = aiFrames(window);
+    for (let i = 0; i < fr.length; i++) {
+      try { if (aiStreamWrap(fr[i])) break; } catch (e) { /* cross-origin */ }
+    }
+    if (aiStreamWrapped || tries >= AI_STREAM_ARM_MAX) {
+      clearInterval(aiStreamArmIv); aiStreamArmIv = null;
+    }
+  }, 1000);
+}
+
 // Everything that has to happen ONCE per page: the status check, the attribution, the
 // 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
 // repeat it — that split IS the "keep one editor instance alive" requirement.
@@ -1789,6 +2105,11 @@ function openDoc(name) {
     await aiChatHandover('', want);
     DOC = want;
     aiChatArm(want);
+    // The ribbon-streaming shim dies with the plugin frame the destroy above took
+    // out, so it is re-armed on every open — not once per page. A swap that quietly
+    // went back to the whole-generation modal would be the worst kind of regression:
+    // invisible, and only on the SECOND file.
+    aiStreamArm();
     el('docname').textContent = want;
     document.title = want + ' — LOffice editor';
 
@@ -2028,13 +2349,22 @@ window.LOfficeEmbed = {
                              saves: aiChatSaves, restores: aiChatRestores,
                              drops: aiChatDrops, holds: aiChatHolds,
                              files: aiChatIndex().length,
-                             last: aiChatLast, live: !!aiChatWindow()}}}),
+                             last: aiChatLast, live: !!aiChatWindow()},
+                      // The ribbon-streaming shim, reported the same way: a probe can
+                      // PROVE it wrapped the live prototype, that a run released the
+                      // Block (or deliberately held it), and what the first chunk cost
+                      // — instead of any of that being inferred from a screenshot.
+                      stream: {pinned: AI_STREAM_PLUGIN_VER, wrapped: aiStreamWrapped,
+                               calls: aiStreamCalls, releases: aiStreamReleases,
+                               stops: aiStreamStops, ttft: aiStreamTTFT,
+                               modal: aiStreamModal(), last: aiStreamLast}}}),
   destroy: async () => {
     openSeq++;
     // Same rule as the swap: the conversation is saved while the frame that holds it
     // is still there. A host that tears the embed down does not lose the chat either.
     if (editor) { await aiChatHandover(DOC, ''); }
     if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }
+    aiStreamDisarm();   // the chip must not outlive the editor it was reporting on
     editor = null; ready = false; dirtyNow = false;
   }
 };

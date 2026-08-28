@@ -3274,11 +3274,27 @@ async function helpAbout() {
              + '  keeps the work and re-reads only what changed (measured: 29,624\n'
              + '  tokens on the first ask, ~516 on each one after it). The panel’s own\n'
              + '  Quick lane streams instead, so it starts answering immediately.\n'
-             + '  The big centred spinner is the editor’s own "busy" screen, which the\n'
-             + '  plugin puts up while it waits. In the CHATBOT panel it clears the\n'
-             + '  moment the first words arrive; the ribbon’s Summarization and\n'
-             + '  Translation buttons hold it until the whole answer is finished — so\n'
-             + '  for anything long, ask in the Chatbot.\n'
+             // ⚠️ v1.5.31 REPLACED THE OLD "ribbon actions hold for the whole
+             // generation — use the Chatbot for anything long" LINES. They were
+             // honest when they were written and they are no longer true, and a Help
+             // sheet that describes last week's behaviour is a lie with a footnote.
+             // The behaviour is now PER ACTION and the split has a reason, so the
+             // copy says which is which and why rather than averaging the two.
+             + '\n  The big centred spinner is the editor’s own "busy" screen, which\n'
+             + '  the plugin puts up while it waits. Every AI action now STREAMS, so:\n'
+             + '  · CHATBOT — clears the moment the first words arrive.\n'
+             + '  · SUMMARIZATION (ribbon) — clears at the first word too: the answer\n'
+             + '    goes into the Summarization dialog and you insert it yourself\n'
+             + '    afterwards, so the sheet behind it is yours again while it writes.\n'
+             + '  · TRANSLATION, and the right-click Text-analysis actions — these\n'
+             + '    still hold the editor, ON PURPOSE. Their answer is pasted straight\n'
+             + '    over whatever is selected the instant it arrives, so releasing you\n'
+             + '    to click elsewhere would land the translation of the FIRST\n'
+             + '    selection on top of the SECOND one. A blocked editor is annoying;\n'
+             + '    overwriting the wrong cells is worse.\n'
+             + '  While any of them runs, a chip over the sheet says whether the model\n'
+             + '  is still thinking or already writing (and how much), with a Stop —\n'
+             + '  stopping writes NOTHING into the document, never half an answer.\n'
              + '  The Chatbot conversation is kept per file: switch away and back and\n'
              + '  it is still there. It is checkpointed on every file switch and every\n'
              + '  20 seconds, so a hard quit can still cost the last few messages.'

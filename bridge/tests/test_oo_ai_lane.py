@@ -679,6 +679,196 @@ check("…and the host-memory prompt cache stays unbounded (--cache-ram -1), whi
       "what lets another lane's turn not evict the sheet's prefix",
       "--cache-ram -1" in START)
 
+# ══ 10. THE RIBBON'S BLOCKING MODAL — STREAMED, AND ONLY RELEASED WHEN SAFE ══
+#
+# v1.5.31. The sixth upstream trap. Debi's finding: AI → Summarization / Translation
+# puts the whole editor behind a centred "AI (model)" spinner for the ENTIRE
+# generation. MEASURED live (WKWebView, real sheet, real runner, 2026-08-28): the
+# `asc-loadmask` appears 0.5s after the click and is STILL up 120s later.
+#
+# It is the EDITOR's BlockInteraction long action, asked for by the plugin, and the
+# plugin already contains the cure it does not use from the ribbon:
+#     chatRequest(content, block, streamFunc) → _wrapRequest(..., block !== false, …)
+#     _chatRequest: isStreaming = (undefined !== streamFunc); returns `allChunks`
+#     register.js:186-212 — the CHATBOT: own StartAction, block=false, EndAction on
+#                           the first streamed chunk.
+#     the ribbon/context sites — chatRequest(prompt): blocking, no streamFunc.
+# So oo.html wraps the prototype in the plugin's own same-origin frame. Zero vendored
+# bytes; the version fence is what makes that safe.
+check("the glue page pins the plugin version the streaming seam was read from",
+      "AI_STREAM_PLUGIN_VER = '3.2.2'" in OO)
+check("…and the EDITOR build the modal-detection selector was read from — two pins, "
+      "because the shim reads one class pair out of each",
+      "AI_STREAM_EDITOR_TAG = 'v9.2.0.119+5'" in OO
+      and "AI_STREAM_MODAL_SEL = '.asc-window.modal'" in OO)
+check("⚠️ THE FENCE: a plugin that is not the pinned version is NOT wrapped, so the "
+      "ribbon degrades to exactly today's behaviour rather than to a broken action",
+      "aiStatus.version !== AI_STREAM_PLUGIN_VER) return false" in OO)
+check("…and the seam is checked STRUCTURALLY too — the arity of the method we are "
+      "about to replace, and the private helper it delegates to",
+      "proto.chatRequest.length !== 3" in OO
+      and "typeof proto._wrapRequest !== 'function'" in OO)
+check("…and an unknown EDITOR build never releases the Block (the modal selector is "
+      "the only thing standing between a release and a wrong-target paste)",
+      "editorTag !== AI_STREAM_EDITOR_TAG) return false" in OO)
+
+check("the wrap point is AI.Request.prototype.chatRequest, and nothing else",
+      "proto.chatRequest = async function (content, block, streamFunc)" in OO
+      and "AI.Request.prototype.chatRequestAgent" not in OO)
+check("⚠️ …and it takes over ONLY the blocking, non-streaming shape — every call that "
+      "already passes block=false or a streamFunc (the agent loop, the helpers, the "
+      "annotators) is passed through byte for byte",
+      "if (block === false || streamFunc !== undefined) {" in OO
+      and "return await orig.call(this, content, block, streamFunc);" in OO)
+check("…calling through with block=false plus a streamFunc of ours — the Chatbot's "
+      "own pattern", "orig.call(this, content, false, async function (chunk)" in OO)
+check("⚠️ …bracketed by our OWN StartAction, with EndAction in a `finally` so the "
+      "Block comes down on EVERY path — an editor left blocked for ever would be "
+      "strictly worse than the modal this exists to shorten",
+      "callMethod('StartAction', ['Block', label])" in OO
+      and "callMethod('EndAction', ['Block', label])" in OO
+      and OO.index("} finally {") < OO.index("aiStreamChipHide();"))
+check("…and EndAction is idempotent and never fires without a StartAction that landed",
+      "if (!started || ended) return;" in OO)
+
+# ⚠️ THE FINDING THAT SHAPED THE SLICE, AND IT IS A LIE-TO-USER THE FIX ITSELF WOULD
+# HAVE CAUSED. register.js:901 pastes the answer over the CURRENT selection the moment
+# it arrives. Release the Block for 70 seconds and the user clicks another cell — and
+# the translation of the FIRST selection lands on the SECOND one, destroying it. So
+# the release is conditional on the document being unreachable anyway.
+check("⚠️ the Block is released ONLY while a plugin MODAL is up — the one state in "
+      "which the answer cannot land on a selection the user has moved",
+      "function aiStreamModal" in OO and "const mayRelease = aiStreamModal();" in OO
+      and "if (mayRelease) { job.released = true; aiStreamReleases++; await end(); }" in OO)
+check("…and that is decided by TWO independent signals: the editor's own modal element "
+      "AND a plugin WINDOW frame — a docked Chatbot alone leaves the ribbon usable and "
+      "must not count as safe",
+      "indexOf('/ooplug/') !== -1 && h.indexOf('windowID=') !== -1" in OO)
+check("…taken ONCE, when the action starts, not re-read while the answer streams",
+      "// The release decision is taken ONCE" in OO)
+
+# ⚠️ TAIL INTEGRITY. Upstream's processResult passes `isTrim = isStreaming ? false :
+# true`, so the streaming path skips the trim and the `<think>` strip the blocking path
+# applies. Without this the SAME action, streamed, would put a DIFFERENT string into
+# the document than blocked — a silent content difference caused by our own change.
+check("⚠️ the streamed answer is put back into the shape the BLOCKING path would have "
+      "produced — upstream's own <think> strip and newline trim, over the accumulated "
+      "text", "function aiStreamNormalize" in OO
+      and "0 === s.indexOf('<think>')" in OO
+      and "s.charCodeAt(iStart) === 10" in OO
+      and "return aiStreamNormalize(out);" in OO)
+check("…and the trim mirrors upstream's own guard, so a string that needs no trim is "
+      "returned untouched",
+      "if (iEnd > iStart && (iStart !== 0 || iEnd !== (s.length - 1)))" in OO)
+check("Stop returns '' rather than the partial text — every ribbon call site does "
+      "`if (!result) return;`, so a stopped action writes NOTHING. A half-translation "
+      "pasted into the sheet is the lie this whole slice exists to avoid",
+      "return job.stopped === true;" in OO
+      and "aiStreamLast = 'stopped after '" in OO
+      and "return '';" in OO)
+
+check("the shim is re-armed on every open — the plugin frame dies with the editor, so "
+      "a swap that quietly went back to the whole-generation modal would be invisible "
+      "and only on the SECOND file",
+      "function aiStreamArm" in OO
+      and OO.index("aiStreamArm();") > OO.index("aiChatArm(want);"))
+check("…the arming poll is CAPPED, like the chat hold", "AI_STREAM_ARM_MAX" in OO)
+check("…and it does nothing at all when the AI tab is gated off",
+      "if (!aiSeeded) return;                  // no AI tab this session" in OO)
+check("…and the chip is torn down with the editor it was reporting on",
+      "aiStreamDisarm();   // the chip must not outlive" in OO)
+check("a probe can PROVE the wrap took, that a run released (or held) the Block, and "
+      "what the first chunk cost — instead of inferring any of it from a screenshot",
+      "stream: {pinned: AI_STREAM_PLUGIN_VER, wrapped: aiStreamWrapped" in OO
+      and "releases: aiStreamReleases" in OO and "ttft: aiStreamTTFT" in OO)
+
+# The chip — the only new pixels in the slice.
+check("the progress chip is OUR element, over the editor iframe, because the thing it "
+      "must be legible on top of is the editor's own full-frame block overlay",
+      "<div id=\"aichip\">" in OO and "#aichip{position:absolute" in OO
+      and "z-index:6" in OO)
+check("⚠️ …at the BOTTOM: at the top it covered the ribbon tab row the user had just "
+      "used (screenshot finding, 2026-08-28)",
+      "bottom:52px" in OO and "top:12px;left:50%" not in OO)
+check("…and it says which of the two states the editor is actually in, because a user "
+      "told 'you can keep working' while the editor is blocked has been lied to",
+      "'the editor is free again'" in OO
+      and "'the editor is held until this lands in the document'" in OO)
+check("…and it distinguishes a model that is THINKING from one that is WRITING — which "
+      "is only knowable because we stream now",
+      "'AI is thinking'" in OO and "'AI is writing — '" in OO
+      and "'AI is working — nothing has come back yet'" in OO)
+check("…with explicit LIGHT colours, like body.embed above: the editor is pinned to "
+      "default-light under every harness design, so a chip on our dark tokens would be "
+      "the one dark object on a white sheet",
+      "#aichip{" in OO and "background:#ffffff" in OO and "var(--bg)" not in OO.split(
+          "#aichip{")[1].split("}")[0])
+check("…and its pulse respects prefers-reduced-motion",
+      "prefers-reduced-motion:reduce" in OO and "#aichip .dot{animation:none" in OO)
+
+# ── the streaming seam, against the VENDORED bytes ───────────────────────────
+if base is not None:
+    pdir = Path(ooai.plug_dir(base))
+    eng_js = pdir / "ai" / "scripts" / "engine" / "engine.js"
+    reg_js = pdir / "ai" / "scripts" / "engine" / "register.js"
+    code_js = pdir / "ai" / "scripts" / "code.js"
+    if eng_js.is_file() and reg_js.is_file():
+        EJ, RJ = eng_js.read_text(errors="replace"), reg_js.read_text(errors="replace")
+        check("⚠️ the VENDORED chatRequest still takes (content, block, streamFunc) and "
+              "still defaults block to TRUE — the whole reason the ribbon blocks",
+              "AI.Request.prototype.chatRequest = async function(content, block, streamFunc)"
+              in EJ and "this._wrapRequest(this._chatRequest, content, block !== false, streamFunc)"
+              in EJ, "a plugin bump changed the seam this shim wraps")
+        check("…and _wrapRequest still brackets it with StartAction/EndAction ONLY when "
+              "block is true, which is what makes block=false ours to bracket",
+              'if (block)\n\t\t\tawait Asc.Editor.callMethod("StartAction", ["Block"' in EJ)
+        check("…and streaming is still switched on by the mere PRESENCE of a streamFunc",
+              "let isStreaming = (undefined !== streamFunc);" in EJ)
+        check("⚠️ …and the streamed request still returns the WHOLE accumulated answer "
+              "(`allChunks`), not the last chunk — this is the tail-integrity claim",
+              "allChunks += dataChunk;" in EJ and "return allChunks;" in EJ)
+        check("…and a streamFunc returning true is still upstream's own documented abort, "
+              "which is what our Stop uses",
+              "if (isBreak === true) {" in EJ and "await readerAsync.abort();" in EJ)
+        check("⚠️ …and the trim our normalize reproduces is still conditional on "
+              "streaming — the reason a streamed answer would otherwise differ",
+              "provider.getChatCompletionsResult(data, model, isStreaming ? false : true)"
+              in EJ)
+        check("the VENDORED ribbon Translation still calls chatRequest with NO block "
+              "flag and NO streamFunc, and still pastes over the live selection",
+              "let result = await requestEngine.chatRequest(prompt);" in RJ
+              and "await Asc.Library.PasteText(result);" in RJ)
+        check("…and every ribbon/context call site still bails on a falsy result, which "
+              "is what makes Stop write nothing",
+              RJ.count("if (!result) return;") >= 8)
+        check("the CHATBOT is still on the other method (chatRequestAgent), so nothing "
+              "this shim does can reach it",
+              "requestEngine.chatRequestAgent(requestData, false, async function(chunk)"
+              in RJ)
+        if code_js.is_file():
+            KJ = code_js.read_text(errors="replace")
+            check("…and the ribbon SUMMARIZATION still asks from inside its own MODAL — "
+                  "which is why releasing the Block there cannot land on a moved "
+                  "selection",
+                  "summarizationWindow.attachEvent(\"Summarize\"" in KJ
+                  and "isModal : true" in KJ
+                  and "let result = await requestEngine.chatRequest(prompt);" in KJ)
+
+# ── the Help copy, which had to change because the behaviour did ─────────────
+check("⚠️ Help → About no longer carries v1.5.29's 'the ribbon holds it until the whole "
+      "answer is finished' line — it stopped being true, and a Help sheet describing "
+      "last week's behaviour is a lie with a footnote",
+      "hold it until the whole answer is finished" not in PAGE
+      and "for anything long, ask in the Chatbot" not in PAGE)
+check("…and says PER ACTION which streams and which still blocks",
+      "SUMMARIZATION (ribbon)" in PAGE and "TRANSLATION" in PAGE
+      and "clears at the first word too" in PAGE)
+check("…and gives the REASON the blocking ones still block, in the user's own terms",
+      "pasted straight" in PAGE and "on top of the SECOND one" in PAGE)
+check("…and names the chip and what Stop does",
+      "a chip over the sheet" in PAGE and "stopping writes NOTHING" in PAGE)
+
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED:")
