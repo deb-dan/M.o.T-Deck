@@ -666,7 +666,12 @@ check('soloView is pure and only knows the views solo mode declares',
       // PHASE 2: the whitelist is DERIVED from the nav registry (any entry that owns a
       // panel view can be pinned as a tab) instead of being the literal ['music'].
       // Mission Control is excluded on purpose: its native tab IS the panel.
-      /const SOLO_VIEWS = NAV_ENTRIES\.filter\(e => e\.view && e\.id !== 'mc'\)\.map\(e => e\.view\)/.test(html)
+      // v1.5.27: …AND an entry that cannot be pinned at all. `?solo=<view>` is how a
+      // pinned view becomes a native TAB, so a sidebar-only entry has no solo surface.
+      // Before Help, "sidebar-only" and "has no view" were the same set and the
+      // exclusion happened by accident; Help is a real view that is sidebar-only, so
+      // the filter has to say it.
+      /const SOLO_VIEWS = NAV_ENTRIES\s*\n?\s*\.filter\(e => e\.view && e\.id !== 'mc' && NAV_SIDEBAR_ONLY\.indexOf\(e\.id\) < 0\)\s*\n?\s*\.map\(e => e\.view\)/.test(html)
       && /function soloView\(search\)/.test(html));
 check('applySolo adds body.solo and pins the view, and is armed at boot',
       /document\.body\.classList\.add\('solo'\)/.test(html)
@@ -681,7 +686,9 @@ check('solo mode hides chrome in exactly three CSS rules and restyles nothing el
 {
   const regStart = html.indexOf('const NAV_ENTRIES = [');
   const reg = html.slice(regStart, html.indexOf('\n];', regStart) + 3);
-  const src = reg + html.slice(html.indexOf('const SOLO_VIEWS = NAV_ENTRIES'),
+  // NAV_SIDEBAR_ONLY travels with the registry now: the derivation reads it.
+  const sbOnly = /const NAV_SIDEBAR_ONLY = \[[^\]]*\];/.exec(html)[0];
+  const src = reg + sbOnly + html.slice(html.indexOf('const SOLO_VIEWS = NAV_ENTRIES'),
                                html.indexOf('function applySolo('));
   const soloView = new Function(src + '; return soloView;')();
   const cases = [
@@ -691,6 +698,9 @@ check('solo mode hides chrome in exactly three CSS rules and restyles nothing el
     ['?solo=chat', 'chat'], ['?solo=models', 'models'], ['?solo=caps', 'caps'],
     // …and Mission Control is deliberately NOT one: its native tab is the panel itself.
     ['?solo=mc', null], ['?solo=logs', null],
+    // …and neither is HELP (v1.5.27): a real view, but sidebar-only, so it can never
+    // be pinned and `?solo=help` is a URL nothing in the product can produce.
+    ['?solo=help', null], ['?solo=HELP', null],
     ['?solo=musicx', null], ['?notsolo=music', null],
     [null, null], [undefined, null], ['?xsolo=music', null],
   ];
@@ -699,7 +709,7 @@ check('solo mode hides chrome in exactly three CSS rules and restyles nothing el
     const got = soloView(inp);
     if (got !== want) { ok = false; console.log('   soloView(' + JSON.stringify(inp) + ') = ' + got + ', want ' + want); }
   }
-  check('soloView decision table (18 cases incl. junk/null totality)', ok);
+  check('soloView decision table (20 cases incl. junk/null totality)', ok);
 }
 
 console.log('');

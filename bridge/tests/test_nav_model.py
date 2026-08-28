@@ -66,12 +66,19 @@ def test_registry():
         e = nav.entry(lane)
         ok(e is not None and e["kind"] == "lane", f"{lane} is a registry lane")
         ok(e and set(e["bars"]) == {"sidebar", "topbar"}, f"{lane} may live on either bar")
-    # Logs is the ONE sidebar-only entry, and the one that may be hidden everywhere
-    # (⌘K reaches it) — both facts are load-bearing for `validate`.
-    ok(nav.entry("logs")["bars"] == ("sidebar",), "logs is sidebar-only (it has no view)")
-    ok(nav.entry("logs").get("always") is True, "logs is the declared always-reachable one")
-    ok(not any(e.get("always") for e in nav.NAV_ENTRIES if e["id"] != "logs"),
-       "…and it is the ONLY one (an exemption must be deliberate)")
+    # Logs and Help are the sidebar-only entries, and the ones that may be hidden
+    # everywhere (⌘K reaches both) — all of it is load-bearing for `validate`.
+    #
+    # ⚠️ THIS ASSERTION WAS `logs` ALONE UNTIL v1.5.27, AND IT IS WIDENED, NOT WEAKENED.
+    # The point of it is that an exemption must be DELIBERATE, so the check is still a
+    # closed list — it just names two entries now, and each one's argument is written
+    # at its registry line. A third `always` still fails here until somebody comes and
+    # makes the case for it in this comment.
+    for eid in ("logs", "help"):
+        ok(nav.entry(eid)["bars"] == ("sidebar",), f"{eid} is sidebar-only")
+        ok(nav.entry(eid).get("always") is True, f"{eid} is declared always-reachable")
+    ok({e["id"] for e in nav.NAV_ENTRIES if e.get("always")} == {"logs", "help"},
+       "…and those two are the ONLY ones (an exemption must be deliberate)")
     ok(nav.can_show("logs", "sidebar") and not nav.can_show("logs", "topbar"),
        "can_show answers the capability question")
     ok(not nav.can_show("nope", "sidebar"), "an unknown id can show nowhere")
@@ -383,13 +390,68 @@ def test_wiring():
        f"the panel's NAV_ENTRIES ids == bridge/nav.py's NAV_IDS ({sorted(set(pids))})")
     ok(f"const NAV_TOPBAR_MAX = {nav.NAV_TOPBAR_MAX};" in PANEL,
        "the panel mirrors the same pin cap")
-    ok("const NAV_SIDEBAR_ONLY = ['logs'];" in PANEL,
-       "…and the same sidebar-only set")
+    ok("const NAV_SIDEBAR_ONLY = ['logs','help'];" in PANEL,
+       "…and the same sidebar-only set (logs + help)")
+    # THE `always` SET, mirrored. Until Help arrived the panel's validate carried a
+    # hardcoded `e.id === 'logs'`, which is precisely how a second exception gets added
+    # on one side only — so both sides now NAME the list and this compares them.
+    ok("const NAV_ALWAYS = ['logs','help'];" in PANEL,
+       "…and the same `always` set, as a NAMED list rather than an inline id test")
+    ok(sorted(e["id"] for e in nav.NAV_ENTRIES if e.get("always")) == ["help", "logs"],
+       "nav.py's `always` entries are exactly logs + help")
+    ok("if (NAV_ALWAYS.indexOf(e.id) >= 0) continue;" in PANEL,
+       "…and the panel's validate reads that list instead of naming one id")
     for bar, const in (("sidebar", "NAV_DEFAULT_SIDEBAR"), ("topbar", "NAV_DEFAULT_TOPBAR")):
         mm = re.search(const + r" = \[([^\]]+)\]", PANEL)
         got = re.findall(r"'([^']+)'", mm.group(1)) if mm else []
         want = [i for i, p in nav.DEFAULTS[bar] if p]
         ok(got == want, f"the panel's {const} == nav.py's pinned {bar} defaults")
+
+
+def test_help_entry():
+    """HELP (roadmap §2.4) — the registry entry, and the upgrade path EXECUTED.
+
+    The interesting half is not that the entry exists; it is that adding it moved
+    nothing. A machine with a saved nav.json must gain the row without its tab strip
+    or its arranged sidebar changing, and hiding Help must stay a legal choice."""
+    h = nav.entry("help")
+    ok(h is not None, "the registry knows Help")
+    ok(h and h["bars"] == ("sidebar",),
+       "Help is SIDEBAR-ONLY — a reference surface, and the strip is at 11 of 12 pins")
+    ok(h and h.get("always") is True,
+       "…and hideable, because ⌘K reaches it (the argument Logs already carried)")
+    ok("help" not in [i for i, _p in nav.DEFAULT_TOPBAR],
+       "Help is not on the default strip at all, so no saved topbar layout can move")
+    side = [i for i, _p in nav.DEFAULT_SIDEBAR]
+    ok(dict(nav.DEFAULT_SIDEBAR).get("help") is True, "…and it IS pinned on the sidebar")
+    ok(side.index("help") == side.index("logs") + 1,
+       "…directly under Logs, which is where the roadmap put it")
+    ok(not nav.can_show("help", "topbar"), "the model refuses to put Help on the strip")
+
+    # THE UPGRADE PATH, executed rather than asserted about.
+    old = {"v": nav.MODEL_V,
+           "sidebar": [{"id": i, "pinned": p} for i, p in nav.DEFAULT_SIDEBAR if i != "help"],
+           "topbar": [{"id": i, "pinned": p} for i, p in nav.DEFAULT_TOPBAR]}
+    got = nav.normalize(old)
+    ok("help" in [r["id"] for r in got["sidebar"]],
+       "a pre-Help nav.json gains the Help row on read (normalize appends known ids)")
+    ok([r["id"] for r in got["topbar"]] == [i for i, _p in nav.DEFAULT_TOPBAR],
+       "…and the TAB STRIP is byte-identical — Help is not topbar-able, so nothing moved")
+    ok(nav.validate(got) == "", "…and the upgraded model still saves")
+
+    # hiding Help everywhere is ALLOWED — the whole point of `always`.
+    hidden = {b: [dict(r, pinned=(False if r["id"] == "help" else r["pinned"]))
+                  for r in got[b]] for b in nav.BARS}
+    ok(nav.validate(hidden) == "",
+       "hiding Help is a legal customisation (⌘K is the reachability that pays for it)")
+    ok(any(r["id"] == "help" and not r["pinned"] for r in nav.repair(hidden)["sidebar"]),
+       "…and `repair` does not silently pin it back on the next read")
+    # a POST that tries to smuggle Help onto the strip loses the ROW, not the layout
+    smuggled = nav.normalize({"topbar": [{"id": "mc"}, {"id": "help"}, {"id": "hermes"}],
+                              "sidebar": [{"id": "chat"}]})
+    ok("help" not in [r["id"] for r in smuggled["topbar"]][:3],
+       "a hand-written nav.json that pins Help to the strip has that row dropped")
+    ok(nav.validate(smuggled) == "", "…and the rest of that layout still saves")
 
 
 def test_routes_live():
@@ -486,7 +548,7 @@ def test_routes_live():
 
 
 for fn in (test_registry, test_normalize, test_validate, test_repair,
-           test_persistence, test_wiring, test_routes_live):
+           test_persistence, test_wiring, test_help_entry, test_routes_live):
     fn()
 
 if FAILS:

@@ -594,6 +594,10 @@
       border-radius:14px; padding:18px 20px; box-shadow:0 16px 48px rgba(0,0,0,.5); }
   .coach h4 { font-family:var(--serif); font-weight:500; font-size:17px; color:var(--cream); margin-bottom:6px; }
   .coach p { font:12.5px -apple-system, sans-serif; color:var(--dim); line-height:1.6; }
+  /* the tour's hand-off to Help (roadmap §2.4). A link, so it reads as one — accent
+     ink and an underline, because a bare colour change is not an affordance. */
+  .coach .coach-help { color:var(--gold); cursor:pointer; border-bottom:1px solid var(--line2); }
+  .coach .coach-help:hover { border-bottom-color:var(--gold); }
   .coach .coach-foot { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
   .coach .coach-step { font:10px var(--mono); color:var(--faint); letter-spacing:.16em; }
   .coach .coach-foot button { margin-left:6px; }
@@ -1297,6 +1301,51 @@
   .art-md pre { margin:12px 0; }
   .art-md table { border-collapse:collapse; margin:12px 0; }
   .art-md th,.art-md td { border:1px solid var(--line2); padding:5px 10px; }
+  /* ---------- HELP view (roadmap §2.4) ----------
+     THE WHOLE POINT OF THIS BLOCK IS HOW SMALL IT IS. Help's prose reuses `.art-md`
+     above verbatim — the type ramp, the code chip, the table rules, and (this is the
+     part that matters for the all-designs rule) studio-design.css's overrides for
+     every one of them, which already exist because the artifact viewer needed them.
+     Nothing below sets a colour that is not a token, a font size that is not
+     inherited, or a shadow of any kind: what remains is LAYOUT and the two-column
+     reading frame, so the four Editorial palettes and both studio variants come out
+     right by construction rather than by six separate hand-tunings. */
+  #help-search { display:flex; align-items:center; gap:10px; margin:-18px 0 18px; }
+  #help-search .cap-inp { width:260px; max-width:60%; }
+  #help-wrap { display:flex; align-items:flex-start; gap:30px; flex-wrap:wrap; }
+  /* The TOC is a rail, not a card: one hairline and nothing else. `.cap-card` here
+     would have made the doc a card inside a card, which is impeccable's nested-cards
+     rule firing at depth two — the same rule that shaped the whole studio design. */
+  #help-toc { flex:0 0 190px; position:sticky; top:6px; align-self:flex-start;
+              border-left:1px solid var(--line2); padding-left:14px; max-height:80vh;
+              overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  /* FOUND BY DRIVING: with a filter that matches nothing the rail is empty, but it
+     still reserved its 190px + the gap — so the "nothing matches" sentence sat
+     stranded in the middle of the page with a wide blank column beside it, reading
+     like a layout fault rather than an answer. An empty rail takes no room. */
+  #help-toc:empty { display:none; }
+  #help-toc a { display:block; font:11px var(--mono); color:var(--dim); letter-spacing:.04em;
+                padding:4px 0; cursor:pointer; overflow-wrap:break-word; }
+  #help-toc a:hover { color:var(--cream); }
+  #help-toc a.on { color:var(--gold); }
+  #help-toc a.sub { padding-left:12px; }
+  #help-doc { flex:1 1 460px; min-width:0; }
+  /* .art-md's own padding is for a bordered artifact pane; Help is the page. */
+  #help-doc .art-md { padding:0; }
+  /* v1.5.24's MEASURE RULE, applied where it belongs — on the PROSE, not on the
+     container. A container cap would have squeezed the three-column tables (Chat
+     lanes, Voice) into unreadable columns to fix a line length they do not have.
+     66ch is the same cap `.sub` and `.cap-desc` carry, by the same arithmetic. */
+  #help-doc .art-md p, #help-doc .art-md li, #help-doc .art-md blockquote { max-width:66ch; }
+  /* …and the tables get the other half of that deal: full column width, and they
+     SCROLL rather than pushing the page sideways at a narrow window. */
+  #help-doc .art-md table { width:100%; }
+  #help-doc .hlp-tw { overflow-x:auto; scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  #help-doc .art-md blockquote { margin:10px 0; padding-left:14px;
+                                 border-left:1px solid var(--line2); color:var(--dim); }
+  .hlp-sec { padding-top:4px; }
+  .hlp-sec + .hlp-sec { border-top:1px solid var(--line); margin-top:26px; }
+  .hlp-sec[hidden] { display:none; }
   .art-code { margin:0; padding:16px 18px; font:12px var(--mono); overflow:auto; border-radius:12px; }
   .art-img { max-width:100%; display:block; margin:20px auto; }
   #art-body .cs-empty { padding:18px 22px; }
@@ -2321,6 +2370,37 @@
       <div id="caps-sec-models"></div>
     </div>
   </div>
+
+  <!-- HELP (roadmap §2.4). The whole view is EMPTY MARKUP: every word on it comes from
+       docs/USER-EXPLAINERS.md through /api/help/explainers, so updating the help text
+       is a documentation edit and never a code edit. The prose is rendered into
+       `.art-md`, the artifact viewer's existing markdown style — which means the type
+       ramp, the code chips, the table rules AND studio's overrides for all of them are
+       inherited rather than written a second time. -->
+  <div id="view-help" hidden>
+    <div class="kicker"><span class="num">VI.</span><span class="rule"></span>
+      <span class="lbl">Help</span></div>
+    <div class="models-head">
+      <div>
+        <h1>Help</h1>
+        <div class="sub">How the parts of MOT Deck actually behave. Every entry answers a
+          question that has cost somebody time.</div>
+      </div>
+    </div>
+    <div class="stamp" id="help-stamp">—</div>
+    <div id="help-search">
+      <input class="cap-inp" id="help-q" type="text" autocomplete="off"
+        placeholder="Filter help… (voice, hermes, models)"
+        aria-label="Filter help sections"
+        oninput="helpSetFilter(this.value)"
+        onkeydown="if(event.key==='Escape'){event.stopPropagation();helpSetFilter('');this.value='';}">
+      <span class="cap-count" id="help-count"></span>
+    </div>
+    <div id="help-wrap">
+      <nav id="help-toc" aria-label="Help contents"></nav>
+      <div id="help-doc"><div class="cs-empty">Loading…</div></div>
+    </div>
+  </div>
 </main>
 
 <dialog id="dlg" class="float-surface">
@@ -2697,6 +2777,11 @@ const NAV_ENTRIES = [
   // Logs is a DIALOG, so it has no view and can never be a tab — sidebar only, and the
   // one entry allowed to be hidden everywhere because ⌘K still reaches it.
   { id:'logs',    label:'Logs',            ico:'≣', kind:'view', view:null,     tab:null },
+  // HELP — a REAL view (unlike Logs), rendered from docs/USER-EXPLAINERS.md via
+  // /api/help/explainers. Sidebar-only and tab-less by choice, not by incapacity: see
+  // bridge/nav.py's entry for the argument, and SOLO_VIEWS below for the one place
+  // that exclusion has to be written down a second time.
+  { id:'help',    label:'Help',            ico:'?', kind:'view', view:'help',   tab:null },
   { id:'odysseus',    label:'Odysseus',    ico:null, kind:'component', view:null, tab:'Odysseus',    prefersTab:true },
   { id:'hermes',      label:'Hermes',      ico:null, kind:'component', view:null, tab:'Hermes',      prefersTab:true },
   { id:'voicestudio', label:'Voicestudio', ico:null, kind:'component', view:null, tab:'VoiceStudio', prefersTab:true },
@@ -2706,11 +2791,17 @@ const NAV_ENTRIES = [
   { id:'opencode',    label:'Opencode',    ico:null, kind:'component', view:null, tab:'OpenCode',    prefersTab:true },
 ];
 // Which bars an entry may appear on — the capability half, mirroring nav.py's `bars`.
-// Logs has no solo surface, so it is sidebar-only; everything else can be either.
-const NAV_SIDEBAR_ONLY = ['logs'];
+// Logs has no solo surface, so it is sidebar-only; Help has a view but deliberately no
+// tab home (nav.py carries the argument); everything else can be either.
+const NAV_SIDEBAR_ONLY = ['logs','help'];
+// …and the entries `validate` may NOT force back onto a bar, mirroring nav.py's
+// `always`. Both are reachable from ⌘K whatever the sidebar says, which is the only
+// reason hiding them is allowed to be a real choice.
+const NAV_ALWAYS = ['logs','help'];
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
 const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','loffice','caps','logs',
+                             'help',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
 /* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
@@ -2778,7 +2869,7 @@ function navValidate(m) {
   const pin = { sidebar:{}, topbar:{} };
   ['sidebar','topbar'].forEach(b => (m[b] || []).forEach(r => { pin[b][r.id] = !!r.pinned; }));
   for (const e of NAV_ENTRIES) {
-    if (e.id === 'logs') continue;              // reachable from ⌘K (see nav.py `always`)
+    if (NAV_ALWAYS.indexOf(e.id) >= 0) continue;   // reachable from ⌘K (nav.py `always`)
     const bars = ['sidebar','topbar'].filter(b => navCanShow(e.id, b));
     if (bars.length && !bars.some(b => pin[b][e.id])) {
       return e.label + ' would be hidden everywhere — keep it on the sidebar or on the tabs.';
@@ -3448,7 +3539,13 @@ const TOUR = [
   { sel: '#nav-chat',    view: null,  title: 'Chat',       body: 'Talk to the stack directly. The chips above the message box pick who handles it: Agent uses tools and the web, Hermes acts on your machine, and Chat goes <em>direct to the runner — no tools, fastest</em> (that faint note is telling you nothing sits between you and the model).' },
   { sel: '#nav-models',  view: null,  title: 'Models',     body: 'Your local library, downloads, and the RAM ledger — see what fits and switch the live model.' },
   { sel: '#mode-browse', view: 'chat', title: 'Browse',    body: 'Give agents your browser — toggle it on and a chat can drive real web pages.' },
-  { sel: '#cards',       view: 'mc',  title: 'Components',  body: 'Start and stop everything here. Green means healthy; the whole stack runs on your machine.' },
+  // ROADMAP §2.4 — THE FIRST-RUN PULL-IN. One line on the LAST step, not a sixth step:
+  // the tour is four steps by design and a fifth would be a rebuild. This is where a
+  // first-run user is when the walkthrough ends, and it is the moment the question
+  // "where do I read about the rest of this?" actually arrives. The <a> is a plain
+  // anchor because the coach card is innerHTML'd; tourToHelp ends the tour BEFORE it
+  // navigates, so the scrim cannot be left over the view it just opened.
+  { sel: '#cards',       view: 'mc',  title: 'Components',  body: 'Start and stop everything here. Green means healthy; the whole stack runs on your machine.<br><br>Everything else is written down: <a class="coach-help" onclick="tourToHelp()">open Help</a> in the sidebar (or ⌘K → Help) for the chat lanes, voice, models and what to do when something looks wrong.' },
 ];
 let _tourIdx = 0;
 function startTour() {
@@ -3486,6 +3583,278 @@ function endTour() {
   localStorage.setItem('harness-tour-done', '1');
   const c = document.getElementById('coach-card'); if (c) c.remove();
   const s = document.getElementById('coach-scrim'); if (s) s.style.display = 'none';
+}
+/* The tour's last line hands the user off to Help rather than just ending. Its own
+   function because the coach card is innerHTML'd and an inline handler in that string
+   would have to survive escaping; and because "end the tour, THEN navigate" is an
+   order that matters (endTour removes the scrim that would sit over the view). */
+function tourToHelp() { endTour(); showView('help'); }
+
+/* ══ HELP — docs/USER-EXPLAINERS.md, rendered (roadmap §2.4) ═══════════════════════
+   WHY A RENDERER AND NOT markdown-it. The panel DOES vendor markdown-it, lazily, for
+   artifacts — and it is the wrong tool here for a reason that is about the feature,
+   not about bytes: this view needs the document's SECTION STRUCTURE (for the contents
+   rail and for the filter), and a slab of HTML would have to be re-parsed to get it.
+   Parsing once, into sections, gives both halves from one pass — and it drops the
+   lazy vendor load and the DOMPurify pairing from the boot path of a help page.
+
+   THE SUBSET, stated exactly, because a renderer that silently drops syntax is a
+   renderer that will eventually eat somebody's paragraph. Measured against the source
+   file, which uses all of this and NOTHING else (no links, no images, no fenced code,
+   no raw HTML — asserted in bridge/tests/test_help_view.js so it stays true):
+     · `# ` document title · `## ` sections · `### ` subsections
+     · `> ` blockquote · `---` horizontal rule (dropped: the layout rules its own
+       sections, and a second rule on top of that reads as a mistake)
+     · GFM pipe tables with the `|---|` delimiter row
+     · `- ` bullets and `1. ` numbers, with two-space continuation lines
+     · inline **bold**, *italic*, `code`
+   ANYTHING ELSE FALLS THROUGH TO A PARAGRAPH, escaped — which is the honest failure:
+   the words are still on screen, in the right section, just not styled. A silent drop
+   is the one behaviour this must not have. ══════════════════════════════════════ */
+const HELP_URL = '/api/help/explainers';
+const HELP_SRC = 'docs/USER-EXPLAINERS.md';
+const helpState = { doc:null, err:'', loading:false, q:'', active:'' };
+
+/* inline. ESCAPE FIRST, then decorate — and split on backticks BEFORE the emphasis
+   passes, so `**not bold**` inside a code span stays literal. An odd number of
+   backticks leaves the tail as plain text rather than swallowing the rest of the
+   line, which is the shape a half-typed edit actually takes. */
+function helpInline(s) {
+  return String(s == null ? '' : s).split('`').map((p, i) => {
+    const t = esc(p);
+    if (i % 2) return '<code>' + t + '</code>';
+    return t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  }).join('');
+}
+const _helpSlugs = {};
+function helpSlug(s) {
+  // the leading prefix is stripped first: subsection ids are minted from
+  // `<sectionId>-<title>`, and without this they came out `hlp-hlp-…`.
+  let base = 'hlp-' + String(s || '').toLowerCase().replace(/^hlp-/, '')
+                          .replace(/[^a-z0-9]+/g, '-')
+                          .replace(/^-+|-+$/g, '').slice(0, 48);
+  if (base === 'hlp-') base = 'hlp-s';
+  // ids are written into the DOM and jumped to; two sections that slugify the same
+  // would give the contents rail a link that scrolls to the wrong place.
+  let id = base, n = 2;
+  while (_helpSlugs[id]) id = base + '-' + (n++);
+  _helpSlugs[id] = 1;
+  return id;
+}
+function helpIsRule(l) { return /^-{3,}\s*$/.test(l); }
+function helpIsTable(l) { return /^\s*\|/.test(l); }
+function helpIsBreak(l) {
+  return !l.trim() || helpIsRule(l) || helpIsTable(l) || /^#{1,6}\s/.test(l)
+      || /^>\s?/.test(l) || /^[-*]\s/.test(l) || /^\d+\.\s/.test(l);
+}
+function helpTable(lines, i) {
+  const rows = [];
+  while (i < lines.length && helpIsTable(lines[i])) rows.push(lines[i++]);
+  const cells = r => {
+    let s = r.trim();
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+    return s.split('|').map(c => c.trim());
+  };
+  const head = cells(rows[0]);
+  let body = rows.slice(1);
+  // the |---|---| delimiter is STRUCTURE and must never render as a data row
+  if (body.length && /^[\s|:-]+$/.test(body[0])) body = body.slice(1);
+  const th = '<tr>' + head.map(c => '<th>' + helpInline(c) + '</th>').join('') + '</tr>';
+  const tb = body.map(r => '<tr>' + cells(r).map(c => '<td>' + helpInline(c) + '</td>').join('') + '</tr>').join('');
+  // the scroll wrapper, not the table: a wide table must scroll inside its column
+  // rather than pushing the whole page sideways at a narrow window.
+  return { i, html: '<div class="hlp-tw"><table><thead>' + th + '</thead><tbody>' + tb + '</tbody></table></div>' };
+}
+function helpList(lines, i, ordered) {
+  const re = ordered ? /^\d+\.\s+(.*)$/ : /^[-*]\s+(.*)$/;
+  const items = [];
+  while (i < lines.length) {
+    const m = re.exec(lines[i]);
+    if (!m) break;
+    let txt = m[1];
+    i++;
+    // CONTINUATION LINES. The source wraps long bullets onto indented lines (32 of
+    // them); without this each wrap became its own paragraph mid-list.
+    while (i < lines.length && /^\s{2,}\S/.test(lines[i])) txt += ' ' + lines[i++].trim();
+    items.push(txt);
+  }
+  const tag = ordered ? 'ol' : 'ul';
+  return { i, html: '<' + tag + '>' + items.map(t => '<li>' + helpInline(t) + '</li>').join('') + '</' + tag + '>' };
+}
+function helpBlocks(lines, secId) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim() || helpIsRule(l)) { i++; continue; }
+    // #{1,6}, not #{3,6}: a stray `# ` left in a body (a second title, a heading
+    // demoted by an edit) becomes a heading, not a paragraph beginning with a hash.
+    const h = /^#{1,6}\s+(.*)$/.exec(l);
+    if (h) {
+      const t = h[1].trim();
+      out.push('<h3 id="' + escAttr(helpSlug((secId || '') + '-' + t)) + '">' + helpInline(t) + '</h3>');
+      i++; continue;
+    }
+    if (/^>\s?/.test(l)) {
+      const b = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) b.push(lines[i++].replace(/^>\s?/, ''));
+      out.push('<blockquote>' + helpInline(b.join(' ')) + '</blockquote>');
+      continue;
+    }
+    if (helpIsTable(l)) { const r = helpTable(lines, i); i = r.i; out.push(r.html); continue; }
+    if (/^[-*]\s/.test(l)) { const r = helpList(lines, i, false); i = r.i; out.push(r.html); continue; }
+    if (/^\d+\.\s/.test(l)) { const r = helpList(lines, i, true); i = r.i; out.push(r.html); continue; }
+    const p = [];
+    while (i < lines.length && !helpIsBreak(lines[i])) p.push(lines[i++]);
+    if (!p.length) { i++; continue; }        // belt and braces: never loop forever
+    out.push('<p>' + helpInline(p.join(' ')) + '</p>');
+  }
+  return out.join('');
+}
+/* the document → {title, lead, sections:[{id,title,subs,html,text}]}. `text` is the
+   RAW markdown of the section, lowercased: the filter searches what the writer typed,
+   so `**Agent**` is findable by typing "agent" and the markup never gets in the way. */
+function helpParse(md) {
+  for (const k in _helpSlugs) delete _helpSlugs[k];
+  const lines = String(md == null ? '' : md).replace(/\r\n?/g, '\n').split('\n');
+  const doc = { title:'', lead:'', sections:[] };
+  let i = 0;
+  /* ⚠️ FOUND BY THE ADVERSARIAL PASS. The first draft SCANNED FORWARD to the `# `
+     title and threw away everything it walked over — so a document that opens with
+     prose, or one whose title line had been deleted, lost its whole lead-in with no
+     sign that anything was missing. Silently dropping the writer's words is the one
+     behaviour a help renderer must not have, so the loop is now total: everything
+     before the first `## ` IS the lead-in, and the `# ` title is the only line lifted
+     out of it (the view already draws its own <h1>). */
+  const lead = [];
+  while (i < lines.length && !/^##\s+/.test(lines[i])) {
+    if (!doc.title && /^#\s+/.test(lines[i])) doc.title = lines[i].replace(/^#\s+/, '').trim();
+    else lead.push(lines[i]);
+    i++;
+  }
+  doc.lead = helpBlocks(lead, 'lead');
+  while (i < lines.length) {
+    // a `## ` with nothing after it would otherwise give the contents rail an
+    // invisible, unclickable row — the empty-state lesson, at the size of one link.
+    const title = lines[i].replace(/^##\s+/, '').trim() || 'Untitled section';
+    i++;
+    const body = [];
+    while (i < lines.length && !/^##\s+/.test(lines[i])) body.push(lines[i++]);
+    const id = helpSlug(title);
+    const subs = body.filter(x => /^###\s+/.test(x)).map(x => {
+      const t = x.replace(/^###\s+/, '').trim();
+      return { id: helpSlug(id + '-' + t), title: t };
+    });
+    // ⚠️ the subs' ids are minted HERE and helpBlocks mints them AGAIN below, from the
+    // same strings in the same order — which is why helpSlug's uniquifier would drift
+    // them apart (`x` then `x-2`). So the section body is rendered FIRST into a
+    // throwaway, and the subs are read back off it. One source of ids, no drift.
+    const html = helpBlocks(body, id);
+    const ids = [];
+    let hm; const hre = /<h3 id="([^"]+)"/g;
+    while ((hm = hre.exec(html))) ids.push(hm[1]);
+    subs.forEach((s, n) => { if (ids[n]) s.id = ids[n]; });
+    doc.sections.push({ id, title, subs, html,
+                        text: (title + '\n' + body.join('\n')).toLowerCase() });
+  }
+  return doc;
+}
+
+/* PURE, and the last function in the pure block deliberately: bridge/tests/
+   test_help_view.js extracts everything from `const HELP_URL` down to `initHelp` and
+   EXECUTES it, so the renderer is proved to behave rather than merely to exist. Keep
+   anything that touches the DOM or the network below this line. */
+function helpMatches(sec, q) {
+  return !q || sec.title.toLowerCase().indexOf(q) >= 0 || sec.text.indexOf(q) >= 0;
+}
+
+async function initHelp() {
+  // idempotent: a second navigation (or a peek over the view) re-renders, never refetches
+  if (helpState.doc || helpState.err || helpState.loading) { renderHelp(); return; }
+  helpState.loading = true;
+  try {
+    const r = await fetch(HELP_URL, { cache:'no-store' });
+    if (!r.ok) {
+      let msg = 'the bridge answered ' + r.status;
+      try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {}
+      helpState.err = msg;
+    } else {
+      const md = await r.text();
+      helpState.doc = helpParse(md);
+      if (!helpState.doc.sections.length) {
+        helpState.doc = null;
+        helpState.err = HELP_SRC + ' has no ## sections — it may be empty or truncated.';
+      }
+    }
+  } catch (e) {
+    helpState.err = 'the bridge did not answer — Help is served by it, so start the '
+                  + 'harness and try again.';
+  }
+  helpState.loading = false;
+  renderHelp();
+}
+function renderHelp() {
+  const toc = document.getElementById('help-toc');
+  const body = document.getElementById('help-doc');
+  const stamp = document.getElementById('help-stamp');
+  const count = document.getElementById('help-count');
+  if (!toc || !body) return;
+  // EVERY failure lands on a sentence that says what happened and what to do — the
+  // standing empty-state rule, and doubly so on the surface people reach when lost.
+  if (helpState.err) {
+    toc.innerHTML = '';
+    body.innerHTML = '<div class="cs-empty">Help could not be loaded — ' + esc(helpState.err) + '</div>';
+    if (stamp) stamp.textContent = HELP_SRC + ' · unavailable';
+    if (count) count.textContent = '';
+    return;
+  }
+  if (!helpState.doc) {
+    toc.innerHTML = '';
+    body.innerHTML = '<div class="cs-empty">Loading…</div>';
+    return;
+  }
+  const d = helpState.doc, q = helpState.q;
+  const shown = d.sections.filter(s => helpMatches(s, q));
+  toc.innerHTML = shown.map(s =>
+    `<a onclick="helpJump('${escAttr(s.id)}', this)" class="${s.id === helpState.active ? 'on' : ''}">${esc(s.title)}</a>`
+    + s.subs.map(u => `<a class="sub${u.id === helpState.active ? ' on' : ''}" onclick="helpJump('${escAttr(u.id)}', this)">${esc(u.title)}</a>`).join('')
+  ).join('');
+  const lead = q ? '' : (d.lead ? '<div class="art-md">' + d.lead + '</div>' : '');
+  body.innerHTML = lead + (shown.length
+    ? shown.map(s => `<section class="hlp-sec" id="${escAttr(s.id)}"><div class="art-md">`
+        + `<h2>${esc(s.title)}</h2>${s.html}</div></section>`).join('')
+    : '<div class="cs-empty">Nothing in Help matches “' + esc(q) + '”. '
+      + 'Try a shorter word — the filter searches every section\'s full text.</div>');
+  if (stamp) stamp.textContent = d.sections.length + ' section'
+    + (d.sections.length === 1 ? '' : 's') + ' · ' + HELP_SRC;
+  if (count) count.textContent = q ? (shown.length + ' of ' + d.sections.length) : '';
+}
+function helpSetFilter(v) {
+  helpState.q = String(v == null ? '' : v).trim().toLowerCase();
+  renderHelp();
+}
+/* ⚠️ THIS DELIBERATELY DOES NOT CALL renderHelp(). Repainting the rail by re-rendering
+   would replace the very nodes the smooth scroll is travelling to, and the jump lands
+   nowhere — found by driving it. So the highlight is moved on the two links directly
+   and the document is left alone. */
+function helpJump(id, el) {
+  helpState.active = id;
+  const toc = document.getElementById('help-toc');
+  if (toc) Array.prototype.forEach.call(toc.querySelectorAll('a'), a => a.classList.remove('on'));
+  if (el && el.classList) el.classList.add('on');
+  /* ⚠️ NO `behavior:'smooth'`, AND THAT IS A DRIVING RESULT, NOT A PREFERENCE. In this
+     WKWebView `scrollIntoView({behavior:'smooth'})` SILENTLY DOES NOTHING — measured
+     on the live panel: the plain call moved the page to 1869px, the smooth call left
+     scrollY at 0 with no error anywhere. A contents rail whose links do not move the
+     page is the whole feature failing quietly, so it uses the form that works. An
+     instant jump is also the anchor-link convention, which is what a rail IS.
+     scrollIntoView (rather than window.scrollTo) is still the right API here because
+     it finds whichever ancestor scrolls — in a ⧉ peek that is the overlay body, not
+     the window. */
+  const t = document.getElementById(id);
+  if (t && t.scrollIntoView) t.scrollIntoView(true);
 }
 
 /* ---------- THEME PACKS (2026-08-28) ----------
@@ -3736,7 +4105,15 @@ function designBoot() {
    a panel VIEW can be pinned to the tab strip, and pinning it means the shell loads
    `?solo=<view>`. `mc` is excluded on purpose: Mission Control's native tab is the
    panel itself (tab 0, the bridge-wait surface), not a chromeless second copy. */
-const SOLO_VIEWS = NAV_ENTRIES.filter(e => e.view && e.id !== 'mc').map(e => e.view);
+/* ⚠️ …AND NOT AN ENTRY THAT CANNOT BE A TAB. `?solo=<view>` is the mechanism by which
+   a pinned view becomes a NATIVE TAB; an entry the model refuses to put on the topbar
+   (NAV_SIDEBAR_ONLY) can never be pinned, so a solo surface for it would be a URL
+   nothing in the product can produce. Help is the first entry that is BOTH a real view
+   AND sidebar-only, which is why this filter has to say so out loud — before it, the
+   exclusion happened by accident of Logs having `view:null`. */
+const SOLO_VIEWS = NAV_ENTRIES
+  .filter(e => e.view && e.id !== 'mc' && NAV_SIDEBAR_ONLY.indexOf(e.id) < 0)
+  .map(e => e.view);
 function soloView(search) {
   const m = /(?:^|[?&])solo=([A-Za-z]+)/.exec(String(search == null ? '' : search));
   const v = m ? m[1].toLowerCase() : '';
@@ -3761,6 +4138,7 @@ function showView(v) {
   document.getElementById('view-models').hidden = (v !== 'models');
   document.getElementById('view-caps').hidden = (v !== 'caps');
   document.getElementById('view-music').hidden = (v !== 'music');
+  document.getElementById('view-help').hidden = (v !== 'help');
   // The rows are rendered from the nav model now, so a row the user hid is simply
   // ABSENT — every lookup here has to tolerate that (a missing row is not an error,
   // and the view itself still opens from ⌘K, a tab, or another row).
@@ -3790,6 +4168,7 @@ function showView(v) {
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
   if (v === 'caps') initCaps();
+  if (v === 'help') initHelp();
   // MUSIC: the status poll is armed on entry and RETIRED on exit — it must never
   // keep polling behind another view (and it only ticks while a render runs). The one
   // exception is a music PEEK: that view is on screen, so its poll must survive a
@@ -3814,7 +4193,12 @@ function showView(v) {
    Excluded on purpose: CHAT (a streaming composer with a live mic and an artifact
    pane — borrowing it mid-turn is a bigger design question than this slice), MISSION
    CONTROL (it is the page you are normally standing on), LOGS (already a dialog). */
-const PEEK_VIEWS = ['models', 'music', 'caps'];
+/* HELP IS IN, and it is the case the mechanism was made for: "how does conv mode
+   actually work" is a question you ask WHILE doing the thing, and navigating away to
+   answer it is exactly the loss of place this overlay exists to prevent. It is
+   read-only prose with no live state, so it is also the cheapest thing here to
+   borrow — initHelp() is idempotent and its fetch is cached after the first open. */
+const PEEK_VIEWS = ['models', 'music', 'caps', 'help'];
 let peekState = null;          // { id, view, node, anchor } — at most ONE at a time
 
 function peekViewFor(id) { const e = navEntry(id); return (e && e.view) || null; }
@@ -3874,6 +4258,7 @@ function peekOpen(id, ev, el) {
   if (view === 'models') initModels();
   else if (view === 'caps') initCaps();
   else if (view === 'music') initMusic();
+  else if (view === 'help') initHelp();
   return true;
 }
 
@@ -4366,7 +4751,8 @@ function renderNavDlg(err) {
     `<div style="font-size:12px; color:var(--dim); line-height:1.5; margin:2px 6px 0">Drag <b>⠿</b> to reorder, switch a row off to
        hide it. Changes apply as you make them. A hidden tab is not gone — it collects in the
        <b>⋯</b> menu at the right of the app's tab strip. Nothing can be hidden on both bars at
-       once, and Logs stays reachable from ⌘K. The tab strip only exists in the app window, and
+       once — except Logs and Help, which stay reachable from ⌘K even with their rows off.
+       The tab strip only exists in the app window, and
        it follows within a few seconds.</div>
      <div id="nav-err" ${err ? '' : 'hidden'} style="color:var(--bad); font:10.5px var(--mono); margin:8px 6px 0">${esc(err || '')}</div>`
     + navBarHtml('sidebar') + navBarHtml('topbar');
@@ -13461,6 +13847,11 @@ const commands = () => {
         const el = document.getElementById('mus-prompt'); if (el) el.focus(); }, 120); }},
     {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},
+    // HELP is here as well as on the sidebar, and that is load-bearing rather than a
+    // convenience: `always` in the nav model lets a user hide the Help row, and this
+    // is the reachability that makes hiding it a safe choice (the same argument Logs
+    // has carried since the model shipped).
+    {t:'Help', k:'?', f:()=>showView('help')},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
     {t:'Customize navigation', k:'⠿', f:openNavDlg},   // STUDIO PHASE 2 §A v2
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},

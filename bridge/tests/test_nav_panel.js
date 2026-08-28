@@ -32,7 +32,7 @@ const end = html.indexOf('let navModel = null;');
 ok(start > 0 && end > start, 'the nav model block is where the test expects it');
 const src = html.slice(start, end);
 const M = new Function(src + `; return { NAV_ENTRIES, NAV_TOPBAR_MAX, NAV_SIDEBAR_ONLY,
-  NAV_DEFAULT_SIDEBAR, NAV_DEFAULT_TOPBAR, NAV_TOPBAR_UNPINNED,
+  NAV_DEFAULT_SIDEBAR, NAV_DEFAULT_TOPBAR, NAV_TOPBAR_UNPINNED, NAV_ALWAYS,
   NAV_MODEL_V, NAV_DEFAULT_TOPBAR_V1,
   navEntry, navCanShow, navDefaultModel, navNormalize, navValidate, navMigrate };`)();
 const ids = (m, bar) => m[bar].map(r => r.id);
@@ -71,7 +71,21 @@ console.log('registry');
   });
   ok(M.navEntry('logs') && !M.navEntry('logs').view && !M.navEntry('logs').tab,
      'Logs is a dialog: no view, no tab');
-  ok(M.NAV_SIDEBAR_ONLY.join() === 'logs', '…and it is the one sidebar-only entry');
+  ok(M.NAV_SIDEBAR_ONLY.join() === 'logs,help',
+     '…and the sidebar-only set is Logs + Help (v1.5.27)');
+  // HELP (roadmap §2.4). The entry that broke the old shape of these assertions: it is
+  // the first registry entry that is a REAL VIEW and still sidebar-only, so "no tab"
+  // can no longer be inferred from "no view".
+  {
+    const h = M.navEntry('help');
+    ok(!!h && h.view === 'help', 'Help is a real panel VIEW (unlike Logs, which is a dialog)');
+    ok(!!h && !h.tab, '…with no native tab');
+    ok(!!h && !h.prefersTab, '…so a click can never be handed to the shell');
+    ok(M.navCanShow('help', 'sidebar') && !M.navCanShow('help', 'topbar'),
+       '…and the model refuses to put it on the strip');
+    ok(M.NAV_ALWAYS.join() === 'logs,help',
+       'the `always` set is a NAMED list, mirroring nav.py (it was an inline id test)');
+  }
   ok(!M.navCanShow('logs', 'topbar') && M.navCanShow('logs', 'sidebar'),
      'navCanShow answers the capability question');
   ok(!M.navCanShow('nope', 'sidebar') && !M.navCanShow('nope', 'topbar'),
@@ -89,8 +103,8 @@ console.log('defaults');
   // Logs — plus the components group. PHASE 2 adds exactly the two lanes Debi asked
   // for, in the workspace group, and moves nothing else.
   const ws = ids(d, 'sidebar').filter(i => M.navEntry(i).kind !== 'component');
-  ok(ws.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs',
-     'the workspace rail is today\'s order + the two lanes: ' + ws.join(','));
+  ok(ws.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs,help',
+     'the workspace rail is today\'s order + the two lanes + Help under Logs: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -262,8 +276,10 @@ console.log('render (executed)');
              comp: document.getElementById('sidecomponents').innerHTML };`);
   const out = run(...Object.values(env));
   const rows = [...out.ws.matchAll(/id="nav-([a-z]+)"/g)].map(m => m[1]);
-  ok(rows.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs',
-     'with NO saved layout the workspace rail renders today\'s rows + the two lanes');
+  ok(rows.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders today\'s rows + the two lanes + Help');
+  ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
+     '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),
      'the current view is highlighted after a render (curView, not a lost class)');
   ok((out.ws.match(/onclick="navOpen\(/g) || []).length === rows.length,
@@ -271,8 +287,10 @@ console.log('render (executed)');
   ok(/<span class="ico">♫<\/span> Music/.test(out.ws), 'the icons and labels come from the registry');
   // ⧉ = open as an overlay (2026-08-21). It rides the eligible workspace rows only.
   const peeks = [...out.ws.matchAll(/peekOpen\('([a-z]+)'/g)].map(m => m[1]).sort();
-  ok(peeks.join(',') === 'caps,models,music',
-     'the ⧉ overlay trigger is on Models / Music / Capabilities only: ' + peeks.join(','));
+  ok(peeks.join(',') === 'caps,help,models,music',
+     'the ⧉ overlay trigger is on Models / Music / Capabilities / Help: ' + peeks.join(',')
+     + ' — Help is in because "how does conv mode work" is a question you ask WHILE '
+     + 'doing the thing, and it is read-only prose with no live state to borrow');
   for (const no of ['chat', 'mc', 'logs', 'aider', 'loffice']) {
     ok(peeks.indexOf(no) < 0, no + ' has NO ⧉ trigger (it is not a peekable view)');
   }

@@ -149,6 +149,33 @@ for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
 
+# ── the TOP-LEVEL docs/*.md, and only those ───────────────────────────────────
+# ⚠️ PENDING FABLE QA — ops-path edit, flagged rather than assumed, per the note above.
+#
+# WHY IT IS HERE AT ALL. The panel's Help view (roadmap §2.4) renders
+# docs/USER-EXPLAINERS.md through /api/help/explainers, which reads it off ROOT — and
+# ROOT in the fat app is the SNAPSHOT. Nothing copied docs/ before this line, so Help
+# would have been permanently empty in the only place it matters while working
+# perfectly in the repo. That is the exact shape of the bridge/{core,routers} near-miss
+# above, so it gets the same treatment: an explicit copy with the reason next to it.
+#
+# WHY `*.md` AT THE TOP LEVEL AND NOT `cp -R docs/`. docs/handoff (972K) and
+# docs/research (596K) are session archaeology and internal briefs — they are not
+# shipped product, and a recursive copy would put them in the user's Application
+# Support folder for no reason. Seven files, ~136K, is what the app can actually use.
+# A `docs/` subdirectory that becomes shippable later must be added deliberately.
+#
+# NOT FENCED like the package copy, and that is a judgement, not an omission: a missing
+# bridge/core/*.py means the bridge cannot import, which must stop the ship; a missing
+# explainer means the Help view shows its named empty state ("run ./scripts/ship.sh"),
+# which is a degradation the user can read and act on. It must not block a ship.
+if [[ -d "$ROOT/docs" ]]; then
+  mkdir -p "$DST/docs"
+  for _d in "$ROOT"/docs/*.md; do
+    [[ -f "$_d" ]] && cp "$_d" "$DST/docs/$(basename "$_d")"
+  done
+fi
+
 # Swift shell: recompile only when main.swift is newer than the installed binary.
 if [[ "$ROOT/app/main.swift" -nt "$APP/Contents/MacOS/Harness" ]]; then
   echo "[ship] main.swift changed → recompiling the shell"

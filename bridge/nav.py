@@ -48,6 +48,20 @@ NAV_ENTRIES = (
     # the one entry that may be hidden everywhere, because ⌘K ("Show bridge logs")
     # reaches it regardless. Every other entry is protected by `validate`.
     {"id": "logs",        "kind": "view",      "bars": ("sidebar",), "always": True},
+    # HELP (roadmap §2.4) — the in-app explainers, rendered from docs/USER-EXPLAINERS.md
+    # by the panel's own tiny markdown renderer. It sits directly under Logs.
+    #
+    # SIDEBAR-ONLY, like Logs, but NOT for Logs' reason. Logs is sidebar-only because it
+    # is a dialog with no view at all; Help IS a real panel view. It is sidebar-only
+    # because it is a reference surface you consult and leave rather than a workspace
+    # you keep a tab on — and because the strip is at 11 of Debi's 12 pins already, so
+    # the honest default is "not a tab". The panel's SOLO_VIEWS derivation therefore
+    # excludes it EXPLICITLY (a view with no tab home has no ?solo= surface either),
+    # rather than the exclusion happening by accident of `view: null`.
+    #
+    # `always` for exactly Logs' reason: ⌘K ("Help") reaches it whatever the sidebar
+    # says, so hiding the row has to be allowed to be a real choice.
+    {"id": "help",        "kind": "view",      "bars": ("sidebar",), "always": True},
     {"id": "odysseus",    "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "hermes",      "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "voicestudio", "kind": "component", "bars": ("sidebar", "topbar")},
@@ -62,9 +76,21 @@ NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 # exactly like the build before this slice, so nothing moves until somebody customises
 # it. The only additions are the two lanes Debi asked for (aider, loffice), which had
 # no sidebar row at all and were therefore reachable only from the tab strip.
+#
+# ⚠️ `help` is APPENDED TO THE SIDEBAR IN PLACE (directly after `logs`) and not to the
+# topbar at all, so the strip's saved layouts are untouched and no migration is needed:
+# `normalize` appends a known id the caller omitted, so an EXISTING nav.json gains
+# `help` at the tail of its sidebar list. That still renders directly under Logs, and
+# not by luck: everything between `logs` and the tail of a saved layout is a COMPONENT,
+# and renderSidebar draws components into their own group. The one visible consequence
+# is that the Appearance editor lists Help last rather than ninth — which is the honest
+# truth about where it sits in that user's saved order, so it is left alone rather than
+# "fixed" by a migration that would move rows somebody may have arranged.
+# That is the whole upgrade path: no `v` bump, no one-time migration.
 DEFAULT_SIDEBAR = (
     ("mc", True), ("chat", True), ("models", True), ("music", True),
     ("aider", True), ("loffice", True), ("caps", True), ("logs", True),
+    ("help", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
 )

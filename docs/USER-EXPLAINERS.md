@@ -1,13 +1,12 @@
-# MOT Deck explainers — the source text for the in-app Help panel
+# MOT Deck explainers
 
-> Renamed 2026-08-21: the app is **MOT Deck** (*Mixture of Tools*), its home screen
-> **MOT Main**. Entries below still say "the harness" / "Mission Control" in places —
-> same thing; rewrite as each entry is next touched.
+> The app is **MOT Deck** (*Mixture of Tools*). Its home screen is the deck itself —
+> the page the sidebar calls **MOT Deck** and the page heading calls **MOT Main**.
 
 Every entry here answers a question that has actually cost time to figure out. This
-file is the CONTENT; the Help surface that renders it (sidebar, under Logs) is a
-Fable-lane design item on the roadmap. Keep entries short, plain, and honest about
-limits — no marketing voice.
+file **is** the in-app Help view (sidebar, under Logs): Help renders it live, so
+editing this file is the only step needed to change what the app shows. Keep entries
+short, plain, and honest about limits — no marketing voice.
 
 ---
 
@@ -16,7 +15,7 @@ limits — no marketing voice.
 | Chip | What happens | When to use it |
 |---|---|---|
 | **Agent** | Your message goes through Odysseus, which can use tools: web search, deep research, memory, documents. | Anything needing the web or multi-step work. |
-| **Chat** | Straight to the local model on the runner. No tools, no web, nothing in between. This is what *"direct to runner — no tools, fastest"* under the chips means. | Quick questions, drafting, anything self-contained. Fastest by a wide margin. |
+| **Chat** | Straight to the local model on the runner. No tools, no web, nothing in between. This is what *"direct to runner — no tools, fastest"* beside the chips means. | Quick questions, drafting, anything self-contained. Fastest by a wide margin. |
 | **Hermes** | Goes to the Hermes agent, which has its own tools, skills, approvals and file access. | Real agent work on your machine: writing files, running commands, multi-tool tasks. |
 
 **Browse** toggles a browser-automation tool for the agent lanes. **Tools** opens
@@ -70,9 +69,14 @@ press ⌘R there.)
 | Control | What it does |
 |---|---|
 | **▶ speak** (under a reply) | Reads that reply aloud with your default TTS voice. |
-| **● talk** | Records, transcribes, and **appends into the message box** — never auto-sends. |
-| **auto** | Hands-free dictation: speak, pause, the text appears. Still never auto-sends. |
-| **conv** | Full conversation: speak → auto-sends → reply streams → reply is read aloud → listening resumes. Needs **both** a TTS and an STT default set. |
+| **● talk** (the mic, inside the message box beside Send) | Records, transcribes, and **appends into the message box** — never auto-sends. |
+| **auto** (top of the switch beside Send) | Hands-free dictation: speak, pause, the text appears. Still never auto-sends. |
+| **off** (middle of the switch) | The resting position. The mic only listens while you use ● talk. |
+| **conv** (bottom of the switch) | Full conversation: speak → auto-sends → reply streams → reply is read aloud → listening resumes. Needs **both** a TTS and an STT default set. |
+
+**auto** and **conv** are the two ends of one vertical three-position switch at the
+right edge of the message box; the middle is **off**. Clicking the engaged end again,
+or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 - The mic is switched off while the assistant is thinking or speaking, so it can never
   transcribe itself. You cannot interrupt playback by talking (yet) — press ■ stop.
@@ -111,7 +115,10 @@ press ⌘R there.)
 - **Drag a tab label** onto a pane to send it there. Drag the tab the *other* pane is
   showing to get a **second live copy** of that app side by side (copies are discarded
   when the split closes).
-- **◐** switches light/dark. **▣** is an optional denser button chrome (opt-in).
+- **◐** cycles the four themes: Editorial (dark), Warm Paper (light), Luxury Gold,
+  Cyber. **▣** is an optional denser button chrome (opt-in). **✦** is a separate axis
+  again — it flips the whole panel to the Studio design, and one more click puts
+  Editorial back exactly as it was.
 - Drop an **image** on the Chat view to attach it; drop a **wav/mp3** on the panel to
   add it to the voice clip library.
 
@@ -130,7 +137,7 @@ press ⌘R there.)
 
 ## When something looks wrong
 
-1. **A component card is red/degraded** → Stop, then Start it on Mission Control.
+1. **A component card is red/degraded** → Stop, then Start it on MOT Deck.
 2. **A tab shows "Not reachable yet"** → that component isn't running; start it, then
    re-select the tab (or ⌘R).
 3. **A turn seems stuck** → press Stop; it force-ends within ~3s and names the stage it

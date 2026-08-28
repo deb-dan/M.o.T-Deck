@@ -218,8 +218,24 @@ console.log('2. Editorial does not pay for the second design');
                the four specificity restatements, and the two moved Debi rulings — talk
                before Send, and auto/conv becoming one control). The MEASURED numbers all
                live in fences (test_editorial_debt.js, test_theme_packs.js,
-               test_audio_switch.js, test_audio_drop.js); only the reasoning is here. */
-  const CEILING = 745000;
+               test_audio_switch.js, test_audio_drop.js); only the reasoning is here.
+       775000  the HELP surface (roadmap §2.4, v1.5.27) — +21KB, and per the protocol,
+               what it bought. NEW BEHAVIOUR, essentially all of it: the markdown
+               renderer for the subset docs/USER-EXPLAINERS.md uses (inline, blocks,
+               GFM tables, lists with continuation lines, the section splitter), the
+               view's fetch → parse → render → filter path, the contents-rail jump, the
+               empty and error states, the view's markup, and ~40 lines of layout CSS.
+               The PROSE half is small and is where this ceiling's own note wants it:
+               the handled subset is enumerated AT the renderer (a renderer that
+               silently drops syntax is the whole defect class, so what it handles has
+               to be readable by whoever edits it), and the one adversarial finding — a
+               scan-forward that discarded the document's lead-in — is recorded at the
+               loop it fixed rather than in a report nobody will open again.
+               ⚠️ AND THE PAGE DID NOT GROW BY THE SIZE OF THE HELP TEXT. The content
+               is served from docs/USER-EXPLAINERS.md by /api/help/explainers and is
+               never inlined — structurally the same argument as the design asset
+               asserted below. Editing the help costs zero page bytes, for ever. */
+  const CEILING = 775000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
