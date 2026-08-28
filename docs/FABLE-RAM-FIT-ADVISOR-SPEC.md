@@ -63,3 +63,27 @@ S1: fit engine + memory strip + verdicts on installed models + the consent-dialo
 integration (retrofit of the advisory-gates ruling rides this).
 S2: HF browser verdicts per quant file + remedies-as-recalculation UI.
 Sequencing: after the capability-audit builder releases index.html.
+
+## 2b. The app-wide RAM ledger (Debi's extension, same ruling, same slice)
+
+The fit advisor's "have" side becomes a full LIVE LEDGER, not one number:
+
+- **Our stack, itemized**: every component the supervisor runs has a known pid (runner,
+  Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, the
+  bridge itself, the app shell) — show each one's live memory footprint by name,
+  including child processes (the runner's model is the headline; voice/music workers
+  when resident). Sampled cheaply (proc_pid_rusage/ps class, cached a few seconds,
+  pushed over the SSE bus like everything else).
+- **Outside the app**: the rest of the machine, honestly — total · our stack · "other
+  apps" as a bucket, expandable to the TOP external consumers by process name (the
+  Activity-Monitor-lite view: e.g. Chrome 6.2GB, standalone Unsloth 2.1GB) so "why is
+  it tight" is answerable without leaving MOT Deck. Read-only: we NAME external
+  processes, we never touch them.
+- **Where it lives**: the MOT Deck tile grows into the entry point (today's "Disk free"
+  grammar) → expands to the full ledger view (a section on MOT Deck or beside Models —
+  builder proposes, Fable design-QAs). The Models strip (§2) shows the compact form.
+- **Ties together**: the fit verdicts cite the ledger's named holders in remedies
+  ("eject Qwen3.6-27B: +16GB", "stop ComfyUI: +1.8GB"); the consent dialog shows the
+  same names. macOS memory nuance stated honestly where it matters (compressed memory
+  and swap exist — surface memory PRESSURE alongside raw free, since free-RAM alone
+  understates what macOS can absorb; label accordingly, no false alarms).
