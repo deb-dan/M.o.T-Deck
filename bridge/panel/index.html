@@ -113,6 +113,20 @@
      rule the studio slice adds outside its block: editorial is the DEFAULT, so the
      icons must be hidden with the attribute ABSENT. The studio block reverses it. */
   .st-only { display:none; }
+  /* HARNESS-DESIGN AXIS: the ✦ chip's FIRST-CLICK loading state. The studio design
+     is a separately fetched asset (Debi's amendment), so the one beat between the
+     click and the paint is SHOWN rather than swallowed. This is the only studio-design
+     rule that lives in Editorial's sheet, and it styles nothing but that one chip. */
+  #design-chip.loading { opacity:.55; pointer-events:none; }
+  /* THE --on-wash PATTERN, applied again (2026-08-28). The AUX RUNNER label carried
+     `style="letter-spacing:.16em"` INLINE from its renderer, and an inline style beats
+     every stylesheet — so it was the one piece of typography a second design could not
+     reach without !important. The literal moves here UNCHANGED: at this element's own
+     font-size .16em computes to exactly what the inline style computed, so Editorial is
+     byte-identical, and an axis can now override it like any other declaration.
+     Specificity note: (1,1,0) deliberately beats `.card .name`'s (0,2,0), which is what
+     the inline style used to do. */
+  #models-aux .name { letter-spacing:.16em; }
   /* FABLE: style pass — Capabilities section sub-tabs (reuse .chip; .on = active) */
   .caps-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 18px; }
   .caps-tab.on { color:var(--cream); border-color:var(--gold); background:var(--bg); }
@@ -1485,6 +1499,23 @@
   // read here, so it migrates silently to editorial (no modal, no data loss — the
   // next ▣ click rewrites the key as 'studio').
   try { if (localStorage.getItem('harness-chrome') === 'studio') document.documentElement.dataset.chrome = 'studio'; } catch (e) {}
+  // HARNESS-DESIGN AXIS (2026-08-28) — the THIRD axis, and the only one whose CSS is
+  // NOT in this file. With the key absent this is one localStorage read and ZERO
+  // requests. At boot the link is appended during head parsing (render-blocking like
+  // any stylesheet) and the ATTRIBUTES ARE STAMPED ONLY IN ITS onload: an unstyled
+  // beat in Editorial is acceptable, a half-painted studio is not.
+  try { var _dg = localStorage.getItem('harness-design');
+        if (_dg === 'studio' || _dg === 'studio-light') {
+          var _dl = document.createElement('link');
+          _dl.rel = 'stylesheet'; _dl.id = 'studio-design-css';
+          _dl.href = '/assets/studio-design.css';
+          _dl.onload = function () {
+            var _d = document.documentElement;
+            _d.dataset.design = 'studio';
+            if (_dg === 'studio-light') _d.dataset.dvariant = 'light';
+          };
+          document.head.appendChild(_dl);
+        } } catch (e) {}
 </script>
 </head>
 <body>
@@ -1546,6 +1577,9 @@
     <span class="chip chip-icon" onclick="toggleTheme()" title="Theme: Editorial → Warm Paper → Luxury Gold → Cyber" aria-label="Next theme"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-theme"/></svg></span><span class="ed-only">◐</span></span>
     <!-- studio chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
     <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle Studio chrome (uniform buttons + icons)" aria-label="Toggle Studio chrome">▣</span>
+    <!-- HARNESS-DESIGN AXIS: its OWN button, a THIRD axis. One click flips the whole
+         app to the studio design; one click back is Editorial exactly as it was. -->
+    <span class="chip chip-icon" id="design-chip" onclick="toggleDesign()" title="Studio design" aria-label="Studio design">✦</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
     <span class="chip chip-icon" onclick="refresh(true)" title="Refresh status" aria-label="Refresh status">↻</span>
   </div>
@@ -2865,7 +2899,13 @@ function storedTheme() {
   return themeId(v);
 }
 // The ◐ chip keeps its meaning — one axis, one click — it just has four stops now.
+// THE STUDIO MAPPING (2026-08-28): while the studio DESIGN is active the four packs
+// cannot apply (studio owns its palette), so ◐ maps to studio's own light/dark
+// variants instead of going dead — and it deliberately does NOT write harness-theme,
+// because that key holds the Editorial theme this user returns to.
 function toggleTheme() {
+  const dsn = storedDesign();
+  if (dsn !== 'editorial') { setDesign(flipDesignVariant(dsn)); return; }
   setTheme(nextThemeId(storedTheme()));
 }
 
@@ -2912,6 +2952,149 @@ function toggleChrome() {
   const p = chromeProbe();
   try { console.log('[chrome] ' + p); } catch (e) {}
   feed('chrome', p);
+}
+
+/* ---------- THE HARNESS-DESIGN AXIS (2026-08-28, FABLE-STUDIO-DESIGN-SPEC) ----------
+   A THIRD axis: theme is a palette, chrome is a control shape, a DESIGN is layout +
+   type + spacing + component shape together. Editorial is the identity (no attribute).
+   The studio CSS is a SEPARATE ASSET, fetched on first activation, so Editorial's boot
+   costs one localStorage read and zero requests. Rationale, the four properties this
+   axis is built to have, and the fence that holds them: bridge/tests/test_studio_design.js
+   and the header of bridge/panel/assets/studio-design.css — deliberately NOT here,
+   because prose in this file is weight Editorial pays for. */
+const DESIGNS = [
+  { id: 'editorial',    label: 'Editorial',    note: 'dark literary (default)' },
+  { id: 'studio',       label: 'Studio dark',  note: 'modern studio, cool graphite' },
+  { id: 'studio-light', label: 'Studio light', note: 'modern studio, cool paper' },
+];
+// PURE (unit-tested): unknown / absent / corrupt → Editorial. A design axis must never
+// be able to leave the panel unpainted.
+function designId(v) { return DESIGNS.some(d => d.id === v) ? v : 'editorial'; }
+function storedDesign() {
+  let v = null;
+  try { v = localStorage.getItem('harness-design'); } catch (e) {}
+  return designId(v);
+}
+// PURE (unit-tested): ✦ is a TWO-state toggle on the AXIS, not a cycle through variants.
+// `last` = the studio variant you were last in, so ✦ returns you there.
+function nextDesignId(v, last) {
+  if (designId(v) !== 'editorial') return 'editorial';
+  return last === 'studio-light' ? 'studio-light' : 'studio';
+}
+// PURE (unit-tested): the ◐ mapping while studio is active. Total on the three ids,
+// identity on Editorial (where ◐ keeps its own four-pack meaning).
+function flipDesignVariant(v) {
+  const id = designId(v);
+  if (id === 'studio') return 'studio-light';
+  if (id === 'studio-light') return 'studio';
+  return id;
+}
+// SESSION memory, not a second localStorage key (the spec asked for one): after a
+// reload from Editorial, ✦ lands on studio-dark. Stated cost, not an oversight.
+let _designLastStudio = 'studio';
+
+/* ONE promise, so a double-click cannot start two fetches and re-activation is free.
+   The boot path may already have appended the link; both cases resolve through here. */
+let _designAsset = null;
+function designAsset() {
+  if (_designAsset) return _designAsset;
+  _designAsset = new Promise((res, rej) => {
+    let el = document.getElementById('studio-design-css');
+    if (el) {
+      if (el.sheet) { res(); return; }            // already parsed (boot path)
+      el.addEventListener('load', () => res());
+      el.addEventListener('error', () => rej(new Error('stylesheet failed')));
+      return;
+    }
+    el = document.createElement('link');
+    el.rel = 'stylesheet'; el.id = 'studio-design-css';
+    el.href = '/assets/studio-design.css';
+    el.addEventListener('load', () => res());
+    el.addEventListener('error', () => rej(new Error('stylesheet failed')));
+    document.head.appendChild(el);
+  });
+  return _designAsset;
+}
+
+/* THE ONE SEAM. Stamps exactly the attributes an id means, removes the others, and
+   brings the two Appearance controls into line. Idempotent by construction: absolute
+   state, never a toggle. It applies NO additive classes — every surface was reachable
+   from the existing ids and classes, which is why there is no studio-design.js. */
+function designApply(v) {
+  // TOTAL on its own, not merely on the paths that reach it. The adversarial pass
+  // called designApply('nonsense') directly and got data-design="studio" — an
+  // unknown id fell through to the else branch and PAINTED. setDesign already
+  // guarded its input, but a seam that only behaves when its callers behave is not
+  // a seam. Unknown → Editorial, same rule as every other axis in this file.
+  const id = designId(v);
+  const d = document.documentElement;
+  if (id === 'editorial') {
+    d.removeAttribute('data-design'); d.removeAttribute('data-dvariant');
+  } else {
+    d.dataset.design = 'studio';
+    if (id === 'studio-light') d.dataset.dvariant = 'light';
+    else d.removeAttribute('data-dvariant');
+  }
+  const sel = document.getElementById('design-pick');
+  if (sel && sel.value !== id) sel.value = id;
+  // GREY-NOT-HIDE: the two dark PACKS cannot apply while studio owns the palette, so
+  // they are greyed and the select says why. Editorial and Warm Paper stay pickable —
+  // they are the ground you will return to, and choosing one now is not a mistake.
+  const ts = document.getElementById('theme-pack');
+  if (ts) {
+    for (const o of ts.options) o.disabled = (id !== 'editorial') && PACK_GATED.includes(o.value);
+    ts.title = (id === 'editorial') ? 'Theme pack' : PACKS_GATED_NOTE;
+  }
+  return id;
+}
+const PACK_GATED = ['gold', 'cyber'];
+const PACKS_GATED_NOTE = 'Luxury Gold and Cyber apply to the Editorial design only — '
+  + 'Studio provides its own light and dark. Your theme is remembered and returns when '
+  + 'you leave Studio (◐).';
+
+async function setDesign(v) {
+  const id = designId(v);
+  const chip = document.getElementById('design-chip');
+  if (id !== 'editorial') {
+    // FIRST CLICK ONLY: the stylesheet has to arrive before the attribute is stamped.
+    const cold = !_designAsset;
+    if (cold && chip) { chip.classList.add('loading'); chip.textContent = '◌'; }
+    const t0 = Date.now();
+    try { await designAsset(); }
+    catch (e) {
+      if (chip) { chip.classList.remove('loading'); chip.textContent = '✦'; }
+      feed('design', 'studio design stylesheet failed to load — staying on Editorial');
+      return 'editorial';
+    }
+    if (chip) { chip.classList.remove('loading'); chip.textContent = '✦'; }
+    if (cold) feed('design', 'studio design loaded in ' + (Date.now() - t0) + 'ms');
+  }
+  designApply(id);
+  if (id !== 'editorial') _designLastStudio = id;
+  try { localStorage.setItem('harness-design', id); } catch (e) {}
+  const d = DESIGNS.find(x => x.id === id);
+  feed('design', 'design: ' + (d ? d.label : id));
+  return id;
+}
+function toggleDesign() { return setDesign(nextDesignId(storedDesign(), _designLastStudio)); }
+
+/* THE RECOVERY PATH, once at boot. If the boot stylesheet never lands (partial ship,
+   404, asset mount down) the panel correctly stays Editorial while the key still says
+   Studio — so the Appearance select would read "Studio" over an Editorial page. This
+   reconciles them: adopt studio if it painted (skipping the cold-load state), else
+   retry the asset once and, failing that, rewrite the key so the next boot is honest. */
+function designBoot() {
+  const want = storedDesign();
+  if (want === 'editorial') return;
+  if (document.documentElement.dataset.design === 'studio') {
+    _designAsset = Promise.resolve();      // the boot link is already parsed
+    _designLastStudio = want;
+    designApply(want);
+    return;
+  }
+  setDesign(want).then(got => {
+    if (got === 'editorial') { try { localStorage.setItem('harness-design', 'editorial'); } catch (e) {} }
+  });
 }
 
 /* ---------- SOLO MODE ----------
@@ -3627,6 +3810,14 @@ function renderAppearance() {
         do not use. Opens over this page — drag to reorder, switch a row off to hide it.</div>
     </div><div class="cap-ctl"><button class="cap-btn" onclick="openNavDlg()">Customize…</button></div></div>
     <div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">Design</div>
+      <div class="cap-desc">A whole second design — layout, type, spacing and component shapes,
+        not just colour. Editorial is the default; Studio is the modern-studio look, with its
+        own light and dark. The ✦ chip in the top bar flips between them, and ◐ switches
+        Studio's light/dark while it is active. Studio's stylesheet is fetched the first time
+        you turn it on.</div>
+    </div><div class="cap-ctl">${designSelect()}</div></div>
+    <div class="cap-row"><div class="cap-txt">
       <div class="cap-name">Theme</div>
       <div class="cap-desc">A complete look — ground, ink and accent together. Applies at once and is
         remembered; the Office tab follows the same choice. The ◐ chip in the top bar steps
@@ -3640,10 +3831,24 @@ function renderAppearance() {
    as the fast path for anyone who already knows the order. */
 function themePackSelect() {
   const cur = storedTheme();
+  // GREY-NOT-HIDE while the studio design owns the palette. Rendered here as well as
+  // in designApply() so the two paths (first render, later flip) can never disagree.
+  const gate = storedDesign() !== 'editorial';
   return `<select class="cap-sel" id="theme-pack" onchange="setTheme(this.value)"
-      title="Theme pack" aria-label="Theme pack">`
-    + THEME_PACKS.map(p => `<option value="${escAttr(p.id)}"${p.id === cur ? ' selected' : ''}>`
+      title="${escAttr(gate ? PACKS_GATED_NOTE : 'Theme pack')}" aria-label="Theme pack">`
+    + THEME_PACKS.map(p => `<option value="${escAttr(p.id)}"${p.id === cur ? ' selected' : ''}`
+        + `${gate && PACK_GATED.includes(p.id) ? ' disabled' : ''}>`
         + `${esc(p.label)} · ${esc(p.note)}</option>`).join('')
+    + `</select>`;
+}
+/* The design picker — the named list beside the ✦ chip's fast path, the same
+   relationship the theme select has with ◐. */
+function designSelect() {
+  const cur = storedDesign();
+  return `<select class="cap-sel" id="design-pick" onchange="setDesign(this.value)"
+      title="Design" aria-label="Design">`
+    + DESIGNS.map(d => `<option value="${escAttr(d.id)}"${d.id === cur ? ' selected' : ''}>`
+        + `${esc(d.label)} · ${esc(d.note)}</option>`).join('')
     + `</select>`;
 }
 
@@ -7404,7 +7609,7 @@ function renderAux(r){
   const foot = document.getElementById('models-aux'); foot.innerHTML = '';
   const aux = r.aux || {};
   const strip = document.createElement('div'); strip.className = 'card'; strip.style.marginTop = '20px';
-  strip.innerHTML = `<div class="name" style="letter-spacing:.16em">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
+  strip.innerHTML = `<div class="name">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
       <div class="meta" style="white-space:normal;overflow:visible;margin-top:5px">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
   if (aux.model){
     const b = document.createElement('button'); b.style.marginTop = '11px';
@@ -12428,6 +12633,7 @@ const commands = () => {
     {t:'Customize navigation', k:'⠿', f:openNavDlg},   // STUDIO PHASE 2 §A v2
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
     {t:'Toggle Studio chrome', k:'▣', f:toggleChrome},
+    {t:'Studio design (whole second design)', k:'✦', f:toggleDesign},
     {t:'Collapse / expand sidebar (⌘\\)', k:'«', f:toggleSideRail},
     {t:'Next theme', k:'◐', f:toggleTheme},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
@@ -12503,6 +12709,7 @@ loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configure
 loadMusicView();       // MUSIC DECK: restore the persisted per-page view (classic default)
 renderSidebar();       // NAV: draw both rails from the INSTANT (localStorage) copy…
 navSync();             // …then adopt data/nav.json, the copy the native shell reads
+designBoot();          // DESIGN: reconcile the persisted design with what actually painted
 applySolo();           // SOLO: ?solo=<view> → chromeless, pinned to that view (native Music tab)
 refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
 </script>

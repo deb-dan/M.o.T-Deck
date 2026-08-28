@@ -263,8 +263,15 @@ console.log('theme resolvers (executed)');
 // the selector lives on the EXISTING Appearance surface; no fifth top-bar chip.
 console.log('the appearance surface');
 {
-  ok(/function renderAppearance\(\)[\s\S]{0,900}\$\{themePackSelect\(\)\}/.test(html),
+  // ⚠️ WINDOW WIDENED 900 → 1800 (2026-08-28, the studio-design slice). The Appearance
+  // group gained a Design row ABOVE Theme, which is the correct order — the design is
+  // the outer axis — and that row's description pushed the theme select further from
+  // the function head. What this assertion is FOR is unchanged and still holds: the
+  // theme picker lives on the EXISTING Appearance surface, not on a new one.
+  ok(/function renderAppearance\(\)[\s\S]{0,1800}\$\{themePackSelect\(\)\}/.test(html),
      'the theme picker is hosted by the existing Appearance group (no new surface)');
+  ok(/function renderAppearance\(\)[\s\S]{0,1200}\$\{designSelect\(\)\}/.test(html),
+     '…and so is the new Design picker, on the same surface rather than a second one');
   ok(/<div class="cap-name">Theme<\/div>/.test(html), '…as a named Appearance row');
   ok(/id="theme-pack" onchange="setTheme\(this\.value\)"/.test(html),
      '…a <select> of the four, applying on change');
@@ -272,8 +279,17 @@ console.log('the appearance surface');
      '…and the Navigation row it sits beside is untouched');
   const topbar = html.slice(html.indexOf('<div class="topbar">'),
                             html.indexOf('<div id="view-mc">'));
-  eq('the top bar still carries exactly its four chips — the packs added none',
-     (topbar.match(/class="chip chip-icon"/g) || []).length, 4);
+  // ⚠️ PIN MOVED 4 → 5 (2026-08-28, the studio-design slice), and the reason is
+  // recorded rather than the number quietly bumped. This assertion's job is to stop a
+  // slice from growing the top bar CASUALLY. The theme packs added none, and still add
+  // none — the fifth chip is the ✦ design axis, which the spec required to have its own
+  // button, and which is separately fenced in test_studio_design.js. The identities are
+  // pinned below, so a sixth chip, or a swap of one of these five, still fails here.
+  eq('the top bar carries exactly five icon chips — the packs added none, and the '
+     + 'design axis added exactly one', (topbar.match(/class="chip chip-icon"/g) || []).length, 5);
+  eq('…and they are these five, in this order — ◐ theme, ▣ chrome, ✦ design, ⌘K, ↻',
+     (topbar.match(/onclick="(\w+)\(/g) || []).map(s => s.slice(9, -1)),
+     ['toggleTheme', 'toggleChrome', 'toggleDesign', 'openPalette', 'refresh']);
   ok(/onclick="toggleTheme\(\)"/.test(topbar), '…and ◐ is still one of them');
   ok(/\{t:'Next theme', k:'◐', f:toggleTheme\}/.test(html), '⌘K reaches the theme axis');
   // the select must reflect reality when the chip is what moved.

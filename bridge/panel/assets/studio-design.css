@@ -1,0 +1,1052 @@
+/* ============================================================================
+   THE STUDIO DESIGN — a real second design for the first-party panel.
+   FABLE-STUDIO-DESIGN-SPEC (2026-08-28) + Debi's lazy-asset amendment.
+
+   WHAT THIS FILE IS. Not a theme pack. A second complete design: layout,
+   typography, spacing, component shape and information hierarchy, in the
+   Unsloth / LM Studio / Jan class. Editorial stays the default and is not
+   touched — this file is FETCHED ONLY when the design is activated, so
+   Editorial's page weight and boot are byte-for-byte what they were.
+
+   THE FENCE (bridge/tests/test_studio_design.js enforces all of it):
+     · EVERY selector in this file contains `html[data-design="studio"]`.
+       There is no unscoped rule, no bare `:root`, no @media that escapes it.
+       With the attribute absent this file cannot match one element.
+     · Two variants, on ONE new localStorage key `harness-design`:
+         'studio'       → studio-dark   (no variant attribute)
+         'studio-light' → studio-light  (`data-dvariant="light"`)
+       The existing `harness-theme` / `harness-chrome` keys are never written
+       by this axis, so leaving studio restores the user's theme and chrome
+       exactly as they were.
+     · Theme packs do not apply here: the token block below covers EVERY
+       token :root declares, and this sheet loads after the inline <style>,
+       so at equal specificity it wins. The Appearance select says so.
+
+   CASCADE NOTE, deliberate and load-bearing. `html[data-design="studio"]`
+   has the same specificity (0,1,1) as `html[data-theme="gold"]` and as
+   `html[data-chrome="studio"]`. This is an EXTERNAL sheet appended to
+   <head> after the inline <style>, so source order resolves every tie in
+   this file's favour. That is the mechanism by which one attribute flips a
+   whole design without a single !important.
+
+   IMPECCABLE (pbakaus/impeccable, 59 deterministic rules, read from source
+   at cli/engine/registry/antipatterns.mjs). Rules that actually shaped this
+   file, so a future edit does not undo them by accident:
+     · nested-cards fires at depth TWO, not three. A "card" is
+       (shadow OR border) AND (radius OR bg). So every inner surface here —
+       .chatcode, .filecard, .approval, pre — carries a GROUND WITH NO
+       BORDER AND NO SHADOW. That is not a shortcut; it is why the design
+       reads flat.
+     · side-tab / border-accent-on-rounded ban the 2px accent edge on a
+       rounded box. Editorial's selected-row idiom is exactly that, so
+       studio states are carried by GROUND + INK instead. .approval keeps a
+       1px accent rule, which is under both thresholds.
+     · dark-glow bans a chromatic blurred shadow (any 0/0 offset, blur >4px,
+       colour spread >=30) — .dot.ok's green halo is removed here.
+     · gpt-thin-border-wide-shadow: with hairlines everywhere, no shadow may
+       blur >=16px. Studio's elevation is tight (max blur 14px), which also
+       happens to be what a modern popover looks like.
+     · undersized-ui-text: 11px is the floor for anything interactive, any
+       furniture label, and any run <=20 chars. Editorial's 7-10px micro-caps
+       are all raised. This is the single largest source of rules below.
+     · flat-type-hierarchy needs max/min font-size >= 2.0. Studio's ramp is
+       11 -> 24px = 2.18.
+     · wide-tracking (>0.05em) and all-caps-body (>30 chars uppercase) are
+       why studio's labels are sentence case at normal tracking — the mono
+       small-caps voice is Editorial's signature and does not appear here.
+     · overused-font's 21-name list includes Inter, Helvetica, Arial and
+       Space Grotesk. "Avenir Next" is on none of the lists, ships with
+       macOS, needs no download, and gives studio a voice of its own.
+     · line-length caps the measure at 80ch (65-75 recommended). Editorial
+       deliberately runs the transcript full-width (a Debi ruling on
+       EDITORIAL); studio caps it at 74ch. Flagged for Fable, not silent.
+     · gray-on-color: an accent-filled control needs INK WITH CHROMA, so
+       .mpill.live's near-neutral #171420 is replaced here.
+
+   MOTION. One easing, ease-out-cubic (Unsloth's own --ease-out-cubic, read
+   off the live app), two durations. No bounce, no elastic, no new keyframes,
+   and nothing animates width/height/padding/margin (layout-transition).
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   1. TOKENS — studio-dark. Covers every token :root declares, which is what
+   makes the theme packs inert while studio is active.
+
+   The neutrals are TINTED toward the accent's temperature (impeccable's
+   "never pure black/gray"): the whole graphite ramp sits at hue ~185, so
+   the ground is a cool slate rather than a grey, and the accent belongs to
+   it instead of sitting on top of it. ONE accent (--gold is the panel's
+   accent token; studio makes it teal). Status inks stay separable from it:
+   ok is at hue ~155, the accent at ~172, which is a real hue gap.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] {
+  --bg:#0d1112; --bg2:#111617; --card:#161c1e; --card2:#1b2325;
+  --line:#232c2e; --line2:#313c3e;
+  --cream:#e9efef; --fg:#c3cccc; --dim:#aeb9b9; --faint:#909d9d;
+  --gold:#41c2ac; --ok:#4ac98d; --warn:#e2aa5e; --bad:#ea7370; --accent:#41c2ac;
+  --on-wash:rgba(65,194,172,.18);
+
+  /* studio's own system. --sd-* so it can never collide with the chrome
+     axis's --st-* tokens (a separate, older axis that still exists). */
+  --sd-sans:"Avenir Next", -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --sd-r:8px;          /* controls            */
+  --sd-r-lg:10px;      /* cards / panes       */
+  --sd-r-xl:14px;      /* composer / dialogs  */
+  --sd-h:30px;         /* standard control    */
+  --sd-h-sm:26px;      /* compact control     */
+  --sd-ease:cubic-bezier(.215,.61,.355,1);
+  --sd-t:.16s;
+  --sd-t-fast:.12s;
+  /* THE PROSE MEASURE. 70ch, not 74: impeccable's line-length estimator is
+     width/(fontSize x 0.5) and it trips above 85. Measured LIVE on the served
+     page, 74ch put .sub and .cap-desc at exactly 86. 70ch lands them at 81. */
+  --sd-measure:70ch;
+  /* THE CHAT LANE. One width for the transcript AND the composer, centred, so the
+     user bubble's right edge, the assistant's measure and the composer all line up
+     on the same two rails — the thing that makes a modern chat read as a column
+     rather than as a page. 600px is not a taste number: impeccable's line-length
+     estimator is width/(fontSize x 0.5), so at the 14.5px reply size 600px is ~83
+     characters, inside the rule's 85 trip point, and ~78 real characters, which is
+     squarely in the 65-75+ reading band. */
+  --sd-lane:600px;
+  /* the ink that sits ON the accent. Chromatic on purpose (gray-on-color). */
+  --sd-on-accent:#03211d;
+  /* tight elevation. Neutral colour (dark-glow) and blur <16px
+     (gpt-thin-border-wide-shadow). */
+  --sd-elev:0 6px 14px rgba(0,0,0,.34), 0 1px 2px rgba(0,0,0,.24);
+
+  /* the chrome axis's tokens, restated in studio's palette. The ▣ axis is
+     largely subsumed while this design is active (a design owns its control
+     shapes, and this sheet wins every tie) — but the handful of controls
+     studio does not restate must not render in Editorial's indigo slate. */
+  --st-btn:#1e2729; --st-hi:#263234; --st-edge:#33403f; --st-inp:#151b1c;
+  --st-font:var(--sd-sans);
+  --st-h:var(--sd-h); --st-hs:var(--sd-h-sm); --st-r:var(--sd-r);
+  --st-fs:12.5px; --st-fs-s:11px;
+
+  /* float surfaces (popovers, dialogs, the peek overlay) — solid studio
+     ground rather than Editorial's warm translucency. */
+  --float-bg:rgba(22,28,30,.92);
+  --float-edge:var(--line2);
+  --float-blur:blur(14px) saturate(120%);
+  --float-shadow:var(--sd-elev);
+}
+
+/* ---------------------------------------------------------------------------
+   2. TOKENS — studio-light. Cool near-white, NOT cream: impeccable's
+   cream-palette detector fires on min(r,g,b)>=209 AND r>=g>=b AND r-b in
+   6..48. #fbfcfd has r<g<=b, so studio-light is cool by construction and
+   can never read as the warm-paper AI default. Hover and well directions
+   invert here, exactly as the chrome axis learned to do on paper.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"][data-dvariant="light"] {
+  --bg:#fbfcfd; --bg2:#f3f6f7; --card:#fdfeff; --card2:#f6fafa;
+  --line:#e3eaeb; --line2:#c9d4d5;
+  --cream:#101a1b; --fg:#33403f; --dim:#4b5a5a; --faint:#5a6a6a;
+  --gold:#097268; --ok:#0d7d5c; --warn:#8a600d; --bad:#b23636; --accent:#097268;
+  --on-wash:rgba(9,114,104,.14);
+
+  --sd-on-accent:#e4fbf5;
+  --sd-elev:0 6px 14px rgba(16,40,40,.12), 0 1px 2px rgba(16,40,40,.10);
+
+  --st-btn:#eef3f3; --st-hi:#e2eaea; --st-edge:#c9d4d5; --st-inp:#f8fbfb;
+
+  --float-bg:rgba(255,255,255,.94);
+  --float-shadow:var(--sd-elev);
+}
+
+/* ---------------------------------------------------------------------------
+   3. FOUNDATIONS — the UI voice, and the one focus ring.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] body {
+  font-family:var(--sd-sans);
+  font-size:13.5px;
+  line-height:1.6;
+  letter-spacing:normal;
+}
+
+/* Editorial has `outline:none` on several fields with only a border cue.
+   Studio adds a real, visible focus ring on every focusable thing —
+   keyboard reach must not be weaker than the mouse's. */
+html[data-design="studio"] :focus-visible {
+  outline:2px solid var(--gold);
+  outline-offset:2px;
+  border-radius:var(--sd-r);
+}
+
+/* ---------------------------------------------------------------------------
+   4. THE SERIF KILL-SWITCH. The serif is Editorial's signature and appears
+   NOWHERE in studio (spec §3). Every site that reads var(--serif) is named
+   here rather than redefining --serif, so the token keeps its meaning and a
+   future serif use in Editorial is unaffected.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] h1,
+html[data-design="studio"] .brand,
+html[data-design="studio"] .kicker .num,
+html[data-design="studio"] .card .state,
+html[data-design="studio"] .metric .v,
+html[data-design="studio"] dialog h3,
+html[data-design="studio"] #setup-card h3,
+html[data-design="studio"] .su-row .su-name,
+html[data-design="studio"] .coach h4,
+html[data-design="studio"] #peek-card .pk-head h3,
+html[data-design="studio"] .md-title,
+html[data-design="studio"] .mrow .mname,
+html[data-design="studio"] .glog-base,
+html[data-design="studio"] #thinking,
+html[data-design="studio"] .cmsg details.think .tbody,
+html[data-design="studio"] .cmsg .msg-edit,
+html[data-design="studio"] .art-md h1,
+html[data-design="studio"] .art-md h2,
+html[data-design="studio"] .art-md h3 {
+  font-family:var(--sd-sans);
+  font-style:normal;
+}
+
+/* ---------------------------------------------------------------------------
+   5. THE ICON SET. Every icon-bearing control already carries BOTH children
+   (.st-only icon, .ed-only text) so CSS alone can choose — the contract the
+   chrome axis established. Studio reuses it: zero DOM change, zero renderer
+   branch, and the composer gets real icon buttons.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .st-only {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+html[data-design="studio"] .ed-only { display:none; }
+html[data-design="studio"] .st-ico { width:15px; height:15px; flex:none; display:block; }
+html[data-design="studio"] .st-word {
+  font-family:var(--sd-sans); font-size:11px; line-height:1;
+  letter-spacing:normal; text-transform:none; }
+
+/* ---------------------------------------------------------------------------
+   6. SIDEBAR — quiet flat nav. Compact wordmark (no serif italic), section
+   labels small and quiet in SENTENCE CASE at normal tracking (Editorial's
+   tracked mono caps are its signature and are also what impeccable's
+   wide-tracking / all-caps-body rules are about), active state carried by
+   ground + ink with no accent edge (side-tab).
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] aside {
+  width:228px; padding:16px 12px 14px; gap:2px;
+  background:var(--bg2); border-right:1px solid var(--line); }
+/* ⚠️ SPECIFICITY COLLISION, FOUND BY DRIVING (not by reading): Editorial's collapsed
+   rail is `body.rail-slim aside`, which is (0,1,2) — EXACTLY the weight of
+   `html[data-design="studio"] aside`. Being the later sheet, studio silently won and
+   the ⌘\ rail became a 228px column of centred lonely glyphs. Every state another
+   rule owns has to be RESTATED here, at a weight that keeps the state's meaning.
+   The same trap is answered for #chat-sessions below. */
+html[data-design="studio"] body.rail-slim aside { width:56px; padding:20px 4px; }
+
+html[data-design="studio"] .brand {
+  font-size:15px; font-weight:600; letter-spacing:.01em;
+  color:var(--cream); margin:0 6px 1px;
+  display:flex; align-items:center; gap:8px; }
+/* the one piece of ornament studio allows itself: a 5px accent square that
+   reads as a product mark rather than as decoration. */
+html[data-design="studio"] .brand::before {
+  content:''; width:6px; height:6px; border-radius:2px;
+  background:var(--gold); flex:none; }
+html[data-design="studio"] .build {
+  font-family:var(--sd-sans); font-size:11px; line-height:1.45;
+  letter-spacing:normal; text-transform:none;
+  color:var(--faint); margin:0 6px 16px 20px; }
+
+html[data-design="studio"] .navlbl {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none;
+  color:var(--faint); margin:14px 8px 4px; }
+
+html[data-design="studio"] nav a {
+  min-height:32px; padding:6px 8px; border-radius:var(--sd-r);
+  font-size:13px; gap:9px; color:var(--dim);
+  transition:background var(--sd-t-fast) var(--sd-ease),
+             color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] nav a:hover { background:var(--card2); color:var(--fg); }
+html[data-design="studio"] nav a.on { background:var(--card2); color:var(--cream); font-weight:600; }
+html[data-design="studio"] nav a.on .ico { color:var(--gold); opacity:1; }
+html[data-design="studio"] nav a .ico { width:16px; opacity:.7; font-size:13px; }
+
+html[data-design="studio"] #rail-toggle,
+html[data-design="studio"] #cs-collapse {
+  font-size:12px; border-radius:6px; color:var(--faint);
+  transition:color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] #rail-toggle:hover,
+html[data-design="studio"] #cs-collapse:hover { color:var(--gold); }
+
+/* ---------------------------------------------------------------------------
+   7. PAGE FURNITURE — the hero becomes a functional page title.
+
+   The editorial kicker (a tracked-caps eyebrow with a serif numeral above a
+   44px serif headline) is precisely impeccable's kicker-above-heading, which
+   is an outright ban — one instance is a finding. Studio does not hide the
+   information: the numeral and the rule are ornament and go, the label stays
+   as a plain quiet breadcrumb in sentence case at normal tracking, which
+   takes it out of the rule's scope by being neither uppercase nor tracked.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] main { padding:22px 30px 48px; max-width:1180px; }
+
+html[data-design="studio"] .kicker { gap:0; margin:2px 0 2px; }
+html[data-design="studio"] .kicker .num,
+html[data-design="studio"] .kicker .rule { display:none; }
+html[data-design="studio"] .kicker .lbl {
+  font-family:var(--sd-sans); font-size:11px; font-weight:500;
+  letter-spacing:normal; text-transform:none; color:var(--faint); }
+
+html[data-design="studio"] h1 {
+  font-size:24px; font-weight:600; letter-spacing:-.01em;
+  color:var(--cream); margin:1px 0 3px; }
+html[data-design="studio"] .sub {
+  font-size:13px; color:var(--dim); max-width:var(--sd-measure); margin-bottom:4px; }
+html[data-design="studio"] .stamp {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; color:var(--faint); margin-bottom:18px; }
+
+html[data-design="studio"] .topbar { gap:6px; margin-bottom:6px; }
+
+/* ---------------------------------------------------------------------------
+   8. CONTROLS — one shape language. Solid-ish ground, hairline edge, 8px
+   radius, sentence case, no tracking, ease-out only.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .chip {
+  height:var(--sd-h); display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--sd-sans); font-size:12px; letter-spacing:normal;
+  text-transform:none; color:var(--fg);
+  background:var(--st-btn); border:1px solid var(--line2);
+  border-radius:var(--sd-r); padding:0 11px;
+  transition:background var(--sd-t-fast) var(--sd-ease),
+             border-color var(--sd-t-fast) var(--sd-ease),
+             color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] .chip:hover {
+  background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+html[data-design="studio"] .chip.chip-icon {
+  width:var(--sd-h); height:var(--sd-h); padding:0; font-size:13px; line-height:1;
+  justify-content:center; }
+/* the ✦ chip's ON state: an accent outline, so the axis you are in is visible from
+   the top bar without a second glyph and without a filled control shouting. */
+html[data-design="studio"] #design-chip { color:var(--gold); border-color:var(--gold); }
+
+/* the sub-tab strip becomes a segmented control: one shared ground, one
+   hairline, the active segment lifted by ground + ink (never an accent edge). */
+/* ⚠️ flex-wrap:WRAP, and the reason is a live finding. This strip has four segments on
+   Models and Capabilities, but NINE on the Logs dialog (bridge · hermes · odysseus · … ),
+   inside a 520px dialog. With nowrap the strip measured 1333px and ran straight out of
+   the dialog, clipped. A segmented control that cannot wrap is a segmented control that
+   only works at the widths you happened to look at. */
+html[data-design="studio"] .caps-tabs {
+  gap:0; row-gap:2px; margin:4px 0 16px; padding:2px;
+  background:var(--st-btn); border:1px solid var(--line);
+  border-radius:var(--sd-r); display:inline-flex; flex-wrap:wrap; max-width:100%; }
+html[data-design="studio"] .caps-tabs .chip {
+  height:var(--sd-h-sm); background:transparent; border-color:transparent;
+  border-radius:6px; color:var(--dim); }
+html[data-design="studio"] .caps-tabs .chip:hover {
+  background:var(--st-hi); border-color:transparent; color:var(--fg); }
+/* the active segment. `.caps-tabs .chip.on` as well as `.caps-tab.on`, and that second
+   selector fixes an INHERITED defect: the Logs dialog renders its sources as
+   `class="chip on"` with no .caps-tab, so Editorial's `.caps-tab.on` rule has never
+   matched them and the active log source has always been unmarked. Turning the strip
+   into a segmented control made that absence obvious, so studio answers it. */
+html[data-design="studio"] .caps-tab.on,
+html[data-design="studio"] .caps-tabs .chip.on {
+  background:var(--card); border-color:var(--line2); color:var(--cream);
+  font-weight:600; }
+
+html[data-design="studio"] button {
+  font-family:var(--sd-sans); font-size:12.5px; font-weight:500;
+  letter-spacing:normal; text-transform:none;
+  height:var(--sd-h); padding:0 13px; border-radius:var(--sd-r);
+  border:1px solid var(--line2); background:var(--st-btn); color:var(--fg);
+  transition:background var(--sd-t-fast) var(--sd-ease),
+             border-color var(--sd-t-fast) var(--sd-ease),
+             color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] button:hover:not(:disabled) {
+  background:var(--st-hi); border-color:var(--line2); color:var(--cream); }
+/* the ONE filled control: the primary action wears the accent, with
+   chromatic ink on it (gray-on-color). */
+html[data-design="studio"] button.primary {
+  background:var(--gold); border-color:var(--gold);
+  color:var(--sd-on-accent); font-weight:600; }
+html[data-design="studio"] button.primary:hover:not(:disabled) {
+  background:var(--gold); border-color:var(--gold);
+  color:var(--sd-on-accent); filter:brightness(1.08); }
+html[data-design="studio"] button:disabled { opacity:.4; }
+
+/* buttons that are really links / micro-actions keep no ground */
+html[data-design="studio"] .msg-act,
+html[data-design="studio"] .cap-exp,
+html[data-design="studio"] .ap-expand,
+html[data-design="studio"] .nv-x,
+html[data-design="studio"] #rail-toggle,
+html[data-design="studio"] #cs-collapse {
+  height:auto; background:none; border:0; padding:0; }
+
+html[data-design="studio"] .cap-btn,
+html[data-design="studio"] .art-btn,
+html[data-design="studio"] .hfget,
+html[data-design="studio"] #mb-go, html[data-design="studio"] #as-go,
+html[data-design="studio"] #cs-new,
+html[data-design="studio"] .mp-act,
+html[data-design="studio"] .cs-act button,
+html[data-design="studio"] .dlrow .dlacts button,
+html[data-design="studio"] .hfrow .hfactions button {
+  font-family:var(--sd-sans); font-size:11.5px; font-weight:500;
+  letter-spacing:normal; text-transform:none;
+  height:var(--sd-h-sm); padding:0 10px; border-radius:6px;
+  background:var(--st-btn); border:1px solid var(--line2); color:var(--fg);
+  line-height:normal; }
+html[data-design="studio"] .cap-btn:hover,
+html[data-design="studio"] .art-btn:hover,
+html[data-design="studio"] .hfget:hover,
+html[data-design="studio"] #mb-go:hover, html[data-design="studio"] #as-go:hover,
+html[data-design="studio"] #cs-new:hover,
+html[data-design="studio"] .mp-act:hover,
+html[data-design="studio"] .cs-act button:hover,
+html[data-design="studio"] .dlrow .dlacts button:hover,
+html[data-design="studio"] .hfrow .hfactions button:hover {
+  background:var(--st-hi); border-color:var(--gold); color:var(--cream); }
+html[data-design="studio"] .cap-btn.go,
+html[data-design="studio"] .mp-act.on,
+html[data-design="studio"] .art-btn.on {
+  color:var(--sd-on-accent); background:var(--gold); border-color:var(--gold); }
+html[data-design="studio"] .cap-btn.arm,
+html[data-design="studio"] .cs-del.armed,
+html[data-design="studio"] .md-del.armed {
+  color:var(--bad); border-color:var(--bad); background:var(--st-btn); }
+
+/* fields: one well, one hairline, one focus colour.
+   ⚠️ KNOWN, REASONED IMPECCABLE EXCEPTION — the only one in this file. A live DOM
+   sweep reports 4 `nested-cards` findings, all of them a native <select>/<input>
+   inside .cap-card on the Capabilities page (Editorial reports 0 there, so these are
+   introduced here, not inherited — checked, not assumed). impeccable's card test is
+   (shadow OR border) AND (radius OR bg), and it has no form-control exemption, so any
+   outlined field inside any card trips it. The two ways to clear it are to drop the
+   card or to drop the field's outline, and a text field that does not look like a
+   text field is a worse product than a detector warning. Kept deliberately, at ONE
+   pixel, and surfaced in the report rather than hidden. */
+html[data-design="studio"] .cap-inp,
+html[data-design="studio"] .cap-sel,
+html[data-design="studio"] .cap-num,
+html[data-design="studio"] #mb-q, html[data-design="studio"] #as-q,
+html[data-design="studio"] #mb-fmt, html[data-design="studio"] #mb-sort,
+html[data-design="studio"] #as-kind,
+html[data-design="studio"] .cs-rename {
+  font-family:var(--sd-sans); font-size:12.5px; letter-spacing:normal;
+  height:var(--sd-h); padding:0 10px; border-radius:var(--sd-r);
+  background:var(--st-inp); border:1px solid var(--line2); color:var(--cream); }
+/* the number box has to leave room for WebKit's own stepper, which the 10px inline
+   padding above was crowding into the digits (seen live on Results count) */
+html[data-design="studio"] .cap-num { width:96px; padding:0 4px 0 8px; }
+html[data-design="studio"] .cap-inp:focus,
+html[data-design="studio"] .cap-sel:focus,
+html[data-design="studio"] .cap-num:focus,
+html[data-design="studio"] #mb-q:focus, html[data-design="studio"] #as-q:focus {
+  border-color:var(--gold); }
+
+/* toggle: accent knob, accent-wash track, no glow */
+html[data-design="studio"] .cap-sw .track { border-radius:999px; background:var(--st-inp); }
+html[data-design="studio"] .cap-sw .knob { background:var(--dim); }
+html[data-design="studio"] .cap-sw input:checked ~ .track {
+  background:var(--on-wash); border-color:var(--gold); }
+html[data-design="studio"] .cap-sw input:checked ~ .knob { background:var(--gold); }
+html[data-design="studio"] .cap-range { background:var(--line2); }
+html[data-design="studio"] .cap-range::-webkit-slider-thumb { background:var(--gold); }
+
+/* pills: sentence case, 11px floor, hairline, small radius */
+html[data-design="studio"] .cap-pill,
+html[data-design="studio"] .mpill,
+html[data-design="studio"] .fitpill,
+html[data-design="studio"] .cs-tag,
+html[data-design="studio"] .cap-count {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; border-radius:5px; padding:1px 6px; }
+html[data-design="studio"] .mpill.fmt { padding:1px 0; }
+html[data-design="studio"] .mpill.live {
+  background:var(--gold); border-color:var(--gold); color:var(--sd-on-accent); }
+html[data-design="studio"] .cap-pill.on { color:var(--gold); border-color:var(--gold); }
+
+/* status dot: no chromatic halo (dark-glow) */
+html[data-design="studio"] .dot { box-shadow:none; width:7px; height:7px; }
+
+/* ---------------------------------------------------------------------------
+   9. MOT DECK — the LM-Studio "server page": clean rows/cards, a clear
+   primary state, aligned metadata, actions that acknowledge hover without
+   ever being hidden from a keyboard (they stay visible at .72 and rise to 1 —
+   an affordance a user cannot find is worse than a busy card).
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .grid {
+  grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:10px; }
+html[data-design="studio"] .card {
+  background:var(--card); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:13px 15px;
+  transition:border-color var(--sd-t) var(--sd-ease); }
+html[data-design="studio"] .card:hover { border-color:var(--line2); }
+html[data-design="studio"] .card .head { gap:8px; margin-bottom:6px; }
+html[data-design="studio"] .card .name {
+  font-family:var(--sd-sans); font-size:11.5px; font-weight:600;
+  letter-spacing:normal; text-transform:capitalize; color:var(--dim); }
+html[data-design="studio"] .card .state {
+  font-size:15px; font-weight:600; color:var(--cream); margin:0 0 3px; }
+html[data-design="studio"] .card .meta {
+  font:11px var(--mono); letter-spacing:normal; color:var(--faint); }
+html[data-design="studio"] .card .actions {
+  margin-top:11px; gap:6px; opacity:.72;
+  transition:opacity var(--sd-t) var(--sd-ease); }
+html[data-design="studio"] .card:hover .actions,
+html[data-design="studio"] .card .actions:focus-within { opacity:1; }
+html[data-design="studio"] .card .actions button {
+  height:var(--sd-h-sm); font-size:11.5px; padding:0 10px; }
+
+html[data-design="studio"] .metrics {
+  grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:10px; margin:18px 0 22px; }
+html[data-design="studio"] .metric {
+  background:var(--card); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:11px 13px; }
+html[data-design="studio"] .metric .k {
+  font-family:var(--sd-sans); font-size:11px; font-weight:500;
+  letter-spacing:normal; text-transform:none; color:var(--dim); }
+html[data-design="studio"] .metric .v {
+  font-size:20px; font-weight:600; color:var(--cream); margin-top:2px; }
+html[data-design="studio"] .metric .v small { font-size:12px; color:var(--dim); }
+
+html[data-design="studio"] .activity {
+  background:var(--card); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:13px 15px; }
+html[data-design="studio"] .activity .k {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--dim); margin-bottom:8px; }
+html[data-design="studio"] .activity .row {
+  font:11px var(--mono); color:var(--dim); padding:5px 0;
+  border-top:1px solid var(--line); }
+html[data-design="studio"] .activity .tag { color:var(--gold); width:66px; }
+
+/* ---------------------------------------------------------------------------
+   10. CHAT LANE — the flagship.
+
+   The message rhythm is the category convention, not a variation on it: the
+   user's turn is a right-leaning bubble at a bounded measure, the assistant's
+   is plain full-measure prose with no bubble and no accent rail (Editorial's
+   1px gold rule is its signature and is also what the eye reads as "quote"
+   rather than "reply"). The 14% left gutter is gone; alignment does that job.
+
+   The composer is ONE rounded field: the shell owns the ground, the hairline
+   and the focus state, and the textarea inside it is transparent and
+   borderless. Every button in the row is an icon button of the same size.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] #chat-head-compact { gap:6px; }
+html[data-design="studio"] #chat-head-compact .cch-title {
+  font-family:var(--sd-sans); font-size:13px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--cream); }
+html[data-design="studio"] #chat-head-compact .cch-sep,
+html[data-design="studio"] #chat-compact-info {
+  font-family:var(--sd-sans); font-size:11.5px; letter-spacing:normal;
+  text-transform:none; color:var(--faint); }
+
+/* --- sessions rail: a compact modern list --- */
+html[data-design="studio"] #chat-sessions { padding-right:12px; }
+/* the collapsed rail, restated for the same reason the slim sidebar is (both are
+   (1,1,1) against this sheet, and this sheet is later) */
+html[data-design="studio"] body.sessions-collapsed #chat-sessions {
+  width:24px; padding-right:0; }
+html[data-design="studio"] .cs-head { margin-bottom:8px; }
+html[data-design="studio"] .cs-title {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--faint); }
+html[data-design="studio"] #cs-new { color:var(--gold); }
+html[data-design="studio"] .cs-item {
+  padding:7px 10px; border-radius:var(--sd-r); border-left:0; margin-bottom:1px;
+  transition:background var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] .cs-item:hover { background:var(--card2); }
+html[data-design="studio"] .cs-item.on { background:var(--card2); }
+html[data-design="studio"] .cs-item .nm {
+  font-family:var(--sd-sans); font-size:12.5px; letter-spacing:normal; color:var(--fg); }
+html[data-design="studio"] .cs-item.on .nm { font-size:12.5px; font-weight:600; color:var(--cream); }
+html[data-design="studio"] .cs-item .meta {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  color:var(--faint); margin-top:1px; }
+html[data-design="studio"] .cs-empty,
+html[data-design="studio"] .glog-empty,
+html[data-design="studio"] .mp-empty {
+  font-family:var(--sd-sans); font-size:12px; letter-spacing:normal; color:var(--faint); }
+
+/* --- transcript: ONE centred lane, shared with the composer --- */
+html[data-design="studio"] #chat-scroll { margin-top:2px; }
+html[data-design="studio"] #chat-msgs {
+  max-width:var(--sd-lane); margin:0 auto; }
+html[data-design="studio"] .cmsg { margin:0 0 18px; }
+html[data-design="studio"] .cmsg .who {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--dim); margin-bottom:4px; }
+html[data-design="studio"] .cmsg.assistant .who { color:var(--gold); }
+html[data-design="studio"] .cmsg.user .who { color:var(--dim); }
+html[data-design="studio"] .cmsg.user .body {
+  margin-left:auto; max-width:84%; width:fit-content;
+  background:var(--card2); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:9px 13px; color:var(--cream); }
+/* the reply is plain prose that FILLS the lane — the lane is the measure, so there
+   is no ragged gap between where the text stops and where the bubbles align. */
+html[data-design="studio"] .cmsg.assistant .body {
+  border-left:0; padding:0; max-width:none;
+  font-size:14.5px; line-height:1.72; color:var(--fg); }
+html[data-design="studio"] .cmsg .body b { color:var(--cream); }
+/* inline code: a ground, no border — never a card inside the bubble */
+html[data-design="studio"] .cmsg .body code {
+  font:12.5px var(--mono); color:var(--gold);
+  background:var(--card2); border:0; border-radius:4px; padding:1px 5px; }
+
+/* the indented rails all lose their 20px gutter with the accent rule */
+html[data-design="studio"] .cmsg .toolline,
+html[data-design="studio"] .cmsg .statusline,
+html[data-design="studio"] .cmsg .msg-acts,
+html[data-design="studio"] .cmsg .msg-stats,
+html[data-design="studio"] .cmsg .msg-voice { padding-left:0; }
+html[data-design="studio"] .cmsg details.think,
+html[data-design="studio"] .cmsg details.inspect,
+html[data-design="studio"] .cmsg details.sources,
+html[data-design="studio"] .cmsg .approval,
+html[data-design="studio"] #thinking { margin-left:0; }
+html[data-design="studio"] #thinking { padding-left:0; font-size:12.5px; font-style:normal; }
+
+html[data-design="studio"] .cmsg .toolline,
+html[data-design="studio"] .cmsg .statusline {
+  font:11px var(--mono); letter-spacing:normal; color:var(--faint); opacity:1; }
+html[data-design="studio"] .cmsg details.think summary,
+html[data-design="studio"] .cmsg details.inspect summary {
+  font-family:var(--sd-sans); font-size:11px; font-weight:500;
+  letter-spacing:normal; text-transform:none; color:var(--dim); }
+html[data-design="studio"] .cmsg details.think .tbody {
+  font-size:12.5px; font-style:normal; line-height:1.65; color:var(--dim);
+  border-left:1px solid var(--line2); }
+html[data-design="studio"] .cmsg details.inspect .ibody {
+  font:11px var(--mono); color:var(--faint); border-left:1px solid var(--line2); }
+html[data-design="studio"] .cmsg details.sources summary {
+  font-family:var(--sd-sans); font-size:11.5px; letter-spacing:normal;
+  color:var(--fg); background:var(--st-btn); border:1px solid var(--line2);
+  border-radius:6px; padding:3px 9px; }
+html[data-design="studio"] .cmsg details.sources .sitem {
+  border:1px solid var(--line); border-radius:var(--sd-r); }
+html[data-design="studio"] .cmsg details.sources .sitem a { font-family:var(--sd-sans); font-size:12px; }
+html[data-design="studio"] .cmsg details.sources .sitem .host {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; color:var(--faint); }
+
+/* micro-actions: 11px floor, sentence case */
+html[data-design="studio"] .cmsg .msg-act {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; color:var(--faint); }
+html[data-design="studio"] .cmsg .msg-act:hover:enabled { color:var(--gold); }
+html[data-design="studio"] .cmsg .msg-act.del:hover:enabled { color:var(--bad); }
+html[data-design="studio"] .cmsg .msg-stats,
+html[data-design="studio"] .cmsg .msg-edited {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; color:var(--faint); }
+html[data-design="studio"] .cmsg .msg-edit {
+  font-family:var(--sd-sans); font-size:13.5px; line-height:1.6;
+  border-radius:var(--sd-r); background:var(--st-inp); border:1px solid var(--line2); }
+
+/* code blocks and file cards: GROUND, NO BORDER — so a code block inside a
+   user bubble is not a card inside a card (nested-cards fires at depth 2). */
+html[data-design="studio"] .chatcode {
+  border:0; border-radius:var(--sd-r); background:var(--card2); margin:10px 0; }
+html[data-design="studio"] .chatcode .cc-head {
+  padding:5px 10px; border-bottom:1px solid var(--line); }
+html[data-design="studio"] .chatcode .cc-lang {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; color:var(--dim); }
+html[data-design="studio"] .cc-open {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; color:var(--fg); background:var(--st-btn);
+  border:1px solid var(--line2); border-radius:6px; padding:2px 8px; }
+html[data-design="studio"] .cc-open:hover { color:var(--gold); border-color:var(--gold); }
+html[data-design="studio"] .filecard {
+  border:0; border-radius:var(--sd-r); background:var(--card2); padding:10px 12px; }
+html[data-design="studio"] .filecard .fc-icon { color:var(--gold); font-size:16px; }
+html[data-design="studio"] .filecard .fc-name { font:12px var(--mono); color:var(--cream); }
+html[data-design="studio"] .filecard .fc-sub {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; color:var(--faint); }
+
+/* pre: a ground and no border anywhere in studio. Editorial hardcodes
+   #0a0910 here and in .chatcode pre — a near-black literal no palette can
+   reach, which would be a black box on studio-light. Tokens only. */
+html[data-design="studio"] pre,
+html[data-design="studio"] .chatcode pre,
+html[data-design="studio"] .hfcard pre {
+  background:var(--st-inp); border:0; border-radius:var(--sd-r);
+  font:11.5px var(--mono); line-height:1.55; color:var(--fg); }
+html[data-design="studio"] .chatcode pre { border-radius:0; background:var(--card2); }
+html[data-design="studio"] .chatcode code { color:var(--fg); font-size:11.5px; }
+
+/* approval card: ground + a 1px accent rule. 1px is under BOTH the side-tab
+   (>=2px) and border-accent-on-rounded (>=2px) thresholds, and no border on
+   the other three edges keeps it out of nested-cards. */
+html[data-design="studio"] .cmsg .approval {
+  background:var(--card2); border:0; border-left:1px solid var(--gold);
+  border-radius:0 var(--sd-r) var(--sd-r) 0; padding:10px 12px;
+  max-width:none; }
+html[data-design="studio"] .cmsg .approval .ap-label {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--dim); }
+html[data-design="studio"] .cmsg .approval .ap-cmd {
+  background:var(--st-inp); border:0; border-radius:6px;
+  font:11.5px var(--mono); color:var(--fg); }
+html[data-design="studio"] .cmsg .approval .ap-btn {
+  font-family:var(--sd-sans); font-size:11.5px; letter-spacing:normal;
+  height:var(--sd-h-sm); padding:0 12px; border-radius:999px;
+  background:var(--st-btn); border:1px solid var(--line2); color:var(--fg); }
+html[data-design="studio"] .cmsg .approval .ap-btn:not(.deny):hover:enabled {
+  border-color:var(--gold); color:var(--cream); background:var(--st-hi); }
+html[data-design="studio"] .cmsg .approval .ap-btn.on {
+  color:var(--sd-on-accent); background:var(--gold); border-color:var(--gold); }
+html[data-design="studio"] .cmsg .approval .ap-btn.deny {
+  color:var(--faint); border-color:var(--line); background:transparent; }
+html[data-design="studio"] .cmsg .approval .ap-expand,
+html[data-design="studio"] .cmsg .approval .ap-done,
+html[data-design="studio"] .cmsg .approval .ap-expired,
+html[data-design="studio"] .cmsg .approval .ap-err {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+
+/* --- the composer --- */
+/* the composer shares the transcript's lane and centring, so the two never drift */
+html[data-design="studio"] #chat-bar {
+  max-width:var(--sd-lane); margin:4px auto 0;
+  border-top:0; padding-top:6px; }
+/* ⚠️ FOUND BY DRIVING: giving .mode-chip an explicit height turned it into a flex box
+   that WRAPPED its own label — "⚙ Tools" stacked the glyph over the word, and the caps
+   strip ran under the AUDIO chip. A control with a fixed height must refuse to wrap;
+   the ROW is what wraps. */
+html[data-design="studio"] #chat-modes {
+  gap:5px; row-gap:5px; margin-bottom:7px; flex-wrap:wrap; }
+html[data-design="studio"] .mode-chip {
+  font-family:var(--sd-sans); font-size:11px; font-weight:500;
+  letter-spacing:normal; text-transform:none; white-space:nowrap; flex:none;
+  height:24px; display:inline-flex; align-items:center; padding:0 9px;
+  border-radius:6px; color:var(--dim);
+  background:transparent; border:1px solid var(--line2);
+  transition:background var(--sd-t-fast) var(--sd-ease),
+             border-color var(--sd-t-fast) var(--sd-ease),
+             color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] .mode-chip:hover { color:var(--fg); border-color:var(--line2);
+  background:var(--st-btn); }
+/* the active lane: accent WASH + accent ink, never a fill with neutral ink */
+html[data-design="studio"] .mode-chip.on,
+html[data-design="studio"] #mode-browse.on {
+  color:var(--gold); background:var(--on-wash); border-color:var(--gold); }
+html[data-design="studio"] #mode-browse {
+  font-size:11px; padding:0 9px; letter-spacing:normal;
+  color:var(--faint); border-color:var(--line); border-radius:6px; margin-left:0; }
+html[data-design="studio"] #chat-model-btn,
+html[data-design="studio"] #chat-audio-btn {
+  font-family:var(--sd-sans); font-size:11px; height:24px; border-radius:6px;
+  letter-spacing:normal; text-transform:none;
+  background:var(--st-btn); border:1px solid var(--line2); color:var(--fg); }
+/* a model id is arbitrarily long and was running flush into the chip's edge with no
+   ellipsis (seen live: "gemma-4-31B-it-uncensored-bipro|"). The full id is on the
+   button's own title, and the popover shows it in full. */
+html[data-design="studio"] #chat-model-btn {
+  max-width:26ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  display:inline-block; line-height:22px; }
+html[data-design="studio"] #chat-model-btn.empty,
+html[data-design="studio"] #chat-audio-btn.empty { color:var(--faint); }
+html[data-design="studio"] .mode-note,
+html[data-design="studio"] .caps-strip {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  color:var(--faint); opacity:1;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+html[data-design="studio"] .caps-strip {
+  border-bottom:1px dotted var(--line2); max-width:22ch; }
+
+/* THE SHELL. #chat-inputrow becomes the field; the textarea inside it is
+   transparent. Focus lives on the shell (:focus-within), which is what makes
+   the whole composer light up as one object. */
+html[data-design="studio"] #chat-inputrow {
+  align-items:flex-end; gap:5px;
+  background:var(--card); border:1px solid var(--line2);
+  border-radius:var(--sd-r-xl); padding:6px 7px 6px 12px;
+  transition:border-color var(--sd-t) var(--sd-ease); }
+html[data-design="studio"] #chat-inputrow:focus-within { border-color:var(--gold); }
+html[data-design="studio"] #chat-input {
+  background:transparent; border:0; border-radius:0; padding:6px 0 5px;
+  font-family:var(--sd-sans); font-size:14px; line-height:1.55; color:var(--cream); }
+html[data-design="studio"] #chat-input:focus { border:0; }
+/* every composer button is the same round icon button */
+html[data-design="studio"] #chat-attach,
+html[data-design="studio"] #chat-send,
+html[data-design="studio"] #chat-talk,
+html[data-design="studio"] #chat-auto,
+html[data-design="studio"] #chat-conv {
+  flex:none; width:30px; height:30px; min-width:30px; padding:0;
+  border-radius:999px; font-size:11px; letter-spacing:normal;
+  display:inline-flex; align-items:center; justify-content:center; }
+html[data-design="studio"] #chat-attach {
+  background:transparent; border:0; color:var(--dim); }
+html[data-design="studio"] #chat-attach:hover { color:var(--gold); background:var(--st-btn); }
+html[data-design="studio"] #chat-send {
+  background:var(--gold); border-color:var(--gold); color:var(--sd-on-accent); }
+html[data-design="studio"] #chat-send:hover:not(:disabled) { filter:brightness(1.08); }
+html[data-design="studio"] #chat-talk,
+html[data-design="studio"] #chat-auto,
+html[data-design="studio"] #chat-conv {
+  background:var(--st-btn); border:1px solid var(--line2); color:var(--fg); }
+html[data-design="studio"] #chat-talk:hover,
+html[data-design="studio"] #chat-auto:hover,
+html[data-design="studio"] #chat-conv:hover {
+  border-color:var(--gold); color:var(--cream); background:var(--st-hi); }
+html[data-design="studio"] #chat-talk.rec .st-ico,
+html[data-design="studio"] #chat-talk.rec .talk-dot { color:var(--bad); }
+html[data-design="studio"] #chat-auto.on .st-ico,
+html[data-design="studio"] #chat-conv.on .st-ico,
+html[data-design="studio"] #chat-auto.on .talk-dot,
+html[data-design="studio"] #chat-conv.on .talk-dot { color:var(--gold); }
+html[data-design="studio"] #chat-attachstrip .anote,
+html[data-design="studio"] #chat-attachstrip .afile {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; }
+
+/* model / voice popovers */
+html[data-design="studio"] .mp-row { border-radius:var(--sd-r); }
+html[data-design="studio"] .mp-row .mp-id { font-family:var(--sd-sans); font-size:12.5px; }
+html[data-design="studio"] .mp-row .mp-meta {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; color:var(--faint); }
+html[data-design="studio"] .mp-err {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; }
+
+/* ---------------------------------------------------------------------------
+   11. MODELS — LM-Studio class. Rows become a two-column grid (name left,
+   badges right-aligned) separated by hairlines rather than gaps, so a long
+   library reads as a table instead of a stack of tiles. The selected row is
+   ground + ink; the 2px accent edge is gone (side-tab).
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .models-head { gap:14px; align-items:center; }
+html[data-design="studio"] #models-main,
+html[data-design="studio"] #models-audio-main { gap:18px; margin-top:14px; }
+
+/* the search affordance is the page's most prominent control after the title */
+/* ⚠️ REVERTED a field-like treatment, found by driving. This button's label FLIPS
+   between "SEARCH / DOWNLOAD ⌄" and "← LIBRARY", and #models-browse carries its own
+   back button — so styling it as a wide search box produced a 210px near-empty field
+   next to a duplicate control. The prominent search the spec asks for is #mb-q itself
+   (38px, full width of the pane); this stays an honest button. */
+html[data-design="studio"] #models-toggle { color:var(--dim); }
+html[data-design="studio"] #models-toggle:hover { color:var(--cream); border-color:var(--gold); }
+
+html[data-design="studio"] #models-listcol,
+html[data-design="studio"] #audio-listcol { gap:0; }
+html[data-design="studio"] .mrow {
+  display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
+  column-gap:12px; padding:9px 11px; border-left:0; border-radius:var(--sd-r);
+  transition:background var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] .mrow + .mrow { border-top:1px solid var(--line); }
+html[data-design="studio"] .mrow:not(.sel):hover { background:var(--card2); }
+html[data-design="studio"] .mrow.sel { background:var(--card2); }
+html[data-design="studio"] .mrow .mname {
+  font-size:13px; font-weight:500; color:var(--fg); min-width:0;
+  overflow:hidden; text-overflow:ellipsis; }
+html[data-design="studio"] .mrow.sel .mname { color:var(--cream); font-weight:600; }
+html[data-design="studio"] .mrow .mbadges {
+  margin-top:0; justify-content:flex-end; flex-wrap:nowrap;
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+html[data-design="studio"] .mrow .msize { color:var(--faint); }
+
+html[data-design="studio"] #models-detail,
+html[data-design="studio"] #models-audio-detail {
+  background:var(--card); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:16px 18px; }
+html[data-design="studio"] .md-title { font-size:16px; font-weight:600; color:var(--cream); }
+html[data-design="studio"] .md-meta,
+html[data-design="studio"] .md-path,
+html[data-design="studio"] .md-imnote,
+html[data-design="studio"] .md-loadphase,
+html[data-design="studio"] .md-loaderr {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+html[data-design="studio"] .md-path { font-family:var(--mono); }
+html[data-design="studio"] .md-actions { gap:6px; margin-top:12px; }
+html[data-design="studio"] .md-loadbar { height:4px; border-radius:2px; background:var(--line); }
+html[data-design="studio"] .md-loadfill { background:var(--gold); border-radius:2px; }
+html[data-design="studio"] .md-div { border-top:1px solid var(--line); margin:14px 0; }
+
+html[data-design="studio"] .mb-searchrow { gap:8px; margin-top:10px; }
+html[data-design="studio"] #mb-q, html[data-design="studio"] #as-q {
+  height:38px; border-radius:var(--sd-r-lg); font-size:13px; padding:0 13px; }
+html[data-design="studio"] #mb-go, html[data-design="studio"] #as-go { height:38px; padding:0 16px; }
+html[data-design="studio"] #mb-fmt, html[data-design="studio"] #mb-sort,
+html[data-design="studio"] #as-kind { height:38px; }
+html[data-design="studio"] #models-browse .mb-toprow { gap:10px; margin-bottom:6px; }
+
+html[data-design="studio"] .hfrow {
+  border:1px solid var(--line); border-radius:var(--sd-r-lg); padding:11px 13px; }
+html[data-design="studio"] .hfrow .hfname { font-family:var(--sd-sans); font-size:13px; }
+html[data-design="studio"] .hfrow .hfmeta,
+html[data-design="studio"] .hffile {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; }
+html[data-design="studio"] .hffile { font-family:var(--mono); line-height:1.8; }
+html[data-design="studio"] .hfcard { font-family:var(--sd-sans); font-size:12.5px; }
+html[data-design="studio"] .hfcard code { font-size:11.5px; background:var(--card2); }
+html[data-design="studio"] .hfcard a { color:var(--gold); }
+
+html[data-design="studio"] .dlrow .dlname { font-family:var(--sd-sans); font-size:12.5px; }
+html[data-design="studio"] .dlrow .dlbar { border-radius:2px; background:var(--line); }
+html[data-design="studio"] .dlrow .dlfill { background:var(--gold); border-radius:2px; }
+html[data-design="studio"] .dlrow .dlmeta {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; }
+/* found live: #models-aux's prose ran the full 1088px card width (est. 198 chars
+   per line). It is the only .meta in the design that is a SENTENCE rather than a
+   one-line ellipsised stat, so it is the only one that needs a measure.
+   ⚠️ and the cap is 58ch, not the shared 70ch, because this one is set in the MONO
+   face: `ch` is the width of "0" in the element's OWN font, and SF Mono's advance is
+   ~20% wider than the sans's, so 70ch of mono measured 476px = 87 estimated
+   characters, still over the rule's 85. Measured, then set. */
+/* …and the label above it, which needed the inline style lifted into Editorial's sheet
+   before any selector here could win. (1,2,1) beats the (1,1,0) rule that replaced it. */
+html[data-design="studio"] #models-aux .name { letter-spacing:normal; }
+html[data-design="studio"] #models-aux .meta,
+html[data-design="studio"] .md-sec .cs-empty,
+html[data-design="studio"] #audio-search .cs-empty { max-width:58ch; }
+html[data-design="studio"] #sw-note {
+  font-family:var(--sd-sans); font-size:11.5px; letter-spacing:normal; }
+
+/* ---------------------------------------------------------------------------
+   12. CAPABILITIES — the same system, one grid, no nesting.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .caps-group { margin-bottom:18px; }
+html[data-design="studio"] .cap-h,
+html[data-design="studio"] .caps-skills-head {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--dim); margin:0 0 7px; }
+html[data-design="studio"] .cap-card {
+  background:var(--card); border:1px solid var(--line);
+  border-radius:var(--sd-r-lg); padding:2px 16px; }
+html[data-design="studio"] .cap-row { gap:14px; padding:12px 0; border-bottom:1px solid var(--line); }
+html[data-design="studio"] .cap-row .cap-name {
+  font-family:var(--sd-sans); font-size:13px; font-weight:500; color:var(--cream); }
+html[data-design="studio"] .cap-row .cap-desc {
+  font-family:var(--sd-sans); font-size:12px; letter-spacing:normal;
+  color:var(--dim); max-width:var(--sd-measure); margin-top:2px; }
+html[data-design="studio"] .cap-row .cap-err {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; }
+html[data-design="studio"] .cap-sub {
+  margin:6px 0 2px; padding-left:12px; border-left:1px solid var(--line2); }
+html[data-design="studio"] .cap-sub .cap-row { padding:10px 0 10px 12px; }
+html[data-design="studio"] .cap-sub .cap-name { font-size:12.5px; }
+html[data-design="studio"] .cap-sub .cap-desc { font-size:12px; }
+html[data-design="studio"] .cap-exp,
+html[data-design="studio"] .cap-count {
+  font-family:var(--sd-sans); font-size:11px; font-weight:500;
+  letter-spacing:normal; text-transform:none; color:var(--gold); }
+html[data-design="studio"] .cap-count { color:var(--faint); }
+html[data-design="studio"] .cap-exp:hover { color:var(--cream); }
+
+/* ---------------------------------------------------------------------------
+   13. DIALOGS / LOGS / PALETTE / FLOAT SURFACES — hairlines, tight
+   elevation, sans headings.
+   --------------------------------------------------------------------------- */
+/* CENTRED, which Editorial's dialogs are not. Measured live: every <dialog> in this
+   panel renders at top:0 left:0, because the sheet's `* { margin:0 }` reset overrides
+   the UA stylesheet's `margin:auto` on a modal dialog. That is Editorial's behaviour
+   and stays Editorial's — but a modal that hugs the top-left corner is not what the
+   product category means by a dialog, and studio is allowed to be right about it
+   inside its own scope. One declaration, zero effect on Editorial. */
+html[data-design="studio"] dialog {
+  background:var(--card); border:1px solid var(--line2);
+  border-radius:var(--sd-r-xl); padding:20px 22px; margin:auto; }
+html[data-design="studio"] dialog::backdrop { background:rgba(4,10,10,.62); }
+html[data-design="studio"] dialog h3 {
+  font-size:17px; font-weight:600; letter-spacing:-.005em;
+  text-transform:none; color:var(--cream); }
+html[data-design="studio"] dialog .note,
+html[data-design="studio"] #log-note {
+  font-family:var(--sd-sans); font-size:11.5px; letter-spacing:normal;
+  color:var(--faint); margin-bottom:10px; }
+html[data-design="studio"] dialog li { font-size:13px; }
+html[data-design="studio"] dialog .btns { gap:8px; }
+html[data-design="studio"] .float-surface {
+  border-radius:var(--sd-r-lg); box-shadow:var(--sd-elev); }
+
+html[data-design="studio"] .glog-row { gap:12px; padding:8px 4px; }
+html[data-design="studio"] .glog-when {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; color:var(--dim); }
+html[data-design="studio"] .glog-base { font-size:12.5px; font-weight:500; color:var(--cream); }
+html[data-design="studio"] .glog-dir {
+  font:11px var(--mono); letter-spacing:normal; color:var(--faint); }
+
+html[data-design="studio"] #palette { border-radius:var(--sd-r-lg); }
+html[data-design="studio"] #palette input {
+  font-family:var(--sd-sans); font-size:14.5px; padding:15px 18px;
+  border-bottom:1px solid var(--line); }
+html[data-design="studio"] #palette .item {
+  padding:9px 18px; font-family:var(--sd-sans); font-size:13px; }
+html[data-design="studio"] #palette .item.sel { background:var(--card2); }
+html[data-design="studio"] #palette .item .k {
+  font-family:var(--sd-sans); font-size:11px; color:var(--faint); }
+
+html[data-design="studio"] #setup-card h3 { font-size:17px; font-weight:600; }
+html[data-design="studio"] #setup-card .su-sub,
+html[data-design="studio"] .su-glyph,
+html[data-design="studio"] .coach .coach-step {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+html[data-design="studio"] .su-row .su-name { font-size:13.5px; font-weight:500; }
+html[data-design="studio"] .coach {
+  background:var(--card); border:1px solid var(--line2);
+  border-radius:var(--sd-r-lg); box-shadow:var(--sd-elev); padding:15px 17px; }
+html[data-design="studio"] .coach h4 { font-size:14.5px; font-weight:600; }
+html[data-design="studio"] .coach p { font-family:var(--sd-sans); font-size:12.5px; }
+
+html[data-design="studio"] #peek-card .pk-head h3 { font-size:17px; font-weight:600; }
+html[data-design="studio"] #peek-card .pk-sub,
+html[data-design="studio"] .pk-open {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+
+html[data-design="studio"] #navdlg h3 { font-size:17px; font-weight:600; }
+html[data-design="studio"] #navdlg .nv-lbl {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none; color:var(--dim); }
+html[data-design="studio"] #navdlg .nv-row { border-radius:var(--sd-r); }
+html[data-design="studio"] #navdlg .nv-n { font-family:var(--sd-sans); font-size:13px; }
+
+/* ---------------------------------------------------------------------------
+   14. ARTIFACT VIEWER — same system (it is a panel surface, and leaving it
+   editorial inside a studio page would be the one visible seam).
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .art-head { gap:6px; }
+html[data-design="studio"] #art-title { font-family:var(--sd-sans); font-size:13px; font-weight:600; }
+html[data-design="studio"] #art-kind,
+html[data-design="studio"] #canvas-note,
+html[data-design="studio"] .art-table-note,
+html[data-design="studio"] .art-cline {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal;
+  text-transform:none; }
+html[data-design="studio"] .art-cline { font-family:var(--mono); }
+html[data-design="studio"] .art-console-det summary {
+  font-family:var(--sd-sans); font-size:11px; letter-spacing:normal; text-transform:none; }
+html[data-design="studio"] .art-md h1 { font-size:19px; font-weight:600; }
+html[data-design="studio"] .art-md h2 { font-size:16px; font-weight:600; }
+html[data-design="studio"] .art-md h3 { font-size:14px; font-weight:600; }
+html[data-design="studio"] .art-md p,
+html[data-design="studio"] .art-md li { font-family:var(--sd-sans); font-size:13.5px; }
+html[data-design="studio"] .art-md code,
+html[data-design="studio"] .art-code { font-size:12px; }
+html[data-design="studio"] .art-table th,
+html[data-design="studio"] .art-table td { font-family:var(--sd-sans); font-size:12px; }
+html[data-design="studio"] .art-json .jt-key,
+html[data-design="studio"] .art-json .jt-count { font-size:11.5px; }
+
+/* ---------------------------------------------------------------------------
+   15. THE 11px FLOOR SWEEP. impeccable's undersized-ui-text puts the floor
+   at 11px for anything interactive, any furniture label, and any run of
+   <=20 characters (10px for non-interactive smallprint). Editorial's
+   7-10px micro-caps are its density idiom; studio buys density from the
+   GAPS instead, so nothing here is under 11px. These are the sites the
+   sections above did not already reach.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] .cap-sel,
+html[data-design="studio"] .cap-num,
+html[data-design="studio"] .cs-item .meta,
+html[data-design="studio"] .cs-tag,
+html[data-design="studio"] .mpill,
+html[data-design="studio"] .fitpill,
+html[data-design="studio"] .cap-pill,
+html[data-design="studio"] #cap-vision,
+html[data-design="studio"] .mode-note,
+html[data-design="studio"] .caps-strip,
+html[data-design="studio"] .md-imnote,
+html[data-design="studio"] .art-json .jt-leaf,
+html[data-design="studio"] #chat-attachstrip .anote { font-size:11px; }
