@@ -563,10 +563,10 @@ except Exception as _e:                                          # noqa: BLE001
 # silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-29a")
+   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-29b")
 check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
       "document cannot claim to be this build",
-      "loffice-2026-08-29a</code>" in PAGE)
+      "loffice-2026-08-29b</code>" in PAGE)
 
 # ── the embed itself ──
 check("the editor is EMBEDDED: the page carries a stage and an iframe for it",
@@ -910,6 +910,85 @@ check("…and the bundle's own new-feature balloon is off",
 check("nothing in the editor page patches a vendored byte — condition #2 of the AGPL "
       "ruling — and it says so",
       "never patches a vendored byte" in OO)
+
+# ══ 6b. THE RENDER-TRUTH PAIR (roadmap §9.2 / §9.3, v1.5.25) ═════════════════
+# TWO findings that were both about the same thing: the page telling the truth about
+# what the editor is holding and showing. Both were ROOT-CAUSED in a real WKWebView
+# before a line was changed, and both root causes are quoted in oo.html itself.
+#
+# §9.2 — THE FRESH-OPEN PHANTOM DIRTY. An untouched, just-opened .xlsx painted the
+# unsaved marker. It was not a phantom flag: a REAL, undoable history point appeared
+# ~160 ms after onDocumentReady, and its second item is
+# historyitem_Workbook_SetCustomFunctions — ONLYOFFICE's own AI plugin registering its
+# custom functions, which the vendored bundle records in the DOCUMENT'S undo history
+# even though the functions live in localStorage. Proved by removal: with the plugin's
+# config forced to null for one probe run, the same cold open reported dirty:false.
+check("§9.2a: the fresh-open arm exists and only ever fires on a dirty:TRUE that the "
+      "page does not already know about, and never mid-save",
+      "if (d && !dirtyNow && !saving && historyIsPluginOnly() && clearPluginDirty())" in OO)
+check("§9.2b: the predicate is FAIL-CLOSED — it returns true only when EVERY item in "
+      "EVERY history point is positively identified as the registration or as the "
+      "point's own marker",
+      "function historyIsPluginOnly()" in OO
+      and "historyitem_Workbook_SetCustomFunctions" in OO
+      and "historyitem_Unknown" in OO
+      and "return false;                                // a real change: stay dirty" in OO
+      and "return found > 0;" in OO)
+check("…and a redo tail (someone has undone something) is not this state",
+      "if (H.Index < 0 || H.Points.length !== H.Index + 1) return false;" in OO)
+check("§9.2c: the repair is sdkjs's OWN primitive for 'the state on screen is the saved "
+      "state', and it is only believed if sdkjs AGREES afterwards",
+      "a.H.Reset_SavedIndex();" in OO
+      and "if (typeof a.H.Have_Changes === 'function' && a.H.Have_Changes()) return false;" in OO
+      and "api.asc_isDocumentModified()) return false;" in OO)
+check("…and it never trims another product's undo stack",
+      "Remove_LastPoint" not in OO and "History.Clear" not in OO)
+check("§9.2d: it is COUNTABLE off probe(), like heldClears — so the fix is measured, "
+      "not inferred (live: pluginDirtyClears 1, dot off, sdkjs modified false)",
+      "pluginDirtyClears: pluginDirtyClears" in OO and "pluginDirtyClears++;" in OO)
+# ⚠️ THE L1 GUARD IS LEFT BYTE-IDENTICAL, and this is the assertion that says so: the
+# two arms cannot both fire on one event (one is dirty:TRUE, the other dirty:FALSE),
+# and L1's is still the one that refuses an unearned clear.
+check("§9.2e: L1's refusal is untouched and still SECOND — a dirty:false that no "
+      "write-back produced is still refused",
+      "if (!d && dirtyNow && !saving) {" in OO
+      and OO.index("if (d && !dirtyNow && !saving && historyIsPluginOnly()")
+          < OO.index("if (!d && dirtyNow && !saving) {"))
+#
+# §9.3 — applyOps REACHED THE MODEL, THE PDF AND THE DISK AND WAS NOT PAINTED. Measured
+# again before the fix: SetValue('PAINTPROOF') at B7, GetValue() returned PAINTPROOF, the
+# grid still drew -300 and every dependent formula still drew its old result. The answer
+# is NOT the non-public Recalculate() the PDF block refused to call: the SPREADSHEET api
+# publishes its own on the asc_ surface, and it is the END of sdkjs's own builder-script
+# bracket (canRunBuilderScript → asc_canPaste → Create_NewPoint + StartTransaction).
+check("§9.3a: the write plan runs inside the editor's own builder-script bracket",
+      "function ooPaintPair(api)" in OO
+      and "api.canRunBuilderScript()" in OO and "api.asc_Recalculate()" in OO)
+check("§9.3b: and the bracket is CLOSED on every exit — the good one, a refusal, a "
+      "throw — because a return that skipped it would leave the editor inside an open "
+      "transaction", "} finally { paint.end(); }" in OO)
+check("§9.3c: asc_Recalculate is only called if a transaction was actually started "
+      "(it ENDS one, so calling it otherwise is worse than not painting)",
+      "if (!started) return;" in OO)
+check("§9.3d: the pair is PROBED FOR BY NAME, so an editor bump cannot silently stop "
+      "painting: the apply still runs and comes back carrying a note that says the "
+      "screen may be stale and ⌘R is the fix",
+      "typeof api.canRunBuilderScript === 'function'" in OO
+      and "typeof api.asc_Recalculate === 'function'" in OO
+      and "could not be asked to " in OO and "Press ⌘R" in OO)
+check("…and the version it was measured against is pinned in the file, next to the "
+      "quoted implementation",
+      "const OO_PAINT_TAG = 'v9.2.0.119+5';" in OO
+      and "spreadsheet_api.prototype.asc_Recalculate = function ()" in OO)
+check("§9.3e: the result says whether it painted, and probe() says whether the pair is "
+      "there at all",
+      "done.painted = paint.painted;" in OO and "paint: {tag: OO_PAINT_TAG" in OO)
+check("§9.3f: ONE ⌘Z FOR ONE APPLY — the transaction collapses the whole plan into one "
+      "history point, and the file says so because it was measured",
+      "ONE ⌘Z FOR ONE APPLY" in OO)
+check("…and the parent still forwards the editor's notes onto the card, so a stale "
+      "screen is something the user is TOLD about",
+      "notes: Array.isArray(d.notes) ? d.notes.slice() : []," in PAGE)
 
 # ══ 7. ⚖️ THE AGPL ATTRIBUTION ═══════════════════════════════════════════════
 eq("oo.ATTRIBUTION names the licence", oo.ATTRIBUTION["licence"], "AGPL-3.0")

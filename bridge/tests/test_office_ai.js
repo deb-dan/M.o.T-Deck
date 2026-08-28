@@ -898,7 +898,7 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-29a');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-29b');
 // ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
 // exactly two, which only held while no comment in the page mentioned the build it was
 // written for — and the one-editor slice writes its own stamp into the comments that
@@ -3826,6 +3826,32 @@ OO_STYLE_KEYS.forEach(k => {
             + '— said rather than silently passed)', true);
     }
   }
+}
+
+/* ══ THE RENDER-TRUTH PAIR — THE PANEL'S HALF (roadmap §9.3, v1.5.25) ═══════════
+   The repaint itself lives in the editor frame (bridge/panel/oo.html::ooPaintPair,
+   pinned in test_oo_lane.py). What is this suite's business is the PANEL'S half: that
+   Apply still goes through the one seam, that the editor's answer is not flattened on
+   the way to the card, and that a build which CANNOT repaint tells the user instead of
+   quietly showing them a stale sheet.
+
+   THE FINDING, measured live in a real WKWebView before the fix: ooApplyApi wrote
+   B7='PAINTPROOF' and D3=1234, GetValue() read both back, and the grid on screen still
+   drew the OLD -300 with every dependent formula unchanged. After the fix, the same
+   call through the same seam painted B7, D3 AND the recalculated C7/B13/C13 — and one
+   asc_Undo took the whole apply back, on screen, in one step. */
+{
+  check('Apply still routes through ONE seam into the editor frame',
+        /return ooChild\.applyOps\(list, \(plan && plan\.sheet\) \|\| ''\);/.test(html));
+  check('…and the editor\'s NOTES survive the normalisation onto the card — the "the '
+        + 'cells went in but this build could not be asked to redraw them" sentence '
+        + 'reaches the user through this line or it reaches nobody',
+        /notes: Array\.isArray\(d\.notes\) \? d\.notes\.slice\(\) : \[\],/.test(html));
+  check('…and the card renders them (a note nobody paints is a note nobody reads)',
+        /done\.notes/.test(html));
+  check('…and a partial apply still names the editor\'s own ⌘Z as the way back, which '
+        + 'is now ONE undo for the whole plan rather than one per op',
+        /⌘Z inside the editor/.test(html));
 }
 
 // ── report ──

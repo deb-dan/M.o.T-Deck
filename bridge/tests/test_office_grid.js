@@ -288,7 +288,15 @@ eq('…and ignores a junk merge entry',
 // at all, so it cannot be blocked by one.
 const HEAD = html.split('</head>')[0];
 // comments necessarily TALK about link and script tags to explain why there are none
-const strip = s => s.replace(/<!--[\s\S]*?-->/g, '');
+// ⚠️ AND SO DOES SCRIPT BODY PROSE, SINCE v1.5.25: the harness-design axis appends a
+// stylesheet AT RUNTIME (bridge/panel/assets/studio-office.css, only when the key says
+// so), and the block that does it has to be able to say the word "<link>" in its own
+// comment. So the MARKUP check strips script bodies as well as HTML comments — what it
+// is about is what the SERVED DOCUMENT contains, which for Editorial is still zero
+// external subresources. bridge/tests/test_studio_office.js is what proves the runtime
+// link is absent unless the design is on.
+const stripJs = s => s.replace(/<script>[\s\S]*?<\/script>/g, '<script></script>');
+const strip = s => stripJs(s.replace(/<!--[\s\S]*?-->/g, ''));
 check('the document contains NO external script tag — tier 1 is the served document',
       !/<script[^>]*\bsrc=/.test(strip(html)));
 check('…and NO external stylesheet in <head>: a pending render-blocking <link> blocks '
@@ -989,7 +997,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-29a');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-29b');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);

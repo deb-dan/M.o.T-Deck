@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="harness-build" content="oo-2026-08-28a">
+<meta name="harness-build" content="oo-2026-08-29b">
 <title>LOffice — editor</title>
 <!--
   ═══════════════════════════════════════════════════════════════════════════════
@@ -804,6 +804,108 @@ function innerEditor() {
   } catch (e) { return null; }
 }
 
+/* ══ THE FRESH-OPEN PHANTOM DIRTY — roadmap §9.2, ROOT-CAUSED ═════════════════════
+   DEBI'S REPORT: an untouched, just-opened .xlsx paints the unsaved marker. TRUE, and
+   reproduced on the first try in a real WKWebView: `ready` at 433 ms, then
+   `state {dirty:true}` at 735 ms with nothing but the page open.
+
+   ⚠️ IT WAS NOT A PHANTOM FLAG, WHICH IS WHY SUPPRESSING THE EVENT WOULD HAVE BEEN A
+   LIE. At the moment of that event the editor really was modified, by its own rules:
+     asc_isDocumentModified() false → TRUE, History.Points 0 → 1, Index -1 → 0,
+     asc_getCanUndo() false → TRUE
+   — a REAL, undoable history point, 160 ms after the document became ready. Its two
+   items name the culprit exactly:
+     [0] g_oUndoRedoCell     Type 0  (historyitem_Unknown, the point's own marker)
+     [1] g_oUndoRedoWorkbook Type 20 (historyitem_Workbook_SetCustomFunctions)
+   and the vendored bundle says who does that and why it counts as a change:
+
+     Api.prototype["pluginMethod_SetCustomFunctions"] = function (jsonString) {
+       if (AscCommon.History.Is_On()) {
+         AscCommon.History.Create_NewPoint();
+         AscCommon.History.Add(g_oUndoRedoWorkbook,
+                               AscCH.historyitem_Workbook_SetCustomFunctions, …);
+       }
+       … setLocalStorageItem(customFunctionsStorageId, obj) …
+
+   So: ONLYOFFICE'S OWN AI PLUGIN, autostarted by us, registers its custom functions at
+   startup; sdkjs records that registration in the DOCUMENT'S undo history even though the
+   functions are stored in localStorage and not one byte of the workbook changes.
+   PROVED by removal, not by reading: with `aiPluginsConfig()` forced to null for one
+   probe run, the same cold open reported dirty:false and painted no marker.
+
+   THE FIX, AND WHY IT IS THIS ONE. The document is genuinely unmodified, so the honest
+   repair is to tell sdkjs so with its OWN primitive for exactly that statement —
+   `History.Reset_SavedIndex()`, which is what its save path calls to mean "the state on
+   screen is the saved state" (SavedIndex := Index, and Have_Changes() is
+   `Index != SavedIndex || ForceSave`, so it goes false). Then `CheckChangedDocument()`
+   re-syncs the editor's own save indicator. Measured after the pair: modified TRUE →
+   FALSE, and a real edit afterwards fires dirty:true again exactly as before.
+
+   ⚠️ IT CANNOT WEAKEN THE L1 SAVE-TRUTH FIX, AND THAT IS STRUCTURAL, not a promise:
+     · L1 refuses a dirty:FALSE that no write-back produced. This is a dirty:TRUE arm.
+       The two guards cannot both fire on one event, and L1's is left byte-identical.
+     · This one only ever runs when `!dirtyNow` — it can never clear unsaved work that
+       the page already knows about — and never while `saving`.
+     · historyIsPluginOnly() is FAIL-CLOSED: it returns true only when EVERY item in
+       EVERY history point is positively identified as the registration or as a point
+       marker. One unrecognised item, a missing global, a redo tail — anything at all —
+       and the answer is false, i.e. STAY DIRTY. Unsaved work is never something to be
+       optimistic about.
+   HONEST LIMIT, stated because it is still reachable: pressing ⌘Z on a freshly opened
+   workbook, before typing anything, undoes the PLUGIN'S registration (upstream's history
+   point is left in place — trimming another product's undo stack is not ours to do) and
+   the document goes dirty. It takes a deliberate user action, and the marker is then
+   telling the truth about the editor's state. */
+let pluginDirtyClears = 0;
+function innerAsc() {
+  try {
+    const w = window.frames && window.frames[0];
+    if (!w || !w.AscCommon || !w.AscCH || !w.AscCommonExcel) return null;
+    return {H: w.AscCommon.History, CH: w.AscCH,
+            WB: w.AscCommonExcel.g_oUndoRedoWorkbook};
+  } catch (e) { return null; }
+}
+// PURE-ISH AND TOTAL: any doubt → false → the document stays dirty.
+function historyIsPluginOnly() {
+  const a = innerAsc();
+  if (!a || !a.H || !a.WB) return false;
+  const H = a.H, CH = a.CH;
+  const REG = CH.historyitem_Workbook_SetCustomFunctions;
+  const MARK = CH.historyitem_Unknown;
+  if (typeof REG !== 'number' || typeof MARK !== 'number') return false;
+  if (!Array.isArray(H.Points)) return false;
+  // A redo tail means points beyond Index exist — someone has undone something, which is
+  // not the state this arm is about.
+  if (H.Index < 0 || H.Points.length !== H.Index + 1) return false;
+  let found = 0;
+  for (let i = 0; i <= H.Index; i++) {
+    const items = (H.Points[i] && H.Points[i].Items) || null;
+    if (!items || !items.length) return false;
+    for (let j = 0; j < items.length; j++) {
+      const it = items[j] || {};
+      if (it.Class === a.WB && it.Type === REG) { found++; continue; }
+      if (it.Type === MARK) continue;              // the point's own bookkeeping item
+      return false;                                // a real change: stay dirty
+    }
+  }
+  return found > 0;
+}
+// Returns TRUE only if sdkjs itself now agrees the document is unmodified.
+function clearPluginDirty() {
+  const a = innerAsc();
+  const api = innerEditor();
+  if (!a || !a.H || typeof a.H.Reset_SavedIndex !== 'function') return false;
+  try {
+    a.H.Reset_SavedIndex();
+    if (typeof a.H.Have_Changes === 'function' && a.H.Have_Changes()) return false;
+    if (api && typeof api.asc_isDocumentModified === 'function'
+        && api.asc_isDocumentModified()) return false;
+    if (api && typeof api.CheckChangedDocument === 'function') api.CheckChangedDocument();
+  } catch (e) { return false; }
+  pluginDirtyClears++;
+  return true;
+}
+
 // ── save ─────────────────────────────────────────────────────────────────────
 // Returns a RESULT rather than only painting one, because the parent's strip Save
 // needs to know what happened — and the two must never disagree about it.
@@ -940,6 +1042,69 @@ function ooColour(api, hex) {
   return api.CreateColorFromRGB((n >> 16) & 255, (n >> 8) & 255, n & 255);
 }
 
+/* ══ THE WRITES ARE PAINTED — roadmap §9.3, and it is the SUPPORTED pair ══════════
+   THE FINDING (v1.5.19, generalised at v1.5.25): a builder-API write reached the model,
+   the PDF and the disk and DID NOT APPEAR ON SCREEN. Measured again here before the fix,
+   in a real WKWebView on the live bundle: `GetRange('B7').SetValue('PAINTPROOF')` →
+   `GetRange('B7').GetValue()` returned 'PAINTPROOF' while the grid still drew the old
+   `-300`, and every formula that depended on B7 still drew its old result. The builder
+   api writes the workbook MODEL; the canvas draws from a cell cache nothing invalidated.
+
+   ⚠️ AND THE ANSWER IS NOT THE NON-PUBLIC `Recalculate()` THE PDF BLOCK REFUSED TO CALL.
+   The presentation finding was in the WORD/SLIDE api, where the only thing that worked was
+   `WordControl.m_oLogicDocument.Recalculate()` — an internal member. The SPREADSHEET api
+   publishes its own, on the `asc_` surface, and it does exactly what is needed
+   (read off the vendored bundle, v9.2.0.119+5):
+
+     spreadsheet_api.prototype.asc_Recalculate = function () {
+       History.EndTransaction();
+       ... trigger("showWorksheet", activeWs.getId());
+       for (i in lastPoint.UpdateRigions) trigger("cleanCellCache", i, [...], null, true);
+       this._onUpdateAfterApplyChanges();
+     };
+
+   It is the END of a pair. `canRunBuilderScript()` is the START — `asc_canPaste()` on the
+   spreadsheet api is `History.Create_NewPoint(); History.StartTransaction(); return true`
+   — so the two together are sdkjs's OWN "a script is about to write; a script has
+   finished writing" bracket, the one its macro runner uses. Two things follow, and both
+   were verified live rather than assumed:
+     · THE PAINT. B7 and D3 appeared on screen, and C7/B13/C13 — the formulas that
+       depend on them — recalculated on screen too.
+     · ONE ⌘Z FOR ONE APPLY. The transaction collapses the whole op plan into ONE history
+       point, so a single ⌘Z takes the entire apply back (measured: two SetValues, one
+       undo, both cells restored, and the screen repainted). Before this, a 12-cell apply
+       cost the user 12 undos.
+
+   THE FENCE IS AT RUNTIME, BECAUSE THE BUNDLE IS NOT IN THE REPO (data/ is a build
+   artifact): both halves are probed for by name, `probe().paint` reports what was found,
+   and an editor bump that removes either half does NOT silently stop painting — the apply
+   still runs, and it comes back carrying a NOTE that says the screen may be stale and
+   ⌘R is the fix. Nothing here reaches inside an object we were not handed. */
+const OO_PAINT_TAG = 'v9.2.0.119+5';        // the bundle this pair was measured against
+let paintMissing = '';                      // set once, reported by probe()
+function ooPaintPair(api) {
+  const canRun = !!(api && typeof api.canRunBuilderScript === 'function');
+  const canEnd = !!(api && typeof api.asc_Recalculate === 'function');
+  if (!canRun || !canEnd) {
+    paintMissing = 'this editor build does not publish '
+      + (!canRun ? 'canRunBuilderScript()' : '')
+      + (!canRun && !canEnd ? ' or ' : '')
+      + (!canEnd ? 'asc_Recalculate()' : '')
+      + ' (measured against bundle ' + OO_PAINT_TAG + ')';
+    return {painted: false, note: paintMissing, end: function () {}};
+  }
+  let started = false;
+  try { started = api.canRunBuilderScript() !== false; } catch (e) { started = false; }
+  // asc_Recalculate ENDS a transaction, so it may only be called if one was started.
+  return {painted: started, note: started ? '' :
+            'the editor refused to start a write transaction, so the cells may not be '
+            + 'drawn until you scroll or press ⌘R',
+          end: function () {
+            if (!started) return;
+            try { api.asc_Recalculate(); } catch (e) { /* the ops still landed */ }
+          }};
+}
+
 // SYNCHRONOUS and ALL-OR-NOTHING as far as the report goes: the first op that throws
 // stops the run and says which one it was. A partial apply is possible (the editor
 // has already taken the earlier ops) — and that is exactly why the answer names the
@@ -960,7 +1125,20 @@ function applyOps(list, sheetName) {
          || api.GetActiveSheet();
   } catch (e) { ws = null; }
   if (!ws) return {ok: false, error: 'the editor has no sheet to write into'};
-  const done = {cells: 0, styled: 0, sheets: [], renamed: '', inserted: 0, deleted: 0};
+  const done = {cells: 0, styled: 0, sheets: [], renamed: '', inserted: 0, deleted: 0,
+                notes: [], painted: false};
+  // ⚠️ THE BRACKET (see ooPaintPair): opened here, closed in the `finally` below, so
+  // every exit from the loop — the good one, a refusal, a throw — closes the editor's
+  // transaction and repaints. A `return` that skipped the end() would leave the editor
+  // inside an open transaction, which is worse than the bug being fixed.
+  const paint = ooPaintPair(api);
+  done.painted = paint.painted;
+  if (paint.note) {
+    done.notes.push('The cells went in, but this editor build could not be asked to '
+                    + 'redraw them (' + paint.note + '). Press ⌘R to reload the editor '
+                    + 'if the sheet on screen looks stale.');
+  }
+  try {
   for (let i = 0; i < list.length; i++) {
     const o = list[i] || {};
     try {
@@ -1010,6 +1188,7 @@ function applyOps(list, sheetName) {
                    + ((e && e.message) || e)};
     }
   }
+  } finally { paint.end(); }
   // The editor raises onDocumentStateChange for its own edits; a builder-API write
   // does not always, so the dirty flag is set here and reported the same way.
   dirtyNow = true;
@@ -1425,6 +1604,16 @@ function openDoc(name) {
             // uses to refuse an agent write all hang off this one event.
             if (!ready) return;
             const d = !!(e && e.data);
+            /* ⚠️ THE FRESH-OPEN PHANTOM (roadmap §9.2). The block above innerEditor()
+               carries the whole measurement: this is ONLYOFFICE's own AI plugin
+               registering its custom functions into the document's undo history at
+               autostart. FAIL-CLOSED — if the history is not provably nothing but that
+               registration, or if sdkjs will not agree afterwards that the document is
+               unmodified, this arm does nothing and the dirty:true is reported as before. */
+            if (d && !dirtyNow && !saving && historyIsPluginOnly() && clearPluginDirty()) {
+              state('ready');
+              return;
+            }
             /* ⚠️⚠️ SECOND HALF OF THE L1 FIX, AND IT IS THE FLOOR UNDER THE FIRST. sdkjs
                fires dirty:FALSE whenever IT believes the document is saved — which, with
                a mock co-authoring server that ACKs `saveChanges`, means "the ACK arrived",
@@ -1514,6 +1703,17 @@ window.LOfficeEmbed = {
   probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
                  editorTag: editorTag, extSaves: extSaves,
                  heldClears: heldClears,
+                 // THE TWO RENDER-TRUTH COUNTERS (roadmap §9.2 / §9.3), reported for the
+                 // same reason heldClears is: a probe can PROVE each fix ran instead of
+                 // inferring it from a screenshot. `pluginDirtyClears` counts the phantom
+                 // fresh-open dirties reconciled; `paint` says whether the supported
+                 // repaint pair is present in this editor build at all.
+                 pluginDirtyClears: pluginDirtyClears,
+                 paint: {tag: OO_PAINT_TAG, missing: paintMissing,
+                         canRun: !!(innerEditor()
+                                    && typeof innerEditor().canRunBuilderScript === 'function'),
+                         canEnd: !!(innerEditor()
+                                    && typeof innerEditor().asc_Recalculate === 'function')},
                  // The AI tab, reported the same way the save counters are: a probe can
                  // prove it is on (and with which model) or read the exact reason it is
                  // off, instead of inferring either from a screenshot.

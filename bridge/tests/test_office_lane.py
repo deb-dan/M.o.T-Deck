@@ -1066,7 +1066,14 @@ AIDER_PAGE = (ROOT / "bridge" / "panel" / "aider.html").read_text(encoding="utf-
 # stronger one: the document has no external subresource to be blocked by. Comments in
 # the page necessarily TALK about script and link tags to explain why there are none,
 # so the check reads the markup with comments stripped.
-NOCOM = re.sub(r"<!--.*?-->", "", PAGE, flags=re.S)
+# ⚠️ AND SCRIPT BODIES TOO, SINCE v1.5.25: the harness-design axis appends a
+# stylesheet AT RUNTIME (assets/studio-office.css, only when the key says so), and the
+# block that does it has to be able to write the word "<link>" in its own comment.
+# What this check is about is the MARKUP of the SERVED document, which for Editorial
+# still carries zero external subresources; bridge/tests/test_studio_office.js is what
+# proves the runtime link is absent unless the design is on.
+NOCOM = re.sub(r"<script>.*?</script>", "<script></script>",
+               re.sub(r"<!--.*?-->", "", PAGE, flags=re.S), flags=re.S)
 check("the served document has NO external script tag at all — tier 1 needs nothing "
       "but itself, so nothing external can stop it existing",
       not re.search(r"<script[^>]*\bsrc=", NOCOM))

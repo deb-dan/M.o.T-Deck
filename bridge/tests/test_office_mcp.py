@@ -1834,8 +1834,11 @@ check("…and the screen work still stops while hidden, so a background tab is n
       "three HTTP calls it cannot use", "if (document.hidden) return;" in _tick_code)
 check("…and coming back to the tab catches up the mtime watch at once, rather than "
       "leaving up to 15 s in which an agent write is not on screen",
-      "hbRun(true);" in PAGE_SRC.split("visibilitychange")[1][:600]
-      and "extCheck();" in PAGE_SRC.split("visibilitychange")[1][:600])
+      # ⚠️ SPLIT ON THE LISTENER, NOT ON THE WORD (v1.5.25): the head script's own
+      # comment names visibilitychange when it lists when syncSkin runs, and splitting
+      # on the bare word silently moved this window into that comment.
+      "hbRun(true);" in PAGE_SRC.split("addEventListener('visibilitychange'")[1][:600]
+      and "extCheck();" in PAGE_SRC.split("addEventListener('visibilitychange'")[1][:600])
 check("…and the bridge's TTL is still the number the promise is about",
       office_ops.HEARTBEAT_TTL == 15.0)
 

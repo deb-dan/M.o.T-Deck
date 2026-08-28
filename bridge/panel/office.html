@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-29a">
+<meta name="harness-build" content="loffice-2026-08-29b">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -118,11 +118,165 @@
     if (chrome === 'studio') d.setAttribute('data-chrome', 'studio');
     else d.removeAttribute('data-chrome');
     var now = (theme === 'light' ? 'light' : 'dark')
-            + '/' + (chrome === 'studio' ? 'studio' : 'editorial');
+            + '/' + (chrome === 'studio' ? 'studio' : 'editorial')
+            + '/' + window.syncDesign(why);
     if (now !== lastSkin) { lastSkin = now; window.bx('skin', now + ' · ' + (why || '')); }
     return now;
   };
-  window.syncSkin('boot');
+
+  /* ══ THE HARNESS-DESIGN AXIS ON /office (v1.5.25, Debi's GO) ═════════════════
+     The THIRD axis, and the only one whose CSS is NOT in this file: a theme is a
+     palette, chrome is a control shape, a DESIGN is layout + type + spacing +
+     component shape together, so it is a separate asset
+     (bridge/panel/assets/studio-office.css) fetched only when it is on.
+
+     ⚠️ THIS PAGE HAS NO DESIGN BUTTON, ON PURPOSE, exactly as it has no theme
+     button: a tab that could disagree with the app it lives in is the original
+     complaint. The panel's ✦ writes `harness-design`; this reads it.
+
+     THE SAME FOUR PROPERTIES THE PANEL'S IMPLEMENTATION IS BUILT FOR (its
+     designApply() is the reference — read, not edited):
+       · EDITORIAL PAYS NOTHING. Key absent → one localStorage read, zero
+         requests, and this file's bytes unchanged.
+       · NOTHING IS HALF-PAINTED. At boot the <link> is appended during head
+         parsing (render-blocking, like any stylesheet) and THE ATTRIBUTES ARE
+         STAMPED ONLY IN ITS onload. An unstyled beat in Editorial is
+         acceptable; a half-painted studio is not.
+       · IT NEVER WRITES. harness-theme / harness-chrome / harness-design are
+         all read-only here, so leaving studio in the panel restores this tab
+         to whatever theme and chrome the user had.
+       · UNKNOWN → EDITORIAL. Any value that is not 'studio' or 'studio-light'
+         (a corrupt key, a value from a future build) paints Editorial rather
+         than an unstyled page.
+     TOTAL and IDEMPOTENT: it is called at boot, on `storage`, on focus and on
+     visibilitychange, and it states absolute state rather than toggling. */
+  var LINK_ID = 'studio-office-css';
+  var CSS_HREF = '/assets/studio-office.css';
+  /* ⚠️⚠️ THE LIVE-FLIP KICK, AND IT IS A MEASURED WEBKIT BUG, NOT A PRECAUTION.
+     A flip WITHOUT a reload (the ✦ in the panel writes the key, this tab gets `storage`)
+     leaves WebKit with STALE CUSTOM PROPERTIES on part of the tree. Measured, twice, on
+     the runtime path only — the boot path is clean because the sheet is render-blocking:
+
+       what the new sheet declares LITERALLY   →  applied     (radius 10px, 11px type,
+                                                              Avenir Next, caps → none)
+       what it declares through var(--…)       →  STALE on the header, the rail rows'
+                                                 state edge and the AI chips:
+         #btn-save  background  #efe9dc  (Editorial cream, not studio's teal)
+         .chip.on   background  none / #c9a44d (Editorial gold)
+         .frow.on   border      #c9a44d
+     …on elements whose OWN computed --gold already read #41c2ac. So it is the custom
+     property INHERITANCE that was not re-resolved, not the cascade: the rules had won,
+     their var() references had not been recomputed.
+
+     WHAT DOES NOT FIX IT (all tried, all measured): toggling the sheet's `disabled`
+     flag, inserting a rule into the sheet, setting and removing a custom property on
+     <html>, and the same on each region. WHAT DOES: forcing those subtrees to be
+     re-styled from scratch — display:none, one forced layout read, restore.
+
+     ⚠️ AND IT IS DONE PER REGION, NEVER ON <html>, FOR ONE HARD REASON: hiding the root
+     would take the EDITOR'S IFRAME to 0×0, and its canvas engine measures its container
+     (the whole reason upgrade() waits a frame before mounting). The six regions below are
+     OUR OWN CHROME — the same list the asset scopes itself to — and none of them
+     contains #oostage. Verified after the kick: the editor's stage box is the same
+     870×853 it was before, and the document is still live (an applyOps after a flip
+     still writes and still paints).
+     It runs ONLY on a LATE stamp (readyState !== 'loading'), i.e. never at boot. */
+  var KICK_REGIONS = ['#boot', 'body>header', '#msg', '#richbar', '#files', '#empty', '#ai'];
+  function designKick(why) {
+    try {
+      if (document.readyState === 'loading') return false;   // boot: nothing to fix
+      var regions = [];
+      for (var i = 0; i < KICK_REGIONS.length; i++) {
+        var n = document.querySelector(KICK_REGIONS[i]);
+        if (n) regions.push([n, n.style.display]);
+      }
+      for (i = 0; i < regions.length; i++) regions[i][0].style.display = 'none';
+      void document.body.offsetHeight;                       // one forced layout
+      for (i = 0; i < regions.length; i++) regions[i][0].style.display = regions[i][1];
+      window.bx('design-kick', (why || '') + ' regions=' + regions.length);
+      return true;
+    } catch (e) { return false; }                            // a repaint may never throw
+  }
+  window.syncDesign = function (why) {
+    var want = null;
+    try { want = localStorage.getItem('harness-design'); } catch (e) { return 'editorial'; }
+    if (want !== 'studio' && want !== 'studio-light') want = 'editorial';
+    var d = document.documentElement;
+    if (want === 'editorial') {
+      var was = d.getAttribute('data-design');
+      d.removeAttribute('data-design');
+      d.removeAttribute('data-dvariant');
+      if (was) designKick('leave');
+      return 'editorial';
+    }
+    // ⚠️ THE STAMP RE-READS THE KEY rather than closing over `want`: the ◐ can flip
+    // studio-dark → studio-light in the ~50 ms while the sheet is still in flight, and
+    // a closure would then paint the variant the user has already left.
+    var stamp = function () {
+      var v = null;
+      try { v = localStorage.getItem('harness-design'); } catch (e) { v = null; }
+      if (v !== 'studio' && v !== 'studio-light') {
+        d.removeAttribute('data-design'); d.removeAttribute('data-dvariant'); return;
+      }
+      d.setAttribute('data-design', 'studio');
+      if (v === 'studio-light') d.setAttribute('data-dvariant', 'light');
+      else d.removeAttribute('data-dvariant');
+    };
+    /* ⚠️⚠️ THE ATTRIBUTE IS STAMPED **BEFORE** THE SHEET IS APPENDED, AND THAT ORDER IS
+       A MEASURED BUG FIX — it is the one place this page deliberately does NOT copy the
+       panel's designApply(), which stamps in the link's onload.
+
+       WHAT HAPPENED WITH onload STAMPING, in a real WKWebView, twice: the sheet loaded
+       into a document where it matched nothing, then the attribute flipped, and WebKit
+       RE-RESOLVED ONLY SOME OF THE AFFECTED ELEMENTS. Measured on one page, at one
+       moment, with --cream reading #e9efef (studio) on the element itself:
+         · #btn-save   background rgb(239,233,220) — Editorial's cream, from the INLINE
+                       rule, while the later, equally weighted studio rule (var(--gold))
+                       sat in the cascade unapplied;
+         · .chip.on    #c9a44d — Editorial's gold, same story;
+         · .frow / #fnote / #ai-in / .hlab — correctly studio.
+       i.e. a partial repaint, which is the worst possible outcome for a design axis. The
+       common factor is that this sheet's prefixes live inside `:where()` (they must —
+       see the asset's header on specificity), and an attribute change did not invalidate
+       every rule hidden behind one.
+
+       Stamping FIRST removes the class of bug rather than working around it: a NEWLY
+       ADDED STYLESHEET always forces a full style recalculation, so the sheet arrives
+       into a document that already matches it and there is nothing to invalidate. And it
+       costs no flash: with the attribute set and the sheet not yet parsed, NOT ONE rule
+       matches, so the page is Editorial — and at boot the <link> is appended during head
+       parsing, i.e. render-blocking, so the FIRST paint already has both halves. */
+    var wasDesign = d.getAttribute('data-design');
+    var wasVariant = d.getAttribute('data-dvariant');
+    stamp();
+    var changed = (wasDesign !== d.getAttribute('data-design'))
+               || (wasVariant !== d.getAttribute('data-dvariant'));
+    var el = document.getElementById(LINK_ID);
+    if (el) {
+      // already fetched once this page — but a VARIANT flip is still a stamp, and a
+      // stamp on an already-loaded sheet is exactly the stale-var case.
+      if (changed && el.sheet) designKick('variant');
+      return want;
+    }
+    el = document.createElement('link');
+    el.rel = 'stylesheet'; el.id = LINK_ID; el.href = CSS_HREF;
+    el.onload = function () {
+      window.bx('design', want + ' loaded · ' + (why || ''));
+      designKick('first-load');
+    };
+    // A 404 (a partial ship, the asset mount down) must leave a WORKING Editorial page
+    // and an HONEST DOM: the attribute comes back off, so nothing claims a design that
+    // is not there, and the boot trace says why.
+    el.onerror = function () {
+      d.removeAttribute('data-design'); d.removeAttribute('data-dvariant');
+      window.bx('design', 'asset failed; staying on Editorial');
+    };
+    document.head.appendChild(el);
+    return want;
+  };
+  // ⚠️ syncSkin('boot') IS NOT CALLED HERE. It is called from a second one-line script
+  // placed immediately AFTER </style> below, and that position is LOAD-BEARING — see
+  // the comment on that script. This block only DEFINES.
 })();
 </script>
 <style>
@@ -324,6 +478,15 @@
      "download" and "delete" cannot be hit by accident for one another. */
   .frow .acts{display:none;gap:4px;margin-top:5px;margin-left:-7px}
   .frow:hover .acts,.frow.on .acts{display:flex}
+  /* ⚠️ AN ARMED DELETE IS SHOWN FROM A CLASS, NEVER FROM `:hover` — the measurement is
+     in the JS block above homeDel(). Two failures live here: a re-rendered row is not
+     under `:hover` until the pointer moves (so the `sure?` could vanish outright), and
+     the LAST row's actions are clipped 11 px below #flist's edge when the list is
+     scrolled to the bottom (so it could be armed and unreadable). The row also gets the
+     danger edge, so which row is armed is answerable from across the screen. */
+  .frow.armed .acts{display:flex}
+  .frow.armed{border-color:var(--bad)}
+  .hrow.armed{border-color:var(--bad)}
   .lnk{color:var(--dim);font-size:10.5px;cursor:pointer;background:none;border:0;
        padding:4px 7px;border-radius:6px;line-height:1}
   .lnk:hover{color:var(--gold);background:var(--card2)}
@@ -840,12 +1003,31 @@
   :where(html[data-chrome="studio"]) #ai-in,
   :where(html[data-chrome="studio"]) #new-name{background:var(--st-inp)}
 </style>
+<!-- ══ AND HERE IS WHERE THE SKIN IS APPLIED, AND THE POSITION IS THE MECHANISM ══════
+     ⚠️ THIS SCRIPT MUST STAY BELOW </style>. It calls syncSkin(), which calls
+     syncDesign(), which APPENDS the studio design's <link> to <head> — and
+     `appendChild` puts it after everything already parsed. Run from the first head
+     script (where it used to live), the sheet above did not exist yet, so the link
+     landed BEFORE it and every zero-specificity `:where(html[data-design="studio"])`
+     rule in the asset LOST the source-order tie to the inline rule it was written to
+     refine. MEASURED, not reasoned: with the call in the first script the tokens
+     applied (they win on specificity) and NOT ONE descendant rule did — Georgia
+     wordmark, 9.5px chips, 10px tracked caps, all still Editorial's.
+
+     The two halves of the fix have to be read together:
+       · the asset carries ZERO-SPECIFICITY prefixes, because a real
+         `html[data-design="studio"] …` prefix would outrank `.ghost`, `.primary`
+         and `.lnk` — the landmine this stylesheet's own post-mortem is about;
+       · so it needs SOURCE ORDER, which it gets from being appended here.
+     bridge/tests/test_studio_office.js pins this script's position, and still runs
+     before first paint, so Editorial is unchanged and studio is never half-painted. -->
+<script>window.syncSkin('boot');</script>
 </head>
 <body>
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-29a</code>.</div>
+  Build <code>loffice-2026-08-29b</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -1384,6 +1566,8 @@ const el = id => document.getElementById(id);
 const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).content || '';
 
 let files = [], current = null, dirty = false, busy = false, armed = null;
+// WHEN the armed delete was armed. It is a timestamp and NOT a timer — see armDelete().
+let armedAt = 0;
 // Set by loadFiles from the bridge's own answer. The landing consults BOTH: a
 // listing that never arrived, or a bridge with no openpyxl, must not be answered
 // by cheerfully trying to create a workbook that cannot be written — that would
@@ -3155,7 +3339,7 @@ function renderHome() {
     // keyboard behaviour a button would have given for free is therefore written out.
     files.slice(0, HOME_MAX).forEach(f => {
       const row = document.createElement('div');
-      row.className = 'hrow';
+      row.className = 'hrow' + (armed === f.name ? ' armed' : '');
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
       row.title = 'Open ' + f.name;
@@ -3176,6 +3360,9 @@ function renderHome() {
       const del = document.createElement('button');
       del.className = 'lnk' + (armed === f.name ? ' arm' : '');
       del.textContent = armed === f.name ? 'sure?' : 'delete';
+      del.title = armed === f.name
+        ? 'Click again to confirm deleting ' + f.name + ' — it will not go away on its own'
+        : 'Delete ' + f.name + ' (asks first)';
       del.onclick = ev => { ev.stopPropagation(); homeDel(f.name); };
       row.appendChild(n); row.appendChild(m); row.appendChild(dl); row.appendChild(del);
       row.onclick = () => openDoc(f.name);
@@ -3203,19 +3390,85 @@ function renderHome() {
   }
   bx('home-render', 'files=' + files.length);
 }
-// The same two-step arm the rail uses, and the same `armed` variable, so a delete armed
-// in one list shows as armed in the other.
-function homeDel(name) {
-  if (armed !== name) {
-    armed = name;
-    renderFiles();
-    setTimeout(() => { if (armed === name) { armed = null; renderFiles(); } }, 3000);
-    return;
-  }
-  armed = null;
+/* ══ THE TWO-STEP DELETE — ONE implementation for both lists (v1.5.25) ═══════════════
+   DEBI'S REPORT, VERBATIM: "when delete is clicked on the last file, it seems to not show
+   clearly, and delete/sure button after really goes away quickly, like after 4 seconds."
+   Both halves were real and they had DIFFERENT causes.
+
+   ① IT WENT AWAY ON A TIMER. Both surfaces armed and then scheduled a 3000 ms
+      setTimeout that cleared the arm and re-rendered the list behind the user's back
+      — 3 s, which reads as "about four seconds" when you are also reading the row. THE
+      HOUSE RULE NOW: a destructive confirm NEVER auto-expires. It stays until it is
+      answered, cancelled, or clicked away. A question that removes itself while you are
+      deciding is a question that trains you to click fast, which is the opposite of what
+      a two-step delete is for. The 400 ms ARM-GUARD stays (see below): that one exists to
+      defeat a double-click, and it re-arms rather than vanishing.
+
+   ② ON THE LAST FILE IT WAS CLIPPED OUT OF VIEW, and this is the measured part. The row
+      actions are `display:none` until `:hover`, so #flist's scrollHeight does NOT include
+      them; hovering the LAST row grows that row by 23 px, and if the list is already
+      scrolled to the bottom the growth appears BELOW the clipping edge with no scroll to
+      follow it. Measured in a real WKWebView, 14 files, list scrolled to the bottom:
+        #flist bottom 734 · acts 727→745 (18 px tall) · CLIPPED 11 px · visible: false
+      i.e. 61% of the download/delete/sure? row was cut off — exactly "does not show
+      clearly", and only ever on the last row.
+      THREE THINGS FIX IT, and each one is load-bearing on its own:
+        · `.frow.armed .acts` / `.hrow.armed` — an armed row shows its actions from a
+          CLASS, not from `:hover`. (Without this the confirm can also disappear for a
+          second reason: renderFiles() REPLACES the row element, and a freshly inserted
+          element is not under `:hover` until the pointer moves.)
+        · the armed row's action strip is SCROLLED INTO VIEW after the re-render.
+        · the message strip at the top of the page says what is armed and offers Cancel,
+          so the question is legible even if the rail is collapsed, scrolled or narrow.
+
+   Both lists call THIS, so the two surfaces cannot drift apart again — and `armed` is
+   still keyed by NAME, so a delete armed in the rail shows as armed on the start screen. */
+// ⚠️ THE SAME 400 ms AS DISCARD_MIN_MS, FOR THE SAME REASON (see confirmDiscard): the
+// rail's actions sit 4 px apart, and a double-click on `delete` must not be both halves
+// of the gesture. A second click that arrives faster than a person can read RE-ARMS.
+const DEL_ARM_MIN_MS = 400;
+function delArmedRow() {
+  return document.querySelector('.frow.armed .acts') || document.querySelector('.hrow.armed');
+}
+function armDelete(name) {
+  armed = name; armedAt = Date.now();
   renderFiles();
+  // ⚠️ THE SENTENCE GOES UP **BEFORE** THE SCROLL, AND THE ORDER IS A MEASURED BUG.
+  // Written the other way round (scroll, then say) the scroll was correct and then
+  // #msg appeared, took ~40 px of vertical space out of #body, shortened #flist and
+  // pushed the row it had just revealed back under the clipping edge — measured at 37 px
+  // clipped, i.e. WORSE than the bug being fixed. say() first, so the scroll runs
+  // against the layout the user will actually be looking at.
+  say('Delete “' + name + '”? Click “sure?” in the file list again to confirm — nothing '
+      + 'has been deleted yet.', null,
+      { label: 'Cancel', run: () => disarmDelete(true) });
+  // THE SCROLL IS THE OTHER HALF OF THE ANSWER TO "the last file": `block:'nearest'` moves
+  // the list by the minimum needed, so a row that is already fully visible does not jump.
+  const a = delArmedRow();
+  if (a && typeof a.scrollIntoView === 'function') {
+    try { a.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+    catch (e) { a.scrollIntoView(false); }
+  }
+  bx('del-arm', name);
+}
+function disarmDelete(clearMsg) {
+  if (!armed) return;
+  bx('del-disarm', armed);
+  armed = null; armedAt = 0;
+  renderFiles();
+  if (clearMsg) say('');
+}
+// The ONE click handler both lists use.
+function delClick(name) {
+  if (busy) return;
+  if (armed !== name) { armDelete(name); return; }
+  if (Date.now() - armedAt < DEL_ARM_MIN_MS) { armDelete(name); return; }   // a double-click
+  armed = null; armedAt = 0;
+  renderFiles();
+  say('');
   deleteAsk(name);                     // ONE delete sentence — see deleteAsk (C6/B4/B5)
 }
+function homeDel(name) { delClick(name); }
 
 // ── the starter templates ────────────────────────────────────────────────────
 // Generated CLIENT-SIDE out of the two routes we already have (new, then save), so
@@ -5031,7 +5284,11 @@ function renderFiles() {
   }
   files.forEach(f => {
     const row = document.createElement('div');
-    row.className = 'frow' + (f.name === current ? ' on' : '');
+    // ⚠️ `armed` IS A CLASS ON THE ROW, not a `:hover` state (see the block above
+    // homeDel()): a re-rendered row is not hovered until the pointer moves, and the
+    // actions of the LAST row are clipped by #flist unless something reveals them.
+    row.className = 'frow' + (f.name === current ? ' on' : '')
+                  + (armed === f.name ? ' armed' : '');
     const n = document.createElement('div');
     n.className = 'fn';
     // ⚠️ THE NAME IS SET AS TEXT AND THE BADGE APPENDED AFTER IT, in that order, and it
@@ -5058,6 +5315,9 @@ function renderFiles() {
     const del = document.createElement('button');
     del.className = 'lnk' + (armed === f.name ? ' arm' : '');
     del.textContent = armed === f.name ? 'sure?' : 'delete';
+    del.title = armed === f.name
+      ? 'Click again to confirm deleting ' + f.name + ' — it will not go away on its own'
+      : 'Delete ' + f.name + ' (asks first)';
     del.onclick = ev => {
       ev.stopPropagation();
       // ⚠️ THE TWO-STEP STAYS (a single click must never delete) BUT THE SECOND STEP NOW
@@ -5065,12 +5325,10 @@ function renderFiles() {
       // workbook being edited nor that unsaved edits went with it, and offered no way to
       // keep a copy first — the File menu at least had a sentence, and the File menu is
       // hidden whenever a workbook is open (B3/B4).
-      if (armed !== f.name) { armed = f.name; renderFiles();
-                              setTimeout(() => { if (armed === f.name) { armed = null; renderFiles(); } }, 3000);
-                              return; }
-      armed = null;
-      renderFiles();
-      deleteAsk(f.name);
+      // ⚠️ AND THE ARM ITSELF LIVES IN delClick() NOW (v1.5.25): no timer, a class-driven
+      // reveal and a scroll-into-view, shared with the start screen. The whole
+      // measurement is in the block above homeDel().
+      delClick(f.name);
     };
     acts.appendChild(dl); acts.appendChild(del);
     row.appendChild(n); row.appendChild(m); row.appendChild(acts);
@@ -9159,6 +9417,23 @@ document.addEventListener('click', () => { if (moreOpen) moreShow(false); });
 window.addEventListener('keydown', ev => {
   if (ev.key === 'Escape' && moreOpen) { ev.preventDefault(); moreShow(false); }
 });
+/* ⚠️ CLICKED AWAY, NOT TIMED OUT (v1.5.25). An armed delete stays up until it is
+   answered — so it needs the OTHER way out that every menu on this page already has:
+   a click somewhere else, or Escape. The row's own buttons call stopPropagation(), and
+   `.frow`/`.hrow` are tested for explicitly, so clicking the armed row (or the file it
+   names, which OPENS it) does not count as answering the question. This listener is
+   deliberately on `document` and NOT capturing, so it runs after the row handlers. */
+document.addEventListener('click', ev => {
+  if (!armed) return;
+  const t = ev.target;
+  const inRow = t && t.closest && t.closest('.frow.armed, .hrow.armed');
+  const inMsg = t && t.closest && t.closest('#msg');
+  if (inRow || inMsg) return;
+  disarmDelete(true);
+});
+window.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && armed) { ev.preventDefault(); disarmDelete(true); }
+});
 el('btn-rail').onclick = () => railSetOpen(!railIsOpen(), 'header');
 const toggleNew = () => nameRow('create');
 el('btn-new').onclick = toggleNew;
@@ -9413,7 +9688,11 @@ window.addEventListener('beforeunload', ev => {
 // two are not both alive at the same moment. It is idempotent and reads two
 // localStorage keys, so calling it too often costs nothing.
 window.addEventListener('storage', ev => {
-  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome') {
+  // harness-design joined the list at v1.5.25 — the ✦ in the panel has to reach this
+  // tab the same way the ◐ and the ▣ already do, or one window would sit in a design
+  // the rest of the app has left.
+  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome'
+      || ev.key === 'harness-design') {
     syncSkin('storage');
   }
 });
