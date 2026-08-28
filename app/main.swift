@@ -496,6 +496,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // a reload behind a minimised window is harmless and the alternative (observing
     // occlusion changes to re-arm) is more machinery than one cheap request is worth.
     let hermesGenPoll: TimeInterval = 4
+    // ══ THE SSE HYBRID (2026-08-28) — WHY THE SHELL KEEPS POLLING, DELIBERATELY ══
+    // bridge/core/events.py added a push channel (GET /api/events) and the PANEL now
+    // rides it: its status poll relaxes from 6s to 30s while push is live and drops to
+    // 4s the instant it dies. The shell was checked for the same treatment and
+    // deliberately left alone, for three reasons — recorded here because the obvious
+    // future edit is to "finish the migration", and it would be a regression:
+    //
+    //  1. DISPROPORTIONATE. These two timers make one 2s-timeout loopback GET each and
+    //     read a single Int out of it (hermes_config_gen, nav_gen). An SSE client in
+    //     Swift means a streaming URLSession delegate, frame parsing, a reconnect
+    //     policy and a staleness clock — a few hundred lines of new machinery, with its
+    //     own failure modes, to save two integers' worth of traffic.
+    //  2. THIS POLL IS NOW LOAD-BEARING FOR THE PANEL. A component that dies on its own
+    //     is not a transition the harness causes, so the only place that fact exists is
+    //     the debounced verdict computed inside GET /api/status (bridge/core/health.py's
+    //     _health_track, which now pushes on a CHANGE). Whoever calls /api/status fans
+    //     that out to every open panel — and this 4s timer is the most reliable caller
+    //     on the machine. Removing or slowing it would make the panel SLOWER to notice a
+    //     crash, which is the opposite of what the hybrid is for.
+    //  3. THE ACTION IS DIFFERENT. The shell's reaction is "reload a WKWebView", not
+    //     "repaint a card". A reload is disruptive, so a slow deliberate tick with an
+    //     occlusion guard is the RIGHT cadence for it, not a latency to be minimised.
+    //
+    // Pinned by bridge/tests/test_sse_hybrid.js §5, which fails if either number moves
+    // without this note moving with it.
     var bridgeProcess: Process?
     var spawnedBridge = false
     // Working harness root: the baked dev path if present, else ~/Harness (portable builds).

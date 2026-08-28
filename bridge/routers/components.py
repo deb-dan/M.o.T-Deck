@@ -10,6 +10,7 @@ import time
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
+from ..core.events import publish
 from ..core.health import _health_track, _probe_timeout
 from ..core.hermescfg import hermes_cfg_gen
 from ..core.modelid import _live_model_id, _runner_engine
@@ -433,6 +434,11 @@ def start(name: str) -> JSONResponse:
 def stop(name: str) -> JSONResponse:
     _clear_expected(name)   # intentional stop → not "degraded", just "stopped"
     PROV.pop(name, None)    # drop any stale provisioning overlay for this component
+    # SSE (2026-08-28): the stop transition, at its source. Emitted BEFORE the kill
+    # rather than after — a stop that goes on to fail returns 409 and the panel's own
+    # refresh (which this event triggers) reads the truth from /api/status either way,
+    # whereas an emit placed after an early `return` path would be skipped.
+    publish("component", name=name, state="stopping")
     # Runner must be stopped by PORT — a child router can survive a PID kill (spike learning).
     if name == "runner":
         rc = cfg().get("runner", {})
@@ -500,6 +506,22 @@ def update(name: str) -> JSONResponse:
 #    is called from nowhere else; it reads _NOTES and _record_load_launch, both
 #    of which are router-side, so keeping it in core would invert the dependency.
 
+def _prov_set(n: str, state: str, detail: str) -> None:
+    """THE single writer of the provisioning overlay — and therefore the single place
+    the SSE hub is told a component moved (2026-08-28).
+
+    This function exists so the emit is at the SOURCE OF TRUTH rather than sprinkled
+    over six call sites: every phase the panel used to discover on its next /api/status
+    tick (pending · starting · on · failed · blocked) now leaves here as a push. The
+    event carries the name and the state as a HINT ONLY — the panel's handler is the
+    poll handler it already had, so a lost or stale event costs nothing but latency.
+
+    ⚠️ Runs in _provision's daemon THREAD. events.publish() is thread-safe by design
+    (it hands off through the serving loop) and never raises."""
+    PROV[n] = {"state": state, "detail": detail}
+    publish("component", name=n, state=state)
+
+
 def _provision(target: str) -> None:
     """Run the dependency closure in order, publishing live state into PROV.
     Runs in a background thread so /api/status can report progress meanwhile."""
@@ -507,21 +529,21 @@ def _provision(target: str) -> None:
     order = _closure(target, c, [])
     PROV.clear()
     for n in order:
-        PROV[n] = {"state": "pending", "detail": "queued"}
+        _prov_set(n, "pending", "queued")
     for i, n in enumerate(order):
         if _running_sync(n, c):
-            PROV[n] = {"state": "on", "detail": "already running"}
+            _prov_set(n, "on", "already running")
             _mark_expected(n)
             continue
-        PROV[n] = {"state": "starting", "detail": _NOTES.get(n, "starting…")}
+        _prov_set(n, "starting", _NOTES.get(n, "starting…"))
         r = _script("start_component.sh", n)
         if r.returncode == 0:
             if n == "runner":
                 _record_load_launch((c.get("runner", {}) or {}).get("model") or "")
-            PROV[n] = {"state": "on", "detail": "started"}
+            _prov_set(n, "on", "started")
             _mark_expected(n)   # expected-up now; if it later dies → degraded
         else:
-            PROV[n] = {"state": "failed", "detail": (r.stdout + r.stderr)[-1500:]}
+            _prov_set(n, "failed", (r.stdout + r.stderr)[-1500:])
             for m in order[i + 1:]:
-                PROV[m] = {"state": "blocked", "detail": f"blocked by {n} failure"}
+                _prov_set(m, "blocked", f"blocked by {n} failure")
             return

@@ -193,6 +193,19 @@ _LANES = (
     "routers.office",
     "core.officelog",
     "routers.oo",
+    # ⚠️ APPENDED, NOT INSERTED, AND THAT IS DELIBERATE. Every other entry above is at
+    # the line its code sat on in the pre-split app.py, because a dozen assertions slice
+    # bridge/appsrc.py's source view BETWEEN two neighbouring routes. core/events.py
+    # (the SSE hub, 2026-08-28) has no pre-split position at all — it is new — so
+    # putting it anywhere in the middle would separate a pair that some test expects to
+    # be adjacent, for no gain. It goes last in both lists, which costs only the
+    # position of /api/events in /openapi.json.
+    #
+    # It is imported EARLIER than this in practice — core/health.py and five routers do
+    # `from ..core.events import publish` — so its two routes register early and the
+    # stable sort below is what puts them back here. That is precisely the mechanism
+    # documented under ROUTE ORDER, RESTORED.
+    "core.events",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

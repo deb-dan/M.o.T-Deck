@@ -357,7 +357,26 @@
   .cmsg .statusline { font:11px var(--mono); color:var(--dim); letter-spacing:.06em; padding:4px 0 4px 20px; }
   .cmsg .statusline .r { color:var(--gold); }
   .cmsg .statusline .d { color:var(--ok); }
+  .cmsg .statusline .x { color:var(--bad); }
   .cmsg .statusline .dim { color:var(--faint); }
+  /* BE-01 (2026-08-28) — the ✗ chip for a tool that FAILED, in the main chat lane
+     (the false-Done class; office.html got this in v1.5.9, this page had no is_error
+     branch at all). ⚠️ SHAPE IS FOR THE ALL-DESIGNS RULE, not for looks: tokens only
+     (the --on-wash lesson), and NO border/shadow so impeccable cannot read it as a
+     nested card — the colour is carried by the GLYPH. Full reasoning + the executed
+     proof: bridge/tests/test_chat_toolerr.js §4. */
+  .cmsg .toolerr { margin:8px 0 2px 20px; padding:7px 11px; max-width:68ch;
+      background:var(--card2); border-radius:8px; font:12px/1.6 var(--mono);
+      letter-spacing:.02em; }
+  .cmsg .toolerr .te-x { color:var(--bad); margin-right:7px; }
+  .cmsg .toolerr .te-tool { color:var(--bad); }
+  /* ⚠️ --fg, NOT --dim, AND THAT IS A MEASURED DECISION. The reason is the whole point
+     of the chip — it is the tool's own sentence, the thing that contradicts a false
+     "Done". Drafted on --dim (the page's secondary-text token) it measured 3.44:1 on
+     Editorial's --card2: under AA, for the one string the user most needs to read.
+     --fg clears AA in all six looks (see test_chat_toolerr.js §4 for the numbers). */
+  .cmsg .toolerr .te-why { color:var(--fg); white-space:pre-wrap;
+      overflow-wrap:anywhere; }
   /* Hermes Phase 2 — inline approval card. ONE gold accent: the left rail
      (mirrors details.think's glyph accent). <!-- FABLE: style pass --> */
   .cmsg .approval { margin:10px 0 10px 20px; padding:10px 12px; max-width:68ch;
@@ -1971,7 +1990,182 @@ function feed(tag, msg) {
   while (f.children.length > 8) f.lastChild.remove();
 }
 
+/* ══ THE SSE HYBRID (2026-08-28) — push for liveness, the poll DEMOTED, never gone ══
+   Ratified: docs/research/2026-08-28-gemini-research-verdict.md §3. Fable's bar: "a
+   dead push stream must degrade to today's behaviour, not to a frozen UI".
+     · SSE (GET /api/events, bridge/core/events.py) carries the TRANSITIONS, and every
+       handler is the poll handler that already owned that surface — an event carries
+       no answer, so it cannot go stale and there is ZERO new render logic here.
+     · the poll never stops. It becomes the heartbeat AND the reconnect detector.
+
+   ⚠️ THE BRIEF SAID "the 4s status poll" — there has never been one in this page. The
+   poll is adaptive: 1.5s provisioning, else 6s. POLL_BACKSTOP is 4s because that is
+   the degraded cadence Fable specified, and it is FASTER than the 6s it replaces —
+   degrading must not also mean getting slower.
+
+   ⚠️ WHY 6s SURVIVES AS POLL_WATCH. A component that dies ON ITS OWN is not a
+   transition the harness causes, so there is nothing to push from (see _health_track
+   in bridge/core/health.py). An unconditional 30s heartbeat would make that crash
+   journey 5× worse while the idle one got better — so only the everything-green idle
+   case relaxes, which is where the wakeups actually are.
+   Executed, branch by branch, by bridge/tests/test_sse_hybrid.js. ══════════════ */
+const SSE_URL        = '/api/events';
+const POLL_FAST      = 1500;    // provisioning — unchanged from before the hybrid
+const POLL_WATCH     = 6000;    // today's cadence: something is unhealthy, or no push
+const POLL_BACKSTOP  = 4000;    // push is DEAD: the poll is the only liveness left
+const POLL_HEARTBEAT = 30000;   // push is live and all green: reconnect detector only
+const SSE_STALE_MS   = 90000;   // ≥3 missed server pings (events.py PING_S = 25s)
+
+/* PURE — the cadence decision, and the whole of it.
+   bridge/tests/test_sse_hybrid.js extracts and EXECUTES this function; the branch
+   order is the contract (provisioning outranks everything; a missing push channel
+   falls back to yesterday, not to the backstop). */
+function pollCadenceMs(st){
+  st = st || {};
+  if (st.provisioning) return POLL_FAST;
+  if (st.sseOff) return POLL_WATCH;      // no EventSource in this runtime at all →
+                                        // exactly the pre-hybrid behaviour, forever
+  if (!st.sseLive) return POLL_BACKSTOP;
+  if (st.unhealthy) return POLL_WATCH;
+  return POLL_HEARTBEAT;
+}
+
+/* PURE — the degradation state machine. (state, event, now) → next state.
+   phases: connecting · live · down · off   events: open · frame · error · tick · unsupported
+
+   ⚠️ `open` DOES NOT MEAN LIVE. EventSource fires onopen on the response HEADERS,
+   which a proxy can produce for a feed that then delivers nothing. Only a FRAME
+   proves the stream — and the bridge sends `hello` on accept so promotion is instant
+   in the healthy case.
+   ⚠️ `tick` EXISTS BECAUSE A WKWEBVIEW CAN HOLD A ZOMBIE SOCKET that never fires
+   onerror. Silence past SSE_STALE_MS is death; safe in both directions, since the
+   server pings every 25s and a wrong verdict costs only the 4s poll.
+   `off` is terminal: a runtime with no EventSource never gets one. */
+function sseNext(st, ev, now){
+  const phase = (st && st.phase) || 'connecting';
+  const lastFrame = (st && st.lastFrame) || 0;
+  now = now || 0;
+  if (ev === 'unsupported') return {phase:'off', lastFrame:0};
+  if (phase === 'off') return {phase:'off', lastFrame:0};
+  if (ev === 'frame') return {phase:'live', lastFrame:now};
+  if (ev === 'error') return {phase:'down', lastFrame:lastFrame};
+  if (ev === 'open')  return {phase:(phase === 'live' ? 'live' : 'connecting'), lastFrame:lastFrame};
+  if (ev === 'tick' && phase === 'live' && (now - lastFrame) > SSE_STALE_MS)
+    return {phase:'down', lastFrame:lastFrame};
+  return {phase:phase, lastFrame:lastFrame};
+}
+function sseIsLive(st){ return !!st && st.phase === 'live'; }
+
+let sse = null;
+let sseState = {phase:'connecting', lastFrame:0};
+let sseStats = {frames:0, drops:0, refreshes:0, lost:0, live:0};
+let sseCoalesce = {};
+
+/* Everything the cadence depends on, read from the LAST STATUS the poll already
+   fetched — no new state, and no extra request to decide how often to request. */
+function pollState(){
+  const prov = (lastStatus && lastStatus.prov) || {};
+  const comps = (lastStatus && lastStatus.components) || {};
+  return {
+    provisioning: Object.values(prov).some(p => ['pending','starting'].includes(p.state)),
+    unhealthy: Object.values(comps).some(c => healthOf(c) !== 'ok'),
+    sseLive: sseIsLive(sseState),
+    sseOff: sseState.phase === 'off',
+  };
+}
+function armPoll(){
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, pollCadenceMs(pollState()));
+}
+
+/* Coalesce: the emitters are BURSTY on purpose (starting one component publishes a
+   phase per component in its dependency closure), and refresh() is three fetches. One
+   refresh per burst is the same screen with a fraction of the work. */
+function sseRun(key, ms, fn){
+  if (sseCoalesce[key]) return;
+  sseCoalesce[key] = setTimeout(() => {
+    sseCoalesce[key] = null;
+    try { fn(); } catch (e) {}
+  }, ms);
+}
+
+/* THE WHOLE MAPPING. Each kind → the poll handler that already owned that surface.
+   A kind this build does not know is IGNORED (and the heartbeat covers it), which is
+   what lets the bridge add one without a lockstep panel update. */
+function sseDispatch(kind){
+  if (kind === 'download') return sseRun('dl', 250, () => { ensureDlPoll(); refreshDownloads(); });
+  if (kind === 'nav') return sseRun('nav', 250, navSync);
+  if (kind === 'model'){
+    sseRun('status', 120, () => { sseStats.refreshes++; refresh(); });
+    return sseRun('models', 400, () => {
+      try { initModels(); } catch (e) {}
+      try { loadChatModels(); } catch (e) {}
+    });
+  }
+  if (kind === 'component' || kind === 'health' || kind === 'config')
+    return sseRun('status', 120, () => { sseStats.refreshes++; refresh(); });
+}
+
+function sseStep(ev){
+  const was = sseState.phase;
+  sseState = sseNext(sseState, ev, Date.now());
+  if (sseState.phase === was) return;
+  if (sseState.phase === 'live'){
+    sseStats.live++;
+    feed('events', 'live updates on — status polling relaxed to '
+                 + (POLL_HEARTBEAT / 1000) + 's');
+    // ⚠️ ONE READING BEFORE LENGTHENING, AND THIS WAS A REAL DEFECT FOUND BY DRIVING.
+    // The first version just called armPoll() here, which schedules 30s out. Coming
+    // back from a gap the panel is by definition behind (it missed every transition
+    // while the stream was down), and after a bridge restart the LAST thing the poll
+    // wrote was `BRIDGE UNREACHABLE` — which then sat on screen for up to 30 seconds
+    // after everything was demonstrably fine. A stale alarm is a lie about the present.
+    // refresh() re-arms the timer itself, at the relaxed cadence, so this both resyncs
+    // and lengthens.
+    clearTimeout(pollTimer);
+    refresh();
+  } else if (sseState.phase === 'down' || sseState.phase === 'off'){
+    if (sseState.phase === 'down') sseStats.lost++;
+    feed('events', sseState.phase === 'off'
+      ? 'live updates unavailable here — polling every ' + (POLL_WATCH / 1000) + 's'
+      : 'live updates lost — polling every ' + (POLL_BACKSTOP / 1000) + 's until they return');
+    // Shorten IMMEDIATELY and take one reading right now: the whole point of the
+    // backstop is that the moment push stops, the UI does not.
+    clearTimeout(pollTimer);
+    refresh();
+  }
+}
+
+function sseBoot(){
+  if (typeof EventSource === 'undefined'){ sseStep('unsupported'); armPoll(); return; }
+  try {
+    sse = new EventSource(SSE_URL);
+    // EventSource RECONNECTS ITSELF (honouring the server's `retry:` hint), so there
+    // is no reconnect loop here on purpose — inventing one would fight the browser's.
+    sse.onopen = () => sseStep('open');
+    sse.onerror = () => sseStep('error');
+    sse.onmessage = (m) => {
+      sseStats.frames++;
+      sseStep('frame');
+      let j = null; try { j = JSON.parse(m.data); } catch (e) { return; }
+      // `missed` = the hub dropped events for this subscriber (a wedged tab catching
+      // up). The honest reaction is to refetch everything, which is also the only
+      // reaction this page has.
+      if (j.missed){ sseStats.drops += j.missed; sseDispatch('component'); }
+      sseDispatch(String(j.type || ''));
+    };
+  } catch (e) { sseStep('unsupported'); }
+  // Deliberately NO staleness timer: refresh() calls sseStep('tick') itself, and it
+  // runs at least every POLL_HEARTBEAT ms. A zombie stream is therefore detected
+  // without adding a single wakeup to the idle path — which is the whole point.
+  armPoll();
+}
+// Diagnostics for the degradation proof (paired with GET /api/events/stats).
+window.__sse = () => ({phase: sseState.phase, cadence_ms: pollCadenceMs(pollState()),
+                       state: pollState(), stats: sseStats});
+
 async function refresh(manual) {
+  sseStep('tick');            // zombie-stream check, on the timer we already have
   let s;
   try { s = await (await fetch('/api/status')).json(); statusFails = 0; }
   catch {
@@ -2061,9 +2255,9 @@ async function refresh(manual) {
   renderSetup();      // §E: keep the checklist glyphs live if it's open
   maybeAutoSetup();   // §E: one-time auto-show if a component needs setup
 
-  // Poll faster while anything is provisioning, else settle to 6s.
-  const active = Object.values(prov).some(p => ['pending','starting'].includes(p.state));
-  clearTimeout(pollTimer); pollTimer = setTimeout(refresh, active ? 1500 : 6000);
+  // THE CADENCE, now owned by pollCadenceMs(): 1.5s provisioning · 6s watching ·
+  // 4s backstop when push is dead · 30s heartbeat when push is live and all green.
+  armPoll();
 }
 
 function showProvLog(name) {
@@ -10086,8 +10280,58 @@ function chatSummary(holder){
   const steps = holder._steps || [];
   if (!steps.length){ if (holder._status){ holder._status.remove(); holder._status = null; } return; }
   chatStatusEl(holder).innerHTML =
-    steps.map(st => `<span class="d">✓</span> ${esc(st.tool)}`).join(' · ')
+    steps.map(st => st.error
+      // BE-01: a step whose tool FAILED is never stamped ✓. The summary line is the
+      // most-read artifact of a turn — a green tick over a refused write is the
+      // false-Done lie in miniature, one line above the chip that contradicts it.
+      ? `<span class="x">✗</span> ${esc(st.tool)}`
+      : `<span class="d">✓</span> ${esc(st.tool)}`).join(' · ')
     + ` <span class="dim">— ${steps.length} step${steps.length > 1 ? 's' : ''}</span>`;
+}
+
+/* ── BE-01 — the ✗ chip for a failed tool, in the MAIN chat lane ───────────────
+   The bridge marks every failure in every lane at ONE seam (hermes_event_to_frames
+   sets is_error + error on the tool_output frame, with the double-encoding unwrap
+   already applied), so native tools and every MCP server alike arrive marked.
+
+   ⚠️ THE CHIP LIVES ON THE HOLDER, NOT IN .body — the end-of-turn renderChatBody()
+   rebuilds .body from scratch, so a chip drawn into it would be silently deleted by
+   the model's own prose arriving. Same placement the produced-file cards use.
+   chatToolErrsRedraw() re-asserts after that render; it is idempotent (draws only
+   what is missing), so it is a no-op today and a net for a future renderer change.
+
+   HONEST LIMIT: like the file cards, chips do not survive a session reload — a
+   Phase-3 transcript stores prose, not frames.
+   Executed (DOM shim) by bridge/tests/test_chat_toolerr.js. */
+function chatToolErrChip(holder, tool, why){
+  const d = document.createElement('div');
+  d.className = 'toolerr';
+  const x = document.createElement('span'); x.className = 'te-x'; x.textContent = '✗';
+  const t = document.createElement('span'); t.className = 'te-tool';
+  t.textContent = String(tool || 'tool');
+  const w = document.createElement('span'); w.className = 'te-why';
+  // "a tool failed" is not an answer to "what went wrong" — so when the tool said
+  // nothing, the chip says THAT, rather than implying we know more than we do.
+  w.textContent = ' — ' + (String(why || '').trim()
+                           || 'it failed, and said nothing about why');
+  d.appendChild(x); d.appendChild(t); d.appendChild(w);
+  holder.appendChild(d);
+  return d;
+}
+function chatToolErr(holder, tool, why){
+  const chip = {tool: String(tool || 'tool'), why: String(why || '')};
+  (holder._toolErrors = holder._toolErrors || []).push(chip);
+  return chatToolErrChip(holder, chip.tool, chip.why);
+}
+function chatToolErrsRedraw(holder){
+  const want = (holder._toolErrors || []).length;
+  if (!want) return 0;
+  const have = holder.querySelectorAll('.toolerr').length;
+  for (let i = have; i < want; i++){
+    const c = holder._toolErrors[i];
+    chatToolErrChip(holder, c.tool, c.why);
+  }
+  return Math.max(want - have, 0);
 }
 
 // ── Hermes Phase 2 — inline approval cards ──────────────────────────────────
@@ -10625,6 +10869,7 @@ async function sendChat() {
             const od = holder.querySelector('details.think'); if (od) od.open = false;
             holder._raw = body.textContent;   // keep the raw answer BEFORE it becomes cards (Copy reads this)
             renderChatBody(body, body.textContent);   // PHASE 3: render md + card artifact fenced blocks
+            chatToolErrsRedraw(holder);   // BE-01: the ✗ chips outlive the re-render
             break;
           }
           let j; try { j = JSON.parse(payload); } catch { continue; }
@@ -10730,7 +10975,29 @@ async function sendChat() {
             (holder._steps = holder._steps || []).push({tool: raw});
             chatStatus(holder, '▸', isWeb ? 'searching the web…' : ('running ' + raw + '…'));
           } else if (j.type === 'tool_output' || j.type === 'agent_step') {
-            chatStatus(holder, '▸', 'reading results…');
+            // ⚠️ BE-01 — A TOOL THAT FAILED MUST NOT ARRIVE LOOKING LIKE A TOOL THAT
+            // WORKED. This ONE handler is every lane's tool_output in this page
+            // (Hermes / Odysseus-agent / direct all share the stream renderer above),
+            // so the branch fixes the class rather than one lane: whichever lane the
+            // bridge marks `is_error` on gets the chip. See chatToolErr().
+            if (j.is_error) {
+              const etool = String(j.tool || 'tool');
+              const ewhy  = String(j.error || '').trim();
+              // A tool_output with no tool_start before it (a frame lost to a
+              // reconnect) starts its OWN step rather than marking step -1.
+              const steps = (holder._steps = holder._steps || []);
+              const last  = steps[steps.length - 1];
+              if (last && !last.error) last.error = ewhy || 'refused';
+              else steps.push({tool: etool, error: ewhy || 'refused'});
+              chatToolErr(holder, etool, ewhy);
+              // If the ✓-summary is ALREADY on screen it is now a lie — redo it.
+              if (holder._summarized) { holder._summarized = false; chatSummary(holder); }
+              turnStage('a tool failed');
+            } else if (!holder._summarized) {
+              // …and once the summary exists, "reading results…" must not clobber it
+              // (that would erase the ✗ this handler just drew into it).
+              chatStatus(holder, '▸', 'reading results…');
+            }
           } else if (j.type === 'web_sources') {
             const items = j.data || [];
             const det = document.createElement('details'); det.className = 'sources';
@@ -12711,7 +12978,8 @@ renderSidebar();       // NAV: draw both rails from the INSTANT (localStorage) c
 navSync();             // …then adopt data/nav.json, the copy the native shell reads
 designBoot();          // DESIGN: reconcile the persisted design with what actually painted
 applySolo();           // SOLO: ?solo=<view> → chromeless, pinned to that view (native Music tab)
-refresh();   // self-schedules the next poll (adaptive: 1.5s while provisioning, else 6s)
+refresh();   // self-schedules the next poll via armPoll() — see THE SSE HYBRID
+sseBoot();   // …and subscribe to the push channel that lets that poll slow down
 </script>
 </body>
 </html>

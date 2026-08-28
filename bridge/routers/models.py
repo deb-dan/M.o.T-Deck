@@ -8,6 +8,7 @@ import threading
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
+from ..core.events import publish
 from ..core.modelid import _live_model_id
 from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, cfg
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
@@ -475,37 +476,56 @@ def api_models_rescan() -> JSONResponse:
 _SWITCH = {"busy": False, "log": ""}
 
 
+def _switch_log(msg: str, done: bool = False) -> None:
+    """THE single writer of the switch log — and therefore the single SSE emit point
+    for "the runner's model is changing" (2026-08-28).
+
+    The panel's own 2s switch-status poll is NOT removed by this and must not be: it is
+    what drives the modal's progress line, and a switch is the one moment the user is
+    staring at the screen waiting. What the push adds is that every OTHER surface — the
+    Mission Control cards, the chat header's model stamp, the sidebar dots — repaints on
+    the transition instead of on its own next tick.
+
+    ⚠️ Called from _do_switch's daemon THREAD as well as from the route. publish() is
+    thread-safe and never raises."""
+    _SWITCH["log"] = msg
+    publish("model", phase=msg[:160], done=bool(done))
+
+
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
     """Fable QA hardening: check exit codes (a failed load must NOT report success),
     and roll harness.yaml back to the previous model on failure so the next Start
     uses a known-good model instead of retrying a broken one."""
     try:
-        _SWITCH["log"] = (f"downloading + loading {new_id} — large downloads take minutes…"
-                          if "/" in new_id else f"loading {new_id}…")
+        _switch_log(f"downloading + loading {new_id} — large downloads take minutes…"
+                    if "/" in new_id else f"loading {new_id}…")
         r = _script("start_component.sh", "runner")
         if r.returncode != 0:
             _set_runner_model(old_id)   # rollback pin; runner is down but recoverable
             tail = (r.stdout + r.stderr)[-400:]
-            _SWITCH["log"] = f"FAILED to load {new_id} — reverted to {old_id}. {tail}"
+            _switch_log(f"FAILED to load {new_id} — reverted to {old_id}. {tail}")
             return
         # The runner is now running with whatever `load` was saved at this moment —
         # record it so the panel can say "not applied yet" only when it is TRUE.
         _record_load_launch(new_id)
         if restart_hermes:
-            _SWITCH["log"] = "re-wiring Hermes…"
+            _switch_log("re-wiring Hermes…")
             if _script("start_component.sh", "hermes").returncode != 0:
-                _SWITCH["log"] = f"active: {new_id} — but Hermes restart FAILED (see logs)"
+                _switch_log(f"active: {new_id} — but Hermes restart FAILED (see logs)")
                 return
         if restart_ody:
-            _SWITCH["log"] = "re-wiring Odysseus…"
+            _switch_log("re-wiring Odysseus…")
             if _script("start_component.sh", "odysseus").returncode != 0:
-                _SWITCH["log"] = f"active: {new_id} — but Odysseus restart FAILED (see logs)"
+                _switch_log(f"active: {new_id} — but Odysseus restart FAILED (see logs)")
                 return
-        _SWITCH["log"] = f"active: {new_id}"
+        _switch_log(f"active: {new_id}")
     except Exception as e:
-        _SWITCH["log"] = f"switch error: {str(e)[:200]}"
+        _switch_log(f"switch error: {str(e)[:200]}")
     finally:
         _SWITCH["busy"] = False
+        # The switch is OVER — whatever the outcome. `done` is what lets the panel
+        # re-read the model list once instead of on every phase.
+        publish("model", phase="switch finished", done=True)
 
 
 @app.post("/api/models/switch")
@@ -543,6 +563,7 @@ async def api_switch_model(req: Request) -> JSONResponse:
     # set BEFORE the thread: no double-switch race. (Download progress lives in the
     # download manager now — "/" repo ids are rejected above, so no HF fetch here.)
     _SWITCH.update(busy=True, log="starting…")
+    publish("model", phase="starting…")
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
@@ -562,6 +583,10 @@ def _eject_runner() -> None:
     _clear_expected("runner")     # intentional → "stopped", not "degraded"
     PROV.pop("runner", None)
     _set_runner_model("")         # no active model — Start must route the user to pick
+    # SSE: the eject transition, at its source (shared by /api/models/eject and by
+    # deleting a live model, so both get the push from one line).
+    publish("model", phase="ejected", done=True)
+    publish("component", name="runner", state="stopping")
 
 
 @app.post("/api/models/eject")

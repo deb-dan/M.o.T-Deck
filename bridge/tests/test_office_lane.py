@@ -1321,9 +1321,20 @@ check("⚠️ REGRESSION PIN: the route parses with `await req.json()`, NOT `jso
       "NameError that this route's own except would swallow, and every beacon would "
       "log as 'unparseable'",
       "await req.json()" in DIAG_CODE and "json.loads" not in DIAG_CODE)
-check("…and app.py still has no module-level `json` import, which is what makes the "
-      "line above load-bearing rather than decorative",
-      not re.search(r"^import json$", APP, re.M))
+# ⚠️ RE-SCOPED 2026-08-28 (SSE-hybrid slice). This read `APP` — bridge/appsrc.py's view
+# of the WHOLE app layer — and asked whether ANY of its ~30 modules imports json. That
+# was the same question as "does the diag route's module import json" only while the app
+# layer was ONE FILE; after the router/core split it became a question about 30 unrelated
+# modules, and the first one to legitimately need json (bridge/core/events.py, which
+# serialises SSE frames) turned it red for a reason that has nothing to do with the
+# beacon. `json` is a MODULE global: the only file whose imports can make `json.loads`
+# resolve inside this route is the file the route lives in.
+_DIAG_OWNER = (ROOT / "bridge" / "routers" / "office.py").read_text()
+check("…and the diag route's OWN module still has no module-level `json` import, which "
+      "is what makes the line above load-bearing rather than decorative",
+      '@app.post("/api/office/diag")' in _DIAG_OWNER
+      and not re.search(r"^import json$", _DIAG_OWNER, re.M)
+      and not re.search(r"^import json as ", _DIAG_OWNER, re.M))
 check("the route works with the office module UNAVAILABLE — that case (openpyxl "
       "missing, a syntax error in office.py) is itself worth reporting, so the "
       "reporting path cannot depend on the module importing",

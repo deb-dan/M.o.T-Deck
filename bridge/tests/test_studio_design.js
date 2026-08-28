@@ -166,16 +166,43 @@ console.log('2. Editorial does not pay for the second design');
      '…and an unknown stored value stamps nothing (no attribute without a stylesheet)');
 }
 {
-  // THE BYTE BUDGET. Editorial's page weight is the thing "untouched" has to include.
-  // The number is the measured growth plus headroom for one small future fix; it is
-  // deliberately tight enough that moving prose INTO this file (which is never served)
-  // stays the cheaper option.
-  const BUDGET = 12000;
+  /* THE BYTE BUDGET. Editorial's page weight is the thing "untouched" has to include,
+     and the point that has always mattered is that the 59KB design is NOT inlined.
+
+     ⚠️ RE-EXPRESSED 2026-08-28 (SSE-hybrid slice) — and this is a fence being MOVED,
+     so it is spelled out for review rather than quietly adjusted. The check was
+     `size - 675454 <= 12000`, where 675454 is index.html at c0eaf03, the commit BEFORE
+     the studio slice. That measured "all growth of index.html since that commit" while
+     claiming to measure studio's footprint, so it charged every LATER, unrelated slice
+     against studio's budget — the first one to touch the page (BE-01's ✗ chip + the SSE
+     hybrid, +13.7KB of new behaviour) failed a studio fence it has nothing to do with.
+     A fence that fails for reasons outside its own subject teaches people to raise the
+     number, which is how a fence dies.
+
+     So it is now two separate facts, each checkable on its own terms:
+       (a) STRUCTURAL — the design asset is not inlined. That is the real invariant and
+           it cannot rot: it is asserted against the sheet's own content, not a number.
+       (b) A CEILING on the page, deliberately tight enough that moving prose into a
+           test file (never served) stays the cheaper option — which is exactly what
+           the SSE slice did before raising it. A slice that needs more must say what
+           it bought, here, in this comment.
+
+     Ceiling history (each line = a slice that consciously raised it):
+       690000  studio design slice (2026-08-28) — the chip, the axis, designBoot
+       706000  BE-01 ✗ chip + the SSE hybrid (2026-08-28) — +13.7KB: the events
+               subscription, the cadence state machine, the chip renderer and its CSS */
+  const CEILING = 706000;
   const size = Buffer.byteLength(html, 'utf8');
-  const BASE = 675454;            // bridge/panel/index.html at c0eaf03, pre-slice
-  const grew = size - BASE;
-  ok(grew <= BUDGET, 'index.html grew ' + grew + ' bytes (budget ' + BUDGET + ') — the '
-     + 'design itself is ' + Buffer.byteLength(sd, 'utf8') + ' bytes and is NOT in it');
+  ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
+  // (a) the structural half: the design's own rules are NOT in the page.
+  const inline = html.split('<style>')[1].split('</style>')[0];
+  const sdRules = (sd.match(/html\[data-design="studio"\][^{]*\{/g) || [])
+    .map(s => s.trim()).slice(0, 40);
+  ok(sdRules.length >= 20, 'the design sheet has rules to check against ('
+     + sdRules.length + ' sampled)');
+  ok(!sdRules.some(r => inline.includes(r)),
+     'NOT ONE of the design\'s own rules appears in index.html\'s inline sheet — the '
+     + Buffer.byteLength(sd, 'utf8') + '-byte design is still a lazy-loaded asset');
   // and the growth is confined to the named seams
   for (const seam of ['harness-design', 'id="design-chip"', 'function designApply(',
                       'function setDesign(', 'function designSelect(',

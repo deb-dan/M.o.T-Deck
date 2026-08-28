@@ -38,8 +38,19 @@ STATUS after the 2026-08-28 batch fix (this file is not the gate — the gate te
     migration in office.migrate_checkpoint_ns and a hands-off rule for destructive ops
     (checkpoint_dir_to_move). Gate: test_office_journey.py (the journey) and
     test_office_mcp.py (the key, the inverse, the migration, the corner found live).
-  · BE-01 still REPRODUCES — DEFERRED by ruling to the SSE/panel slice that owns
-    bridge/panel/index.html. It is the only line left in this file.
+  · BE-01 FIXED (2026-08-28, the SSE/panel slice that owns bridge/panel/index.html) —
+    the chat lane's ONE tool_output handler (shared by the Hermes, Odysseus-agent and
+    direct lanes) grew the is_error branch: a failed or denied tool renders a red ✗ chip
+    carrying the tool's own sentence, drawn on the message HOLDER so the end-of-turn
+    renderChatBody() cannot delete it (re-asserted by chatToolErrsRedraw after that
+    render), and the step is marked so chatSummary can never stamp ✓ over it. Gate:
+    bridge/tests/test_chat_toolerr.js — the three chip functions EXECUTED against a DOM
+    shim, plus the handler, the all-designs token proof, and the two controls (the
+    bridge's is_error mapping and office.html's own chip).
+
+EVERY LINE IN THIS FILE NOW READS `fixed`. Per the note above, the probes have all been
+promoted into real gate suites (named per finding) and this file has done its job — it
+is kept for one more wave as the campaign record, then deletable.
 """
 from __future__ import annotations
 
@@ -149,6 +160,17 @@ try:
          "routers/hermes.py sets fr['is_error'] for every lane; office.html draws the\n"
          "✗ chip; index.html's handler (near 'tool_output' ~line 10527) says only\n"
          "'reading results…' whatever the frame carried.")
+    # FIXED 2026-08-28. The probe above is deliberately left as-is (it is what proved
+    # the bug), and these three lines are what the FIX has to keep true — a chip that
+    # is drawn but deleted by the end-of-turn re-render would still pass a bare
+    # `is_error in idx`, which is precisely the mistake worth pinning.
+    echo("BE-01f", "false-Done",
+         "…and the fix is a real chip, not just a mention of is_error: it is drawn on "
+         "the holder, re-asserted after renderChatBody, and the step is marked so the "
+         "✓ summary cannot contradict it",
+         not ("function chatToolErrChip(" in idx
+              and "chatToolErrsRedraw(holder);   // BE-01" in idx
+              and "st.error" in idx))
     echo("BE-01c", "CONTROL",
          "the original v1.5.9 fix holds: the bridge maps is_error and office.html "
          "renders the ✗ chip",

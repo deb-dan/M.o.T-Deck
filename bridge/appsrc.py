@@ -79,6 +79,10 @@ FILES: tuple[str, ...] = (
     "routers/office.py",
     "core/officelog.py",
     "routers/oo.py",
+    # APPENDED, not inserted — a module with no pre-split position must not separate a
+    # pair of neighbours some assertion slices between. See the matching note in
+    # bridge/app.py's _LANES.
+    "core/events.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

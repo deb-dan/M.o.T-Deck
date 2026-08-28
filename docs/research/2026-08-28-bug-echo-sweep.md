@@ -39,7 +39,14 @@ self-running, exits 0 always, NOT in the gate; the campaign-ledger pattern of
 
 ## BUG — real echoes, in user-impact order
 
-### BE-01 — the false-Done class is fixed in the LOffice panel and NOT in the main chat lane
+### BE-01 — ✅ **FIXED 2026-08-28** (the SSE/panel slice) — the false-Done class was fixed in the LOffice panel and NOT in the main chat lane
+> **Fix:** `bridge/panel/index.html`'s ONE `tool_output` handler (shared by the Hermes,
+> Odysseus-agent and direct lanes) grew the `is_error` branch — a red ✗ chip carrying the
+> tool's own sentence, drawn on the message HOLDER so the end-of-turn `renderChatBody()`
+> cannot delete it, plus the step marked so `chatSummary` can never stamp ✓ over it.
+> Gate: `bridge/tests/test_chat_toolerr.js` (70 checks; the chip functions EXECUTED
+> against a DOM shim, the all-designs token proof, and both v1.5.9 controls).
+> The paragraph below is the original finding, kept verbatim as the record.
 `bridge/panel/index.html:10527` · echoes the **2026-08-27 agent-consent incident**
 (model narrated "Done. Added Purchases…" over a failed write; nothing on screen
 contradicted it — fixed v1.5.9 with harness-authored lines + ✗ chips).

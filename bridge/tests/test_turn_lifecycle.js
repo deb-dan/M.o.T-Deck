@@ -368,6 +368,19 @@ check('SCENARIO — switch sessions with a card open, then answer: the card stil
   && !/session_id: chatPane\.hermesSid/.test(approval + ask)
   && (html.match(/card\._sid/g) || []).length >= 4);
 
+/* BE-01 (2026-08-28) — cross-reference pin. bridge/tests/test_chat_toolerr.js owns the
+ * chip; this ONE line lives here because this file owns the stream renderer, and the
+ * regression to guard against is somebody simplifying the tool_output branch back to a
+ * single chatStatus() call while looking at the turn lifecycle rather than at the chip.
+ * A failed tool must never be as invisible as it was in the 2026-08-27 incident. */
+{
+  const tob = html.slice(html.indexOf("j.type === 'tool_output'"),
+                         html.indexOf("j.type === 'web_sources'"));
+  check('the tool_output branch still renders a failure '
+        + '(BE-01 — the chip itself is owned by test_chat_toolerr.js)',
+    tob.length > 100 && /if \(j\.is_error\)/.test(tob) && /chatToolErr\(/.test(tob));
+}
+
 /* The pane-scoped race token: two independent rail loaders must never invalidate
  * each other (draft §6 "honourable mentions"). */
 check('the rail race token is PANE state, not a shared module counter',

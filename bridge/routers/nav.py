@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, _NAV_ERR, _nav, app
+from ..core.events import publish
 
 
 # ── NAV generation (FABLE-STUDIO-PHASE2-SPEC §A) ─────────────────────────────
@@ -64,4 +65,10 @@ async def api_nav_set(req: Request) -> JSONResponse:
     except OSError as e:
         return JSONResponse({"ok": False, "error": f"could not save: {e}"}, status_code=500)
     gen = _nav_bump()
+    # SSE (2026-08-28): the gen bump, pushed. The Swift shell's 5s nav_gen poll stays
+    # exactly as it is — it is a different consumer with its own backstop, and a solo
+    # tab (no script-message handler) still has nothing but that poll. This event is
+    # for the OTHER open panels: a layout saved in one tab now redraws the sidebar in
+    # the next without waiting for anybody's tick.
+    publish("nav", gen=gen)
     return JSONResponse({"ok": True, "nav": model, "gen": gen})

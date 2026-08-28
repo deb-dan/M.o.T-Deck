@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import yaml
 from .appctx import ROOT
+from .events import publish
 from .procs import cfg
 
 
@@ -42,6 +43,10 @@ def _hermes_cfg_bump() -> int:
     has ALREADY succeeded, so it must never be able to fail that write."""
     global _HERMES_CFG_GEN
     _HERMES_CFG_GEN += 1
+    # SSE (2026-08-28): pushed as `config`. Same rider as nav's — the Swift shell's 4s
+    # hermes_config_gen poll is UNTOUCHED (it reloads a webview, which is a different
+    # decision from repainting a card, and it is the only consumer that can act on it).
+    publish("config", gen=_HERMES_CFG_GEN)
     return _HERMES_CFG_GEN
 
 

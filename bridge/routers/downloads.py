@@ -6,7 +6,18 @@ import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, _modeltools, _voice, app
+from ..core.events import publish
 from ..core.hfclient import _HF
+
+# ── SSE (2026-08-28): how often a running download is allowed to push ────────
+# ⚠️ THE ONE EMITTER THAT NEEDS A THROTTLE, AND THE NUMBER IS NOT ARBITRARY. The read
+# loop below pulls 1 MB chunks, so a 30 GB weight set is ~30,000 iterations: emitting
+# per chunk would turn a push channel into a flood, wake the panel thousands of times,
+# and make the hub's own drop counter the busiest thing in the process. A progress bar
+# needs about the cadence a human eye reads, which is also exactly the panel's old
+# download poll (2s) — so this is not slower than what it replaces; it is the same
+# cadence with the wakeups moved off the idle path (nothing ticks when nothing runs).
+DL_TICK_S = 2.0
 
 
 # ── Download manager (Bridge-owned, no Jan) ──────────────────────────────────
@@ -199,6 +210,7 @@ async def _run_download(dl_id: str) -> None:
     e = DOWNLOADS.get(dl_id)
     if not e:
         return
+    last_push = 0.0           # SSE progress throttle clock (see DL_TICK_S)
     try:
         for f in e["files"]:
             dest, total = f["dest"], f["total"]
@@ -224,6 +236,7 @@ async def _run_download(dl_id: str) -> None:
                         pass
                     e["state"] = "error"
                     e["error"] = f"HTTP {resp.status_code}: {snip}"[:300]
+                    publish("download", id=dl_id, state="error")
                     return
                 # A 200 to a Range request means the server ignored it → restart file.
                 mode = "ab" if (existing > 0 and resp.status_code == 206) else "wb"
@@ -250,11 +263,18 @@ async def _run_download(dl_id: str) -> None:
                             inst = (f["done"] - last_done) / dt
                             e["rate"] = 0.7 * e["rate"] + 0.3 * inst
                             last_ts, last_done = now, f["done"]
+                        # SSE progress tick, throttled to DL_TICK_S. Carries NO
+                        # numbers: the panel's handler is refreshDownloads(), which
+                        # reads /api/dl — so a tick can never disagree with the list.
+                        if now - last_push >= DL_TICK_S:
+                            last_push = now
+                            publish("download", id=dl_id, state="downloading")
             if e["state"] == "cancelled":
                 break
             _os.replace(part, dest)
         if e["state"] == "cancelled":
             _dl_cleanup(e)
+            publish("download", id=dl_id, state="cancelled")
             return
         # All files complete → register the model.
         base = (_mlx_registry_entry(e) if e.get("kind") == "mlx"
@@ -282,9 +302,15 @@ async def _run_download(dl_id: str) -> None:
                 base["tools"] = None
         _registry_add(base)
         e["state"] = "done"
+        # Two events, because two things changed: the download list AND the model
+        # library (the registry gained an entry). Each maps to the poll handler that
+        # already owns that surface — no new render logic on either side.
+        publish("download", id=dl_id, state="done")
+        publish("model", phase="library changed", done=True)
     except Exception as ex:
         e["state"] = "error"
         e["error"] = str(ex)[:300]
+        publish("download", id=dl_id, state="error")
 
 
 # Files a model NEVER needs at runtime. Everything else in the repo is fetched.
@@ -333,6 +359,9 @@ def _mk_download(repo: str, files: list, model_id: str, kind: str,
              "model_dir": model_dir, "voice_format": voice_format, "task": None}
     DOWNLOADS[dl_id] = entry
     entry["task"] = asyncio.create_task(_run_download(dl_id))
+    # SSE: a new download exists. This is what lets the panel's Downloads section
+    # appear the instant a Get is clicked in ANOTHER tab.
+    publish("download", id=dl_id, state="downloading")
     return entry
 
 
@@ -456,6 +485,7 @@ async def dl_pause(dl_id: str) -> JSONResponse:
         return JSONResponse({"ok": False}, status_code=404)
     if e["state"] == "downloading":
         e["state"] = "paused"        # the task returns on its next chunk
+        publish("download", id=dl_id, state="paused")
     return JSONResponse(_dl_json(e))
 
 
@@ -473,6 +503,7 @@ async def dl_resume(dl_id: str) -> JSONResponse:
         e["rate"] = 0.0
         e["state"] = "downloading"
         e["task"] = asyncio.create_task(_run_download(dl_id))
+        publish("download", id=dl_id, state="downloading")
     return JSONResponse(_dl_json(e))
 
 
@@ -487,6 +518,7 @@ async def dl_cancel(dl_id: str) -> JSONResponse:
     # If nothing is actively streaming (paused/finished), clean up the partials here.
     if was in ("paused", "done", "error") or task is None or task.done():
         _dl_cleanup(e)
+    publish("download", id=dl_id, state="cancelled")
     return JSONResponse(_dl_json(e))
 
 

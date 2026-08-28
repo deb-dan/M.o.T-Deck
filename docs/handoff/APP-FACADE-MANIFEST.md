@@ -60,7 +60,35 @@ Order is the order the code sat in the pre-split file, which is also
 | 29 | `bridge/routers/office.py` | 508 | 9448-9951 (− the logger pair) |
 | 30 | `bridge/core/officelog.py` | 25 | 9460-9467 |
 | 31 | `bridge/routers/oo.py` | 150 | 9952-10092 |
+| 32 | `bridge/core/events.py` | 263 | — (NEW, 2026-08-28) |
 | | **total** | **10666** | 10,072 |
+
+⚠️ **The table's line counts are the SPLIT-DAY snapshot** and are not re-measured by
+any test — later slices grow these files normally (the only enforced number is the
+1,500-line ceiling in `bridge/tests/test_app_facade.py`). Regenerate before relying on
+a specific figure.
+
+### Added since the split
+
+| # | module | what it is | why it is LAST in `FILES` / `_LANES` |
+|---:|---|---|---|
+| 32 | `bridge/core/events.py` | the SSE event hub + `GET /api/events` and `/api/events/stats` (the SSE-hybrid slice, 2026-08-28) | it has **no pre-split position**, and a dozen assertions slice `appsrc`'s view *between* two neighbouring routes. Inserting a new module in the middle would separate a pair some test expects to be adjacent, for no gain — so a module with no original line range is **appended** to both lists. The only cost is where `/api/events` sits in `/openapi.json`. |
+
+**Adding a module is still exactly two lines** — one in `bridge/app.py`'s `_LANES`, one
+in `bridge/appsrc.py`'s `FILES` — and both are needed: the first registers the routes
+(importing a lane *is* registering it; there are no `include_router` calls for lanes),
+the second puts it in the source view, without which every `X not in APP_SOURCE`
+assertion about it passes **vacuously**. `bridge/tests/test_events_hub.py` §4 pins both
+for this module, and `test_app_facade.py` §1 then covers its symbols automatically.
+
+⚠️ **A NEW MODULE'S IMPORTS CAN TURN AN OLD APP-WIDE ASSERTION RED — and that is the
+assertion's bug, not the module's.** `core/events.py` does `import json`, which broke
+`test_office_lane.py`'s "app.py has no module-level `json` import" check: that check
+read the whole-app-layer view and so was asking about ~30 unrelated modules, when
+`json` is a *module* global and the only file that can make `json.loads` resolve inside
+a route is the file the route lives in. It was re-scoped to
+`bridge/routers/office.py`. Expect more of this shape: a post-split assertion that
+still reads `APP_SOURCE` where it means "this module".
 
 Largest file: routers/hermes.py at 1206 lines (ceiling was ~1,500). The growth over 10,072 is
 module docstrings and generated per-module import blocks; not a line of logic moved,
@@ -107,7 +135,9 @@ office-mcp suites working unchanged.
 
 **`bridge/core/modelid.py`** — `_display_model`, `_live_model_id`, `_reconcile_live`, `display_model_id`, `wire_model_id`
 
-**`bridge/core/health.py`** — `HEALTH_MISS_LOST`, `PROBE_TIMEOUT_DEFAULT`, `PROBE_TIMEOUT_S`, `_HEALTH_MISS`, `_health_track`, `_probe_timeout`, `health_verdict`
+**`bridge/core/health.py`** — `HEALTH_MISS_LOST`, `PROBE_TIMEOUT_DEFAULT`, `PROBE_TIMEOUT_S`, `_HEALTH_MISS`, `_HEALTH_SAID`, `_health_track`, `_probe_timeout`, `health_verdict`
+
+**`bridge/core/events.py`** — `HUB`, `Hub`, `KINDS`, `PING_S`, `QUEUE_MAX`, `RETRY_MS`, `api_events`, `api_events_stats`, `publish`
 
 **`bridge/routers/components.py`** — `_NOTES`, `status`
 
@@ -137,7 +167,7 @@ that stays on disk is a tool that rots. What DOES stay is the checkable invarian
 
 ```sh
 python -m bridge.appsrc                     # the source view's module boundaries
-./scripts/verify.sh                         # the contract gate (142 + 4 skipped)
-for f in bridge/tests/test_*.py; do python "$f"; done   # 44 suites
-for f in bridge/tests/test_*.js; do node   "$f"; done   # 24 suites
+./scripts/verify.sh                         # the contract gate (143 + 4 skipped)
+for f in bridge/tests/test_*.py; do python "$f"; done   # 46 suites
+for f in bridge/tests/test_*.js; do node   "$f"; done   # 28 suites
 ```

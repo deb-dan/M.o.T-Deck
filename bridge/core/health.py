@@ -1,6 +1,8 @@
 """CORE — the component health verdict: one probe budget, one debounced answer."""
 from __future__ import annotations
 
+from .events import publish
+
 
 
 # ── COMPONENT HEALTH: one probe budget per component, ONE debounced verdict ───
@@ -75,13 +77,43 @@ def health_verdict(expected: bool, running: bool, misses: int,
     return "lost" if m >= n else "transient"
 
 
+_HEALTH_SAID: dict = {}         # component -> the verdict last PUSHED (SSE dedup)
+
+
 def _health_track(name: str, expected: bool, running: bool) -> tuple:
     """Advance the consecutive-miss counter for `name`; return (verdict, misses).
     A recovery (or a clean Stop, which clears .expected) forgets the streak, so a
-    component that blips twice an hour never accumulates its way to 'lost'."""
+    component that blips twice an hour never accumulates its way to 'lost'.
+
+    ⚠️ SSE (2026-08-28) — THE ONE PUSH THAT IS NOT AT A STATE TRANSITION WE CAUSED, AND
+    THE HONEST REASON IT LIVES HERE. Every other event in the hub is emitted where the
+    harness itself changes something (a start, a stop, a switch, a download tick, a nav
+    save). A component that dies ON ITS OWN — an OOM, an upstream crash — changes
+    nothing we wrote; the only place that fact comes into existence is the debounced
+    verdict computed HERE, and this function runs only inside GET /api/status. So there
+    is no "source of truth" to hook that is independent of a poll, and inventing a
+    server-side ticker to create one would be moving the poll into the bridge while
+    adding new state, which this slice explicitly did not do.
+
+    What this DOES buy, and it is worth the four lines: whoever calls /api/status
+    fans the verdict out to everyone. The Swift shell polls it every 4s
+    (app/main.swift hermesGenPoll) and the panel's own slow heartbeat calls it too, so
+    a crash discovered by ANY caller reaches every open panel at once instead of
+    waiting for each one's next tick. The panel's cadence machine covers the rest by
+    refusing to go to the slow heartbeat while anything is unhealthy — it keeps
+    today's 6s watch cadence exactly when a crash is the thing being watched for.
+
+    Dedup on the CHANGE, not on the poll: without _HEALTH_SAID this would publish an
+    event per component per status call, which is a push channel that reproduces the
+    poll's wakeups on purpose."""
     if running or not expected:
         _HEALTH_MISS.pop(name, None)
-        return ("ok", 0)
-    m = _HEALTH_MISS.get(name, 0) + 1
-    _HEALTH_MISS[name] = m
-    return (health_verdict(expected, running, m), m)
+        verdict, misses = ("ok", 0)
+    else:
+        m = _HEALTH_MISS.get(name, 0) + 1
+        _HEALTH_MISS[name] = m
+        verdict, misses = (health_verdict(expected, running, m), m)
+    if _HEALTH_SAID.get(name) != verdict:
+        _HEALTH_SAID[name] = verdict
+        publish("health", name=name, verdict=verdict, misses=misses)
+    return (verdict, misses)
