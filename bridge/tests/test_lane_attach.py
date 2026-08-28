@@ -70,13 +70,21 @@ def _load(names, consts=()):
 
 
 NS = _load(("ody_attach_error", "hermes_attach_error", "flatten_ody_content",
-            "flatten_history", "ody_attachment_handles"),
-           ("IMAGE_MAX_CHARS", "HERMES_IMAGE_MAX_CHARS"))
+            "flatten_history", "ody_attachment_handles",
+            # v1.5.32 — the auto-wired Agent-lane vision
+            "ody_vision_evidence", "ody_vision_wire_decision",
+            "ody_vision_provenance", "ody_name_looks_vision"),
+           ("IMAGE_MAX_CHARS", "HERMES_IMAGE_MAX_CHARS",
+            "ODY_NAME_VISION_KEYWORDS", "ODY_NAME_VISION_RE"))
 ody_attach_error = NS["ody_attach_error"]
 hermes_attach_error = NS["hermes_attach_error"]
 flatten_ody_content = NS["flatten_ody_content"]
 flatten_history = NS["flatten_history"]
 ody_attachment_handles = NS["ody_attachment_handles"]
+ody_vision_evidence = NS["ody_vision_evidence"]
+ody_vision_wire_decision = NS["ody_vision_wire_decision"]
+ody_vision_provenance = NS["ody_vision_provenance"]
+ody_name_looks_vision = NS["ody_name_looks_vision"]
 
 PNG = ("data:image/png;base64,"
        + base64.b64encode(bytes.fromhex(
@@ -164,6 +172,69 @@ check("malformed metadata is skipped, never raised",
                               None]) is not None)
 
 
+print("\n── E. AGENT-LANE VISION, AUTO-WIRED (v1.5.32) ──")
+# THE JOURNEY THIS PINS: attach a picture on the Agent lane with a genuinely
+# multimodal model loaded and get an answer that used the PIXELS. v1.5.28 could
+# not close it — Odysseus classes models by NAME and its `vision_model` was
+# unset, so the picture became "[No vision model configured…]". Driven live
+# 2026-08-28: an orange/blue-circle/green-square probe image came back
+# "Background: orange · Large centred shape: blue circle · Small top-left shape:
+# green square".
+REG = [{"id": "vision-gguf", "mmproj": "/m/mmproj.gguf"},
+       {"id": "vision-mlx", "vision": True},
+       {"id": "text-only", "vision": False, "mmproj": None}]
+check("the evidence gate accepts a gguf mmproj sibling",
+      ody_vision_evidence(REG, "vision-gguf") == "vision-gguf")
+check("…and an mlx vision_config flag", ody_vision_evidence(REG, "vision-mlx") == "vision-mlx")
+check("…and REFUSES a model with no evidence (never a guess from the name)",
+      ody_vision_evidence(REG, "text-only") == "")
+check("…and an id the registry has never heard of", ody_vision_evidence(REG, "ghost") == "")
+check("…and no live model at all (runner down ⇒ no promise)",
+      ody_vision_evidence(REG, None) == "" and ody_vision_evidence([], "x") == "")
+
+# NEVER CLOBBER — the rule that makes this write safe to ship.
+check("an UNSET vision_model is wired", ody_vision_wire_decision("", "", "m1") == (True, "vision_model was unset"))
+w, why = ody_vision_wire_decision("debi-picked-this", "", "m1")
+check("a HAND-SET value is never touched…", w is False)
+check("…and the reason says why, in the user's terms", "set by hand" in why)
+check("a value WE wrote is re-wired when the loaded model changes",
+      ody_vision_wire_decision("m0", "m0", "m1")[0] is True)
+check("…but a hand-set value that merely differs from our marker is still safe",
+      ody_vision_wire_decision("debi", "m0", "m1")[0] is False)
+check("already wired to the loaded model = no write at all (no log spam, no churn)",
+      ody_vision_wire_decision("m1", "m1", "m1")[0] is False)
+check("NO EVIDENCE = no write, even over emptiness",
+      ody_vision_wire_decision("", "", "")[0] is False)
+check("…and whitespace is not evidence", ody_vision_wire_decision("", "", "   ")[0] is False)
+
+# THE PROVENANCE TEXT — two upstream rules, both load-bearing.
+prov = ody_vision_provenance("shot.png", "big-vision-27b", "An orange square.")
+check("the description we store NEVER starts with '[' (upstream discards those)",
+      not prov.startswith("["))
+check("…it names the model that actually read the pixels", "big-vision-27b" in prov)
+check("…it names the file", "shot.png" in prov)
+check("…it SAYS it is a description, not the picture (the anti-lie rule)",
+      "not the picture" in prov)
+check("…and it carries the description itself", "An orange square." in prov)
+check("a nameless/modelless call still produces honest text, never 'None'",
+      "None" not in ody_vision_provenance(None, None, "x")
+      and not ody_vision_provenance(None, None, "x").startswith("["))
+
+# WHERE WE MUST NOT STEP IN: a model Odysseus already recognises gets the pixels
+# natively, and a cached caption there is stamped "treat as authoritative" — so
+# telling such a model "you are reading a description" would be a false statement
+# aimed at the one model that could have done better.
+for good in ("gemma-3-27b-it", "Llama-4-Scout", "Qwen3-VL-4B-Instruct", "some-vlm-8b",
+             "mistral-small-3.1", "phi-4", "glm-4.5v"):
+    check(f"Odysseus's own name test recognises {good}", ody_name_looks_vision(good))
+for miss in ("Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-Q4_K_S",
+             "llama-3.1-8b", "vllm-hosted-thing", "gemma-2-2b-it"):
+    check(f"…and misses {miss[:28]} (which is the whole reason this slice exists)",
+          not ody_name_looks_vision(miss))
+check("a null/odd name never raises",
+      ody_name_looks_vision(None) is False and ody_name_looks_vision(42) is False)
+
+
 # ── D. the flows, driven against stubs ──────────────────────────────────────
 def test_flows():
     try:
@@ -240,6 +311,45 @@ def test_flows():
           json.loads(calls["stream"]["attachments"]) == ["up_9"])
     check("…while the message text itself is untouched",
           calls["stream"]["message"] == "what is this")
+
+    # ---- vision prep rides the Agent lane (v1.5.32) -------------------------
+    calls.clear()
+    prep = {}
+
+    async def _fake_prep(fid, raw, mime, name):
+        prep.update(fid=fid, raw=raw, mime=mime, name=name)
+        if prep.get("boom"):
+            raise RuntimeError("vision prep exploded")
+        return {"source": "precaption", "model": "big-vision", "note": "n", "wired": True}
+
+    OC.ody_vision_prepare = _fake_prep
+    r = client.post("/api/ody/chat", json={"session": "s1", "message": "what is this",
+                                           "image": PNG, "image_name": "shot.png"})
+    check("vision prep is handed the UPLOADED id, the real bytes and the mime",
+          prep.get("fid") == "up_9" and isinstance(prep.get("raw"), bytes)
+          and prep.get("mime") == "image/png" and prep.get("name") == "shot.png")
+    vev = [json.loads(l[6:]) for l in r.text.splitlines()
+           if l.startswith("data: ") and '"vision"' in l]
+    check("…and the panel is TOLD how the model got at the picture", len(vev) == 1)
+    check("…including that it was a DESCRIPTION and by which model",
+          vev and vev[0]["source"] == "precaption" and vev[0]["model"] == "big-vision")
+    check("…before the turn streams (the provenance can't arrive after the answer)",
+          r.text.index('"vision"') < r.text.index('"delta"'))
+    check("…and the turn still carries the attachment id",
+          json.loads(calls["stream"]["attachments"]) == ["up_9"])
+
+    calls.clear()
+    prep.clear()
+    prep["boom"] = True
+    r = client.post("/api/ody/chat", json={"session": "s1", "message": "m", "image": PNG})
+    check("a vision-prep CRASH never costs the user the turn (best-effort, always)",
+          r.status_code == 200 and "stream" in calls and "proxy_error" not in r.text)
+    check("…and it is not misreported as an ATTACHMENT failure (wrong blame, wrong fix)",
+          "refused the attachment" not in r.text and "upload failed" not in r.text)
+    check("…while the panel still hears the honest 'not described' provenance",
+          '"source": "none"' in r.text and "vision prep failed" in r.text)
+    OC.ody_vision_prepare = _fake_prep
+    prep.clear()
 
     calls.clear()
     calls["upload_fails"] = True

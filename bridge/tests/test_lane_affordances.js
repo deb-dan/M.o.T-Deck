@@ -108,28 +108,66 @@ console.log('\n-- the Odysseus vision-config caveat (a DRIVEN finding) --');
 const BLIND = {enabled: true, model: ''};
 const OFF = {enabled: false, model: 'x'};
 const OK = {enabled: true, model: 'some-vl-model'};
-check('agent + vision model + Odysseus has NO vision model: the ⊕ still works but '
-      + 'SAYS SO before the send (the dead end we drove into)',
+// ⚠️ v1.5.32 REWROTE THIS BLOCK ON PURPOSE. v1.5.28 could only WARN about the
+// unset `vision_model`; the bridge now FIXES it (pre-caption + evidence-gated
+// auto-wire — bridge/routers/ody.py ody_vision_prepare), so warning about it
+// would be crying wolf over a problem we just solved. What must survive is the
+// HONESTY: the agent answers from a DESCRIPTION, and that is a NOTE, not a
+// warning — `why` greys the ⊕ and means "act on this", `note` never does.
+check('agent + a vision-capable model + Odysseus with NO vision model set: NO warning '
+      + 'any more — the bridge wires this itself (v1.5.32, the cry-wolf fix)',
       attachVerdict('agent', true, BLIND).on === true
-      && /Settings → Vision/.test(attachVerdict('agent', true, BLIND).why));
-check('…and it names BY NAME as the condition, because that is literally Odysseus\'s '
-      + 'rule (is_vision_model keyword match)',
-      /BY NAME/.test(attachVerdict('agent', true, BLIND).why));
-check('agent + Odysseus vision switched OFF gets its own sentence',
+      && !attachVerdict('agent', true, BLIND).why);
+check('…but the honest note stands: the loaded vision model reads it FOR the agent',
+      /reads this image/.test(attachVerdict('agent', true, BLIND).note || ''));
+check('WARN-ONCE: a verdict is never BOTH a warning and a note (one line, or none)',
+      [['chat', true, BLIND], ['agent', true, BLIND], ['agent', true, OFF],
+       ['agent', false, BLIND], ['agent', null, OK], ['hermes', false, OK]]
+        .every(a => { const v = attachVerdict(a[0], a[1], a[2]);
+                      return !(v.why && v.note); }));
+check('agent + Odysseus vision switched OFF still WARNS — nothing on our side can '
+      + 'fix a disabled attachment path (upstream skips it entirely)',
       /turned OFF/.test(attachVerdict('agent', true, OFF).why));
-check('agent + a configured vision model: back to a clean yes, no noise',
-      attachVerdict('agent', true, OK).on === true && !attachVerdict('agent', true, OK).why);
+check('agent + a configured vision model: a clean yes, still with the note',
+      attachVerdict('agent', true, OK).on === true
+      && !attachVerdict('agent', true, OK).why
+      && !!attachVerdict('agent', true, OK).note);
 check('NO caps snapshot yet is UNKNOWN, not "misconfigured" — an unread config must '
       + 'never print a warning we cannot support',
       !attachVerdict('agent', true, null).why
       && !attachVerdict('agent', true, undefined).why);
-check('the caveat is AGENT-only — it is Odysseus\'s setting, and Hermes/chat do not '
-      + 'read it',
-      !attachVerdict('hermes', true, BLIND).why && !attachVerdict('chat', true, BLIND).why);
-check('a text-only model on the agent lane stops promising a description it cannot '
-      + 'produce when no vision model is configured',
-      /Settings → Vision/.test(attachVerdict('agent', false, BLIND).why)
+check('the note is AGENT-only — chat sends the pixels itself, Hermes has its own path',
+      !attachVerdict('hermes', true, BLIND).note
+      && !attachVerdict('chat', true, BLIND).note
+      && !attachVerdict('hermes', true, BLIND).why
+      && !attachVerdict('chat', true, BLIND).why);
+check('a text-only model on the agent lane with nothing configured anywhere still '
+      + 'says the truth: the agent will tell you it cannot see this',
+      /can't see this image/.test(attachVerdict('agent', false, BLIND).why)
       && /describe/.test(attachVerdict('agent', false, OK).why));
+// The chip renders exactly one of the two lines, and a NOTE must not grey the ⊕.
+const staged = grab('showAttachedImage');
+check('the chip renders the warning OR the note, in their own classes',
+      /v\.why \|\| v\.note/.test(staged) && /'anote' : 'ainfo'/.test(staged));
+check('…and only `why` greys the ⊕ / flips aria-disabled (a note is not a refusal)',
+      /classList\.toggle\('off', !!v\.why\)/.test(grab('applyVisionUi')));
+check('…and .ainfo is a real, themed class rather than an inline colour (ALL-DESIGNS)',
+      /#chat-attachstrip \.ainfo \{ color:var\(--faint\); \}/.test(html));
+
+// THE ANTI-LIE LINE: the turn itself says how the model got at the picture.
+const visLine = html.slice(html.indexOf("j.type === 'vision'"),
+                           html.indexOf("j.type === 'vision'") + 1400);
+check('a `vision` stream event renders a statusline (the turn states its provenance)',
+      /className = 'statusline'/.test(visLine));
+check('…a PRE-CAPTIONED image is never presented as directly seen',
+      /not from the picture/.test(visLine));
+check('…a NATIVE read says so instead of borrowing the description wording',
+      /reads this image\s*'\s*\n?\s*\+ 'directly|reads this image[\s\S]{0,40}directly/.test(visLine));
+check('…a failed/absent vision pass warns rather than going quiet',
+      /was not described here/.test(visLine));
+check('…and it is drawn ONCE per turn, not per stream frame',
+      /holder\._visionLine/.test(visLine));
+
 check('odyVisionCfg never invents a config (null when no snapshot)',
       /capsSnap && capsSnap\.vision/.test(grab('odyVisionCfg')));
 check('…and the caps fetch repaints the ⊕ once the config is known',

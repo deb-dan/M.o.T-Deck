@@ -277,8 +277,29 @@ console.log('2. Editorial does not pay for the second design');
                sentence comes from bridge/core/fit.py over /api/memory*; the panel
                formats bytes and paints. That is the same structural argument as the
                help text and the design asset: the engine can grow without costing this
-               page a byte, and a browser badge can never disagree with the loader. */
-  const CEILING = 795000;
+               page a byte, and a browser badge can never disagree with the loader.
+       798000  AGENT-LANE VISION, AUTO-WIRED (v1.5.32 — the queued "auto-wire Ody
+               vision" fix v1.5.28 could not close) — +3.2KB, and per the protocol,
+               what it bought. NEW BEHAVIOUR: attachVerdict grew a second, weaker
+               channel — `note` ("here is what will happen") beside `why` ("here is a
+               problem") — because the thing v1.5.28's warning warned about is now
+               FIXED in the bridge, and warning about it would be crying wolf; the
+               chip renders whichever one is set, in its own class (.ainfo — ONE CSS
+               rule, reusing the same --faint token .anote already proves in all six
+               looks); and the turn itself now renders a `vision` statusline stating
+               HOW the model got at the picture — read directly, described by the
+               named vision model, or not described at all. That last one is not
+               decoration: on this lane the main model never receives pixels, it
+               receives our description, and an answer that does not say so reads
+               exactly like direct sight. The PROSE half is the argued kind this
+               ceiling allows AT the rule it excuses — the paragraph at attachVerdict
+               explaining WHY the old caveat was deleted, so the next reader does not
+               "restore" a warning the bridge now makes false.
+               ⚠️ AND THE PAGE HOLDS NO VISION LOGIC. The evidence gate, the
+               pre-caption, the never-clobber decision and the provenance text all
+               live in bridge/routers/ody.py; the panel renders one event and one
+               line. Same structural argument as the fit arithmetic above. */
+  const CEILING = 798000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

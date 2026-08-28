@@ -79,6 +79,68 @@ def test_odysseus_still_describes_images_for_text_only_models():
         "same vision gate the direct lane has (bridge/routers/odychat.py)")
 
 
+def test_odysseus_vision_cache_is_the_precaption_seam():
+    """v1.5.32 — the PRIMARY Agent-lane vision path is a pre-caption written into
+    Odysseus's own vision cache. Four upstream facts carry it, and every one of
+    them is an internal detail upstream never promised."""
+    if not ODY.exists():
+        return
+    up = _read(ODY / "routes" / "upload_routes.py")
+    assert '@router.put("/{file_id}/vision")' in up, (
+        "PUT /api/upload/{id}/vision is gone — that is where the bridge stores the "
+        "description it produced with OUR runner (bridge/routers/ody.py "
+        "ody_vision_prepare); without it the Agent lane goes blind again")
+    assert "_vision_cache_path(file_id)" in up, (
+        "the vision text is no longer written to the per-upload cache file the chat "
+        "send reads")
+    ch = _read(ODY / "src" / "chat_handler.py")
+    assert 'os.path.join(UPLOAD_DIR, ".vision", att_id + ".txt")' in ch, (
+        "chat_handler no longer reads UPLOAD_DIR/.vision/<id>.txt before calling its "
+        "own VL model — that short-circuit is the whole reason the pre-caption works")
+    assert 'not cached_desc.startswith("[")' in ch, (
+        "the '[' rule is gone: Odysseus DISCARDS a cached description that starts "
+        "with '[' (its own error markers). ody_vision_provenance is written never to "
+        "start with one — if the rule changed, re-check that comment")
+    dp = _read(ODY / "src" / "document_processor.py")
+    assert "timeout=120" in dp, (
+        "Odysseus's VL call is no longer hard-capped at 120s. THAT CAP IS WHY WE "
+        "PRE-CAPTION: driven 2026-08-28, the loaded 27B thinking model needed 173s "
+        "for the same image and the turn died with '[VL model unavailable]'. If the "
+        "cap is now configurable, the simple vision_model wire may finally suffice")
+    assert 'settings.get("vision_model", "")' in dp, (
+        "`vision_model` is no longer the setting that names Odysseus's VL model — "
+        "the bridge's evidence-gated auto-wire writes exactly that key")
+
+
+def test_odysseus_name_keyword_vision_test_still_exists():
+    """We MIRROR Odysseus's name test (ody_name_looks_vision) so we only step in
+    where it misses. If upstream starts reading real capability, stop mirroring."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "chat_helpers.py")
+    assert "_VISION_MODEL_KEYWORDS" in src and "def is_vision_model" in src, (
+        "Odysseus no longer classifies vision BY NAME — re-read "
+        "ody_name_looks_vision in bridge/routers/ody.py, which exists only to "
+        "predict that keyword match")
+    for kw in ('"gemma-3"', '"llama-4"', '"phi-4"'):
+        assert kw in src, (
+            f"the vision keyword {kw} left Odysseus's list — our mirrored copy "
+            "(ODY_NAME_VISION_KEYWORDS) is now wrong in the direction that makes us "
+            "SKIP a model Odysseus can no longer see with")
+    assert r"(?<![a-z])vl(?![a-z])|vlm" in src, (
+        "the standalone-'vl' regex changed — ODY_NAME_VISION_RE mirrors it verbatim")
+
+
+def test_odysseus_settings_still_carries_the_vision_keys():
+    """The fallback path (A) writes ONE key through Odysseus's own settings API."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "settings.py")
+    assert '"vision_model"' in src and '"vision_enabled"' in src, (
+        "vision_model / vision_enabled left Odysseus's settings — the bridge's "
+        "auto-wire writes the first and refuses to caption when the second is off")
+
+
 def test_odysseus_persists_multimodal_turns_as_parts():
     """Why the bridge flattens history (flatten_ody_content)."""
     if not ODY.exists():

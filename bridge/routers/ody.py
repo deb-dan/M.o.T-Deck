@@ -1,10 +1,14 @@
 """ROUTER — the Odysseus lane: session CRUD, per-message actions, the Capabilities pane."""
 from __future__ import annotations
 
+import base64
+import json
+import time
+
 import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from ..core.appctx import app
+from ..core.appctx import ROOT, app
 from ..core.modelid import _display_model
 from ..core.procs import cfg
 from .sidecars import _attachment_forget, _attachment_rows, _thinking_forget, _thinking_rows, attach_images, attach_thinking
@@ -255,6 +259,328 @@ def ody_attachment_handles(history_rows):
     except Exception:
         pass
     return history_rows
+
+
+# ── AGENT-LANE VISION, AUTO-WIRED (v1.5.32) ──────────────────────────────────
+# THE DEFECT v1.5.28 FOUND AND COULD NOT CLOSE: an image transports perfectly on
+# the Agent lane, and then Odysseus decides whether the MAIN model may see pixels
+# by NAME KEYWORDS (src/chat_helpers.py is_vision_model — "gemma-3", "llama-4", a
+# standalone "vl"). Our registry's real evidence (a gguf mmproj sibling, an mlx
+# vision_config) is invisible to it, so a genuinely multimodal local model is
+# classed text-only, Odysseus falls back to its `vision_model` setting, and with
+# that unset the user's picture becomes the literal string
+# "[No vision model configured — set one in Settings → Vision]".
+#
+# ── THE RESEARCH (obligation 8), and why the obvious fix is NOT the primary one ──
+# Odysseus's own text-only path is src/chat_handler.py:253-283:
+#     _vcache = UPLOAD_DIR/.vision/<att_id>.txt
+#     if the cache holds text that does NOT start with "[":  use it
+#     else: analyze_image_with_vl_result(path)   ← llm_call(..., timeout=120)
+# Two candidate fixes follow from that, and only DRIVING them separated them:
+#   (A) write `vision_model` so Odysseus's own VL call resolves to our loaded,
+#       genuinely-multimodal model. DRIVEN 2026-08-28, and it FAILED: the call is
+#       hard-capped at 120s upstream, and the loaded 27B is a THINKING model —
+#       "Describe this image in detail" with no token budget measured 173s / 908
+#       tokens (and 222s when capped at 400, all of it reasoning, content EMPTY).
+#       Odysseus logged `[vision fallback] primary … failed (HTTPException)` and
+#       the turn answered "the vision-language model is currently unavailable".
+#   (B) PRE-CAPTION the upload ourselves and PUT the text into that same cache,
+#       so the 120s call never happens. DRIVEN: the identical model, asked with
+#       `chat_template_kwargs={"enable_thinking": false}` and a bounded prompt,
+#       answered in 5.6s / 60 tokens and named the background colour, both shapes
+#       and their positions correctly.
+# So (B) is the PRIMARY path and (A) is the graceful fallback: we still wire
+# `vision_model` (evidence-gated, never clobbering a hand-set value) so an image
+# we could NOT pre-caption — or one attached from the Odysseus tab — reaches a
+# real vision model instead of a settings chore addressed to the user. The
+# autocorrect standard: our registry KNOWS; the user should never be asked.
+#
+# HONEST, AND KEPT HONEST: the main model still does not receive the pixels — it
+# receives OUR description of them. So the text we store SAYS SO (see
+# ody_vision_provenance), and the panel is told over the stream, so a described
+# answer can never present itself as direct sight (the LIES-TO-USER class).
+
+ODY_VISION_PROMPT = (
+    "Describe this image for someone who cannot see it. Report only what is "
+    "visibly there: the background colour, every distinct shape or object with "
+    "its colour, size and position, and any text transcribed word for word. "
+    "At most 120 words. No preamble, no speculation, no markdown headings."
+)
+ODY_VISION_MAX_TOKENS = 700     # generous for 120 words; bounds a runaway model
+ODY_VISION_TIMEOUT = 180.0      # our own budget — Odysseus's is a hard 120s
+ODY_VISION_PUT = "/api/upload/{fid}/vision"
+
+
+def ody_vision_evidence(models, live_id):
+    """PURE: the LIVE model's id when the registry carries REAL vision evidence
+    for it (a gguf mmproj sibling / an mlx vision_config), else "".
+
+    This is the evidence gate for everything below: we never wire, never
+    pre-caption and never promise vision on a guess about a model's name — which
+    is precisely the mistake being corrected here."""
+    if not live_id:
+        return ""
+    for m in (models or []):
+        if isinstance(m, dict) and m.get("id") == live_id:
+            return live_id if (m.get("vision") or m.get("mmproj")) else ""
+    return ""
+
+
+# Odysseus's OWN name test, mirrored (vendor/odysseus/src/chat_helpers.py
+# _VISION_MODEL_KEYWORDS + _VISION_VL_RE @ the pinned dev SHA). We mirror rather
+# than import because Odysseus lives in a different venv and process — and this
+# copy is a READ of its behaviour, never a replacement for it.
+ODY_NAME_VISION_KEYWORDS = (
+    "gemma-3", "gemma3", "gemma-4", "gemma4", "llama-4", "llama4",
+    "mistral-small-3.1", "mistral-small3.1", "mistral-small-3.2", "mistral-small3.2",
+    "phi-4", "phi4", "glm-4.5v", "glm-4.6v", "glm-5v",
+)
+ODY_NAME_VISION_RE = r"(?<![a-z])vl(?![a-z])|vlm"
+
+
+def ody_name_looks_vision(name) -> bool:
+    """PURE: would ODYSSEUS classify this model name as multimodal?
+
+    ⚠️ WHY THIS EXISTS (adversarial self-pass, v1.5.32): when Odysseus DOES
+    recognise the name it hands the model the real pixels and folds any cached
+    description in as a "User-corrected caption … treat as authoritative"
+    (chat_handler.py:229-243). Pre-captioning there would (a) be wasted work and
+    (b) tell a model that CAN see "you are reading a description, not the
+    picture" — a false statement, stamped authoritative, aimed at the one model
+    that could have done better. So we only step in where Odysseus would miss."""
+    import re as _re
+    m = str(name or "").lower()
+    if any(kw in m for kw in ODY_NAME_VISION_KEYWORDS):
+        return True
+    return bool(_re.search(ODY_NAME_VISION_RE, m))
+
+
+def ody_vision_provenance(name, model, desc):
+    """PURE: the text handed to Odysseus's vision cache for one image.
+
+    ⚠️ TWO UPSTREAM RULES ARE BAKED IN HERE:
+    • It must NEVER start with "[": chat_handler.py:262 discards a cached
+      description whose first character is "[" (that is how Odysseus recognises
+      its OWN error markers, "[VL model unavailable…]" and friends). A leading
+      bracket would silently throw our whole pass away.
+    • It must SAY WHAT IT IS. Odysseus injects this into the prompt as if it were
+      the picture; without the provenance line a described answer reads exactly
+      like a seen one, and that is the LIE-TO-USER class."""
+    who = (model or "the local vision model").strip() or "the local vision model"
+    what = (name or "the attached image").strip() or "the attached image"
+    return (f"Vision pass on {what} — {who} read the image pixels and wrote the "
+            f"description below. You are reading this description, not the "
+            f"picture itself; say so if the answer depends on a detail it does "
+            f"not mention.\n\n{(desc or '').strip()}")
+
+
+def ody_vision_wire_decision(current, marker_model, candidate):
+    """PURE: (Odysseus's stored `vision_model`, the value WE last auto-wired, the
+    evidence-backed candidate) → (write?, reason).
+
+    NEVER CLOBBER — the whole rule in three lines: we write over EMPTINESS, and
+    we write over OUR OWN earlier marker; a value we did not write is the user's
+    and is left alone forever, however wrong we think it is."""
+    cur = (current or "").strip()
+    cand = (candidate or "").strip()
+    mark = (marker_model or "").strip()
+    if not cand:
+        return (False, "no vision evidence for the loaded model")
+    if not cur:
+        return (True, "vision_model was unset")
+    if cur == cand:
+        return (False, "already wired to the loaded model")
+    if mark and cur == mark:
+        return (True, "re-wiring our own earlier value to the loaded model")
+    return (False, "vision_model was set by hand — left untouched")
+
+
+def _ody_vision_marker_path():
+    """Where we remember what WE wrote — the reversibility record. Deleting this
+    file plus clearing Settings → Vision returns Odysseus to its stock state."""
+    return ROOT / "data" / "ody_vision_autowire.json"
+
+
+def _ody_vision_marker_read() -> dict:
+    try:
+        return json.loads(_ody_vision_marker_path().read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _ody_vision_marker_write(model: str) -> None:
+    try:
+        p = _ody_vision_marker_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"model": model,
+                                 "wrote_at": time.strftime("%Y-%m-%dT%H:%M:%S")}))
+    except Exception:
+        pass
+
+
+def _ody_live_vision_model() -> tuple:
+    """(registry id, wire id) of the LIVE model when it has vision evidence, else
+    ("", ""). The wire id is what BOTH the runner and Odysseus's session carry —
+    llama.cpp's --alias for gguf, the model PATH for MLX."""
+    from ..core.modelid import _live_model_id, wire_model_id
+    from ..core.procs import _registry_models
+    try:
+        port = cfg().get("runner", {}).get("port")
+        reg = _registry_models()
+        mid = ody_vision_evidence(reg, _live_model_id(int(port)) if port else None)
+        return (mid, wire_model_id(mid, reg)) if mid else ("", "")
+    except Exception:                                            # noqa: BLE001
+        return ("", "")
+
+
+async def _ody_settings() -> dict:
+    """Odysseus's settings bag, or {} when it cannot be read. Never raises."""
+    try:
+        r = await _ody_req("GET", "/api/auth/settings")
+        if r.status_code == 200 and isinstance(r.json(), dict):
+            return r.json()
+    except Exception:                                            # noqa: BLE001
+        pass
+    return {}
+
+
+async def ody_vision_autowire(settings=None) -> dict:
+    """FALLBACK PATH (A): point Odysseus's `vision_model` at the loaded, evidence-
+    verified vision model. Evidence-gated, never-clobbering, logged, reversible.
+    Best-effort: every failure returns a dict, never raises into a turn."""
+    from ..core.modelid import _live_model_id
+    from ..core.procs import _registry_models
+    out = {"wired": False, "model": "", "reason": ""}
+    try:
+        rc = cfg().get("runner", {})
+        port = rc.get("port")
+        live = _live_model_id(int(port)) if port else None
+        cand = ody_vision_evidence(_registry_models(), live)
+        s = settings if isinstance(settings, dict) else await _ody_settings()
+        cur = str(s.get("vision_model") or "")
+        out["model"] = cur
+        write, why = ody_vision_wire_decision(cur, _ody_vision_marker_read().get("model"), cand)
+        out["reason"] = why
+        if not write:
+            return out
+        w = await _ody_req("POST", "/api/auth/settings", json={"vision_model": cand})
+        if w.status_code != 200:
+            out["reason"] = f"Odysseus refused the vision_model write ({w.status_code})"
+            return out
+        _ody_vision_marker_write(cand)
+        out.update(wired=True, model=cand)
+        print(f"[ody-vision] auto-wired vision_model={cand} ({why}) — "
+              f"registry evidence: mmproj/vision_config", flush=True)
+    except Exception as e:                                       # noqa: BLE001
+        out["reason"] = f"auto-wire unavailable: {str(e)[:160]}"
+    return out
+
+
+async def _ody_vision_describe(raw: bytes, mime: str) -> tuple:
+    """Ask OUR runner to describe the image. → (text, model_id, error).
+
+    THINKING IS TURNED OFF on purpose (`chat_template_kwargs.enable_thinking`):
+    measured on the loaded 27B, the same request answered in 5.6s with it and
+    burned 400 tokens of reasoning and returned EMPTY content without it. An
+    engine that rejects the kwarg (some MLX servers) gets one retry without it."""
+    from .sampling import _RUNNER
+    rc = cfg().get("runner", {})
+    base = (rc.get("endpoint") or "http://127.0.0.1:6767/v1").rstrip("/")
+    key = rc.get("api_key", "")
+    mid, wire = _ody_live_vision_model()
+    if not mid:
+        return ("", "", "no loaded model has vision evidence in the registry")
+    url = "data:%s;base64,%s" % (mime or "image/png",
+                                 base64.b64encode(raw).decode("ascii"))
+    body = {
+        "model": wire,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": ODY_VISION_PROMPT},
+            {"type": "image_url", "image_url": {"url": url}}]}],
+        "max_tokens": ODY_VISION_MAX_TOKENS, "temperature": 0.2,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    hdr = {"Authorization": f"Bearer {key}"} if key else {}
+    for attempt in (0, 1):
+        try:
+            r = await _RUNNER.post(base + "/chat/completions", json=body,
+                                   headers=hdr, timeout=ODY_VISION_TIMEOUT)
+        except Exception as e:                                   # noqa: BLE001
+            return ("", mid, f"the runner did not answer the vision pass: {str(e)[:120]}")
+        if r.status_code == 200:
+            break
+        if attempt == 0 and "chat_template_kwargs" in body:
+            body.pop("chat_template_kwargs")     # engine that rejects the kwarg
+            continue
+        return ("", mid, f"the runner refused the vision pass ({r.status_code})")
+    try:
+        text = str(((r.json().get("choices") or [{}])[0]
+                    .get("message") or {}).get("content") or "").strip()
+    except Exception:                                            # noqa: BLE001
+        text = ""
+    if not text:
+        # A thinking model that ignored the kwarg spends the whole budget on
+        # reasoning and returns nothing. Say so; the (A) fallback then serves.
+        return ("", mid, "the vision pass returned no description")
+    return (text, mid, "")
+
+
+async def ody_vision_prepare(fid: str, raw: bytes, mime: str, name: str) -> dict:
+    """Give this Agent-lane image a real path to the model's eyes, BEFORE the turn.
+
+    (B) pre-caption with our own runner and PUT the text into Odysseus's vision
+    cache — the turn then costs nothing extra upstream; then (A) auto-wire
+    `vision_model` so anything we did not cover still lands somewhere real.
+    ENTIRELY best-effort: an image is never blocked because vision prep failed —
+    Odysseus's own honest marker is a worse outcome than this, not a fatal one."""
+    out = {"source": "none", "model": "", "note": "", "wired": False}
+    settings = await _ody_settings()
+    # ⚠️ ADVERSARIAL FINDING (self-pass, v1.5.32 — the LIE-TO-USER class): with
+    # `vision_enabled` false, chat_handler.py:203-215 never enters the attachment
+    # branch AT ALL, so our stored description is read by nobody and the image
+    # parts are stripped. Captioning anyway and then telling the panel "described"
+    # would be a false success over an answer the model wrote blind. So: say the
+    # true thing, spend nothing, and let the composer's existing warning stand.
+    if settings.get("vision_enabled", True) is False:
+        out["note"] = ("Odysseus has vision turned off (its Settings → Vision) — "
+                       "it will not read this picture at all")
+        return out
+    # …and when Odysseus's OWN name test already recognises the loaded model, it
+    # gets the pixels natively: stepping in would waste a pass and stamp a false
+    # "you are reading a description" on a model that can see (see
+    # ody_name_looks_vision). Say what actually happens instead.
+    _mid, _wire = _ody_live_vision_model()
+    if _mid and ody_name_looks_vision(_wire):
+        out.update(source="native", model=_mid,
+                   note="the loaded model receives the picture itself")
+        wire0 = await ody_vision_autowire(settings)
+        out["wired"] = bool(wire0.get("wired"))
+        return out
+    try:
+        text, mid, err = await _ody_vision_describe(raw, mime)
+        out["model"] = mid
+        if text:
+            body = {"text": ody_vision_provenance(name, mid, text)}
+            try:
+                r = await _ody_req("PUT", ODY_VISION_PUT.format(fid=fid), json=body)
+                if r.status_code == 200:
+                    out["source"] = "precaption"
+                    out["note"] = (f"{mid} read this image and described it for the "
+                                   f"agent — the answer is based on that description")
+                else:
+                    out["note"] = ("the description could not be stored "
+                                   f"({r.status_code}) — the agent will try its own")
+            except Exception as e:                               # noqa: BLE001
+                out["note"] = f"the description could not be stored: {str(e)[:120]}"
+        else:
+            out["note"] = err
+    except Exception as e:                                       # noqa: BLE001
+        out["note"] = f"vision prep unavailable: {str(e)[:140]}"
+    wire = await ody_vision_autowire(settings)
+    out["wired"] = bool(wire.get("wired"))
+    if out["source"] == "none" and not out["note"]:
+        out["note"] = wire.get("reason") or ""
+    return out
 
 
 @app.get("/api/ody/attachment/{fid}")
@@ -519,8 +845,17 @@ async def ody_caps() -> JSONResponse:
             # a genuinely vision-capable local model answered "Without a
             # vision-enabled model, I can't see the image". The composer now says
             # so BEFORE the send instead of after it.
+            # v1.5.32: `auto` is the AUTO-WIRE RECORD — still read-only, still not
+            # in CAPS_SETTING_KEYS (this block tells the truth; it does not edit).
+            # `mine` is true when the stored value is one WE wrote, which is the
+            # never-clobber rule made visible: anything else is the user's.
+            _mark = _ody_vision_marker_read()
+            _cur = str(full.get("vision_model") or "")
             out["vision"] = {"enabled": bool(full.get("vision_enabled", True)),
-                             "model": str(full.get("vision_model") or "")}
+                             "model": _cur,
+                             "auto": {"model": str(_mark.get("model") or ""),
+                                      "wrote_at": str(_mark.get("wrote_at") or ""),
+                                      "mine": bool(_cur and _cur == _mark.get("model"))}}
         else:
             out["errors"]["settings"] = r.text[:200]
     except Exception as e:

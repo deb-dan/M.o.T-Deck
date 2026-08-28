@@ -5,7 +5,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from ..core.analytics import _log_ody_metrics
 from ..core.appctx import app
-from .ody import _ody, _ody_login, _ody_req
+from .ody import _ody, _ody_login, _ody_req, ody_vision_prepare
 from .sampling import IMAGE_MAX_CHARS
 from .sidecars import parse_data_url
 
@@ -86,6 +86,34 @@ async def ody_chat(req: Request) -> StreamingResponse:
                             err = "Odysseus stored no attachment id — attach removed"
                         else:
                             fields["attachments"] = _json.dumps(ids)
+                            # ── VISION PREP (v1.5.32) ───────────────────────
+                            # Odysseus would otherwise decide this model cannot
+                            # see BY NAME and replace the picture with
+                            # "[No vision model configured…]". We pre-caption it
+                            # with the loaded, registry-verified vision model and
+                            # hand the text to Odysseus's own vision cache, then
+                            # auto-wire `vision_model` as the fallback. Both are
+                            # best-effort: NOTHING here may fail the turn — the
+                            # image already landed, and the user's picture is
+                            # never lost because a preparation step went wrong.
+                            # ⚠️ ITS OWN try: a raise in here would otherwise be
+                            # caught by the UPLOAD handler below and reported as
+                            # "attachment upload failed" — blaming the transport
+                            # for a preparation step AND failing a turn whose
+                            # image already landed.
+                            try:
+                                vis = await ody_vision_prepare(
+                                    ids[0], raw, mime or "", image_name or "image")
+                            except Exception as ve:              # noqa: BLE001
+                                vis = {"source": "none", "model": "",
+                                       "note": f"vision prep failed: {str(ve)[:140]}"}
+                            # Tell the panel HOW the model got at this image, so a
+                            # described answer can never wear the clothes of a
+                            # seen one (the LIES-TO-USER rule, requirement 4).
+                            yield ("data: " + _json.dumps(
+                                {"type": "vision", "source": vis.get("source"),
+                                 "model": vis.get("model"),
+                                 "note": vis.get("note")}) + "\n\n")
                 except Exception as e:
                     err = f"Odysseus attachment upload failed: {str(e)[:160]}"
             if err:

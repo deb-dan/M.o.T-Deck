@@ -1097,6 +1097,10 @@
       cursor:pointer; font:11px var(--mono); padding:0 2px; }
   #chat-attachstrip .aclear:hover { color:var(--bad); }
   #chat-attachstrip .anote { color:var(--faint); }
+  /* .ainfo = "here is what will happen", not "here is a problem". Deliberately the
+     SAME token as .anote (--faint): a note must not out-shout the warning, and a
+     colour every design already proves is the safest one to add (ALL-DESIGNS). */
+  #chat-attachstrip .ainfo { color:var(--faint); }
   #chat-attach { align-self:flex-end; }
   /* GREY-NOT-HIDE (the tools-pill grammar): a lane/model that cannot carry an
      image keeps its ⊕ visible and quiet, and CLICKING it prints the reason in the
@@ -6475,37 +6479,54 @@ let liveVision = null;   // true | false | null — a RUNNER property, not a lan
 function attachVerdict(mode, vision, odyVision){
   // PURE (unit-tested by bridge/tests/test_lane_affordances.js):
   // (lane, vision, Odysseus's vision config) → whether ⊕ carries an image on that
-  // lane, and the sentence for why not / what will happen instead.
+  // lane, plus at most ONE line: `why` = a real gap the user should know about
+  // (also greys the ⊕), `note` = what will happen, said quietly. Never both.
   //
-  // ⚠️ THE AGENT-LANE CAVEAT IS A DRIVEN RESULT (2026-08-28), not a precaution.
-  // Odysseus decides whether the MAIN model may see pixels by NAME KEYWORDS
-  // (vendor/odysseus/src/chat_helpers.py is_vision_model: "gemma-3", "llama-4",
-  // a standalone "vl"…). Our registry's real evidence — an mmproj sibling, an mlx
-  // vision_config — is invisible to it. A model it does not recognise falls back
-  // to its own `vision_model` setting, and with that UNSET the user's picture is
-  // replaced by the literal string "[No vision model configured…]".
-  // Driven: a genuinely vision-capable local model answered "Without a
-  // vision-enabled model, I can't see the image." That is a real dead end, so the
-  // composer says it BEFORE the send. `odyVision` null = we have not read the caps
-  // snapshot yet, which is NOT evidence of a missing config — say nothing then.
-  const odyBlind = mode === 'agent' && odyVision
-                   && (odyVision.enabled === false || !odyVision.model);
-  const odyWhy = odyVision && odyVision.enabled === false
-    ? "Odysseus has vision turned OFF (its Settings → Vision), so it will pass the "
-      + "file but not the picture"
-    : "Odysseus has no vision model set (its Settings → Vision) — it can only see "
-      + "this image if it recognises the loaded model as multimodal BY NAME";
-  if (vision === true)
-    return odyBlind ? {on: true, warn: true, why: odyWhy} : {on: true, why: ''};
+  // ⚠️ THE AGENT-LANE CAVEAT WAS A DRIVEN RESULT (2026-08-28) — AND v1.5.32 FIXED
+  // THE THING IT WARNED ABOUT, so it must stop crying wolf. Odysseus decides
+  // whether the MAIN model may see pixels by NAME KEYWORDS
+  // (vendor/odysseus/src/chat_helpers.py is_vision_model: "gemma-3", "llama-4", a
+  // standalone "vl"…) and our registry's real evidence — an mmproj sibling, an mlx
+  // vision_config — is invisible to it. The bridge now closes that gap itself: an
+  // Agent-lane image is PRE-CAPTIONED by the loaded, registry-verified vision
+  // model and the text is handed to Odysseus's own vision cache, and
+  // `vision_model` is auto-wired as the fallback (bridge/routers/ody.py
+  // ody_vision_prepare). So when the loaded model HAS vision evidence
+  // (vision === true) there is no gap left to warn about — only the honest note
+  // that the agent reads a DESCRIPTION rather than the picture, which is the one
+  // thing that must never go unsaid.
+  // `odyVision` null = we have not read the caps snapshot yet, which is NOT
+  // evidence of a missing config — say nothing extra then.
+  const odyOff = mode === 'agent' && odyVision && odyVision.enabled === false;
+  const odyNoModel = mode === 'agent' && odyVision && odyVision.enabled !== false
+                     && !odyVision.model;
+  const odyOffWhy =
+    "Odysseus has vision turned OFF (its Settings → Vision), so it will pass the "
+    + "file but not the picture";
+  // Deliberately true for BOTH shapes the send can take — pixels straight to a
+  // model Odysseus recognises by name, or our pre-caption for one it does not.
+  // The turn itself then says WHICH, in a statusline, from the `vision` event.
+  const agentNote = "the loaded vision model reads this image for the agent";
+  if (vision === true){
+    // Vision turned OFF upstream is a real dead end nothing on our side can fix
+    // (Odysseus skips the whole attachment path) — that one still warns.
+    if (odyOff) return {on: true, warn: true, why: odyOffWhy, note: ''};
+    if (mode === 'agent') return {on: true, why: '', note: agentNote};
+    return {on: true, why: '', note: ''};
+  }
   if (vision !== false)
-    return {on: true, warn: true,
+    return {on: true, warn: true, note: '',
             why: "no model is loaded — attach anyway and the lane will say if it can't"};
   if (mode === 'chat')
-    return {on: false, warn: true,
+    return {on: false, warn: true, note: '',
             why: "this model can't see images — try Agent or Hermes, which describe "
                  + "it instead, or load a vision model"};
-  if (odyBlind) return {on: true, warn: true, why: odyWhy};
-  return {on: true, warn: true,
+  if (odyOff) return {on: true, warn: true, why: odyOffWhy, note: ''};
+  if (odyNoModel)
+    return {on: true, warn: true, note: '',
+            why: "no vision model is loaded and Odysseus has none set — the agent "
+                 + "will tell you it can't see this image"};
+  return {on: true, warn: true, note: '',
           why: (mode === 'hermes' ? 'Hermes' : 'the agent')
                + " will describe this image for you — the loaded model can't see it"};
 }
@@ -6529,7 +6550,7 @@ function applyVisionUi(){
     btn.hidden = false;                     // grey-not-hide: the ⊕ is always there
     btn.classList.toggle('off', !!v.why);
     btn.setAttribute('aria-disabled', v.on ? 'false' : 'true');
-    btn.title = v.why || 'Attach an image';
+    btn.title = v.why || v.note || 'Attach an image';
     if (!v.on) clearImage();                // a staged image the lane cannot carry
     // A STAGED image outlives a lane switch, so its caveat has to be REPAINTED for
     // the lane it is now going to: staging on Hermes (clean) and then switching to
@@ -6616,10 +6637,15 @@ function showAttachedImage(dataUrl, name){
   // …and the lane's honest caveat RIDES THE CHIP rather than being a toast that
   // the thumbnail then overwrites: on a text-only model the user must be able to
   // see, at send time, that this lane will describe the image rather than look at it.
+  // WARN-ONCE DISCIPLINE (v1.5.32): a WARNING (`why`) is a gap the user may want
+  // to act on; a NOTE (`note`) is just what will happen, and rides the chip in the
+  // same quiet type without greying the ⊕. Exactly one of them is ever set, so the
+  // strip never stacks two sentences at the user.
   const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
-  if (v.why){
+  if (v.why || v.note){
     const n = document.createElement('span');
-    n.className = 'anote'; n.textContent = v.why;
+    n.className = v.why ? 'anote' : 'ainfo';
+    n.textContent = v.why || v.note;
     strip.appendChild(n);
   }
   strip.hidden = false;
@@ -12465,6 +12491,29 @@ async function sendChat() {
               list.appendChild(it);
             }
             holder.appendChild(det);
+          } else if (j.type === 'vision') {
+            // HOW THE MODEL GOT AT THE PICTURE (v1.5.32). The Agent lane never
+            // hands the main model pixels — Odysseus injects a DESCRIPTION — so an
+            // answer about an image must carry its own provenance or it reads
+            // exactly like direct sight (the LIES-TO-USER class). One statusline,
+            // once per turn, in the tokens the tool statuslines already use.
+            if (!holder._visionLine){
+              holder._visionLine = true;
+              const s = document.createElement('div'); s.className = 'statusline';
+              const mdl = esc(String(j.model || 'the vision model'));
+              if (j.source === 'native')
+                s.innerHTML = '<span class="dim">👁</span> the model reads this image '
+                            + 'directly — <span class="dim">' + mdl + '</span>';
+              else if (j.source === 'precaption')
+                s.innerHTML = '<span class="dim">👁</span> image described by '
+                            + '<span class="dim">' + mdl + '</span> — the agent answers '
+                            + 'from that description, not from the picture';
+              else
+                s.innerHTML = '<span class="r">⚠</span> the image was not described here'
+                            + (j.note ? ': <span class="dim">' + esc(String(j.note)) + '</span>' : '')
+                            + ' — the agent may not be able to see it';
+              holder.appendChild(s);
+            }
           } else if (j.type === 'proxy_error') {
             body.textContent += `\n[proxy error: ${j.error}]`;
           }
