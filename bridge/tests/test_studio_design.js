@@ -278,7 +278,7 @@ console.log('2. Editorial does not pay for the second design');
                formats bytes and paints. That is the same structural argument as the
                help text and the design asset: the engine can grow without costing this
                page a byte, and a browser badge can never disagree with the loader.
-       798000  AGENT-LANE VISION, AUTO-WIRED (v1.5.32 — the queued "auto-wire Ody
+       798000  AGENT-LANE VISION, AUTO-WIRED (v1.5.31 — the queued "auto-wire Ody
                vision" fix v1.5.28 could not close) — +3.2KB, and per the protocol,
                what it bought. NEW BEHAVIOUR: attachVerdict grew a second, weaker
                channel — `note` ("here is what will happen") beside `why` ("here is a
