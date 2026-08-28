@@ -87,3 +87,13 @@ The fit advisor's "have" side becomes a full LIVE LEDGER, not one number:
   same names. macOS memory nuance stated honestly where it matters (compressed memory
   and swap exist — surface memory PRESSURE alongside raw free, since free-RAM alone
   understates what macOS can absorb; label accordingly, no false alarms).
+
+## 3b. Copy provenance rule (Debi, 2026-08-28)
+
+LM Studio is closed-source: its extracted strings are RESEARCH EVIDENCE, not copy to
+ship. The advisor's user-facing text is written in OUR editorial voice — same grammar
+CLASS as the best references (verdict → reason → remedy → proceed; the gap on the chip),
+but no sentence lifted verbatim from any closed-source product. Near is fine; identical
+is not. (Open-source strings may be adapted where their license permits, still preferring
+our voice.) A test may pin OUR strings; none may match LM Studio's shipped strings —
+the builder checks its final copy against the extracted table and reports zero collisions.
