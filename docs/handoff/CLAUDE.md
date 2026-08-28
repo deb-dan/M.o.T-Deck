@@ -2,6 +2,15 @@
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
 
+> **⚖️ ADVISORY-GATES RULING (Debi, 2026-08-28): RAM/resource gates WARN AND RECOMMEND,
+> never hard-block.** A projected-doesn't-fit launch shows the measured numbers ("needs
+> ~XGB peak · you have ~YGB free · expect heavy swapping"), a clear recommendation, and
+> an explicit proceed-anyway consent. Applies to the spawn_guard/ledger gates on EVERY
+> heavy lane (music, voice workers, the coming Voice Chat) — retrofit queued. Gate
+> figures are MEASURED process peaks, surfaced as information, not enforced as walls.
+> Voice Chat (M3) is ADDITIVE: no existing sound path (talk/auto/conv/TTS/VoiceStudio/
+> Voicebox) is replaced or altered by it.
+
 > **🎨 ALL-DESIGNS RULE (Debi, 2026-08-28): every UI change to a first-party surface must be
 > verified under EVERY design/theme it can render in — Editorial, the theme packs, and Studio
 > (light + dark) — before it ships. New UI carries tokens reachable by all of them (the
