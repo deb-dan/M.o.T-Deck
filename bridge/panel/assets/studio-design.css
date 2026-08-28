@@ -1111,3 +1111,17 @@ html[data-design="studio"] .caps-strip,
 html[data-design="studio"] .md-imnote,
 html[data-design="studio"] .art-json .jt-leaf,
 html[data-design="studio"] #chat-attachstrip .anote { font-size:11px; }
+
+/* ---------------------------------------------------------------------------
+   16. HELP (roadmap §2.4) — and the delta is one rule, which is the report.
+   The Help view's prose is rendered into `.art-md`, which sections 4, 12 and
+   15 above already own: the serif kill-switch, the heading ramp, the body
+   sans and the code chip all apply to it with no new selector. What is left
+   is the contents rail, whose Editorial voice is tracked mono — the signature
+   this design does not use — so it is restated in the sans at studio's own
+   11px floor. Layout (the two columns, the 66ch prose cap, the scrolling
+   table) is design-neutral and stays where it is written, in the page.
+   --------------------------------------------------------------------------- */
+html[data-design="studio"] #help-toc a {
+  font:11.5px var(--sd-sans); letter-spacing:normal; }
+html[data-design="studio"] #help-toc { border-left-color:var(--line); }

@@ -212,6 +212,12 @@ _LANES = (
     # no pair of neighbours; it costs only where /api/help/explainers appears in
     # /openapi.json.
     "routers.help",
+    # …and the RAM fit advisor (v1.5.30) by the SAME rule, a third time: core.memory is
+    # the live ledger, core.fit the verdict engine, routers.memory their three GETs.
+    # None of the three has a pre-split position, so all three go LAST in both lists.
+    "core.memory",
+    "core.fit",
+    "routers.memory",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

@@ -84,6 +84,10 @@ FILES: tuple[str, ...] = (
     # bridge/app.py's _LANES.
     "core/events.py",
     "routers/help.py",
+    # The RAM fit advisor (v1.5.30), appended by the same rule.
+    "core/memory.py",
+    "core/fit.py",
+    "routers/memory.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

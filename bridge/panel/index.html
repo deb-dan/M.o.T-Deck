@@ -920,6 +920,55 @@
   .fit-ok { color:var(--ok); border:1px solid var(--ok); }
   .fit-slow { color:var(--warn); border:1px solid var(--warn); }
   .fit-no { color:var(--bad); border:1px solid var(--bad); }
+  .fit-unk { color:var(--faint); border:1px solid var(--line2); }
+  .fit-live { color:var(--gold); border:1px solid var(--gold); }
+
+  /* ---------- memory strip + fit advisor (v1.5.30) ----------
+     ⚠️ TOKENS ONLY, no literals — the --on-wash lesson, fifth sighting. Every colour
+     below is a var() a theme pack or the Studio design can swap; a hardcoded rgba
+     here is a shade no palette can reach. Same reason there is not one inline
+     style= on any node these rules paint: an inline style beats every stylesheet. */
+  .mem-strip { border:1px solid var(--line); border-radius:12px; background:var(--card);
+      padding:12px 15px; margin:0 0 16px; }
+  .mem-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .mem-dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--ok); }
+  .mem-dot.warn { background:var(--warn); }
+  .mem-dot.crit { background:var(--bad); }
+  .mem-title { font:11px var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--cream); }
+  .mem-sub { font:11px var(--mono); color:var(--dim); }
+  .mem-more { margin-left:auto; font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+      color:var(--gold); background:transparent; border:1px solid var(--line2); border-radius:7px;
+      padding:4px 10px; cursor:pointer; }
+  .mem-more:hover { border-color:var(--gold); }
+  .mem-bar { display:flex; height:8px; border-radius:5px; overflow:hidden; margin-top:11px;
+      background:var(--bg); border:1px solid var(--line); }
+  .mem-seg { height:100%; }
+  .mem-seg.ours { background:var(--gold); }
+  .mem-seg.other { background:var(--line2); }
+  .mem-seg.free { background:transparent; }
+  .mem-rows { margin-top:12px; display:flex; flex-direction:column; gap:6px; }
+  .mem-row { display:flex; align-items:baseline; gap:10px; font:11px var(--mono); color:var(--dim); }
+  .mem-row .nm { color:var(--cream); }
+  .mem-row .gb { margin-left:auto; color:var(--fg); }
+  .mem-row .pk { color:var(--faint); }
+  .mem-note { margin-top:10px; font:10.5px var(--mono); color:var(--faint); line-height:1.5; }
+  .fit-line { margin-top:7px; font:11px var(--mono); color:var(--dim); line-height:1.6; }
+  .fit-line .num { color:var(--fg); }
+  .fit-consent { margin-top:12px; border:1px solid var(--warn); border-radius:11px;
+      background:var(--card2); padding:13px 15px; }
+  .fit-consent.hard { border-color:var(--bad); }
+  .fit-consent .fc-head { font:12px var(--mono); letter-spacing:.06em; color:var(--cream); }
+  .fit-consent .fc-why { margin-top:6px; font:11px var(--mono); color:var(--dim); line-height:1.6; }
+  .fit-consent .fc-rem { margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .fit-consent .fc-rem button { text-align:left; font:11px var(--mono); color:var(--fg);
+      background:transparent; border:1px solid var(--line2); border-radius:8px; padding:7px 11px; cursor:pointer; }
+  .fit-consent .fc-rem button:hover { border-color:var(--gold); color:var(--cream); }
+  .fit-consent .fc-act { margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .fit-consent .fc-act button { font:10.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+      background:transparent; border:1px solid var(--line2); border-radius:7px; padding:6px 12px;
+      cursor:pointer; color:var(--dim); }
+  .fit-consent .fc-act button.go { color:var(--gold); border-color:var(--gold); }
+  .fit-consent .fc-hedge { margin-top:9px; font:10.5px var(--mono); color:var(--faint); line-height:1.5; }
 
   /* ---------- command palette ---------- */
   #palette { padding:0; overflow:hidden; }
@@ -2235,6 +2284,12 @@
       <button id="sw-cancel" onclick="cancelSwitch()">Cancel</button>
     </div>
 
+    <!-- THE MEMORY STRIP (v1.5.30). Pressure first, fill second: Activity Monitor's
+         lesson is that a full machine is not a warning — only pressure is. Painted
+         from /api/memory/fits, which carries the ledger AND every row's verdict in
+         one answer so no two numbers on this page can come from different seconds. -->
+    <div class="mem-strip" id="mem-strip" hidden></div>
+
     <div id="models-main">
       <div id="models-leftwrap">
         <div id="models-listcol"></div>
@@ -2589,6 +2644,12 @@ function sseDispatch(kind){
       try { loadChatModels(); } catch (e) {}
     });
   }
+  // The ledger moved. Repaint ONLY the memory surfaces — the model list, the detail
+  // pane and the deck are unaffected by a footprint changing, and re-running their
+  // fetches on a 2s ledger tick would turn a cheap push into a poll storm.
+  if (kind === 'memory') return sseRun('mem', 400, () => {
+    try { refreshMemory(); } catch (e) {}
+  });
   if (kind === 'component' || kind === 'health' || kind === 'config')
     return sseRun('status', 120, () => { sseStats.refreshes++; refresh(); });
 }
@@ -2732,11 +2793,23 @@ async function refresh(manual) {
       vTile = metric('Version', vv);
     }
   } catch {}
+  let memTile = '';
+  try {   // the memory ledger's compact entry point — same "Disk free" grammar, and
+          // ?watch=0 so merely showing the deck does not pin the sampler at its fast
+          // rate for the session. Degrades silently, like every optional tile here.
+    const mem = await (await fetch('/api/memory?watch=0')).json();
+    if (mem && mem.budget && mem.budget.budget_bytes){
+      const gb = b => (Number(b || 0) / 1073741824).toFixed(1);
+      const p = ((mem.system || {}).pressure) || 'normal';
+      memTile = metric('Memory for a model',
+        `${gb(mem.budget.budget_bytes)}<small> GB usable · pressure ${esc(p)}</small>`);
+    }
+  } catch {}
   m.innerHTML =
     metric('Components running', `${running}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Installed', `${installed}<small> / ${Object.keys(s.components).length}</small>`) +
     metric('Disk free', `${s.disk.free_gb}<small> GB</small>`) +
-    metric('Bridge', 'Live') + aTiles + vTile;
+    metric('Bridge', 'Live') + aTiles + vTile + memTile;
   if (manual) feed('status', 'refreshed');
 
   renderSetup();      // §E: keep the checklist glyphs live if it's open
@@ -8641,16 +8714,18 @@ async function initModels(){
     const n = (r.installed || []).length;
     if (r.error && !n) stamp.textContent = 'REGISTRY UNAVAILABLE — ' + r.error;
     else {
-      let s = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED') + ' · ' + n + ' INSTALLED · LOCAL';
-      if (r.ledger && r.ledger.budget_bytes) {
-        const gb = b => (b / 1073741824).toFixed(1);
-        s += ' · RAM ' + gb(r.ledger.used_bytes || 0) + ' / ' + gb(r.ledger.budget_bytes) + ' GB';
-      }
-      stamp.textContent = s;
+      // The old "RAM used / budget_gb" figure is GONE from this line as of v1.5.30:
+      // it was file-size arithmetic against a hand-written budget, and the memory
+      // strip below now says the same thing measured, in words, with the pressure
+      // state that decides whether the number is even worth worrying about. Two
+      // memory readouts that disagree is worse than one that is late.
+      stamp.textContent = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED')
+                        + ' · ' + n + ' INSTALLED · LOCAL';
     }
     renderModels(r);
   } catch { stamp.textContent = 'BRIDGE UNAVAILABLE'; }
   refreshDownloads();   // restore any in-flight downloads when revisiting the pane
+  refreshMemory();      // ledger + a verdict per row; degrades silently on its own
 }
 
 // Re-scan the model folders → prune models deleted in LM Studio/Jan, pick up new
@@ -8821,6 +8896,238 @@ function srcBadge(src){
        + esc(srcLabel(src)) + '</span>';
 }
 
+/* ══════ THE RAM FIT ADVISOR — panel side (v1.5.30) ══════════════════════════
+   The bridge owns every number and every sentence here (bridge/core/fit.py +
+   bridge/core/memory.py). That is deliberate and it is the whole reason the engine
+   was built first: the chip on a row, the line in the detail pane, the consent panel
+   and what an API client is told are ONE answer rendered four ways. LM Studio's
+   documented defect is a browser badge and a loader that price the same model
+   differently; there is no arithmetic in this file that could drift from the bridge.
+
+   The one thing the panel decides is WHEN to speak: a chip always, a line on the
+   selected model, and a panel only when a load would not fit — and never twice for
+   the same decision (see fitAcked, the cry-wolf rule). */
+let memLedger = null;        // last /api/memory/fits payload (ledger + every verdict)
+let memFits = {};            // model id → verdict
+let memOpen = false;         // is the ledger expanded?
+let memExternal = null;      // top OUTSIDE consumers, only fetched when expanded
+let fitConsent = null;       // {id, name, advisory} while a load waits for consent
+let auxWarn = '';            // the aux slot's pending fit warning, if any
+const fitAcked = {};         // model id → true once the user has proceeded anyway.
+                             // CRY-WOLF RULE: a risk the user has already accepted is
+                             // not re-litigated on the next load of the same model.
+const MEM_GB = 1073741824;
+
+function memGB(b){ return (Number(b || 0) / MEM_GB).toFixed(1); }
+function shortName(s){ s = String(s || ''); return s.length > 26 ? s.slice(0, 25) + '…' : s; }
+
+async function refreshMemory(){
+  let r = null;
+  try { r = await (await fetch('/api/memory/fits')).json(); } catch (e) { return; }
+  if (!r || !r.ok) return;
+  memLedger = r; memFits = r.fits || {};
+  renderMemStrip();
+  paintFitChips();
+  try { renderDetail(); } catch (e) {}
+}
+
+function memDotClass(p){ return p === 'critical' ? 'crit' : (p === 'warn' ? 'warn' : ''); }
+
+/* Pressure, not fill — Activity Monitor's semantics, in our words. A machine whose
+   RAM is entirely spoken for is HEALTHY if the kernel says pressure is normal; a
+   fill bar alone would cry wolf every day. The bar under the headline is context,
+   never the verdict. */
+function memHeadline(sys){
+  const p = (sys && sys.pressure) || 'normal';
+  if (p === 'critical') return 'Memory pressure: critical — the machine is swapping now.';
+  if (p === 'warn') return 'Memory pressure: elevated — macOS is compressing to keep up.';
+  return 'Memory pressure: normal.';
+}
+
+function renderMemStrip(){
+  const el = document.getElementById('mem-strip');
+  if (!el) return;
+  if (!memLedger || !memLedger.system){ el.hidden = true; return; }
+  el.hidden = false;
+  const sys = memLedger.system, bud = memLedger.budget || {};
+  // Both budgets, because both are true and one alone misleads: the resident model's
+  // weights are GPU-wired, so "usable now" and "usable after a switch" differ by the
+  // whole model. Measured here: 5.0 GB vs 14.9 GB.
+  const after = memLedger.budget_after_eject;
+  const total = Number(sys.total_bytes || 0);
+  const ours = Number(memLedger.ours_bytes || 0);
+  const other = Number(memLedger.other_bytes || 0);
+  const pct = (b) => total ? Math.max(0, Math.min(100, 100 * b / total)) : 0;
+  const head = `<div class="mem-head">
+      <span class="mem-dot ${memDotClass(sys.pressure)}"></span>
+      <span class="mem-title">Memory</span>
+      <span class="mem-sub">${esc(memHeadline(sys))} ~${memGB(bud.budget_bytes)} GB usable for a model right now${
+        after ? `, ~${memGB(after.budget_bytes)} GB once ${esc(shortName(memLedger.live_model))} is ejected` : ''} — of ${memGB(total)} GB.</span>
+      <button class="mem-more" onclick="toggleMemLedger()">${memOpen ? 'Less' : 'Details'}</button>
+    </div>
+    <div class="mem-bar">
+      <div class="mem-seg ours" style="width:${pct(ours).toFixed(2)}%"></div>
+      <div class="mem-seg other" style="width:${pct(other).toFixed(2)}%"></div>
+    </div>`;
+  let body = '';
+  if (memOpen){
+    const rows = (memLedger.components || []).slice()
+      .sort((a, b) => (b.footprint_bytes || 0) - (a.footprint_bytes || 0));
+    body += '<div class="mem-rows">';
+    for (const c of rows){
+      const nm = (c.name === 'runner' && memLedger.live_model) ? memLedger.live_model
+                                                              : (c.label || c.name);
+      const peak = (c.peak_bytes && c.peak_bytes > c.footprint_bytes * 1.2)
+        ? `<span class="pk">peak ${memGB(c.peak_bytes)}</span>` : '';
+      body += `<div class="mem-row"><span class="nm">${esc(nm)}</span>${peak}
+               <span class="gb">${memGB(c.footprint_bytes)} GB</span></div>`;
+    }
+    body += `<div class="mem-row"><span class="nm">Everything else on this Mac</span>
+             <span class="gb">${memGB(other)} GB</span></div>`;
+    if (memExternal && memExternal.length){
+      for (const e of memExternal){
+        body += `<div class="mem-row"><span>· ${esc(e.name)}</span>
+                 <span class="gb">${memGB(e.footprint_bytes)} GB</span></div>`;
+      }
+    }
+    body += '</div>';
+    const swap = sys.swap_used_bytes ? ` Swap in use: ${memGB(sys.swap_used_bytes)} GB` +
+      (sys.compression_ratio ? `, compression ${sys.compression_ratio}:1` : '') +
+      ' — normal on macOS while pressure is normal.' : '';
+    body += `<div class="mem-note">${esc(memLedger.metric_note || '')}${esc(swap)}
+      GPU-wireable ceiling: ${memGB(sys.metal_ceiling_bytes)} GB of ${memGB(total)} GB.
+      We name what other apps hold; we never touch them.</div>`;
+  }
+  el.innerHTML = head + body;
+}
+
+async function toggleMemLedger(){
+  memOpen = !memOpen;
+  renderMemStrip();
+  if (memOpen && memExternal === null){
+    try {
+      const r = await (await fetch('/api/memory?external=1')).json();
+      memExternal = (r && r.external) || [];
+    } catch (e) { memExternal = []; }
+    renderMemStrip();
+  }
+}
+
+function fitChipClass(v){
+  if (v === 'fits') return 'fit-ok';
+  if (v === 'tight') return 'fit-slow';
+  if (v === 'over') return 'fit-no';
+  if (v === 'live') return 'fit-live';   // measured, not predicted — see live_verdict()
+  return 'fit-unk';
+}
+
+/* Chips are patched IN PLACE rather than re-rendered. The ledger pushes every couple
+   of seconds while this view is open, and rebuilding the list on each push would
+   fight the user's scroll position and drop their selection — the row is the same
+   row; only the verdict moved. */
+function paintFitChips(){
+  const nodes = document.querySelectorAll('#models-listcol .mrow');
+  for (const row of nodes){
+    const chip = row.querySelector('.mfit');
+    if (!chip) continue;
+    const v = memFits[row.dataset.mid];
+    if (!v || !v.copy || !v.copy.chip){ chip.hidden = true; continue; }
+    chip.hidden = false;
+    chip.className = 'fitpill mfit ' + fitChipClass(v.verdict);
+    chip.textContent = v.copy.chip;
+    chip.title = (v.copy.line || '') + (v.copy.hedge ? '  ' + v.copy.hedge : '');
+  }
+}
+
+/* The detail pane's need-vs-free line: verdict, the arithmetic, and the hedge that
+   says which of the two it is (llama.cpp's own fitter, or our formula). */
+function fitDetailHtml(mid){
+  const v = memFits[mid];
+  if (!v || !v.copy) return '';
+  const c = v.copy;
+  const math = c.math ? `<br>${esc(c.math)}` : '';
+  const hedge = c.hedge ? `<br>${esc(c.hedge)}` : '';
+  return `<div class="fit-line"><span class="fitpill ${fitChipClass(v.verdict)}">${esc(c.chip)}</span>
+          <span class="num"> ${esc(c.line || '')}</span>${math}${hedge}</div>`;
+}
+
+function fitCancel(){ fitConsent = null; renderDetail(); }
+
+/* THE CONSENT PANEL — verdict → reason → remedies → proceed, inline, never a modal.
+   "Load anyway" is a plain visible button with the consequence in its own sentence:
+   the override is ours by ruling, and hiding it behind a modifier key (the field's
+   clever move) is an override only the people who read release notes can find. */
+function fitConsentHtml(){
+  if (!fitConsent) return '';
+  const a = fitConsent.advisory || {};
+  const c = a.copy || {};
+  const hard = !!(a.refuse);
+  let rem = '';
+  for (const r of (a.remedies || [])){
+    if (r.kind === 'ctx'){
+      rem += `<button onclick="fitApplyCtx(${Number(r.value)})">${esc(r.text)} · use ${esc(r.label)}</button>`;
+    } else if (r.kind === 'kv_quant'){
+      rem += `<button onclick="fitTryKv('${escAttr(String(r.value))}')">${esc(r.text)} · use it</button>`;
+    } else {
+      rem += `<button onclick="fitCheckAgain()">${esc(r.text)} · re-check after</button>`;
+    }
+  }
+  const act = hard
+    ? `<button onclick="fitCancel()">Close</button>`
+    : `<button onclick="fitCancel()">Not now</button>
+       <button class="go" onclick="fitProceed()">Load anyway</button>`;
+  const why = hard
+    ? `${esc(a.refuse.reason)}<br>${esc(a.refuse.remedy)}<br>Set ${esc(a.refuse.override_env)}=1 in the environment if you have a reason to try it anyway.`
+    : `${esc(c.line || '')}<br>${esc(c.math || '')}`;
+  return `<div class="fit-consent${hard ? ' hard' : ''}">
+      <div class="fc-head">${esc(hard ? 'This context is past what this Mac can wire' : (c.chip || 'Probably will not fit'))}</div>
+      <div class="fc-why">${why}</div>
+      ${rem ? `<div class="fc-rem">${rem}</div>` : ''}
+      <div class="fc-act">${act}</div>
+      <div class="fc-hedge">${esc(c.hedge || '')} ${esc(c.caveat || '')}</div>
+    </div>`;
+}
+
+async function fitRefetch(extra){
+  if (!fitConsent) return;
+  let url = '/api/memory/fit?id=' + encodeURIComponent(fitConsent.id) + (extra || '');
+  try {
+    const r = await (await fetch(url)).json();
+    if (r && r.ok){ fitConsent.advisory = r; renderDetail(); }
+  } catch (e) {}
+}
+
+function fitCheckAgain(){ fitRefetch(''); }
+
+/* ⚠️ A REMEDY MUST CHANGE WHAT LOADS, NOT ONLY WHAT THE PANEL SAYS. Caught in the
+   adversarial pass: the first version of the KV-cache remedy re-PRICED the model at
+   q8_0 and flipped the chip to "Fits · ~18.3 GB", but Load anyway still loaded the
+   SAVED settings — f16 KV, 20.2 GB, the configuration the panel had just declared
+   fine. A green verdict over a red load is the worst thing this feature can ship, so
+   both remedies write through the endpoint that owns load settings. The change is
+   visible in the Load group afterwards, and undoable there. */
+async function fitApplyLoad(patch){
+  if (!fitConsent) return;
+  try {
+    await fetch('/api/models/load-settings', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: fitConsent.id, load: patch})});
+  } catch (e) {}
+  await initModels();
+  await refreshMemory();
+  fitRefetch('');
+}
+function fitApplyCtx(ctx){ return fitApplyLoad({ctx: ctx}); }
+function fitTryKv(v){ return fitApplyLoad({kv_quant: v}); }
+
+function fitProceed(){
+  if (!fitConsent) return;
+  const id = fitConsent.id, name = fitConsent.name;
+  fitAcked[id] = true;
+  fitConsent = null;
+  switchModel(id, name, true);
+}
+
 function modelRowHtml(m, isActive, isAux, runnerUp){
   const badges = [];
   if ((m.capabilities || []).includes('vision')) badges.push('<span class="mpill vision">vision</span>');
@@ -8833,6 +9140,11 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
   if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
   if (isAux) badges.push('<span class="mpill aux">aux</span>');
+  // The fit verdict, as an EMPTY placeholder filled by paintFitChips(). Rendering it
+  // hidden-until-known is the honest default: a row with no chip says "we have not
+  // priced this yet", where a green chip drawn before the answer arrives would be a
+  // guess wearing a verdict's clothes.
+  badges.push('<span class="fitpill mfit fit-unk" hidden></span>');
   return `<div class="mname">${esc(m.name || m.id)}</div><div class="mbadges">${badges.join('')}</div>`;
 }
 
@@ -8855,6 +9167,7 @@ function renderList(r){
     col.appendChild(row);
   }
   renderHiddenRow(col, r, 'chat');
+  paintFitChips();          // fill any verdicts we already hold for these rows
 }
 
 // Aux runner control — full-width strip under the split (unchanged behavior).
@@ -8867,8 +9180,19 @@ function renderAux(r){
   if (aux.model){
     const b = document.createElement('button'); b.style.marginTop = '11px';
     if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
-    else { b.textContent = 'Start'; b.onclick = auxStart; }
+    else { b.textContent = 'Start'; b.onclick = () => auxStart(false); }
     strip.appendChild(b);
+  }
+  if (auxWarn && !aux.up){
+    const warn = document.createElement('div');
+    warn.className = 'fit-consent';
+    warn.innerHTML = `<div class="fc-head">Probably will not fit beside what is loaded</div>
+      <div class="fc-why">${esc(auxWarn)}</div>
+      <div class="fc-act">
+        <button onclick="auxWarn=''; initModels();">Not now</button>
+        <button class="go" onclick="auxStart(true)">Start anyway</button>
+      </div>`;
+    strip.appendChild(warn);
   }
   foot.appendChild(strip);
 }
@@ -10459,7 +10783,9 @@ function renderDetail(){
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       ${caps.length ? `<div class="mbadges" style="margin-top:6px">${caps.join('')}</div>` : ''}
+      ${fitDetailHtml(m.id)}
       <div class="md-actions" id="md-actions"></div>
+      ${(fitConsent && fitConsent.id === m.id) ? fitConsentHtml() : ''}
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
       ${lau ? `<div class="md-sec" id="md-launch">${lau}</div>` : ''}
@@ -10603,10 +10929,19 @@ async function auxSet(id){
         body: JSON.stringify({id})}); } catch {}
   initModels();
 }
-async function auxStart(){
+async function auxStart(go){
   const st = document.getElementById('models-stamp');
   try {
-    const r = await (await fetch('/api/aux/start', {method:'POST'})).json();
+    const r = await (await fetch('/api/aux/start' + (go ? '?confirm=1' : ''),
+                                 {method:'POST'})).json();
+    // Same advisory shape as the main slot: the aux model sits BESIDE the runner, so
+    // nothing is freed by starting it. One warning, one way through, never a wall.
+    if (!r.ok && r.needs_confirm){
+      auxWarn = (r.log || 'that may not fit');
+      initModels();
+      return;
+    }
+    auxWarn = '';
     st.textContent = ('AUX: ' + (r.log || '')).toUpperCase();
     setTimeout(initModels, 15000);
   } catch { st.textContent = 'AUX START FAILED'; }
@@ -10748,10 +11083,10 @@ function hfDownload(repo, btn){
 // Load AND Switch share ONE pipeline (Fable A): both call this → /api/models/switch →
 // the background _do_switch (busy-lock + exit-code checks + harness.yaml rollback +
 // switch-status poll). Load is just "switch when nothing is live" — identical machinery.
-async function switchModel(id, name){
+async function switchModel(id, name, confirmed){
   if (modelsBusy) return;              // repeat clicks are no-ops while one is in flight
   modelsBusy = true;
-  switchingId = id; switchErr = '';
+  switchingId = id; switchErr = ''; fitConsent = null;
   renderDetail();                      // flip the clicked model's button to Loading… at once (ISSUE B)
   const stamp = document.getElementById('models-stamp');
   stamp.textContent = 'LOADING → ' + (name || id) + ' (model load ~60–90s)…';
@@ -10762,8 +11097,23 @@ async function switchModel(id, name){
     renderDetail();                    // re-enable the button + surface the error inline (no silent wedge)
   };
   try {
+    // The override travels in the request, exactly as it does for an API client:
+    // `confirm:true` is the whole consent protocol and there is no panel-only path.
+    const wantsGo = !!confirmed || !!fitAcked[id];
     const r = await (await fetch('/api/models/switch', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})})).json();
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(wantsGo ? {id, confirm:true} : {id})})).json();
+    // A fit advisory is NOT a failure and must not be painted as one: the load has
+    // not been refused, it is waiting on a person. (The one exception, r.refuse, is
+    // the Metal over-commit hard stop — same panel, no proceed button.)
+    if (!r.ok && (r.needs_confirm || r.refuse)){
+      fitConsent = {id: id, name: name || id, advisory: r.advisory || {}};
+      switchingId = null; modelsBusy = false;
+      stamp.textContent = 'CHECK BEFORE LOADING → ' + (name || id);
+      const sr0 = document.getElementById('sw-row'); if (sr0) sr0.hidden = true;
+      renderDetail();
+      return;
+    }
     if (!r.ok){ fail(r.log || 'the bridge rejected the load'); return; }
     const poll = setInterval(async () => {
       try {

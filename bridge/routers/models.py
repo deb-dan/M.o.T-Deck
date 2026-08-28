@@ -249,6 +249,70 @@ def _voice_spawn_guard(size_bytes: int) -> "str | None":
     return None
 
 
+def _wants_confirm(body: dict) -> bool:
+    """Did the caller EXPLICITLY consent? Nothing else counts as consent — not a
+    retry, not a second click, not a header. Same predicate shape the music lane
+    already uses, so the two heavy lanes cannot drift apart."""
+    if not isinstance(body, dict):
+        return False
+    v = body.get("confirm")
+    if isinstance(v, bool):
+        return v
+    return str(v or "").strip().lower() in ("1", "true", "yes")
+
+
+def _fit_advice(mid: str, slot: str = "main") -> "dict | None":
+    """The fit verdict for loading `mid` into `slot`, or None if we cannot say.
+
+    ⚠️ THE SLOT IS NOT COSMETIC. A MAIN-slot switch EJECTS the resident model, so its
+    footprint comes back as budget; an AUX start puts a second model beside the first
+    and frees nothing. Crediting the runner's 13 GB to an aux start would be a
+    confident "fits" for a load that doubles the machine's model memory.
+
+    None is deliberate and it is the safe direction: an engine that cannot produce a
+    verdict must not produce a REFUSAL either. Whatever goes wrong here — the header
+    unreadable, the oracle missing, Metal unreachable — the load proceeds exactly as
+    it did before this feature existed."""
+    try:
+        from ..core import fit as _fitmod
+        from ..core import memory as _memmod
+        entry = next((m for m in _split_audio(_registry_models())[0]
+                      if m.get("id") == mid), None)
+        if entry is None:
+            return None
+        snap = _memmod.snapshot()
+        rc = cfg().get("runner", {}) or {}
+        live_up = bool(rc.get("port") and _port_alive_sync(int(rc["port"])))
+        # What the runner REPORTS serving, not what harness.yaml pins — the two can
+        # disagree after a failed switch, and crediting the wrong model's memory is
+        # how the advisor starts describing a process that is not there.
+        live_id = ((_live_model_id(int(rc["port"])) or rc.get("model") or "")
+                   if live_up else "")
+        runner_row = next((r for r in (snap.get("components") or [])
+                           if r.get("name") == "runner"), None)
+            # ⚠️ A RELOAD OF THE MODEL ALREADY RESIDENT ALSO FREES IT. The first draft
+            # credited the runner's footprint only when the target was a DIFFERENT
+            # model, so the live model's own row read "Over by ~3.7 GB" — a model
+            # visibly running, and running fine, marked as not fitting. Any switch
+            # into the main slot ejects what is there first, including itself.
+        freeing = int((runner_row or {}).get("footprint_bytes") or 0) if (
+            slot == "main" and live_up) else 0
+        hold = [{"name": r.get("name"),
+                 "title": (live_id if r.get("name") == "runner" and live_id
+                           else (r.get("label") or r.get("name"))),
+                 "footprint_bytes": r.get("footprint_bytes") or 0}
+                for r in (snap.get("components") or [])
+                if r.get("name") not in ("bridge", "app")
+                and not (r.get("name") == "runner" and freeing)]
+        got = _fitmod.fit(entry, None, freeing_bytes=freeing, holders=hold,
+                          replaces=(live_id if (freeing and live_id != mid) else ""))
+        got["replaces"] = live_id if (freeing and live_id != mid) else ""
+        return got
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[fit] advisory unavailable for {mid}: {str(e)[:120]}", flush=True)
+        return None
+
+
 def _within_budget(candidate_bytes: int, other_slot_bytes: int, budget_bytes: int) -> bool:
     """Pure predicate (unit-testable): does loading `candidate` alongside the other
     slot's current usage stay within budget? True = OK to load."""
@@ -536,7 +600,10 @@ async def api_switch_model(req: Request) -> JSONResponse:
     registry model (HF repo ids are rejected — downloads go via the download manager)."""
     if _SWITCH["busy"]:
         return JSONResponse({"ok": False, "log": "a switch is already in progress"}, status_code=409)
-    new_id = ((await req.json()).get("id") or "").strip()
+    _body = await req.json()
+    if not isinstance(_body, dict):
+        _body = {}
+    new_id = (_body.get("id") or "").strip()
     if not new_id:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
     c = cfg()
@@ -548,17 +615,50 @@ async def api_switch_model(req: Request) -> JSONResponse:
     if _bad is not None:
         return _bad
     old_id = (c.get("runner", {}) or {}).get("model") or ""
-    # Model-RAM ledger gate: candidate + the OTHER slot (aux) must fit the budget.
-    # Switching the MAIN slot replaces its own usage → exclude "main" from "other".
-    _models = _registry_models()
-    _cand = _model_size(_models, new_id)
-    _other = _loaded_models_bytes(exclude_slot="main")
-    _budget = _budget_bytes()
-    if _cand and not _within_budget(_cand, _other, _budget):
-        _g = lambda b: round(b / (1024 ** 3), 1)
-        msg = (f"would exceed model-RAM budget: {_g(_cand)} + {_g(_other)} > "
-               f"{_g(_budget)} GB — eject something first")
-        return JSONResponse({"ok": False, "log": msg}, status_code=409)
+    # ── THE LOAD CONSENT GATE (v1.5.30) ──────────────────────────────────────
+    # THIS USED TO BE A WALL AND IS NOW AN ADVISOR, and it is the same engine the
+    # chips and the strip use (bridge/core/fit.py) — one verdict, one grammar, no
+    # divergence between what the list said and what the loader says. Debi's
+    # advisory-gates ruling: a projected-doesn't-fit load shows the measured numbers,
+    # a recommendation and a proceed-anyway, and it never refuses.
+    #
+    # The old gate compared FILE SIZE against a hand-written budget_gb, which was
+    # wrong in both directions: it ignored the KV cache (the whole point of the
+    # feature — 4 GB of it on the resident 27B at 65k) and it counted the model this
+    # switch is about to EJECT against the model replacing it.
+    #
+    # ⚠️ PARITY IS A REQUIREMENT, NOT A COURTESY. `confirm: true` is the override and
+    # it works on this route, i.e. for the CLI and any API client, exactly as it works
+    # for the panel — LM Studio's documented defect (lms#499) is an advisory GUI over a
+    # hard-blocking API, so a headless caller is stuck behind a number it cannot see.
+    _adv = _fit_advice(new_id)
+    if _adv is not None:
+        _refuse = _adv.get("refuse")
+        if _refuse:
+            # THE ONE HARD STOP IN THE FEATURE: a hand-set context past Metal's wired
+            # ceiling. Documented kernel PANIC, not an OOM — a warning that precedes a
+            # panic is not a warning.
+            #
+            # ⚠️ `confirm: true` DOES NOT CLEAR THIS, and an earlier draft let it: the
+            # consent flag is the answer to "this will be slow", not to "this may take
+            # the machine down with it". The only key that opens this door is the
+            # environment variable named in the message — a deliberate act outside the
+            # click that provoked it. Caught in the adversarial pass.
+            return JSONResponse({"ok": False, "refuse": True,
+                                 "advisory": _adv,
+                                 "log": _refuse["reason"] + " " + _refuse["remedy"]},
+                                status_code=409)
+        if _adv.get("verdict") == "over" and not _wants_confirm(_body):
+            _c = _adv.get("copy") or {}
+            return JSONResponse({"ok": False, "needs_confirm": True,
+                                 "advisory": _adv,
+                                 "log": (_c.get("line") or "this may not fit"),
+                                 "error": (_c.get("line") or "this may not fit")},
+                                status_code=409)
+        if _adv.get("verdict") in ("over", "tight"):
+            print(f"[fit] {new_id}: {_adv.get('verdict')} — "
+                  f"{(_adv.get('copy') or {}).get('line', '')}"
+                  f"{' (user confirmed)' if _wants_confirm(_body) else ''}", flush=True)
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
     # set BEFORE the thread: no double-switch race. (Download progress lives in the
     # download manager now — "/" repo ids are rejected above, so no HF fetch here.)
@@ -744,7 +844,7 @@ def _aux_kill(port: int) -> None:
 
 
 @app.post("/api/aux/start")
-def aux_start() -> JSONResponse:
+def aux_start(req: Request) -> JSONResponse:
     """Launch the aux model on its own port using the SAME engine dispatch as the
     main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
     `jan serve` path knew nothing about harness-downloaded models."""
@@ -763,16 +863,17 @@ def aux_start() -> JSONResponse:
     if not m or not m.get("path"):
         return JSONResponse({"ok": False, "log": f"aux model '{model}' not in registry"}, status_code=400)
     fmt, path, mmproj = m.get("format", "gguf"), m["path"], m.get("mmproj")
-    # Model-RAM ledger gate: aux candidate + the OTHER slot (main) must fit budget.
-    _cand = int(m.get("size_bytes") or 0)
-    _other = _loaded_models_bytes(exclude_slot="aux")
-    _budget = _budget_bytes()
-    if _cand and not _within_budget(_cand, _other, _budget):
-        _g = lambda b: round(b / (1024 ** 3), 1)
-        return JSONResponse(
-            {"ok": False, "log": (f"would exceed model-RAM budget: {_g(_cand)} + "
-                                  f"{_g(_other)} > {_g(_budget)} GB — eject something first")},
-            status_code=409)
+    # The aux slot gets the SAME advisory gate as the main one (v1.5.30) — it is a
+    # second model resident BESIDE the first, so nothing is freed by starting it and
+    # `freeing_bytes` stays 0. Consent rides `?confirm=1` here because this route has
+    # never taken a body; the override exists on every surface either way.
+    _confirm = str(req.query_params.get("confirm") or "").lower() in ("1", "true", "yes")
+    _adv = _fit_advice(model, slot="aux")
+    if _adv is not None and _adv.get("verdict") == "over" and not _confirm:
+        _c = _adv.get("copy") or {}
+        return JSONResponse({"ok": False, "needs_confirm": True, "advisory": _adv,
+                             "log": _c.get("line") or "this may not fit"},
+                            status_code=409)
     _aux_kill(port)
     if fmt == "mlx":
         venv = ROOT / "data" / "mlx-venv"

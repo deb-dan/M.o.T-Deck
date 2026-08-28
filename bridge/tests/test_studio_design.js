@@ -231,11 +231,54 @@ console.log('2. Editorial does not pay for the second design');
                to be readable by whoever edits it), and the one adversarial finding — a
                scan-forward that discarded the document's lead-in — is recorded at the
                loop it fixed rather than in a report nobody will open again.
+       780000  the CAPABILITY-AFFORDANCE slice (2026-08-28, Debi's "all paths have what
+               they can handle" ruling) — +9.5KB, and per the protocol, what it bought.
+               NEW BEHAVIOUR, most of it: attachVerdict (the pure lane × model × Odysseus
+               -vision-config decision) and odyVisionCfg; applyVisionUi rewritten from
+               hide-or-show into the grey-not-hide painter, including the repaint of a
+               STAGED image's caveat across a lane switch; laneNote as the single source
+               of the composer's per-lane sentence; the image riding the Hermes and
+               Odysseus request bodies; the ⊕'s `.off` rule; addRestoredAttachment's
+               second provenance (an Odysseus upload, proxied) and attachLineEl's honest
+               per-lane ✕ title; Send-becomes-Stop on every lane; the empty-message-with-
+               an-image refusal; and both smooth-scroll fixes. The PROSE half is the
+               argued kind this ceiling's note allows AT the rule it excuses: WHY the
+               agent and hermes lanes have no vision gate (their backends describe), and
+               the driven root cause of the Odysseus caveat (it decides vision by NAME
+               KEYWORDS, so a genuinely multimodal local model answered "I can't see the
+               image") — a sentence that has to sit at the decision it explains, because
+               the next reader's instinct will be to delete the caveat as noise.
                ⚠️ AND THE PAGE DID NOT GROW BY THE SIZE OF THE HELP TEXT. The content
                is served from docs/USER-EXPLAINERS.md by /api/help/explainers and is
                never inlined — structurally the same argument as the design asset
-               asserted below. Editing the help costs zero page bytes, for ever. */
-  const CEILING = 775000;
+               asserted below. Editing the help costs zero page bytes, for ever.
+       795000  the RAM FIT ADVISOR, slice 1 (v1.5.30, Debi's RAM ruling + the
+               advisory-gates retrofit) — +18.7KB, and per the protocol, what it bought.
+               NEW BEHAVIOUR, nearly all of it: the memory strip (pressure-first
+               headline, the two-budget sentence, the stacked bar) and its expansion
+               into the full ledger — every supervised component by name with its
+               lifetime peak, the residual "everything else" row and the top external
+               consumers; the per-row fit chip and its in-place painter (patched rather
+               than re-rendered, so a 2s ledger push cannot fight the user's scroll);
+               the detail pane's need-vs-free line with its arithmetic and its hedge;
+               the load-consent panel — verdict, reason, breakdown, computed remedies
+               that WRITE THROUGH to load settings, and a plain always-present Load
+               anyway — plus the aux slot's version of the same; the warn-once memory
+               (fitAcked); the 'memory' SSE kind's dispatch; and the MOT Deck tile.
+               ~40 lines of it is CSS, all token-only, verified to resolve in all six
+               looks. The PROSE half is the argued kind this ceiling allows AT the rule
+               it excuses, and every line of it records a LIE THIS SLICE ALMOST SHIPPED
+               and the walk that caught it: why the chip placeholder is hidden until a
+               verdict exists rather than green by default; why a remedy must write the
+               setting instead of only re-pricing it (a "Fits" chip over an unchanged
+               f16 load); and why the two budgets are both printed. Those sentences sit
+               at the code that would otherwise be "simplified" back into the defect.
+               ⚠️ AND THE PAGE HOLDS NO FIT ARITHMETIC. Every number and every verdict
+               sentence comes from bridge/core/fit.py over /api/memory*; the panel
+               formats bytes and paints. That is the same structural argument as the
+               help text and the design asset: the engine can grow without costing this
+               page a byte, and a browser badge can never disagree with the loader. */
+  const CEILING = 795000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

@@ -77,9 +77,14 @@ RETRY_MS = 3000         # the SSE `retry:` hint — EventSource's own reconnect 
 #                finished  (progress is THROTTLED at the emitter, see DL_TICK_S)
 #   config     → the Hermes config generation bumped
 #   nav        → the nav layout was saved
+#   memory     → the memory ledger moved enough to matter. DELTA-SUPPRESSED at the
+#                emitter (core/memory.py): a component's footprint moving >2% AND
+#                >32MB, or a change of pressure / swap-used / free-percentage — plus a
+#                60s keepalive so a client can tell "nothing changed" from "the
+#                sampler died". Sampled only while somebody is subscribed.
 #   hello      → sent once per connection, never emitted by a state transition
 #   ping       → the keepalive above
-KINDS = ("component", "health", "model", "download", "config", "nav")
+KINDS = ("component", "health", "model", "download", "config", "nav", "memory")
 
 
 class Hub:
