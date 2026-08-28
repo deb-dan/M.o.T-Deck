@@ -10,6 +10,13 @@
     --line:#241f33; --line2:#2e2745;
     --cream:#efe7d7; --fg:#c9c4d4; --dim:#6f6a80; --faint:#4a4658;
     --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    /* The translucent wash behind an ON toggle track. It EXISTS as a token because the
+       theme-pack guardrail is "token swaps only": .cap-sw's checked track used to carry
+       the gold literal rgba(217,179,108,.22) inline, which no palette swap could reach,
+       so under Cyber a cyan knob sat in a warm haze (caught in the live drive). This
+       value is byte-identical to that literal, so Editorial is unchanged — and Warm
+       Paper deliberately does NOT override it, for the same reason. */
+    --on-wash:rgba(217,179,108,.22);
     --mono: "SF Mono", ui-monospace, Menlo, monospace;
     --serif: "New York", "Iowan Old Style", Georgia, serif;
   }
@@ -25,6 +32,51 @@
   html[data-theme="light"] button.primary { color:var(--bg); }
   html[data-theme="light"] button.primary:hover { background:var(--fg); }  /* keep dark fill so light text stays readable */
   html[data-theme="light"] .cmsg.user .body { background:var(--card2); }
+
+  /* ===================== THEME PACKS — TOKEN SWAPS ONLY ========================
+     FABLE'S BINDING GUARDRAIL for this slice: a theme pack is ONE rule on the root
+     containing NOTHING BUT custom properties. No per-theme rule forks, no DOM
+     changes, no typography change (--mono / --serif are declared once, on :root,
+     and a pack never restates them) — a pack changes the COLOUR VOICE and nothing
+     else. bridge/tests/test_theme_packs.js fences exactly that: it walks the whole
+     stylesheet and fails if any selector mentioning a pack value declares anything
+     that is not a custom property, or appears more than once.
+
+     Four packs, persisted in the SAME key the panel has always used
+     (localStorage['harness-theme']), so office.html's syncSkin() keeps following
+     along untouched:
+       dark   → Editorial     — NO attribute at all, byte-identical to the default
+       light  → Warm Paper    — the shipped light palette above, now merely NAMED
+       gold   → Luxury Gold   — deeper, warmer obsidian; a brighter, warmer gold
+       cyber  → Cyber         — denser slate-indigo; neon cyan / green status ink
+
+     ⚠️ WHY THE TWO NEW PACKS ARE BOTH DARK: office.html reads this key and maps
+     'light' → data-theme="light", ANY OTHER VALUE → its own dark obsidian. That
+     contract is not ours to change here (office.html is out of scope), so a pack
+     that wanted a light ground under a value other than 'light' would render as
+     dark in the Office tab. Gold and Cyber are therefore constrained to dark
+     grounds — the theme is constrained, not the office page.
+
+     Contrast, measured (WCAG, against each pack's own --bg): both new packs beat
+     the shipped Editorial default on the ink that matters most for the
+     grey-not-hide grammar — disabled --faint 2.85 / 2.83 vs 2.17, --dim 5.32 /
+     5.17 vs 3.80 — and every status colour clears 3:1 (ok 9.6 / 11.2, warn 9.9 /
+     11.7, bad 6.7 / 7.3). */
+  html[data-theme="gold"] {
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#8c826c; --faint:#615748;
+    --gold:#e8bf76; --ok:#4fc79b; --warn:#e8a95e; --bad:#e77070; --accent:#a89bf5;
+    --on-wash:rgba(232,191,118,.22);
+  }
+  html[data-theme="cyber"] {
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#75849f; --faint:#4e5a74;
+    --gold:#7dd3fc; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#a78bfa;
+    --on-wash:rgba(125,211,252,.20);
+  }
+  /* =================== end theme packs (no rules past here) ==================== */
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--fg); min-height:100vh; display:flex;
          font:14px/1.55 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
@@ -97,7 +149,7 @@
                    border-radius:22px; transition:background .15s,border-color .15s; }
   .cap-sw .knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%;
                   background:var(--dim); transition:transform .15s,background .15s; }
-  .cap-sw input:checked ~ .track { background:rgba(217,179,108,.22); border-color:var(--gold); }
+  .cap-sw input:checked ~ .track { background:var(--on-wash); border-color:var(--gold); }
   .cap-sw input:checked ~ .knob { transform:translateX(18px); background:var(--gold); }
   .cap-sw input:disabled ~ .track { opacity:.5; }
   .cap-sel, .cap-num { font:12px var(--mono); color:var(--cream); background:var(--card2);
@@ -208,13 +260,29 @@
   #chat-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
       max-width:none; width:100%; margin-top:6px; padding-right:2px;   /* Fable: fill width + reflow (was 760px cap); minimal gap to divider (Debi) */
       scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
-  .cmsg { margin:0 0 30px; }
+  /* ---------- CHAT DENSITY (2026-08-28) ----------
+     Debi's research direction: the chat lane carries too much dead space. Three
+     judgment calls, all of them VALUE changes to rules that already existed — no new
+     rules, no layout rewrite, and deliberately NOT a terminal:
+       · turn gap        30 → 22px. 30px is a paragraph break between turns; 22px is
+                         still a clear break, and on a 6-turn screen it hands ~48px
+                         back to the transcript.
+       · label gap        8 →  6px. The eyebrow belongs TO its message; 8px let it
+                         float between the two.
+       · user bubble     margin-left 20% → 14%, padding 15/19 → 12/16px. The 20%
+                         gutter was the single largest empty region on screen; 14%
+                         still reads as an indented, right-leaning bubble (the shape
+                         and the asymmetric radius carry that, not the gutter).
+     NOT touched, on purpose — this is where "denser but still calm" is bought:
+     the assistant reply keeps font-size:15px and line-height:1.75, and the serif /
+     mono type system is untouched everywhere. Density came out of the GAPS. */
+  .cmsg { margin:0 0 22px; }
   .cmsg .who { font:10.5px var(--mono); letter-spacing:.22em; text-transform:uppercase;
-               color:var(--faint); margin-bottom:8px; }
+               color:var(--faint); margin-bottom:6px; }
   .cmsg.user .who { text-align:right; color:var(--dim); }
-  .cmsg.user .body { margin-left:20%; text-align:left; color:var(--cream);
+  .cmsg.user .body { margin-left:14%; text-align:left; color:var(--cream);
                      background:var(--card); border:1px solid var(--line);
-                     border-radius:14px 14px 4px 14px; padding:15px 19px; }
+                     border-radius:14px 14px 4px 14px; padding:12px 16px; }
   .cmsg.assistant .who { color:var(--gold); }
   .cmsg.assistant .body { border-left:1px solid var(--gold); padding:2px 0 2px 14px;
                           color:var(--fg); font-size:15px; line-height:1.75; max-width:none;   /* Fable: full width + reflow (was 68ch cap); tighter gap from the accent bar (20->14) */
@@ -283,7 +351,9 @@
     border-radius:8px; }
   .cmsg .approval .ap-label { font:10.5px var(--mono); letter-spacing:.18em;
     text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
-  .cmsg .approval .ap-cmd { margin:0 0 8px; padding:8px 10px; background:#0a0910;
+  /* background rides the theme's own ground token — a hardcoded near-black here was a
+     dark box on Warm Paper (the --on-wash defect class; #0a0910 ≈ Editorial's --bg) */
+  .cmsg .approval .ap-cmd { margin:0 0 8px; padding:8px 10px; background:var(--bg);
     border-radius:6px; font:12px var(--mono); color:var(--dim); white-space:pre-wrap;
     word-break:break-all; max-height:180px; overflow:auto; }
   .cmsg .approval .ap-expand { background:none; border:0; padding:0; margin:-2px 0 8px;
@@ -412,19 +482,39 @@
   #chat-auto.on .talk-dot, #chat-conv.on .talk-dot { color:var(--gold); }
 
   /* session rail + chat column live side by side under the header */
-  #chat-body { flex:1 1 auto; display:flex; gap:24px; min-height:0; margin-top:10px; overflow:hidden; }
+  /* CHAT DENSITY: 24 → 18px. This gap is BETWEEN the sessions rail and the chat column,
+     i.e. dead space on both sides of the #cs-resize handle. The handle itself is
+     unchanged (8px wide, centred on the rail's right edge at right:-4px), so it still
+     sits entirely inside the remaining gap and its hit area did not shrink. */
+  #chat-body { flex:1 1 auto; display:flex; gap:18px; min-height:0; margin-top:10px; overflow:hidden; }
   #chat-main { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; min-width:0; }
   /* TASK A: resizable session rail — width driven by a CSS var (collapse rule below still wins). */
   #chat-sessions { flex:none; width:var(--sessions-width, 204px); display:flex; flex-direction:column;
       min-height:0; border-right:1px solid var(--line); padding-right:16px; position:relative; }
-  /* right-edge drag handle (subtle; gold cue on hover). Hidden while collapsed. */
-  #cs-resize { position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:6;
-      touch-action:none; }
+  /* right-edge drag handle (subtle; gold cue on hover). Hidden while collapsed.
+     ⚠️ LIVE FINDING 2026-08-28 — THE `+ New` / HANDLE COLLISION IS REAL, and the
+     research was right about it; it was just invisible at the default width. The handle
+     is z-index:6 and spanned the FULL height of the rail, including the .cs-head row.
+     At the default 204px the ＋ New button's right edge stops 12px short of the handle,
+     so nothing overlaps — which is why no one saw it. But clampSessionsWidth allows the
+     rail down to 120px, and measured on the served panel with elementFromPoint:
+         204px → gap  +12px, elementFromPoint(＋ New centre) = cs-new     ✓
+         140px → gap   −4px, centre still cs-new, edges shadowed         ⚠
+         120px → gap  −24px, elementFromPoint(＋ New CENTRE) = cs-resize  ✗ UNCLICKABLE
+     i.e. a user who drags the sessions rail to its own minimum loses the New-chat
+     button entirely, silently, with the button still fully painted on screen.
+     THE FIX is the one the research names: start the handle BELOW the header. The head
+     measures 24px + its 10px bottom margin = 34px, so 38px clears it with a margin and
+     height is reduced by the same amount so the handle still reaches the rail's foot.
+     The visible ::after bar is centred on the handle, so it now centres on the LIST,
+     which is where the grab actually is. */
+  #cs-resize { position:absolute; top:38px; right:-4px; width:8px; height:calc(100% - 38px);
+      cursor:col-resize; z-index:6; touch-action:none; }
   #cs-resize::after { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
       width:2px; height:34px; border-radius:2px; background:transparent; transition:background .12s; }
   #cs-resize:hover::after { background:var(--gold); }
   body.sessions-collapsed #cs-resize { display:none; }
-  .cs-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .cs-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }  /* CHAT DENSITY: 12 → 10px */
   .cs-title { font:10px var(--mono); letter-spacing:.22em; text-transform:uppercase; color:var(--faint); }
   #cs-new { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--gold);
       background:transparent; border:1px solid var(--line2); border-radius:7px; padding:4px 10px; cursor:pointer; }
@@ -578,8 +668,14 @@
   #mode-browse:hover { color:var(--dim); border-color:var(--line2); }
   #mode-browse.on { color:var(--gold); background:transparent; border-color:var(--gold); }
 
-  /* Session rail — calmer rows, clearer active state, gentle motion */
-  .cs-item { padding:10px 12px; border-radius:10px;
+  /* Session rail — calmer rows, clearer active state, gentle motion.
+     CHAT DENSITY (2026-08-28): padding 10/12 → 8/11px. This is the rule that WINS for
+     .cs-item (it restates the earlier 11/12 declaration), so it is the only place the
+     value has to change. HIT TARGET CHECKED, not assumed: a row's content is the .nm
+     line (13px × 1.55 ≈ 20px) plus .meta (4px margin + ~15px) ≈ 39px, so 8px of
+     vertical padding leaves a ~55px row — comfortably over 44px, which is why 8 and
+     not 6. Verified live with getBoundingClientRect, see the report. */
+  .cs-item { padding:8px 11px; border-radius:10px;
       transition: background .16s ease, border-color .16s ease; }
   .cs-item .nm { font-size:13px; letter-spacing:.1px; }
   .cs-item .meta { margin-top:4px; letter-spacing:.05em; }
@@ -712,25 +808,41 @@
      body.chat-mode (added/removed in showView). Other views are untouched.
      <!-- FABLE: style pass --> */
 
-  /* rail collapse toggle (chevron) — only meaningful on Chat, shown there only */
-  #rail-toggle { display:none; position:absolute; top:14px; right:12px;
-      width:24px; height:24px; line-height:1; padding:0; z-index:2;
+  /* rail collapse toggle (chevron). 2026-08-28: the rail is no longer a CHAT-ONLY
+     affordance, so the chevron is no longer chat-only either — it is present in every
+     view, which is also the only honest place to put it now that ⌘\ can collapse the
+     rail from anywhere. 28px so it clears a 24px pointer target. */
+  #rail-toggle { display:block; position:absolute; top:14px; right:12px;
+      width:28px; height:28px; line-height:1; padding:0; z-index:2;
       font:12px var(--mono); color:var(--faint); background:var(--bg2);
       border:1px solid var(--line); border-radius:6px; cursor:pointer; }
   #rail-toggle:hover { color:var(--gold); border-color:var(--gold); }
-  body.chat-mode #rail-toggle { display:block; }
 
-  /* Chat view + slim preference → collapse the left rail to a ~56px icon strip.
+  /* Collapsed preference → the left rail becomes a 56px icon strip, in EVERY view.
      font-size:0 on the link hides the bare text-node label; .ico is restored so
-     only the glyph/dot shows. Native title=""/aria-label give hover discovery. */
-  body.chat-mode.rail-slim aside { width:56px; padding:26px 8px; }
-  body.chat-mode.rail-slim aside .brand,
-  body.chat-mode.rail-slim aside .build,
-  body.chat-mode.rail-slim aside .navlbl,
-  body.chat-mode.rail-slim aside .side-foot { display:none; }
-  body.chat-mode.rail-slim aside nav a { font-size:0; gap:0; padding:8px 0; justify-content:center; }
-  body.chat-mode.rail-slim aside nav a .ico { font-size:16px; }
-  body.chat-mode.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
+     only the glyph/dot shows. Native title=""/aria-label give hover discovery —
+     every row already carries both (renderSidebar writes them), so the labels are
+     not lost, they move to the tooltip. Component rows keep their status .dot,
+     which is the whole reason a 56px rail is still readable at a glance.
+     nav a padding 8→11px: at font-size:0 the row's height is the .ico line box, and
+     11px of padding is what keeps the collapsed hit target at ~46px (≥44).
+     LIVE FINDING (2026-08-28): with the rail's own side padding at the inherited 8px a
+     row measured 39px WIDE — tall enough but too narrow, so the target was ≥44 in one
+     axis only. 4px here makes the row 48px wide. Measured on the served panel:
+     48 × 46.8px. */
+  body.rail-slim aside { width:56px; padding:26px 4px; }
+  body.rail-slim aside .brand,
+  body.rail-slim aside .build,
+  body.rail-slim aside .navlbl,
+  body.rail-slim aside .side-foot { display:none; }
+  body.rail-slim aside nav a { font-size:0; gap:0; padding:11px 0; justify-content:center; }
+  body.rail-slim aside nav a .ico { font-size:16px; }
+  /* the hover-revealed ⧉ peek target has nowhere to sit in a 56px rail and would
+     land on top of the glyph — it is hidden here and returns the moment the rail is
+     expanded (the behaviour itself is untouched: peekOpen still exists, and ⌘K and
+     the row's own click still reach every view). */
+  body.rail-slim aside .pk-open { display:none; }
+  body.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
 
   /* Chat view → widen: drop the narrow centered caps, reclaim the sidebar space.
      Reading width is still bounded per-message (assistant .body max-width:68ch). */
@@ -1359,7 +1471,14 @@
 </style>
 <script>
   // §C: apply the saved theme before first paint so there's no flash (dark = default).
-  try { if (localStorage.getItem('harness-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
+  // THEME PACKS (2026-08-28): the key is unchanged; the set of values it may hold grew
+  // from light|dark to light|dark|gold|cyber. The WHITELIST is duplicated here rather
+  // than shared with THEME_PACKS below on purpose — this block runs before any of the
+  // page's own script, and an unknown/corrupt value must fall through to Editorial
+  // (no attribute) rather than stamping an attribute no stylesheet answers.
+  try { var _th = localStorage.getItem('harness-theme');
+        if (_th === 'light' || _th === 'gold' || _th === 'cyber')
+          document.documentElement.dataset.theme = _th; } catch (e) {}
   // STUDIO CHROME (2026-08-20, replaces the parked "compact" axis): a SECOND,
   // independent axis, applied in the SAME pre-paint pass so controls never reflow
   // after first paint. Editorial = default. A stored legacy 'compact' value is NOT
@@ -1396,7 +1515,7 @@
 
 <aside>
   <!-- FABLE: style pass — Phase 1 rail collapse toggle (Chat view only) -->
-  <button id="rail-toggle" onclick="toggleChatRail()" title="Expand sidebar" aria-label="Expand sidebar">»</button>
+  <button id="rail-toggle" onclick="toggleSideRail()" title="Collapse sidebar (⌘\)" aria-label="Collapse sidebar">«</button>
   <!-- Wordmark: the acronym carries the display weight (216px rail — "Mixture of Tools
        (MOT)" cannot be set at 22px italic serif without shrinking the whole mark), and
        the expansion rides the existing .build line. ZERO new CSS. -->
@@ -1424,7 +1543,7 @@
 <main>
   <!-- FABLE: style pass — PHASE 1.5 topbar icon-ified (glyph only; word on hover) -->
   <div class="topbar">
-    <span class="chip chip-icon" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light / dark theme"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-theme"/></svg></span><span class="ed-only">◐</span></span>
+    <span class="chip chip-icon" onclick="toggleTheme()" title="Theme: Editorial → Warm Paper → Luxury Gold → Cyber" aria-label="Next theme"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-theme"/></svg></span><span class="ed-only">◐</span></span>
     <!-- studio chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
     <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle Studio chrome (uniform buttons + icons)" aria-label="Toggle Studio chrome">▣</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
@@ -2704,12 +2823,50 @@ function endTour() {
   const s = document.getElementById('coach-scrim'); if (s) s.style.display = 'none';
 }
 
-// §C: cycle dark ↔ light, persist. Dark = default (no attribute).
+/* ---------- THEME PACKS (2026-08-28) ----------
+   §C shipped a two-state dark↔light flip. This is the same axis with four curated
+   COMPLETE LOOKS on it, in the SAME localStorage key, so nothing that follows the
+   panel's theme (office.html's syncSkin, the shell) needs to learn anything new.
+
+   'dark' is the identity: it removes the attribute, so Editorial is not a palette
+   the panel selects — it is the stylesheet's own :root, unchanged. */
+const THEME_PACKS = [
+  { id: 'dark',  label: 'Editorial',   note: 'dark literary (default)' },
+  { id: 'light', label: 'Warm Paper',  note: 'light, warm paper ground' },
+  { id: 'gold',  label: 'Luxury Gold', note: 'deep obsidian, warm gold' },
+  { id: 'cyber', label: 'Cyber',       note: 'slate indigo, neon status' },
+];
+// PURE (unit-tested): any unknown / absent / corrupt stored value resolves to the
+// default. A theme axis must never be able to leave the panel unpainted.
+function themeId(v) {
+  return THEME_PACKS.some(p => p.id === v) ? v : 'dark';
+}
+// PURE (unit-tested): the ◐ chip's order is fixed and wraps, so a click is deterministic.
+function nextThemeId(v) {
+  const i = THEME_PACKS.findIndex(p => p.id === themeId(v));
+  return THEME_PACKS[(i + 1) % THEME_PACKS.length].id;
+}
+function applyThemeAttr(id) {
+  if (id === 'dark') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme = id;
+}
+function setTheme(v) {
+  const id = themeId(v);
+  applyThemeAttr(id);
+  try { localStorage.setItem('harness-theme', id); } catch (e) {}
+  const p = THEME_PACKS.find(x => x.id === id);
+  feed('theme', 'theme: ' + (p ? p.label : id));
+  const sel = document.getElementById('theme-pack');
+  if (sel && sel.value !== id) sel.value = id;
+}
+function storedTheme() {
+  let v = null;
+  try { v = localStorage.getItem('harness-theme'); } catch (e) {}
+  return themeId(v);
+}
+// The ◐ chip keeps its meaning — one axis, one click — it just has four stops now.
 function toggleTheme() {
-  const toLight = document.documentElement.dataset.theme !== 'light';
-  if (toLight) document.documentElement.dataset.theme = 'light';
-  else document.documentElement.removeAttribute('data-theme');
-  try { localStorage.setItem('harness-theme', toLight ? 'light' : 'dark'); } catch (e) {}
+  setTheme(nextThemeId(storedTheme()));
 }
 
 // STUDIO CHROME (2026-08-20, replaces the parked "compact" axis): the control-shape
@@ -2801,6 +2958,10 @@ function showView(v) {
   // PHASE 1: scope the slim-rail collapse to the Chat view ONLY. Other views must
   // render exactly as before, so the class is removed whenever we leave Chat.
   document.body.classList.toggle('chat-mode', v === 'chat');
+  // The rail's 'auto' default is per-view (Chat slim, everything else expanded), so the
+  // decision has to be re-run on every navigation, not only at boot. With an explicit
+  // preference stored this is a no-op — the class is already what it should be.
+  if (typeof applySideRail === 'function') applySideRail();
   // PHASE 2: the artifact viewer lives inside the Chat view. Its split pane hides with
   // the view naturally, but the EXPAND overlay is position:fixed — drop it when leaving
   // Chat so it can never linger over another view (the split state is kept for return).
@@ -2924,24 +3085,46 @@ function peekKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closePeek()
    Both classes live on <body> always; the CSS only acts inside body.chat-mode, so
    toggling here never affects Mission Control / Models / other views. Preferences
    persist in localStorage; default = slim rail on Chat, sessions open. */
-function applyChatRail() {
-  let pref = 'slim';
-  try { pref = localStorage.getItem('harness-chat-rail') || 'slim'; } catch (e) {}
-  const slim = pref !== 'full';
+/* SIDEBAR COLLAPSE, PROMOTED (2026-08-28). It used to be a Chat-view affordance
+   (`body.chat-mode.rail-slim`), which meant the sidebar could not be collapsed on the
+   screen the app OPENS on. It is global now — same chevron, same localStorage key
+   ('harness-chat-rail', kept as-is so an existing preference is not lost and no second
+   key appears), plus ⌘\ (the shortcut LOffice already uses for its own file rail, and
+   which was unclaimed in the panel).
+
+   ⚠️ THE DEFAULT IS THE DELICATE PART, and it is why this is a three-state pref rather
+   than a boolean. The shipped default was "slim ON Chat, expanded everywhere else".
+   Making the key global with its old default would have booted Mission Control — the
+   opening screen — with a collapsed sidebar, a change nobody asked for. So an ABSENT
+   key still means exactly what it meant before, and only an explicit click/⌘\ pins the
+   rail globally. */
+// PURE (unit-tested): stored value → 'slim' | 'full' | 'auto' (nothing stored yet).
+function railPref(v) { return (v === 'slim' || v === 'full') ? v : 'auto'; }
+// PURE (unit-tested): the whole decision table. 'auto' reproduces the pre-2026-08-28
+// behaviour exactly, so a fresh install and an untouched install are unchanged.
+function railIsSlim(pref, view) {
+  if (pref === 'slim') return true;
+  if (pref === 'full') return false;
+  return view === 'chat';
+}
+function applySideRail() {
+  let raw = null;
+  try { raw = localStorage.getItem('harness-chat-rail'); } catch (e) {}
+  const slim = railIsSlim(railPref(raw), curView);
   document.body.classList.toggle('rail-slim', slim);
   const t = document.getElementById('rail-toggle');
   if (t) {
     t.textContent = slim ? '»' : '«';
-    const lbl = slim ? 'Expand sidebar' : 'Collapse sidebar';
-    t.title = lbl; t.setAttribute('aria-label', lbl);
+    const lbl = slim ? 'Expand sidebar (⌘\\)' : 'Collapse sidebar (⌘\\)';
+    t.title = lbl; t.setAttribute('aria-label', slim ? 'Expand sidebar' : 'Collapse sidebar');
   }
 }
-function toggleChatRail() {
-  let pref = 'slim';
-  try { pref = localStorage.getItem('harness-chat-rail') || 'slim'; } catch (e) {}
-  const next = (pref !== 'full') ? 'full' : 'slim';
+function toggleSideRail() {
+  // Flip against what is ON SCREEN, not against the stored value: with the key absent
+  // the two disagree, and a chevron that reads » must expand on the first click.
+  const next = document.body.classList.contains('rail-slim') ? 'full' : 'slim';
   try { localStorage.setItem('harness-chat-rail', next); } catch (e) {}
-  applyChatRail();
+  applySideRail();
 }
 function applySessionsRail() {
   let collapsed = false;
@@ -3443,7 +3626,25 @@ function renderAppearance() {
       <div class="cap-desc">Order the sidebar and the app window's tab strip, and hide what you
         do not use. Opens over this page — drag to reorder, switch a row off to hide it.</div>
     </div><div class="cap-ctl"><button class="cap-btn" onclick="openNavDlg()">Customize…</button></div></div>
+    <div class="cap-row"><div class="cap-txt">
+      <div class="cap-name">Theme</div>
+      <div class="cap-desc">A complete look — ground, ink and accent together. Applies at once and is
+        remembered; the Office tab follows the same choice. The ◐ chip in the top bar steps
+        through the same four.</div>
+    </div><div class="cap-ctl">${themePackSelect()}</div></div>
   </div></div>`;
+}
+/* THEME PACKS live on the EXISTING Appearance surface (Capabilities → General) rather
+   than a fifth top-bar chip: Appearance is already where a look is chosen, and a
+   four-way choice wants a named list, not a glyph that cycles blind. The ◐ chip stays
+   as the fast path for anyone who already knows the order. */
+function themePackSelect() {
+  const cur = storedTheme();
+  return `<select class="cap-sel" id="theme-pack" onchange="setTheme(this.value)"
+      title="Theme pack" aria-label="Theme pack">`
+    + THEME_PACKS.map(p => `<option value="${escAttr(p.id)}"${p.id === cur ? ' selected' : ''}>`
+        + `${esc(p.label)} · ${esc(p.note)}</option>`).join('')
+    + `</select>`;
 }
 
 /* ---------- Phase 3: Models (Background-tasks + Utility model pickers) ----------
@@ -4349,6 +4550,14 @@ async function hermesSkillsWrite(payload, errId, el) {
     await loadHermesSkills();
     if ((j.stuck || []).length)
       hermesSkillsErr(errId, 'still off: ' + j.stuck.join(', '));
+    // The other direction, and it is REACHABLE from v0.20.6 on: Hermes keeps a
+    // small set of skills it will not let anyone disable (ESSENTIAL_SKILLS —
+    // `hermes-agent` today) and drops such a request silently on the way in.
+    // The switch above already snapped back because we re-read Hermes's answer;
+    // without this sentence that snap-back looks like our bug.
+    else if ((j.pinned_on || []).length)
+      hermesSkillsErr(errId, 'Hermes keeps these on and ignores a request to '
+                      + 'switch them off: ' + j.pinned_on.join(', '));
     return true;
   } catch (err) {
     if (el) el.disabled = false;
@@ -12219,6 +12428,8 @@ const commands = () => {
     {t:'Customize navigation', k:'⠿', f:openNavDlg},   // STUDIO PHASE 2 §A v2
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},
     {t:'Toggle Studio chrome', k:'▣', f:toggleChrome},
+    {t:'Collapse / expand sidebar (⌘\\)', k:'«', f:toggleSideRail},
+    {t:'Next theme', k:'◐', f:toggleTheme},
     {t:'Setup checklist', k:'✓', f:()=>openSetup(false)},
     {t:'Walkthrough (tour)', k:'◎', f:startTour},
     // PHASE 2 dev affordance: exercise the artifact viewer without Phase-3 cards.
@@ -12275,10 +12486,15 @@ document.getElementById('pal-q').addEventListener('keydown', e=>{
 });
 document.addEventListener('keydown', e=>{
   if ((e.metaKey||e.ctrlKey) && e.key==='k'){ e.preventDefault(); openPalette(); }
+  // ⌘\ collapses / expands the sidebar. MIRRORED from LOffice, which already binds ⌘\
+  // to its own file rail — the same gesture for the same kind of thing, and it was
+  // unclaimed in the panel. preventDefault because ⌘\ is otherwise a no-op the browser
+  // may hand to the page's text fields.
+  if ((e.metaKey||e.ctrlKey) && e.key==='\\'){ e.preventDefault(); toggleSideRail(); }
   if (e.key==='Escape'){ palette.close(); }
 });
 
-applyChatRail();       // PHASE 1: restore persisted rail preference (acts only in chat-mode)
+applySideRail();       // sidebar rail: restore the persisted preference (global since 2026-08-28)
 applySessionsRail();   // PHASE 1: restore persisted sessions-rail preference
 loadArtifactSplit();   // TASK A: restore persisted artifact split (default half)
 loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
