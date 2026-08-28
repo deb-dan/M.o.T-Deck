@@ -70,3 +70,27 @@ The bridge (panel + gearbox) always runs.
   button depends on pristine submodules.
 - Pins change only via the updater (or deliberately in `harness.yaml` + commit).
 - One upstream update at a time; contract tests gate every switch.
+
+<!-- unforget-registry:begin -->
+
+### unforget registry
+
+**Global**
+
+| key | value |
+|---|---|
+| git_posture | committed |
+| recall_block | maintained |
+| recall_file | CLAUDE.md |
+| policy_deferral | aggressive |
+| policy_multiaxis | lifespan-wins |
+| ratio_flag_threshold | 3 |
+| stale_trivial_sessions | 2 |
+
+**Ledgers**
+
+| name | path | role | axis | discipline | parent | death |
+|---|---|---|---|---|---|---|
+| UNFORGET.md | docs/UNFORGET.md | main | — | standard-10col | — | — |
+
+<!-- unforget-registry:end -->

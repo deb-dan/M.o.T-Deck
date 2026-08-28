@@ -62,6 +62,17 @@
 > test_office_journey.py (288).
 > Queued: tier-1 deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
 
+> **📒 DEFERRED WORK LEDGER (unforget) — Ledger home: `docs/UNFORGET.md`.** ALL deferred
+> work lives there and ONLY there: paused plans, mid-task spillover, audit findings that
+> aren't fixed on the spot, observed quirks, and every WORKAROUND/BRIDGE around an
+> upstream defect (Debi's ruling 2026-08-29, after the Odysseus vision bridge). When a
+> slice ships a workaround, add a U-row naming the root cause, the retirement plan, and a
+> verify-still-open recipe; when closing a row, use the closure pointer + spawn links.
+> "What's deferred / what's the backlog?" = read that file. Don't scatter deferral into
+> this file's queued lines anymore — new queued shapes from builder reports go into the
+> ledger at QA time.
+
+
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
 > EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by
 > reference into every builder dispatch and every QA pass.** Short form: build the

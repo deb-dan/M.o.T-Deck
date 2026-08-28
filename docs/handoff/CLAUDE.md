@@ -29,9 +29,49 @@
 > gate) are the standing QA pattern. v1.5.11 updated 8 components/engines (llama.cpp b10662 —
 > its /v1/models now needs auth, probe fixed + contract-pinned; Odysseus rsync MUST exclude
 > /data/ + /.env or it deletes the live DB). Hermes v0.20.x bump in flight as its own sitting.
-> Queued: ONLYOFFICE AI plugin -> our runner, Download-as-PDF (x2t has PdfWriter), Docs/Slides,
-> app.py modularization (10,072 lines — router/facade split ratified), tier-1
-> deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
+> **bridge/app.py IS NO LONGER A MONOLITH (v1.5.15):** its 10,072 lines are now
+> bridge/core/*.py + bridge/routers/*.py (29 files, largest 1,206) and app.py is a
+> ~280-line FACADE — a module-class proxy so `bridge.app` still answers for every
+> symbol the suite imports AND still propagates the monkeypatches (`A.ROOT`,
+> `A._script`, …) into the modules that read them. The ~40 test files that assert
+> against app.py's SOURCE TEXT read bridge/appsrc.py's ordered view of the whole
+> layer instead; adding a lane means adding it to appsrc.FILES (a contract test
+> fences that, because a lane missing from the view makes every `not in` assertion
+> pass vacuously). ship.sh copies bridge/{core,routers}/ — the flat `bridge/*.py`
+> glob would have shipped a facade with nothing behind it. Read
+> docs/handoff/APP-FACADE-MANIFEST.md before touching this area.
+> **LOFFICE IS THREE FILE TYPES + AN IN-RIBBON AI TAB + PDF EXPORT (loffice-2026-08-29a,
+> the three queued items all landed):** (1) ONLYOFFICE's OWN AI plugin is vendored
+> UNMODIFIED (`scripts/install_oo_ai_plugin.sh`, pinned by commit+sha256) and pointed at
+> our runner through the plugin's own localStorage keys — AI tab live in the ribbon of all
+> three editors, round-trip proven against :6767; gated OFF with a sentence when the plugin
+> or the runner is absent. FOUR upstream traps, all silent, documented in bridge/ooai.py
+> (layout `ai/` next to `v1/`, a mergePlugins race answered by a GENERATED
+> `/oo/dist/v9/plugins.json`, an `onResetPlugins` crash worked around with one invisible
+> companion entry, and `aiPluginSettings` being a dead end). (2) DOWNLOAD AS PDF replaces
+> Print: `asc_nativeGetPDF` → x2t with `m_nFormatFrom` = CANVAS_{SPREADSHEET 8194 | WORD
+> 8193 | PRESENTATION 8195}, `m_nFormatTo` 513, the bundle's 91 fonts mounted first, and
+> ⚠️ `m_bIsNoBase64` **true** — with false x2t returns rc 0 and a VALID PDF WITH `/Count 0`.
+> It is the LIVE editor state (proven with a never-saved marker), downloaded via an
+> `<a download>` blob (a navigation would not: WebKit CAN show application/pdf). (3) .docx
+> and .pptx are OPAQUE BLOBS to the bridge — the store handles all three, the CONTENT path
+> (snapshot, grid, sort, stats, office_read/stage_changes) is .xlsx only and refuses the
+> other two by name with `office.require_sheet()`. Blank packages are BUILT in
+> bridge/officeblank.py from the OOXML rules (never vendored, deterministic, sha-pinned).
+> New suites: test_oo_ai_lane.py (152) + test_office_types.py (168); journeys in
+> test_office_journey.py (288).
+> Queued: tier-1 deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
+
+> **📒 DEFERRED WORK LEDGER (unforget) — Ledger home: `docs/UNFORGET.md`.** ALL deferred
+> work lives there and ONLY there: paused plans, mid-task spillover, audit findings that
+> aren't fixed on the spot, observed quirks, and every WORKAROUND/BRIDGE around an
+> upstream defect (Debi's ruling 2026-08-29, after the Odysseus vision bridge). When a
+> slice ships a workaround, add a U-row naming the root cause, the retirement plan, and a
+> verify-still-open recipe; when closing a row, use the closure pointer + spawn links.
+> "What's deferred / what's the backlog?" = read that file. Don't scatter deferral into
+> this file's queued lines anymore — new queued shapes from builder reports go into the
+> ledger at QA time.
+
 
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
 > EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by
