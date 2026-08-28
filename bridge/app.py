@@ -218,6 +218,10 @@ _LANES = (
     "core.memory",
     "core.fit",
     "routers.memory",
+    # …and the Odysseus VISION SHIM (v1.5.33) by the SAME rule, a fourth time: it is
+    # new, it separates no pair of neighbours, and it costs only where
+    # /api/ody/vlshim/* appears in /openapi.json.
+    "routers.odyvision",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

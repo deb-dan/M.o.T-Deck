@@ -445,18 +445,39 @@ async def _ody_settings() -> dict:
 
 
 async def ody_vision_autowire(settings=None) -> dict:
-    """FALLBACK PATH (A): point Odysseus's `vision_model` at the loaded, evidence-
-    verified vision model. Evidence-gated, never-clobbering, logged, reversible.
-    Best-effort: every failure returns a dict, never raises into a turn."""
+    """PATH (A): point Odysseus's `vision_model` at something that answers FAST.
+    Evidence-gated, never-clobbering, logged, reversible. Best-effort: every
+    failure returns a dict, never raises into a turn.
+
+    ⚠️ WHAT IT WIRES CHANGED IN v1.5.33, AND THE REASON IS THE WHOLE SLICE. It used
+    to write the LOADED MODEL'S OWN ID, which made Odysseus call our runner exactly
+    as it always had — "Describe this image in detail", no token budget, thinking
+    ON: measured 65.1s on this machine for the probe image and 173s in v1.5.31 for
+    a harder one, against a hard 120s cap upstream. It now prefers the VISION SHIM
+    (routers/odyvision.py): the same model, reached through our own OpenAI-
+    compatible route, which turns thinking off and bounds the prompt — 5.7s
+    measured on the same image, same model, same runner.
+
+    The model id stays as the fallback: if the shim cannot be registered (Odysseus
+    down, its admin API refusing) we still wire what v1.5.31 wired, because a slow
+    real answer beats "[No vision model configured…]"."""
     from ..core.modelid import _live_model_id
     from ..core.procs import _registry_models
-    out = {"wired": False, "model": "", "reason": ""}
+    out = {"wired": False, "model": "", "reason": "", "shim": ""}
     try:
         rc = cfg().get("runner", {})
         port = rc.get("port")
         live = _live_model_id(int(port)) if port else None
         cand = ody_vision_evidence(_registry_models(), live)
         s = settings if isinstance(settings, dict) else await _ody_settings()
+        if cand:
+            # The evidence gate is unchanged and still comes FIRST: no vision-capable
+            # model loaded ⇒ we promise nothing and write nothing, shim or no shim.
+            from .odyvision import ody_vision_shim_ensure
+            shim = await ody_vision_shim_ensure(s)
+            out["shim"] = shim.get("spec") or shim.get("reason") or ""
+            if shim.get("spec"):
+                cand = shim["spec"]
         cur = str(s.get("vision_model") or "")
         out["model"] = cur
         write, why = ody_vision_wire_decision(cur, _ody_vision_marker_read().get("model"), cand)
@@ -476,8 +497,12 @@ async def ody_vision_autowire(settings=None) -> dict:
     return out
 
 
-async def _ody_vision_describe(raw: bytes, mime: str) -> tuple:
+async def _ody_vision_describe(raw: bytes, mime: str, timeout: float = None) -> tuple:
     """Ask OUR runner to describe the image. → (text, model_id, error).
+
+    `timeout` overrides our own budget: the VISION SHIM (routers/odyvision.py)
+    answers a call ODYSSEUS caps at a hard 120s, so it asks for a shorter one and
+    can still say WHY it gave up while Odysseus is listening.
 
     THINKING IS TURNED OFF on purpose (`chat_template_kwargs.enable_thinking`):
     measured on the loaded 27B, the same request answered in 5.6s with it and
@@ -504,7 +529,8 @@ async def _ody_vision_describe(raw: bytes, mime: str) -> tuple:
     for attempt in (0, 1):
         try:
             r = await _RUNNER.post(base + "/chat/completions", json=body,
-                                   headers=hdr, timeout=ODY_VISION_TIMEOUT)
+                                   headers=hdr,
+                                   timeout=float(timeout or ODY_VISION_TIMEOUT))
         except Exception as e:                                   # noqa: BLE001
             return ("", mid, f"the runner did not answer the vision pass: {str(e)[:120]}")
         if r.status_code == 200:

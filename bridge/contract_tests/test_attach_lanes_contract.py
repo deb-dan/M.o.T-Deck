@@ -195,3 +195,108 @@ def test_hermes_prompt_submit_still_drains_attached_images():
     assert "_enrich_with_attached_images" in src and "build_native_content_parts" in src, (
         "Hermes lost one of its two image routes (native parts / vision "
         "description) — the lane's no-vision-gate stance rests on both existing")
+
+
+# ── The VISION SHIM (v1.5.33) ───────────────────────────────────────────────
+# An image uploaded in ODYSSEUS'S OWN TAB never touches our panel, so the v1.5.32
+# pre-caption cannot reach it. Instead the bridge registers an OpenAI-compatible
+# endpoint of its own (bridge/routers/odyvision.py) and points Odysseus's
+# `vision_model` at it, so ODYSSEUS'S OWN VL call becomes the fast one: measured
+# 2026-08-29 on the loaded Qwen3.6-27B — 65.1s/849 tokens through the stock path,
+# 4.2s through the shim, same model, same picture. Five upstream mechanics carry
+# that, and each is an internal detail upstream never promised.
+def test_odysseus_resolves_vision_model_through_its_endpoint_rows():
+    """`vision_model` → (url, model, headers) via the ModelEndpoint table, with the
+    `model@endpoint` form selecting one endpoint BY NAME. Both halves are ours."""
+    if not ODY.exists():
+        return
+    ai = _read(ODY / "src" / "ai_interaction.py")
+    assert "def _resolve_model(" in ai, (
+        "_resolve_model is gone — it is what turns our `vision_model` string into a "
+        "call to the shim (bridge/routers/odyvision.py)")
+    assert 'model_name, target_endpoint_name = spec.rsplit("@", 1)' in ai, (
+        "the `model@endpoint` spec form is gone — ody_shim_spec() writes exactly "
+        "that so resolution is deterministic and no other endpoint is probed")
+    assert "ModelEndpoint.name.ilike(f\"%{target_endpoint_name}%\")" in ai, (
+        "the endpoint half of the spec no longer matches by display NAME — "
+        "ody_vision_shim_ensure re-reads the row's name and re-specs vision_model "
+        "to whatever the user renamed it to, which only works while this holds")
+    mr = _read(ODY / "routes" / "model_routes.py")
+    assert '@router.post("/model-endpoints")' in mr, (
+        "POST /api/model-endpoints is gone — that is how the bridge registers the "
+        "image-describer endpoint (admin session, form fields)")
+    assert '@router.delete("/model-endpoints/{ep_id}")' in mr, (
+        "DELETE /api/model-endpoints/{id} is gone — ody_shim_stale_rows cleans up "
+        "our OWN leftover row after a bridge port/path change with it")
+
+
+def test_odysseus_url_classification_still_traps_api_and_v1_paths():
+    """⚠️ THE TRAP THAT BROKE THE FIRST DRIVE OF THIS SLICE, PINNED.
+
+    Odysseus decides a LOOPBACK endpoint's protocol from its PATH: anything under
+    "/api/…" is native Ollama (so it probes /api/tags and never /models), and
+    anything under "/v1…" is Ollama's OpenAI-compat surface (so it also pokes
+    /slots). The shim therefore lives at /odyvision/v1 — outside the bridge's usual
+    /api namespace — and that choice is only correct while these two hold."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "llm_core.py")
+    assert 'path.startswith("/api/")' in src and "def _is_ollama_native_url" in src, (
+        "_is_ollama_native_url changed. If '/api/…' is no longer read as Ollama, the "
+        "shim may move back under /api/ody/; if the rule got BROADER, re-check that "
+        "/odyvision/v1 is still classified as a plain OpenAI endpoint")
+    assert 'if path.startswith("/v1"):\n        return False' in src, (
+        "the /v1 escape hatch in _is_ollama_native_url is gone")
+    assert "def _is_ollama_openai_compat_url" in src and 'path.startswith("/v1/")' in src, (
+        "_is_ollama_openai_compat_url changed — it is why the shim's base does NOT "
+        "start with /v1 either")
+
+
+def test_odysseus_derives_our_two_shim_urls_from_the_base():
+    """The shim serves exactly <base>/models and <base>/chat/completions because
+    that is what Odysseus builds from a path-carrying base."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "endpoint_resolver.py")
+    assert 'return _append_endpoint_path(base, "/chat/completions")' in src, (
+        "build_chat_url no longer appends /chat/completions to a generic base")
+    assert 'return _append_endpoint_path(base, "/models")' in src, (
+        "build_models_url no longer appends /models to a path-carrying base — the "
+        "shim's GET route would then be at the wrong address")
+    assert "if not parsed.path and uses_v1_models_by_default:" in src, (
+        "the 'only invent /v1 for an EMPTY path' rule changed — the shim's base "
+        "ends in /v1 precisely because of it")
+
+
+def test_odysseus_vl_call_still_blocks_its_event_loop():
+    """WHY THE SHIM NEVER CALLS ODYSSEUS BACK. The VL call is synchronous and is
+    made straight from an async handler — no asyncio.to_thread — so Odysseus's
+    whole event loop is frozen while it waits for us. A request from the shim back
+    to :7860 mid-call would deadlock until its own 120s timeout, which is why
+    everything the shim needs is snapshotted by ody_vision_shim_ensure instead."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "chat_handler.py")
+    assert "vl_result = analyze_image_with_vl_result(file_info[\"path\"], owner=owner)" in src, (
+        "the VL call moved. If it is now on a thread (asyncio.to_thread) the "
+        "deadlock hazard is gone and routers/odyvision.py may read Odysseus's "
+        "settings live instead of from _SHIM_STATE")
+
+
+def test_odysseus_vl_failure_text_is_still_its_own_bracket_marker():
+    """Our shim answers a failure the same way upstream does — a leading '[' — so
+    Odysseus shows it and (chat_handler's rule) never caches it."""
+    if not ODY.exists():
+        return
+    src = _read(ODY / "src" / "document_processor.py")
+    assert '"[VL model unavailable - image not analyzed]"' in src, (
+        "upstream's own VL failure marker changed — ody_shim_failure() deliberately "
+        "speaks the same idiom")
+    assert '"[No vision model configured — set one in Settings → Vision]"' in src, (
+        "the unconfigured-vision marker changed — that literal string is what the "
+        "tab journey produced before this slice, and what it must never produce "
+        "again while a vision-capable model is loaded")
+    assert "resolve_vision_fallback_candidates" in src, (
+        "the vision FALLBACK chain is gone — ody_shim_failure returns an HTTP error "
+        "instead of a 200 marker precisely so a user's configured fallback still "
+        "gets its turn")

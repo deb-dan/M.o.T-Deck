@@ -88,6 +88,8 @@ FILES: tuple[str, ...] = (
     "core/memory.py",
     "core/fit.py",
     "routers/memory.py",
+    # The Odysseus vision shim (v1.5.33), appended by the same rule.
+    "routers/odyvision.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the
