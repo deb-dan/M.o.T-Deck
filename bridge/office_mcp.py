@@ -219,10 +219,17 @@ def tool_specs() -> list:
             "read_only": True,
             "description": (
                 _ADDRESSING +
-                "List every spreadsheet in the Office folder, newest first, with its "
-                "size, when it changed, whether Debi has it open in LOffice right now "
-                "and whether she has unsaved edits in it. Start here: the other tools "
-                "need a name from this list."),
+                "List every file in the Office folder, newest first, with its size, "
+                "when it changed, whether Debi has it open in LOffice right now and "
+                "whether she has unsaved edits in it. Start here: the other tools need "
+                "a name from this list. "
+                "⚠️ THE FOLDER HOLDS THREE KINDS OF FILE AND YOU CAN ONLY WORK WITH "
+                "ONE. Each row carries `kind`: 'sheet' (.xlsx) is a spreadsheet and "
+                "every tool here works on it; 'doc' (.docx) and 'slides' (.pptx) are "
+                "edited only by LOffice's editor and are OPAQUE to these tools — "
+                "office_read and office_stage_changes refuse them by name. Do not "
+                "offer to change one; say it is the editor's and offer the "
+                "spreadsheets."),
             "schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         {
@@ -234,7 +241,9 @@ def tool_specs() -> list:
                 "cached in the file by whichever real engine last saved it, and any "
                 "merged ranges. NOTHING HERE RECOMPUTES ANYTHING — there is no formula "
                 "engine — so a cached value can be stale and every result says so. Cap "
-                f"{office_ops.READ_MAX_CELLS} cells; omit `range` for the used range."),
+                f"{office_ops.READ_MAX_CELLS} cells; omit `range` for the used range. "
+                "SPREADSHEETS (.xlsx) ONLY: a .docx or .pptx is refused with a sentence "
+                "saying so — there is no way to read inside one from here."),
             "schema": {"type": "object", "properties": {
                 "name": _NAME_ARG, "sheet": _SHEET_ARG,
                 "range": {"type": "string",
@@ -251,7 +260,8 @@ def tool_specs() -> list:
                 "formula counts, plus per-column stats for one sheet (how many "
                 "numbers, text, booleans, blanks and formulas, and min/max/sum/mean of "
                 "the numbers) and row 1 as it actually is. Cheaper than office_read for "
-                "'what is in this file' and 'which column holds the amounts'."),
+                "'what is in this file' and 'which column holds the amounts'. "
+                "SPREADSHEETS (.xlsx) ONLY, like office_read."),
             "schema": {"type": "object", "properties": {
                 "name": _NAME_ARG, "sheet": _SHEET_ARG,
             }, "required": ["name"], "additionalProperties": False},
@@ -267,6 +277,8 @@ def tool_specs() -> list:
                 "list on it and an Apply button. "
                 + office_ops.NOT_APPLIED_SENTENCE + " "
                 "You cannot apply it: there is no apply tool and there never will be. "
+                "SPREADSHEETS (.xlsx) ONLY: a .docx or .pptx cannot be staged, because "
+                "nothing here reads or writes one. "
                 "Stage the COMPLETE change for the request in ONE call — a second call "
                 "REPLACES the first proposal, so a change sent in pieces loses the "
                 "earlier pieces. Then say in one short sentence what you staged, and "
@@ -330,7 +342,7 @@ def call_tool(root, name, params):
 
     A refusal comes back as `isError` with the SENTENCE in it, never as a JSON-RPC
     error: a model that gets a transport error learns nothing, and a model that gets
-    "refused: a workbook is addressed by name, not by path" learns the rule. The panel
+    "refused: a file here is addressed by name, not by path" learns the rule. The panel
     renders every isError result as a red ✗ chip, so a refusal is no longer something
     only the model sees (that silence is half of the 2026-08-27 incident).
     """

@@ -30,3 +30,66 @@ the plugin covers in-ribbon rewrite/summarize; the panel owns agent tools + appr
 
 Sources: onlyoffice.com blog "How to add a custom provider to the ONLYOFFICE AI plugin"
 (2025-03), api.onlyoffice.com AI plugin docs, ONLYOFFICE/sdkjs-plugins.
+
+---
+
+## ✅ ANSWERED AND SHIPPED — 2026-08-28 (Opus 5, loffice-2026-08-29a)
+
+**The blocking question ("does our vendored CryptPad build support plugin loading at all?")
+is YES, and the AI tab is live in a real WKWebView, answering from our own runner.**
+
+### The evidence for the gate
+- `web-apps/apps/*/main/app.js` carries `pluginsData`, `getPlugins`, `asc_pluginsRegister`,
+  `onPluginToolbarMenu` and `Common.UI.LayoutManager.addCustomControls` (the code that draws
+  a plugin's own ribbon tab). `sdkjs/*/sdk-all-min.js` carries
+  `pluginMethod_AddToolbarMenuItem` plus the three events this plugin declares
+  (`onAIPluginSettings`, `onContextMenuShow`, `onToolbarMenuClick`).
+- CryptPad's `api.js` is a WRAPPER: it deep-merges our config and hands it to the real
+  `api-orig.js`, whose `_init` posts the WHOLE `editorConfig` into the editor iframe. So
+  `editorConfig.plugins.pluginsData` is a live surface in our build. Nothing was patched.
+- **`customization.plugins` was `false` in bridge/panel/oo.html for the entire life of the
+  embed**, and the plugins controller reads it FIRST and skips loading entirely — so the
+  recon's question would have looked like "not supported" from the outside.
+
+### What was vendored, and what it cost
+`scripts/install_oo_ai_plugin.sh` — ONLYOFFICE's own `ai.plugin` deploy archive
+(`ONLYOFFICE/onlyoffice.github.io @ 799b287`, sha256 `5e98cc51…`, plugin 3.2.2, guid
+`asc.{9DC93CDB-…}`) plus the three shared SDK files, UNMODIFIED, into
+`data/onlyoffice-plugins/` and served at `/ooplug/*` with the same three isolation headers.
+8.7 MB, 666 files.
+
+**The deploy archive is what makes UNMODIFIED possible.** The repository's working copy of
+`content/ai/index.html` loads the SDK from `https://onlyoffice.github.io/…` — absolute,
+which a COEP page cannot load and an offline Mac cannot reach. The deploy archive uses
+`./../v1/plugins.js`. The installer now FAILS LOUDLY if a future pin regresses that.
+
+### Four upstream traps, all of which fail SILENTLY (each is now a pinned test)
+1. **The layout.** `./../v1/` resolves ONE level above the plugin folder, so it must be
+   unzipped to `<dest>/ai/` NEXT TO `<dest>/v1/` — not `content/ai/` mirroring the repo.
+   Wrong layout ⇒ `window.Asc.plugin` undefined inside the plugin frame, no AI tab, and no
+   error anywhere the host can see.
+2. **A merge race.** `mergePlugins` no-ops while either list is `undefined`, and the
+   `plugins.json` error branch never calls it again — so `editorConfig.plugins` ALONE loses
+   a coin flip. Fixed by ANSWERING the bundle's own `plugins.json` request from the route
+   (generated, nothing written into the vendored tree).
+3. **An upstream crash.** `onResetPlugins` creates the ribbon's "Background plugins" button
+   only while walking a NON-background plugin, then calls `.show()` on it whenever any
+   background plugin exists — and the AI plugin IS one. A list holding only it throws
+   mid-registration, and the throw is swallowed by upstream's own `.catch`. Fixed by adding
+   ONE generated, invisible companion entry (`EditorsSupport: []`).
+4. **`Asc.plugin.info.aiPluginSettings` is a dead end**: sdkjs only fills it from a
+   DocumentServer licence message and then forces `data.proxy = …/ai-proxy`. Registration
+   goes through the plugin's OWN localStorage keys instead (same origin, same keys its
+   Settings dialog writes), seeded by the glue page before the editor starts.
+
+### Live proof
+AI tab in the ribbon (Settings · Chatbot · Summarization · Translation) on a spreadsheet, a
+document and a presentation; a Chatbot prompt round-tripped through `127.0.0.1:6767` — the
+runner log shows an 11,268-token prompt eval and 52 generated tokens — and the answer
+("LOCAL RUNNER OK") rendered in the chat window. Plugin removed ⇒ the editor opens exactly
+as before, no Plugins tab, no AI tab, `probe().ai.gate` says why. Nothing leaves the Mac.
+
+⚠️ **Honest limit:** the plugin's own capability list is bound to Chat, Summarization,
+Translation and Text analysis only. Image generation, OCR and vision are deliberately left
+UNBOUND — a local text model cannot do them, and a bound-but-broken action would be worse
+than a visibly empty one.

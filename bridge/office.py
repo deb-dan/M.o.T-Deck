@@ -59,9 +59,99 @@ except Exception as _e:                                          # noqa: BLE001
     get_column_letter = None                                     # type: ignore
     _OPENPYXL_ERR = str(_e)[:200]
 
+# The blank-.docx/.pptx builder. Defensive for the same reason as openpyxl above: a
+# snapshot that predates stage 3 must still serve spreadsheets, and "New document" must
+# then SAY it is unavailable rather than 500.
+# ⚠️ THREE ATTEMPTS, AND THE THIRD IS NOT PADDING. This module is imported three
+# different ways in this repo: as `bridge.office` by the app, as `bridge import office`
+# by most suites, and as a TOP-LEVEL `office` by bridge/tests/test_office_journey.py,
+# which puts bridge/ itself on sys.path. Without the flat `import officeblank` the
+# journey test would see New-document silently unavailable and blame the feature.
+_BLANK_ERR = ""
+try:                                                             # pragma: no cover
+    from . import officeblank
+except Exception:                                                # noqa: BLE001
+    try:
+        from bridge import officeblank                           # type: ignore
+    except Exception:                                            # noqa: BLE001
+        try:
+            import officeblank                                   # type: ignore
+        except Exception as _e:                                  # noqa: BLE001
+            officeblank = None                                   # type: ignore
+            _BLANK_ERR = str(_e)[:200]
+
 
 # ── constants ────────────────────────────────────────────────────────────────
 DOC_EXT = ".xlsx"
+
+# ⚠️⚠️ THREE EXTENSIONS NOW LIVE IN data/office, AND TWO OF THEM ARE OPAQUE TO THIS
+# MODULE. THAT ASYMMETRY IS THE DESIGN, NOT A GAP (loffice-2026-08-29a, stage 3).
+#
+# This file is the .xlsx round-trip: openpyxl in, IWorkbookData out, openpyxl back.
+# There is no equivalent for .docx or .pptx and there is deliberately not going to be
+# one — a word processor is not a grid, and a half-implemented mapper for it would lose
+# more than it kept. So the lane splits cleanly in two:
+#
+#   THE STORE (this module's naming, listing, containment, backups, upload, download,
+#   rename, delete, create) handles all THREE. A .docx is a file with a name and bytes,
+#   and every one of those operations needs nothing else.
+#
+#   THE CONTENT (snapshot_from_path, write_snapshot, save_doc, open_doc, the agent's
+#   office_read / office_stage_changes, the tier-1 grid, sorting, column stats) is
+#   .xlsx ONLY and REFUSES the other two by name, with a sentence that says why rather
+#   than a type error. `require_sheet()` is that refusal, in one place.
+#
+# The honest consequence, stated on the surfaces too: a .docx or .pptx is edited ONLY
+# by the editor. The bridge never rewrites its bytes — which makes it SIMPLER and MORE
+# trustworthy than the .xlsx path, not less: there is no mapper to lose anything.
+DOC_EXTS = (".xlsx", ".docx", ".pptx")
+
+# What each one IS, for the rail's badge and the per-type sentences. `kind` travels in
+# every list row so the panel never has to re-derive it from a string.
+KINDS = {".xlsx": "sheet", ".docx": "doc", ".pptx": "slides"}
+KIND_LABELS = {"sheet": "Spreadsheet", "doc": "Document", "slides": "Presentation"}
+# The noun each type is called in a sentence. "workbook" was hardcoded everywhere and
+# is now wrong two thirds of the time.
+KIND_NOUNS = {"sheet": "workbook", "doc": "document", "slides": "presentation"}
+
+
+def ext_of(name) -> str:
+    """The lowercase extension of a name, '' if it has none. Total."""
+    try:
+        return os.path.splitext(str(name))[1].lower()
+    except Exception:                                            # noqa: BLE001
+        return ""
+
+
+def kind_of(name) -> str:
+    """'sheet' | 'doc' | 'slides' | '' — what this file IS, from its extension."""
+    return KINDS.get(ext_of(name), "")
+
+
+def noun_of(name) -> str:
+    """'workbook' | 'document' | 'presentation' — for a sentence about this file."""
+    return KIND_NOUNS.get(kind_of(name), "file")
+
+
+def require_sheet(name):
+    """None when this name is an .xlsx, else the REASON it cannot be read or written.
+
+    ⚠️ ONE PLACE, AND IT RETURNS A SENTENCE, NOT A FLAG. Every content-level entry point
+    calls this, so a .docx reaching the snapshot mapper produces the same explanation
+    everywhere instead of an openpyxl stack trace — and the explanation says what the
+    user CAN do, because "unsupported" with no alternative is how a feature reads as
+    broken.
+    """
+    ext = ext_of(name)
+    if ext == DOC_EXT:
+        return None
+    k = KINDS.get(ext)
+    if not k:
+        return (f"refused: LOffice stores {', '.join(DOC_EXTS)} — not {ext or 'that'}")
+    return (f"a {KIND_NOUNS[k]} ({ext}) is edited only by the full editor. LOffice's "
+            f"own grid, its sorting and its AI tools read and write .xlsx spreadsheets; "
+            f"they never rewrite a {ext} file, which is why nothing in it can be lost "
+            f"here. Open it in the editor to change it.")
 # ⚠️ THE FIDELITY SENTENCE IS PER SAVE PATH AS OF loffice-2026-08-28d, AND THE SPLIT IS
 # THE WHOLE FIX (live finding L3, server finding F-27). It was ONE sentence describing
 # the openpyxl mapper, printed globally — while the surface a user actually saves
@@ -90,6 +180,29 @@ FIDELITY_EDITOR_NOTE = ("a save from the full editor round-trips the workbook th
                         "the editor's own converter and keeps charts, images, "
                         "autofilters, data validation, hyperlinks, freeze panes and "
                         "conditional formatting. Measured, not assumed.")
+
+# ⚠️ THE THIRD SENTENCE, AND IT IS THE SHORTEST ONE BECAUSE THE TRUTH IS SIMPLER. For a
+# .docx or .pptx there is no mapper and no snapshot, so there is nothing that could drop
+# anything: the file is stored exactly as the editor wrote it and read back byte for
+# byte. Saying so plainly is the honest version — and it is a BETTER promise than the
+# one we can make about .xlsx, which is why it is worth its own line rather than being
+# folded into a hedge about "limited support".
+FIDELITY_BLOB_NOTE = ("this file is edited only by the full editor. LOffice stores "
+                      "exactly the bytes the editor writes and hands exactly those "
+                      "bytes back — there is no mapper in between, so nothing in it "
+                      "can be dropped. What LOffice itself cannot do to it: read its "
+                      "contents, sort it, run column statistics, or let the AI panel "
+                      "change it. Those are spreadsheet tools.")
+
+# The MIME each type is served and downloaded as. Hardcoding the spreadsheet type for
+# all three (which is what /api/office/download did before stage 3) hands macOS a
+# .docx that it opens in the wrong application.
+MEDIA_TYPES = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml"
+              ".presentation"),
+}
 NAME_MAX = 80
 # Where the checkpoint stack and the pre-agent copies live. ⚠️ MIRRORED IN
 # bridge/office_ops.py (which reads it from here) and in bridge/panel/office.html.
@@ -179,7 +292,10 @@ def office_dir(root) -> str:
 def is_backup_name(name) -> bool:
     """`sheet.20260821.bak.xlsx` — our own safety copies, hidden from the list so
     the file column does not double in length after a week of editing."""
-    return isinstance(name, str) and name.lower().endswith(".bak" + DOC_EXT)
+    # Extension-aware since stage 3: `letter.20260828.bak.docx` is a backup too, and a
+    # backup that list_docs does not recognise shows up in the rail as a document.
+    return isinstance(name, str) and any(
+        name.lower().endswith(".bak" + e) for e in DOC_EXTS)
 
 
 def is_agent_copy_name(name) -> bool:
@@ -200,7 +316,8 @@ def is_agent_copy_name(name) -> bool:
     namespacing means nothing writes to that name any more, so nothing can be lost by
     it. The files stay on disk and File → Download of the real workbook is unaffected.
     """
-    return isinstance(name, str) and name.lower().endswith(".pre-agent" + DOC_EXT)
+    return isinstance(name, str) and any(
+        name.lower().endswith(".pre-agent" + e) for e in DOC_EXTS)
 
 
 def checkpoint_root(root) -> str:
@@ -221,28 +338,36 @@ def agent_copy_rel(name) -> str:
     return CHECKPOINT_DIR + "/" + stem + "/" + PRE_AGENT_NAME
 
 
-def valid_name(name):
+def valid_name(name, allowed=DOC_EXTS):
     """(safe_basename, None) or (None, reason).
 
     The name comes off the wire in every route here, so this is the ONE place that
     decides what a workbook may be called: a basename, no traversal, no dotfile, no
-    separators, `.xlsx` FORCED (a caller may omit it; a caller may not pick another).
+    separators, and one of `allowed` as the extension — defaulted to `.xlsx` when the
+    caller gave none, refused when the caller gave something else.
     """
     if not isinstance(name, str) or not name.strip():
         return None, "no file name given"
     name = name.strip()
     if name in (".", "..") or name != os.path.basename(name):
-        return None, "refused: a workbook is addressed by name, not by path"
+        return None, "refused: a file here is addressed by name, not by path"
     if "/" in name or "\\" in name or os.sep in name or name.startswith("."):
-        return None, "refused: a workbook is addressed by name, not by path"
+        return None, "refused: a file here is addressed by name, not by path"
     if "\x00" in name:
         return None, "refused: that name is not a file name"
     stem, ext = os.path.splitext(name)
-    if ext and ext.lower() != DOC_EXT:
-        return None, f"refused: slice 1 is spreadsheets only ({DOC_EXT})"
+    # ⚠️ THE EXTENSION IS PRESERVED WHEN IT IS ONE OF OURS, AND DEFAULTED WHEN THERE IS
+    # NONE. A caller may omit it (the New box does) and gets a spreadsheet, which is what
+    # "New" has always meant here; a caller may not invent one. `allowed` is a real
+    # argument so an .xlsx-only path can still narrow it (see require_sheet).
+    ext_l = ext.lower()
+    if ext and ext_l not in allowed:
+        return None, ("refused: LOffice stores " + ", ".join(allowed)
+                      + (f" — not {ext_l}" if ext_l else ""))
     if not stem.strip():
         return None, "no file name given"
-    safe = stem.strip() + DOC_EXT
+    safe = stem.strip() + (ext_l if ext else (allowed[0] if len(allowed) == 1
+                                              else DOC_EXT))
     if len(safe) > NAME_MAX:
         return None, f"refused: that name is longer than {NAME_MAX} characters"
     return safe, None
@@ -267,7 +392,7 @@ def doc_target(root, name, must_exist: bool = True):
 
 
 def backup_for(path, today=None) -> str:
-    """`<stem>.<YYYYMMDD>.bak.xlsx` beside the file.
+    """`<stem>.<YYYYMMDD>.bak.<same ext>` beside the file.
 
     ONE backup per file per DAY (Fable-tagged judgment call): a save writes a NEW
     workbook from the snapshot, so a file that arrived from Excel can lose things
@@ -275,9 +400,11 @@ def backup_for(path, today=None) -> str:
     must survive. Per-save copies would fill the folder during normal editing;
     per-day keeps exactly the version that existed before today's session.
     """
-    stem = os.path.splitext(str(path))[0]
+    stem, ext = os.path.splitext(str(path))
     day = today or time.strftime("%Y%m%d")
-    return f"{stem}.{day}.bak{DOC_EXT}"
+    # The SOURCE extension, not DOC_EXT: a .docx must be backed up as a .docx or the
+    # copy is a file macOS, Word and our own list all mis-identify.
+    return f"{stem}.{day}.bak{ext.lower() or DOC_EXT}"
 
 
 def list_docs(root) -> list:
@@ -297,7 +424,7 @@ def list_docs(root) -> list:
     except OSError:
         return out
     for n in names:
-        if (not n.lower().endswith(DOC_EXT) or is_backup_name(n)
+        if (not n.lower().endswith(DOC_EXTS) or is_backup_name(n)
                 or is_agent_copy_name(n) or n.startswith("~$")):
             continue
         p = os.path.join(d, n)
@@ -310,6 +437,10 @@ def list_docs(root) -> list:
         agent = agent_copy_path(root, n)
         out.append({"name": n, "size_bytes": st.st_size, "modified": st.st_mtime,
                     "has_backup": bool(_any_backup(p)),
+                    # `kind` travels with the row so the rail's badge, the start
+                    # screen's cards and every sentence about the file agree without
+                    # three copies of the extension table in the page.
+                    "ext": ext_of(n), "kind": kind_of(n),
                     "agent_copy": (agent_copy_rel(n) if os.path.isfile(agent) else "")})
     out.sort(key=lambda e: e["modified"], reverse=True)
     return out
@@ -801,7 +932,15 @@ def empty_snapshot(name: str) -> dict:
 
 
 def snapshot_from_path(path) -> dict:
-    """Read an .xlsx into IWorkbookData. Raises OfficeError with a sentence in it."""
+    """Read an .xlsx into IWorkbookData. Raises OfficeError with a sentence in it.
+
+    ⚠️ REFUSES .docx / .pptx FIRST, with require_sheet's sentence. Reaching openpyxl
+    with a presentation would raise something about zip files — telling the user their
+    file is broken when the truth is that this code path is not for it.
+    """
+    _r = require_sheet(path)
+    if _r:
+        raise OfficeError(_r)
     if openpyxl is None:
         raise OfficeError("openpyxl is not installed in the bridge venv — "
                           f"the .xlsx round-trip is unavailable ({_OPENPYXL_ERR})")
@@ -901,7 +1040,14 @@ def write_snapshot(snapshot, path) -> dict:
 
     Returns a small report ({sheets, cells}) so the panel can say what it saved.
     Junk in any cell costs that cell; junk in the whole snapshot is a refusal.
+
+    ⚠️ REFUSES .docx / .pptx. This is the snapshot mapper; there is no document mapper
+    and there is deliberately not going to be one, so this is the fence that stops a
+    .docx being silently replaced by a spreadsheet wearing its name.
     """
+    _r = require_sheet(path)
+    if _r:
+        raise OfficeError(_r)
     if openpyxl is None:
         raise OfficeError("openpyxl is not installed in the bridge venv — "
                           f"the .xlsx round-trip is unavailable ({_OPENPYXL_ERR})")
@@ -1101,8 +1247,13 @@ def _atomic_save(wb, path) -> None:
 
 
 # ── the operations the routes call ───────────────────────────────────────────
-def create_doc(root, name):
-    """(name, None) or (None, reason). Never clobbers an existing workbook.
+def create_doc(root, name, ext=""):
+    """(name, None) or (None, reason). Never clobbers an existing file.
+
+    `ext` is the TYPE the caller asked for — "" (a spreadsheet, the historic meaning of
+    New), ".docx" or ".pptx". It wins over the extension in `name`, because it comes
+    from the button that was pressed rather than from something the user may not have
+    typed.
 
     TWO CALLERS, TWO MEANINGS, and the difference is the whole point of the empty case:
 
@@ -1118,21 +1269,71 @@ def create_doc(root, name):
     """
     blank = name is None or (isinstance(name, str) and not name.strip())
     if blank:
-        safe, reason = free_name(root, DEFAULT_DOC_STEM)
+        safe, reason = free_name(root, DEFAULT_DOC_STEM + (ext or DOC_EXT))
     else:
         safe, reason = valid_name(name)          # junk types still land here, and refuse
+        # An explicit `ext` overrides whatever the typed name ended in, because it comes
+        # from the BUTTON the user pressed ("Blank presentation"), which is a clearer
+        # statement of intent than a suffix they may not have typed at all.
+        if safe and ext and ext_of(safe) != ext:
+            safe = os.path.splitext(safe)[0] + ext
     if not safe:
         return None, reason
     target, reason = doc_target(root, safe, must_exist=False)
     if not target:
         return None, reason
     if os.path.exists(target):
-        return None, "a workbook with that name already exists"
-    try:
-        write_snapshot(empty_snapshot(safe), target)
-    except OfficeError as e:
-        return None, str(e)
+        return None, f"a {noun_of(safe)} with that name already exists"
+    # ⚠️ TWO CREATE PATHS, AND THE SPLIT IS THE WHOLE OF STAGE 3's HONESTY. A blank
+    # spreadsheet is written by OUR mapper, because a spreadsheet is what this module
+    # understands. A blank document or presentation is a complete OOXML package built by
+    # bridge/officeblank.py — read that file's header for why it is BUILT rather than
+    # vendored — and written here byte for byte. Nothing interprets it on the way in.
+    if kind_of(safe) == "sheet":
+        try:
+            write_snapshot(empty_snapshot(safe), target)
+        except OfficeError as e:
+            return None, str(e)
+    else:
+        if officeblank is None:
+            return None, ("the blank-document builder failed to load, so New "
+                          f"{KIND_LABELS.get(kind_of(safe), 'file')} is unavailable "
+                          f"({_BLANK_ERR})")
+        try:
+            data = officeblank.blank_bytes(ext_of(safe))
+        except Exception as e:                                   # noqa: BLE001
+            return None, f"could not build a blank {noun_of(safe)}: {e}"
+        ok, reason = _write_bytes(target, data)
+        if not ok:
+            return None, reason
     return safe, None
+
+
+def _write_bytes(target, data):
+    """(True, None) or (False, reason) — temp file + os.replace, in the target's dir.
+
+    The same atomicity every other write in this module has: a crash mid-write leaves
+    the old file intact rather than a truncated one. Shared by create (blank .docx /
+    .pptx) and import.
+    """
+    d = os.path.dirname(target)
+    tmp = ""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".office-", dir=d,
+                                   suffix=(ext_of(target) or DOC_EXT))
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(bytes(data))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+        return True, None
+    except OSError as e:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False, f"could not write that file: {e}"
 
 
 def free_name(root, name):
@@ -1146,9 +1347,9 @@ def free_name(root, name):
     safe, reason = valid_name(name)
     if not safe:
         return None, reason
-    stem = os.path.splitext(safe)[0]
+    stem, ext = os.path.splitext(safe)
     for n in range(1, 1000):
-        cand = safe if n == 1 else f"{stem} ({n}){DOC_EXT}"
+        cand = safe if n == 1 else f"{stem} ({n}){ext.lower() or DOC_EXT}"
         if len(cand) > NAME_MAX:
             return None, f"refused: that name is longer than {NAME_MAX} characters"
         target, reason = doc_target(root, cand, must_exist=False)
@@ -1159,16 +1360,52 @@ def free_name(root, name):
     return None, "refused: too many workbooks with that name already"
 
 
-def import_doc(root, name, data):
-    """(report, None) or (None, reason) — an .xlsx from outside, into data/office.
+# The ROOT PART each package type must contain. This is how a .docx / .pptx is verified
+# without a library: an OOXML package is a zip whose [Content_Types].xml declares its
+# main part, and the main part must be there. It is a weaker check than openpyxl's full
+# parse — and it is the strongest one available without shipping a parser for a format
+# we deliberately never parse. Anything that passes it and is still broken is caught by
+# the editor, which says so in its own words.
+PACKAGE_ROOT = {".docx": "word/document.xml", ".pptx": "ppt/presentation.xml"}
 
-    The bytes are VERIFIED as a workbook before they are kept: a renamed .txt would
-    otherwise land in the list and only fail later, when the user clicks it. Written
-    through the same temp-file + os.replace path as every other write here.
+
+def verify_package(data, ext):
+    """None when `data` looks like a real OOXML package of that type, else the reason.
+
+    ⚠️ THIS RUNS BEFORE THE BYTES ARE KEPT, and that is the point: a renamed .txt that
+    lands in the list is a file the user clicks once, gets a broken editor for, and
+    stops trusting the whole folder over. Refusing at the door costs one sentence.
     """
-    if openpyxl is None:
-        return None, ("openpyxl is not installed in the bridge venv — "
-                      f"the .xlsx round-trip is unavailable ({_OPENPYXL_ERR})")
+    import zipfile as _zip
+    root = PACKAGE_ROOT.get(str(ext).lower())
+    if not root:
+        return f"refused: {ext} is not a file LOffice can store"
+    try:
+        with _zip.ZipFile(_io.BytesIO(bytes(data))) as z:
+            names = set(z.namelist())
+            if "[Content_Types].xml" not in names:
+                return (f"that file is not a readable {ext}: it has no "
+                        "[Content_Types].xml, so it is not an Office package")
+            if root not in names:
+                return (f"that file is a zip but not a {ext}: it has no {root}. "
+                        "(A .docx renamed to .pptx, or the other way round, fails here.)")
+    except Exception as e:                                        # noqa: BLE001
+        return f"that file is not a readable {ext}: {e}"
+    return None
+
+
+def import_doc(root, name, data):
+    """(report, None) or (None, reason) — a file from outside, into data/office.
+
+    The bytes are VERIFIED before they are kept: a renamed .txt would otherwise land in
+    the list and only fail later, when the user clicks it. Written through the same
+    temp-file + os.replace path as every other write here.
+
+    ⚠️ TWO VERIFIERS, ONE PER LANE. A spreadsheet is parsed by openpyxl, because this
+    module is going to have to read it later anyway. A .docx / .pptx is checked as a
+    PACKAGE (see verify_package) and never parsed — the bridge is not going to read
+    inside it, and a check that pretended to would be a promise we do not keep.
+    """
     if not isinstance(data, (bytes, bytearray)) or not data:
         return None, "no file received"
     if len(data) > UPLOAD_MAX_BYTES:
@@ -1177,10 +1414,18 @@ def import_doc(root, name, data):
     safe, reason = valid_name(name)
     if not safe:
         return None, reason
-    try:
-        openpyxl.load_workbook(_io.BytesIO(bytes(data)), data_only=False).close()
-    except Exception as e:                                       # noqa: BLE001
-        return None, f"that file is not a readable .xlsx workbook: {e}"
+    if kind_of(safe) == "sheet":
+        if openpyxl is None:
+            return None, ("openpyxl is not installed in the bridge venv — "
+                          f"the .xlsx round-trip is unavailable ({_OPENPYXL_ERR})")
+        try:
+            openpyxl.load_workbook(_io.BytesIO(bytes(data)), data_only=False).close()
+        except Exception as e:                                   # noqa: BLE001
+            return None, f"that file is not a readable .xlsx workbook: {e}"
+    else:
+        reason = verify_package(data, ext_of(safe))
+        if reason:
+            return None, reason
     final, reason = free_name(root, safe)
     if not final:
         return None, reason
@@ -1188,7 +1433,8 @@ def import_doc(root, name, data):
     if not target:
         return None, reason
     d = os.path.dirname(target)
-    fd, tmp = tempfile.mkstemp(prefix=".office-", suffix=DOC_EXT, dir=d)
+    fd, tmp = tempfile.mkstemp(prefix=".office-", suffix=(ext_of(final) or DOC_EXT),
+                               dir=d)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(bytes(data))
@@ -1204,9 +1450,17 @@ def import_doc(root, name, data):
 
 def save_doc(root, name, snapshot):
     """(report, None) or (None, reason). Takes a .bak first when the workbook
-    already exists and today's backup has not been made yet."""
+    already exists and today's backup has not been made yet.
+
+    SPREADSHEETS ONLY: this is the snapshot mapper's write. A .docx or .pptx is saved by
+    the EDITOR, through /api/office/writeback, which stores the editor's own bytes and
+    never asks this module what is inside them.
+    """
     target, reason = doc_target(root, name, must_exist=False)
     if not target:
+        return None, reason
+    reason = require_sheet(target)
+    if reason:
         return None, reason
     backup = ""
     if os.path.isfile(target):
@@ -1229,9 +1483,12 @@ def save_doc(root, name, snapshot):
 
 
 def open_doc(root, name):
-    """(snapshot, None) or (None, reason)."""
+    """(snapshot, None) or (None, reason). SPREADSHEETS ONLY — see require_sheet."""
     target, reason = doc_target(root, name)
     if not target:
+        return None, reason
+    reason = require_sheet(target)
+    if reason:
         return None, reason
     try:
         snap = snapshot_from_path(target)
@@ -1363,7 +1620,14 @@ def rename_doc(root, name, to):
     src, reason = doc_target(root, name)
     if not src:
         return None, reason
-    safe, reason = valid_name(to)
+    # ⚠️ A RENAME MAY CHANGE THE STEM AND NEVER THE TYPE (stage 3). With three
+    # extensions in the folder, `valid_name` would happily accept `budget.docx` as the
+    # new name for a spreadsheet — and the result would be a file whose extension lies
+    # about its bytes, which the editor then refuses to open with a message about the
+    # FILE rather than about the rename. So the source's extension is the only one
+    # allowed, and a caller who omits an extension gets the source's.
+    src_ext = ext_of(src) or DOC_EXT
+    safe, reason = valid_name(to, allowed=(src_ext,))
     if not safe:
         return None, reason
     dst, reason = doc_target(root, safe, must_exist=False)
@@ -1372,7 +1636,7 @@ def rename_doc(root, name, to):
     if os.path.realpath(dst) == os.path.realpath(src):
         return safe, None                       # renaming a file to its own name: a no-op
     if os.path.exists(dst):
-        return None, "a workbook with that name already exists"
+        return None, f"a {noun_of(safe)} with that name already exists"
     try:
         os.rename(src, dst)
     except OSError as e:

@@ -556,7 +556,16 @@ check('every URL the page calls is one of the endpoints that already existed',
                           and the WRITE happens bridge-side behind it. The page still
                           adds no writer of its own — see the writer fence in PART 5. */
                        "'/api/office/changeset?file='",
-                       "'/api/office/changeset/'"].indexOf(u) >= 0), urls);
+                       "'/api/office/changeset/'",
+                       /* THE IN-RIBBON AI TAB (loffice-2026-08-29a). ONE read, and it
+                          is READ-ONLY: Help → About asks whether ONLYOFFICE's own AI
+                          plugin is vendored and whether it is currently usable, so the
+                          AGPL attribution AND the honest "why the tab is missing"
+                          sentence both come from the bridge instead of being retyped
+                          here. This page does not configure the plugin and never talks
+                          to it — bridge/panel/oo.html does that, inside the editor
+                          frame, because the plugin lives inside the editor. */
+                       "'/api/oo/ai/status'"].indexOf(u) >= 0), urls);
 check('the session is deliberately EMPTY, so a spreadsheet question can never appear '
       + 'in — or retitle — a chat in Mission Control',
       /session: ''/.test(send));
@@ -777,11 +786,11 @@ check('it invents no dialog primitive — window.prompt and window.confirm are b
 
 // ── the way home ─────────────────────────────────────────────────────────────
 const home = grab('goHome');
-check('⌂ MOT Main asks the SHELL to switch tabs, through the same postMessage contract '
+check('⌂ MOT Deck asks the SHELL to switch tabs, through the same postMessage contract '
       + 'the panel sidebar already uses',
       /messageHandlers[\s\S]{0,80}harness/.test(home) && /cmd: 'switchTab'/.test(home));
 check('…sending the stable id AS WELL AS the title, so a renamed tab still resolves',
-      /id: 'mc'/.test(home) && /title: 'MOT Main'/.test(home));
+      /id: 'mc'/.test(home) && /title: 'MOT Deck'/.test(home));
 check('…defensively, because the shell does not register that handler on this webview '
       + 'yet: no handler is a MESSAGE, never a silent nothing',
       /try \{/.test(home) && /say\(/.test(home));
@@ -889,7 +898,7 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28d');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-29a');
 // ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
 // exactly two, which only held while no comment in the page mentioned the build it was
 // written for — and the one-editor slice writes its own stamp into the comments that
@@ -2006,7 +2015,7 @@ eval(grab('agentGate'));
         /M-4B/.test(agentGate({ hermes: true, mcpRegistered: true, mcpInSync: true,
                                 tools: false, model: 'M-4B' }).why));
   check('…and every refusal names WHERE to fix it',
-        shut.every(([, env]) => /MOT Main|Models/.test(agentGate(env).why)));
+        shut.every(([, env]) => /MOT Deck|Models/.test(agentGate(env).why)));
 
   const open = { hermes: true, mcpRegistered: true, mcpInSync: true, tools: true,
                  model: 'M-4B' };
@@ -3749,9 +3758,14 @@ OO_STYLE_KEYS.forEach(k => {
     const oo = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'oo.html'), 'utf8');
     check('bridge/panel/oo.html exposes readCells on the parent contract',
           /readCells: readCells/.test(oo) && /function readCells\(refs, sheetName\)/.test(oo));
-    // ⚠️ 2 → 3 AT loffice-2026-08-28d: `renameTo` joined the contract (live finding B1).
+    // ⚠️ 2 → 3 AT loffice-2026-08-28d (`renameTo`, live finding B1); 3 → 4 AT
+    // loffice-2026-08-29a (`downloadPdf`, the PDF export that replaces Print).
     check('…the contract version moved with it, so an older frame is detectable',
-          /contract: 3/.test(oo));
+          /contract: 4/.test(oo));
+    check('…and the new member is the PDF export, published as a FUNCTION so an older '
+          + 'frame degrades to a sentence instead of a silent nothing',
+          /downloadPdf: downloadPdf/.test(oo)
+          && /typeof ooChild\.downloadPdf !== 'function'/.test(html));
     /* ⚠️⚠️ THE TWO HALVES OF live finding L1, PINNED IN THE EMBED WHERE THEY LIVE. The
        vendored header's own floppy-disk Save ran sdkjs's DocumentServer save, which arrives
        at the mock server as `saveChanges`; we ACKed it and did nothing else, so sdkjs

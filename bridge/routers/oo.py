@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from ..core.appctx import PANEL, ROOT, _OO_ERR, _office, _oo, app
+from ..core.appctx import PANEL, ROOT, _OO_ERR, _OOAI_ERR, _office, _oo, _ooai, app
 from ..core.officelog import _office_log, _office_unavailable
 
 
@@ -97,6 +97,28 @@ def oo_asset(rel: str, request: Request) -> Response:
     """
     if _oo is None:
         return _oo_unavailable()
+    # ⚠️ ONE GENERATED FILE INSIDE AN OTHERWISE READ-ONLY BUNDLE, and the whole
+    # argument for it is in bridge/ooai.py under "THE SECOND CHANNEL": the editor asks
+    # its host for `plugins.json`, the vendored bundle does not ship one, and the 404
+    # is what makes the plugin-merge race lose. Answering it is configuration, not a
+    # modification — nothing is written to disk. It is served ONLY when the bundle has
+    # no plugins.json of its own AND the AI tab is genuinely usable.
+    if _ooai is not None and rel.lstrip("/") == _ooai.SERVER_LIST_REL:
+        on_disk, _ = _oo.bundle_target(ROOT, rel)
+        if not on_disk:
+            from ..core.modelid import _runner_loaded_id
+            from ..core.procs import cfg
+            st = _ooai.status(ROOT, cfg, _runner_loaded_id)
+            base = str(request.base_url).rstrip("/")
+            body = _ooai.server_plugins_json(
+                st.get("enabled"), st.get("guid") or "",
+                base + (st.get("config_url") or ""),
+                base + (st.get("shim_url") or ""))
+            if body is None:
+                return JSONResponse({"ok": False, "error": "no server plugin list"},
+                                    status_code=404, headers=_oo_headers())
+            return JSONResponse(body, headers=_oo_headers(
+                {"Cache-Control": _oo.NO_CACHE}))
     target, reason = _oo.bundle_target(ROOT, rel)
     if not target:
         # 404 for everything, including a refused traversal. Telling a caller which
@@ -116,6 +138,100 @@ def oo_asset(rel: str, request: Request) -> Response:
         headers["Content-Encoding"] = "br"
         headers["Vary"] = "Accept-Encoding"
         return FileResponse(br, media_type=media, headers=headers)
+    return FileResponse(target, media_type=media, headers=headers)
+
+
+# ══ THE IN-RIBBON AI TAB — ONLYOFFICE's own plugin, our runner ══════════════════
+#
+# Two routes, and they are the whole integration: one says whether the tab can work
+# (and hands the glue page the localStorage seed that registers our runner), one
+# serves the vendored plugin. Every decision lives in bridge/ooai.py.
+#
+# ⚠️ THESE CARRY oo.ISOLATION_HEADERS TOO, and for a reason that is easy to miss: the
+# plugin is loaded into an IFRAME INSIDE the editor iframe, i.e. inside the
+# cross-origin-isolated page tree. A nested document without CORP is refused by a
+# require-corp embedder, so a plugin served without these headers does not "load
+# slowly" — it does not load, and the ribbon tab never appears.
+
+@app.get("/api/oo/fonts")
+def oo_fonts() -> JSONResponse:
+    """The bundle's font file names — the precondition for Download as PDF.
+
+    x2t renders the PDF with real embedded faces and its wasm filesystem starts empty,
+    so the glue page copies these in first. The list comes off disk (bridge/oo.py
+    `font_files`) so a vendored bump cannot leave a hardcoded list quietly short.
+    """
+    if _oo is None:
+        return _oo_unavailable()
+    files = _oo.font_files(ROOT)
+    return JSONResponse({"ok": True, "count": len(files),
+                         "base": "/oo/" + _oo.FONTS_REL, "files": files},
+                        headers=_oo_headers({"Cache-Control": _oo.NO_CACHE}))
+
+
+@app.get("/api/oo/ai/status")
+def oo_ai_status() -> JSONResponse:
+    """Can the in-ribbon AI tab work right now, and with which model?
+
+    Install state + the runner probe + the seed, in ONE body, because the glue page
+    needs all three before it may construct the editor: the plugin list goes into the
+    DocsAPI config, and a config is not something you can amend after the fact.
+    """
+    if _ooai is None:
+        return JSONResponse(
+            {"ok": False, "installed": False, "enabled": False,
+             "gate": f"the in-ribbon AI module failed to load: {_OOAI_ERR}",
+             "installer": "scripts/install_oo_ai_plugin.sh"},
+            status_code=503, headers=_oo_headers())
+    # Injected rather than imported inside ooai.py so that module stays unit-testable
+    # without the model lane (which imports the world). See ooai.runner_state.
+    from ..core.modelid import _runner_loaded_id
+    from ..core.procs import cfg
+    body = _ooai.status(ROOT, cfg, _runner_loaded_id)
+    return JSONResponse({"ok": True, **body},
+                        headers=_oo_headers({"Cache-Control": _oo.NO_CACHE
+                                             if _oo is not None else "no-store"}))
+
+
+@app.get("/api/oo/ai/shim/config.json")
+def oo_ai_shim_config() -> JSONResponse:
+    """OUR OWN invisible companion plugin descriptor — an upstream crash workaround.
+
+    Read bridge/ooai.py's "THE COMPANION ENTRY" block before touching this: without a
+    non-background plugin in the list, the vendored editor throws while registering
+    plugins and the AI tab never appears. Generated, never a file on disk, and served
+    under /api/ rather than /ooplug/ precisely so nobody can mistake it for part of the
+    vendored ONLYOFFICE plugin.
+    """
+    if _ooai is None:
+        return JSONResponse({"ok": False, "error": _OOAI_ERR}, status_code=503,
+                            headers=_oo_headers())
+    return JSONResponse(_ooai.shim_config(),
+                        headers=_oo_headers({"Cache-Control": "no-store"}))
+
+
+@app.get("/ooplug/{rel:path}")
+def oo_plugin_asset(rel: str, request: Request) -> Response:
+    """The vendored AI plugin, read-only. Same containment + MIME discipline as /oo/*.
+
+    Its own route rather than a subtree of /oo/* because it is a DIFFERENT vendored
+    artefact with a different installer and pin — putting it under /oo/ would make an
+    editor-bundle re-unzip (which does `rm -rf`) delete it.
+    """
+    if _ooai is None:
+        return JSONResponse({"ok": False, "error": "the in-ribbon AI module failed to "
+                                                   f"load: {_OOAI_ERR}"},
+                            status_code=503, headers=_oo_headers())
+    target, reason = _ooai.plugin_target(ROOT, rel)
+    if not target:
+        # 404 for everything, refused traversals included — same reasoning as /oo/*.
+        return JSONResponse({"ok": False, "error": reason}, status_code=404,
+                            headers=_oo_headers())
+    media = _oo.media_type_for(target) if _oo is not None else "application/octet-stream"
+    # NOT immutable-cached like the editor bundle. The plugin is 8 MB, not 1 GB, so the
+    # cache buys little — and it is the artefact most likely to be re-pinned, which
+    # with an immutable year-long cache would need a hard reload nobody would think of.
+    headers = _oo_headers({"Cache-Control": "public, max-age=300"})
     return FileResponse(target, media_type=media, headers=headers)
 
 

@@ -220,6 +220,11 @@
   <span class="name" id="docname">—</span>
   <span class="sp"></span>
   <span id="state"></span>
+  <!-- Download as PDF lives here too, not only in LOffice's ⋯ menu, because this page
+       is ALSO the standalone rollback surface: an editor you can reach but cannot get a
+       PDF out of would be a dead end for the one feature that replaces Print. Hidden in
+       the embed (the header is), where LOffice's own File / ⋯ menus carry it. -->
+  <button id="btn-pdf" disabled title="Make a PDF of this document as it would print, and save it to Downloads">PDF</button>
   <button id="btn-save" class="primary" disabled title="Overwrite this workbook (⌘S)">Save</button>
 </header>
 
@@ -425,6 +430,295 @@ function x2tConvert(data, inName, outFormat) {
   return out;
 }
 
+// ══ DOWNLOAD AS PDF ═══════════════════════════════════════════════════════════
+//
+// This replaces Print, which the serverless bundle cannot do (its Print expects a
+// document server), and it is the ONE route to a PDF that this build actually has.
+// Everything below is measured; the three findings are each a silent failure.
+//
+// ⚠️ FINDING 1 — THE DOCUMENT MODEL CANNOT BE CONVERTED TO PDF IN THIS BUILD.
+// x2t's `m_nFormatFrom` values come from `Asc.c_oAscFileType` (read live out of the
+// vendored sdkjs, not guessed): XLSY=4098, PDF=513. `4098 → 513` returns rc 80 —
+// refused. That is not a bug: in ONLYOFFICE's own server the bin→PDF step runs sdkjs
+// itself inside x2t's embedded JS engine (hence its `m_sScriptsCacheDirectory` /
+// `m_sAllFontsPath` parameters), and a wasm build has no such engine. Plain
+// `<extension>.pdf` with no format code is refused the same way.
+//
+// ⚠️ FINDING 2 — THE ROUTE THAT WORKS IS THE EDITOR'S OWN PRINT METAFILE.
+// `asc_nativeGetPDF(options)` returns sdkjs's print command buffer for the LIVE
+// document. x2t converts THAT with
+// `m_nFormatFrom = Asc.c_oAscFileType.CANVAS_SPREADSHEET (8194)` — CANVAS_WORD 8193
+// and CANVAS_PRESENTATION 8195 for the other two — and `m_nFormatTo = 513`. Its
+// wasm carries the matching writer: `NSOnlineOfficeBinToPdf::ConvertBufferToPdf` and
+// `CPdfFile::OnlineWordToPdf`. Result on a real workbook: A4 page, real text
+// operators, two SUBSETTED EMBEDDED TrueType faces, 33 KB, 13 ms.
+//
+// ⚠️ FINDING 3 — TWO PRECONDITIONS THAT FAIL SILENTLY IF YOU GET THEM WRONG.
+//   (a) `m_bIsNoBase64` MUST BE **true** here. The print buffer is raw binary, while
+//       every other conversion on this page passes CryptPad's base64 text form. With
+//       `false` x2t base64-DECODES the raw bytes, finds no pages, and still returns
+//       rc 0 — handing back a structurally valid PDF with `/Count 0`. A perfectly
+//       well-formed EMPTY document is exactly the lie this lane must not ship, which
+//       is why `pdfPageCount` below re-reads the output and refuses a zero.
+//   (b) THE FONTS MUST BE IN x2t's FILESYSTEM FIRST. With an empty /working/fonts the
+//       conversion does not fail politely: it aborts the wasm module with "Out of
+//       bounds memory access", and every later conversion in that page — INCLUDING
+//       SAVE — dies with it. So `mountFonts` runs first, its count is checked, and a
+//       failure means we do not attempt the conversion at all.
+//
+// ⚠️ FINDING 4 — THE THREE EDITORS DISAGREE ABOUT HOW TO ASK, AND ONLY ONE CALL WORKS
+// FOR ALL THREE. `asc_nativePrint(undefined, undefined, undefined)` builds the buffer
+// itself in the SPREADSHEET api and returns it — but the word and slide apis treat that
+// argument shape as "the desktop host is driving" and return nothing at all (measured:
+// "the editor produced no print layout for this document" on a .docx that was open and
+// ready). The call that is implemented in all three is `asc_nativeGetPDF(options)`,
+// which loops the pages into a renderer and hands back its whole buffer.
+// Its one catch: it reports the VALID LENGTH by calling `window.native.Save_End(...)` —
+// a desktop host hook — and returns the UNSLICED buffer (5 MB of mostly zeros). So we
+// install a `window.native.Save_End` in the editor frame that captures that length.
+// That is the same kind of thing this page already does with `window.APP`: providing the
+// host object sdkjs documents itself as calling, not patching sdkjs.
+//
+// ⚠️ FINDING 5 — AND IT IS THE ONE THAT SAYS THE EXPORT IS HONEST. A PRESENTATION edited
+// through sdkjs's BUILDER api (`slide.AddObject`, `presentation.AddSlide`) exports a PDF
+// with the right number of pages and NO CONTENT — repeatably, and it never recovers
+// within the page. Chased to the end, because "the PDF is empty" is exactly the class of
+// lie this lane exists to prevent, and the answer is that it is not a lie:
+//   · the added shape is not in the PDF, AND IT IS NOT ON SCREEN EITHER — the slide
+//     canvas and the slide thumbnail are both blank (screenshot taken to check);
+//   · `asc_nativeCalculate()` does not help; `WordControl.m_oLogicDocument.Recalculate()`
+//     makes the shape appear on screen AND in the PDF (1897 → 15449 bytes).
+// So the builder api adds to the model without laying it out, and the export renders
+// what is laid out — i.e. exactly what the user sees, which is the promise. Nothing in
+// LOffice edits a PRESENTATION through the builder api (the AI panel's applyOps writes
+// CELLS, and a spreadsheet's live edit does reach the PDF — proven with a never-saved
+// marker). A UI edit cannot hit this: the user seeing the text IS the recalculation.
+// The internal `Recalculate()` is deliberately NOT called from here — reaching into a
+// non-public sdkjs member to paper over a path the product does not use would be the
+// wrong trade.
+const PDF_CANVAS_FORMAT = {cell: 8194, word: 8193, slide: 8195};
+const PDF_FORMAT = 513;                    // Asc.c_oAscFileType.PDF
+let fontsMounted = 0;                      // how many faces are in x2t's FS
+let x2tDead = false;                        // the wasm aborted; nothing may use it again
+
+// The font list comes from the bridge (/api/oo/fonts reads the vendored directory), so
+// a bundle bump that adds a face cannot leave this quietly short. Idempotent: a second
+// export pays nothing.
+async function mountFonts() {
+  if (fontsMounted > 0) return fontsMounted;
+  const M = x2t;
+  if (!M) throw new Error('the converter is not loaded');
+  let list;
+  try {
+    list = await (await fetch('/api/oo/fonts', {cache: 'no-store'})).json();
+  } catch (e) {
+    throw new Error('could not ask the bridge for the editor fonts (' + e + ')');
+  }
+  const names = (list && list.files) || [];
+  if (!names.length) throw new Error('the editor bundle has no fonts to render with');
+  try { M.FS.mkdir('/working/fonts'); } catch (e) { /* exists */ }
+  const base = (list.base || '/oo/dist/v9/fonts/fonts') + '/';
+  // Fetched in parallel (they are same-origin, immutable-cached assets) and written
+  // sequentially, because the wasm FS is not concurrent.
+  const got = await Promise.all(names.map((n) =>
+    fetch(base + encodeURIComponent(n))
+      .then((r) => (r.ok ? r.arrayBuffer().then((a) => [n, new Uint8Array(a)]) : null))
+      .catch(() => null)));
+  let n = 0;
+  got.forEach((p) => { if (p) { M.FS.writeFile('/working/fonts/' + p[0], p[1]); n++; } });
+  // ALL OR NOTHING. A partial font set is the case that renders the wrong glyphs
+  // without saying so — and a missing font is a fetch we can retry, not a defect to
+  // work around.
+  if (n !== names.length) {
+    throw new Error('only ' + n + ' of ' + names.length + ' editor fonts loaded — '
+                    + 'not converting with an incomplete font set');
+  }
+  fontsMounted = n;
+  return n;
+}
+
+// The page count, read back out of the produced PDF. This exists because the failure
+// mode above is a VALID pdf with no pages: `%PDF` alone is not proof of anything.
+//
+// ⚠️ SCANNED OVER THE WHOLE FILE, ON THE BYTES, AND BOTH OF THOSE ARE FIXES FOR A BUG
+// THIS FUNCTION ALREADY HAD. The first version decoded only the last 4 KB, on the
+// reasoning that the page tree sits near the trailer. It does in x2t's EMPTY output
+// (1.4 KB) and it does NOT in its real output (33 KB) — so the check refused a perfectly
+// good PDF, and refused it with the message meant for the empty one. Measured live.
+// The `/Count` values of nested page-tree nodes are partial, so the MAXIMUM is the total.
+function pdfPageCount(bytes) {
+  if (!bytes || bytes.length < 8) return -1;
+  if (bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46) {
+    return -1;                                                   // not "%PDF"
+  }
+  const NEEDLE = [0x2F, 0x43, 0x6F, 0x75, 0x6E, 0x74];           // "/Count"
+  let best = 0;
+  for (let i = 0, end = bytes.length - NEEDLE.length; i <= end; i++) {
+    if (bytes[i] !== 0x2F) continue;
+    let hit = true;
+    for (let k = 1; k < NEEDLE.length; k++) {
+      if (bytes[i + k] !== NEEDLE[k]) { hit = false; break; }
+    }
+    if (!hit) continue;
+    let j = i + NEEDLE.length;
+    while (j < bytes.length && (bytes[j] === 0x20 || bytes[j] === 0x0A
+                                || bytes[j] === 0x0D || bytes[j] === 0x09)) j++;
+    let num = 0, digits = 0;
+    while (j < bytes.length && bytes[j] >= 0x30 && bytes[j] <= 0x39) {
+      num = num * 10 + (bytes[j] - 0x30); j++; digits++;
+      if (digits > 7) break;                                     // not a page count
+    }
+    if (digits > 0 && num > best) best = num;
+  }
+  return best;
+}
+
+// Returns {ok:true, bytes, pages, ms} or {ok:false, error}. NEVER throws: the parent
+// turns whatever comes back into one sentence in the strip.
+async function exportPdf() {
+  if (x2tDead) {
+    return {ok: false, error: 'the converter stopped working earlier in this window — '
+                              + 'reopen this document before exporting or saving'};
+  }
+  if (!ready) return {ok: false, error: 'the editor is not ready yet'};
+  const api = innerEditor();
+  if (!api || typeof api.asc_nativePrint !== 'function') {
+    return {ok: false, error: 'this editor build cannot produce a print layout'};
+  }
+  const t0 = (window.performance && performance.now()) || Date.now();
+  try {
+    await mountFonts();
+  } catch (e) {
+    return {ok: false, error: String(e.message || e)};
+  }
+  const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
+  const from = PDF_CANVAS_FORMAT[DOC_TYPES[ext] || 'cell'];
+  if (!from) return {ok: false, error: 'there is no print layout for a .' + ext};
+  const M = x2t;
+  const inPath = '/working/print.bin';
+  const outPath = '/working/print.pdf';
+  let out;
+  try {
+    // The LIVE document, not the saved file — see the note on the parent's menu item.
+    // `Save_End` is the length report; see finding 4. Installed fresh each time so a
+    // stale length from a previous export can never be reused.
+    let printedLen = 0;
+    const frame = window.frames[0];
+    frame.native = frame.native || {};
+    frame.native.Save_End = function (_name, len) { printedLen = Number(len) || 0; };
+    const data = api.asc_nativeGetPDF({});
+    if (!data || !data.length || !printedLen) {
+      return {ok: false, error: 'the editor produced no print layout for this document'};
+    }
+    const buf = data.slice(0, Math.min(printedLen, data.length));
+    try { M.FS.unlink(outPath); } catch (e) { /* first run */ }
+    M.FS.writeFile(inPath, buf);
+    M.FS.writeFile('/working/params.xml',
+      '<?xml version="1.0" encoding="utf-8"?>'
+      + '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+      + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+      + '<m_sFileFrom>' + inPath + '</m_sFileFrom>'
+      + '<m_sThemeDir>/working/themes</m_sThemeDir>'
+      + '<m_sFontDir>/working/fonts</m_sFontDir>'
+      + '<m_sFileTo>' + outPath + '</m_sFileTo>'
+      + '<m_nFormatFrom>' + from + '</m_nFormatFrom>'
+      + '<m_nFormatTo>' + PDF_FORMAT + '</m_nFormatTo>'
+      // ⚠️ true, and finding 3(a) above is the whole reason.
+      + '<m_bIsNoBase64>true</m_bIsNoBase64>'
+      + '</TaskQueueDataConvert>');
+    let rc;
+    try {
+      rc = M.ccall('main1', 'number', ['string'], ['/working/params.xml']);
+    } catch (e) {
+      // An abort takes the module with it. Say so once, loudly, and stop trusting it —
+      // a save attempted after this point would fail, and it must not fail silently.
+      x2tDead = true;
+      tell('error', {text: 'the converter stopped working: ' + (e.message || e),
+                     fatal: false});
+      return {ok: false, error: 'the converter stopped working (' + (e.message || e)
+                                + '). Reopen this document before saving.'};
+    }
+    if (rc !== 0) return {ok: false, error: 'the converter refused this document (x2t '
+                                            + rc + ')'};
+    out = M.FS.readFile(outPath);
+    try { M.FS.unlink(inPath); M.FS.unlink(outPath); } catch (e) { /* fine */ }
+  } catch (e) {
+    return {ok: false, error: String(e.message || e)};
+  }
+  const pages = pdfPageCount(out);
+  if (pages <= 0) {
+    return {ok: false, error: pages < 0
+      ? 'what came back is not a PDF'
+      : 'the converter produced a PDF with no pages — nothing was downloaded'};
+  }
+  const ms = Math.round(((window.performance && performance.now()) || Date.now()) - t0);
+  return {ok: true, bytes: out, pages: pages, ms: ms,
+          name: DOC.replace(/\.[^.]+$/, '') + '.pdf'};
+}
+
+// ⚠️ THE DOWNLOAD MECHANISM, AND IT IS THE ONE THE SHELL DOCUMENTS AS WORKING.
+// A WKWebView saves nothing by itself. The harness shell answers two delegates
+// (app/main.swift, "download routing"):
+//   · `decidePolicyFor navigationResponse` → .download when it CANNOT show the MIME.
+//     That is what makes the existing "Download .xlsx" work — a navigation to
+//     /api/office/download/<name>. It would NOT work for a PDF: WebKit CAN show
+//     application/pdf, so that navigation would REPLACE the editor with a PDF viewer.
+//   · `decidePolicyFor navigationAction` → .download when `shouldPerformDownload` is
+//     set, which WebKit sets for an `<a download>` click "including the blob: URLs a
+//     SPA builds client-side". So that is the route: a blob of our own bytes and a
+//     synthetic anchor click. The shell then saves into ~/Downloads with never-clobber
+//     " (n)" suffixing and reveals the file in Finder — no bridge round trip, no temp
+//     file on disk, and nothing to clean up if the user cancels.
+// Proven in a real WKWebView with a download delegate wired into the probe harness.
+function saveBlob(bytes, filename) {
+  const url = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  // The revoke is deferred: revoking synchronously after click has raced the download
+  // start in WebKit before. 60s is far longer than a same-process blob read needs.
+  setTimeout(() => {
+    try { URL.revokeObjectURL(url); } catch (e) { /* fine */ }
+    try { a.remove(); } catch (e) { /* fine */ }
+  }, 60000);
+}
+
+// ONE implementation for both surfaces: LOffice's menu calls this through the contract,
+// and the standalone page's own PDF button calls it directly. Returns the result so the
+// caller can put the reason on screen rather than guessing.
+let pdfBusy = false;
+async function downloadPdf() {
+  if (pdfBusy) return {ok: false, error: 'a PDF is already being made'};
+  pdfBusy = true;
+  const btn = el('btn-pdf');
+  if (btn) btn.disabled = true;
+  state('making a PDF…');
+  let r;
+  try {
+    r = await exportPdf();
+  } finally {
+    pdfBusy = false;
+    if (btn) btn.disabled = !ready;
+  }
+  if (r.ok) {
+    saveBlob(r.bytes, r.name);
+    state(r.pages + (r.pages === 1 ? ' page' : ' pages') + ' → Downloads');
+    tell('pdf', {ok: true, name: r.name, pages: r.pages, bytes: r.bytes.length,
+                 ms: r.ms});
+  } else {
+    state('no PDF');
+    note('Could not make a PDF: ' + r.error, 'bad');
+    tell('pdf', {ok: false, error: r.error});
+  }
+  // The bytes are deliberately NOT handed back to the caller: they are megabytes, the
+  // download has already been started, and a second copy of them in the parent frame
+  // would only be a second thing that can leak.
+  return {ok: r.ok, error: r.error, pages: r.pages, name: r.name, ms: r.ms};
+}
+
 // ── the mock server ──────────────────────────────────────────────────────────
 // `api.js`'s own `handleAuth` answers the `auth` message and hands the editor the
 // Editor.bin URL; everything below is the single-user remainder. `saveChanges` is
@@ -521,6 +815,17 @@ async function save(force) {
     state('the editor is not ready to save yet');
     return {ok: false, error: 'the editor is not ready to save yet'};
   }
+  // ⚠️ A DEAD CONVERTER MUST NOT LOOK LIKE A WORKING SAVE. An x2t abort (see the PDF
+  // block) takes the module out for the whole page, and the serialiser runs THROUGH it.
+  // Refusing here with the reason is the honest answer; letting it throw further down
+  // would report "not saved" without saying that a reopen is the fix.
+  if (x2tDead) {
+    state('not saved');
+    return {ok: false, error: 'the converter stopped working earlier in this window, so '
+                              + 'this document cannot be written. Your typing is still '
+                              + 'on screen — copy anything you cannot retype, then '
+                              + 'reopen this workbook.'};
+  }
   const name = DOC;
   saving = true;
   el('btn-save').disabled = true;
@@ -582,6 +887,7 @@ async function save(force) {
   return out;
 }
 el('btn-save').addEventListener('click', () => save(false));
+el('btn-pdf').addEventListener('click', () => { downloadPdf(); });
 // ⌘S. The editor's own Save lives inside the iframe and would be handled there, so
 // this only catches the shortcut while our chrome has focus. The Save BUTTON — ours
 // standalone, the PARENT'S strip embedded — is the documented path; this is a
@@ -777,6 +1083,100 @@ function renderAttribution(a) {
   el('attrib-src').innerHTML = links ? 'source: ' + links : '';
 }
 
+// ══ THE IN-RIBBON AI TAB ══════════════════════════════════════════════════════
+// ONLYOFFICE's OWN AI plugin, vendored by scripts/install_oo_ai_plugin.sh, served
+// same-origin at /ooplug/*, and pointed at THIS machine's runner. Everything about
+// why it can work at all is in bridge/ooai.py's header; what belongs here is the two
+// things this page does with it.
+//
+//   1. THE CONFIG. `editorConfig.plugins.pluginsData` is a list of config.json URLs
+//      the editor fetches itself; `autostart` starts a background plugin without a
+//      click. Both are published DocsAPI keys — the vendored bundle is not touched.
+//      `customization.plugins` MUST also flip to true: the plugins controller checks
+//      it FIRST and skips loadPlugins() entirely when it is false (this page set it
+//      false for the whole life of the embed, which is why nothing loaded before).
+//
+//   2. THE SEED. The plugin stores providers, models and per-action model bindings in
+//      localStorage — the same two keys its own Settings dialog writes. Its iframe is
+//      OUR origin (we serve it), so those keys are ours to write, and writing them
+//      before the editor starts is what makes the tab arrive already configured
+//      instead of arriving as an empty settings form. The bridge computes the values
+//      (bridge/ooai.py `seed`) so the model id is the one the runner actually reports.
+//
+// ⚠️ AND THE GATE, WHICH IS THE POINT. If the plugin is not installed, or the runner
+// is down, or the runner has no model loaded, `enabled` is false and we pass NO
+// plugins config at all. The tab is ABSENT, not present-and-broken: every button on
+// it would post to a dead port and report an opaque failure inside a ribbon dropdown.
+// The reason is kept on `aiGate` — read back by probe(), told to the LOffice host, and
+// spelled out in LOffice's Help → About next to the other honest limits.
+let aiStatus = null;         // the /api/oo/ai/status body, or null if the route 404s
+let aiGate = '';             // '' when the tab is live; otherwise WHY it is not
+let aiSeeded = false;        // the seed has been written to localStorage this page
+
+async function aiPrepare() {
+  aiStatus = null;
+  aiGate = '';
+  try {
+    const r = await fetch('/api/oo/ai/status', {cache: 'no-store'});
+    // A snapshot older than this slice has no such route. That is not an error and
+    // must not look like one: it is simply an editor without the AI tab.
+    if (r.status === 404) { aiGate = 'this build has no in-ribbon AI tab'; return; }
+    aiStatus = await r.json();
+  } catch (e) {
+    aiGate = 'the bridge did not answer about the AI tab';
+    return;
+  }
+  if (!aiStatus || !aiStatus.enabled) {
+    aiGate = (aiStatus && aiStatus.gate) || 'the in-ribbon AI tab is not available';
+    return;
+  }
+  // The seed. Wrapped tight: a localStorage that throws (private mode, a quota, a
+  // policy) must cost us the AI tab and NOTHING else — the editor still has to open.
+  const seed = aiStatus.seed || {};
+  try {
+    if (seed.storage_key && seed.storage) {
+      window.localStorage.setItem(seed.storage_key, JSON.stringify(seed.storage));
+    }
+    if (seed.actions_key && seed.actions) {
+      window.localStorage.setItem(seed.actions_key, JSON.stringify(seed.actions));
+    }
+    aiSeeded = true;
+    // ⚖️ CONDITION #3 AGAIN, FOR A SECOND VENDORED AGPL ARTEFACT. The footer already
+    // names the editor; the moment we also serve ONLYOFFICE's AI plugin it has to name
+    // that too, from the bridge's own ATTRIBUTION rather than retyped here. LOffice's
+    // Help → About renders the same body, so the two cannot drift.
+    const at = (aiStatus.attribution || {});
+    if (at.name) {
+      el('attrib').textContent += ' · AI tab by ' + at.name.replace(
+        / \(sdkjs-plugins.*$/, '') + ' · ' + at.licence;
+    }
+  } catch (e) {
+    aiGate = 'this browser would not let us store the AI settings (' + e + ')';
+    aiStatus = null;
+  }
+}
+
+// The `plugins` object for editorConfig, or null when the tab is gated off. null is
+// not the same as `{pluginsData: []}`: an empty list still turns the plugins TAB on
+// in the ribbon, and an empty plugins tab is a dead end.
+function aiPluginsConfig() {
+  if (!aiStatus || !aiStatus.enabled || !aiSeeded) return null;
+  const url = location.origin + (aiStatus.config_url || '/ooplug/content/ai/config.json');
+  // ⚠️ TWO ENTRIES, AND THE SECOND ONE IS NOT OPTIONAL. The vendored editor's own
+  // toolbar code only creates its "Background plugins" button while walking a
+  // NON-background plugin, and it then calls .show() on that button whenever any
+  // background plugin exists — so a list holding only the (background) AI plugin
+  // throws mid-registration and the AI tab never appears. The shim is OUR generated,
+  // invisible companion entry that satisfies that walk. The whole measurement is in
+  // bridge/ooai.py under "THE COMPANION ENTRY".
+  const shim = location.origin + (aiStatus.shim_url || '/api/oo/ai/shim/config.json');
+  const cfg = {pluginsData: [url, shim]};
+  // `type: background` plugins need autostart or they never run — the AI plugin adds
+  // its ribbon tab from inside its own init, so no autostart means no tab.
+  if (aiStatus.guid) cfg.autostart = [aiStatus.guid];
+  return cfg;
+}
+
 // Everything that has to happen ONCE per page: the status check, the attribution, the
 // 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
 // repeat it — that split IS the "keep one editor instance alive" requirement.
@@ -830,6 +1230,22 @@ async function once() {
   // sdkjs reads `window.APP` (connectMockServer installs getImageURL onto it), so it
   // must exist first. Ours is deliberately bare — we serve no editor-side images.
   window.APP = window.APP || {};
+
+  // The AI tab, decided ONCE per page like everything else here — the runner probe is
+  // a network round trip and a document swap must not pay for it again. Deliberately
+  // AFTER the editor is known to be loadable and deliberately never fatal: a gated AI
+  // tab is a missing convenience, not a broken editor.
+  step('checking the in-ribbon AI tab…', 50);
+  try {
+    await aiPrepare();
+  } catch (e) {
+    aiGate = 'the AI tab check failed (' + e + ')';
+  }
+  step(aiGate ? 'AI tab off — ' + aiGate
+              : 'AI tab on — ' + ((aiStatus.runner || {}).model || 'local runner'), 52);
+  tell('ai', {enabled: !aiGate, gate: aiGate,
+              model: (aiStatus && aiStatus.runner && aiStatus.runner.model) || ''});
+
   onceDone = true;
   return true;
 }
@@ -856,6 +1272,7 @@ function openDoc(name) {
     el('boot-title').textContent = swap ? 'Opening ' + want + '…'
                                         : 'Opening the editor…';
     el('btn-save').disabled = true;
+    el('btn-pdf').disabled = true;
     ready = false;
     dirtyNow = false;
     noteClear();
@@ -931,13 +1348,19 @@ function openDoc(name) {
         documentType: DOC_TYPES[ext] || 'cell',
         width: '100%',
         height: '100%',
-        editorConfig: {
+        editorConfig: Object.assign({
           lang: 'en',
           mode: 'edit',
           user: {id: 'harness', name: 'You'},
           customization: {
             about: false, feedback: false, chat: false, comments: false,
-            help: false, plugins: false, compactHeader: false,
+            // ⚠️ `plugins` IS THE MASTER SWITCH, and it is computed rather than
+            // constant. The plugins controller reads it FIRST and, when it is false,
+            // never registers a single plugin callback and never calls loadPlugins()
+            // — so a pluginsData list beside a `plugins: false` is silently ignored.
+            // It stays false whenever aiPluginsConfig() gated the tab off, which
+            // keeps the ribbon exactly as it was before this slice.
+            help: false, plugins: !!aiPluginsConfig(), compactHeader: false,
             autosave: false, forcesave: false,
             // ⚠️ THE RIGHT PANEL STARTS CLOSED, AND THAT IS A LAYOUT DECISION MADE BY
             // LOOKING AT THE SCREENSHOT. Embedded, this editor is one column of three:
@@ -971,7 +1394,7 @@ function openDoc(name) {
               featuresTips: false
             }
           }
-        },
+        }, aiPluginsConfig() ? {plugins: aiPluginsConfig()} : {}),
         events: {
           onAppReady: () => { step('editor frame ready', 88); },
           onDocumentReady: () => {
@@ -979,6 +1402,7 @@ function openDoc(name) {
             ready = true;
             el('boot').classList.add('gone');
             el('btn-save').disabled = false;
+            el('btn-pdf').disabled = false;
             state('ready');
             // The editor keeps the document; the blob has been read.
             try { URL.revokeObjectURL(blobUrl); } catch (e) { /* fine */ }
@@ -1070,20 +1494,33 @@ function renameTo(to) {
 
 // ── the API the parent gets, i.e. the contract ────────────────────────────────
 window.LOfficeEmbed = {
-  // ⚠️ BUMPED 2 → 3 AT loffice-2026-08-28d: `renameTo` is a new member (live finding B1).
+  // ⚠️ BUMPED 3 → 4 AT loffice-2026-08-29a: `downloadPdf` is a new member (Download as
+  // PDF, which replaces the Print this bundle cannot do). Bumped 2 → 3 at
+  // loffice-2026-08-28d for `renameTo` (live finding B1).
   // The parent probes for the FUNCTION rather than the number (a version check that gates
   // a capability the object plainly has is a way to break a working page), so an older
   // frame degrades to an honest sentence rather than to a silent 404 on the next save.
-  contract: 3,
+  contract: 4,
   open: openDoc,
   save: save,
+  // Export + the blob download, in one call, INSIDE this frame — one implementation for
+  // LOffice's menu and for this page's own PDF button. Resolves to
+  // {ok, pages, name, ms} or {ok:false, error}; the bytes stay here.
+  downloadPdf: downloadPdf,
   reload: reloadDoc,
   renameTo: renameTo,
   applyOps: applyOps,
   readCells: readCells,
   probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
                  editorTag: editorTag, extSaves: extSaves,
-                 heldClears: heldClears}),
+                 heldClears: heldClears,
+                 // The AI tab, reported the same way the save counters are: a probe can
+                 // prove it is on (and with which model) or read the exact reason it is
+                 // off, instead of inferring either from a screenshot.
+                 ai: {enabled: !aiGate && !!aiSeeded, gate: aiGate,
+                      model: (aiStatus && aiStatus.runner
+                              && aiStatus.runner.model) || '',
+                      version: (aiStatus && aiStatus.version) || ''}}),
   destroy: () => {
     openSeq++;
     if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }

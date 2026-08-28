@@ -25,8 +25,27 @@
 > pass vacuously). ship.sh copies bridge/{core,routers}/ — the flat `bridge/*.py`
 > glob would have shipped a facade with nothing behind it. Read
 > docs/handoff/APP-FACADE-MANIFEST.md before touching this area.
-> Queued: ONLYOFFICE AI plugin -> our runner, Download-as-PDF (x2t has PdfWriter),
-> Docs/Slides, tier-1 deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
+> **LOFFICE IS THREE FILE TYPES + AN IN-RIBBON AI TAB + PDF EXPORT (loffice-2026-08-29a,
+> the three queued items all landed):** (1) ONLYOFFICE's OWN AI plugin is vendored
+> UNMODIFIED (`scripts/install_oo_ai_plugin.sh`, pinned by commit+sha256) and pointed at
+> our runner through the plugin's own localStorage keys — AI tab live in the ribbon of all
+> three editors, round-trip proven against :6767; gated OFF with a sentence when the plugin
+> or the runner is absent. FOUR upstream traps, all silent, documented in bridge/ooai.py
+> (layout `ai/` next to `v1/`, a mergePlugins race answered by a GENERATED
+> `/oo/dist/v9/plugins.json`, an `onResetPlugins` crash worked around with one invisible
+> companion entry, and `aiPluginSettings` being a dead end). (2) DOWNLOAD AS PDF replaces
+> Print: `asc_nativeGetPDF` → x2t with `m_nFormatFrom` = CANVAS_{SPREADSHEET 8194 | WORD
+> 8193 | PRESENTATION 8195}, `m_nFormatTo` 513, the bundle's 91 fonts mounted first, and
+> ⚠️ `m_bIsNoBase64` **true** — with false x2t returns rc 0 and a VALID PDF WITH `/Count 0`.
+> It is the LIVE editor state (proven with a never-saved marker), downloaded via an
+> `<a download>` blob (a navigation would not: WebKit CAN show application/pdf). (3) .docx
+> and .pptx are OPAQUE BLOBS to the bridge — the store handles all three, the CONTENT path
+> (snapshot, grid, sort, stats, office_read/stage_changes) is .xlsx only and refuses the
+> other two by name with `office.require_sheet()`. Blank packages are BUILT in
+> bridge/officeblank.py from the OOXML rules (never vendored, deterministic, sha-pinned).
+> New suites: test_oo_ai_lane.py (152) + test_office_types.py (168); journeys in
+> test_office_journey.py (288).
+> Queued: tier-1 deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
 
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
 > EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by

@@ -2057,7 +2057,15 @@ def op_list(root) -> dict:
     files = []
     for e in office.list_docs(root):
         st = open_state(e["name"])
-        files.append({"name": e["name"], "size_bytes": e["size_bytes"],
+        files.append({"name": e["name"],
+                      # ⚠️ `kind` IS HERE SO THE MODEL DOES NOT HAVE TO GUESS FROM THE
+                      # SUFFIX AND DOES NOT HAVE TO LEARN BY BEING REFUSED. The folder
+                      # holds three types since loffice-2026-08-29a and these tools can
+                      # only work with one of them; the refusal exists (require_sheet)
+                      # but a tool that only says no AFTER being called makes the model
+                      # look incompetent to the user. So the list states the fact.
+                      "kind": e.get("kind", ""), "ext": e.get("ext", ""),
+                      "size_bytes": e["size_bytes"],
                       "modified_epoch": round(e["modified"], 3),
                       "modified": time.strftime("%Y-%m-%d %H:%M:%S",
                                                 time.localtime(e["modified"])),
@@ -2066,8 +2074,13 @@ def op_list(root) -> dict:
                       "open_in_loffice": st["open"],
                       "unsaved_edits": st["dirty"]})
     return {"ok": True, "folder": "data/office", "count": len(files), "files": files,
-            "notes": ["a workbook is addressed by NAME — these tools cannot read or "
+            "notes": ["a file is addressed by NAME — these tools cannot read or "
                       "write anything outside data/office.",
+                      "kind 'sheet' (.xlsx) is the only kind these tools can read or "
+                      "change. 'doc' (.docx) and 'slides' (.pptx) are edited only by "
+                      "LOffice's own editor: office_read and office_stage_changes "
+                      "refuse them, and nothing here can alter their contents — which "
+                      "also means nothing here can damage them.",
                       "'unsaved_edits' true means a write tool will refuse until Debi "
                       "saves or closes it.",
                       "'agent_copy', when it is not empty, is where the copy of that "

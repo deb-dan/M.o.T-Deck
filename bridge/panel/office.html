@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-28d">
+<meta name="harness-build" content="loffice-2026-08-29a">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -394,6 +394,30 @@
      about to take over, because an edit made there would be silently dropped the
      moment it did. */
   body.oowait #gridwrap{pointer-events:none;opacity:.62}
+  /* ⚠️ THE THIRD CENTRE STATE (stage 3: docs + slides). A .docx or .pptx has NO tier-1
+     representation — our grid is a grid — so the interstitial cannot be "the same file
+     in our own grid". It is a sentence instead, saying what is opening and what LOffice
+     will and will not do to it, and it is REPLACED (not overlaid) by the editor the
+     moment `body.ooedit` lands. Showing an empty grid here would have been the worst of
+     the three options: it looks like the document is empty. */
+  #blobwait{position:absolute;inset:0;display:none;z-index:1;background:var(--bg);
+            padding:30px 26px;overflow:auto}
+  #blobwait b{display:block;font-size:15px;margin-bottom:8px}
+  #blobwait p{margin:0 0 10px;max-width:62ch;color:var(--dim);line-height:1.55}
+  body.blobdoc #blobwait{display:block}
+  body.blobdoc #gridwrap{display:none}
+  body.blobdoc #menubar{display:none}
+  body.blobdoc #toolbar{display:none}
+  body.blobdoc #findrow{display:none}
+  body.blobdoc.ooedit #blobwait{display:none}
+  /* The rail's and the start screen's TYPE BADGE. Quiet by design — it is a fact about
+     the row, not a call to action — and present on ALL THREE types rather than only the
+     new two, because a badge that appears for some rows reads as a warning. */
+  .tbadge{display:inline-block;margin-left:6px;padding:0 4px;border-radius:3px;
+          font-size:9px;font-weight:700;letter-spacing:.06em;vertical-align:1px;
+          border:1px solid var(--line2);color:var(--dim);background:transparent}
+  .tbadge.doc{color:#7aa2f7;border-color:#7aa2f766}
+  .tbadge.slides{color:#e0af68;border-color:#e0af6866}
   /* ⚠️ #empty IS THE START SCREEN NOW — same element, same overlay, same `.off`
      class, because "no document is open" and "the start screen" are the same state
      and a spreadsheet app should have exactly one of them. It stopped being a
@@ -473,9 +497,9 @@
          padding:9px 10px;border-bottom:1px solid var(--line)}
   #ai-log{flex:1 1 auto;min-height:0;overflow:auto;padding:10px;
           display:flex;flex-direction:column;gap:12px}
-  #ai-empty{color:var(--dim);font-size:11.5px;line-height:1.6}
-  #ai-empty.off{display:none}
-  #ai-empty b{color:var(--cream);font-weight:600}
+  #ai-empty,#ai-empty-blob{color:var(--dim);font-size:11.5px;line-height:1.6}
+  #ai-empty.off,#ai-empty-blob.off{display:none}
+  #ai-empty b,#ai-empty-blob b{color:var(--cream);font-weight:600}
   .aim{display:flex;flex-direction:column;gap:4px}
   .aim .who{font:9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
             text-transform:uppercase;color:var(--dim)}
@@ -821,7 +845,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-28d</code>.</div>
+  Build <code>loffice-2026-08-29a</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -855,7 +879,7 @@
        most rows DO have another door (Rename is the title, Save is here, Close is ⌂,
        Download and Delete are on every file row, Open IS the file list, Help is ?), but
        three had NONE while a workbook was open:
-         · File → Back to MOT Main ↗   — you had to CLOSE the workbook to leave the app
+         · File → Back to MOT Deck ↗   — you had to CLOSE the workbook to leave the app
          · Data → Column statistics · Sort A→Z
          · View → Zoom / Gridlines
        This menu is their home. It sits in the DARK strip, so it survives `body.ooedit`
@@ -869,7 +893,11 @@
   <div class="mwrap" id="morewrap">
     <button id="btn-more" class="ghost" title="Download, column statistics, sort, and the way out of LOffice">⋯</button>
     <div class="mpop" id="m-more">
-      <button class="mi" id="mm-download">Download a copy<span class="mk">byte-exact</span></button>
+      <button class="mi" id="mm-download">Download a copy<span class="mk">.xlsx · exact file</span></button>
+      <!-- The PDF replaces Print, which this bundle cannot do. Its mark says LIVE
+           because that is the honest difference from the row above it: one hands you
+           the bytes on disk, the other renders what is on screen. -->
+      <button class="mi" id="mm-pdf">Download as PDF<span class="mk">live · as it prints</span></button>
       <button class="mi" id="mm-stats">Column statistics</button>
       <button class="mi" id="mm-sortaz">Sort sheet A → Z<span class="mk">by this column</span></button>
       <button class="mi" id="mm-sortza">Sort sheet Z → A<span class="mk">by this column</span></button>
@@ -877,7 +905,7 @@
       <button class="mi" id="mm-fidelity">What round-trips</button>
       <button class="mi" id="mm-delete">Delete this workbook…</button>
       <div class="msep"></div>
-      <button class="mi" id="mm-home">Back to MOT Main<span class="mk">↗</span></button>
+      <button class="mi" id="mm-home">Back to MOT Deck<span class="mk">↗</span></button>
     </div>
   </div>
   <button id="btn-info" class="ghost" title="About this build, what round-trips, and the keyboard shortcuts">?</button>
@@ -907,13 +935,16 @@
       <button class="mtop" id="btn-file">File</button>
       <div id="filemenu" class="mpop">
         <button class="mi" id="mi-new">New spreadsheet<span class="mk">blank name = Untitled</span></button>
+        <button class="mi" id="mi-newdoc">New document<span class="mk">.docx</span></button>
+        <button class="mi" id="mi-newdeck">New presentation<span class="mk">.pptx</span></button>
         <button class="mi" id="mi-open">Open…<span class="mk">⌘O</span></button>
         <button class="mi" id="mi-import">Import…</button>
         <button class="mi" id="mi-makecopy" disabled title="There is no copy route on the bridge yet. Download already gives you a byte-exact copy of the saved file — composing this out of New + Save would round-trip through our mapper and quietly drop charts, images and borders.">Make a copy</button>
         <div class="msep"></div>
         <button class="mi" id="mi-rename">Rename…</button>
         <button class="mi" id="mi-save">Save<span class="mk">⌘S</span></button>
-        <button class="mi" id="mi-download">Download<span class="mk">.xlsx</span></button>
+        <button class="mi" id="mi-download">Download<span class="mk">.xlsx · exact file</span></button>
+        <button class="mi" id="mi-pdf">Download as PDF<span class="mk">live · as it prints</span></button>
         <button class="mi" id="mi-delete">Delete…</button>
         <div class="msep"></div>
         <button class="mi" id="mi-close">Close file</button>
@@ -922,7 +953,7 @@
         <!-- the way OUT of LOffice, said in words, at the bottom, where a "leave this
              app" action belongs. It used to be the item labelled "home", which is the
              bug: ⌂ home now means LOffice's own start screen. -->
-        <button class="mi" id="mi-home">Back to MOT Main<span class="mk">↗</span></button>
+        <button class="mi" id="mi-home">Back to MOT Deck<span class="mk">↗</span></button>
       </div>
     </div>
     <div class="mwrap">
@@ -1139,10 +1170,12 @@
   <aside id="files">
     <!-- collapsed: the pane becomes this 34px reopener. It is REAL MARKUP and hidden
          by a class, like everything else on this page. -->
-    <button id="rail-tab" title="Show the file list"><span>Spreadsheets</span></button>
+    <button id="rail-tab" title="Show the file list"><span>Files</span></button>
     <div id="files-panel">
       <div class="hd">
-        <span class="pill">Spreadsheets</span>
+        <!-- "Files", not "Spreadsheets", since loffice-2026-08-29a: the rail lists
+             three types and each row carries its own badge. -->
+        <span class="pill">Files</span>
         <span class="grow"></span>
         <button id="btn-new">New</button>
         <button id="rail-hide" class="ghost" title="Collapse this panel">‹</button>
@@ -1199,6 +1232,12 @@
     <div id="oostage">
       <iframe id="ooframe" title="ONLYOFFICE spreadsheet editor"></iframe>
     </div>
+    <!-- The interstitial for a document or a presentation — see #blobwait in the
+         stylesheet for why it is a sentence and not an empty grid. -->
+    <div id="blobwait">
+      <b id="bw-title">Opening…</b>
+      <p id="bw-note"></p>
+    </div>
     <!-- ══ THE START SCREEN ═══════════════════════════════════════════════════════
          #empty was one centred sentence: "No workbook is open. Pick one on the left…"
          — a page that is working perfectly and reads as broken, because it states a
@@ -1211,10 +1250,21 @@
     <div id="empty">
       <div id="home">
         <div class="hband">
-          <div class="hlab">Start a new spreadsheet</div>
+          <div class="hlab">Start something new</div>
           <div class="hcards">
             <button class="hcard" id="h-blank" title="A new empty workbook">
-              <span class="hthumb">＋</span><span class="hcname">Blank</span></button>
+              <span class="hthumb">＋</span><span class="hcname">Blank sheet</span></button>
+            <!-- STAGE 3. Two more cards, and they are cards rather than a menu item
+                 because this screen is where a new file is started and a type is a
+                 choice, not a setting. Both make a real, empty OOXML package
+                 (bridge/officeblank.py) and open it in the editor — LOffice's own grid
+                 has nothing to show for either, which the interstitial says. -->
+            <button class="hcard" id="h-doc"
+                    title="A new empty text document, edited by the full editor">
+              <span class="hthumb">¶</span><span class="hcname">Blank document</span></button>
+            <button class="hcard" id="h-deck"
+                    title="A new empty presentation, edited by the full editor">
+              <span class="hthumb">▭</span><span class="hcname">Blank presentation</span></button>
             <button class="hcard" id="h-budget"
                     title="A month of income and outgoings, with the totals already summed">
               <span class="hthumb">▦</span><span class="hcname">Monthly budget</span></button>
@@ -1224,7 +1274,7 @@
           </div>
         </div>
         <div class="hband">
-          <div class="hlab">Recent spreadsheets</div>
+          <div class="hlab">Recent files</div>
           <div class="hlist" id="hlist"></div>
         </div>
         <div class="hnote" id="hnote"></div>
@@ -1255,6 +1305,17 @@
       <div id="ai-log">
         <!-- REAL MARKUP, not JS output, and hidden by a CLASS like everything else on
              this page: the panel says what it is for even if its script never runs. -->
+        <!-- ⚠️ SWAPPED FOR A BLOB (loffice-2026-08-29a). `#ai-empty` describes what the
+             panel can do WITH A SPREADSHEET; every sentence in it is false while a .docx
+             or .pptx is open. `#ai-empty-blob` is the honest version, and aiPaint swaps
+             the two — the same grey-not-hide discipline the rest of this page uses. -->
+        <div id="ai-empty-blob" class="off"><b>Ask the model anything.</b><br>This is a
+          chat with the model running on this Mac — useful while you write. What it
+          <b>cannot</b> do here is see the file: LOffice reads .xlsx spreadsheets, and a
+          document or a presentation belongs entirely to the editor. Nothing here reads
+          inside it and nothing here can change it, which is also why nothing in it can
+          be lost.<br><br>Open a spreadsheet and the panel gets its cells back, along
+          with Apply cards that can fill it in.</div>
         <div id="ai-empty"><b>Ask about this sheet.</b><br>The open sheet is sent with
           your question, so “what does column C do?”, “write me a formula that sums B
           by month” and “is anything odd in this data?” all work.<br><br>It is told
@@ -1333,7 +1394,31 @@ let filesOk = false, roundtripOk = false;
 // shape is the bridge's own IWorkbookData (bridge/office.py), a save from either tier
 // goes through the identical round-trip.
 let snap = null, activeSid = null;
-let mode = 'grid';               // 'grid' | 'univer'
+let mode = 'grid';               // 'grid' | 'univer' | 'blob' (a .docx / .pptx)
+
+// ══ THE THREE TYPES (stage 3, loffice-2026-08-29a) ═══════════════════════════
+// ⚠️ THE ASYMMETRY IS THE DESIGN. A .xlsx is a document this app UNDERSTANDS: it has a
+// grid, a snapshot, a sort, column statistics and an AI panel that can rewrite it. A
+// .docx or .pptx is a BLOB: the editor owns it end to end, LOffice stores exactly the
+// bytes the editor writes, and nothing here reads inside it. That is a NARROWER promise
+// and a MORE trustworthy one — there is no mapper that could lose anything — and every
+// surface below says which of the two it is talking about instead of implying one rule.
+const KIND_NOUN = {sheet: 'spreadsheet', doc: 'document', slides: 'presentation'};
+const KIND_BADGE = {sheet: 'XLSX', doc: 'DOCX', slides: 'PPTX'};
+const EXT_KIND = {'.xlsx': 'sheet', '.docx': 'doc', '.pptx': 'slides'};
+// From the NAME, so a row, a menu title and an error sentence all agree without asking
+// the bridge again. `files` rows also carry `kind` from the bridge; this is the fallback
+// for a name we hold without a row (mid-create, mid-rename).
+function kindOf(name) {
+  const m = String(name || '').toLowerCase().match(/\.[a-z0-9]+$/);
+  return (m && EXT_KIND[m[0]]) || 'sheet';
+}
+function nounOf(name) { return KIND_NOUN[kindOf(name)] || 'file'; }
+// TRUE while the open document is one the editor owns outright. Every tier-1 verb reads
+// this: our grid, our sort, our column statistics and the AI panel's writes are all
+// spreadsheet tools, and running them over a presentation is not a degraded experience,
+// it is a wrong one.
+let blobDoc = false;
 let richWanted = false;          // sticky: once upgraded, later opens stay rich
 let univer = null, api = null;
 
@@ -1413,10 +1498,10 @@ function fmtWhen(ts) {
 function paint() {
   // ── row 1: the document TITLE, which is also the rename control ──
   const t = el('doctitle');
-  t.textContent = current || 'no workbook open';
+  t.textContent = current || 'no file open';
   t.disabled = !current || busy;
   t.title = current ? 'Click to rename “' + current + '”'
-                    : 'No workbook is open — pick one, or start a new one';
+                    : 'Nothing is open — pick a file, or start a new one';
   el('dot').classList.toggle('on', !!dirty);
   // ── row 2, right of the menus: the save state and the tier, which is where every
   // office app puts them ("All changes saved in Drive"). #p-file carries the STATE
@@ -1424,7 +1509,7 @@ function paint() {
   // printing it twice was the redundancy. ⚠️ the two ids are kept as they are because
   // a test pins their document order against the File button.
   el('p-file').textContent = busy ? 'working…'
-    : (!current ? 'no workbook open'
+    : (!current ? 'no file open'
                 : (dirty ? 'unsaved changes' : 'all changes saved'));
   el('p-file').className = 'mstat' + ((dirty && !busy) ? ' warn' : '');
   // ⚠️ THE ONE PREDICATE REACHES THE DOM HERE, ONCE, and everything below reads the
@@ -1434,10 +1519,21 @@ function paint() {
   el('p-state').textContent = !current ? ''
     : (editorActive() ? 'full editor'
        : (ooInstalled && ooBooting ? 'full editor loading…'
-          : (mode === 'univer' ? 'rich editor' : 'grid editor')));
+          // ⚠️ NEVER "grid editor" FOR A BLOB. Our grid is not, and never becomes, the
+          // editor of a .docx — saying so while a document is on screen would be the page
+          // claiming a capability it does not have.
+          : (blobDoc ? KIND_NOUN[kindOf(current)] + ' · editor only'
+             : (mode === 'univer' ? 'rich editor' : 'grid editor'))));
   el('p-state').className = 'mstat';
   el('btn-save').disabled = !current || busy
+    // A blob is saved by the EDITOR or not at all: with the editor down there is no
+    // second path, so the button is greyed rather than routed into a mapper that would
+    // refuse — and refuse AFTER the user pressed Save.
+    || (blobDoc && !editorActive())
     || (editorActive() ? false : (mode === 'univer' && !api));
+  el('btn-save').title = (blobDoc && !editorActive())
+    ? 'A ' + nounOf(current) + ' is saved by the full editor — it is not ready yet'
+    : 'Write this file to disk (⌘S)';
   el('btn-import').disabled = busy;
   // ⌂ is never disabled for "no workbook": with nothing open it IS the start screen, and
   // that is the one place a page with nothing open should always be able to get to.
@@ -1481,6 +1577,15 @@ function fileMenuPaint() {
   el('mi-rename').disabled = !has || busy;
   el('mi-save').disabled = el('btn-save').disabled;
   el('mi-download').disabled = !has;
+  // Same rule as the ⋯ menu's row: the PDF is the editor's print layout, so it is live
+  // only while the editor is. Greyed with a reason, never hidden.
+  el('mi-pdf').disabled = !editorActive();
+  el('mi-pdf').title = editorActive() ? ''
+    : (ooInstalled === false
+       ? 'A PDF comes out of the full editor, which is not installed on this Mac.'
+       : (has ? 'The full editor is not holding this workbook, and the PDF is its print '
+                + 'layout. Reopen the file to bring the editor up.'
+              : 'Open a workbook first — the PDF is its print layout.'));
   el('mi-close').disabled = !has || busy;
   el('mi-new').disabled = busy;
   el('mi-import').disabled = busy;
@@ -1505,7 +1610,7 @@ function mi(id, run) {
   n.onclick = () => { fileMenu(false); menuClose('row'); bx('menu-row', id); run(); };
 }
 
-// ⌂ MOT Main — the way back, and the reason the menu exists at all.
+// ⌂ MOT Deck — the way back, and the reason the menu exists at all.
 //
 // ⚠️ THE SHELL MUST REGISTER THE "harness" SCRIPT HANDLER ON THIS WEBVIEW FOR THIS TO
 // WORK. Today it is added to the PANEL's webview only (app/main.swift builds
@@ -1527,7 +1632,7 @@ function goHome() {
   if (h) {
     // id first, title second — the shell resolves the stable id against its registry
     // and falls back to the title, so this works whatever the tab is called.
-    try { h.postMessage({ cmd: 'switchTab', title: 'MOT Main', id: 'mc' }); return true; }
+    try { h.postMessage({ cmd: 'switchTab', title: 'MOT Deck', id: 'mc' }); return true; }
     catch (e) { bx('home-fail', String(e).slice(0, 120)); }
   }
   let inShell = false;
@@ -1622,7 +1727,11 @@ function moreShow(open) {
 // PURE-ish: reads `current`, `busy` and editorActive(). One row, one honest reason.
 function morePaint() {
   const has = !!current && !busy;
-  const t1 = has && !editorActive();
+  // ⚠️ `blobDoc` IS PART OF THIS GATE, NOT AN AFTERTHOUGHT. Between clicking a .docx and
+  // the editor being ready, `editorActive()` is false — so without this clause the
+  // tier-1 verbs (column statistics, sort) would come back ON for a few seconds, over a
+  // document that has no cells at all.
+  const t1 = has && !editorActive() && !blobDoc;
   let rc = null;
   try { rc = lastCellNow(); } catch (e) { rc = null; }
   const setRow = (id, on, why) => {
@@ -1632,6 +1741,16 @@ function morePaint() {
     b.title = on ? '' : (why || '');
   };
   setRow('mm-download', has, 'Open a workbook first — this hands you the file itself.');
+  // ⚠️ THE PDF NEEDS THE EDITOR, AND THE GREYED ROW SAYS WHICH REASON APPLIES. The
+  // print layout is sdkjs's; our own tier-1 grid has no page model, so this row is not
+  // "temporarily unavailable", it is "not a thing the grid can do" — and the title
+  // distinguishes "no workbook open" from "the editor is not the one holding it".
+  setRow('mm-pdf', editorActive(),
+         ooInstalled === false
+           ? 'A PDF comes out of the full editor, which is not installed on this Mac.'
+           : (has ? 'The full editor is not holding this workbook, and the PDF is its '
+                    + 'print layout. Reopen the file to bring the editor up.'
+                  : 'Open a workbook first — the PDF is its print layout.'));
   // ⚠️ THE EDITOR'S OWN CONTROLS ARE NAMED RATHER THAN SHADOWED. Column statistics and
   // Sort run over the TIER-1 grid's selection; with the editor up that grid is not what
   // you are looking at, so running them would compute over a document nobody can see.
@@ -2849,6 +2968,19 @@ function helpKeys() { say(KEYS_TEXT, 'dim'); }
    than reciting the narrow one's limits over both (live finding L3). Called from
    loadFiles(), from ooPaintClass()'s repaint and from renderHome(). */
 function fnoteText() {
+  // ⚠️ THE PER-TYPE SENTENCE COMES FIRST, because for a .docx / .pptx none of the three
+  // sentences below is true: there is no mapper, no snapshot and no narrower path. What
+  // there is, is a stronger promise — the bytes are the editor's, kept exactly — and the
+  // real limits are on OUR side, not the file's. Named here so the rail line, the start
+  // screen note and the interstitial all say it.
+  if (blobDoc || (current && kindOf(current) !== 'sheet')) {
+    const n = nounOf(current);
+    return 'This ' + n + ' is edited only by the full editor, and LOffice stores exactly '
+         + 'the bytes it writes — there is no mapper in between, so nothing in it can be '
+         + 'dropped. LOffice’s own grid, sort, column statistics and AI panel are '
+         + 'spreadsheet tools and are off for a ' + n + '. Download as PDF and Download '
+         + 'both work. ? → What round-trips.';
+  }
   if (editorActive()) {
     return 'Saved by the full editor: charts, images, filters, validation, hyperlinks and '
          + 'freeze panes all survive. A sort asked for in the AI panel goes through the '
@@ -2916,12 +3048,49 @@ async function helpAbout() {
         + '  Print is turned OFF. This is the serverless build of ONLYOFFICE and its\n'
         + '  Print expects a document server we do not run, so it would throw. It is\n'
         + '  disabled through the editor’s own published config — the vendored\n'
-        + '  bundle is never patched. Use File → Download and print the .xlsx.\n'
-        + '  There is no co-editing, no comments, no chat and no plugins.\n'
+        + '  bundle is never patched. FILE → DOWNLOAD AS PDF REPLACES IT: it renders\n'
+        + '  the document as it would print, from what is on screen right now (so it\n'
+        + '  can be newer than the saved .xlsx), and saves it to your Downloads.\n'
+        + '  It needs the full editor — our own grid has no page layout to print.\n'
+        + '  There is no co-editing, no comments and no chat.\n'
         + '  The AI panel sends the sheet AS LAST SAVED — press ⌘S first if you\n'
         + '  have just typed something the model needs to see.';
     }
   } catch (e) { attrib = '\n\n(the bridge did not answer about the editor)'; }
+  // ⚖️ THE SECOND VENDORED AGPL ARTEFACT — the in-ribbon AI tab. Same rule as the
+  // editor above: named here, from the bridge's own ATTRIBUTION, licence and source
+  // link included, WHETHER OR NOT it is installed and whether or not it is currently
+  // usable. And when it is NOT usable this is where the reason lands: the tab is
+  // simply absent from the ribbon, and a limit nobody can find is a limit nobody
+  // believes. See bridge/ooai.py and bridge/panel/oo.html's aiPrepare().
+  try {
+    const ai = await (await fetch('/api/oo/ai/status', {cache: 'no-store'})).json();
+    const a = ai && ai.attribution;
+    if (a) {
+      attrib += '\n\nThe in-ribbon AI tab\n'
+        + '  ' + a.name + ' — ' + a.licence + '\n'
+        + (ai.installed
+           ? '  vendored: ' + (ai.version || '?') + ' @ '
+             + String(ai.commit || '').slice(0, 7) + '\n'
+           : '  not installed on this Mac\n')
+        + (a.sources || []).map(sc => '  ' + sc.what + ': ' + sc.url).join('\n')
+        + '\n  ' + a.note + '\n'
+        + (ai.enabled
+           ? '  Status: ON, answering from ' + ((ai.runner || {}).model || 'the runner')
+             + '.\n  Chat, Summarization, Translation and Text analysis are bound to it;\n'
+             + '  image generation, OCR and vision are NOT (a local text model cannot).\n'
+             + '  The AI panel is unchanged and still owns the agent tools + approvals.'
+           : '  Status: OFF — ' + (ai.gate || 'unavailable') + '\n'
+             + '  The tab is left out of the ribbon rather than shown with nothing\n'
+             + '  behind it. The AI panel on the right is unaffected.\n'
+             // ⚠️ THE LIMIT IS NOT ACTIONABLE WITHOUT THE COMMAND. "not installed" with
+             // no way to install it is the dead-click shape one layer up: the user now
+             // knows something is missing and still cannot do anything about it.
+             + (ai.installed ? '' : ('  Install it once with:  ./'
+                                     + (ai.installer || 'scripts/install_oo_ai_plugin.sh')
+                                     + '\n')));
+    }
+  } catch (e) { attrib += '\n\n(the bridge did not answer about the AI tab)'; }
   // ⚠️ THE OTHER TWO HELP SHEETS RIDE ALONG AS BUTTONS, and that is what makes ONE
   // control in the strip enough to replace a three-row menu: say() has taken an
   // actions list since the external-change banner needed one, so this costs no new
@@ -2938,10 +3107,10 @@ async function helpAbout() {
 }
 
 // ══ ⌂ LOFFICE HOME — and this is the bug fix ══════════════════════════════════
-// The File menu's home item used to be `⌂ MOT Main`, i.e. the one thing called "home"
+// The File menu's home item used to be `⌂ MOT Deck`, i.e. the one thing called "home"
 // left LOffice altogether. Home now means LOffice's OWN start screen: the document is
 // closed and #empty — which IS the start screen — comes forward. Leaving the app is a
-// separate row, at the bottom, labelled "Back to MOT Main ↗".
+// separate row, at the bottom, labelled "Back to MOT Deck ↗".
 let startArmed = false;
 function goStart() {
   bx('home-start', current || 'no workbook');
@@ -2976,7 +3145,8 @@ function renderHome() {
     const d = document.createElement('div');
     d.className = 'hempty';
     d.textContent = filesOk
-      ? 'Nothing here yet — Blank makes your first spreadsheet.'
+      ? 'Nothing here yet — the three cards above make a spreadsheet, a document or a '
+        + 'presentation.'
       : 'The bridge did not answer, so there is no list to show.';
     list.appendChild(d);
   } else {
@@ -2992,6 +3162,7 @@ function renderHome() {
       const n = document.createElement('span');
       n.className = 'hn';
       n.textContent = f.name;
+      n.appendChild(typeBadge(f));
       const m = document.createElement('span');
       m.className = 'hm';
       m.textContent = fmtSize(f.size_bytes) + ' · ' + fmtWhen(f.modified);
@@ -3068,6 +3239,21 @@ const TPL = {
 async function newBlank() {
   el('new-name').value = '';
   await create();
+}
+// ⚠️ STAGE 3 — AND BOTH OF THESE NEED THE EDITOR, SO BOTH SAY SO BEFORE MAKING A FILE.
+// Creating a .docx on a Mac with no editor installed would leave a file in the folder
+// that nothing here can open: a dead row, made by a working button. The check is first,
+// and its sentence names the installer rather than just refusing.
+async function newBlob(kind) {
+  if (ooInstalled === false) {
+    say('A ' + KIND_NOUN[kind] + ' is edited only by the full editor, which is not '
+        + 'installed on this Mac — so making one now would leave a file nothing here '
+        + 'can open.\n\nInstall it once with ./scripts/install_onlyoffice.sh, then '
+        + 'this card works. Spreadsheets work either way.');
+    return null;
+  }
+  el('new-name').value = '';
+  return await create(false, kind);
 }
 /* ⚠️ REWRITTEN AT loffice-2026-08-28d FOR TWO MEASURED FINDINGS AT ONCE.
 
@@ -3198,6 +3384,8 @@ el('find-r').onkeydown = ev => {
   else if (ev.key === 'Escape') { ev.preventDefault(); findOpen(false); }
 };
 el('h-blank').onclick = newBlank;
+el('h-doc').onclick = () => newBlob('doc');
+el('h-deck').onclick = () => newBlob('slides');
 el('h-budget').onclick = () => newFromTemplate('budget');
 el('h-tasks').onclick = () => newFromTemplate('tasks');
 
@@ -4344,6 +4532,48 @@ async function ooSave(force) {
   return true;                                   // the 'saved' event says the rest
 }
 
+// ══ DOWNLOAD AS PDF ══════════════════════════════════════════════════════════
+// ⚠️ THE PDF IS THE LIVE EDITOR STATE, NOT THE SAVED FILE, AND THAT IS THE DECISION.
+// The alternative — export the .xlsx on disk — would hand a user who has just typed a
+// figure a PDF without it, silently. So the bytes come from the editor's own print
+// layout (`asc_nativePrint`), i.e. exactly what is on screen, and the menu row says so.
+// The consequence is stated rather than hidden: a PDF can be NEWER than the saved
+// workbook, which is why the row's mark reads "live · as it prints".
+//
+// It needs the EDITOR: the print layout is sdkjs's, and our own tier-1 grid has no page
+// model at all. So the row is greyed with the reason instead of pretending.
+async function ooDownloadPdf() {
+  if (!editorActive()) {
+    say(ooInstalled === false
+        ? 'A PDF comes out of the full editor, which is not installed on this Mac. '
+          + 'Download gives you the .xlsx itself in the meantime.'
+        : 'Open a workbook in the full editor first — the PDF is its print layout, '
+          + 'and LOffice’s own grid has no page layout to print.');
+    return false;
+  }
+  if (!ooChild || typeof ooChild.downloadPdf !== 'function') {
+    say('This editor frame is older than the PDF export. Reload the page (⌘R) and try '
+        + 'again; Download still gives you the .xlsx itself.');
+    return false;
+  }
+  busy = true; paint();
+  say('Making a PDF of “' + current + '” as it would print…', 'dim');
+  let r = null;
+  try { r = await ooChild.downloadPdf(); }
+  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+  busy = false; paint();
+  if (!r || !r.ok) {
+    say('No PDF: ' + ((r && r.error) || 'the editor did not say why')
+        + '\n\nNothing was downloaded, and the workbook on disk was not touched.');
+    return false;
+  }
+  say('“' + (r.name || 'the PDF') + '” — ' + r.pages
+      + (r.pages === 1 ? ' page' : ' pages') + ' — is in your Downloads folder, and '
+      + 'Finder has it selected. It is this document as it would PRINT, taken from what '
+      + 'is on screen right now.', 'dim');
+  return true;
+}
+
 // ── RELOAD THE DOCUMENT, not the page ───────────────────────────────────────
 // The agent writes to disk; the editor holds the file in memory. This is the answer
 // the external-change banner reaches for now, and the difference from the old one is
@@ -4371,6 +4601,11 @@ async function ooReload(why) {
 // to keep a prompt fresh is a lot of work for a difference the note already states.
 async function ooRefreshSnapshot() {
   if (!current) return false;
+  // ⚠️ A BLOB HAS NO SNAPSHOT TO REFRESH, and asking for one would fetch a refusal.
+  // /api/office/open returns an IWorkbookData snapshot and now says so for a .docx —
+  // a correct refusal, but this function's callers treat `false` as "nothing changed"
+  // and would otherwise beacon a failure on every external-change reload of a document.
+  if (blobDoc || kindOf(current) !== 'sheet') return false;
   const name = current;
   try {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name),
@@ -4769,6 +5004,18 @@ async function upgrade() {
 // rollback. Do not extend them; do not wire them to a button.
 
 // ══ files ═════════════════════════════════════════════════════════════════════
+// ONE badge builder for both lists, so the rail and the start screen can never label
+// the same file differently. The kind comes from the ROW when the bridge sent one and
+// from the name otherwise — same answer either way, and no third copy of the table.
+function typeBadge(f) {
+  const k = (f && f.kind) || kindOf(f && f.name);
+  const b = document.createElement('span');
+  b.className = 'tbadge ' + k;
+  b.textContent = KIND_BADGE[k] || '?';
+  b.title = KIND_NOUN[k] || '';
+  return b;
+}
+
 function renderFiles() {
   const box = el('flist');
   box.innerHTML = '';
@@ -4776,7 +5023,8 @@ function renderFiles() {
     const d = document.createElement('div');
     d.className = 'fm';
     d.style.padding = '10px 9px';
-    d.textContent = 'No spreadsheets yet — New makes one.';
+    d.textContent = 'Nothing here yet — New makes a spreadsheet, a document or a '
+                  + 'presentation.';
     box.appendChild(d);
     renderHome();          // ⚠️ the empty case is exactly the one the start screen is for
     return;
@@ -4786,7 +5034,12 @@ function renderFiles() {
     row.className = 'frow' + (f.name === current ? ' on' : '');
     const n = document.createElement('div');
     n.className = 'fn';
+    // ⚠️ THE NAME IS SET AS TEXT AND THE BADGE APPENDED AFTER IT, in that order, and it
+    // is not a style choice: `textContent =` is what keeps the row's name readable to
+    // everything that reads it as text (the grid suite's fake DOM among them), and a
+    // badge inserted BEFORE it would push the name out of the first text position.
     n.textContent = f.name;
+    n.appendChild(typeBadge(f));
     const m = document.createElement('div');
     m.className = 'fm';
     // "open" is said in words as well as in gold: the border alone reads as "selected",
@@ -4862,6 +5115,9 @@ async function loadFiles() {
 // One workbook is open at a time, in one tier at a time. This is the ONLY place that
 // decides which tier draws it, so the two can never both think they own the document.
 function showWorkbook(data, name) {
+  // Leaving a document for a spreadsheet: the blob state and its interstitial go with it.
+  blobDoc = false;
+  document.body.classList.remove('blobdoc');
   snap = data;
   activeSid = sheetIds(snap)[0] || null;
   viewRows = 0; viewCols = 0;
@@ -4918,6 +5174,12 @@ function showWorkbook(data, name) {
 async function openDoc(name) {
   if (busy) return;
   if (!confirmDiscard(name)) return;
+  // ⚠️ A DOCUMENT OR A PRESENTATION NEVER GOES THROUGH /api/office/open, AND THAT ROUTE
+  // NOW REFUSES IT BY NAME (office.require_sheet). It returns an IWorkbookData snapshot
+  // — a spreadsheet — and asking it for a .pptx would produce a refusal sentence in
+  // place of a document. So the blob path is its own branch, three lines long, and it
+  // hands the file straight to the editor that owns it.
+  if (kindOf(name) !== 'sheet') { openBlob(name); return; }
   busy = true; say(''); paint();
   bx('open-start', name);
   try {
@@ -4933,6 +5195,44 @@ async function openDoc(name) {
                + 'copy is best treated as read-only.', 'dim');
   } catch (e) { bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
   finally { busy = false; renderFiles(); paint(); extCheck(); }
+}
+
+// ── OPEN A .docx / .pptx ─────────────────────────────────────────────────────
+// Everything showWorkbook does about STATE (current, dirty, the mtime baseline, the
+// undo stack, the AI context) still has to happen — the heartbeat, the external-change
+// watch and the dirty guard are all keyed on `current` and none of them cares what is
+// inside the file. What does NOT happen is the tier-1 mount: there is no grid for a
+// document, so the centre gets the #blobwait sentence until the editor lands.
+function openBlob(name) {
+  if (ooInstalled === false) {
+    say('“' + name + '” is a ' + nounOf(name) + ', and a ' + nounOf(name) + ' is edited '
+        + 'only by the full editor — which is not installed on this Mac.\n\n'
+        + 'Install it once with ./scripts/install_onlyoffice.sh. The file itself is '
+        + 'untouched, and Download hands you it exactly as it is.');
+    return;
+  }
+  snap = null;
+  activeSid = null;
+  viewRows = 0; viewCols = 0;
+  current = name;
+  dirty = false;
+  extSeen = 0;                       // established from disk on the next extCheck
+  histClear('open ' + name);
+  aiCtxOn = false;                   // there is no sheet to send
+  blobDoc = true;
+  mode = 'blob';
+  el('sheet').classList.remove('on');
+  document.body.classList.add('blobdoc');
+  el('bw-title').textContent = 'Opening “' + name + '” in the full editor…';
+  el('bw-note').textContent = fnoteText();
+  ooReady = false;
+  ooPaintClass();
+  ooStart(name, 'open');
+  renderFiles();
+  paint();
+  aiPaint(true);
+  extCheck();
+  bx('open-blob', name + ' kind=' + kindOf(name));
 }
 
 function truncatedSheets(s) {
@@ -5018,6 +5318,16 @@ async function save() {
   // That is the single worst thing this page could do, which is why the branch is the
   // first line of the function rather than somewhere inside snapshotToSave().
   if (editorActive()) { await ooSave(false); return; }
+  // ⚠️ AND FOR A BLOB THERE IS NO SECOND PATH. Falling through would hand
+  // /api/office/save a null snapshot for a .docx, and the bridge would refuse it with
+  // require_sheet's sentence — a correct refusal, arriving after the user pressed Save
+  // and reading as if their document were the problem. Say it before, in words about
+  // the editor.
+  if (blobDoc) {
+    say('A ' + nounOf(current) + ' is saved by the full editor, and it is not ready '
+        + 'yet. Nothing was written, and the file on disk is untouched.');
+    return;
+  }
   let snapshot = null;
   try { snapshot = snapshotToSave(); }
   catch (e) { bx('save-fail', 'read-back threw: ' + e);
@@ -5046,6 +5356,10 @@ async function save() {
 function clearWorkbook() {
   current = null; dirty = false; snap = null; activeSid = null;
   extSeen = 0; extAsking = false;
+  // Every path that closes a document goes through here (close, delete, a failed open),
+  // so the blob flag is cleared HERE rather than in each of them.
+  blobDoc = false;
+  document.body.classList.remove('blobdoc');
   histClear('close');
   // ⚠️ THE EDITOR IS STOOD DOWN, NOT TORN DOWN. `editorActive()` goes false (it reads
   // `current`), so `body.ooedit` drops, our chrome comes back and the start screen
@@ -5111,21 +5425,24 @@ function bakNote(backup) {
 // `step` (live finding B2): the caller is a TEMPLATE CARD, not a typed name, so a
 // collision takes the ' (n)' never-clobber walk instead of a refusal. The bridge owns the
 // walk — see /api/office/new for why the distinction is the caller's to make.
-async function create(step) {
+// `kind` is '' (a spreadsheet — what New has always meant), 'doc' or 'slides'. It goes
+// on the wire as the KIND rather than an extension because that is what the button says;
+// the bridge maps it (routers/office.py) and refuses anything it does not know.
+async function create(step, kind) {
   if (busy) return null;
   const name = (el('new-name').value || '').trim();
   busy = true; say(''); paint();
   try {
     const r = await fetch('/api/office/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name, step: !!step }),
+      body: JSON.stringify({ name: name, step: !!step, kind: kind || '' }),
     });
     let j = null;
     try { j = await r.json(); } catch (pe) { j = null; }
     if (!j || !j.ok) {
       const why = (j && j.error) || ('the bridge answered ' + r.status);
       bx('create-fail', 'http=' + r.status + ' ' + why);
-      say(why || 'could not create that spreadsheet');
+      say(why || ('could not create that ' + (KIND_NOUN[kind || 'sheet'] || 'file')));
       return null;
     }
     el('new-name').value = '';
@@ -5139,7 +5456,7 @@ async function create(step) {
     // A create that fell over on the wire used to be silent everywhere but the message
     // box — and the message box was the thing that was broken. It beacons now too.
     bx('create-fail', 'threw: ' + e);
-    say('could not create that spreadsheet: ' + e);
+    say('could not create that ' + (KIND_NOUN[kind || 'sheet'] || 'file') + ': ' + e);
     return null;
   }
   finally { busy = false; paint(); }
@@ -5346,12 +5663,41 @@ let aiNote = null;
 function aiRecount() { aiNote = aiExtent(); return aiNote; }
 
 function aiPaint(recount) {
+  // ⚠️ A BLOB HAS NO SHEET TO COUNT AND NONE TO SEND. aiRecount reads `snap`, which is
+  // null for a .docx, and the ⊞-sheet toggle would otherwise offer to attach a
+  // spreadsheet that does not exist. The panel still WORKS — it is a chat with the local
+  // model, and asking it to draft a paragraph while a document is open is a reasonable
+  // thing to do — it just stops claiming to see the file.
+  // ⚠️ ONE PLACEHOLDER AT A TIME, AND `aiEmpty()` STILL OWNS WHETHER EITHER IS SHOWN.
+  // The rule is: the log decides SHOWN-vs-HIDDEN (aiEmpty, on message count), the open
+  // file decides WHICH. Doing it here rather than in aiEmpty keeps aiEmpty a one-liner
+  // about the log, which is what every caller of it expects.
+  const eb = el('ai-empty-blob'), ee = el('ai-empty');
+  if (eb && ee) {
+    const anyMsg = el('ai-log').querySelectorAll('.aim').length > 0;
+    eb.classList.toggle('off', !blobDoc || anyMsg);
+    ee.classList.toggle('off', blobDoc || anyMsg);
+  }
+  if (blobDoc) {
+    aiCtxOn = false;
+    const cx = el('ai-ctx');
+    if (cx) {
+      cx.classList.remove('on');
+      cx.disabled = true;
+      cx.title = 'LOffice reads .xlsx spreadsheets. A ' + nounOf(current) + ' is the '
+               + 'editor\u2019s: nothing here can read inside it, so there is nothing '
+               + 'to attach.';
+    }
+  } else {
+    const cx = el('ai-ctx');
+    if (cx) cx.disabled = false;
+  }
   if (recount === true || (recount !== false && mode !== 'univer')) aiRecount();
   const pill = el('ai-model');
   pill.textContent = aiModel || 'no model loaded';
   pill.className = 'pill' + (aiModel ? ' on' : '');
   pill.title = aiModel ? ('the live model on the harness runner: ' + aiModel)
-                       : 'Load a model in Models (MOT Main) to use this';
+                       : 'Load a model in Models (MOT Deck) to use this';
   el('ai-send').disabled = aiBusy || !aiModel;
   el('ai-in').disabled = aiBusy;
   el('ai-ctx').classList.toggle('on', aiCtxOn);
@@ -5369,7 +5715,8 @@ function aiPaint(recount) {
   // model sees is the SAVED one. That is a real limit and it is stated on the control
   // rather than left for the user to discover from a wrong answer.
   const stale = aiCtxOn && editorActive() && dirty;
-  el('ai-ctxnote').textContent = !aiCtxOn ? 'sheet not sent'
+  el('ai-ctxnote').textContent = blobDoc ? 'no sheet — this is a ' + nounOf(current)
+    : !aiCtxOn ? 'sheet not sent'
     : (c ? (c.rows + '×' + c.cols + (c.truncated ? ' (truncated)' : '')
             + (stale ? ' · as last saved' : ''))
          : 'no sheet open');
@@ -5403,7 +5750,7 @@ async function aiRefreshModel() {
     const h = j && j.components && j.components.hermes;
     agentEnv.hermes = !!(h && h.running);
     agentProbe(aiModel);
-    if (!aiModel) aiStatus('No model is loaded. Open MOT Main → Models and '
+    if (!aiModel) aiStatus('No model is loaded. Open MOT Deck → Models and '
                            + 'load one — this panel uses the same model the Chat lane does.');
     else if (!aiBusy) aiStatus('');
   } catch (e) {
@@ -7188,8 +7535,12 @@ async function aiSend() {
 // The placeholder is markup, not JS output, and it is hidden by a class — never by an
 // inline display, for the reason spelled out on the #msg rule.
 function aiEmpty() {
+  const any = el('ai-log').querySelectorAll('.aim').length > 0;
   const d = el('ai-empty');
-  if (d) d.classList.toggle('off', el('ai-log').querySelectorAll('.aim').length > 0);
+  if (d) d.classList.toggle('off', any || blobDoc);
+  // The blob variant follows the same rule from the other side — see aiPaint.
+  const b = el('ai-empty-blob');
+  if (b) b.classList.toggle('off', any || !blobDoc);
 }
 
 function aiGrow() {
@@ -7272,18 +7623,18 @@ function agentGate(g) {
   if (!e.hermes) {
     return { ok: false, warn: '',
              why: 'Hermes is not running, and the Agent lane IS Hermes. Start it in '
-                + 'MOT Main → Capabilities, then reopen this panel.' };
+                + 'MOT Deck → Capabilities, then reopen this panel.' };
   }
   if (!e.mcpRegistered) {
     return { ok: false, warn: '',
              why: 'the loffice tool server is not registered with Hermes, so Hermes has '
-                + 'no Office tools to call. MOT Main → Capabilities → Connected tools '
+                + 'no Office tools to call. MOT Deck → Capabilities → Connected tools '
                 + '(MCP) is where it is turned on.' };
   }
   if (!e.mcpInSync) {
     return { ok: false, warn: '',
              why: 'the loffice entry in Hermes’s config does not match what this '
-                + 'bridge serves (out of sync) — Adopt it in MOT Main → Capabilities → '
+                + 'bridge serves (out of sync) — Adopt it in MOT Deck → Capabilities → '
                 + 'Connected tools (MCP), then reopen this panel.' };
   }
   if (e.tools === false) {
@@ -7423,8 +7774,14 @@ function lanePaint() {
   a.classList.toggle('on', aiLane === LANE_AGENT);
   a.disabled = !st.ok;
   a.title = st.why;
+  // ⚠️ THE PLACEHOLDER MUST NOT PROMISE A SHEET THERE IS NOT. With a .docx or .pptx
+  // open the panel is still a chat with the local model — a useful thing while writing —
+  // but it cannot see the file, and inviting "Ask about this sheet" would be the panel
+  // claiming otherwise in the one place the user is about to type.
   el('ai-in').placeholder = aiLane === LANE_AGENT
-    ? 'Ask Hermes to do it…' : 'Ask about this sheet…';
+    ? 'Ask Hermes to do it…'
+    : (blobDoc ? 'Ask the model anything — it cannot see this '
+                 + nounOf(current) + '…' : 'Ask about this sheet…');
   return st;
 }
 
@@ -7656,7 +8013,7 @@ function agentFrame(j, turn, held, steps) {
     d.className = 'err';
     d.style.marginTop = '6px';
     d.textContent = 'Hermes is asking: ' + String((j.request && j.request.question) || '?')
-                  + '\nThis lane cannot answer a question card — answer it in MOT Main → '
+                  + '\nThis lane cannot answer a question card — answer it in MOT Deck → '
                   + 'Chat (Hermes), or press Escape there to end the turn.';
     turn.wrap.appendChild(d);
     return {};
@@ -8789,6 +9146,7 @@ el('btn-more').onclick = ev => { ev.stopPropagation(); moreShow(!moreOpen); };
 mm('mm-download', () => {
   if (current) window.location.href = '/api/office/download/' + encodeURIComponent(current);
 });
+mm('mm-pdf', ooDownloadPdf);
 mm('mm-stats', colStats);
 mm('mm-sortaz', () => sortGo(false));
 mm('mm-sortza', () => sortGo(true));
@@ -8818,6 +9176,8 @@ el('new-name').onkeydown = ev => { if (ev.key === 'Enter') nameRowGo();
 // ── the File menu, wired to the actions that already existed ─────────────────
 el('btn-file').onclick = ev => { ev.stopPropagation(); fileMenu(); };
 mi('mi-new', toggleNew);
+mi('mi-newdoc', () => newBlob('doc'));
+mi('mi-newdeck', () => newBlob('slides'));
 mi('mi-open', () => railSetOpen(true, 'menu'));
 mi('mi-import', pickImport);
 mi('mi-rename', () => nameRow('rename'));
@@ -8856,6 +9216,10 @@ function mi_close() {
   closeArmed = false; discardArmed = null;
   bx('close-file', current || 'none');
   clearWorkbook();
+  // The blob state dies with the document, and the interstitial with it — otherwise the
+  // start screen would come up behind a "Opening …" sentence for a file nobody has open.
+  blobDoc = false;
+  document.body.classList.remove('blobdoc');
   mode = 'grid';
   el('sheet').classList.remove('on');
   el('gridwrap').classList.remove('off');
@@ -8868,6 +9232,7 @@ mi('mi-home', goHome);
 mi('mi-start', goStart);
 // Delete the OPEN file, with the same two-step the rail's ✕ uses — through say()'s
 // inline action, so the question and its answer are in the same sentence.
+mi('mi-pdf', ooDownloadPdf);
 mi('mi-delete', () => deleteAsk(current));
 
 /* ⚠️ ONE DELETE SENTENCE, AND IT NAMES CONTROLS THAT EXIST AT THAT MOMENT (live findings

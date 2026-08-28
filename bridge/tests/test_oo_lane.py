@@ -513,10 +513,10 @@ except Exception as _e:                                          # noqa: BLE001
 # silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28d")
+   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-29a")
 check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
       "document cannot claim to be this build",
-      "loffice-2026-08-28d</code>" in PAGE)
+      "loffice-2026-08-29a</code>" in PAGE)
 
 # ── the embed itself ──
 check("the editor is EMBEDDED: the page carries a stage and an iframe for it",
@@ -758,9 +758,9 @@ check("…it is DIRECT same-origin property access, and the file says why not po
 # gained a member; `LOfficeHost.contract` is what the PARENT publishes to the child, and
 # it did not change. Pinning them as one number was the shortcut that had to go.
 check("…both sides carry a contract VERSION, so a signature change is a visible one",
-      "contract: 3," in OO and "contract: 1," in PAGE)
+      "contract: 4," in OO and "contract: 1," in PAGE)
 check("…and the child's version is the one that moved, because the child is the side "
-      "that gained a member (readCells at 28c, renameTo at 28d)",
+      "that gained a member (readCells at 28c, renameTo at 28d, downloadPdf at 29a)",
       "readCells: readCells," in OO and "renameTo: renameTo," in OO and "readCells" not in
       PAGE.split("register: (embed)")[0].split("contract: 1,")[-1])
 # ⚠️⚠️ THE THREE THINGS THE CHILD GAINED AT loffice-2026-08-28d, AND EACH ONE IS A MEASURED

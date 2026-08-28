@@ -195,6 +195,38 @@ def install_state(root) -> dict:
     }
 
 
+# ── the bundle's fonts, listed (PDF export needs them IN the wasm filesystem) ──
+# ⚠️ WHY THE BRIDGE HAS TO LIST THESE. x2t renders a PDF with real, subsetted, EMBEDDED
+# TrueType faces, so it needs the font FILES — and its wasm filesystem starts empty. The
+# glue page therefore copies the bundle's own font directory into x2t's FS before the
+# first export. MEASURED 2026-08-28: with an empty /working/fonts the conversion does not
+# fail politely — it takes the whole wasm module out ("Out of bounds memory access") and
+# every later conversion in that page, INCLUDING SAVE, dies with it. So the list is a
+# precondition, not an optimisation.
+#
+# Read from disk rather than hardcoded, for a reason that has already bitten this lane:
+# a vendored bump that adds or renames a face would leave a hardcoded list quietly
+# short, and "quietly short" here means a PDF with the wrong glyphs.
+FONTS_REL = "dist/v9/fonts/fonts"
+FONT_EXTS = (".ttf", ".otf", ".ttc")
+
+
+def font_files(root) -> list:
+    """The bundle's font file NAMES, sorted. Empty list when the bundle is absent.
+
+    Names only — the page fetches each one through /oo/* like any other asset, so
+    containment, forced MIME and the immutable cache all still apply, and this route
+    cannot become a second way to read the disk.
+    """
+    base = os.path.join(oo_dir(root), FONTS_REL)
+    try:
+        return sorted(n for n in os.listdir(base)
+                      if n.lower().endswith(FONT_EXTS)
+                      and os.path.isfile(os.path.join(base, n)))
+    except OSError:
+        return []
+
+
 def bundle_target(root, rel):
     """(abs_path, None) or (None, reason) for a /oo/* request.
 
@@ -271,7 +303,12 @@ def brotli_sibling(path, accept_encoding) -> str:
 
 def _zip_looking(data) -> bool:
     """OOXML is a zip. Two signatures are legal: a normal local file header and an
-    empty archive. Anything else is not a workbook and must not land on disk."""
+    empty archive. Anything else is not an Office file and must not land on disk.
+
+    This is the sniff for ALL THREE types (stage 3): .xlsx, .docx and .pptx are the same
+    container. The TYPE is then checked properly by `writeback` below, which asks
+    office.verify_package whether the package really is what its name claims.
+    """
     return isinstance(data, (bytes, bytearray)) and len(data) > 4 and (
         bytes(data[:4]) in (b"PK\x03\x04", b"PK\x05\x06"))
 
@@ -290,11 +327,19 @@ def writeback(office, root, name, data, expect_mtime=None, force=False, today=No
         return None, (413, f"that save is {len(data) // (1024 * 1024)} MB — the cap "
                            f"is {WRITEBACK_MAX_BYTES // (1024 * 1024)} MB")
     if not _zip_looking(data):
-        return None, (400, "refused: those bytes are not a workbook")
+        return None, (400, f"refused: those bytes are not a {office.noun_of(name)}")
 
     target, reason = office.doc_target(root, name)
     if not target:
         return None, (404 if reason == "no such workbook" else 400, reason)
+    # ⚠️ THE PACKAGE MUST BE WHAT THE NAME CLAIMS. The editor serialises whatever it is
+    # holding, and a document-type mix-up upstream (a word editor asked to write over a
+    # .pptx, say) would otherwise land a valid-but-wrong package on top of the user's
+    # file — a zip signature alone cannot tell those apart.
+    if hasattr(office, "verify_package") and office.kind_of(target) != "sheet":
+        bad = office.verify_package(data, office.ext_of(target))
+        if bad:
+            return None, (400, "refused: " + bad)
 
     try:
         st = os.stat(target)
@@ -327,7 +372,11 @@ def writeback(office, root, name, data, expect_mtime=None, force=False, today=No
     d = os.path.dirname(target)
     tmp = ""
     try:
-        fd, tmp = tempfile.mkstemp(dir=d, prefix=".oo-save-", suffix=".xlsx")
+        # ⚠️ THE TARGET'S OWN EXTENSION, NOT A HARDCODED .xlsx (stage 3). The temp file is
+        # renamed over the real one, and a .docx that spent a moment named .xlsx is a
+        # .docx that Spotlight, Quick Look and a crash-recovery listing all misread.
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".oo-save-",
+                                   suffix=(office.ext_of(target) or ".xlsx"))
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
             fh.flush()

@@ -847,7 +847,9 @@ check('row 1 carries the DOCUMENT TITLE, and it is a control — clicking a titl
       /<button id="doctitle"/.test(html)
       && /doctitle'\)\.onclick = \(\) => \{ if \(current && !busy\) nameRow\('rename'\)/.test(html));
 check('…and paint() keeps it truthful rather than leaving the placeholder up',
-      /t\.textContent = current \|\| 'no workbook open'/.test(grab('paint')));
+      // 'no workbook open' → 'no file open' at loffice-2026-08-29a: three types live
+      // here now, and two of them are not workbooks.
+      /t\.textContent = current \|\| 'no file open'/.test(grab('paint')));
 
 // ══ THE LANDING ══════════════════════════════════════════════════════════════
 // THE BUG THIS GUARDS. LOffice booted perfectly — tier-1 ready in 4-7 ms, bridge fine,
@@ -950,7 +952,10 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     check('…while the busy guard, which is a real one, stays', /if\s*\(busy\)\s*return/.test(src));
     check('create() sends whatever is in the box, empty included, and lets the bridge '
           + 'choose the default name',
-          /JSON\.stringify\(\{ name: name, step: !!step \}\)/.test(src));
+          // `kind` joined the body at loffice-2026-08-29a (stage 3): '' is a
+          // spreadsheet, 'doc' and 'slides' are the two new start-screen cards. The
+          // NAME half of this assertion is the one that matters and is unchanged.
+          /JSON\.stringify\(\{ name: name, step: !!step, kind: kind \|\| '' \}\)/.test(src));
     // ⚠️ `step` ARRIVED AT loffice-2026-08-28d (live finding B2), AND IT DOES NOT WEAKEN
     // THE NEVER-CLOBBER RULING — it is how the caller SAYS which of the two meanings it
     // has. A name the USER TYPED still collides and is still refused; a TEMPLATE CARD
@@ -984,7 +989,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28d');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-29a');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
@@ -1149,7 +1154,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           && /mi\('mi-home', goHome\)/.test(html) && /mi\('mi-start', goStart\)/.test(html));
     check('…and the two rows are labelled so nobody has to guess which is which',
           /id="mi-start">⌂ LOffice home</.test(html)
-          && /id="mi-home">Back to MOT Main</.test(html));
+          && /id="mi-home">Back to MOT Deck</.test(html));
     check('home is the LAST thing before the exit row, and the exit row is last of all',
           html.indexOf('id="mi-start"') < html.indexOf('id="mi-home"'));
     check('going home with unsaved work offers to save rather than discarding it, and '
@@ -1244,6 +1249,15 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
       // the note (capped / not capped) rather than being rewritten around the wording.
       const fnoteText = () => 'the fidelity sentence';
       const deleteAsk = () => {};
+      // STAGE 3 (loffice-2026-08-29a): the row carries a TYPE BADGE, and the badge is
+      // the REAL function — the tables it reads are declared here because the page
+      // declares them as consts, and `grab` extracts functions. `kindOf` is the real
+      // one, so a badge that stopped matching the extension would fail here.
+      const KIND_NOUN = { sheet: 'spreadsheet', doc: 'document', slides: 'presentation' };
+      const KIND_BADGE = { sheet: 'XLSX', doc: 'DOCX', slides: 'PPTX' };
+      const EXT_KIND = { '.xlsx': 'sheet', '.docx': 'doc', '.pptx': 'slides' };
+      eval(grab('kindOf'));
+      eval(grab('typeBadge'));
       eval(grab('renderHome'));
       eval(grab('homeDel'));
 
@@ -1254,8 +1268,10 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
       eq('an empty library draws exactly one line, and it points at the Blank card '
          + 'rather than at a control somewhere else',
          nodes.hlist.children.map(c => c.className), ['hempty']);
-      check('…and that line names Blank',
-            /Blank/.test(nodes.hlist.children[0].textContent));
+      check('…and that line names what the three cards make, not just a spreadsheet',
+            /spreadsheet/.test(nodes.hlist.children[0].textContent)
+            && /document/.test(nodes.hlist.children[0].textContent)
+            && /presentation/.test(nodes.hlist.children[0].textContent));
       filesOk = false; renderHome();
       check('…while a bridge that never answered says THAT instead of pretending the '
             + 'library is empty', /bridge did not answer/.test(nodes.hlist.children[0].textContent));
@@ -1276,6 +1292,29 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
             && typeof rowsOf()[0].onkeydown === 'function');
       check('…and it says what it does on hover', /^Open /.test(rowsOf()[0].title));
 
+      // ⚠️ THE BADGE IS ON EVERY ROW, NOT JUST THE NEW TWO. A badge that appears for
+      // some rows and not others reads as a warning about those rows; a badge on all
+      // three reads as a fact about the file. And the badge must never displace the
+      // NAME from the row's text, which is what the previous assertion covers.
+      files = [{ name: 'a.xlsx', size_bytes: 1, modified: 3 },
+               { name: 'b.docx', size_bytes: 1, modified: 2 },
+               { name: 'c.pptx', size_bytes: 1, modified: 1 }];
+      renderHome();
+      eq('every row carries a type badge, one per file type',
+         rowsOf().map(r => r.children[0].children.map(c => c.textContent).join('')),
+         ['XLSX', 'DOCX', 'PPTX']);
+      eq('…and the badge is classed by kind so the rail can colour it',
+         rowsOf().map(r => r.children[0].children[0].className),
+         ['tbadge sheet', 'tbadge doc', 'tbadge slides']);
+      eq('…and the NAME is still the row\u2019s text, unmoved by the badge',
+         rowsOf().map(r => r.children[0].textContent),
+         ['a.xlsx', 'b.docx', 'c.pptx']);
+      check('…and the badge says what it means on hover',
+            rowsOf()[1].children[0].children[0].title === 'document');
+
+      files = [{ name: 'newest.xlsx', size_bytes: 10, modified: 2 },
+               { name: 'older.xlsx', size_bytes: 20, modified: 1 }];
+      renderHome();
       armed = 'older.xlsx'; renderHome();
       eq('a delete armed anywhere shows as armed HERE too, because both lists read the '
          + 'same variable', rowsOf()[1].children[3].textContent, 'sure?');

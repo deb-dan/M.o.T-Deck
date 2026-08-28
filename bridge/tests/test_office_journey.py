@@ -922,6 +922,120 @@ check("…and the card's before column renders the date, not the raw serial — 
 b.drop()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOURNEY — A DOCUMENT AND A PRESENTATION, END TO END (loffice-2026-08-29a, stage 3)
+#
+# THE USER STORY: Debi presses "Blank document" (or "Blank presentation"), the editor
+# opens it, she types, she saves, she comes back later and her words are still there.
+#
+# ⚠️ WHAT THIS TEST CAN AND CANNOT BE. The middle of that story is a WebAssembly editor
+# in a WKWebView, and this file must stay model-free and browser-free (see the header).
+# So the EDITOR'S STEP IS PLAYED BY REAL BYTES OF OUR OWN MAKING: the package that comes
+# back from `officeblank` with one part rewritten, which is exactly the shape the editor
+# posts to /api/office/writeback (a complete OOXML package, ours to store verbatim).
+# That makes every step this codebase owns executable forever:
+#     create → read back → the editor's write-back → read back again → the text is there
+# and it makes the two things the bridge could get wrong impossible to regress: storing
+# the wrong bytes, and mis-typing the file on the way through.
+#
+# The EDITOR half was walked live in a real WKWebView for this slice — a blank .docx and
+# a blank .pptx created here, opened in the vendored editor, typed into through the
+# editor's own document API, saved through this very write-back, and reopened with the
+# text read back out of the reopened editor. That evidence is a screenshot in the ship
+# report, which is where the doctrine puts it; this is the part that runs every time.
+# ══════════════════════════════════════════════════════════════════════════════
+import io as _io                                                  # noqa: E402
+import zipfile as _zip                                            # noqa: E402
+
+import officeblank as _blank                                      # noqa: E402
+import oo as _oomod                                               # noqa: E402
+
+
+def _edit_package(data, part, marker):
+    """The editor's step, played honestly: the same package with `marker` in one part.
+
+    Rebuilt member by member (a zip cannot be edited in place), which also proves the
+    write-back stores WHATEVER complete package it is handed rather than re-deriving it.
+    """
+    src = _zip.ZipFile(_io.BytesIO(data))
+    out = _io.BytesIO()
+    with _zip.ZipFile(out, "w", _zip.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == part:
+                body = body.replace(b"<w:p/>", b"<w:p><w:r><w:t>" + marker
+                                    + b"</w:t></w:r></w:p>")
+                body = body.replace(b"<p:cSld>", b"<p:cSld><!--" + marker + b"-->")
+            dst.writestr(info.filename, body)
+    return out.getvalue()
+
+
+for _kind, _ext, _part, _marker in (
+        ("document", ".docx", "word/document.xml", b"JOURNEY-DOCX-TEXT"),
+        ("presentation", ".pptx", "ppt/slides/slide1.xml", b"JOURNEY-PPTX-TEXT")):
+    b = Bench()
+    # 1 ─ the card is pressed: a blank file of that type, made by us, never vendored
+    _name, _why = office.create_doc(b.root, "Notes", _ext)
+    eq(f"a blank {_kind} is created", _name, "Notes" + _ext)
+    check(f"…and it is on disk as a real package",
+          office.verify_package(open(b.path(_name), "rb").read(), _ext) is None, _why)
+    # it must be visible in the list, with its kind, or the rail cannot show it
+    _row = [r for r in office.list_docs(b.root) if r["name"] == _name][0]
+    eq(f"…and the list calls it what it is", _row["kind"],
+       {"document": "doc", "presentation": "slides"}[_kind])
+
+    # 2 ─ LOffice hands the bytes to the editor through /api/office/download's target
+    _served, _why = office.doc_target(b.root, _name)
+    check(f"…and the {_kind} is servable to the editor", bool(_served), _why)
+    _bytes = open(_served, "rb").read()
+
+    # 3 ─ THE EDITOR'S STEP: the user types, the editor serialises the whole package
+    _edited = _edit_package(_bytes, _part, _marker)
+    check(f"the edited {_kind} is still a valid package",
+          office.verify_package(_edited, _ext) is None)
+
+    # 4 ─ ⌘S: the write-back, with the mtime fence the editor passes
+    _mtime = os.stat(_served).st_mtime
+    _rep, _err = _oomod.writeback(office, b.root, _name, _edited, _mtime)
+    check(f"the {_kind} write-back landed", _rep is not None, _err)
+    check("…and it took the daily safety copy, with the right extension",
+          _rep and _rep["backup"].endswith(".bak" + _ext), _rep)
+    # THE FENCE IS REAL FOR THESE TYPES TOO: a save that thinks the file is older than
+    # it is must be REFUSED rather than silently winning. `- 5` rather than the mtime
+    # this test just read, because the fence deliberately allows one second of slack
+    # (the wire carries a float through JSON and a filesystem whose timestamp
+    # resolution is not ours to assume) and a same-second re-save is inside it.
+    _rep2, _err2 = _oomod.writeback(office, b.root, _name, _edited, _mtime - 5)
+    check("…and a save against a STALE mtime is refused, not silently won",
+          _rep2 is None and _err2[0] == 409, _err2)
+    check("…with a sentence that says the file changed and what to do",
+          _rep2 is None and "changed on disk" in _err2[1], _err2)
+    _rep3, _err3 = _oomod.writeback(office, b.root, _name, _edited, _mtime - 5, True)
+    check("…and `force` overrides it, because a refusal nobody can override is its own "
+          "kind of data loss", _rep3 is not None, _err3)
+
+    # 5 ─ SHE COMES BACK: reopen means read the bytes off disk again
+    _again = open(b.path(_name), "rb").read()
+    _z = _zip.ZipFile(_io.BytesIO(_again))
+    check(f"reopening the {_kind} shows the edit — the marker is in {_part}",
+          _marker in _z.read(_part))
+    check("…and the package is intact, not merely present",
+          _z.testzip() is None and "[Content_Types].xml" in _z.namelist())
+    eq("…and it is still the same file, under the same name",
+       [r["name"] for r in office.list_docs(b.root) if r["name"] == _name], [_name])
+
+    # 6 ─ AND NOTHING ELSE IN LOFFICE PRETENDS TO UNDERSTAND IT
+    check(f"the snapshot mapper refuses the {_kind}",
+          office.open_doc(b.root, _name)[0] is None)
+    check(f"…the agent's read tool refuses it, with a sentence",
+          oo.op_read(b.root, _name)[0] is None
+          and _kind in (oo.op_read(b.root, _name)[1] or ""))
+    check("…and a changeset cannot be staged against it",
+          oo.stage_changes(b.root, "j", _name, None,
+                           [{"op": "set", "at": "A1", "values": [["x"]]}])[0] is None)
+    b.drop()
+
+
 # ══ report ════════════════════════════════════════════════════════════════════
 print("")
 if FAIL:

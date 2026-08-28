@@ -294,3 +294,39 @@ same machine's own user is private use; running it is unconditionally permitted.
    version; any modification we ever make to the bundle must be published. This line item
    goes into the fat-installer checklist NOW so it cannot be forgotten later.
 4. Track A (fernfei) is **never** shipped — measurement vehicle only, provenance unverified.
+
+---
+
+## 📄 DOWNLOAD AS PDF — the x2t recipe, found by measurement (2026-08-28, Opus 5)
+
+The runbook's open item "check 3 — save/export" is closed for PDF. **x2t CAN write a PDF in
+the browser, but only from one input, and every wrong turn fails SILENTLY.** The whole
+recipe, and how each part was established:
+
+| part | value | how it was found |
+|---|---|---|
+| input | the editor's PRINT METAFILE, from `asc_nativeGetPDF(options)` | `asc_nativePrint(undefined,undefined,undefined)` builds it in the SPREADSHEET api and returns it, but the word and slide apis read that argument shape as "the desktop is driving" and return nothing. `asc_nativeGetPDF` is implemented in all three. It reports the buffer's valid length by calling `window.native.Save_End(...)`, so the glue installs that host hook in the editor frame (the `window.APP` precedent) and returns the UNSLICED buffer. |
+| `m_nFormatFrom` | **8194** cell · **8193** word · **8195** slide | `Asc.c_oAscFileType` read LIVE out of the vendored sdkjs: `CANVAS_SPREADSHEET/WORD/PRESENTATION`. |
+| `m_nFormatTo` | **513** | same table: `PDF: 513` (`PDFA: 521`). |
+| `m_sFontDir` | `/working/fonts`, with ALL 91 of the bundle's faces written in first | ⚠️ with an empty font dir the conversion does not fail politely — it aborts the wasm module with "Out of bounds memory access", and every later conversion in that page INCLUDING SAVE dies with it. |
+| `m_bIsNoBase64` | **true** | ⚠️ THE ONE THAT COSTS A DAY. The print buffer is raw binary while every other conversion on the page passes CryptPad's base64 text form. With `false`, x2t base64-DECODES the raw bytes, finds no pages, and STILL RETURNS rc 0 — handing back a structurally valid PDF with `/Count 0`. |
+
+**Routes that do NOT work in this build:** `XLSY (4098) → PDF (513)` returns rc 80, and so
+does a bare `.pdf` output extension with no format code. That is not a bug: in ONLYOFFICE's
+own server the document-model→PDF step runs sdkjs inside x2t's embedded JS engine (hence its
+`m_sScriptsCacheDirectory` / `m_sAllFontsPath` parameters), and a wasm build has no engine.
+
+**Measured cost** (warm, Apple Silicon): font mount 33 ms · print buffer 32 ms · conversion
+13 ms. Output for a small real workbook: A4, 1 page, 33 KB, TWO subsetted embedded TrueType
+faces, real text operators.
+
+**The download mechanism.** A navigation to a bridge URL — which is how `Download .xlsx`
+works — would NOT download a PDF: the shell's delegate turns a response into a download only
+when `!canShowMIMEType`, and WebKit CAN show `application/pdf`, so the editor would be
+replaced by a PDF viewer. The route that works is an `<a download>` click on a blob of our
+own bytes (`shouldPerformDownload`, which the shell also answers, "including the blob: URLs
+a SPA builds client-side"). PROVEN by teaching the probe harness the same three download
+delegate methods the app has: a click produced `Monthly budget.pdf`, 32,846 bytes, on disk.
+
+**It is the LIVE document, not the saved file** — proven with a marker typed into a workbook
+and never saved: it is in the PDF, and the `.xlsx` on disk stayed byte-identical.

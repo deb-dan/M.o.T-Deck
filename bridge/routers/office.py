@@ -135,6 +135,15 @@ def office_files() -> JSONResponse:
                          "fidelity": _office.FIDELITY_NOTE,
                          "fidelity_editor": _office.FIDELITY_EDITOR_NOTE,
                          "ext": _office.DOC_EXT,
+                         # STAGE 3: three types live here now. `ext` stays as the
+                         # DEFAULT (what New makes when nobody says otherwise) so the
+                         # page's existing uses do not shift meaning; `exts` and `kinds`
+                         # are the new facts, and `fidelity_blob` is the per-type
+                         # sentence for the two the bridge never rewrites.
+                         "exts": list(_office.DOC_EXTS),
+                         "kinds": _office.KINDS,
+                         "kind_labels": _office.KIND_LABELS,
+                         "fidelity_blob": _office.FIDELITY_BLOB_NOTE,
                          "roundtrip": not err,
                          "roundtrip_error": err})
 
@@ -156,12 +165,31 @@ async def office_new(req: Request) -> JSONResponse:
     # listing the existing file two inches below. So the caller SAYS which of the two it
     # is, and a template takes the same ' (n)' walk import and the blank name already take.
     want = (body or {}).get("name") or ""
+    # STAGE 3: WHICH TYPE. `kind` ("sheet" | "doc" | "slides") is what the start-screen
+    # cards send, because a card is a statement of intent and an extension typed into a
+    # name box is not; `ext` is accepted too for a caller that would rather be literal.
+    # Anything unrecognised is refused rather than silently made into a spreadsheet.
+    kind = str((body or {}).get("kind") or "").strip().lower()
+    ext = str((body or {}).get("ext") or "").strip().lower()
+    if kind and not ext:
+        for _e, _k in _office.KINDS.items():
+            if _k == kind:
+                ext = _e
+                break
+        if not ext:
+            return JSONResponse({"ok": False, "error": f"refused: there is no “{kind}” "
+                                 "kind of file here"}, status_code=400)
+    if ext and ext not in _office.DOC_EXTS:
+        return JSONResponse({"ok": False, "error": "refused: LOffice stores "
+                             + ", ".join(_office.DOC_EXTS)}, status_code=400)
     if bool((body or {}).get("step")) and str(want).strip():
-        safe, reason = await asyncio.to_thread(_office.free_name, ROOT, want)
+        safe, reason = await asyncio.to_thread(
+            _office.free_name, ROOT, (os.path.splitext(str(want))[0] + ext) if ext
+            else want)
         if not safe:
             return JSONResponse({"ok": False, "error": reason}, status_code=400)
         want = safe
-    name, reason = await asyncio.to_thread(_office.create_doc, ROOT, want)
+    name, reason = await asyncio.to_thread(_office.create_doc, ROOT, want, ext)
     if not name:
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     _office_log(f"created {name}")
@@ -250,7 +278,7 @@ async def office_rename(req: Request) -> JSONResponse:
 
 @app.post("/api/office/upload")
 async def office_upload(req: Request) -> JSONResponse:
-    """RAW .xlsx body + ?name= → import a workbook into data/office.
+    """RAW .xlsx / .docx / .pptx body + ?name= → import a file into data/office.
 
     Same body shape as /api/voice/library/save: one part, so multipart would buy
     nothing. The name is sanitized by office.valid_name like every other route here,
@@ -285,9 +313,11 @@ def office_download(name: str) -> Response:
     target, reason = _office.doc_target(ROOT, name)
     if not target:
         raise HTTPException(404, reason)
-    return FileResponse(
-        target,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    # ⚠️ THE MIME FOLLOWS THE TYPE (stage 3). It was hardcoded to the spreadsheet type,
+    # which for a .docx would have been a download the OS opens in the wrong app — and
+    # for the EDITOR's own fetch of the bytes, a Content-Type that contradicts the file.
+    return FileResponse(target, media_type=_office.MEDIA_TYPES.get(
+        _office.ext_of(target), "application/octet-stream"),
         filename=os.path.basename(target))
 
 

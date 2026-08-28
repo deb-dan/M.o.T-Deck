@@ -96,8 +96,17 @@ NAME_TABLE = [
     (".hidden", None, "a dotfile is refused"),
     ("..", None, "'..' is refused"),
     (".", None, "'.' is refused"),
-    ("sheet.docx", None, "slice 1 refuses a non-xlsx extension"),
-    ("sheet.csv", None, "…including csv"),
+    # ⚠️ THE POLICY CHANGED AT loffice-2026-08-29a AND THIS IS THE NEW, STRONGER PIN.
+    # LOffice stores THREE types now (stage 3: docs + slides). .docx and .pptx are
+    # ACCEPTED as names — they are opaque blobs to this module, and the refusal moved
+    # from the NAME to the CONTENT path (require_sheet, pinned in its own group below).
+    # Everything that is not one of the three is still refused here.
+    ("sheet.docx", "sheet.docx", "a document name is accepted — three types live here"),
+    ("deck.pptx", "deck.pptx", "…and a presentation name"),
+    ("Deck.PPTX", "Deck.pptx", "…case-normalised like .xlsx is"),
+    ("sheet.csv", None, "csv is still refused — it is not one of the three"),
+    ("sheet.doc", None, "…and so is the legacy .doc"),
+    ("sheet.txt", None, "…and anything else"),
     ("", None, "empty is refused"),
     ("   ", None, "whitespace-only is refused"),
     (None, None, "None is refused"),
@@ -432,8 +441,17 @@ if HAVE_XL:
     check("…and on the TARGET", office.rename_doc(tmp, "after.xlsx", "../ok.xlsx")[0] is None)
     check("rename_doc refuses a missing workbook",
           office.rename_doc(tmp, "ghost.xlsx", "ok")[0] is None)
-    check("rename_doc refuses another extension — slice 1 is .xlsx only",
-          office.rename_doc(tmp, "after.xlsx", "after.docx")[0] is None)
+    # ⚠️ A RENAME MAY CHANGE THE STEM AND NEVER THE TYPE (loffice-2026-08-29a). With
+    # three extensions in the folder this stopped being a naming rule and became a
+    # TRUTHFULNESS rule: `budget.docx` holding spreadsheet bytes is a file whose
+    # extension lies, and the editor would then blame the file rather than the rename.
+    check("rename_doc refuses a change of TYPE, even to another extension it stores",
+          office.rename_doc(tmp, "after.xlsx", "after.docx")[0] is None
+          and ".docx" in (office.rename_doc(tmp, "after.xlsx", "after.docx")[1] or ""))
+    check("…and a rename with NO extension keeps the source's",
+          office.rename_doc(tmp, "after.xlsx", "afterwards")[0] == "afterwards.xlsx")
+    check("…and renaming it back leaves the name where the rest of this group expects it",
+          office.rename_doc(tmp, "afterwards.xlsx", "after")[0] == "after.xlsx")
     check("rename_doc refuses an empty or junk new name without raising",
           office.rename_doc(tmp, "after.xlsx", "")[0] is None
           and office.rename_doc(tmp, "after.xlsx", None)[0] is None
@@ -615,7 +633,7 @@ _new_route = _new_route[:_new_route.index('@app.get("/api/office/open')]
 check("POST /api/office/new passes an empty name straight through to create_doc, and "
       "carries no empty-name refusal of its own — a guard here would put the dead end "
       "back one layer down, where nobody would look for it",
-      '_office.create_doc, ROOT, want)' in _new_route
+      '_office.create_doc, ROOT, want, ext)' in _new_route
       and 'want = (body or {}).get("name") or ""' in _new_route
       and "no file name" not in _new_route)
 # ⚠️ `step` ARRIVED AT loffice-2026-08-28d (live finding B2) AND IT DOES NOT WEAKEN THE
@@ -627,7 +645,7 @@ check("POST /api/office/new passes an empty name straight through to create_doc,
 # listing the existing file two inches below.
 check("…and a TEMPLATE's collision takes free_name's ' (n)' walk instead, on the "
       "caller's own say-so rather than by weakening create_doc",
-      "_office.free_name, ROOT, want" in _new_route
+      "_office.free_name, ROOT," in _new_route
       and '(body or {}).get("step")' in _new_route)
 check("…and the walk is the SAME one import and the blank name already take — one "
       "never-clobber convention in this codebase, not a second",

@@ -141,6 +141,22 @@ except Exception:                                # noqa: BLE001
         print(f"[office] oo module unavailable — the rich editor is off ({_OO_ERR})",
               flush=True)
 
+# LOFFICE IN-RIBBON AI — ONLYOFFICE's own AI plugin, vendored and pointed at our own
+# runner (bridge/ooai.py). Its OWN defensive import and its own handle rather than a
+# member of oo.py, because the two have separate installers, separate pins and
+# separate licence lines: a snapshot that has the editor bundle but not the plugin
+# must serve the editor exactly as before and simply leave the AI tab out, saying why.
+_OOAI_ERR = ""
+try:
+    from .. import ooai as _ooai
+except Exception:                                # noqa: BLE001
+    try:
+        from bridge import ooai as _ooai
+    except Exception as _e:                      # noqa: BLE001
+        _ooai, _OOAI_ERR = None, str(_e)[:200]
+        print("[office] ooai module unavailable — no in-ribbon AI tab "
+              f"({_OOAI_ERR})", flush=True)
+
 # NAV — the sidebar/tab-strip customization model (FABLE-STUDIO-PHASE2-SPEC §A). Same
 # defensive import for the same reason: without it the panel falls back to its own
 # default layout and the shell keeps its built-in tab order, i.e. exactly the
