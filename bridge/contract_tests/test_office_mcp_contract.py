@@ -81,12 +81,90 @@ def test_the_client_hermes_ships_accepts_a_json_reply_and_a_bare_202():
     assert "if response.status_code == 202:" in src, (
         "the MCP client no longer treats 202 as the answer to a notification — "
         "bridge/office_mcp.py answers every notification 202-with-no-body")
-    assert "content_type.startswith(JSON)" in src, (
+    # ⚠️ WIDENED AT THE mcp 1.28.1 → 2.0.0 JUMP (2026-08-28, Hermes v0.20.6).
+    # 2.0.0 inlined the `JSON` constant: `content_type.startswith(JSON)` became
+    # `content_type.startswith("application/json")` (streamable_http.py:382). Same
+    # branch, same first-class status — a literal rename, not a behaviour change.
+    # Both spellings are accepted so this passes on mcp 1.x AND 2.x; what it must
+    # never tolerate is the branch disappearing.
+    assert ('content_type.startswith(JSON)' in src
+            or 'content_type.startswith("application/json")' in src), (
         "the MCP client no longer accepts an application/json reply to a request — "
         "bridge/office_mcp.py never opens an SSE stream, so this is load-bearing")
     assert "status_code == 405" in src, (
         "the MCP client no longer tolerates a 405 on the GET stream — "
         "bridge/office_mcp.py 405s it because it never initiates anything")
+
+
+def test_hermes_stays_on_the_handshake_era_so_our_hand_written_server_is_reachable():
+    """THE mcp 2.x QUESTION, ANSWERED AND PINNED (2026-08-28, v0.20.6 bump).
+
+    mcp 2.0.0 implements MCP revision **2026-07-28**, which replaces the
+    `initialize` handshake with a stateless per-request envelope and discovers the
+    peer with a `server/discover` probe. bridge/office_mcp.py speaks the HANDSHAKE
+    era and nothing else: five methods, `initialize` among them.
+
+    That is safe because the SDK keeps BOTH eras and Hermes deliberately stays on
+    the old one:
+      · `mcp_types.version` splits HANDSHAKE_PROTOCOL_VERSIONS (up to 2025-11-25)
+        from MODERN_PROTOCOL_VERSIONS (2026-07-28);
+      · Hermes's HTTP transport connects with `ClientSession.initialize()` and
+        seeds the `mcp-protocol-version` header from LATEST_HANDSHAKE_VERSION —
+        with a comment saying that advertising 2026-07-28 would route the request
+        onto the envelope ladder, which then rejects a legacy body;
+      · Hermes never calls `mcp.client._probe.negotiate_auto`, so `server/discover`
+        is never sent to us at all. (Even if it were, our -32601 "method not found"
+        is on that module's fallback DENYLIST — anything that is not positive
+        modern evidence falls back to `initialize`.)
+
+    IF THIS TEST FAILS, our server is being spoken to in an era it does not
+    implement. The fix is NOT to relax it: either add the per-request envelope to
+    bridge/office_mcp.py, or answer `server/discover` advertising handshake
+    versions only (which the SDK treats as an explicit legacy advertisement).
+
+    ⚠️ THE UPSTREAM HALF IS DORMANT AT THE PIN WE SHIP (v2026.8.13, mcp 1.28.1 —
+    one era, no split) AND ARMS BY ITSELF the moment the vendored Hermes moves to
+    mcp 2.x. The OUR-SIDE half below runs at every pin, because
+    `office_mcp.negotiate()` must never claim the modern revision regardless of what
+    any client asks for. The v0.20.6 bump this was written against was rolled back —
+    see docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md — but the answer it
+    records ("our hand-written server needs no change for mcp 2.0.0") is measured
+    and still stands.
+    """
+    src = _read("tools/mcp_tool.py")
+    if "LATEST_HANDSHAKE_VERSION" not in src:
+        # mcp 1.x era: there is no handshake/modern split to get wrong upstream.
+        # Fall through to our own invariants only.
+        _assert_our_negotiate_never_claims_the_modern_revision()
+        return
+    assert 'headers["mcp-protocol-version"] = LATEST_HANDSHAKE_VERSION' in src, (
+        "the MCP-Protocol-Version header is no longer seeded from the HANDSHAKE "
+        "version — see bridge/office_mcp.py KNOWN_PROTOCOLS/negotiate()")
+    assert "session.initialize()" in src, (
+        "Hermes's MCP transport no longer connects via ClientSession.initialize() "
+        "— bridge/office_mcp.py implements `initialize` and no envelope")
+    assert "negotiate_auto" not in src, (
+        "Hermes now uses the SDK's mode='auto' era negotiation, so our server WILL "
+        "be probed with `server/discover`. Our -32601 should still fall back to the "
+        "handshake (mcp/client/_probe.py is a denylist), but that is now a live "
+        "path and must be walked, not assumed — see office_mcp.handle()")
+    _assert_our_negotiate_never_claims_the_modern_revision()
+
+
+def _assert_our_negotiate_never_claims_the_modern_revision() -> None:
+    """Our half of the era contract — true at EVERY pin, so it is checked at every
+    pin, whichever SDK generation the vendored Hermes happens to carry."""
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from bridge import office_mcp                                # noqa: E402
+    assert "2025-11-25" in office_mcp.KNOWN_PROTOCOLS, (
+        "office_mcp.KNOWN_PROTOCOLS no longer contains the newest handshake "
+        "revision — we would answer initialize with our own default instead of "
+        "echoing the client's offer")
+    assert office_mcp.negotiate("2026-07-28") == office_mcp.DEFAULT_PROTOCOL, (
+        "office_mcp.negotiate() now ECHOES the modern revision back. It must not: "
+        "echoing 2026-07-28 claims a per-request envelope this server does not "
+        "implement")
 
 
 # ── 2. THE APPROVAL STORY. This is the group that matters. ───────────────────

@@ -1,0 +1,294 @@
+{
+  "browsermcp": {
+    "fingerprint": "cedfcd6eff08fa4f",
+    "tools": [
+      {
+        "name": "browser_navigate",
+        "description": "Navigate to a URL",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "The URL to navigate to"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_go_back",
+        "description": "Go back to the previous page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_go_forward",
+        "description": "Go forward to the next page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_snapshot",
+        "description": "Capture accessibility snapshot of the current page. Use this for getting references to elements to interact with.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_click",
+        "description": "Perform click on a web page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "element": {
+              "type": "string",
+              "description": "Human-readable element description used to obtain permission to interact with the element"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Exact target element reference from the page snapshot"
+            }
+          },
+          "required": [
+            "element",
+            "ref"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_hover",
+        "description": "Hover over element on page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "element": {
+              "type": "string",
+              "description": "Human-readable element description used to obtain permission to interact with the element"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Exact target element reference from the page snapshot"
+            }
+          },
+          "required": [
+            "element",
+            "ref"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_type",
+        "description": "Type text into editable element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "element": {
+              "type": "string",
+              "description": "Human-readable element description used to obtain permission to interact with the element"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Exact target element reference from the page snapshot"
+            },
+            "text": {
+              "type": "string",
+              "description": "Text to type into the element"
+            },
+            "submit": {
+              "type": "boolean",
+              "description": "Whether to submit entered text (press Enter after)"
+            }
+          },
+          "required": [
+            "element",
+            "ref",
+            "text",
+            "submit"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_select_option",
+        "description": "Select an option in a dropdown",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "element": {
+              "type": "string",
+              "description": "Human-readable element description used to obtain permission to interact with the element"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Exact target element reference from the page snapshot"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of values to select in the dropdown. This can be a single value or multiple values."
+            }
+          },
+          "required": [
+            "element",
+            "ref",
+            "values"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_press_key",
+        "description": "Press a key on the keyboard",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "Name of the key to press or a character to generate, such as `ArrowLeft` or `a`"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_wait",
+        "description": "Wait for a specified time in seconds",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "number",
+              "description": "The time to wait in seconds"
+            }
+          },
+          "required": [
+            "time"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_get_console_logs",
+        "description": "Get the console logs from the browser",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "browser_screenshot",
+        "description": "Take a screenshot of the current page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      }
+    ],
+    "utility_tools": [
+      {
+        "schema": {
+          "name": "mcp__browsermcp__list_resources",
+          "description": "List available resources from MCP server 'browsermcp'",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "handler_key": "list_resources"
+      },
+      {
+        "schema": {
+          "name": "mcp__browsermcp__read_resource",
+          "description": "Read a resource by URI from MCP server 'browsermcp'",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "uri": {
+                "type": "string",
+                "description": "URI of the resource to read"
+              }
+            },
+            "required": [
+              "uri"
+            ]
+          }
+        },
+        "handler_key": "read_resource"
+      }
+    ]
+  },
+  "loffice": {
+    "fingerprint": "73b9c6994f495451",
+    "tools": [
+      {
+        "name": "office_list",
+        "description": "Workbooks are addressed by NAME (as office_list returns them), never by path: these tools cannot see anything outside the Office folder. List every spreadsheet in the Office folder, newest first, with its size, when it changed, whether Debi has it open in LOffice right now and whether she has unsaved edits in it. Start here: the other tools need a name from this list.",
+        "inputSchema": {},
+        "annotations": {
+          "readOnlyHint": false
+        }
+      },
+      {
+        "name": "office_read",
+        "description": "Workbooks are addressed by NAME (as office_list returns them), never by path: these tools cannot see anything outside the Office folder. Read cells from one sheet: values, formulas AS TEXT with the value cached in the file by whichever real engine last saved it, and any merged ranges. NOTHING HERE RECOMPUTES ANYTHING — there is no formula engine — so a cached value can be stale and every result says so. Cap 2000 cells; omit `range` for the used range.",
+        "inputSchema": {},
+        "annotations": {
+          "readOnlyHint": false
+        }
+      },
+      {
+        "name": "office_sheet_stats",
+        "description": "Workbooks are addressed by NAME (as office_list returns them), never by path: these tools cannot see anything outside the Office folder. The shape of a workbook: every sheet's name, used size, merge and formula counts, plus per-column stats for one sheet (how many numbers, text, booleans, blanks and formulas, and min/max/sum/mean of the numbers) and row 1 as it actually is. Cheaper than office_read for 'what is in this file' and 'which column holds the amounts'.",
+        "inputSchema": {},
+        "annotations": {
+          "readOnlyHint": false
+        }
+      },
+      {
+        "name": "office_stage_changes",
+        "description": "Workbooks are addressed by NAME (as office_list returns them), never by path: these tools cannot see anything outside the Office folder. PROPOSE a change to a workbook. THIS WRITES NOTHING. It checks the operations, reads the workbook, works out what each cell would say before and after, and hands Debi ONE card in LOffice with the whole list on it and an Apply button. NOT applied — Debi reviews and applies this in LOffice. You cannot apply it: there is no apply tool and there never will be. Stage the COMPLETE change for the request in ONE call — a second call REPLACES the first proposal, so a change sent in pieces loses the earlier pieces. Then say in one short sentence what you staged, and stop. Never say a workbook was changed unless a system line tells you the changeset was applied. SEND AMOUNTS AS JSON NUMBERS with a number-format style op, never as \"$2,500\" — a formula over text computes 0. READ THE RESULT'S `notes` AND `warnings` BEFORE YOU ANSWER: if one says a range holds text that looks numeric, fix it in THIS turn by staging one new change that re-sets those cells as numbers AND re-states the formula together, or — if the column really is ids or codes — drop the aggregate and say why. Do not ask Debi to decide a cell's type. A proposal expires after 10 minutes.",
+        "inputSchema": {},
+        "annotations": {
+          "readOnlyHint": false
+        }
+      }
+    ],
+    "utility_tools": [],
+    "ttl_ms": 0,
+    "written_at": 1787877686.163594,
+    "cache_scope": "private"
+  }
+}

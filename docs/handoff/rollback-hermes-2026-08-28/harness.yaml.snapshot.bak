@@ -1,0 +1,119 @@
+version: 0.1.0
+components:
+  hermes:
+    repo: https://github.com/NousResearch/hermes-agent.git
+    pin: v2026.8.13
+    installed: true
+    enabled: false
+    port: 9119
+    depends_on:
+    - runner
+  odysseus:
+    repo: https://github.com/pewdiepie-archdaemon/odysseus.git
+    pin: c9dd68d890a7c0ee0df9a0e351ce22aafd6c7c0f
+    installed: true
+    enabled: false
+    port: 7860
+    depends_on:
+    - runner
+    - searxng
+    admin_user: admin
+    admin_password: admin123
+  searxng:
+    repo: https://github.com/searxng/searxng.git
+    pin: main
+    installed: true
+    enabled: false
+    port: 8080
+  voicestudio:
+    repo: https://github.com/debpalash/VoiceStudio.git
+    pin: v0.5.0
+    installed: true
+    enabled: false
+    port: 3900
+    depends_on: []
+  voicebox:
+    repo: https://github.com/jamiepine/voicebox.git
+    pin: v0.5.0
+    installed: true
+    enabled: false
+    port: 17493
+    depends_on: []
+  comfyui:
+    repo: https://github.com/comfyanonymous/ComfyUI.git
+    pin: v0.34.1
+    installed: true
+    enabled: false
+    port: 8188
+    depends_on: []
+  unsloth:
+    repo: https://github.com/unslothai/unsloth.git
+    pin: v0.1.804-beta
+    installed: true
+    enabled: false
+    port: 8899
+    depends_on: []
+  opencode:
+    repo: https://github.com/sst/opencode.git
+    pin: 1.18.23
+    installed: true
+    enabled: false
+    port: 4096
+    depends_on: []
+runner:
+  adapter: auto
+  llamacpp_pin: b10662
+  binary:
+  mlx_venv: data/mlx-venv
+  port: 6767
+  endpoint: http://127.0.0.1:6767/v1
+  api_key: harness-local
+  model: Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-Q4_K_S
+  ctx_size: 65536
+  spec_mtp: auto
+aux:
+  port: 6768
+  endpoint: http://127.0.0.1:6768/v1
+  api_key: harness-aux
+  model:
+memory:
+  budget_gb: 48
+bridge:
+  port: 8700
+  gearbox_port: 8710
+build:
+  python_version: 3.12.11
+  python_tag: cp312
+  mlx_lm_pin: 0.31.3
+  mlx_vlm_pin: 0.6.17
+  bun_pin: bun-v1.3.14
+  imageio_ffmpeg_pin: 0.6.0
+  mlx_audio_pin: 0.4.8
+  uv_pin: 0.12.3
+  mlx_whisper_pin: 0.4.3
+  music_minimax_pin: 0505e3f04ddfb883e0a2fbd8ad1a34c2f313e514
+  acestep_pin: 9761469d95fc204b5468623c68a1a2203e50b1f9
+  aider_pin: 5dc9490bb35f9729ef2c95d00a19ccd30c26339c
+  univer_pin: 0.25.1
+  opencode_pin: 1.18.23
+inference:
+  endpoints:
+    cookbook:
+      url: http://127.0.0.1:8000/v1
+      kind: local
+    ollama:
+      url: http://127.0.0.1:11434/v1
+      kind: local
+    lmstudio:
+      url: http://127.0.0.1:1234/v1
+      kind: local
+  cloud: []
+paths:
+  vendor: ./vendor
+  skills: ./skills
+  data: ./data
+voice:
+  tts_model: OmniVoice-bfloat16
+  stt_model: parakeet-tdt-0.6b-v3
+hermes:
+  max_turn_s: 600

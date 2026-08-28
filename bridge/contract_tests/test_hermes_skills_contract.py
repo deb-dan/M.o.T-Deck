@@ -80,9 +80,73 @@ def test_the_global_list_is_unioned_into_every_platform():
     assert 'global_disabled = _normalize_string_set(skills_cfg.get("disabled"))' in src
     assert 'skills_cfg.get("platform_disabled") or {}' in src, \
         "skills.platform_disabled is no longer the per-platform key"
-    assert "return global_disabled | _normalize_string_set(platform_disabled)" in src, \
+    # ⚠️ WIDENED AT THE v0.20.6 BUMP (2026-08-28), and the reason is recorded here
+    # rather than only in a report: v0.20.6 wraps the union in
+    # `(global | platform) - ESSENTIAL_SKILLS`. The UNION is what this test guards
+    # and it is intact; the subtraction is a NEW upstream fact, pinned by
+    # test_essential_skills_cannot_be_disabled_from_either_side below. Matching the
+    # union alone (not the whole `return` line) is what lets this assertion survive
+    # that wrapper while still failing if the `|` ever becomes a `&` or the
+    # platform list ever REPLACES the global one.
+    assert "global_disabled | _normalize_string_set(platform_disabled)" in src, \
         "the per-platform list no longer ADDS to the global one — our lane-hidden " \
         "pill's one-directional reasoning depends on this union"
+
+
+def test_essential_skills_cannot_be_disabled_from_either_side():
+    """UPSTREAM GAINS A SET OF SKILLS NO SURFACE MAY SWITCH OFF, and our lever is one
+    of those surfaces.
+
+    ⚠️ THIS TEST IS DORMANT AT THE PIN WE SHIP (v2026.8.13 / v0.20.1) AND ARMS BY
+    ITSELF. It was written on 2026-08-28 against v2026.8.27 (v0.20.6), where
+    `ESSENTIAL_SKILLS` first appears; that bump was rolled back for unrelated
+    reasons (see docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md), so the
+    constant is absent again and this returns early. It is KEPT, rather than
+    deleted with the bump, because the finding is real and the next builder to
+    move this pin should not have to rediscover it. The `pinned_on` reporting in
+    bridge/app.py is inert while the constant is absent, which is why leaving it
+    in place is free.
+
+    `agent/skill_utils.ESSENTIAL_SKILLS` (exactly {"hermes-agent"} at this pin) is
+    subtracted SYMMETRICALLY: `save_disabled_skills` drops it on the way IN and
+    `get_disabled_skills` drops it on the way OUT (hermes_cli/skills_config.py:55-74).
+
+    THE SYMMETRY IS THE WHOLE POINT, because it is what keeps our panel honest:
+      · because the WRITER drops it, `PUT /api/skills/toggle {"enabled": false}`
+        answers 200 and persists nothing;
+      · because the READER drops it too, `GET /api/skills` reports that skill
+        ENABLED again — so the listing and the model's actual prompt AGREE, and
+        `hermes_skill_lane_off`'s one-directional claim stays true.
+    If the subtraction ever goes ASYMMETRIC (dropped on write but honoured on read,
+    or the reverse), the listing and the lane disagree and the pill starts lying.
+
+    Our side: POST /api/hermes/skills re-probes and reports `pinned_on` for a name
+    that refused to go off, and the panel prints a sentence for it. Without that,
+    Debi's switch snapped back with no explanation and it looked like our bug.
+    """
+    utils = _read("agent/skill_utils.py")
+    if "ESSENTIAL_SKILLS" not in utils:
+        # Nothing is force-enabled at this pin, so every skill the toggle writes
+        # really lands and `pinned_on` is always empty. Nothing to check.
+        return
+    assert "- ESSENTIAL_SKILLS" in utils, \
+        "get_disabled_skill_names no longer subtracts the essential set"
+    cfg = _read("hermes_cli/skills_config.py")
+    # THE READER — every branch of it.
+    assert cfg.count("- ESSENTIAL_SKILLS") >= 3, (
+        "get_disabled_skills stopped subtracting the essential set on one of its "
+        "branches — the listing and our lane can now disagree")
+    # THE WRITER. This is the half that makes the 200 a no-op.
+    writer = cfg.split("def save_disabled_skills", 1)[1].split("\ndef ", 1)[0]
+    assert "disabled = set(disabled) - ESSENTIAL_SKILLS" in writer, (
+        "save_disabled_skills no longer drops essential skills on the way in — "
+        "either the toggle now really disables them (drop `pinned_on`) or the "
+        "config and the resolver have gone asymmetric (a lie in the panel)")
+    # Our own reporting must still be there.
+    app = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
+    assert '"pinned_on": pinned_on' in app, (
+        "the skills lever stopped reporting the names Hermes refuses to switch "
+        "off — a request to disable one answers 200 and does nothing")
 
 
 def test_upstream_ships_no_default_disabled_skills():

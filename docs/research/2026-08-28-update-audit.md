@@ -17,6 +17,19 @@ registry.npmjs.org, HF API). Verdict legend: **SECURITY** / **BUGFIX-WORTHWHILE*
 ## 1. Installed components (running lanes)
 
 ### Hermes (NousResearch/hermes-agent) — vendored, INSTALLED
+> **‼️ SUPERSEDED 2026-08-28 (same day): the bump was ATTEMPTED and ROLLED BACK.**
+> The real newest tag is **v2026.8.27** (not a "v0.20.6 line" — that tag *is* v0.20.6),
+> and it is **BLOCKED by two upstream bugs**, not by our integration: Hermes v0.20.3+
+> forgot to convert two `getattr(obj, "camelCase")` reads for mcp 2.0.0's snake_case
+> field rename, which (1) makes every read-only MCP tool on an `untrusted` server raise
+> an approval card and (2) writes EMPTY tool schemas into
+> `~/.hermes/cache/mcp_schema_cache.json`. Both reproduced live on the real stack.
+> **Do not retry above `v2026.8.16` (the last `mcp==1.28.1` tag) without reading
+> `docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md` first** — it carries the root
+> cause, the retry plan, and the large amount that DID pass (notably: our hand-written
+> MCP server needs no change at all for mcp 2.0.0). Ranked recommendation #4 below is
+> stale, and so is this section's "our 102-test contract suite is the gate": the suite
+> went GREEN at v0.20.6 (142/142) while the LOffice Agent lane was broken.
 - **Our pin:** tag `v2026.8.13` (app version v0.20.1). Verified: `git -C vendor/hermes describe` = v2026.8.13.
 - **Latest:** v0.20.6 line, released 2026-08-27 (five releases since ours: 0.20.2–0.20.6, ~1,400 merged PRs total).
 - **Delta:** **FEATURE-NICE, leaning RISKY** — big feature waves (MCP 2.x migration in 0.20.3, Bot Mode plugin bundling, desktop registry expansion, OS-keychain encryption in 0.20.6, subprocess Python isolation hardening). No advertised critical security fix. The MCP 2.x migration and the known upstream habit of pruning dashboard flags (`--tui` shim comment; `_add_server_runtime_args()` refactor) mean our 102-test contract suite is the gate — the manifest's own watch-item warns `HERMES_DESKTOP=1` + source-less sessions resolve to "desktop" surfaces.

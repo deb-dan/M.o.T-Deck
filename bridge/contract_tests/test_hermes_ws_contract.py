@@ -211,10 +211,45 @@ def test_clarify_protocol_contract():
     # Panel Stop with a card open: session.interrupt must release the pending
     # prompt (scoped to that session), or a Stop during an ask would wedge the
     # agent thread until the clarify timeout — the exact hang this card fixes.
+    #
+    # ⚠️ MOVED AT v0.20.6 (2026-08-28 pin bump), and the RESOLUTION IS A MIRROR
+    # UPDATE, NOT A RELAXATION. Up to v0.20.1 the `session.interrupt` handler in
+    # methods_session.py contained the release inline (`_clear_pending(sid)`).
+    # v0.20.6 hoisted the whole interrupt body into ONE shared helper,
+    # `server._interrupt_session_turn(sid, session, *, request_id=None)`
+    # (server.py:1112-1157), because the WS orphan reaper now has to apply the
+    # identical contract when a dead client's reconnect grace expires. The
+    # handler calls that helper on BOTH of its branches (compute-host at
+    # methods_session.py:3338 and in-process at :3345), and the helper still does
+    # `_clear_pending(sid)` AND `resolve_gateway_approval(..., "deny",
+    # resolve_all=True)`. So the guarantee is unchanged — and it is now pinned in
+    # BOTH shapes, which is stronger than the old single literal: wherever the body
+    # lives, it must still release the prompt AND deny in-flight approvals, and the
+    # handler must reach it. (Written 2026-08-28 while bumping to v0.20.6; that bump
+    # was ROLLED BACK, so the INLINE branch is the live one today and the helper
+    # branch arms itself when this pin next moves.)
     msess = (HERMES / "tui_gateway" / "methods_session.py").read_text(errors="replace")
-    assert "_clear_pending(sid)" in msess, (
-        "session.interrupt no longer releases pending gateway prompts — panel "
-        "Stop during an open ask card would no longer end the turn")
+    _interrupt = msess.split('@method("session.interrupt")', 1)
+    assert len(_interrupt) == 2, "the session.interrupt handler is gone"
+    _interrupt = _interrupt[1].split('\n@method(', 1)[0]
+    if "_clear_pending(sid)" in _interrupt:
+        _body = _interrupt                      # pre-v0.20.6: released inline
+    else:
+        assert "_interrupt_session_turn(" in _interrupt, (
+            "session.interrupt neither clears pending prompts inline nor routes "
+            "through _interrupt_session_turn — panel Stop during an open ask card "
+            "would no longer end the turn")
+        _helper = server.split("def _interrupt_session_turn(", 1)
+        assert len(_helper) == 2, (
+            "server._interrupt_session_turn is gone — find where session.interrupt "
+            "now releases pending gateway prompts")
+        _body = _helper[1].split("\ndef ", 1)[0]
+        assert "_clear_pending(sid)" in _body, (
+            "the shared interrupt helper no longer releases pending gateway prompts "
+            "— panel Stop during an open ask card would no longer end the turn")
+    assert "resolve_gateway_approval(" in _body and '"deny"' in _body, (
+        "the interrupt path no longer denies in-flight approvals — a Stop with an "
+        "approval card open would leave the agent thread blocked on it")
     ctool = (HERMES / "tools" / "clarify_tool.py").read_text(errors="replace")
     assert '"user_response": user_response' in ctool, (
         "clarify no longer returns the raw user_response string — the card sends "
@@ -339,10 +374,43 @@ def test_path_guard_hook_contract():
         plugins), (
         "plugins.py no longer imports request_tool_approval from tools.approval — "
         "plugin escalations would not open an approval card")
+    #
+    # ⚠️ WIDENED AGAIN AT v0.20.6 (2026-08-28 pin bump) — A MIRROR UPDATE, NOT A
+    # RELAXATION. v0.20.6 hoisted the escalation body out of
+    # `resolve_pre_tool_block` into `_resolve_block_from_details(details,
+    # tool_name, *, turn_id, tool_call_id, session_id)` (plugins.py:6603-6660), so
+    # that the NEW `_dispatch_pre_tool_call_hooks` (which also handles `modify`
+    # directives) shares the identical fail-closed logic instead of copying it.
+    # `resolve_pre_tool_block` now ends in a call to that helper (:6597).
+    # So the seam still runs, one hop further down, and this check follows it
+    # rather than loosening: the resolver must reach the helper, the helper must
+    # call the gate, and the helper must still FAIL CLOSED — which is the property
+    # the path-guard fence actually depends on and which the old single literal
+    # never pinned at all.
     _resolver = plugins.split("def resolve_pre_tool_block", 1)[1].split("\ndef ", 1)[0]
-    assert "request_tool_approval(" in _resolver, (
-        "resolve_pre_tool_block no longer CALLS request_tool_approval — an "
-        "'approve' directive from the path-guard would never reach the human gate")
+    _gate = "request_tool_approval(" in _resolver
+    if not _gate:
+        assert "_resolve_block_from_details(" in _resolver, (
+            "resolve_pre_tool_block neither calls request_tool_approval nor "
+            "delegates to _resolve_block_from_details — an 'approve' directive "
+            "from the path-guard would never reach the human gate")
+        _helper = plugins.split("def _resolve_block_from_details", 1)
+        assert len(_helper) == 2, "_resolve_block_from_details is gone"
+        _helper = _helper[1].split("\ndef ", 1)[0]
+        assert "request_tool_approval(" in _helper, (
+            "the shared pre_tool_call resolver no longer CALLS "
+            "request_tool_approval — an 'approve' directive from the path-guard "
+            "would never reach the human gate")
+        assert 'if details.action == "approve":' in _helper, (
+            "the shared resolver no longer branches on the 'approve' directive")
+        # FAIL-CLOSED. A gate that errors must BLOCK, never proceed: this is the
+        # difference between a fence and a decoration.
+        assert 'return f"BLOCKED: plugin approval gate failed for {tool_name}"' in _helper, (
+            "the shared resolver no longer fails CLOSED when the approval gate "
+            "raises — a path-guard escalation whose gate errors would now be "
+            "allowed to write")
+        assert 'if not result.get("approved"):' in _helper, (
+            "the shared resolver no longer blocks on a DENIED approval")
     appr = (HERMES / "tools" / "approval.py").read_text(errors="replace")
     assert "def request_tool_approval" in appr, (
         "request_tool_approval gone from tools/approval.py — fence has no gate")
@@ -363,13 +431,74 @@ def test_path_guard_hook_contract():
     assert "discover_plugins" in mtools, (
         "model_tools no longer discovers plugins on import — the dashboard path "
         "would never load the path-guard plugin")
-    assert "resolve_pre_tool_block" in mtools, (
+    #
+    # ⚠️ RENAMED AT v0.20.6 (2026-08-28 pin bump) — MIRROR UPDATE. The dashboard
+    # dispatch path in model_tools.py:1384-1401 switched its ONE call from
+    # `resolve_pre_tool_block` to `_dispatch_pre_tool_call_hooks`, which fires the
+    # hook once and returns `(block_message, modified_args)` instead of just the
+    # block message — the same single-fire contract, same fail-closed resolver
+    # (`_resolve_block_from_details`, pinned above), plus the new `modify`
+    # directive. Either name satisfies the fence; NEITHER does not.
+    assert ("resolve_pre_tool_block" in mtools
+            or "_dispatch_pre_tool_call_hooks" in mtools), (
         "model_tools no longer resolves pre_tool_call directives — writes unfenced")
+    assert "skip_pre_tool_call_hook" in mtools, (
+        "the single-fire opt-out is gone — the hook may now fire twice per tool "
+        "call (two path-guard cards for one write) or not at all")
     # the two tools the fence gates must still exist under these names
     ftools = (HERMES / "tools" / "file_tools.py").read_text(errors="replace")
     assert 'registry.register(name="write_file"' in ftools
     assert 'registry.register(name="patch"' in ftools, (
         "the patch tool was renamed — path-guard's GATED_TOOLS needs updating")
+
+
+def test_the_new_modify_directive_can_rewrite_args_the_guard_already_judged():
+    """FOUND WHILE BUMPING TO v0.20.6 (2026-08-28). A NEW upstream hazard, recorded
+    here rather than left to be rediscovered.
+
+    v0.20.6 added a third `pre_tool_call` directive: `{"action": "modify", "args":
+    {...}}`, which shallow-merges into the tool's arguments before dispatch
+    (hermes_cli/plugins.py:6485-6495) and is returned ALONGSIDE a block/approve
+    directive from the SAME single hook pass (`_PreToolCallDirective.modified_args`).
+    model_tools.py then applies `modified_args` and, if there is no block, runs the
+    tool (:1398-1400).
+
+    SO THE ORDERING IS: our path-guard judges the ORIGINAL `file_path`, Debi
+    approves THAT path on the card, and a `modify` directive from ANY OTHER enabled
+    pre_tool_call plugin can then replace `file_path` with a different one that
+    nothing re-checked. That is a fence bypass by construction.
+
+    WHY IT IS NOT A LIVE HOLE IN THIS HARNESS, TODAY, AND WHAT WOULD MAKE IT ONE:
+      · no plugin BUNDLED with Hermes returns a `modify` directive (asserted below);
+      · user plugins are opt-in through `plugins.enabled`, and the only name
+        scripts/start_component.sh ever adds there is `harness-path-guard`, which
+        returns block/approve and never modify.
+    A SECOND enabled pre_tool_call plugin is therefore the precondition, and it is
+    a deliberate act. If this test ever fails because a bundled plugin gained a
+    modify directive, the path-guard must move to re-judging `modified_args` — do
+    NOT relax this.
+    """
+    if not HERMES.exists():
+        return
+    plugins = (HERMES / "hermes_cli" / "plugins.py").read_text(errors="replace")
+    if 'result.get("action") == "modify"' not in plugins:
+        return          # upstream dropped the directive — the hazard is gone
+    assert "modified_args" in plugins, "modify exists but carries no args channel"
+    guard = ROOT / "guards" / "harness-path-guard" / "__init__.py"
+    if guard.exists():
+        assert '"modify"' not in guard.read_text(errors="replace"), (
+            "our own path-guard now emits modify directives — it must then also "
+            "judge the merged args, which nothing currently does")
+    bundled = sorted((HERMES / "plugins").rglob("__init__.py"))
+    offenders = [str(p.relative_to(HERMES)) for p in bundled
+                 if '"action": "modify"' in p.read_text(errors="replace")
+                 or "'action': 'modify'" in p.read_text(errors="replace")]
+    assert not offenders, (
+        "a BUNDLED Hermes plugin now returns a pre_tool_call `modify` directive: "
+        + ", ".join(offenders) + ". Combined with our path-guard's approve "
+        "directive, that plugin can rewrite the very file_path Debi approved on "
+        "the card. The fence must start re-judging modified_args before this pin "
+        "ships.")
 
 
 def test_approvals_default_mode_contract():

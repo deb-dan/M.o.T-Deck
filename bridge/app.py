@@ -7589,19 +7589,39 @@ async def hermes_skills_set(req: Request) -> JSONResponse:
     except Exception:
         after = rows
     now = set(hermes_skills_on(after))
-    stuck = sorted({n for n in desired
-                    if n in set(hermes_skill_names(after)) and n not in now})
+    known = set(hermes_skill_names(after))
+    stuck = sorted({n for n in desired if n in known and n not in now})
+    # ⚠️ THE OTHER DIRECTION, ADDED AT THE v0.20.6 PIN BUMP (2026-08-28).
+    # Upstream grew `agent/skill_utils.ESSENTIAL_SKILLS` (today exactly
+    # {"hermes-agent"}) and subtracts it in BOTH directions —
+    # `save_disabled_skills` drops it on the way IN and `get_disabled_skills`
+    # drops it on the way OUT (hermes_cli/skills_config.py:55-74). So a request
+    # to disable an essential skill is accepted with a 200, persists nothing,
+    # and the row is enabled again on the next read. Before this, the write
+    # answered `ok:true changed:[hermes-agent] "takes effect on the next Hermes
+    # chat"` and Debi's switch snapped back with no sentence explaining why —
+    # a small lie the re-probe already had the facts to contradict. `stuck`
+    # cannot carry it (its message is "still off"), so it gets its own field.
+    pinned_on = sorted({n for n, on in p["plan"]
+                        if not on and n in known and n in now})
     view = hermes_skill_view(after, cfgv)
     print(f"[hermes-skills] {len(changed)} changed, {len(p['plan'])} planned, "
           f"{view['in_prompt']}/{view['total']} skills in the prompt "
-          f"failed={failed} stuck={stuck}", flush=True)
+          f"failed={failed} stuck={stuck} pinned_on={pinned_on}", flush=True)
+    # A name upstream refused to move did NOT change, whatever the 200 said.
+    changed = [n for n in changed if n not in set(pinned_on)]
+    note = "takes effect on the next Hermes chat"
+    if failed:
+        note = "some skills could not be written — " + " · ".join(failed)
+    elif pinned_on:
+        note = ("Hermes will not let these be switched off — " +
+                " · ".join(pinned_on))
     return JSONResponse({
         "ok": not failed, "changed": changed, "failed": failed,
-        "unknown": p["unknown"], "stuck": stuck,
+        "unknown": p["unknown"], "stuck": stuck, "pinned_on": pinned_on,
         "enabled_count": view["enabled_count"], "in_prompt": view["in_prompt"],
         "total": view["total"], "scope": "global", "restart_required": False,
-        "note": ("takes effect on the next Hermes chat" if not failed else
-                 "some skills could not be written — " + " · ".join(failed)),
+        "note": note,
     }, status_code=200 if not failed else 502)
 
 

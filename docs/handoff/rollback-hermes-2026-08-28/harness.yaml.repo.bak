@@ -7,67 +7,7 @@ components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
     pin: v2026.8.13           # release tag — never track a branch.
-                              # ⚠️⚠️ 2026-08-28: THE v2026.8.27 (v0.20.6) BUMP WAS ATTEMPTED, PROVEN
-                              # UNSHIPPABLE AND ROLLED BACK. Do not retry above v2026.8.16 without
-                              # reading docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md first — the
-                              # blocker is TWO upstream bugs, not our integration, and the whole record
-                              # (including everything that DID pass) is in that file.
-                              #
-                              # ══ 2026-08-28: v2026.8.27 (v0.20.6) ATTEMPTED → ROLLED BACK ══
-                              # The bump was built, shipped, restarted and WALKED on the real stack. It
-                              # is blocked by TWO upstream bugs in Hermes v0.20.3+ (NOT by our
-                              # integration, which passed everything else). Do not retry above
-                              # v2026.8.16 until upstream fixes them.
-                              #
-                              # THE BLOCKER, in one sentence: mcp 2.0.0 renamed every model field to
-                              # snake_case and kept camelCase only as a SERIALIZATION alias — pydantic
-                              # aliases do not apply to attribute access — and Hermes v0.20.6 missed two
-                              # of its own `getattr(obj, "camelCase")` reads:
-                              #   · tools/mcp_tool.py:4643 `_annotation_read_only_hint` reads
-                              #     `getattr(annotations, "readOnlyHint")` → always None on mcp 2.x, so
-                              #     EVERY read-only MCP tool on an `untrusted` server is classified
-                              #     write-capable and gets an approval card. REPRODUCED live: a real 27B
-                              #     turn calling office_list raised "This tool is write-capable (no
-                              #     readOnlyHint=true annotation)" and was denied. That is the whole v2
-                              #     zero-card LOffice consent design inverted.
-                              #   · tools/mcp_tool.py:7374 the schema-cache WRITER reads
-                              #     `getattr(mcp_tool, "inputSchema")` → None, so it persists
-                              #     `inputSchema: {}`. REPRODUCED on disk: ~/.hermes/cache/
-                              #     mcp_schema_cache.json now holds all four loffice tools with an EMPTY
-                              #     schema and readOnlyHint:false. Any cache-registered ("lazy") start
-                              #     hands the model tools with no arguments.
-                              # Upstream built the fix helper for exactly this (`mcp_field(obj, snake,
-                              # camel, default)`, mcp_tool.py:488 — its docstring even names both failure
-                              # modes, "failed tool calls read as successful, tool schemas read as
-                              # empty") and applied it in 19 places. These two, plus :2284
-                              # `requestedSchema`, were missed. There is NO fix from our side: our server
-                              # already sends camelCase on the wire correctly, and pydantic DROPS unknown
-                              # extra keys, so no wire payload can make the SDK object expose a
-                              # `readOnlyHint` attribute. Editing vendor/hermes is out (compose over
-                              # APIs, never fork) and flipping `trust: untrusted` → `full` would disarm a
-                              # documented fence to hide an upstream bug.
-                              #
-                              # WHAT DID PASS AT v0.20.6, and is worth knowing next time:
-                              #  · our HAND-WRITTEN Streamable-HTTP server needs NO change for mcp 2.0.0.
-                              #    The SDK keeps two eras (`mcp_types.version` splits
-                              #    HANDSHAKE_PROTOCOL_VERSIONS …2025-11-25 from MODERN_PROTOCOL_VERSIONS
-                              #    2026-07-28) and Hermes deliberately stays on the handshake era
-                              #    (mcp_tool.py:261-267, :3616-3624 — it never calls `negotiate_auto`, so
-                              #    `server/discover` is never sent to us). All three transport rules hold
-                              #    in the 2.0.0 client: 202-for-a-notification, application/json accepted,
-                              #    405 tolerated on the GET. PROVEN on the wire: the handshake test listed
-                              #    all four tools with correct schemas. NO new bridge dependency — the
-                              #    no-FastMCP ruling stands.
-                              #  · the path-guard fence + approval cards still work: a real turn asking
-                              #    write_file for ~/Desktop raised "path-guard: write outside workspace"
-                              #    and the file was never created.
-                              #  · a real Hermes-lane chat turn streamed end-to-end through the bridge SSE.
-                              #  · the contract gate went 139 → 142 green after five mirror updates; all
-                              #    five are upstream refactor-MOVES, and all five mirrors were written to
-                              #    pass at BOTH tags, so they are KEPT at the rolled-back pin.
-                              # Full record + the retry plan: docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md
-                              #
-                              # (2026-08-14 bump v2026.7.30 → v2026.8.13 (update sweep; 2565 commits in range).
+                              # 2026-08-14 bump v2026.7.30 → v2026.8.13 (update sweep; 2565 commits in range).
                               # Contract-checked against a real v2026.8.13 checkout: 13/14 asserts passed; the ONE
                               # failure was a COSMETIC import reformat in hermes_cli/plugins.py (the tools.approval
                               # import became parenthesised multi-line at L5884) — resolve_pre_tool_block still exists
@@ -101,8 +41,7 @@ components:
                               # ⚠️ The one to remember at the NEXT bump: HERMES_DESKTOP=1 (set by start_component.sh
                               # for the cron ticker) is exactly what makes a source-less session resolve to "desktop".
                               # Only our explicit session `source` keeps this lane off that surface.
-                              # — end of the v2026.8.13 record.)
-                              # (prev v2026.8.13, before that v2026.7.30, v2026.7.20)
+                              # (prev v2026.7.30, before that v2026.7.20)
     installed: true
     enabled: false
     port: 9119                # hermes serve REST API (persistent surface)

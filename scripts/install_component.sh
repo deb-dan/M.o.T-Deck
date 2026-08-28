@@ -219,6 +219,18 @@ if [[ "$NAME" == "hermes" ]]; then
   # web_dist/ are gitignored by upstream → this never dirties the submodule / blocks
   # pin-bumps). The `web` workspace has a file: dep on apps/shared (@hermes/shared),
   # so the install must run at the hermes root with --workspace web (not inside web/).
+  #
+  # ⚠️ THE ONE THING IT *DOES* DIRTY, AND THE MYSTERY IS SOLVED (2026-08-28).
+  # `npm install` rewrites vendor/hermes/package-lock.json, which is NOT gitignored.
+  # That is the whole story behind the long-standing "dirty package-lock.json" every
+  # builder since 2026-08-23 correctly reported as "pre-existing, not mine" — it is
+  # not a stray local edit and never was: THIS STEP regenerates it, deterministically,
+  # on every hermes install. Measured during the v0.20.6 bump attempt: discard it,
+  # re-run this script, and the resulting `git diff` is BYTE-IDENTICAL (27 added
+  # lines). So it is safe to discard before any pin bump and it will simply come back.
+  # Do not "fix" it by committing the regenerated lock into the submodule, and do not
+  # add --package-lock-only=false games here: the file is upstream's, our copy of it
+  # is a build artefact, and nothing we run reads it.
   if command -v npm >/dev/null 2>&1; then
     echo "[harness] building Hermes web dashboard UI (npm --workspace web)…"
     ( cd vendor/hermes \
