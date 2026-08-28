@@ -110,6 +110,10 @@ html[data-design="studio"] {
      squarely in the 65-75+ reading band. */
   --sd-lane:600px;
   /* the ink that sits ON the accent. Chromatic on purpose (gray-on-color). */
+  /* v1.5.24: Editorial promoted its hardcoded on-the-accent ink to a token, so the
+     design axis has to cover it too or a gold-filled chip would inherit Editorial's
+     violet near-black onto studio's teal. It is the SAME value studio already uses. */
+  --on-accent:var(--sd-on-accent);
   --sd-on-accent:#03211d;
   /* tight elevation. Neutral colour (dark-glow) and blur <16px
      (gpt-thin-border-wide-shadow). */
@@ -146,6 +150,7 @@ html[data-design="studio"][data-dvariant="light"] {
   --gold:#097268; --ok:#0d7d5c; --warn:#8a600d; --bad:#b23636; --accent:#097268;
   --on-wash:rgba(9,114,104,.14);
 
+  --on-accent:var(--sd-on-accent);
   --sd-on-accent:#e4fbf5;
   --sd-elev:0 6px 14px rgba(16,40,40,.12), 0 1px 2px rgba(16,40,40,.10);
 
@@ -542,9 +547,30 @@ html[data-design="studio"] #chat-compact-info {
 /* --- sessions rail: a compact modern list --- */
 html[data-design="studio"] #chat-sessions { padding-right:12px; }
 /* the collapsed rail, restated for the same reason the slim sidebar is (both are
-   (1,1,1) against this sheet, and this sheet is later) */
+   (1,1,1) against this sheet, and this sheet is later).
+   v1.5.24 — 24px → 44px, tracking Editorial's slim reopen strip (Debi's ratified
+   34–48px band). The restatement is what keeps the trap answered: without it
+   `html[data-design="studio"] #chat-sessions` below would silently reinstate the
+   12px padding on a 44px strip and push the label off its own centre. */
 html[data-design="studio"] body.sessions-collapsed #chat-sessions {
-  width:24px; padding-right:0; }
+  width:44px; padding-right:0; border-right:0; }
+/* THE REOPENER, in studio's voice. Editorial's strip is tracked mono caps — its
+   signature — which is precisely what impeccable's wide-tracking / all-caps-body
+   rules are about and what this design does not borrow. Same object, sentence case
+   at normal tracking, at studio's own 11px floor.
+   ⚠️ THE SPECIFICITY TRAP AGAIN, and this one is worse than the sidebar's: the
+   Editorial rule is `body.sessions-collapsed #cs-reopen` = (1,1,1), and this sheet's
+   generic `html[data-design="studio"] button` = (0,1,1) LOSES to it — so the strip
+   would have kept Editorial's mono caps while every other studio control changed.
+   The scope has to be spelled out with the STATE class to win, exactly as the
+   collapsed sidebar and the collapsed rail above had to be. */
+html[data-design="studio"] body.sessions-collapsed #cs-reopen {
+  font-family:var(--sd-sans); font-size:11px; font-weight:600;
+  letter-spacing:normal; text-transform:none;
+  color:var(--dim); background:transparent; border:0;
+  border-right:1px solid var(--line);
+  transition:color var(--sd-t-fast) var(--sd-ease); }
+html[data-design="studio"] body.sessions-collapsed #cs-reopen:hover { color:var(--gold); }
 html[data-design="studio"] .cs-head { margin-bottom:8px; }
 html[data-design="studio"] .cs-title {
   font-family:var(--sd-sans); font-size:11px; font-weight:600;

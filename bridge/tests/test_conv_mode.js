@@ -330,7 +330,7 @@ check('the conv chip is rendered AFTER the auto chip in the composer', (() => {
   return a > 0 && c > a;
 })());
 check('the conv chip shares the ● talk / auto sizing rule (one size grammar)',
-  /#chat-talk, #chat-auto, #chat-conv \{[^}]*font-size:7px/.test(html));
+  /#chat-talk, #chat-auto, #chat-conv \{[^}]*font-size:9\.5px/.test(html));
 check('the live state reuses the existing gold talk-dot rule — no new CSS colour',
   /#chat-auto\.on \.talk-dot, #chat-conv\.on \.talk-dot \{ color:var\(--gold\); \}/.test(html));
 

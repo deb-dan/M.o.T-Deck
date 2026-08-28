@@ -467,8 +467,8 @@ ok(/--serif: "New York"/.test(css) && /--mono: "SF Mono"/.test(css),
   const h = 2 * pad + nmLine + metaTop + metaLine;
   ok(h >= 44, 'a session card is still ≥44px tall (2×' + pad + ' + ' + nmLine.toFixed(1)
      + ' + ' + metaTop + ' + ' + metaLine.toFixed(1) + ' = ' + h.toFixed(1)
-     + 'px; the served panel measures 46.5px)');
-  ok(h < 50, '…and the arithmetic AGREES with the live measurement (46.5px) rather than '
+     + 'px; the served panel measures 47.5px)');
+  ok(h < 50, '…and the arithmetic AGREES with the live measurement (47.5px) rather than '
      + 'assuming body\'s 1.55 line-height, which the `font:` shorthand resets');
   ok(/\.cs-item \.nm \{ font:/.test(css) && /\.cs-item \.meta \{ font:/.test(css),
      '…and both really are set with the `font:` shorthand (which is why 1.2, not 1.55)');

@@ -190,8 +190,21 @@ console.log('2. Editorial does not pay for the second design');
      Ceiling history (each line = a slice that consciously raised it):
        690000  studio design slice (2026-08-28) — the chip, the axis, designBoot
        706000  BE-01 ✗ chip + the SSE hybrid (2026-08-28) — +13.7KB: the events
-               subscription, the cadence state machine, the chip renderer and its CSS */
-  const CEILING = 706000;
+               subscription, the cadence state machine, the chip renderer and its CSS
+       720000  the impeccable-debt slice (v1.5.24, 2026-08-28) — +14KB, and it is almost
+               entirely PROSE, which the ceiling's own note says should have gone to a
+               test file instead. It did not, deliberately, and here is the trade: what
+               this slice bought is a set of ARGUED EXCEPTIONS living at the rules they
+               excuse — the one kept glow, the kept 10/10.5px micro-caps voice, the 9.5px
+               chip size that overrode a standing Debi ruling, the full-width transcript,
+               the measure caps and the four re-measured palettes. An exception whose
+               argument is in a test file is an exception the next person editing the rule
+               will not read. The MEASURED numbers are in the fence
+               (bridge/tests/test_editorial_debt.js, 96 checks) so nothing here is load-
+               bearing for correctness; only the reasoning is in the page. The structural
+               half of this budget — the design asset is not inlined — is unaffected and
+               is asserted below on its own terms. */
+  const CEILING = 720000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
@@ -769,6 +782,14 @@ console.log('6. the states another rule owns (the collision trap)');
   for (const [sel, prop] of [
     ['html[data-design="studio"] body.rail-slim aside', 'width'],
     ['html[data-design="studio"] body.sessions-collapsed #chat-sessions', 'width'],
+    // v1.5.24 — THE THIRD INSTANCE, and the sharpest: the collapsed sessions rail became a
+    // labelled reopen strip, and `html[data-design="studio"] button` is (0,1,1) while
+    // Editorial's `body.sessions-collapsed #cs-reopen` is (1,1,1). The generic studio
+    // button rule LOSES, so without this restatement the one control that gets your
+    // sessions back would have kept Editorial's tracked mono caps while every other
+    // studio control changed. Found by reading the trap this list already records —
+    // which is what a pinned trap is for.
+    ['html[data-design="studio"] body.sessions-collapsed #cs-reopen', 'font-size'],
   ]) {
     const r = RULES.find(x => x.sel === sel);
     ok(!!r, 'restated: ' + sel);
@@ -779,8 +800,16 @@ console.log('6. the states another rule owns (the collision trap)');
   ok(slim && /width:56px/.test(slim.body),
      'the collapsed rail is still 56px in studio (it was 228px of empty column)');
   const col = RULES.find(x => x.sel === 'html[data-design="studio"] body.sessions-collapsed #chat-sessions');
-  ok(col && /width:24px/.test(col.body) && /padding-right:0/.test(col.body),
-     'the collapsed sessions rail is still 24px with no padding');
+  // v1.5.24: 24px → 44px. The number is no longer duplicated as a literal on both sides —
+  // it is read from EDITORIAL's rule and required to match, because a collapse geometry
+  // that differs per design is exactly how studio ended up with a 22×14px reopen target.
+  const edCol = /body\.sessions-collapsed #chat-sessions \{[^}]*width:(\d+)px/.exec(inlineCss);
+  ok(!!edCol, 'Editorial states the collapsed strip width');
+  ok(col && new RegExp('width:' + edCol[1] + 'px').test(col.body) && /padding-right:0/.test(col.body),
+     'the collapsed sessions rail is the SAME ' + edCol[1] + 'px in studio as in Editorial, '
+     + 'with no padding (it was 24px before Debi ratified the 34–48px reopen strip)');
+  ok(+edCol[1] >= 44, '…and that width is ≥44px, so the strip clears the hit floor on its '
+     + 'narrow axis in this design too');
   // and the states studio deliberately does NOT restate, because Editorial's rule is
   // MORE specific and correctly wins — recorded so the next reader does not "fix" it.
   ok(/body\.chat-mode main \{/.test(inlineCss),

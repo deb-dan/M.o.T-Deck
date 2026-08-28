@@ -8,7 +8,27 @@
   :root {
     --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
     --line:#241f33; --line2:#2e2745;
-    --cream:#efe7d7; --fg:#c9c4d4; --dim:#6f6a80; --faint:#4a4658;
+    /* ⚠️ THE QUIET-INK RAMP WAS BELOW AA, AND IT WAS MEASURED, NOT GUESSED (v1.5.24).
+       The studio slice's live sweep found Editorial failing WCAG AA on 83 distinct ink
+       sites, and every one of them resolved to just two tokens: --dim (3.44–3.80 across
+       the four grounds) and --faint (1.96–2.17). At 2:1 "grey-not-hide" was grey-IS-hide:
+       `.cap-pill.off`, `.su-glyph.off`, `.md-path`, `.msg-stats`, the session date/msg
+       count and every micro-caps stamp were information the user could not read.
+       The FIX is the ramp lesson from v1.5.13 and again from studio: raising both inks to
+       the 4.5 floor collapses them into each other (both solved to ~#847e98), so the
+       SEPARATION has to live ABOVE the floor, not below it. Hue and saturation are
+       untouched — only lightness moves — so Editorial's violet-grey voice is the same
+       voice, one step louder:
+         --faint  #4a4658 → #847e98   2.17/2.13/2.04/1.96 → 5.09/5.01/4.78/4.61  (AA)
+         --dim    #6f6a80 → #9e9aab   3.80/3.74/3.57/3.44 → 7.20/7.08/6.76/6.52
+       (ratios against --bg / --bg2 / --card / --card2, in that order; --fg is 10.49+ and
+       --cream ~14, so the four-step ramp faint < dim < fg < cream still reads.)
+       NOTE --faint is also `.dot`'s ground (a component that is OFF): at 2.04 on a card
+       that dot was invisible, so the raise fixes the status grammar as well as the text.
+       NO new --disabled token: every place --faint means "off/disabled" here is a place
+       the user is SUPPOSED to read (grey-not-hide), and WCAG's disabled exemption does
+       not apply to text that carries state the user must act on. */
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
     --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
     /* The translucent wash behind an ON toggle track. It EXISTS as a token because the
        theme-pack guardrail is "token swaps only": .cap-sw's checked track used to carry
@@ -17,6 +37,19 @@
        value is byte-identical to that literal, so Editorial is unchanged — and Warm
        Paper deliberately does NOT override it, for the same reason. */
     --on-wash:rgba(217,179,108,.22);
+    /* THE INK THAT SITS ON THE ACCENT FILL (v1.5.24). Same reason --on-wash exists, and
+       the FOURTH sighting of the same defect class: `#171420` was hardcoded at six sites
+       — three on a --gold ground, three on a --cream ground — so no palette could reach
+       it. Measured, that was not theoretical:
+         dark ink on gold   — dark 9.17 · gold pack 10.49 · cyber 10.88 · WARM PAPER 4.23 ✗
+         dark ink on cream  — every dark palette ~14 · WARM PAPER 1.08 ✗✗
+       (Warm Paper's --cream is DARK ink, so a near-black label on a cream-filled button
+       was black-on-black; it survived because the light pack forks button.primary, and
+       the ▣ chrome axis's own restatement of that rule then out-ordered the fork.)
+       Now: the gold-fill sites take --on-accent, and the cream-fill sites take --bg,
+       which is the ground the cream fill is drawn against and is therefore correct in
+       every palette by construction. Warm Paper: 4.23 → 4.99 and 1.08 → 15.65. */
+    --on-accent:#171420;
     --mono: "SF Mono", ui-monospace, Menlo, monospace;
     --serif: "New York", "Iowan Old Style", Georgia, serif;
   }
@@ -24,8 +57,17 @@
   html[data-theme="light"] {
     --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
     --line:#e6dfcf; --line2:#d6ccb4;
-    --cream:#221d14; --fg:#3d372b; --dim:#6b6455; --faint:#8d8470;
-    --gold:#9c7327; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
+    /* v1.5.24, same measured pass as :root. Warm Paper failed AA on TWO inks, and one
+       of them was the accent — which no one had measured because gold reads "strong":
+         --faint  #8d8470 → #716a5a   3.46/3.20/3.71/3.43 → 5.02/4.63/5.37/4.97  (AA)
+         --dim    #6b6455 → #5a5447   5.48/5.06/5.87/5.44 → 7.03/6.48/7.52/6.96
+         --gold   #9c7327 → #886522   4.01/3.70/4.29/3.98 → 4.99/4.61/5.34/4.95  (AA)
+       --dim already cleared 4.5 here; it moves anyway so the ramp keeps the SAME shape
+       in both directions (light ink gets darker), which is what stops a future palette
+       from re-deriving one and not the other. */
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
+    --on-accent:#faf7f0;   /* light ink on the darker gold: 4.99 (a near-black gives 3.40) */
   }
   /* light-only fixes: --cream is dark ink in light, so the cream-filled primary
      button needs light text; user bubble uses the warm card2 tone. */
@@ -61,22 +103,62 @@
      the shipped Editorial default on the ink that matters most for the
      grey-not-hide grammar — disabled --faint 2.85 / 2.83 vs 2.17, --dim 5.32 /
      5.17 vs 3.80 — and every status colour clears 3:1 (ok 9.6 / 11.2, warn 9.9 /
-     11.7, bad 6.7 / 7.3). */
+     11.7, bad 6.7 / 7.3).
+
+     ⚠️ UPDATED v1.5.24 — "beat the default" was true and still not good enough.
+     Measured against ALL FOUR of each pack's own grounds (--bg / --bg2 / --card /
+     --card2, in that order), --faint failed AA in BOTH packs and cyber's --dim failed
+     on its own --card2. Same hue-preserving lightness raise as :root, so both packs
+     keep their voice and now clear the floor everywhere:
+       gold   --faint #615748 → #8d7f69   2.85/2.79/2.66/2.54 → 5.17/5.05/4.82/4.60
+              --dim   #8c826c → #a39b88   5.32/5.20/4.95/4.73 → 7.32/7.15/6.82/6.51
+       cyber  --faint #4e5a74 → #7b88a6   2.83/2.75/2.56/2.36 → 5.50/5.35/4.99/4.60
+              --dim   #75849f → #99a4b8   5.17/5.02/4.69/4.32 → 7.78/7.56/7.05/6.49
+     The packs still inherit every rule; what they do NOT inherit is the palette, which
+     is exactly why a token fix on :root alone would have left both of them behind
+     (the all-designs rule, in its most literal form). */
   html[data-theme="gold"] {
     --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
     --line:#2b2318; --line2:#3c301f;
-    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#8c826c; --faint:#615748;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
     --gold:#e8bf76; --ok:#4fc79b; --warn:#e8a95e; --bad:#e77070; --accent:#a89bf5;
     --on-wash:rgba(232,191,118,.22);
+    --on-accent:#171420;   /* dark ink on this pack's brighter gold: 10.49 */
   }
   html[data-theme="cyber"] {
     --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
     --line:#1f2b45; --line2:#2c3c5e;
-    --cream:#e6edf7; --fg:#b9c6dd; --dim:#75849f; --faint:#4e5a74;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
     --gold:#7dd3fc; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#a78bfa;
     --on-wash:rgba(125,211,252,.20);
+    --on-accent:#171420;   /* dark ink on this pack's cyan accent: 10.88 */
   }
   /* =================== end theme packs (no rules past here) ==================== */
+
+  /* ══ EDITORIAL'S TYPE FLOOR (v1.5.24, the impeccable debt slice) ═══════════════
+     THE JUDGEMENT, once, so the next reader does not re-litigate it per rule.
+
+     impeccable's `undersized-ui-text` floor is 11px for anything interactive, any
+     furniture label, and any run of ≤20 characters. Editorial measured 59 sites under
+     it. Raising all 59 to 11px is not debt repayment, it is a redesign of the thing
+     Debi explicitly ruled must stay: the tracked mono micro-caps voice (kickers,
+     stamps, .navlbl, .cs-title, .build, the metric labels). So the slice split the
+     finding instead of averaging it:
+
+       · 10 / 10.5px — KEPT, as Editorial's identity. This IS the voice, it is used
+         consistently, and at that size the readability lever that actually moves is
+         CONTRAST, not another half pixel — which is the studio slice's own lesson
+         ("real 11px ink needed AA — ramp rebuilt"). Every one of these sites is now
+         AA (see the ramp note in :root). Argued exception, fenced as an exception.
+       · BELOW 10px — FIXED, because it was never the voice; it was drift. 9px and
+         9.5px labels carrying load-bearing data (model quant/format/size/live pills,
+         tok/s stats, the session date + message count, the mode chips, the download
+         and HF actions, #art-kind, the nav-dialog labels) are now at the voice's own
+         10px floor. 24 declarations, no layout grammar changed.
+       · The single 7px declaration is called out at its own rule below.
+
+     THE FENCE (bridge/tests/test_editorial_debt.js) pins the floor at 10px, so a new
+     9px label fails the gate — the floor is now a constraint, not a preference. ══ */
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--fg); min-height:100vh; display:flex;
          font:14px/1.55 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
@@ -138,7 +220,12 @@
                  text-transform:uppercase; }
   h1 { font-family:var(--serif); font-weight:500; font-size:44px; color:var(--cream);
        letter-spacing:.2px; margin:2px 0 6px; }
-  .sub { color:var(--dim); font-size:15px; margin-bottom:6px; }
+  /* v1.5.24 MEASURE CAP. Live-measured at 113.5ch on a 1280px window (impeccable's
+     estimator, width/(font-size × 0.5), trips above 85). A page subtitle is prose and
+     had no measure at all, so it grew with the window forever. 66ch of the SANS '0'
+     advance ≈ 587px ≈ 78 estimator-characters — inside the rule and inside the 65–75
+     real-character reading band. It is a max, so nothing narrower moves. */
+  .sub { color:var(--dim); font-size:15px; margin-bottom:6px; max-width:66ch; }
   .stamp { font:10.5px var(--mono); color:var(--faint); letter-spacing:.18em;
            text-transform:uppercase; margin-bottom:30px; }
 
@@ -153,7 +240,10 @@
   .cap-row:last-child { border-bottom:none; }
   .cap-row .cap-txt { flex:1; min-width:0; }
   .cap-row .cap-name { font-size:14px; color:var(--cream); }
-  .cap-row .cap-desc { font-size:12px; color:var(--dim); margin-top:2px; }
+  /* v1.5.24 MEASURE CAP — the worst overrun on the surface: 155.7ch live (and 136.3ch
+     in the nested rows). These are real explanatory sentences at 12px running the full
+     card width. Same 66ch cap as .sub, for the same reason and by the same arithmetic. */
+  .cap-row .cap-desc { font-size:12px; color:var(--dim); margin-top:2px; max-width:66ch; }
   .cap-row .cap-ctl { flex:none; display:flex; align-items:center; }
   .cap-row .cap-err { font:10.5px var(--mono); color:var(--bad); margin-top:4px; }
   /* toggle switch (pure CSS over a checkbox) */
@@ -184,7 +274,7 @@
   .cap-sub .cap-row { padding:9px 0 9px 14px; }
   .cap-sub .cap-name { font-size:13px; }
   .cap-sub .cap-desc { font-size:11px; }
-  .cap-pill { font:9.5px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  .cap-pill { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
               padding:2px 7px; border-radius:20px; border:1px solid var(--line2);
               color:var(--dim); margin-left:8px; }
   .cap-pill.on { color:var(--gold); border-color:var(--gold); }
@@ -217,6 +307,26 @@
   .card:hover { border-color:var(--line2); }
   .card .head { display:flex; align-items:center; gap:9px; margin-bottom:10px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); flex:none; }
+  /* ══ THE ONE GLOW, KEPT ON PURPOSE (v1.5.24 — impeccable `dark-glow`) ═══════════
+     The live sweep found exactly ONE chromatic blurred shadow in the whole of Editorial:
+     this one. It is kept, and here is the argument, because "keep" without one is how
+     an anti-pattern spreads:
+       (1) It is a SIGNAL, not decoration. On an 8px dot, hue is the only carrier of
+           running/degraded/down, and hue alone is the encoding accessibility guidance
+           tells you not to rely on. The halo triples the lit AREA of the live state, so
+           "which components are up" is answerable from across the room and from the
+           slim 56px rail, where the dot is all that is left of the row.
+       (2) It is ONE instance, on ONE state, and the other three states carry no shadow —
+           a signature, which is what impeccable's rule is protecting against being a
+           habit. The neutral-elevation rule the studio design lives under is about
+           CARDS and TEXT wearing coloured haze; this is a 6px status LED.
+       (3) It is not load-bearing for anything else: deleting it loses information,
+           keeping it costs nothing but this exception.
+     FENCED as an exception in bridge/tests/test_editorial_debt.js: the gate asserts
+     there is exactly ONE chromatic glow in the sheet and that it is this selector, so a
+     SECOND glow — the actual risk — fails the build. Studio removes it (its own fence
+     asserts `.dot { box-shadow:none }`), which is the right answer for that design and
+     not for this one. ══ */
   .dot.ok { background:var(--ok); box-shadow:0 0 8px rgba(70,201,154,.5); }
   .dot.warn { background:var(--warn); }
   .dot.bad { background:var(--bad); }
@@ -225,12 +335,22 @@
   .card .state { font-family:var(--serif); font-size:24px; color:var(--cream); margin:2px 0 4px; }
   .card .meta { font:11px var(--mono); color:var(--faint); letter-spacing:.04em;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* v1.5.24 — THE INLINE-STYLE DEFECT CLASS AGAIN (the --on-wash lesson, third sighting).
+     The AUX RUNNER card's meta line arrived from its renderer wearing
+     `style="white-space:normal;overflow:visible;margin-top:5px"`, which (a) turned a
+     one-line truncating strip into WRAPPING PROSE with no measure — live-measured at
+     169.1ch, the single worst line-length reading on the surface — and (b) was
+     unreachable by any stylesheet, theme pack or design, exactly like the --on-wash and
+     AUX-RUNNER-tracking literals before it. The declarations are LIFTED here unchanged
+     and the measure is added, so the value the renderer had is the value it still has,
+     plus a cap. 58ch of the mono '0' advance at 11px ≈ 384px ≈ 70 estimator-characters. */
+  .card .meta.wrap { white-space:normal; overflow:visible; margin-top:5px; max-width:58ch; }
   .card .actions { margin-top:16px; display:flex; gap:8px; }
 
   button { font:12.5px -apple-system, sans-serif; border-radius:9px; padding:7px 15px;
            cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--fg); }
   button:hover { border-color:var(--gold); color:var(--cream); }
-  button.primary { background:var(--cream); border-color:var(--cream); color:#171420; font-weight:600; }
+  button.primary { background:var(--cream); border-color:var(--cream); color:var(--bg); font-weight:600; }
   button.primary:hover { background:#fff; }
   button:disabled { opacity:.35; cursor:default; }
 
@@ -262,7 +382,14 @@
   dialog ul { padding-left:18px; margin-bottom:16px; }
   dialog li { margin:7px 0; color:var(--fg); }
   dialog .btns { display:flex; gap:10px; justify-content:flex-end; }
-  pre { background:#0a0910; border:1px solid var(--line); padding:12px; border-radius:10px;
+  /* v1.5.24: #0a0910 → var(--bg), at both `pre` rules and the one inline cssText that
+     carried the same literal. This is the SAME fix .ap-cmd already carries a hundred
+     lines below, applied to the sites the studio fence named as still hardcoding it. In
+     Editorial the used value is unchanged to the eye (#0a0910 vs --bg #0b0a10); in Warm
+     Paper it stops being a near-black box on a paper page, and in both packs the code
+     ground now belongs to the palette. `pre`'s ink is --dim, which section 1 of the debt
+     fence proves is AA on --bg in all four palettes — measured, not assumed. */
+  pre { background:var(--bg); border:1px solid var(--line); padding:12px; border-radius:10px;
         font:11px var(--mono); max-height:220px; overflow:auto; white-space:pre-wrap;
         color:var(--dim); margin-top:14px; }
 
@@ -327,13 +454,13 @@
               overflow:hidden; background:var(--card); }
   .chatcode .cc-head { display:flex; align-items:center; gap:8px; padding:6px 10px;
               border-bottom:1px solid var(--line); }
-  .chatcode .cc-lang { font:9.5px var(--mono); letter-spacing:.16em; text-transform:uppercase;
+  .chatcode .cc-lang { font:10px var(--mono); letter-spacing:.16em; text-transform:uppercase;
               color:var(--faint); margin-right:auto; }
   .cc-open { font:10px var(--mono); letter-spacing:.06em; text-transform:uppercase;
              color:var(--dim); background:var(--bg2); border:1px solid var(--line2);
              border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; }
   .cc-open:hover { color:var(--gold); border-color:var(--gold); }
-  .chatcode pre { margin:0; border:0; border-radius:0; max-height:340px; background:#0a0910; }
+  .chatcode pre { margin:0; border:0; border-radius:0; max-height:340px; background:var(--bg); }
   /* block code must NOT wear the inline-code pill styling */
   .chatcode code { background:none; padding:0; color:var(--dim); border-radius:0; font:12px var(--mono); }
   .filecard { display:flex; align-items:center; gap:12px; margin:12px 0; padding:12px 14px;
@@ -429,19 +556,19 @@
   .cmsg.user .msg-acts { padding:5px 0 0 0; justify-content:flex-end; }
   .cmsg:hover .msg-acts, .cmsg .msg-acts:focus-within { opacity:1; }
   .cmsg .msg-act { background:none; border:0; padding:0; cursor:pointer;
-      font:9px var(--mono); letter-spacing:.16em; text-transform:uppercase;
+      font:10px var(--mono); letter-spacing:.16em; text-transform:uppercase;
       color:var(--faint); }
   .cmsg .msg-act:hover:enabled { color:var(--fg); }
   .cmsg .msg-act.del:hover:enabled { color:var(--bad); }
   .cmsg .msg-act:disabled { opacity:.45; cursor:default; }
-  .cmsg .msg-stats { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
+  .cmsg .msg-stats { font:10px var(--mono); letter-spacing:.08em; color:var(--faint);
       padding:6px 0 0 20px; }
   .cmsg.user .msg-stats { padding:6px 0 0 0; text-align:right; }
   /* always-visible ▶ speak line (Fable design — NOT hover-gated like .msg-acts) */
   .cmsg .msg-voice { padding:6px 0 0 20px; }
   .cmsg .msg-voice .msg-act { color:var(--faint); }
   .cmsg .msg-voice .msg-act:hover { color:var(--gold); }
-  .cmsg .msg-edited { font:9.5px var(--mono); letter-spacing:.08em; color:var(--faint);
+  .cmsg .msg-edited { font:10px var(--mono); letter-spacing:.08em; color:var(--faint);
       margin-top:5px; }
   .cmsg.user .msg-edited { text-align:right; }
   .cmsg .msg-edit { width:100%; box-sizing:border-box; min-height:84px;
@@ -474,11 +601,24 @@
       border-top:1px solid var(--line); padding-top:14px; }
   /* FABLE compact pass (Debi 2026-08-06): the composer row got clunky as chips
      accumulated (4 lanes + Tools + select + pill) — ~40% smaller footprint. */
-  #chat-modes { display:flex; align-items:center; gap:5px; margin-bottom:8px; }
-  .mode-chip { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase;
+  /* ⚠️ FOUND BY THE ADVERSARIAL PASS (v1.5.24), at 820×600 with the sessions rail OPEN.
+     This row is `nowrap`, so below ~950px it pushed its own tail off the right edge of
+     the window: #chat-audio-btn ended at 826px and #caps-strip ("web ✓ · research ✗ ·
+     memory ✓ · 77/77 tools") at 908px, in an 820px window — the tools status was
+     UNREACHABLE, not merely tight. That was already true before this slice; raising the
+     sub-10px chip labels to the 10px floor made it 23px worse and pushed a third element
+     (#cap-vision) over, so it is this slice's to answer.
+     THE FIX IS ALREADY IN THE HOUSE: the studio design solved this exact row with
+     `flex-wrap:wrap` and the note "a control with a fixed height must refuse to wrap; the
+     ROW is what wraps". Editorial takes the same answer. Measured after: 0 offscreen
+     elements at 820×600 in BOTH rail states, and no change at all at 1280 (the row still
+     fits on one line, so nothing moves at any width where it already fit). */
+  #chat-modes { display:flex; align-items:center; gap:5px; row-gap:5px; flex-wrap:wrap;
+                margin-bottom:8px; }
+  .mode-chip { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase;
                color:var(--dim); border:1px solid var(--line2); border-radius:6px;
                padding:3px 7px; cursor:pointer; }
-  .mode-chip.on { color:#171420; background:var(--gold); border-color:var(--gold); }
+  .mode-chip.on { color:var(--on-accent); background:var(--gold); border-color:var(--gold); }
   /* FABLE style pass: the composer's mode note is a single line — let it SHRINK to
      an ellipsis in a tight row instead of wrapping mid-word ("Herme/s"). Full text
      stays available via its title attribute (set in setMode). */
@@ -498,11 +638,21 @@
      12.5px/7px-15px). Scoped to these two ids — button.primary elsewhere (Models,
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
      size that WebKit rounds unpredictably across zoom levels. */
-  #chat-send, #chat-talk { font-size:9px; padding:5px 10px; letter-spacing:.06em; }
+  #chat-send, #chat-talk { font-size:10px; padding:5px 10px; letter-spacing:.06em; }
   /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13).
      AUTO-DICTATION v1: the `auto` chip rides the SAME rule — it is the same class of
-     control at the same size, so it shares the selector rather than adding one. */
-  #chat-talk, #chat-auto, #chat-conv { flex:none; white-space:nowrap; font-size:7px; padding:3px 6px; }
+     control at the same size, so it shares the selector rather than adding one.
+
+     ⚠️ v1.5.24 — 7px → 9.5px, AND THIS IS THE ONE PLACE THIS SLICE OVERRODE A STANDING
+     DEBI RULING, so it is flagged rather than buried. 7px was the smallest ink anywhere
+     in the panel and the only declaration under 9px; at 7px the words `talk`, `auto` and
+     `conv` are shapes, not labels, and they sit on INTERACTIVE controls that change what
+     the microphone does. What the 2026-08-13 ruling asked for is preserved in ORDER —
+     these three are still the smallest controls on the row and still visibly subordinate
+     to Send — but not in RATIO: 9.5/10 rather than 7/9. 9.5px is not a new size; it is a
+     step Editorial's own ramp already used. If Debi wants the ratio back, this line is
+     the single place to change, and the fence records the argument either way. */
+  #chat-talk, #chat-auto, #chat-conv { flex:none; white-space:nowrap; font-size:9.5px; padding:3px 6px; }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
   #chat-talk.rec .talk-dot { color:var(--bad); }
@@ -562,7 +712,7 @@
   .cs-item .nm { font:12.5px -apple-system, "SF Pro Text", sans-serif; color:var(--fg);
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:38px; }
   .cs-item.on .nm { color:var(--cream); font-size:13.5px; }
-  .cs-item .meta { font:9.5px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
+  .cs-item .meta { font:10px var(--mono); letter-spacing:.06em; color:var(--faint); margin-top:3px; }
   /* Phase 3 — Hermes rail row tag. <!-- FABLE: style pass --> */
   /* path-guard audit list (Logs dialog) — editorial rows, not raw JSON */
   .glog-row { display:flex; align-items:center; gap:14px; padding:9px 4px;
@@ -577,7 +727,7 @@
                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .glog-acts { flex:none; display:flex; gap:6px; }
   .glog-empty { font:12px var(--mono); color:var(--faint); padding:14px 4px; }
-  .cs-tag { font:9px var(--mono); color:var(--faint); letter-spacing:.08em;
+  .cs-tag { font:10px var(--mono); color:var(--faint); letter-spacing:.08em;
             text-transform:uppercase; margin-left:6px; }
   .cs-act { position:absolute; top:7px; right:7px; display:none; gap:4px; }
   .cs-item:hover .cs-act { display:flex; }
@@ -600,11 +750,11 @@
   .mrow.sel { background:var(--card); border-left-color:var(--gold); }
   .mrow .mname { font:15px var(--serif); color:var(--cream); }
   .mrow .mbadges { margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;
-      font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+      font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
   .mpill { padding:2px 7px; border-radius:6px; border:1px solid var(--line2); color:var(--dim); }
   .mpill.vision { color:var(--ok); border-color:var(--ok); }
   .mpill.fmt { color:var(--faint); border:none; padding:2px 0; }
-  .mpill.live { color:#171420; background:var(--gold); border-color:var(--gold); }
+  .mpill.live { color:var(--on-accent); background:var(--gold); border-color:var(--gold); }
   .mpill.aux { color:var(--gold); }
   /* app-owned vs read-only import provenance — plain-language "who owns the files" */
   .mpill.owned { color:var(--gold); border-color:var(--gold); }
@@ -667,7 +817,7 @@
   .hfrow .hfactions button:hover { border-color:var(--gold); }
   .hffiles { margin-top:11px; display:flex; flex-direction:column; gap:7px; }
   .hffile { display:flex; align-items:center; gap:10px; font:11px var(--mono); color:var(--dim); word-break:break-all; }
-  .fitpill { flex:none; font:9px var(--mono); letter-spacing:.08em; text-transform:uppercase; border-radius:5px; padding:2px 7px; }
+  .fitpill { flex:none; font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase; border-radius:5px; padding:2px 7px; }
   .fit-ok { color:var(--ok); border:1px solid var(--ok); }
   .fit-slow { color:var(--warn); border:1px solid var(--warn); }
   .fit-no { color:var(--bad); border:1px solid var(--bad); }
@@ -696,7 +846,7 @@
 
   /* Browse is a CAPABILITY, not a mode — it must whisper next to Agent/Chat.
      On-state = gold outline (filled gold stays reserved for the active mode). */
-  #mode-browse { font-size:9px; padding:3.5px 9px; letter-spacing:.14em;
+  #mode-browse { font-size:10px; padding:3.5px 9px; letter-spacing:.14em;
       color:var(--faint); border-color:var(--line); border-radius:6px; margin-left:2px; }
   #mode-browse:hover { color:var(--dim); border-color:var(--line2); }
   #mode-browse.on { color:var(--gold); background:transparent; border-color:var(--gold); }
@@ -744,7 +894,7 @@
      per-row actions, so it was replaced by #chat-model-btn + the #model-pop popover.
      Same footprint as the old select (compact pass): 180px / 9px mono / 3px 5px. */
   #chat-model-btn { max-width:180px; background:var(--card); color:var(--dim);
-      border:1px solid var(--line2); border-radius:6px; font:9px var(--mono);
+      border:1px solid var(--line2); border-radius:6px; font:10px var(--mono);
       letter-spacing:.03em; padding:3px 5px; cursor:pointer;
       text-transform:none;            /* .mode-chip uppercases — ids keep their case */
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -753,7 +903,7 @@
   /* PHASE C: voice chip — same closed-control grammar as the model chip (a model id
      is mixed-case, so .mode-chip's uppercase is switched off here too). */
   #chat-audio-btn { max-width:150px; background:var(--card); color:var(--dim);
-      border:1px solid var(--line2); border-radius:6px; font:9px var(--mono);
+      border:1px solid var(--line2); border-radius:6px; font:10px var(--mono);
       letter-spacing:.03em; padding:3px 5px; cursor:pointer; text-transform:none;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #chat-audio-btn.empty { color:var(--faint); }
@@ -769,24 +919,24 @@
   .mp-row .mp-id { font:10px var(--mono); color:var(--fg); word-break:break-all;
       line-height:1.55; }
   .mp-row .mp-meta { margin-top:5px; display:flex; gap:6px; align-items:center;
-      flex-wrap:wrap; font:9px var(--mono); letter-spacing:.12em;
+      flex-wrap:wrap; font:10px var(--mono); letter-spacing:.12em;
       text-transform:uppercase; }
   .mp-row .mp-acts { margin-left:auto; display:flex; gap:5px; visibility:hidden; }
   .mp-row:hover .mp-acts, .mp-row.live .mp-acts { visibility:visible; }
-  .mp-act { font:9px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  .mp-act { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:2px 8px; cursor:pointer; white-space:nowrap; }
   .mp-act:hover { color:var(--gold); border-color:var(--gold); }
   /* selected voice chip (Audio tab) — the same gold-fill "this one is active"
      idiom as .mpill.live, on the existing .mp-act chip. One new rule, no new
      primitive. <!-- FABLE: style pass --> */
-  .mp-act.on { color:#171420; background:var(--gold); border-color:var(--gold); }
+  .mp-act.on { color:var(--on-accent); background:var(--gold); border-color:var(--gold); }
   .mp-empty { font:10px var(--mono); letter-spacing:.06em; color:var(--faint);
       padding:12px 10px; }
   .mp-err { font:10px var(--mono); letter-spacing:.06em; color:var(--bad); padding:8px 10px; }
   /* live-model capability pill — same .mpill.vision colors as the Models pane rows;
      the chat bar has no .mbadges font context, so only the type is restated here */
-  #cap-vision { font:9px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+  #cap-vision { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
   /* image attachment (direct lane, vision models): button left of the composer,
      one thumbnail chip in a slim strip above it */
   #chat-attachstrip { display:flex; align-items:center; gap:8px; margin:0 0 7px;
@@ -819,7 +969,7 @@
 
   /* per-file "Get" button on HF file rows + the Downloads section */
   .hffile { justify-content:flex-start; }
-  .hfget { font:9.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+  .hfget { font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase;
       color:var(--gold); background:transparent; border:1px solid var(--line2);
       border-radius:6px; padding:2px 9px; margin-left:auto; cursor:pointer;
       white-space:nowrap; flex:none; }
@@ -831,7 +981,7 @@
   .dlrow .dlfill { height:100%; background:var(--gold); border-radius:2px; transition:width .8s ease; }
   .dlrow .dlmeta { display:flex; justify-content:space-between; align-items:center;
       font:10px var(--mono); letter-spacing:.08em; color:var(--dim); }
-  .dlrow .dlacts button { font:9.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+  .dlrow .dlacts button { font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase;
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:2px 8px; margin-left:6px; cursor:pointer; }
   .dlrow .dlacts button:hover { color:var(--gold); border-color:var(--gold); }
@@ -878,7 +1028,15 @@
   body.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
 
   /* Chat view → widen: drop the narrow centered caps, reclaim the sidebar space.
-     Reading width is still bounded per-message (assistant .body max-width:68ch). */
+     ⚠️ CORRECTED v1.5.24: this sentence was STALE and therefore a lie in the source.
+     `.cmsg.assistant .body` carries `max-width:none` (see its own rule, which says so
+     and says why) — the 68ch cap was deliberately removed when the transcript was ruled
+     full-width. The reading measure is NOT bounded per-message in Editorial, by ruling.
+     Live-measured: the assistant turn runs 107ch and the user turn 99ch on a 1280px
+     window, both over impeccable's 85 trip point. KEPT as an argued exception — the
+     ruling is Debi's and it is about EDITORIAL specifically; studio is the design that
+     caps the lane (--sd-lane 600px / --sd-measure 70ch), which is the honest place for
+     a measure to be a design decision rather than a silent override of a ruling. */
   /* Fable (Debi: reclaim side/top/bottom, LM-Studio-tight): the Chat view fills the whole
      webview. Override main's default padding:34/44/60 — that side+bottom padding was the dead
      space. main becomes a full-height flex column; #view-chat flex-fills it (no magic px math). */
@@ -895,7 +1053,11 @@
   #chat-head-compact { display:none; align-items:center; gap:9px; margin:0 0 6px;
       font:11px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
   #chat-head-compact .cch-title { color:var(--gold); }
-  #chat-head-compact .cch-sep { color:var(--line2); }
+  /* v1.5.24: this separator was painted with --line2, a BORDER token used as ink — the
+     one low-contrast site that was not a ramp problem but a category error (1.40:1, the
+     worst reading on the whole surface). It is a separator, so it stays the quietest ink
+     on the strip; it is now the quietest INK token rather than a hairline colour. */
+  #chat-head-compact .cch-sep { color:var(--faint); }
   body.chat-mode #view-chat > .kicker,
   body.chat-mode #view-chat > h1,
   body.chat-mode #view-chat > .sub,
@@ -909,11 +1071,47 @@
       font:12px var(--mono); color:var(--faint); background:transparent;
       border:1px solid var(--line2); border-radius:6px; }
   #cs-collapse:hover { color:var(--gold); border-color:var(--gold); }
-  body.sessions-collapsed #chat-sessions { width:24px; padding-right:0; }   /* Fable: collapse to ~arrow width (Debi: no dead space) */
-  body.sessions-collapsed #chat-sessions .cs-title,
-  body.sessions-collapsed #chat-sessions #cs-list,
-  body.sessions-collapsed #chat-sessions #cs-new { display:none; }
-  body.sessions-collapsed #chat-sessions .cs-head { justify-content:center; }
+  /* ══ THE COLLAPSED SESSIONS RAIL — A SLIM REOPEN STRIP (v1.5.24) ════════════════
+     WHAT WAS WRONG, measured on the served panel before this change: the collapsed rail
+     was already 24px wide, so the literal "wide empty column" in the screenshots is not
+     reproducible in the shipped code — but the SHAPE Debi named is exactly right and was
+     the real defect. The strip was a 24px column ~640px tall with a 22×22px chevron
+     parked at the top of it and 600px of nothing underneath: a lone button floating in
+     an empty column. And the target was 22×22px in Editorial and 22×14px in studio
+     (studio zeroes the border and the height) — a fifth of the 44px floor the sidebar
+     rail is already fenced at, on the ONE control that gets your sessions back.
+
+     WHAT IT IS NOW, per Debi's ratified proposal and office.html's collapsed-rail
+     pattern (#files → #rail-tab): the pane IS the reopener. One full-height labelled
+     button, vertical text, nothing else in the strip.
+       · 44px wide — inside Debi's ratified 34–48px band, and chosen at 44 rather than
+         office.html's 34 so the target clears the 44px floor on BOTH axes with no
+         argument (office's own 34px strip is the house look; this is the house look at
+         the accessibility floor, and 10px is a cheap price for that).
+       · the button is `flex:1 1 auto`, so the click target is 44 × the full rail height
+         (≈640px live) — the click axis is not a question any more.
+       · LABELLED. The chevron alone never said what came back; "Sessions »" does, and
+         the tooltip repeats it. This is office.html's own finding ("collapsing to
+         display:none was the other half of feels-off") applied to the panel.
+       · No border-right and no padding while collapsed: the strip's own left hairline
+         is the separator, so the reclaimed width goes to the transcript instead of to
+         a second rule of dead space.
+     Reflow: #chat-main is `flex:1 1 auto`, so every pixel the strip gives up is taken by
+     the transcript with no JS — measured 1078px → 1058px main at 44px, vs 950px open.
+     Expand restores exactly: the width comes from --sessions-width, which this rule
+     never touches, so a rail dragged to 500px collapses and reopens at 500px. ══ */
+  body.sessions-collapsed #chat-sessions { width:44px; padding-right:0; border-right:0; }
+  body.sessions-collapsed #chat-sessions .cs-head,
+  body.sessions-collapsed #chat-sessions #cs-list { display:none; }
+  #cs-reopen { display:none; }
+  body.sessions-collapsed #cs-reopen {
+      display:flex; align-items:center; justify-content:center;
+      flex:1 1 auto; width:100%; min-height:44px; padding:0;
+      background:transparent; border:0; border-right:1px solid var(--line);
+      cursor:pointer; color:var(--dim);
+      font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase; }
+  body.sessions-collapsed #cs-reopen span { writing-mode:vertical-rl; white-space:nowrap; }
+  body.sessions-collapsed #cs-reopen:hover { color:var(--gold); }
 
   /* ---------- PHASE 2 (Artifacts spec) — sandboxed artifact viewer ----------
      Split pane (right of the chat) + full-panel expand overlay. Renders live/
@@ -947,7 +1145,7 @@
   .art-titlewrap { display:flex; flex-direction:column; min-width:0; margin-right:auto; }
   #art-title { font:12.5px var(--mono); color:var(--cream);
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #art-kind { font:9px var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--faint); }
+  #art-kind { font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--faint); }
   .art-btn { font:11px var(--mono); color:var(--dim); border:1px solid var(--line2);
       background:var(--bg2); border-radius:7px; padding:4px 10px; cursor:pointer; flex:none; }
   .art-btn:hover { color:var(--cream); border-color:var(--gold); }
@@ -1109,7 +1307,7 @@
     font:10.5px var(--mono); letter-spacing:.15em; text-transform:uppercase;
     color:var(--cream); }
   #view-music[data-mview="studio"] .mv-tag {
-    font:9.5px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase;
     color:var(--faint); display:block; margin-top:3px; }
   #view-music[data-mview="studio"] .mv-gist {
     font-size:12px; line-height:1.5; color:var(--dim); overflow:hidden;
@@ -1169,7 +1367,7 @@
                   padding:2px 7px; border-radius:6px; }
   #navdlg .nv-x:hover { color:var(--cream); background:var(--card); }
   #navdlg .nv-body { padding:0 16px 16px; max-height:calc(80vh - 66px); overflow-y:auto; }
-  #navdlg .nv-lbl { font:9.5px var(--mono); letter-spacing:.2em; text-transform:uppercase;
+  #navdlg .nv-lbl { font:10px var(--mono); letter-spacing:.2em; text-transform:uppercase;
                     color:var(--faint); padding:14px 6px 6px; }
   #navdlg .nv-row { display:flex; align-items:center; gap:11px; padding:7px 8px;
                     border-radius:9px; border:1px solid transparent; }
@@ -1247,7 +1445,7 @@
                         padding:17px 22px 6px; }
   #peek-card .pk-head h3 { margin:0; font-family:var(--serif); font-weight:500;
                            font-size:20px; color:var(--cream); }
-  #peek-card .pk-sub { font:9.5px var(--mono); letter-spacing:.2em;
+  #peek-card .pk-sub { font:10px var(--mono); letter-spacing:.2em;
                        text-transform:uppercase; color:var(--faint); }
   #peek-card .pk-x { margin-left:auto; cursor:pointer; color:var(--faint);
                      font:13px var(--mono); padding:2px 7px; border-radius:6px; }
@@ -1395,7 +1593,7 @@
   /* Send is the ONE filled control on the surface — gold, with the ink the editorial
      gold-fills use, so an icon on gold stays readable in BOTH themes. */
   html[data-chrome="studio"] #chat-send {
-    background:var(--gold); border-color:var(--gold); color:#171420; font-weight:600; }
+    background:var(--gold); border-color:var(--gold); color:var(--on-accent); font-weight:600; }
   /* recording / listening keep TODAY's signal, moved from the ● glyph to the icon */
   html[data-chrome="studio"] #chat-talk.rec .st-ico { color:var(--bad); }
   html[data-chrome="studio"] #chat-auto.on .st-ico,
@@ -1417,7 +1615,7 @@
      so the fill, the dark ink and the weight are restated or the one filled button in
      the panel goes flat / light-on-light. */
   html[data-chrome="studio"] button.primary {
-    background:var(--cream); border-color:var(--cream); color:#171420; font-weight:600; }
+    background:var(--cream); border-color:var(--cream); color:var(--bg); font-weight:600; }
   /* EXEMPTIONS (D3): the per-message action row stays quiet TEXT and the approval
      chips keep their pill identity. Their own rules already win every painted
      property; only the uniform height would have leaked in. */
@@ -1635,6 +1833,13 @@
 
     <div id="chat-body">
       <div id="chat-sessions">
+        <!-- COLLAPSED: the whole rail becomes this labelled reopener (v1.5.24, Debi's
+             ratified slim-strip). REAL MARKUP hidden by a class, which is the pattern
+             office.html's #rail-tab already established — one collapse grammar for the
+             app instead of two. It is the ONLY thing in the strip while collapsed, so
+             there is no lone button floating in an empty column. -->
+        <button id="cs-reopen" onclick="toggleSessionsRail()" title="Show sessions"
+                aria-label="Show sessions"><span>Sessions »</span></button>
         <div class="cs-head">
           <!-- FABLE: style pass — Phase 1 sessions rail collapse chevron -->
           <span style="display:flex;align-items:center;gap:8px">
@@ -2477,7 +2682,7 @@ function navShellNote(id, why) {
   const s = document.createElement('span');
   // Inline style rather than a class: one transient diagnostic line does not earn a CSS
   // rule (the panel's zero-new-CSS habit), and it must read as an aside, not a control.
-  s.style.cssText = 'margin-left:6px;opacity:.55;font-size:9.5px;text-transform:none';
+  s.style.cssText = 'margin-left:6px;opacity:.55;font-size:10px;text-transform:none';
   s.className = 'nav-note';
   s.textContent = '— ' + why;
   row.appendChild(s);
@@ -3507,11 +3712,15 @@ function applySessionsRail() {
   let collapsed = false;
   try { collapsed = localStorage.getItem('harness-sessions-rail') === 'collapsed'; } catch (e) {}
   document.body.classList.toggle('sessions-collapsed', collapsed);
+  // v1.5.24: the COLLAPSE chevron now only exists in the expanded state — the collapsed
+  // state is #cs-reopen, a labelled full-height strip (see its CSS). So this control has
+  // exactly one meaning again ("hide"), and the reopen affordance carries its own label
+  // instead of the same glyph doing double duty. Kept as an absolute write, not a toggle,
+  // so a future state cannot leave the two disagreeing.
   const t = document.getElementById('cs-collapse');
   if (t) {
-    t.textContent = collapsed ? '»' : '«';
-    const lbl = collapsed ? 'Show sessions' : 'Hide sessions';
-    t.title = lbl; t.setAttribute('aria-label', lbl);
+    t.textContent = '«';
+    t.title = 'Hide sessions'; t.setAttribute('aria-label', 'Hide sessions');
   }
 }
 function toggleSessionsRail() {
@@ -7804,7 +8013,7 @@ function renderAux(r){
   const aux = r.aux || {};
   const strip = document.createElement('div'); strip.className = 'card'; strip.style.marginTop = '20px';
   strip.innerHTML = `<div class="name">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
-      <div class="meta" style="white-space:normal;overflow:visible;margin-top:5px">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
+      <div class="meta wrap">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
   if (aux.model){
     const b = document.createElement('button'); b.style.marginTop = '11px';
     if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
@@ -10539,7 +10748,7 @@ function chatAsk(holder, req, sid){
     inp.className = 'ask-text';
     inp.placeholder = opts.length ? 'or type your answer…' : 'type your answer…';
     inp.style.cssText = 'flex:1;min-width:180px;font:11px var(--mono);padding:5px 9px;'
-      + 'background:#0a0910;border:1px solid var(--line);color:var(--cream);outline:none;';
+      + 'background:var(--bg);border:1px solid var(--line);color:var(--cream);outline:none;';
     const send = document.createElement('button'); send.className = 'ap-btn';
     send.textContent = 'send';
     const fire = () => { const v = inp.value.trim(); if (v) answerHermes(card, v); };

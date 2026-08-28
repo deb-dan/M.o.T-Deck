@@ -395,7 +395,7 @@ check('the auto chip ships hidden (shown only when an STT default exists)',
 // (CONVERSATION MODE later joined both selectors — same class of control, same
 //  size, same meaning of "live" — so these pin the widened form.)
 check('the auto chip shares ● talk\'s size rule instead of inventing one',
-  /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:7px/.test(html));
+  /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:9\.5px/.test(html));
 check('the listening state reuses the glyph-carries-the-colour idiom',
   /#chat-auto\.on \.talk-dot,\s*#chat-conv\.on \.talk-dot\s*\{\s*color:var\(--gold\)/.test(html));
 check('the auto chip rides the SAME config read as ● talk',

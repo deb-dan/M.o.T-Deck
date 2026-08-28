@@ -98,11 +98,22 @@ check('● talk ships hidden (shown only when an STT default exists)',
 // AUTO-DICTATION v1 widened the smaller override to `#chat-talk, #chat-auto`, and
 // CONVERSATION MODE widened it again to include `#chat-conv` — each is the same
 // class of control at the same size, so they share the rule rather than adding one.
+// ⚠️ FENCE MOVED 2026-08-28 (v1.5.24, the impeccable-debt slice), spelled out because a
+// moved fence should be reviewed, not quietly adjusted. THREE suites (this one,
+// test_conv_mode and test_vad_segmenter) pinned the literal `font-size:7px`. What each of
+// them is actually about is that the three chips SHARE ONE size rule; the number was
+// incidental to that claim and load-bearing for nothing else. 7px was the smallest ink in
+// the panel and its only declaration under 9px, so it is now 9.5px — with the argument
+// (including which standing Debi ruling that overrode) in the rule's own comment in
+// index.html. The claim these checks make is unchanged; only the literal moved. The floor
+// itself is now fenced properly in bridge/tests/test_editorial_debt.js, which asserts the
+// whole sheet has no font under 10px APART FROM this one named exception — the number is
+// pinned in ONE place with its reason instead of three places without one.
 check('Send keeps the shared size rule; talk carries its own smaller override',
   html.indexOf('#chat-send, #chat-talk {') >= 0
-  && /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:7px/.test(html));
+  && /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:9\.5px/.test(html));
 check('the size rule does NOT touch button.primary globally',
-  !/button\.primary\s*\{[^}]*font-size:9px/.test(html));
+  !/button\.primary\s*\{[^}]*font-size:/.test(html));
 check('the button rides loadVoiceCfg (same read as the AUDIO chip)',
   html.indexOf('renderTalkBtn();     // PHASE D') >= 0);
 check('the transcript is APPENDED to the composer, never auto-sent',

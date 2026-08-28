@@ -544,8 +544,16 @@ ok(delta({ tag: 'button', id: 'chat-attach', cls: ['chip', 'chip-icon'] },
      'button.primary keeps its cream fill under studio chrome');
   ok(w['border-color'] && w['border-color'].v === 'var(--cream)',
      'button.primary keeps its cream border under studio chrome');
-  ok(w.color && w.color.v === '#171420',
-     'button.primary keeps its DARK ink under studio chrome (L1)');
+  // ⚠️ FENCE MOVED 2026-08-28 (v1.5.24): this pinned the LITERAL `#171420`, and the
+  // literal was the bug. Measured, a near-black label on a --cream fill is ~14:1 in every
+  // dark palette and 1.08:1 in Warm Paper, where --cream is DARK ink — and the ▣ chrome
+  // axis's own restatement of button.primary out-ordered the light pack's fork of it, so
+  // this landmine check was pinning black-on-black into place. The ink is now var(--bg),
+  // which is by construction the ground the cream fill is drawn against, so it is correct
+  // in every palette (Warm Paper: 15.65). The CLAIM is unchanged and now stronger: the
+  // state still WINS the cascade; it just wins with a colour a palette can reach.
+  ok(w.color && w.color.v === 'var(--bg)',
+     'button.primary keeps its readable dark-on-cream ink under studio chrome (L1)');
   ok(w['font-weight'] && w['font-weight'].v === '600',
      'button.primary keeps weight 600 under studio chrome'); }
   // the block writes font size/family as LONGHANDS: a `font:` shorthand is parsed only
@@ -557,8 +565,11 @@ ok(delta({ tag: 'button', id: 'chat-attach', cls: ['chip', 'chip-icon'] },
 { const w = winners({ tag: 'button', id: 'chat-send', cls: ['primary'] }, ON);
   ok(w.background && w.background.v === 'var(--gold)',
      '#chat-send is the one FILLED composer control (gold) under studio chrome');
-  ok(w.color && w.color.v === '#171420',
-     '#chat-send keeps the gold-fill ink so the arrow reads in both themes'); }
+  // same fence move: the on-the-accent ink is a token now (--on-accent), which is what
+  // lets Warm Paper give the darker gold a LIGHT ink (4.99) instead of a near-black
+  // one (3.40) while every dark palette keeps the near-black it always had.
+  ok(w.color && w.color.v === 'var(--on-accent)',
+     '#chat-send keeps the gold-fill ink so the arrow reads in every theme'); }
 // L2: studio .cap-btn (0,2,1) outranks .cap-btn.arm/.go (0,2,0).
 for (const [st, want] of [['arm', 'var(--bad)'], ['go', 'var(--gold)']]) {
   const w = winners({ tag: 'button', id: null, cls: ['cap-btn', st] }, ON);
