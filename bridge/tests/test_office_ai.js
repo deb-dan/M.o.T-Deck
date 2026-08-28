@@ -90,7 +90,7 @@ function num(name) {
 }
 
 // A contiguous RUN of const declarations, first..last inclusive, taken verbatim out of
-// the page. Added at loffice-2026-08-28c: the coercion rule and the contextual-inference
+// the page. Added at loffice-2026-08-28d: the coercion rule and the contextual-inference
 // weights are constants (regexes, word lists, weights) that several eval'd functions
 // close over, and restating them here would be a second copy of the exact thing this
 // test exists to pin.
@@ -336,7 +336,7 @@ const CV_STRING = num('CV_STRING'), CV_NUMBER = num('CV_NUMBER'), CV_BOOLEAN = n
 eval(grab('colName')); eval(grab('a1')); eval(grab('cellAt')); eval(grab('valueText'));
 eval(grab('displayText')); eval(grab('usedExtent'));
 // The coercion rule, because ctxCellText now asks it whether a cell is text-that-looks-
-// numeric (the type-honest grounding, loffice-2026-08-28c).
+// numeric (the type-honest grounding, loffice-2026-08-28d).
 eval(grabConsts('CO_MAX_LEN', 'CO_LEADING_ZERO'));
 eval(grab('stripTextMark')); eval(grab('coDp')); eval(grab('coPattern'));
 eval(grab('coNum')); eval(grab('coerceNumeric')); eval(grab('textNumeric'));
@@ -702,7 +702,27 @@ check('a missing SHEET name costs a clause, never the preamble',
 const send3 = grab('aiSend');
 check('THE FIX: the preamble is prepended UNCONDITIONALLY. The sheet chip governs the '
       + 'DATA, never whether the model is told it is inside a spreadsheet',
-      /const message = aiPreamble\(current, aiSheetName\(\)\)/.test(send3));
+      /const message = aiPreamble\(current, aiSheetName\(\), stale\)/.test(send3));
+/* ⚠️ AND THE THIRD ARGUMENT IS THE STALENESS SENTENCE (live finding L6). The prompt is
+   `aiPreamble()` + the sheet dump, and the dump is `snap` — read from DISK and refreshed at
+   exactly two moments (an open and a save). With unsaved edits in the editor the model was
+   therefore shown the PRE-EDIT file under the sentence "The user is editing the workbook
+   X", and nothing in the prompt said otherwise. On screen the entire warning was
+   `aiPaint()` appending "· as last saved" to the context chip: eight characters of 10.5px
+   dim text in an overflow:hidden span, which the transcript's own "context sent"
+   disclosure never recorded either — so a saved log kept answers about data that was
+   already stale when they were given, unmarked. */
+check('…and it is TOLD when the sheet is behind what the user is looking at',
+      /IMPORTANT: the sheet below is the file AS LAST SAVED/.test(
+        aiPreamble('Sales.xlsx', 'Sheet1', true))
+      && !/AS LAST SAVED/.test(aiPreamble('Sales.xlsx', 'Sheet1', false)));
+check('…only when a workbook is actually open — there is nothing to be behind otherwise',
+      !/AS LAST SAVED/.test(aiPreamble('', '', true)));
+check('…and the staleness is exactly editorActive() && dirty: the snapshot IS the '
+      + 'document in tier 1, so tier 1 can never be behind',
+      /editorActive\(\) && dirty/.test(grab('aiStale')));
+check('…and the LOG records it too, so a saved transcript says what the answer was based '
+      + 'on', /asked against the LAST-SAVED sheet/.test(send3));
 check('…and the order is preamble → sheet (if sent) → question',
       /aiPreamble[\s\S]{0,200}ctx\.text[\s\S]{0,120}'---/.test(send3));
 check('the disclosure now carries the WHOLE message, preamble included — a prompt the '
@@ -869,7 +889,7 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
 const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
-check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28c');
+check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-28d');
 // ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
 // exactly two, which only held while no comment in the page mentioned the build it was
 // written for — and the one-editor slice writes its own stamp into the comments that
@@ -935,7 +955,7 @@ var actSeq = 0;                       // page-side module state, mirrored for ac
 var dirty = false;                    // histEntry records it, so it has to exist here
 var TIER1_MAX_COLS = num('TIER1_MAX_COLS');
 
-// THE COERCION RULE AND THE CONTEXTUAL INFERENCE (loffice-2026-08-28c). parseInput
+// THE COERCION RULE AND THE CONTEXTUAL INFERENCE (loffice-2026-08-28d). parseInput
 // delegates to coerceNumeric/stripTextMark, and actRunOps asks setContext whether a
 // numeric-shaped string in that column is meant as a number.
 eval(grabConsts('CO_MAX_LEN', 'CO_LEADING_ZERO'));
@@ -1744,8 +1764,14 @@ check('…and that call site is a button\'s own onclick handler',
       /yes\.onclick = \(\) => actApply\(card, plan\)/.test(grab('actPaint')));
 check('…on a button labelled Apply (or Create & apply when there is no workbook yet)',
       /actChip\(bar, current \? 'Apply' : 'Create & apply'\)/.test(grab('actPaint')));
+// ⚠️ THE TIMER CHECK LOOKS INSIDE setTimeout'S ARGUMENTS AS OF loffice-2026-08-28d, not
+// at the 80 characters after the word. The loose version began matching the moment
+// `ooWaitReady` (whose whole body is a poll, and which is L2's fix) was defined just above
+// `async function actApply` — a false positive on a DEFINITION, which is not a call site
+// and cannot auto-apply anything. What must never exist is a TIMER THAT CALLS IT.
 check('nothing on a timer, and no auto-apply anywhere near the reply path',
-      !/setTimeout[\s\S]{0,80}actApply/.test(code) && !/actApply/.test(stripComments(send))
+      !/setTimeout\(\s*[^)]*actApply\s*\(/.test(code)
+      && !/actApply/.test(stripComments(send))
       && !/actApply/.test(stripComments(grab('aiRenderBody')))
       && !/actApply/.test(stripComments(grab('actCard'))));
 check('the card renderers write no cell of their own',
@@ -1871,11 +1897,29 @@ check('…and the undo and the redo through one call site named by direction',
 // WHAT THE PANEL PROMISES THE USER, which must match what it does
 check('the placeholder says the model can fill the sheet in',
       /<b>fill the sheet in<\/b>/.test(html));
-check('…and names the three guarantees: a preview, an Apply, an Undo',
+/* ⚠️⚠️ THESE TWO CHECKS PINNED A PROMISE THAT WAS FALSE IN THE LANE IT DESCRIBED (live
+   finding L5), so what they pin changed with it. The intro said "You get a preview of every
+   cell it would touch and it changes nothing until you press Apply — with an Undo after,
+   and the file only written when you press ⌘S." MEASURED:
+     · once a workbook is open the EDITOR owns the document, `ooActApply` sets
+       card._undo = false and actLast = null, and there is NO Undo button on the card. The
+       undo is the editor's own ⌘Z — which the card says and the intro did not.
+     · a plan containing a `sort` takes the BRIDGE route, which SAVES THE FILE IMMEDIATELY
+       (/api/office/save plus a daily .bak), so "only written when you press ⌘S" was exactly
+       wrong for it.
+   Worse, the promise was SOMETIMES kept — the create-from-nothing path does render an Undo
+   chip — so the rule could not be learnt. One sentence per lane, matching what the card
+   will actually offer. */
+check('…and names the guarantees it can keep: a preview, an Apply, and the EDITOR\'s ⌘Z '
+      + 'as the undo — not a card button that is not there',
       /preview of every cell/.test(html) && /<b>Apply<\/b>/.test(html)
-      && /<b>Undo<\/b>/.test(html));
-check('…and that the FILE is only written on ⌘S',
-      /file only written when you press ⌘S/.test(html));
+      && /<b>⌘Z<\/b> inside the sheet takes it/.test(html)
+      && !/with an <b>Undo<\/b> after/.test(html));
+check('…and that ⌘S writes the file, WITH the one route that does not wait for it',
+      /<b>⌘S<\/b> writes it to the file/.test(html)
+      && /<b>sort<\/b>, which has to go through the file and is saved straight away/
+         .test(html)
+      && !/file only written when you press ⌘S/.test(html));
 check('the block header no longer claims the panel is advisory only, because it is not',
       html.indexOf('AND IT IS ADVISORY ONLY') < 0
       && /NO LONGER ADVISORY ONLY/.test(html));
@@ -2095,7 +2139,15 @@ check('the session is created LAZILY — no session id on the first message, and
 // which workbook is open).
 check('full grounding (preamble + tool note WITH the open file named) rides the FIRST '
       + 'message of a session',
-      /aiPreamble\(current, aiSheetName\(\)\) \+ agentToolNote\(current\)/.test(asend));
+      /aiPreamble\(current, aiSheetName\(\), agStale\) \+ agentToolNote\(current\)/
+        .test(asend));
+// ⚠️ AND THE STALENESS SENTENCE RIDES BOTH LANES (live finding L6). The Agent lane's tools
+// read the FILE, so a dirty editor means every read they do is behind what she is looking
+// at — which is also exactly why office_ops refuses to write it. Told on the first turn
+// through aiPreamble, and on later turns beside agentBrief.
+check('…and a dirty editor is stated to the agent on EVERY turn, not only the first',
+      /UNSAVED edits in the editor, so the file the tools/.test(asend)
+      && /a write will be refused/.test(asend));
 check('…and later turns send agentBrief instead, gated on agentSid',
       /agentSid\s*[\s\S]{0,20}\?\s*agentBrief\(current, aiSheetName\(\)\)/.test(asend));
 check('…and the sheet chip still governs the sheet exactly as it does in Quick',
@@ -2468,22 +2520,49 @@ check('a closed workbook stops the registration — mi_close goes through the sa
 
 // ── 4. THE EXTERNAL-CHANGE BANNER ───────────────────────────────────────────
 // THE TWO SENTENCES ARE THE CONTRACT (spec §3 rule 3), and they are pinned literally.
+/* ⚠️⚠️ REWRITTEN AT loffice-2026-08-28d FOR TWO FINDINGS ON THE SAME FILE.
+
+   SERVER F-07 / F-22 + LIVE C4 — THE COPY MOVED. It was the sibling
+   `<stem>.pre-agent.xlsx`, i.e. a safety copy living in the namespace of real documents:
+   a workbook Debi genuinely had by that name was silently OVERWRITTEN by the first apply
+   on its neighbour (F-07), such a workbook could never be written at all because the copy
+   resolved to ITSELF (F-22), and the copies sat in the file rail with a download/delete
+   pair, indistinguishable from documents (C4). It is now
+   `.checkpoints/<stem>/pre-agent.xlsx`, which is none of those things.
+
+   LIVE L4 — AND THE BANNER STOPPED COMPUTING THE NAME AT ALL. `extPlan` fires on nothing
+   but a newer mtime, and both its sentences asserted an AGENT and that copy. Only a
+   changeset apply ever writes one; Excel, a script, `curl` on /api/office/save, a second
+   LOffice tab and a `git checkout` all move the mtime and got the same sentence, naming a
+   file that does not exist — the DIRTY fork offering "Keep mine" on the strength of a
+   backup that was not there. So the decision now takes `agentCopy`, the path the BRIDGE
+   says EXISTS (office.list_docs stats it per path), and `preAgentName` is only for the
+   follow-up sentence, where existence has already been established. */
+// The two constants preAgentName reads, brought in from the page the same way the
+// function is, so nothing here restates a literal the page owns.
+const PRE_AGENT_DIR = (code.match(/PRE_AGENT_DIR = '([^']+)'/) || [])[1];
+const PRE_AGENT_FILE = (code.match(/PRE_AGENT_FILE = '([^']+)'/) || [])[1];
 eval(grab('preAgentName'));
 {
-  const PRE_AGENT_SUFFIX_JS = (code.match(/PRE_AGENT_SUFFIX = '([^']+)'/) || [])[1];
-  eq('the pre-agent suffix is the one office_ops.py actually writes — pinned ACROSS the '
+  const DIR_JS = (code.match(/PRE_AGENT_DIR = '([^']+)'/) || [])[1];
+  const FILE_JS = (code.match(/PRE_AGENT_FILE = '([^']+)'/) || [])[1];
+  eq('the checkpoint folder is the one office.py actually writes into — pinned ACROSS the '
      + 'two languages, because a page naming a file that does not exist is worse than a '
-     + 'page saying nothing', PRE_AGENT_SUFFIX_JS,
-     (opsPy.match(/PRE_AGENT_SUFFIX = "(\.pre-agent)" \+ office\.DOC_EXT/) || [])[1] + '.xlsx');
-  eq('preAgentName mirrors office_ops.pre_agent_for', preAgentName('Budget.xlsx'),
-     'Budget.pre-agent.xlsx');
+     + 'page saying nothing', DIR_JS,
+     (officePy.match(/CHECKPOINT_DIR = "([^"]+)"/) || [])[1]);
+  eq('…and so is the copy\'s own file name', FILE_JS,
+     (officePy.match(/PRE_AGENT_NAME = "([^"]+)" \+ DOC_EXT/) || [])[1] + '.xlsx');
+  eq('preAgentName mirrors office_ops.pre_agent_label', preAgentName('Budget.xlsx'),
+     '.checkpoints/Budget/pre-agent.xlsx');
   eq('…on a name given without its extension too', preAgentName('Budget'),
-     'Budget.pre-agent.xlsx');
-  eq('…and never doubles the suffix, exactly as the python refuses to',
-     preAgentName('Budget.pre-agent.xlsx'), 'Budget.pre-agent.xlsx');
+     '.checkpoints/Budget/pre-agent.xlsx');
+  eq('…and a workbook actually NAMED *.pre-agent.xlsx gets its OWN folder rather than '
+     + 'resolving to itself, which is the whole of F-07 and F-22',
+     preAgentName('Budget.pre-agent.xlsx'),
+     '.checkpoints/Budget.pre-agent/pre-agent.xlsx');
   check('…which is the rule the python states in its own words',
-        /never \.pre-agent\.pre-agent\.xlsx/.test(opsPy));
-  eq('a nameless workbook yields nothing rather than ".pre-agent.xlsx"',
+        /neither itself nor a document/.test(opsPy));
+  eq('a nameless workbook yields nothing rather than a bare folder path',
      [preAgentName(''), preAgentName(null)], ['', '']);
 }
 const EXT_EPS = num('EXT_EPS');
@@ -2502,30 +2581,54 @@ eval(grab('extPlan'));
   eq('an OLDER mtime is not a change either', 
      extPlan({ name: 'A.xlsx', seen: 200, mtime: 100 }).act, 'none');
 
-  // CLEAN PAGE → AUTO-RELOAD, with the spec's sentence.
-  const clean = extPlan({ name: 'Budget.xlsx', dirty: false, seen: 100, mtime: 200 });
+  /* ══ CLEAN PAGE → AUTO-RELOAD. TWO SENTENCES NOW, ONE PER TRUTH (live finding L4).
+     The `agentCopy` field is the path the bridge says EXISTS for this workbook. With one,
+     the change is attributed to the agent and the copy is NAMED — that copy is the only
+     thing that HAS an agent as its author. Without one, nothing is promised. */
+  const COPY = '.checkpoints/Budget/pre-agent.xlsx';
+  const clean = extPlan({ name: 'Budget.xlsx', dirty: false, seen: 100, mtime: 200,
+                          agentCopy: COPY });
   eq('a clean page reloads itself', clean.act, 'reload');
-  eq('…and the message is the spec\'s sentence, character for character', clean.text,
-     'the agent edited this file — reloaded (pre-edit copy kept as '
-     + 'Budget.pre-agent.xlsx)');
+  eq('…and when a safety copy really is there, the sentence names it and says the agent '
+     + 'did it', clean.text,
+     'the agent edited this file — reloaded (the copy from before that change is kept as '
+     + COPY + ')');
+  const cleanNo = extPlan({ name: 'Budget.xlsx', dirty: false, seen: 100, mtime: 200 });
+  eq('…and it still reloads when nothing here wrote the file', cleanNo.act, 'reload');
+  check('…BUT IT PROMISES NO COPY AND BLAMES NO AGENT — this is the fork Excel, a script, '
+        + 'a second tab and a git checkout all take, and it used to get the agent sentence',
+        !/pre-agent/.test(cleanNo.text) && !/the agent edited/.test(cleanNo.text)
+        && /outside LOffice/.test(cleanNo.text), cleanNo.text);
 
   // DIRTY PAGE → TWO BUTTONS, and the sentence that says which version survives where.
-  const dirtyP = extPlan({ name: 'Budget.xlsx', dirty: true, seen: 100, mtime: 200 });
+  const dirtyP = extPlan({ name: 'Budget.xlsx', dirty: true, seen: 100, mtime: 200,
+                           agentCopy: COPY });
   eq('a dirty page asks instead of discarding your work', dirtyP.act, 'ask');
   check('…the banner names the file', dirtyP.text.indexOf('Budget.xlsx') > 0);
   check('…says what Reload does', /Reload discards your unsaved edits/.test(dirtyP.text));
   check('…says what Keep mine does', /Keep mine keeps yours/.test(dirtyP.text));
+  /* ⚠️ AND THE DANGEROUS FORK: dirty, changed on disk, and NO safety copy. This offered
+     "Keep mine" on the strength of a backup that did not exist (live finding L4). It must
+     name no copy and must SAY there is none, because the whole point of the sentence is
+     what the user can fall back on. */
+  const dirtyNo = extPlan({ name: 'Budget.xlsx', dirty: true, seen: 100, mtime: 200 });
+  eq('a dirty page with no safety copy still asks', dirtyNo.act, 'ask');
+  check('…and says PLAINLY that there is no safety copy, rather than naming one',
+        !/pre-agent/.test(dirtyNo.text) && /NO safety copy/.test(dirtyNo.text)
+        && /Download it first/.test(dirtyNo.text), dirtyNo.text);
+  eq('…and it carries the copy path (or the empty string) so the follow-up sentence '
+     + 'cannot invent one either', [dirtyP.copy, dirtyNo.copy], [COPY, '']);
   /* ⚠️⚠️ THE ONE SENTENCE THE SPEC WRITES OUT IN FULL, and it is pinned as a literal
      substring rather than paraphrased: "the banner must say that plainly". Keeping your
      version means your next ⌘S overwrites the agent's write, and the agent's write
      survives in NOTHING — the .pre-agent copy holds the PRE-write state, not the
      write. A banner that only implied that would be the failure this rule exists for. */
-  check('…AND SAYS PLAINLY THAT SAVING WILL OVERWRITE THE AGENT\'S CHANGES',
-        dirtyP.text.indexOf("saving will overwrite the agent's changes") > 0, dirtyP.text);
+  check('…AND SAYS PLAINLY THAT SAVING WILL OVERWRITE WHAT IS ON DISK',
+        /saving will overwrite what is on disk/.test(dirtyP.text), dirtyP.text);
   check('…and names where the PRE-write state is kept, which is the only version the '
-        + 'agent lane can restore', dirtyP.text.indexOf('Budget.pre-agent.xlsx') > 0);
+        + 'agent lane can restore', dirtyP.text.indexOf(COPY) > 0);
   check('…and says BEFORE, so the copy is never read as "the agent\'s write is safe"',
-        /BEFORE the agent touched/.test(dirtyP.text));
+        /before that change is kept/.test(dirtyP.text));
   [null, undefined, 0, 'x', { name: 1 }].forEach((v, i) => {
     let threw = null, r = null;
     try { r = extPlan(v); } catch (e) { threw = e; }
@@ -2575,9 +2678,19 @@ eval(grab('extPlan'));
   // The apostrophe is BACKSLASH-ESCAPED in the page's single-quoted string, so the
   // source form is matched with a tolerant class; the sentence itself is pinned as a
   // literal against extPlan's real output above, which is the pin that counts.
+  /* ⚠️ REWORDED FOR live finding L4: the sentence promised the agent's `.pre-agent.xlsx`
+     copy on a path that had never made one, and "the agent's changes" named an author this
+     banner cannot know. It repeats the overwrite warning — that half was right and the
+     reason for it has not changed — and it names the safety copy ONLY when the bridge said
+     one exists. */
   check('…and Keep mine repeats the overwrite warning, because the banner it replaces '
         + 'is gone the moment it is clicked',
-        /will overwrite the agent.?.s changes/.test(ea));
+        /will overwrite what is on disk/.test(ea));
+  check('…and it names a safety copy only when there IS one, and otherwise says there is '
+        + 'not — the dangerous half of L4 was offering Keep mine on a backup that did not '
+        + 'exist',
+        /extCopy\s*\n?\s*\?/.test(ea) && /nothing here has a copy of what is on disk/
+          .test(ea));
   check('both answers beacon, so "it reloaded my file" is answerable from the boot log',
         /bx\('ext-reload'/.test(ea) && /bx\('ext-keep-mine'/.test(ea));
   const ec = grab('extCheck');
@@ -2730,7 +2843,7 @@ eval(grab('extPlan'));
         + 'read off the sheet by eye',
         /DELETED/.test(csReceiptText({ rows_or_columns_deleted: 2, receipt: 'x' })));
   const src = grab('csApply');
-  /* ⚠️ TWO CALL SITES AS OF loffice-2026-08-28c, NOT ONE, AND BOTH TAKE `j`. The second
+  /* ⚠️ TWO CALL SITES AS OF loffice-2026-08-28d, NOT ONE, AND BOTH TAKE `j`. The second
      is the post-apply COMPUTED CHECK: after the editor has reloaded and been asked what
      the new formulas evaluate to, the badge is RE-LABELLED with that answer appended. The
      fence is unchanged in substance — every csReceiptText argument is still the parsed
@@ -2912,7 +3025,7 @@ eval(grab('extPlan'));
               'csNote', 'csPrefix', 'csRow', 'csRows', 'csCardText', 'csReceiptText',
               'csCard', 'csBusy', 'csApply', 'csDismiss', 'csUndo', 'csStamp',
               'csRelabel', 'csStatusLine', 'csErrChip', 'csRead', 'csAfterTurn', 'csTick',
-              /* AND THE TYPE-HONESTY SLICE (loffice-2026-08-28c): the coercion outcomes
+              /* AND THE TYPE-HONESTY SLICE (loffice-2026-08-28d): the coercion outcomes
                  on the card, the aggregate-over-text info line, and the post-apply
                  computed check. The computed check READS the editor (that is its whole
                  job) but must not WRITE anything — readCells is a getter and this fence
@@ -2974,6 +3087,84 @@ eval(grab('ooOpPlan'));
 eval(grab('ooRects'));            // the format-op grouper ooEditorOps calls (28c)
 eval(grab('ooTextForce'));        // …and the editor's-parser guard (28c)
 eval(grab('ooEditorOps'));
+
+/* ══ ooEditorOps: THE RANGE MUST BE THE WHOLE RECTANGLE ════════════════════════
+   A LIE-TO-USER found in the loffice-2026-08-28d adversarial self-pass, live, in a real
+   editor — not in either hunt's catalogue, and live since the one-editor ruling.
+
+   MEASURED in the vendored bundle (v9.2.0.119+3), the two forms side by side in one call:
+       SetValue over 'D1'    with [[a,b],[c,d],[e,f]]  →  D1=a and NOTHING ELSE
+       SetValue over 'G1:H3' with the same array        →  all six cells
+   ApiRange.SetValue writes an array ACROSS ITS OWN RANGE. The parent used to emit the
+   ANCHOR only (`colName(o.c) + (o.r + 1)`), so every multi-cell Quick-lane apply through
+   the editor stored exactly ONE cell — while `done.cells` counted every value and the card
+   stamped "6 written", and the ⌘S it then asked for made that permanent. The incident's
+   exact shape: a true-looking number over a write that did not happen. */
+{
+  const rows = ooEditorOps([{ op: 'set', r: 0, c: 0,
+                              values: [['Month', 'Planned'], ['January', 900]] }], null);
+  const set = rows.filter(r => r.k === 'set')[0];
+  eq('a multi-cell `set` addresses the WHOLE rectangle, so SetValue writes all of it',
+     set.at, 'A1:B2');
+  eq('…and the values it is handed are exactly that rectangle', set.values,
+     [['Month', 'Planned'], ['January', 900]]);
+  /* ⚠️ `null` MEANS "EMPTY THIS CELL", AND THE EDITOR'S WAY OF SAYING THAT IS ''.
+     MEASURED live in the same run: SetValue over 'F1:H1' with [[null,'','keep']] wrote
+     F1 = "#N/A" — the ERROR VALUE, which looks like a broken formula and is worse than
+     the silence it replaced. Unreachable before the rectangle fix (only the anchor was
+     ever written), so it is the same defect surfacing rather than a new one. */
+  const nulls = ooEditorOps([{ op: 'set', r: 0, c: 0,
+                               values: [['keep', null], [undefined, 2]] }], null)
+    .filter(r => r.k === 'set')[0];
+  eq('a null or an undefined becomes the empty string, never the #N/A the editor writes '
+     + 'for null', nulls.values, [['keep', ''], ['', 2]]);
+  /* ⚠️⚠️ AND A PLAIN NUMERIC STRING GOES AS A NUMBER. This is the 2026-08-28 incident
+     living on in the editor route, found in the loffice-2026-08-28d self-pass and MEASURED
+     LIVE: LOffice's own starter template came up with `=SUM(B2:B5)` reading 0 over the four
+     amounts directly above it, every amount left-aligned. The test was
+     `!co || !co.n || …`, and `coerceNumeric('900')` returns {v:900, n:NULL} — the pattern
+     is deliberately null because General is already right for a bare number — so `!co.n`
+     read that as "keep it as text", sent the STRING, and `ooTextForce` then stamped the
+     cell `@` to protect it. An ordinary integer pinned as text on purpose. `=SUM` ignores
+     text (0) while `=C2-B2` still worked (operators DO coerce), which is why it looked
+     half-working. The question is "does our rule say this is a NUMBER", never "does it
+     also have a pattern to write". */
+  // A local fixture: an 'Amount' header in B1 so the inference reads column B as numeric.
+  const numCol = { name: 'S', cellData: { '0': { '1': { v: 'Amount', t: 1 } } } };
+  const plain = ooEditorOps([{ op: 'set', r: 1, c: 1,
+                               values: [['900'], ['320'], ['75']] }], numCol);
+  eq('a PLAIN numeric string is sent as a NUMBER, so =SUM over it is not 0',
+     plain.filter(r => r.k === 'set')[0].values, [[900], [320], [75]]);
+  eq('…with NO number-format op, because General is already right for a bare number and '
+     + 'writing one would flatten a format Debi had set herself',
+     plain.filter(r => r.k === 'style').length, 0);
+  check('…and NO `@` text-protection op either — that guard is for the values our rule '
+        + 'refused to coerce, which is not this one',
+        !plain.some(r => r.k === 'style' && r.set && r.set.n
+                    && r.set.n.pattern === '@'), plain);
+  check('…and this now AGREES with office_ops.parse_input, which has always stored the '
+        + 'plain shape as a number with no format merge — the two lanes were disagreeing '
+        + 'about every plain numeric string',
+        /out\["v"\], out\["t"\] = co\["v"\], CV_NUMBER/.test(opsPy));
+  const one = ooEditorOps([{ op: 'set', r: 2, c: 3, values: [['x']] }], null)
+    .filter(r => r.k === 'set')[0];
+  eq('…while a single cell is still a single cell, not a degenerate range', one.at, 'D3');
+  /* THE OP GRAMMAR ALLOWS RAGGED ROWS (a short row means "nothing further along this
+     one"), and handing a ragged array to a rectangular range is a second thing to get
+     wrong — so the grid is PADDED with null, which is what the tier-1 writer already
+     means by "leave that cell". */
+  const rag = ooEditorOps([{ op: 'set', r: 0, c: 0,
+                             values: [['a', 'b', 'c'], ['d']] }], null)
+    .filter(r => r.k === 'set')[0];
+  eq('a ragged grid is padded to the rectangle it claims', rag.at, 'A1:C2');
+  eq('…with the EMPTY STRING in the cells the model did not name — not null, which the '
+     + 'editor turns into #N/A', rag.values, [['a', 'b', 'c'], ['d', '', '']]);
+  check('and the child counts what it was SENT, which is only honest because the range '
+        + 'now matches the array',
+        /done\.cells \+= \(row \|\| \[\]\)\.length/.test(
+          fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'oo.html'), 'utf8')));
+}
+
 const OO_STYLE_KEYS = JSON.parse('[' + (code.match(/const OO_STYLE_KEYS = \[([\s\S]*?)\];/)[1]
   .replace(/'/g, '"').replace(/\s+/g, ' ')) + ']');
 
@@ -3047,9 +3238,15 @@ check('…and it is PURE: no DOM, no page state, nothing but its argument',
       !/document\.|\bel\(|\bsnap\b|dirty|\bbx\(/.test(grab('ooOpPlan')));
 
 // ── the translation to the editor's own addresses ──
-eq('a `set` becomes an A1 anchor and the same grid of values',
+/* ⚠️ THIS CHECK PINNED THE ANCHOR, AND THE ANCHOR WAS THE BUG (loffice-2026-08-28d
+   adversarial self-pass, measured live in a real editor). ApiRange.SetValue writes an
+   array ACROSS ITS OWN RANGE, so `at: 'F1'` handed a 2×2 grid stored ONE cell and dropped
+   the rest in silence — while the child counted every value and the card stamped "4
+   written". See the ooEditorOps rectangle block above for the side-by-side measurement.
+   The three eq()s further down had the same anchor baked in for the same reason. */
+eq('a `set` becomes the A1 RECTANGLE its values fill, and the same grid of values',
    ooEditorOps([{ op: 'set', r: 0, c: 5, values: [['x', 1], [null, true]] }]),
-   [{ k: 'set', at: 'F1', values: [['x', 1], [null, true]] }]);
+   [{ k: 'set', at: 'F1:G2', values: [['x', 1], ['', true]] }]);
 eq('a `style` becomes an A1 RANGE and the style dict untouched',
    ooEditorOps([{ op: 'style', r0: 1, c0: 1, r1: 3, c1: 2, set: { bl: 1 } }]),
    [{ k: 'style', at: 'B2:C4', set: { bl: 1 } }]);
@@ -3194,7 +3391,7 @@ OO_STYLE_KEYS.forEach(k => {
 }
 
 /* ══ 7. TYPE HONESTY — THE 2026-08-28 INCIDENT, PINNED ON THE PAGE SIDE ════════
-   (loffice-2026-08-28c)
+   (loffice-2026-08-28d)
 
    WHAT HAPPENED, in one sentence: Debi's budget was staged as the strings "$2,500",
    "$400", …; our writers stored them verbatim as TEXT; her "sum it up" produced a
@@ -3383,7 +3580,7 @@ OO_STYLE_KEYS.forEach(k => {
      + 'with $#,##0 whatever the editor\'s own SetValue does with "$2,500"',
      ooEditorOps([{ op: 'set', r: 1, c: 1,
                     values: [['$2,500'], ['$400'], ['$200']] }], sheetWith([], 'Planned')),
-     [{ k: 'set', at: 'B2', values: [[2500], [400], [200]] },
+     [{ k: 'set', at: 'B2:B4', values: [[2500], [400], [200]] },
       { k: 'style', at: 'B2:B4', set: { n: { pattern: '$#,##0' } } }]);
   eq('…the format ops are GROUPED into rectangles, so a column of twelve amounts is one '
      + 'SetNumberFormat call and not twelve',
@@ -3417,12 +3614,12 @@ OO_STYLE_KEYS.forEach(k => {
      + 'is the case the editor gets wrong on its own',
      ooEditorOps([{ op: 'set', r: 0, c: 0, values: [['Employee ID'], ['007']] }], null),
      [{ k: 'style', at: 'A2', set: { n: { pattern: '@' } } },
-      { k: 'set', at: 'A1', values: [['Employee ID'], ['007']] }]);
+      { k: 'set', at: 'A1:A2', values: [['Employee ID'], ['007']] }]);
   eq('a value the inference kept as text is protected too',
      ooEditorOps([{ op: 'set', r: 0, c: 0, values: [['SKU'], ['$2,500']] }],
                  { name: 'S', cellData: {} }),
      [{ k: 'style', at: 'A2', set: { n: { pattern: '@' } } },
-      { k: 'set', at: 'A1', values: [['SKU'], ['$2,500']] }]);
+      { k: 'set', at: 'A1:A2', values: [['SKU'], ['$2,500']] }]);
   check('ooTextForce is NARROW: a label is in no danger from the editor\'s parser and '
         + 'must not have its number format rewritten',
         ['Rent', 'AB-100', 'Q1 2026', 'Groceries', ''].every(s => !ooTextForce(s)));
@@ -3553,8 +3750,44 @@ OO_STYLE_KEYS.forEach(k => {
     const oo = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'oo.html'), 'utf8');
     check('bridge/panel/oo.html exposes readCells on the parent contract',
           /readCells: readCells/.test(oo) && /function readCells\(refs, sheetName\)/.test(oo));
+    // ⚠️ 2 → 3 AT loffice-2026-08-28d: `renameTo` joined the contract (live finding B1).
     check('…the contract version moved with it, so an older frame is detectable',
-          /contract: 2/.test(oo));
+          /contract: 3/.test(oo));
+    /* ⚠️⚠️ THE TWO HALVES OF live finding L1, PINNED IN THE EMBED WHERE THEY LIVE. The
+       vendored header's own floppy-disk Save ran sdkjs's DocumentServer save, which arrives
+       at the mock server as `saveChanges`; we ACKed it and did nothing else, so sdkjs
+       considered the document saved and fired onDocumentStateChange(false) → the parent
+       cleared THE dirty flag that guards every discard path → the strip said "all changes
+       saved" with the FILE UNTOUCHED (mtime identical before and after) → the next rail
+       click found dirty === false and swapped with no warning at all. The work was gone,
+       two clicks apart. */
+    check('L1a: the editor\'s OWN save gesture is routed into the write-back, so the only '
+          + 'Save control in the window that looks like it writes the file actually does',
+          /t === 'saveChanges'/.test(oo) && /extSaves\+\+/.test(oo)
+          && /save\(false\)/.test(oo));
+    check('…and it cannot re-enter our own save, which does not come through there',
+          /if \(!saving && ready\)/.test(oo));
+    check('L1b: a dirty:false that NO write-back produced is refused rather than '
+          + 'forwarded — the floor under L1a, and the half that keeps us honest if that '
+          + 'route is ever unreachable',
+          /if \(!d && dirtyNow && !saving\)/.test(oo)
+          && /heldClears\+\+/.test(oo)
+          && /tell\('state', \{dirty: true\}\)/.test(oo));
+    check('…and BOTH are countable off probe(), so the fix is measurable rather than '
+          + 'inferred', /extSaves: extSaves/.test(oo) && /heldClears: heldClears/.test(oo));
+    /* live finding B1: rename a workbook while the editor holds it and the next save
+       posted to the OLD name, got a 404, and the unsaved work could never be written by
+       any route at all. */
+    check('B1: the embed can be re-pointed at a new name WITHOUT re-opening the file, so a '
+          + 'rename cannot cost the unsaved edits it deliberately keeps',
+          /renameTo: renameTo/.test(oo) && /function renameTo\(to\)/.test(oo)
+          && !/function renameTo\(to\)[\s\S]{0,400}openDoc\(/.test(oo));
+    check('…and the parent calls it on a successful rename, probing for the FUNCTION',
+          /typeof ooChild\.renameTo === 'function'/.test(code)
+          && /ooChild\.renameTo\(j\.name\)/.test(code));
+    check('…and an embed too old to be told says so instead of leaving a Save that will '
+          + '404 looking like a Save that will work',
+          /too old to be told/.test(code));
     check('…and the parent probes for the FUNCTION, not the number — a version check that '
           + 'gates a capability the object plainly has is a way to break a working page',
           /typeof ooChild\.readCells !== 'function'/.test(code));

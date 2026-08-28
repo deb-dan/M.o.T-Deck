@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -49,10 +50,19 @@ from bridge import office                                        # noqa: E402
 FAILS = []
 
 
-def check(name, cond):
+def check(name, cond, extra=""):
+    """`extra` is printed only on a FAILURE — the evidence, so a red line is legible
+    without re-running by hand. Added at loffice-2026-08-28d, matching the other office
+    suites; the older two-argument calls are unaffected."""
     print(("PASS" if cond else "FAIL"), name)
     if not cond:
+        if extra != "":
+            print(f"     {extra!r}")
         FAILS.append(name)
+
+
+def eq(name, got, want):
+    check(name, got == want, f"got {got!r}, want {want!r}")
 
 
 try:
@@ -316,8 +326,19 @@ if HAVE_XL:
           "f" not in jcd.get("2", {}).get("4", {}))
     check("a style id resolves out of workbook.styles", jcd["2"]["5"]["s"]["bl"] == 1)
     check("an unknown style id costs the style, not the value", jcd["2"]["6"]["v"] == 6)
+    # ⚠️ THE `t` THIS ASSERTS CHANGED 1 → 4 AT loffice-2026-08-28d, AND THE CHANGE IS
+    # FINDING F-28'S FIX. FORCE_STRING means "this cell is text ON PURPOSE" — a part code,
+    # a leading-zero id. The value survived the round-trip; the INTENT did not, because the
+    # .xlsx has nowhere to keep it, so it came back as an ordinary string (t:1) and the new
+    # text-that-looks-numeric detector then nagged about a cell the page had deliberately
+    # made text. `_write_cell` now stamps the `@` number format — which is exactly what
+    # Excel uses to say this — and `cell_snapshot` re-derives t:4 from it.
     check("FORCE_STRING keeps a leading zero", jcd["2"]["7"]["v"] == "07"
-          and jcd["2"]["7"]["t"] == 1 and office.CV_FORCE_STRING == 4)
+          and office.CV_FORCE_STRING == 4)
+    check("…and the INTENT survives the round-trip, as the `@` number format",
+          jcd["2"]["7"]["t"] == office.CV_FORCE_STRING
+          and office.is_text_format((jcd["2"]["7"].get("s") or {}).get("n", {})
+                                    .get("pattern")))
     check("a negative row index is skipped", "-1" not in jcd)
     check("an inverted merge range is skipped and a good one kept",
           {"startRow": 8, "startColumn": 0, "endRow": 9, "endColumn": 1}
@@ -460,10 +481,105 @@ check("empty_snapshot is JSON-serialisable", isinstance(json.dumps(es), str))
 check("empty_snapshot names the workbook from the file stem",
       office.empty_snapshot("budget.xlsx")["name"] == "budget")
 
-check("the fidelity contract is single-sourced and says the honest thing",
-      "round-trip" in office.FIDELITY_NOTE and "simplified" in office.FIDELITY_NOTE
-      and "saves copies" in office.FIDELITY_NOTE)
+# ⚠️ REWRITTEN AT loffice-2026-08-28d, AND THE REWRITE IS THE FIX (live finding L3). The
+# fidelity contract used to be ONE sentence — "complex styling may be simplified; keep your
+# original file" — printed on every surface. It described the openpyxl mapper, while the
+# surface Debi actually saves through is the embedded editor, whose x2t round-trip
+# MEASURABLY keeps charts, images, autofilters, validation, hyperlinks and freeze panes
+# (measured on QA-rich.xlsx: chart1.xml 1159 B → 3020 B, present after the save). So the
+# contract is now PER SAVE PATH, and what this pins is that both sentences exist and that
+# each one names its own path rather than the other's limits.
+check("the fidelity contract is single-sourced and split per SAVE PATH",
+      "mapper" in office.FIDELITY_NOTE and "full editor" in office.FIDELITY_NOTE
+      and "editor" in office.FIDELITY_EDITOR_NOTE)
+check("the FILE path's sentence names what it really loses",
+      all(x in office.FIDELITY_NOTE for x in ("charts", "images", "borders", "macros")))
+check("…and no longer claims to lose the four things F-27 made it carry",
+      all(x in office.FIDELITY_NOTE for x in
+          ("freeze panes", "hidden rows and columns", "autofilter")))
+check("the EDITOR path's sentence claims the fidelity that was measured, and says it was",
+      all(x in office.FIDELITY_EDITOR_NOTE for x in
+          ("charts", "images", "autofilters", "freeze panes"))
+      and "Measured" in office.FIDELITY_EDITOR_NOTE)
 
+
+# ══ THE 2026-08-28 ADVERSARIAL CAMPAIGN — the mapper/filesystem half ═════════
+# Repros live in bridge/tests/test_office_adversarial.py (the campaign ledger, not a gate).
+print("\n── the adversarial campaign: what the file layer promises ──")
+if HAVE_XL:
+    _cd = tempfile.mkdtemp(prefix="office-camp-")
+    _od = office.office_dir(_cd)
+
+    def _mk(name, val="v"):
+        wb = openpyxl.Workbook()
+        wb.active["A1"] = val
+        wb.save(os.path.join(_od, name))
+
+    # L4 — the external-change banner promised `<name>.pre-agent.xlsx` on ANY mtime change,
+    # including the several that never make one; the DIRTY fork offered "Keep mine" on the
+    # strength of a backup that was not there. The row now carries whether it EXISTS, per
+    # path, so the page can say only what is true.
+    _mk("banner.xlsx")
+    _row = [f for f in office.list_docs(_cd) if f["name"] == "banner.xlsx"][0]
+    eq("L4 · a workbook nothing has written carries NO agent copy for the banner to name",
+       _row["agent_copy"], "")
+    os.makedirs(os.path.dirname(office.agent_copy_path(_cd, "banner.xlsx")),
+                exist_ok=True)
+    shutil.copy2(os.path.join(_od, "banner.xlsx"),
+                 office.agent_copy_path(_cd, "banner.xlsx"))
+    _row = [f for f in office.list_docs(_cd) if f["name"] == "banner.xlsx"][0]
+    eq("…and once one really exists, the row names it — checked by stat, not derived from "
+       "the workbook's name", _row["agent_copy"],
+       office.CHECKPOINT_DIR + "/banner/pre-agent.xlsx")
+
+    # C4 — the safety copies were listed as ordinary workbooks, with a size, a date and a
+    # download/delete pair, indistinguishable from documents, and the sentence that made
+    # them long gone. Filtered exactly the way a .bak is.
+    _mk("legacy.pre-agent.xlsx", "an old sibling copy")
+    _names = [f["name"] for f in office.list_docs(_cd)]
+    check("C4 · a legacy *.pre-agent.xlsx sibling is filtered out of the workbook list, "
+          "the way a .bak is — a safety copy is not a document",
+          "legacy.pre-agent.xlsx" not in _names and "banner.xlsx" in _names, _names)
+    check("…and the predicate is a named, testable one rather than a substring somewhere",
+          office.is_agent_copy_name("x.pre-agent.xlsx")
+          and not office.is_agent_copy_name("x.xlsx"))
+
+    # B5 — "This cannot be undone" was false in BOTH directions: a delete left the daily
+    # .bak on disk, `is_backup_name()` hides those from the list, so the delete COULD be
+    # undone from a file the user was not told about — and somebody deleting a workbook for
+    # privacy KEPT its contents.
+    _mk("bye.xlsx")
+    _bak = office.backup_for(os.path.join(_od, "bye.xlsx"))
+    shutil.copy2(os.path.join(_od, "bye.xlsx"), _bak)
+    ok, _r = office.delete_doc(_cd, "bye.xlsx")
+    check("the default delete still KEEPS the daily backup — it exists to survive a "
+          "mistake, and that ruling has not changed", ok and os.path.isfile(_bak))
+    _mk("bye2.xlsx")
+    _bak2 = office.backup_for(os.path.join(_od, "bye2.xlsx"))
+    shutil.copy2(os.path.join(_od, "bye2.xlsx"), _bak2)
+    os.makedirs(os.path.dirname(office.agent_copy_path(_cd, "bye2.xlsx")), exist_ok=True)
+    shutil.copy2(os.path.join(_od, "bye2.xlsx"), office.agent_copy_path(_cd, "bye2.xlsx"))
+    ok, _r = office.delete_doc(_cd, "bye2.xlsx", True)
+    check("B5 · …but a user who says 'and its backups' can MEAN it — the daily copy, the "
+          "agent copy and the checkpoint stack all go",
+          ok and not os.path.isfile(_bak2)
+          and not os.path.exists(office.agent_copy_path(_cd, "bye2.xlsx")), _r)
+
+    # F-21 — the checkpoint stack was keyed by the file STEM and a rename moved neither it
+    # nor the pre-agent sibling, so undo answered "no such workbook" for ever.
+    _mk("mover.xlsx")
+    _cp = os.path.join(office.checkpoint_root(_cd), "mover")
+    os.makedirs(_cp, exist_ok=True)
+    shutil.copy2(os.path.join(_od, "mover.xlsx"), os.path.join(_cp, "abc123.xlsx"))
+    _new, _r = office.rename_doc(_cd, "mover.xlsx", "moved.xlsx")
+    check("F-21 · rename_doc moves the checkpoint folder with the workbook, so the undo "
+          "stack is not orphaned under a stem nothing points at any more",
+          _new == "moved.xlsx"
+          and os.path.isfile(os.path.join(office.checkpoint_root(_cd), "moved",
+                                          "abc123.xlsx"))
+          and not os.path.exists(_cp), _r)
+
+    shutil.rmtree(_cd, ignore_errors=True)
 
 # ══ 6. wiring ════════════════════════════════════════════════════════════════
 APP = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
@@ -492,8 +608,23 @@ _new_route = _new_route[:_new_route.index('@app.get("/api/office/open')]
 check("POST /api/office/new passes an empty name straight through to create_doc, and "
       "carries no empty-name refusal of its own — a guard here would put the dead end "
       "back one layer down, where nobody would look for it",
-      '_office.create_doc, ROOT, ((body or {}).get("name") or "")' in _new_route
-      and "no file name" not in _new_route and "name.strip()" not in _new_route)
+      '_office.create_doc, ROOT, want)' in _new_route
+      and 'want = (body or {}).get("name") or ""' in _new_route
+      and "no file name" not in _new_route)
+# ⚠️ `step` ARRIVED AT loffice-2026-08-28d (live finding B2) AND IT DOES NOT WEAKEN THE
+# NEVER-CLOBBER RULING — it is how the CALLER says which of the route's two meanings it
+# has. A name the USER TYPED still collides and is still refused, because quietly making
+# `budget (2).xlsx` when somebody asked for `budget.xlsx` hides the thing they need to
+# know. A TEMPLATE CARD is "give me one of these", and refusing it left the card
+# PERMANENTLY DEAD after one use, with a red line offering no way forward, on a screen
+# listing the existing file two inches below.
+check("…and a TEMPLATE's collision takes free_name's ' (n)' walk instead, on the "
+      "caller's own say-so rather than by weakening create_doc",
+      "_office.free_name, ROOT, want" in _new_route
+      and '(body or {}).get("step")' in _new_route)
+check("…and the walk is the SAME one import and the blank name already take — one "
+      "never-clobber convention in this codebase, not a second",
+      "free_name" in APP)
 check("download and delete both go through doc_target/delete_doc containment",
       "_office.doc_target(ROOT, name)" in APP and "_office.delete_doc" in APP)
 check("rename goes through rename_doc — which puts BOTH names through doc_target, so "

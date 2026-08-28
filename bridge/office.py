@@ -39,6 +39,7 @@ import datetime as _dt
 import math
 import io as _io
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -61,11 +62,45 @@ except Exception as _e:                                          # noqa: BLE001
 
 # ── constants ────────────────────────────────────────────────────────────────
 DOC_EXT = ".xlsx"
-# The one sentence the panel prints under the file list. Single-sourced here so the
-# page and any future surface cannot promise two different things.
-FIDELITY_NOTE = ("Values, formulas and basic formatting round-trip. Complex styling "
-                 "may be simplified — keep your original file; Office saves copies.")
+# ⚠️ THE FIDELITY SENTENCE IS PER SAVE PATH AS OF loffice-2026-08-28d, AND THE SPLIT IS
+# THE WHOLE FIX (live finding L3, server finding F-27). It was ONE sentence describing
+# the openpyxl mapper, printed globally — while the surface a user actually saves
+# through is the embedded ONLYOFFICE editor, whose x2t round-trip MEASURABLY keeps
+# charts, images, autofilters, data validation, hyperlinks and freeze panes (measured
+# on QA-rich.xlsx: chart1.xml 1159 B → 3020 B, every feature still present). Telling
+# her the app drops all of that was a lie in our own disfavour, and it drove her away
+# from the app.
+#
+# TWO PATHS, TWO SENTENCES, and every surface now names WHICH one it is about:
+#   · FIDELITY_EDITOR_NOTE — the editor's ⌘S (asc_nativeGetFile → x2t → writeback).
+#     This is the normal save and it is high fidelity.
+#   · FIDELITY_NOTE — the FILE path: office.write_snapshot through openpyxl. Reached by
+#     a `sort` op, an agent changeset apply, and LOffice's own tier-1 grid. This one
+#     really does lose the things named in it, and now it names them ALL rather than
+#     three of them (F-27 added freeze panes, hidden rows/columns, gridline visibility
+#     and autofilter to the round-trip, so those four came OFF this list).
+FIDELITY_NOTE = ("this save rewrote the whole workbook through LOffice's own .xlsx "
+                 "mapper, which carries values, formulas, dates, number formats, "
+                 "fonts, fills, alignment, merges, widths, heights, freeze panes, "
+                 "hidden rows and columns, gridline visibility and autofilter — but "
+                 "NOT charts, images, pivot tables, conditional formatting, cell "
+                 "borders, comments, named ranges or macros. Saving from the full "
+                 "editor (⌘S) keeps all of those.")
+FIDELITY_EDITOR_NOTE = ("a save from the full editor round-trips the workbook through "
+                        "the editor's own converter and keeps charts, images, "
+                        "autofilters, data validation, hyperlinks, freeze panes and "
+                        "conditional formatting. Measured, not assumed.")
 NAME_MAX = 80
+# Where the checkpoint stack and the pre-agent copies live. ⚠️ MIRRORED IN
+# bridge/office_ops.py (which reads it from here) and in bridge/panel/office.html.
+CHECKPOINT_DIR = ".checkpoints"
+# ⚠️ THE PRE-AGENT COPY MOVED INSIDE .checkpoints/<stem>/ AT loffice-2026-08-28d, and it
+# is a deliberate deviation from the old sibling-file ruling — see office_ops.pre_agent_for
+# for the argument (server findings F-07, F-22, live finding C4).
+PRE_AGENT_NAME = "pre-agent" + DOC_EXT
+# Excel refuses these in a sheet title, and openpyxl raises ValueError rather than
+# repairing — which used to escape apply_changeset as an HTTP 500 (F-19).
+SHEET_TITLE_BAD = ":\\/?*[]"
 SHEET_NAME_MAX = 31            # Excel's own limit; openpyxl truncates past it
 # A snapshot travels as JSON through a WKWebView. 200k cells is far past any workbook
 # a person edits by hand and still well inside what JSON.stringify survives; past it
@@ -147,6 +182,45 @@ def is_backup_name(name) -> bool:
     return isinstance(name, str) and name.lower().endswith(".bak" + DOC_EXT)
 
 
+def is_agent_copy_name(name) -> bool:
+    """`sheet.pre-agent.xlsx` — the LEGACY sibling copies an agent write used to leave
+    in data/office (live finding C4, server finding F-07).
+
+    ⚠️ THESE ARE NO LONGER CREATED. The copy now lives at
+    `.checkpoints/<stem>/pre-agent.xlsx`, so this predicate exists to stop the ones
+    already on disk from being listed as ordinary workbooks — indistinguishable from
+    real documents, with a download/delete pair, and the sentence that created them
+    long gone. Filtered exactly the way `.bak` copies are, and for exactly the reason:
+    a safety copy is not a document.
+
+    ⚠️ DEVIATION FOR FABLE, STATED OUT LOUD: this CHANGES VISIBILITY. A workbook Debi
+    deliberately named `something.pre-agent.xlsx` herself would disappear from the rail.
+    That is judged the lesser harm — the old behaviour let the first agent apply on
+    `report.xlsx` silently OVERWRITE such a file (F-07) — and `checkpoint_pre_agent`'s
+    namespacing means nothing writes to that name any more, so nothing can be lost by
+    it. The files stay on disk and File → Download of the real workbook is unaffected.
+    """
+    return isinstance(name, str) and name.lower().endswith(".pre-agent" + DOC_EXT)
+
+
+def checkpoint_root(root) -> str:
+    return os.path.join(office_dir(root), CHECKPOINT_DIR)
+
+
+def agent_copy_path(root, name) -> str:
+    """`data/office/.checkpoints/<stem>/pre-agent.xlsx` — the pre-write copy of ONE
+    workbook, namespaced so it can never collide with a document."""
+    stem = os.path.splitext(os.path.basename(str(name)))[0]
+    return os.path.join(checkpoint_root(root), stem, PRE_AGENT_NAME)
+
+
+def agent_copy_rel(name) -> str:
+    """The same path as the panel and the tool results say it: a relative path, so
+    nobody reads it as a sibling workbook they could open."""
+    stem = os.path.splitext(os.path.basename(str(name)))[0]
+    return CHECKPOINT_DIR + "/" + stem + "/" + PRE_AGENT_NAME
+
+
 def valid_name(name):
     """(safe_basename, None) or (None, reason).
 
@@ -207,7 +281,15 @@ def backup_for(path, today=None) -> str:
 
 
 def list_docs(root) -> list:
-    """Every workbook, newest first. Backups are on disk but not in this list."""
+    """Every workbook, newest first. Backups are on disk but not in this list.
+
+    ⚠️ `agent_copy` IS NOT DECORATION (live finding L4). The page's external-change
+    banner used to promise `<name>.pre-agent.xlsx` on ANY mtime change — Excel, a
+    script, a second tab, a `git checkout` — while only a changeset apply ever writes
+    one. The dirty variant offered "Keep mine" on the strength of a backup that was not
+    there. So the row now carries whether that copy ACTUALLY exists, per path, and the
+    banner says only what is true.
+    """
     d = office_dir(root)
     out = []
     try:
@@ -215,7 +297,8 @@ def list_docs(root) -> list:
     except OSError:
         return out
     for n in names:
-        if not n.lower().endswith(DOC_EXT) or is_backup_name(n) or n.startswith("~$"):
+        if (not n.lower().endswith(DOC_EXT) or is_backup_name(n)
+                or is_agent_copy_name(n) or n.startswith("~$")):
             continue
         p = os.path.join(d, n)
         if not os.path.isfile(p):
@@ -224,8 +307,10 @@ def list_docs(root) -> list:
             st = os.stat(p)
         except OSError:
             continue
+        agent = agent_copy_path(root, n)
         out.append({"name": n, "size_bytes": st.st_size, "modified": st.st_mtime,
-                    "has_backup": bool(_any_backup(p))})
+                    "has_backup": bool(_any_backup(p)),
+                    "agent_copy": (agent_copy_rel(n) if os.path.isfile(agent) else "")})
     out.sort(key=lambda e: e["modified"], reverse=True)
     return out
 
@@ -295,6 +380,96 @@ def _hex_to_argb(v) -> str:
     if len(s) != 6 or any(c not in "0123456789abcdefABCDEF" for c in s):
         return ""
     return "FF" + s.upper()
+
+
+def valid_sheet_title(name):
+    """('', ) → (safe, None) or (None, reason). THE ONE PLACE that decides whether a
+    sheet title can be written at all.
+
+    ⚠️ IT EXISTS BECAUSE openpyxl RAISES, NOT BECAUSE EXCEL IS FUSSY (F-19). A title
+    holding `:` made `wb.create_sheet` throw a bare ValueError out through
+    `apply_changeset` and out through the route as an HTTP 500 with a traceback — after
+    the checkpoint, the daily `.bak` and the pre-agent copy had all been taken, and with
+    the whole changeset lost. A refusal with a sentence, at validation time, costs one
+    operation instead.
+    """
+    s = "" if name is None else str(name).strip()
+    if not s:
+        return None, "a sheet needs a name"
+    bad = sorted({c for c in s if c in SHEET_TITLE_BAD})
+    if bad:
+        return None, ("a sheet name cannot contain " + " ".join(bad)
+                      + " — Excel refuses those characters in a sheet title")
+    if s.startswith("'") or s.endswith("'"):
+        return None, "a sheet name cannot start or end with an apostrophe"
+    if len(s) > SHEET_NAME_MAX:
+        return None, f"a sheet name is at most {SHEET_NAME_MAX} characters"
+    if s.lower() == "history":
+        return None, "'History' is reserved by Excel and cannot be a sheet name"
+    return s, None
+
+
+# ── dates, both directions ───────────────────────────────────────────────────
+# ⚠️ THE INVERSE OF excel_serial, AND IT IS A HONESTY FIX RATHER THAN A FEATURE
+# (findings F-10, F-11). A date cell is a NUMBER with a date number-format on it; the
+# tool result used to hand the model `{"value": 46037.0, "text": "46037"}` and the
+# card's before→after column printed `46034 (yyyy-mm-dd)`. An agent asked "what is the
+# invoice date in A1" answered 46037, and a text date written into a date-formatted cell
+# read as a FIX on the card ("46034 → 2026-01-15") when it was in fact the $2,500
+# incident with the visual tell removed.
+_DATE_TOKENS = re.compile(r"[ymdhs]", re.IGNORECASE)
+
+
+def is_date_format(pattern) -> bool:
+    """Does this number-format pattern render its cell as a DATE or a TIME? PURE.
+
+    Quoted literals and [bracketed] sections are stripped first, so `0.00" kg"` and
+    `[$-409]#,##0` are not mistaken for dates by the letters inside them. A pattern
+    holding `@` is a TEXT format and is never a date.
+    """
+    p = str(pattern or "")
+    if not p or p.strip().lower() == "general":
+        return False
+    p = re.sub(r'"[^"]*"', "", p)
+    p = re.sub(r"\[[^\]]*\]", "", p)
+    p = re.sub(r"\\.", "", p)
+    if "@" in p:
+        return False
+    return bool(_DATE_TOKENS.search(p))
+
+
+def is_text_format(pattern) -> bool:
+    """`@` — the pattern that MEANS "this cell is text on purpose" (F-09, F-28)."""
+    p = str(pattern or "").strip().strip('"')
+    return p == "@"
+
+
+def serial_text(serial, pattern="") -> str:
+    """A date serial → 'YYYY-MM-DD' (or with a time when the value has a fraction, or
+    a bare 'HH:MM:SS' when it is under a day). '' when it is not a usable serial.
+
+    Deliberately ISO rather than a re-implementation of Excel's pattern language: the
+    goal is that a human and a model can both read the cell, and inventing a second
+    number-format renderer would be a second thing to get wrong. The PATTERN travels
+    alongside so the reader can see how the sheet shows it.
+    """
+    n = _num(serial)
+    if n is None or n < 0 or n > 2_958_465:            # 0 … 9999-12-31
+        return ""
+    try:
+        days = int(n)
+        frac = float(n) - days
+        secs = int(round(frac * 86400.0))
+        if secs >= 86400:
+            days, secs = days + 1, 0
+        if days == 0:
+            return "%02d:%02d:%02d" % (secs // 3600, (secs // 60) % 60, secs % 60)
+        d = _EPOCH + _dt.timedelta(days=days, seconds=secs)
+    except (OverflowError, ValueError):
+        return ""
+    if secs:
+        return d.strftime("%Y-%m-%d %H:%M:%S")
+    return d.strftime("%Y-%m-%d")
 
 
 def excel_serial(value) -> float:
@@ -468,6 +643,17 @@ def cell_snapshot(cell, cached=None) -> dict:
     style = style_from_cell(cell)
     if style:
         out["s"] = style
+    # ⚠️ FORCE_STRING IS RE-DERIVED FROM THE `@` NUMBER FORMAT (finding F-28), because
+    # the .xlsx has nowhere else to keep it. Univer's t:4 means "this cell is text ON
+    # PURPOSE" — a part code, a leading-zero id — and it was written out as a plain
+    # string and read back as t:1, at which point the text-that-looks-numeric detector
+    # nagged about a cell the page had deliberately made text. The `@` pattern IS the
+    # persisted intent, in the format Excel itself uses for it.
+    if out.get("t") == CV_STRING and isinstance(style, dict):
+        n = style.get("n")
+        pat = n.get("pattern") if isinstance(n, dict) else n
+        if is_text_format(pat):
+            out["t"] = CV_FORCE_STRING
     return out
 
 
@@ -497,22 +683,75 @@ def sheet_snapshot(ws, sheet_id: str, cached_ws=None) -> dict:
             cell_data.setdefault(str(cell.row - 1), {})[str(cell.column - 1)] = c
             used += 1
 
+    # ⚠️ hd (HIDDEN) IS READ FROM THE FILE NOW, NOT HARD-CODED TO 0 (finding F-27).
+    # This block used to emit `hd: 0` on every entry — a value read from nothing and
+    # written to nothing, so the snapshot ASSERTED "nothing is hidden" about a sheet
+    # where rows and columns were hidden. A present-but-fake field is worse than an
+    # absent one, and the consequence was real: a hidden column came BACK ON SCREEN
+    # after an agent write, which is data Debi deliberately hid reappearing.
     row_data, column_data = {}, {}
     try:
         for idx, dim in (ws.row_dimensions or {}).items():
             i = _idx(idx)
             h = _num(getattr(dim, "height", None))
-            if i is not None and i >= 1 and h:
-                row_data[str(i - 1)] = {"h": round(h / PT_PER_PX, 2), "hd": 0}
+            hd = 1 if getattr(dim, "hidden", False) else 0
+            if i is not None and i >= 1 and (h or hd):
+                ent = {"hd": hd}
+                if h:
+                    ent["h"] = round(h / PT_PER_PX, 2)
+                row_data[str(i - 1)] = ent
     except Exception:                                            # noqa: BLE001
         pass
     try:
         for letter, dim in (ws.column_dimensions or {}).items():
             w = _num(getattr(dim, "width", None))
-            col = getattr(dim, "min", None)
-            i = _idx(col)
-            if i is not None and i >= 1 and w:
-                column_data[str(i - 1)] = {"w": round(w * PX_PER_CHAR, 2), "hd": 0}
+            hd = 1 if getattr(dim, "hidden", False) else 0
+            lo, hi = _idx(getattr(dim, "min", None)), _idx(getattr(dim, "max", None))
+            if lo is None or lo < 1 or not (w or hd):
+                continue
+            # A column_dimensions entry can span a RANGE (min..max); hidden columns very
+            # often arrive that way, and reading only `min` lost every other column in
+            # the band. Bounded so a "hide A:XFD" cannot build a 16k-entry dict.
+            hi = lo if hi is None or hi < lo else min(hi, lo + 512)
+            for i in range(lo, hi + 1):
+                ent = {"hd": hd}
+                if w:
+                    ent["w"] = round(w * PX_PER_CHAR, 2)
+                column_data[str(i - 1)] = ent
+    except Exception:                                            # noqa: BLE001
+        pass
+
+    # ⚠️ FREEZE PANES, GRIDLINES AND AUTOFILTER, ALSO READ RATHER THAN INVENTED (F-27).
+    # The three hard-coded literals below the return used to say "not frozen, gridlines
+    # on, no filter" about every sheet ever read.
+    freeze = {"xSplit": 0, "ySplit": 0, "startRow": -1, "startColumn": -1}
+    try:
+        fp = getattr(ws, "freeze_panes", None)
+        if isinstance(fp, str) and fp:
+            m = re.match(r"^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$", fp.strip())
+            if m:
+                c = 0
+                for ch in m.group(1).upper():
+                    c = c * 26 + (ord(ch) - 64)
+                xs, ys = max(c - 1, 0), max(int(m.group(2)) - 1, 0)
+                freeze = {"xSplit": xs, "ySplit": ys,
+                          "startRow": ys if ys else -1,
+                          "startColumn": xs if xs else -1}
+    except Exception:                                            # noqa: BLE001
+        pass
+    gridlines = 1
+    try:
+        sv = getattr(ws, "sheet_view", None)
+        if sv is not None and getattr(sv, "showGridLines", True) is False:
+            gridlines = 0
+    except Exception:                                            # noqa: BLE001
+        pass
+    autofilter = ""
+    try:
+        af = getattr(ws, "auto_filter", None)
+        ref = getattr(af, "ref", None) if af is not None else None
+        if isinstance(ref, str) and ref:
+            autofilter = ref
     except Exception:                                            # noqa: BLE001
         pass
 
@@ -528,15 +767,16 @@ def sheet_snapshot(ws, sheet_id: str, cached_ws=None) -> dict:
     cols = max(int(getattr(ws, "max_column", 0) or 0) + 5, DEFAULT_COLS)
     name = str(getattr(ws, "title", "") or "Sheet")[:SHEET_NAME_MAX]
     return {
-        "id": sheet_id, "name": name, "tabColor": "", "hidden": 0,
+        "id": sheet_id, "name": name, "tabColor": "",
+        "hidden": 1 if str(getattr(ws, "sheet_state", "visible")) != "visible" else 0,
         "rowCount": min(rows, 5000), "columnCount": min(cols, 500),
-        "zoomRatio": 1, "freeze": {"xSplit": 0, "ySplit": 0,
-                                   "startRow": -1, "startColumn": -1},
+        "zoomRatio": 1, "freeze": freeze,
         "scrollTop": 0, "scrollLeft": 0,
         "defaultColumnWidth": DEFAULT_COL_PX, "defaultRowHeight": DEFAULT_ROW_PX,
         "mergeData": merges, "cellData": cell_data,
         "rowData": row_data, "columnData": column_data,
-        "showGridlines": 1, "rowHeader": {"width": 46}, "columnHeader": {"height": 20},
+        "showGridlines": gridlines, "autoFilter": autofilter,
+        "rowHeader": {"width": 46}, "columnHeader": {"height": 20},
         "rightToLeft": 0, "truncated": bool(truncated),
     }
 
@@ -638,9 +878,18 @@ def _sheet_names(snapshot) -> list:
             name = str(data.get("name") or "").strip()[:SHEET_NAME_MAX]
         if not name:
             name = f"Sheet{i + 1}"
+        # ⚠️ THE SUFFIX IS BUILT INSIDE THE 31-CHARACTER BUDGET (finding F-31). The old
+        # `base[:SHEET_NAME_MAX - 3] + "(n)"` produced a 32-character title from the
+        # tenth duplicate on, past Excel's own limit — openpyxl warned and wrote it, and
+        # some applications refuse the file. And it is BOUNDED: a name that cannot be
+        # made free in 200 tries falls back to a positional one rather than spinning.
         base, n = name, 2
         while name.lower() in seen:            # Excel refuses duplicate sheet names
-            name = f"{base[:SHEET_NAME_MAX - 3]}({n})"
+            if n > 200:
+                name = f"Sheet{i + 1}-{len(seen)}"[:SHEET_NAME_MAX]
+                break
+            sfx = f"({n})"
+            name = base[:max(1, SHEET_NAME_MAX - len(sfx))] + sfx
             n += 1
         seen.add(name.lower())
         out.append((sid, name))
@@ -667,7 +916,17 @@ def write_snapshot(snapshot, path) -> dict:
     written = 0
     for sid, name in pairs:
         data = snapshot["sheets"].get(sid)
-        ws = wb.create_sheet(title=name)
+        # ⚠️ THE ONE LINE THAT USED TO 500 (finding F-19). openpyxl raises a bare
+        # ValueError for a title holding `: [ ] * ? / \`, save_doc catches only
+        # OfficeError, so the ValueError escaped apply_changeset and the route answered
+        # HTTP 500 with a traceback — the whole changeset lost and every retry crashing
+        # the same way. validate_ops refuses such a name now; this is the FLOOR under
+        # that, for a snapshot that arrived from anywhere else.
+        try:
+            ws = wb.create_sheet(title=name)
+        except Exception as e:                                   # noqa: BLE001
+            raise OfficeError(
+                f"refused: {name!r} cannot be a sheet name — {e}") from None
         if not isinstance(data, dict):
             continue
         cell_data = data.get("cellData")
@@ -687,6 +946,7 @@ def write_snapshot(snapshot, path) -> dict:
                         continue
         _write_dimensions(ws, data)
         _write_merges(ws, data)
+        _write_view(ws, data)
     _atomic_save(wb, path)
     return {"sheets": len(pairs), "cells": written}
 
@@ -722,18 +982,35 @@ def _write_cell(ws, row: int, col: int, cval: dict, styles) -> bool:
     if style:
         apply_style(cell, style)
         wrote = True
+    # ⚠️ FORCE_STRING'S INTENT IS PERSISTED AS THE `@` FORMAT (finding F-28). Writing the
+    # string alone lost the "this is text on purpose" flag, and the round-trip then read
+    # it back as an ordinary string — so the text-that-looks-numeric detector nagged
+    # about a cell the page had deliberately made text. `@` is what Excel itself uses to
+    # say this, and cell_snapshot re-derives t:4 from it.
+    if cval.get("t") == CV_FORCE_STRING and isinstance(cell.value, str):
+        try:
+            if not is_text_format(cell.number_format):
+                cell.number_format = "@"
+                wrote = True
+        except Exception:                                        # noqa: BLE001
+            pass
     return wrote
 
 
 def _write_dimensions(ws, data: dict) -> None:
+    """Row heights, column widths — and, as of loffice-2026-08-28d, HIDDEN (F-27)."""
     try:
         rd = data.get("rowData")
         if isinstance(rd, dict):
             for key, val in rd.items():
                 i = _idx(key)
-                h = _num((val or {}).get("h")) if isinstance(val, dict) else None
-                if i is not None and h and h > 0:
+                if i is None or not isinstance(val, dict):
+                    continue
+                h = _num(val.get("h"))
+                if h and h > 0:
                     ws.row_dimensions[i + 1].height = round(h * PT_PER_PX, 2)
+                if _num(val.get("hd")):
+                    ws.row_dimensions[i + 1].hidden = True
     except Exception:                                            # noqa: BLE001
         pass
     try:
@@ -741,10 +1018,49 @@ def _write_dimensions(ws, data: dict) -> None:
         if isinstance(cd, dict):
             for key, val in cd.items():
                 i = _idx(key)
-                w = _num((val or {}).get("w")) if isinstance(val, dict) else None
-                if i is not None and w and w > 0:
-                    ws.column_dimensions[get_column_letter(i + 1)].width = \
-                        round(w / PX_PER_CHAR, 2)
+                if i is None or not isinstance(val, dict):
+                    continue
+                w = _num(val.get("w"))
+                letter = get_column_letter(i + 1)
+                if w and w > 0:
+                    ws.column_dimensions[letter].width = round(w / PX_PER_CHAR, 2)
+                if _num(val.get("hd")):
+                    ws.column_dimensions[letter].hidden = True
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
+def _write_view(ws, data: dict) -> None:
+    """Freeze panes, gridline visibility, autofilter and sheet-hidden — the four things
+    finding F-27 proved were LOST by every save while the snapshot claimed otherwise.
+
+    Each one is independently guarded: an unwritable view setting must cost that setting
+    and never the workbook.
+    """
+    try:
+        fz = data.get("freeze")
+        if isinstance(fz, dict):
+            xs = int(_num(fz.get("xSplit")) or 0)
+            ys = int(_num(fz.get("ySplit")) or 0)
+            if xs > 0 or ys > 0:
+                ws.freeze_panes = get_column_letter(max(xs, 0) + 1) + str(max(ys, 0) + 1)
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        g = data.get("showGridlines")
+        if g is not None and not _num(g):
+            ws.sheet_view.showGridLines = False
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        af = data.get("autoFilter")
+        if isinstance(af, str) and af.strip():
+            ws.auto_filter.ref = af.strip()
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        if _num(data.get("hidden")):
+            ws.sheet_state = "hidden"
     except Exception:                                            # noqa: BLE001
         pass
 
@@ -987,9 +1303,22 @@ def write_diag(root, stage, detail="", boot="", ms=None) -> str:
     return line
 
 
-def delete_doc(root, name):
-    """(True, None) or (False, reason). Deletes the workbook only — a .bak beside
-    it is the thing that exists to survive mistakes, so it stays."""
+def delete_doc(root, name, backups: bool = False):
+    """(True, None) or (False, reason).
+
+    THE WORKBOOK ONLY, BY DEFAULT — a `.bak` beside it is the thing that exists to survive
+    mistakes, so it stays.
+
+    ⚠️ `backups=True` IS THE OTHER HALF OF AN HONESTY FIX (live finding B5). "This cannot be
+    undone" was false in BOTH directions: a delete left the daily `<stem>.YYYYMMDD.bak.xlsx`
+    on disk, and `is_backup_name()` filters those out of `list_docs`, so the copy was
+    neither listed nor deletable from the UI. The delete COULD be undone from a file the
+    user was never told about — and somebody deleting a workbook for privacy kept its
+    contents. The panel now says which of the two she is getting and offers both.
+
+    The pre-agent copy and the checkpoint stack go with the workbook whenever the backups
+    do: they are copies of the same content, under the same argument.
+    """
     target, reason = doc_target(root, name)
     if not target:
         return False, reason
@@ -997,6 +1326,23 @@ def delete_doc(root, name):
         os.remove(target)
     except OSError as e:
         return False, f"could not delete: {e}"
+    if not backups:
+        return True, None
+    d, base = os.path.split(target)
+    stem = os.path.splitext(base)[0]
+    try:
+        for n in os.listdir(d):
+            if n.startswith(stem + ".") and is_backup_name(n):
+                try:
+                    os.remove(os.path.join(d, n))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    try:
+        shutil.rmtree(os.path.join(checkpoint_root(root), stem), ignore_errors=True)
+    except OSError:
+        pass
     return True, None
 
 
@@ -1031,4 +1377,18 @@ def rename_doc(root, name, to):
         os.rename(src, dst)
     except OSError as e:
         return None, f"could not rename: {e}"
+    # ⚠️ THE UNDO STACK FOLLOWS THE FILE (finding F-21). `.checkpoints/<stem>/` is keyed
+    # by the file stem, and a rename used to orphan it: `undo_changeset` then answered
+    # "no such workbook" — blaming a missing file for what was really an unreachable
+    # stack — while the checkpoints, and the pre-agent copy that now lives beside them,
+    # sat on disk under the old stem for ever. A rename is not a reason to lose an undo.
+    try:
+        old_dir = os.path.join(checkpoint_root(root),
+                               os.path.splitext(os.path.basename(src))[0])
+        new_dir = os.path.join(checkpoint_root(root), os.path.splitext(safe)[0])
+        if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+            os.makedirs(os.path.dirname(new_dir), exist_ok=True)
+            os.rename(old_dir, new_dir)
+    except OSError:
+        pass                                 # the rename SUCCEEDED; this is a courtesy
     return safe, None

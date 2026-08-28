@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-28c">
+<meta name="harness-build" content="loffice-2026-08-28d">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -196,6 +196,14 @@
         border-radius:6px;color:var(--dim);white-space:nowrap;
         height:var(--ctl-h);display:inline-flex;align-items:center}
   .pill.on{color:var(--gold);border-color:var(--gold)}
+  /* ⚠️ THE MODEL PILL RAN OFF THE RIGHT EDGE OF THE AI PANEL (live finding D1):
+     `QWEN3.6-27B-FABLE-FUS-711-UNHERETIC-NM-DAU-NE…` is 45 characters of `nowrap` in a
+     334 px column, and it clipped its own container in BOTH states. It SHRINKS and
+     ellipsises now instead of overflowing — `min-width:0` is the half that matters,
+     because a flex item will not shrink below its content width without it. The full name
+     stays on the pill's own `title`, so nothing is lost. */
+  #ai-model{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;
+            display:inline-block;line-height:var(--ctl-h)}
   /* The dirty marker is a dot beside the file name — the office convention — not a
      word: the name is the thing the eye is already on. */
   #dot{display:none;width:7px;height:7px;border-radius:50%;background:var(--gold);
@@ -813,7 +821,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>loffice-2026-08-28c</code>.</div>
+  Build <code>loffice-2026-08-28d</code>.</div>
 <!-- ══ ROW 1 — IDENTITY, TITLE, AND THE FOUR PRIMARY ACTIONS ══════════════════════
      Google's own layout, and the reason it is two rows: the logo sits at the far left
      across both, the DOCUMENT TITLE is row 1, and the menu bar is row 2 directly under
@@ -839,6 +847,39 @@
        title, Download and Delete are on every file row, Open IS the file list.
        They live in the DARK strip rather than the rail because the rail collapses. -->
   <button id="btn-start" class="ghost" title="⌂ LOffice home — close this workbook and show the start screen">⌂</button>
+  <!-- ══ THE SURVIVORS' DOOR (live finding B3) ═════════════════════════════════════
+       THE FINDING, and it named the one arrangement that cannot be right: `body.ooedit`
+       hides the whole white menu bar, so the bar is visible ONLY on the start screen —
+       where every document row in it is disabled because nothing is open. Sixty-odd rows
+       of chrome that can be seen only when they can do nothing. The survivor audit found
+       most rows DO have another door (Rename is the title, Save is here, Close is ⌂,
+       Download and Delete are on every file row, Open IS the file list, Help is ?), but
+       three had NONE while a workbook was open:
+         · File → Back to MOT Main ↗   — you had to CLOSE the workbook to leave the app
+         · Data → Column statistics · Sort A→Z
+         · View → Zoom / Gridlines
+       This menu is their home. It sits in the DARK strip, so it survives `body.ooedit`
+       and the rail collapsing, and it is present in BOTH modes so there is one place to
+       look. Download is here too because the rail row's tiny `download` link was the only
+       door to the one byte-exact copy of the file, unlabelled as such.
+       ⚠️ AND IT DOES NOT PRETEND. The verbs the EDITOR owns — zoom, gridlines, its own
+       sort, its own selection aggregates — are NOT duplicated here; `morePaint` disables
+       the two tier-1 rows with a sentence naming the editor's own control instead, because
+       a row that runs against a grid nobody is looking at is worse than no row at all. -->
+  <div class="mwrap" id="morewrap">
+    <button id="btn-more" class="ghost" title="Download, column statistics, sort, and the way out of LOffice">⋯</button>
+    <div class="mpop" id="m-more">
+      <button class="mi" id="mm-download">Download a copy<span class="mk">byte-exact</span></button>
+      <button class="mi" id="mm-stats">Column statistics</button>
+      <button class="mi" id="mm-sortaz">Sort sheet A → Z<span class="mk">by this column</span></button>
+      <button class="mi" id="mm-sortza">Sort sheet Z → A<span class="mk">by this column</span></button>
+      <div class="msep"></div>
+      <button class="mi" id="mm-fidelity">What round-trips</button>
+      <button class="mi" id="mm-delete">Delete this workbook…</button>
+      <div class="msep"></div>
+      <button class="mi" id="mm-home">Back to MOT Main<span class="mk">↗</span></button>
+    </div>
+  </div>
   <button id="btn-info" class="ghost" title="About this build, what round-trips, and the keyboard shortcuts">?</button>
   <button id="btn-rich" title="Open this workbook in the full ONLYOFFICE editor">Full editor</button>
   <button id="btn-import" title="Bring an .xlsx in from anywhere on this Mac">Import</button>
@@ -957,9 +998,9 @@
         <button class="mi" id="mi-coldel">Delete this column<span class="mk">⌘Z undoes it</span></button>
         <div class="msep"></div>
         <button class="mi" id="mi-func" disabled title="Type it straight into the cell, starting with =. LOffice stores the formula as text and Excel recalculates it when you open the file there.">Function</button>
-        <button class="mi" id="mi-chart" disabled title="LOffice's .xlsx round-trip does not model charts — see Help → What round-trips.">Chart</button>
-        <button class="mi" id="mi-image" disabled title="LOffice's .xlsx round-trip does not model images — see Help → What round-trips.">Image</button>
-        <button class="mi" id="mi-link" disabled title="Hyperlinks are not carried by the round-trip yet — see Help → What round-trips.">Link<span class="mk">⌘K</span></button>
+        <button class="mi" id="mi-chart" disabled title="This is LOffice's own plain grid, which cannot draw a chart. The full editor's own Insert tab can, and a save keeps it — measured, not assumed (see ? → What round-trips).">Chart</button>
+        <button class="mi" id="mi-image" disabled title="This is LOffice's own plain grid, which cannot place an image. The full editor's own Insert tab can, and a save keeps it — measured, not assumed (see ? → What round-trips).">Image</button>
+        <button class="mi" id="mi-link" disabled title="This is LOffice's own plain grid, which cannot make a hyperlink. The full editor's own Insert tab can, and a save keeps it — measured, not assumed (see ? → What round-trips).">Link<span class="mk">⌘K</span></button>
       </div>
     </div>
     <div class="mwrap">
@@ -1005,8 +1046,8 @@
              says that too, after the sort, with ⌘Z right there. -->
         <button class="mi" id="mi-sortaz">Sort sheet A → Z<span class="mk">by this column</span></button>
         <button class="mi" id="mi-sortza">Sort sheet Z → A<span class="mk">by this column</span></button>
-        <button class="mi" id="mi-filter" disabled title="Filters are not carried by the .xlsx round-trip yet — see Help → What round-trips.">Create a filter</button>
-        <button class="mi" id="mi-valid" disabled title="Data validation is not carried by the .xlsx round-trip yet — see Help → What round-trips.">Data validation</button>
+        <button class="mi" id="mi-filter" disabled title="This is LOffice's own plain grid, which cannot build a filter. The full editor's own Data tab can, and a save keeps it — measured, not assumed (see ? → What round-trips).">Create a filter</button>
+        <button class="mi" id="mi-valid" disabled title="This is LOffice's own plain grid, which cannot set up data validation. The full editor's own Data tab can, and a save keeps it — measured, not assumed (see ? → What round-trips).">Data validation</button>
         <div class="msep"></div>
         <button class="mi" id="mi-sheetname" disabled title="The rail's one name box is already doing two jobs (create and rename a FILE); a third verb is not this page's to add yet. The rich editor renames a sheet from its tab.">Rename this sheet</button>
       </div>
@@ -1112,7 +1153,19 @@
       </div>
       <div id="flist"></div>
       <div id="fnote">
-        <span id="fidelity"></span>
+        <!-- ⚠️ THE RAIL'S OWN LINE IS `#fnote-line` AS OF loffice-2026-08-28d, AND THE TWO
+             SPANS BELOW IT ARE HIDDEN CARRIERS (live finding L3). The rail footer used to
+             print the openpyxl mapper's sentence — "Complex styling may be simplified —
+             keep your original file; Office saves copies" — under a workbook the EDITOR
+             was holding, whose save measurably keeps charts, images, filters, validation,
+             hyperlinks and freeze panes. So the visible line is now about the save path
+             that is actually live, and the full per-path text lives in Help → What
+             round-trips. Both sentences are still single-sourced from bridge/office.py;
+             they are parked in these spans so `helpFidelity` and the start-screen note can
+             read them without a second fetch. -->
+        <div id="fnote-line"></div>
+        <span id="fidelity" style="display:none"></span>
+        <span id="fidelity-editor" style="display:none"></span>
         <div style="margin-top:6px" id="fdir"></div>
         <!-- the build stamp, copied from the <meta> once scripts are alive: it answers
              "is the bridge serving the file I just shipped?" without a terminal -->
@@ -1210,8 +1263,22 @@
           <b>fill the sheet in</b>: “create a 2026 monthly budget with a total row”,
           “put the months down column A”, “bold the header”.
           You get a preview of every cell it would touch and it changes nothing until
-          you press <b>Apply</b> — with an <b>Undo</b> after, and the
-          file only written when you press ⌘S.<br><br>
+          you press <b>Apply</b>.
+          <!-- ⚠️ THIS SENTENCE WAS REWRITTEN AT loffice-2026-08-28d BECAUSE IT WAS FALSE
+               IN THE LANE IT DESCRIBES (live finding L5). It used to promise "with an
+               Undo after, and the file written only on a ⌘S", and MEASURED:
+               once a workbook is open the editor owns the document, ooActApply sets
+               card._undo = false, and THERE IS NO UNDO BUTTON on the card — the undo is
+               the editor's own ⌘Z, which the card says and the intro did not. And a plan
+               containing a `sort` takes the BRIDGE route, which saves the file IMMEDIATELY
+               (/api/office/save plus a daily .bak), so "only written when you press ⌘S"
+               was exactly wrong for it. Worse, the promise was SOMETIMES kept — the
+               create-from-nothing path does render an Undo chip — so the rule could not be
+               learnt. One sentence per lane, matching what the card will actually offer. -->
+          Apply puts the change in the editor: <b>⌘Z</b> inside the sheet takes it
+          back, and <b>⌘S</b> writes it to the file. The one exception is a
+          <b>sort</b>, which has to go through the file and is saved straight away —
+          the card says so before you press it.<br><br>
           Each question is asked on its own: the sheet travels with it, the earlier
           answers do not.</div>
       </div>
@@ -1532,6 +1599,56 @@ function menuClose(why) {
     if (b) b.classList.remove('on');
   });
   openMenu = -1;
+}
+
+/* ══ THE STRIP'S ⋯ MENU — THE SURVIVORS' HOME (live finding B3) ═════════════════
+   Deliberately NOT a ninth entry in MENUS/MTOPS: that array is the white menu bar, which
+   `body.ooedit` hides — and hiding is precisely the problem this menu exists to solve. It
+   is one popover with its own open flag, and it borrows the bar's CSS (.mwrap/.mpop/.mi)
+   so it costs no new styling and reads as the same kind of object.
+
+   EVERY ROW EITHER WORKS OR SAYS WHY NOT, and the "why not" names a control that exists at
+   that moment — which is the discipline live finding B4 is about (File → Delete's sentence
+   told the user to use File → Download, in a state where the menu bar holding both was
+   hidden). */
+let moreOpen = false;
+function moreShow(open) {
+  moreOpen = !!open;
+  const p = el('m-more'), b = el('btn-more');
+  if (p) p.classList.toggle('on', moreOpen);
+  if (b) b.classList.toggle('on', moreOpen);
+  if (moreOpen) { menuClose('more'); morePaint(); bx('more-open', current || 'none'); }
+}
+// PURE-ish: reads `current`, `busy` and editorActive(). One row, one honest reason.
+function morePaint() {
+  const has = !!current && !busy;
+  const t1 = has && !editorActive();
+  let rc = null;
+  try { rc = lastCellNow(); } catch (e) { rc = null; }
+  const setRow = (id, on, why) => {
+    const b = el(id);
+    if (!b) return;
+    b.disabled = !on;
+    b.title = on ? '' : (why || '');
+  };
+  setRow('mm-download', has, 'Open a workbook first — this hands you the file itself.');
+  // ⚠️ THE EDITOR'S OWN CONTROLS ARE NAMED RATHER THAN SHADOWED. Column statistics and
+  // Sort run over the TIER-1 grid's selection; with the editor up that grid is not what
+  // you are looking at, so running them would compute over a document nobody can see.
+  setRow('mm-stats', t1 && !!rc,
+         editorActive()
+           ? 'The full editor shows Sum/Average/Count for the selected cells in its own '
+             + 'status bar, along the bottom of the sheet.'
+           : (has ? 'Click a cell in the column first.' : 'Open a workbook first.'));
+  const sortWhy = editorActive()
+    ? 'The full editor has its own sort: Data → Sort, or the AI panel — ask for "sort by '
+      + 'column B" and the card will say it goes through the file.'
+    : (has ? 'Click a cell in the column to sort by.' : 'Open a workbook first.');
+  setRow('mm-sortaz', t1 && !!rc, sortWhy);
+  setRow('mm-sortza', t1 && !!rc, sortWhy);
+  setRow('mm-delete', has, 'Open a workbook first.');
+  setRow('mm-fidelity', true, '');
+  setRow('mm-home', true, '');
 }
 
 /* ══ SUBMENUS — ONE NESTING LEVEL, AND NO SECOND ENGINE ════════════════════════
@@ -2707,18 +2824,72 @@ const KEYS_TEXT = [
   '  hides it.',
 ].join('\n');
 function helpKeys() { say(KEYS_TEXT, 'dim'); }
+/* ⚠️⚠️ REWRITTEN AT loffice-2026-08-28d, AND EVERY LINE OF THE CHANGE IS A MEASUREMENT
+   (live finding L3). This sheet used to say, globally and in one voice, that "a SAVE drops
+   charts, images, pivot tables, conditional formatting, data validation, comments, cell
+   borders, freeze panes, filters, named ranges, macros."
+
+   MEASURED, on QA-rich.xlsx (chart, autofilter, data validation, hyperlink, freeze panes,
+   fill, second sheet): open it in the editor, change one cell, save from OUR strip, re-read
+   the .xlsx —
+       xl/charts/chart1.xml   1 159 B  →  3 020 B, present (plus a new _rels)
+       autoFilter · dataValidation · hyperlink · freeze pane   all still there.
+   The x2t round-trip keeps every one of them. The old sentence described the OPENPYXL
+   mapper, which in one-editor world runs only for the Quick lane's bridge route (a sort),
+   an agent changeset apply, and the tier-1 grid.
+
+   Under-promising is still lying, and this particular lie drove the user AWAY from the app
+   — it is why Insert → Chart, Insert → Image, Insert → Link, Data → Create a filter and
+   Data → Data validation were all greyed out with a limit that does not apply to the
+   editor that is doing the work. So the sheet states the limit PER SAVE PATH, and the
+   per-path sentences are single-sourced from bridge/office.py (FIDELITY_NOTE /
+   FIDELITY_EDITOR_NOTE) via /api/office/files so the two languages cannot drift. */
+/* The rail footer's and the start screen's one line about fidelity. PURE-ish: it reads
+   `editorActive()` and nothing else, so it says which of the two save paths is LIVE rather
+   than reciting the narrow one's limits over both (live finding L3). Called from
+   loadFiles(), from ooPaintClass()'s repaint and from renderHome(). */
+function fnoteText() {
+  if (editorActive()) {
+    return 'Saved by the full editor: charts, images, filters, validation, hyperlinks and '
+         + 'freeze panes all survive. A sort asked for in the AI panel goes through the '
+         + 'file instead and keeps less — the card says so. ? → What round-trips.';
+  }
+  if (ooInstalled === false) {
+    return 'LOffice’s own grid is the editor on this Mac, so a save goes through LOffice’s '
+         + '.xlsx mapper: it keeps values, formulas and basic formatting and drops charts, '
+         + 'images and borders. ? → What round-trips.';
+  }
+  return 'Open a workbook and the full editor saves it, keeping charts, images, filters '
+       + 'and validation. ? → What round-trips names the one narrower path.';
+}
+function fnoteLine() {
+  const d = el('fnote-line');
+  if (d) d.textContent = fnoteText();
+  const h = el('hnote');
+  if (h && !current) h.textContent = fnoteText();
+}
+
 function helpFidelity() {
-  say('What the .xlsx round-trip carries\n\n'
-      + '  values (text, numbers, booleans), formulas as text with their last cached '
-      + 'result, dates, number formats, bold, italic, underline, strikethrough, font '
-      + 'name, size and colour, solid fills, alignment, wrap, merged ranges, column '
-      + 'widths, row heights, sheet names and order.\n\n'
-      + 'What a SAVE drops\n\n'
-      + '  charts, images, pivot tables, conditional formatting, data validation, '
-      + 'comments, cell borders, freeze panes, filters, named ranges, macros.\n\n'
-      + 'That is why a copy of the previous file is kept the first time you save each '
-      + 'day, and why File → Download (which hands you the file itself) is the only '
-      + 'byte-exact copy.\n\n' + (el('fidelity').textContent || ''), 'dim');
+  const editing = editorActive();
+  say('There are TWO ways this app writes a file, and they keep different things.\n\n'
+      + 'The FULL EDITOR’s save (⌘S, the Save button) — the normal one\n\n'
+      + '  ' + (el('fidelity-editor').textContent
+                || 'keeps charts, images, autofilters, data validation, hyperlinks, '
+                   + 'freeze panes and conditional formatting.') + '\n'
+      + '  This is what happens every time you press ⌘S with a workbook open in the '
+      + 'editor.\n\n'
+      + 'LOffice’s own .xlsx mapper — the narrow one\n\n'
+      + '  ' + (el('fidelity').textContent || '') + '\n'
+      + '  You reach it in exactly three places, and each says so at the time: a SORT '
+      + 'asked for in the AI panel (the card names the route before you press Apply), an '
+      + 'agent change you Apply, and LOffice’s own plain grid when the full editor is not '
+      + 'installed.\n\n'
+      + 'Either way a copy of the previous file is kept the first time you save each day, '
+      + 'and File → Download (which hands you the file itself) is always byte-exact.\n\n'
+      + 'Right now: ' + (editing
+          ? 'the full editor holds this workbook, so ⌘S is the high-fidelity save.'
+          : 'the full editor is not holding a workbook, so a save would go through the '
+            + 'mapper.'), 'dim');
 }
 // ⚖️ ABOUT CARRIES THE AGPL ATTRIBUTION — condition #3 of the 2026-08-27 ONLYOFFICE
 // ruling, which says that if this harness is ever handed to anyone else, the About
@@ -2851,7 +3022,10 @@ function renderHome() {
   }
   const note = el('hnote');
   if (note) {
-    note.textContent = (el('fidelity').textContent || '')
+    // ⚠️ fnoteText(), NOT the mapper's sentence (live finding L3). The start screen used to
+    // greet a first-time user with "Complex styling may be simplified — keep your original
+    // file", which is the narrow path's limit and not the one their ⌘S will take.
+    note.textContent = fnoteText()
       + (files.length > HOME_MAX
           ? ' · showing the ' + HOME_MAX + ' most recent; the file list on the left has them all'
           : '');
@@ -2868,7 +3042,8 @@ function homeDel(name) {
     return;
   }
   armed = null;
-  remove(name);
+  renderFiles();
+  deleteAsk(name);                     // ONE delete sentence — see deleteAsk (C6/B4/B5)
 }
 
 // ── the starter templates ────────────────────────────────────────────────────
@@ -2894,13 +3069,62 @@ async function newBlank() {
   el('new-name').value = '';
   await create();
 }
+/* ⚠️ REWRITTEN AT loffice-2026-08-28d FOR TWO MEASURED FINDINGS AT ONCE.
+
+   B2 — THE CARDS WERE ONE-SHOT AND THEN PERMANENTLY DEAD. `newFromTemplate` hard-coded
+   the name ("Monthly budget", "Task tracker") and POST /api/office/new refuses a name that
+   already exists — deliberately, for names the user TYPED, because silently making
+   `budget (2).xlsx` when somebody asked for `budget.xlsx` hides what they need to know.
+   But a TEMPLATE CARD is not a typed name: it is "give me one of these". So once you had
+   made a Monthly budget, clicking the card forever answered the red line "a workbook with
+   that name already exists" — on a screen showing `Monthly budget.xlsx` in its own recent
+   list two inches below, with no way to name the new one and no hint that renaming or
+   deleting the old one was the fix. `Blank` was unaffected because an empty name already
+   takes the ' (n)' never-clobber walk. Templates take it now too: "Monthly budget (2)".
+
+   L2 — AND IT WROTE THE ROWS INTO A SNAPSHOT NOBODY WAS LOOKING AT. The tail of this
+   function was tier-1: putCell into `snap`, then `save()`. With the editor installed,
+   `save()` routes to ooSave() and writes THE EDITOR'S document — which is the empty file
+   the create route just made. Same defect as the AI lane's create-with-data, same fix:
+   wait for the editor to hold the file, then write through it. */
 async function newFromTemplate(kind) {
   const t = TPL[kind];
   if (!t || busy) return;
   bx('template', kind);
   el('new-name').value = t.name;
-  const made = await create();          // create() names it, opens it, and reports
+  const made = await create(true);      // create() names it, opens it, and reports
   if (!made) return;                    // …or has already said why not
+  // The ops, in the ONE grammar both write paths speak, so the editor route and the
+  // tier-1 route put the same thing in the same cells.
+  const ops = [];
+  t.rows.forEach((row, r) => {
+    const vals = row.map(x => (x === '' ? null : x));
+    ops.push({ op: 'set', r: r, c: 0, values: [vals] });
+  });
+  ops.push({ op: 'style', r0: 0, c0: 0, r1: 0, c1: Math.max(0, t.rows[0].length - 1),
+             set: { bl: 1 } });
+  if (ooInstalled) {
+    const up = await ooWaitReady(OO_WAIT_MS);
+    if (!up) {
+      say('“' + current + '” was created but the full editor has not finished opening it, '
+          + 'so the template rows were not written. The file is empty — delete it, or try '
+          + 'the template again.', 'dim');
+      bx('template-refused', kind + ' editor not ready');
+      return;
+    }
+    const r = ooApplyApi({ ops: ops });
+    if (!r || !r.ok) {
+      say('The template rows could not be written into the editor: '
+          + ((r && r.error) || 'the editor did not say why') + ' — the file was created '
+          + 'and is empty.', null);
+      return;
+    }
+    dirty = true; paint();
+    // A template is a document the user asked to EXIST, so it is saved for them — and
+    // now the thing being saved is the document they can see.
+    await save();
+    return;
+  }
   const sh = activeSheet();
   if (!sh) return;
   t.rows.forEach((row, r) => row.forEach((txt, c) => {
@@ -3949,6 +4173,9 @@ function editorActive() { return !!(ooInstalled && ooReady && !!current); }
 function ooPaintClass() {
   document.body.classList.toggle('ooedit', editorActive());
   document.body.classList.toggle('oowait', !!(ooInstalled && ooBooting && !ooReady));
+  // The fidelity line is about WHICH SAVE PATH IS LIVE, and this is the one place that
+  // changes (live finding L3), so it repaints from here rather than on a timer.
+  try { fnoteLine(); } catch (e) { /* before the rail exists */ }
 }
 
 // ══ THE HOST HALF OF THE PARENT↔CHILD CONTRACT ════════════════════════════════
@@ -4012,8 +4239,7 @@ function ooEvent(ev) {
     bx('oo-saved', ooDoc + ' bytes=' + (ev.bytes || '?')
        + (ev.backup ? ' bak=' + ev.backup : ''));
     say('Saved ' + (ooDoc || '') + ' — ' + Math.round((ev.bytes || 0) / 1024) + ' KB'
-        + (ev.backup ? ' (a copy of the previous file is kept as ' + ev.backup + ')'
-                     : ''), 'ok');
+        + bakNote(ev.backup), 'ok');
     // The AI panel's context is the tier-1 snapshot, which the editor's own edits do
     // not touch. A save is the one moment the two are known to agree, so this is when
     // the snapshot is refreshed — see ooRefreshSnapshot for why it is not more often.
@@ -4321,11 +4547,29 @@ function ooEditorOps(ops, sh) {
         if (m.marked) { if (ooTextForce(m.text)) asText.push(here); return m.text; }
         const co = coerceNumeric(m.text);
         const seat = ctx[o.c + c];
-        if (!co || !co.n || (seat && !seat.numeric)) {
+        /* ⚠️⚠️ THE TEST USED TO BE `!co || !co.n || …`, AND THE `!co.n` HALF WAS THE
+           2026-08-28 INCIDENT LIVING ON IN THE EDITOR ROUTE. Found in the
+           loffice-2026-08-28d adversarial self-pass, measured live: LOffice's OWN starter
+           template came up with `=SUM(B2:B5)` reading 0 over the four amounts directly
+           above it, and every amount left-aligned.
+           WHY: `coerceNumeric('900')` returns {v: 900, n: NULL, shape: 'plain'} — the
+           pattern is deliberately null, because General is already right for a bare number
+           and writing "0" over it would flatten a cell Debi had formatted herself. But
+           `!co.n` read that as "keep it as text", so the STRING went to the editor AND
+           `ooTextForce('900')` stamped the cell `@` to stop the editor's parser touching
+           it. A perfectly ordinary integer was pinned as text on purpose. `=SUM` ignores
+           text, so it computed 0; `=C2-B2` still worked (arithmetic operators DO coerce),
+           which is exactly why it looked half-working.
+           THE QUESTION IS "DOES OUR RULE SAY THIS IS A NUMBER", not "does it also have a
+           pattern to write". This now matches office_ops.parse_input, which has always
+           stored the plain shape as a NUMBER with no format merge — the two lanes were
+           disagreeing about every plain numeric string. */
+        const keepText = !co || (seat && !seat.numeric);
+        if (keepText) {
           if (ooTextForce(m.text)) asText.push(here);
           return v;
         }
-        (byPattern[co.n] = byPattern[co.n] || []).push(here);
+        if (co.n) (byPattern[co.n] = byPattern[co.n] || []).push(here);
         return co.v;
       }));
       /* ⚠️ THE "@" OPS COME FIRST, AND THEY ARE THE FINDING OF THE 2026-08-28 LIVE
@@ -4344,7 +4588,46 @@ function ooEditorOps(ops, sh) {
       ooRects(asText).forEach(at => {
         out.push({ k: 'style', at: at, set: { n: { pattern: '@' } } });
       });
-      out.push({ k: 'set', at: colName(o.c) + (o.r + 1), values: values });
+      /* ⚠️⚠️ THE RANGE IS THE WHOLE RECTANGLE, NOT THE ANCHOR — AND THAT IS A LIE-TO-USER
+         FOUND IN THE 2026-08-28d ADVERSARIAL SELF-PASS, LIVE, IN A REAL EDITOR.
+
+         This used to emit `at: colName(o.c) + (o.r + 1)` — a 1×1 range — and hand it the
+         whole grid. MEASURED in the vendored bundle (v9.2.0.119+3), side by side in one
+         call:
+             SetValue over 'D1'    with [[a,b],[c,d],[e,f]] → D1=a and NOTHING ELSE
+             SetValue over 'G1:H3' with the same array       → all six cells
+         ApiRange.SetValue writes an array ACROSS ITS OWN RANGE, so an anchor-only range
+         silently drops every value but the first — while `done.cells` counted every one of
+         them and the card stamped "6 written". Every multi-cell Quick-lane apply through
+         the editor has been doing that since the one-editor ruling landed, and ⌘S made it
+         permanent. It is the incident's exact shape: a true-looking number over a write
+         that did not happen.
+
+         THE GRID IS PADDED TO A RECTANGLE FIRST, deliberately: the op grammar allows
+         ragged rows (a short row means "nothing further along this one"), and handing a
+         ragged array to a rectangular range is a second thing to get wrong. `null` is what
+         the tier-1 writer means by "leave it", and it is what SetValue gets. */
+      /* ⚠️ AND `null` BECOMES THE EMPTY STRING ON THE WAY TO THE EDITOR. MEASURED in the
+         same live run, once the rectangle above made these cells reachable at all:
+             SetValue over 'F1:H1' with [[null, '', 'keep']]  →  F1 = "#N/A"
+         The op grammar's `null` MEANS "empty this cell" (office_ops.act_cell returns None
+         for both null and ''), and the editor's way of saying that is ''. Handing it null
+         wrote the #N/A ERROR VALUE into the cell instead — which is worse than the silence
+         it replaced, because an error value looks like a broken formula. It was
+         unreachable before the rectangle fix (only the anchor was ever written), so this
+         is the same defect surfacing, not a new one. */
+      const wide = values.reduce((m, row) => Math.max(m, (row || []).length), 0);
+      const blank = v => (v === null || v === undefined ? '' : v);
+      const rect = values.map(row => {
+        const r2 = (row || []).map(blank);
+        while (r2.length < wide) r2.push('');
+        return r2;
+      });
+      const span = colName(o.c) + (o.r + 1)
+        + (rect.length > 1 || wide > 1
+           ? ':' + colName(o.c + wide - 1) + (o.r + rect.length)
+           : '');
+      out.push({ k: 'set', at: span, values: rect });
       Object.keys(byPattern).forEach(pat => {
         ooRects(byPattern[pat]).forEach(at => {
           out.push({ k: 'style', at: at, set: { n: { pattern: pat } } });
@@ -4524,11 +4807,17 @@ function renderFiles() {
     del.textContent = armed === f.name ? 'sure?' : 'delete';
     del.onclick = ev => {
       ev.stopPropagation();
+      // ⚠️ THE TWO-STEP STAYS (a single click must never delete) BUT THE SECOND STEP NOW
+      // ASKS IN WORDS (live finding C6). `sure?` alone said neither that this was the
+      // workbook being edited nor that unsaved edits went with it, and offered no way to
+      // keep a copy first — the File menu at least had a sentence, and the File menu is
+      // hidden whenever a workbook is open (B3/B4).
       if (armed !== f.name) { armed = f.name; renderFiles();
                               setTimeout(() => { if (armed === f.name) { armed = null; renderFiles(); } }, 3000);
                               return; }
       armed = null;
-      remove(f.name);
+      renderFiles();
+      deleteAsk(f.name);
     };
     acts.appendChild(dl); acts.appendChild(del);
     row.appendChild(n); row.appendChild(m); row.appendChild(acts);
@@ -4551,6 +4840,8 @@ async function loadFiles() {
     bx('files-ok', 'n=' + files.length + ' roundtrip=' + j.roundtrip
        + (j.roundtrip_error ? ' err=' + j.roundtrip_error : ''));
     el('fidelity').textContent = j.fidelity || '';
+    el('fidelity-editor').textContent = j.fidelity_editor || '';
+    fnoteLine();
     el('fdir').textContent = j.dir || '';
     // The one thing worth shouting about: no openpyxl means no round-trip at all —
     // New, Import, Open and Save all fail, and until this banner could actually be
@@ -4673,6 +4964,20 @@ function confirmDiscard(name) {
     discardArmed = null; return true;
   }
   discardArmed = name; discardAt = Date.now();
+  /* ⚠️ CLICKING THE ROW OF THE WORKBOOK YOU ARE ALREADY IN IS A REVERT, AND IT SAYS SO
+     (live finding C1). With QA-A.xlsx open and dirty, clicking ITS OWN rail row said
+     '"QA-A.xlsx" has unsaved changes. Save it first, or click QA-A.xlsx again to discard
+     them.' with a "Save & open QA-A.xlsx" button. What two clicks actually got you was a
+     revert-to-last-saved — a reasonable thing to want, and not what the sentence said.
+     "Open" and "Save & open" are both the wrong words for a file you never left. */
+  if (name === current) {
+    say('“' + name + '” is the workbook you have open, and it has unsaved changes. Click '
+        + 'it again to DISCARD them and reload it from the last saved version on disk.',
+        null,
+        { label: 'Save it instead', run: async () => { await save(); discardArmed = null; } });
+    setTimeout(() => { if (discardArmed === name) discardArmed = null; }, 6000);
+    return false;
+  }
   // ⚠️ THE THIRD OPTION IS THE POINT. The message used to state a dilemma — save, or
   // click again to lose the work — and then leave the user to find both halves of it
   // by hand. This is the half nobody should have to assemble: save, then open.
@@ -4729,7 +5034,7 @@ async function save() {
     dirty = false;
     bx('save-ok', j.name + ' cells=' + j.cells + ' mode=' + mode);
     say('Saved ' + j.name + ' — ' + j.cells + ' cells'
-        + (j.backup ? ' (a copy of the previous file is kept as ' + j.backup + ')' : ''), 'ok');
+        + bakNote(j.backup), 'ok');
     await loadFiles();
     // OUR write moved the mtime. Clearing the baseline makes the next check re-read it
     // instead of reporting our own save as somebody else's edit.
@@ -4758,13 +5063,16 @@ function clearWorkbook() {
   mountGen++;    // a pending settle probe must not accuse a grid we just removed
 }
 
-async function remove(name) {
+// `backups` (live finding B5): take the daily `.bak` copies with the workbook. Opt-IN,
+// because a backup is the thing that exists to survive a mistake — but a user deleting a
+// file for privacy must be able to mean it, and until now she could not.
+async function remove(name, backups) {
   if (busy) return;
   busy = true; paint();
   try {
     const r = await fetch('/api/office/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name }),
+      body: JSON.stringify({ name: name, backups: !!backups }),
     });
     const j = await r.json();
     if (!j.ok) { say(j.error || 'could not delete that spreadsheet'); return; }
@@ -4780,14 +5088,37 @@ async function remove(name) {
 // dead end this whole slice exists to remove. The bridge decides the default name
 // (office.DEFAULT_DOC_STEM through the ' (n)' never-clobber walk), so the panel does
 // not have to know or duplicate it. `busy` stays: that one is a real guard.
-async function create() {
+/* ⚠️ THE ".bak" LINE IS SKIPPED FOR A FILE THIS SESSION CREATED (live finding C3).
+   `office.save_doc` takes one daily backup per workbook, and on a brand-new file that means
+   the FIRST save copies the empty workbook the create route wrote a second earlier — and
+   the strip announced it as "a copy of the previous file", which is a safety copy of
+   nothing, described as a safety copy of something. The copy itself is harmless and stays
+   (the rule is one per day per file, and tomorrow's really is worth having); it is the
+   SENTENCE that was untrue. Tracked per NAME in a Set, because that is the only thing this
+   page reliably knows about a create: a rename carries the name forward so the note stays
+   suppressed for the same document, which is right. */
+const madeThisSession = new Set();
+function bakNote(backup) {
+  const b = String(backup || '');
+  if (!b) return '';
+  if (current && madeThisSession.has(current)) {
+    return ' (this one is new, so the safety copy beside it is just the empty file it '
+         + 'started as)';
+  }
+  return ' (a copy of the previous file is kept as ' + b + ')';
+}
+
+// `step` (live finding B2): the caller is a TEMPLATE CARD, not a typed name, so a
+// collision takes the ' (n)' never-clobber walk instead of a refusal. The bridge owns the
+// walk — see /api/office/new for why the distinction is the caller's to make.
+async function create(step) {
   if (busy) return null;
   const name = (el('new-name').value || '').trim();
   busy = true; say(''); paint();
   try {
     const r = await fetch('/api/office/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name }),
+      body: JSON.stringify({ name: name, step: !!step }),
     });
     let j = null;
     try { j = await r.json(); } catch (pe) { j = null; }
@@ -4799,6 +5130,7 @@ async function create() {
     }
     el('new-name').value = '';
     el('newrow').classList.remove('on');
+    madeThisSession.add(j.name);          // see bakNote (live finding C3)
     await loadFiles();
     busy = false;
     await openDoc(j.name);
@@ -4844,11 +5176,59 @@ async function renameDoc() {
     // The open document is the same document; only its name moved. Unsaved edits are
     // deliberately kept — a rename is not a save, and losing work to one would be a
     // very expensive surprise.
+    if (madeThisSession.has(from)) { madeThisSession.delete(from);
+                                    madeThisSession.add(j.name); }
     current = j.name;
+    /* ⚠️⚠️ AND THE EDITOR IS TOLD, WHICH IS THE FIX FOR live finding B1 — the most
+       expensive class of bug this page can have: unsaved work that can never be written.
+
+       Measured before this: the rename succeeded, the title updated, the dot stayed on —
+       and NOTHING told the embed. `ooChild.probe()` still reported the OLD name, so the
+       next Save posted to /api/office/writeback/<old name>, got a 404, and answered "Not
+       saved: no such workbook — the workbook on disk was not changed." There was no way
+       out that kept the work: saving always 404'd, reopening discarded the edit, and the
+       message named no file and offered no next step. The comment above this function
+       says losing work to a rename "would be a very expensive surprise"; keeping work
+       that can never be written is more expensive still.
+
+       A rename is a NAME change and nothing else, so the embed only re-points: same
+       document in memory, same dirty flag, same mtime fence (os.rename preserves both
+       the bytes and the mtime). Re-opening the file here would have been the obvious
+       answer and it would have thrown away exactly the edits this fixes. */
+    if (ooDoc === from || (editorActive() && !ooDoc)) {
+      if (ooChild && typeof ooChild.renameTo === 'function') {
+        let rr = null;
+        try { rr = ooChild.renameTo(j.name); } catch (e) { rr = null; }
+        if (rr && rr.ok) {
+          ooDoc = j.name;
+          bx('oo-rename', from + ' -> ' + j.name);
+        } else {
+          bx('oo-rename-fail', from + ' -> ' + j.name);
+        }
+      } else if (editorActive()) {
+        // An embed too old to know its own name cannot be repointed, and a Save that
+        // will 404 must not be left looking like a Save that will work.
+        say('Renamed to ' + j.name + ' — but this editor frame is too old to be told, so '
+            + '⌘S would fail. Reload the page before saving; your unsaved edits are '
+            + 'still in the editor and ⌘Z still works.', null);
+        el('new-name').value = '';
+        el('newrow').classList.remove('on');
+        await loadFiles();
+        return;
+      }
+    }
     el('new-name').value = '';
     el('newrow').classList.remove('on');
+    // ⚠️ THE HEARTBEAT FOLLOWS TOO, IMMEDIATELY. The bridge is holding "<old name> is
+    // open and dirty" against a file that no longer exists, and until it expires (15s)
+    // the NEW name reads as nobody's — i.e. an agent write would be allowed over the
+    // unsaved edits this rename just preserved. paint() → hbSync() posts the close and
+    // the open in one beat.
+    paint();
     await loadFiles();
-    say('Renamed to ' + j.name, 'ok');
+    say('Renamed to ' + j.name + (dirty ? ' — your unsaved edits are still here, and ⌘S '
+                                          + 'now writes them to the new name.' : ''),
+        'ok');
   } catch (e) {
     bx('rename-fail', 'threw: ' + e);
     say('could not rename that spreadsheet: ' + e);
@@ -5046,16 +5426,34 @@ async function aiRefreshModel() {
 // ambiguity that actually bites: "function".
 //
 // PURE, and TOTAL: a missing file or sheet name costs a clause, never the preamble.
-function aiPreamble(file, sheet) {
+/* ⚠️ `stale` IS THE THIRD ARGUMENT AND IT IS THE FIX FOR live finding L6 — the model being
+   handed the LAST-SAVED file and told the user "is editing" it.
+
+   The sheet dump is `snap`, read from DISK and refreshed at exactly two moments (open and
+   save). With unsaved edits in the editor the model was therefore shown the PRE-EDIT file
+   under the sentence "The user is editing the workbook X" — and nothing in the prompt said
+   otherwise. On screen the entire warning was `aiPaint` appending "· as last saved" to the
+   context chip: eight characters of 10.5px dim text in an overflow:hidden span, which the
+   transcript's own "context sent" disclosure never recorded either. Save afterwards and the
+   log kept an answer about data that was already stale when it was given, unmarked.
+
+   One plain sentence, in the PROMPT, where the model reads it. */
+function aiPreamble(file, sheet, stale) {
   const f = String(file == null ? '' : file).trim();
   const sh = String(sheet == null ? '' : sheet).trim();
   const where = f
     ? ('The user is editing the workbook “' + f + '”'
        + (sh ? ', on the sheet “' + sh + '”' : '') + '.')
     : 'The user has no workbook open at the moment.';
+  const staleness = (f && stale)
+    ? ('IMPORTANT: the sheet below is the file AS LAST SAVED. The user has UNSAVED edits '
+       + 'in the editor that are NOT shown here, so a cell may already say something '
+       + 'different. Answer from what you can see, and say that you are looking at the '
+       + 'last-saved version if it matters to the answer.\n')
+    : '';
   return 'You are the assistant built into LOffice, a spreadsheet editor for Excel '
        + '(.xlsx) workbooks inside the Harness workspace.\n'
-       + where + '\n'
+       + where + '\n' + staleness
        + 'Answer as a spreadsheet expert. Unless the user names a programming '
        + 'language, a question about a "function" means a SPREADSHEET function with '
        + 'Excel semantics — CLEAN, TRIM, VLOOKUP, SUMIFS and the like — never a '
@@ -5234,6 +5632,13 @@ function aiContext() {
 }
 // The sheet the user is on, by NAME, for the preamble. Falls back to nothing rather
 // than to an internal sheet id, which would mean nothing to a model or a reader.
+/* IS THE SHEET WE ARE ABOUT TO SEND BEHIND WHAT THE USER IS LOOKING AT? (live finding L6)
+   TRUE only when the EDITOR owns the document AND it is dirty: `snap` is read from disk at
+   an open and at a save, so those are exactly the moments the two are known to agree, and
+   anything after a keystroke and before a ⌘S is stale. In tier 1 the snapshot IS the
+   document, so there is nothing to be behind. */
+function aiStale() { return !!(editorActive() && dirty); }
+
 function aiSheetName() {
   const s = aiSnapshot();
   const sid = s ? aiSheetId(s) : null;
@@ -6104,9 +6509,79 @@ function actWhere(plan) {
   return (sh && sh.name) ? String(sh.name) : 'this sheet';
 }
 
+/* ⚠️ WAIT FOR THE EDITOR TO HOLD THE DOCUMENT — the missing step behind live finding L2.
+   `create()` → `openDoc()` → `showWorkbook()` fires `ooStart()` and returns WITHOUT
+   awaiting it (deliberately: showWorkbook is the one tier decision point and is called
+   from paths that cannot await). So immediately after a create, `editorActive()` is false
+   even though the editor is two seconds from owning the file — which is exactly how the
+   create-with-data path ended up writing a hidden tier-1 snapshot.
+
+   Resolves TRUE when the editor holds the document, FALSE when it never will (not
+   installed, or a fatal failure) or when the wait ran out. A caller that gets FALSE with
+   `ooInstalled` truthy must REFUSE, not fall through to tier 1. */
+const OO_WAIT_MS = 12000;
+function ooWaitReady(ms) {
+  return new Promise(resolve => {
+    if (editorActive()) return resolve(true);
+    if (!ooInstalled || ooFailed) return resolve(false);
+    const t0 = Date.now();
+    const tick = () => {
+      if (editorActive()) return resolve(true);
+      if (ooFailed) return resolve(false);
+      if (Date.now() - t0 > (Number(ms) || OO_WAIT_MS)) return resolve(false);
+      setTimeout(tick, 120);
+    };
+    setTimeout(tick, 120);
+  });
+}
+
 async function actApply(card, plan) {
   if (!card || !plan || card._state === 'busy' || card._state === 'applied') return;
   if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
+  /* ⚠️⚠️ THE CREATE HAPPENS BEFORE THE ROUTE IS CHOSEN, AND THAT ORDERING IS THE WHOLE
+     FIX FOR live finding L2 — "create a spreadsheet with this data" reporting six cells
+     written into a file that was empty on disk.
+
+     WHAT USED TO HAPPEN, measured on the start screen with nothing open: `editorActive()`
+     was tested HERE, at the top, BEFORE the workbook existed — so it was false, and the
+     `!current` branch below ran the TIER-1 writer (actRunOps into `snap`) while
+     create() → openDoc() → showWorkbook() brought the EDITOR up on the file as created,
+     i.e. EMPTY. `ooEvent('ready')` then set dirty=false, the card stamped "change applied
+     · 6 written", the strip said "6 cells in Sheet1 — applied. Press ⌘S", and the ⌘S the
+     card asked for went through ooSave() and wrote the editor's EMPTY document. Three
+     separate surfaces stated a success no file ever had, and the instruction they gave
+     destroyed the result.
+
+     Now: create FIRST, WAIT for the editor to hold the new file, and only then pick the
+     route — so the ops land in the document that is actually on screen. If the editor
+     cannot take it, this REFUSES rather than writing somewhere nobody is looking. */
+  if (!current) {
+    card._state = 'busy';
+    actPaint(card);
+    el('new-name').value = plan.file || '';
+    const made = await create();          // names it, opens it, and reports its own errors
+    if (!made || !current) {
+      card._state = 'ready';
+      bx('action-refused', 'create failed');
+      actPaint(card);
+      actNote(card, 'The spreadsheet could not be created, so nothing was changed.');
+      return;
+    }
+    if (ooInstalled) {
+      const up = await ooWaitReady(OO_WAIT_MS);
+      if (!up) {
+        card._state = 'ready';
+        bx('action-refused', 'create ok, editor not ready');
+        actPaint(card);
+        actNote(card, '“' + current + '” was created and is open, but the full editor has '
+                    + 'not finished loading it — so nothing was written, because writing '
+                    + 'anywhere else would not be the sheet you are looking at. Press '
+                    + 'Apply again in a moment.');
+        return;
+      }
+    }
+    card._state = 'ready';
+  }
   // ⚠️ THE ONE-EDITOR RULING CHANGED THIS FUNCTION'S BACKEND, NOT ITS FRONT. Everything
   // above — the parse, the caps, the preview, the refusals — is unchanged and still
   // ours. But the WRITE no longer goes into the tier-1 snapshot when the editor owns
@@ -6131,18 +6606,10 @@ async function actApply(card, plan) {
   }
   card._state = 'busy';
   actPaint(card);
-  // "create a document with data on that page" — the whole flow, from nothing.
-  if (!current) {
-    el('new-name').value = plan.file || '';
-    const made = await create();          // names it, opens it, and reports its own errors
-    if (!made || !current) {
-      card._state = 'ready';
-      bx('action-refused', 'create failed');
-      actPaint(card);
-      actNote(card, 'The spreadsheet could not be created, so nothing was changed.');
-      return;
-    }
-  }
+  // ⚠️ THE CREATE USED TO LIVE HERE AND IT MOVED TO THE TOP OF THIS FUNCTION — see the
+  // L2 block there. Reaching this line means the editor is NOT the editor for this
+  // workbook (it is not installed, or it failed fatally), so tier 1 really is what the
+  // user is looking at and writing the snapshot is the honest thing to do.
   const sid = actTargetSid(plan.sheet);
   const sh = (snap && snap.sheets) ? snap.sheets[sid] : null;
   if (!sh) {
@@ -6625,13 +7092,21 @@ async function aiSend() {
   const ctx = aiCtxOn ? aiContext() : null;
   // THE ORDER IS: who you are → what is open → the data (if any) → the question.
   // The preamble is UNCONDITIONAL; the sheet is the part the chip governs.
-  const message = aiPreamble(current, aiSheetName()) + '\n\n'
+  // ⚠️ `aiStale()` REACHES THE PROMPT AND THE LOG LABEL (live finding L6). The whole
+  // staleness warning used to be "· as last saved" appended to the context chip — eight
+  // characters of 10.5px dim text in an overflow:hidden span, which the model never saw
+  // and the transcript never recorded, so a saved log kept answers about data that was
+  // already stale when they were given, with no marker at all.
+  const stale = aiStale();
+  const message = aiPreamble(current, aiSheetName(), stale) + '\n\n'
                 + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
                 + '---\n\n' + q;
   const shown = { text: message,
-                  label: (ctx && ctx.text)
+                  label: ((ctx && ctx.text)
                     ? (ctx.rows + '×' + ctx.cols + (ctx.truncated ? ' (truncated)' : ''))
-                    : 'grounding only — the sheet was not sent' };
+                    : 'grounding only — the sheet was not sent')
+                    + (stale ? ' · asked against the LAST-SAVED sheet (you had unsaved '
+                             + 'edits)' : '') };
   bx('ai-send', 'chars=' + message.length + ' ctx=' + (ctx && ctx.text ? ctx.rows + 'x' + ctx.cols : 'none'));
   el('ai-in').value = ''; aiGrow();
   aiAdd('user', q, shown);
@@ -6822,9 +7297,16 @@ function agentGate(g) {
     + 'call tools — its chat template could not be read. If the Agent lane answers in '
     + 'prose without touching a tool, that is why: look for the green `tools` pill in '
     + 'Models.';
+  // ⚠️ THIS SENTENCE WAS WRONG SINCE THE CHANGESET RULING (live finding C7). It said the
+  // agent "can read and WRITE your workbooks itself… and every write asks you first" —
+  // but NO TOOL on the loffice server can write any more. /api/office/mcp says so in its
+  // own consent block ("every tool on this server is read-only"). The model can only STAGE
+  // a proposal; the write is a button only Debi presses. "Writes itself, and asks you
+  // first" is a materially different, and more alarming, promise than what happens.
   return { ok: true, warn: warn,
-           why: 'Hermes, with the real Office tools: it can read and write your '
-              + 'workbooks itself, over several steps, and every write asks you first.'
+           why: 'Hermes, with the real Office tools: it can read your workbooks over '
+              + 'several steps and PROPOSE a change — nothing on that server can write. '
+              + 'You apply it here, from a card that shows every cell.'
               + (warn ? ' ⚠ ' + warn : '') };
 }
 
@@ -6902,15 +7384,26 @@ function agentBrief(file, sheet) {
     : 'No workbook is open right now.';
 }
 
-// `<stem>.pre-agent.xlsx` — the copy office_ops.take_pre_agent leaves beside the file
-// before any agent write. PURE. Mirrors bridge/office_ops.py PRE_AGENT_SUFFIX, and a
-// test pins the two strings equal across the two languages.
-const PRE_AGENT_SUFFIX = '.pre-agent.xlsx';
+/* `.checkpoints/<stem>/pre-agent.xlsx` — the copy office_ops.take_pre_agent takes before
+   any agent write. PURE. Mirrors bridge/office_ops.pre_agent_label, and a test pins the two
+   strings equal across the two languages.
+
+   ⚠️ IT MOVED OUT OF data/office/ AT loffice-2026-08-28d (server findings F-07 and F-22,
+   live finding C4): as a SIBLING file it could overwrite a workbook Debi genuinely had by
+   that name, it made such a workbook unwritable, and the copies sat in the file rail
+   indistinguishable from documents. See office_ops.pre_agent_for for the full argument.
+
+   ⚠️ AND IT IS NO LONGER WHAT THE BANNER PRINTS. `extPlan` takes the path the BRIDGE says
+   EXISTS, because a name computed from a workbook's name is a guess (live finding L4) —
+   this function is now only for the follow-up sentence, where the caller has already
+   established that a copy is there. */
+const PRE_AGENT_DIR = '.checkpoints';
+const PRE_AGENT_FILE = 'pre-agent.xlsx';
 function preAgentName(name) {
   const n = String(name == null ? '' : name).trim();
   if (!n) return '';
-  const stem = n.replace(/\.xlsx$/i, '').replace(/\.pre-agent$/i, '');
-  return stem + PRE_AGENT_SUFFIX;
+  const stem = n.replace(/\.xlsx$/i, '');
+  return PRE_AGENT_DIR + '/' + stem + '/' + PRE_AGENT_FILE;
 }
 
 // ── the toggle ───────────────────────────────────────────────────────────────
@@ -7011,9 +7504,16 @@ async function agentSend() {
   const ctx = aiCtxOn ? aiContext() : null;
   // Full grounding rides the FIRST message of a session only — the session keeps its
   // history, so later turns need just the one line that can change (agentBrief).
+  // The staleness sentence rides the Agent lane too (live finding L6): the tools read the
+  // FILE, so a dirty editor means every read they do is behind what she is looking at —
+  // which is also why office_ops refuses to write it.
+  const agStale = aiStale();
   const grounding = agentSid
     ? agentBrief(current, aiSheetName())
-    : (aiPreamble(current, aiSheetName()) + agentToolNote(current));
+      + (agStale ? '\nThe user has UNSAVED edits in the editor, so the file the tools '
+                 + 'read is behind what she is looking at, and a write will be refused '
+                 + 'until she saves.' : '')
+    : (aiPreamble(current, aiSheetName(), agStale) + agentToolNote(current));
   // ⚠️ THE OUTCOME LINES RIDE IN FRONT, AND THAT IS THE WHOLE ANTI-HALLUCINATION SEAM
   // (spec §2). Apply and Dismiss each queue one system line; it goes into the model's
   // context BEFORE it answers, so the next turn cannot invent the state of the workbook
@@ -7592,9 +8092,25 @@ async function csApply(card) {
   csNote(j.session_line);
   bx('cs-applied', cs.changeset_id + ' receipt=' + j.receipt
      + ' cells=' + j.cells_written);
-  // The FILE moved. The page's copy did not — reload the document the existing way.
-  extSeen = 0;
-  await ooExtReload(j.name);
+  /* ⚠️ A CARD CAN APPLY TO A WORKBOOK YOU ARE NOT LOOKING AT, AND NOW IT SAYS SO (live
+     finding C2). A staged card correctly names its target and survives a switch to another
+     workbook with Apply still enabled — `csApply` posts by CHANGESET ID, so the open file
+     is irrelevant. But `ooExtReload(j.name)` IGNORES `name` when the editor is active and
+     reloads the CURRENTLY OPEN document instead: the receipt appeared, the sheet in front
+     of you did not change, and no sentence said the change had landed elsewhere. Applying
+     it is still right — it is the change she approved, for the workbook the card names —
+     so the fix is the sentence, and a door to the file it actually touched. */
+  if (j.name && current && j.name !== current) {
+    actNote(card, 'Applied to “' + j.name + '”, which is NOT the workbook you have open '
+                + '(“' + current + '”) — so nothing on the sheet in front of you changed.');
+    const go = actChip(card._bar, 'Open ' + j.name, 'lnk');
+    go.onclick = () => openDoc(j.name);
+    bx('cs-applied-elsewhere', j.name + ' open=' + current);
+  } else {
+    // The FILE moved. The page's copy did not — reload the document the existing way.
+    extSeen = 0;
+    await ooExtReload(j.name);
+  }
   // ⚠️ AND ONLY NOW CAN THE RECEIPT SAY WHAT THE FORMULAS COME TO. See csComputed.
   const comp = await csComputed(card, j);
   // ⚠️ RE-LABEL, DO NOT RE-STAMP. csStamp() empties the bar, which would take the "Undo
@@ -7895,28 +8411,58 @@ function hbSync() { return hbRun(false); }
 const EXT_EPS = 0.5;            // seconds of mtime slack: a filesystem, not a clock
 let extSeen = 0;                // the mtime this page believes it is showing
 let extAsking = false;          // a banner is up; do not stack a second one
+let extCopy = '';               // the safety copy the banner NAMED, or '' — finding L4
 
 // The decision, given four numbers and a flag. PURE — this is the state machine the
 // tests execute.
+/* ⚠️⚠️ THE TWO SENTENCES STOPPED PROMISING A FILE THAT MIGHT NOT EXIST (live finding L4).
+
+   `extPlan` fires on nothing but a NEWER mtime, and both of its sentences used to assert
+   an AGENT and a `.pre-agent.xlsx` safety copy:
+     clean: "the agent edited this file — reloaded (pre-edit copy kept as X.pre-agent.xlsx)"
+     dirty: "… Either way the file as it was BEFORE the agent touched it is kept as X."
+   Only the changeset-apply path ever writes that copy. ANY other writer — Excel, a script,
+   `curl` on /api/office/save, a second LOffice tab, a `git checkout` — moves the mtime and
+   got the same sentence, naming a file that does not exist. The dirty variant is the
+   dangerous one: it offered "Keep mine" on the strength of a backup that was not there.
+
+   So the decision now takes `agentCopy` — the path the BRIDGE says actually exists for
+   this workbook (office.list_docs → row.agent_copy, checked per path, not guessed from the
+   name) — and says only what is true:
+     · a copy exists → it is named, and the change is attributed to the agent, because that
+       copy is the only thing that HAS an agent as its author.
+     · no copy → "changed on disk by something outside LOffice", no backup promised, and
+       for the dirty fork the plain warning that keeping yours means overwriting it.
+   PURE, and the tests execute both forks in both states. */
 function extPlan(s) {
   const name = String((s && s.name) || '');
   const seen = Number((s && s.seen) || 0);
   const mt = Number((s && s.mtime) || 0);
+  const copy = String((s && s.agentCopy) || '');
   if (!name) return { act: 'none', why: 'no workbook open' };
   if (!(mt > 0)) return { act: 'none', why: 'no mtime for that workbook' };
   if (!(seen > 0)) return { act: 'baseline', why: 'first sight — remember this mtime' };
   if (!(mt > seen + EXT_EPS)) return { act: 'none', why: 'unchanged on disk' };
   if (!(s && s.dirty)) {
     return { act: 'reload', why: 'changed on disk, nothing unsaved here',
-             text: 'the agent edited this file — reloaded (pre-edit copy kept as '
-                 + preAgentName(name) + ')' };
+             text: copy
+               ? ('the agent edited this file — reloaded (the copy from before that '
+                  + 'change is kept as ' + copy + ')')
+               : ('“' + name + '” changed on disk outside LOffice — reloaded. Nothing '
+                  + 'here made a safety copy of it, because nothing here wrote it.') };
   }
-  return { act: 'ask', why: 'changed on disk, unsaved edits here',
-           text: '“' + name + '” was changed on disk by the agent, and you have unsaved '
-               + 'edits here. Reload discards your unsaved edits and shows the agent’s '
-               + 'version. Keep mine keeps yours on screen, and saving will overwrite the '
-               + 'agent\'s changes. Either way the file as it was BEFORE the agent touched '
-               + 'it is kept as ' + preAgentName(name) + '.' };
+  return { act: 'ask', why: 'changed on disk, unsaved edits here', copy: copy,
+           text: '“' + name + '” was changed on disk '
+               + (copy ? 'by the agent' : 'by something outside LOffice')
+               + ', and you have unsaved edits here. Reload discards your unsaved edits '
+               + 'and shows the version on disk. Keep mine keeps yours on screen, and '
+               + 'saving will overwrite what is on disk. '
+               + (copy
+                  ? ('Either way the file as it was before that change is kept as '
+                     + copy + '.')
+                  : ('There is NO safety copy of the version on disk — nothing here '
+                     + 'wrote it, so nothing here backed it up. Download it first if you '
+                     + 'may want it.')) };
 }
 
 async function extCheck() {
@@ -7935,7 +8481,11 @@ async function extCheck() {
   } catch (e) { bx('ext-check-fail', String((e && e.message) || e).slice(0, 100)); return null; }
   if (!row) return null;             // deleted or renamed under us: not this banner's job
   if (name !== current) return null; // the user opened something else mid-flight
-  const plan = extPlan({ name: name, dirty: dirty, seen: extSeen, mtime: row.modified });
+  // `agent_copy` comes off the SAME row as `modified` (bridge/office.py list_docs, which
+  // stats the path) — so the banner names a file that is there, per path, rather than
+  // deriving a name from the workbook's and hoping (live finding L4).
+  const plan = extPlan({ name: name, dirty: dirty, seen: extSeen, mtime: row.modified,
+                         agentCopy: row.agent_copy || '' });
   if (plan.act === 'none') return plan;
   // ⚠️ THE BASELINE MOVES BEFORE THE BANNER IS DRAWN, and that is what makes this
   // fire ONCE per external change instead of every beat for ever.
@@ -7973,6 +8523,7 @@ function extAct(plan, name) {
     return;
   }
   extAsking = true;
+  extCopy = String((plan && plan.copy) || '');
   say(plan.text, null, [
     // ⚠️ CLEARING `dirty` HERE IS THE POINT OF THE BUTTON, not a way round a guard.
     // Reload MEANS "discard my in-memory edits" — exactly the question confirmDiscard
@@ -7986,8 +8537,14 @@ function extAct(plan, name) {
     { label: 'Keep mine', run: () => {
         extAsking = false;
         bx('ext-keep-mine', name);
-        say('Keeping your version. ⌘S will overwrite the agent\'s changes; the file as '
-            + 'it was before the agent touched it stays in ' + preAgentName(name) + '.',
+        // ⚠️ AND THIS SENTENCE ONLY NAMES THE COPY WHEN THERE IS ONE (live finding L4).
+        // Offering "Keep mine" on the strength of a backup that does not exist is the
+        // dangerous half of that finding, and this was the line that did it.
+        say('Keeping your version. ⌘S will overwrite what is on disk; '
+            + (extCopy
+               ? ('the version from before that change stays in ' + extCopy + '.')
+               : 'nothing here has a copy of what is on disk, so download it first if '
+                 + 'you may want it.'),
             'dim');
       } },
   ]);
@@ -8027,11 +8584,31 @@ const SLOW_EVERY = AI_POLL_MS / HB_TICK_MS;      // 3
 let tickN = 0, pageTimer = null;
 
 function pageTick() {
-  if (document.hidden) return;
-  // The heartbeat's keepalive: the same {name, dirty} again, so the bridge's TTL never
-  // expires under a page that is still open. The CHANGES come through paint().
+  /* ⚠️⚠️ THE HEARTBEAT BEATS WHILE THE TAB IS HIDDEN, AND THAT ONE LINE MOVING IS THE FIX
+     FOR live finding L7. This function used to OPEN with `if (document.hidden) return;`,
+     which stopped the keepalive, the mtime watch and the changeset recovery together.
+
+     WHAT THAT COST, and it is not a cadence question: `office_ops.HEARTBEAT_TTL` is 15
+     SECONDS. Unsaved edits in the editor → switch to another MOT Deck tab (or the OS hides
+     the webview) → 15 s later the bridge believes NO PAGE holds that workbook →
+     APPLY_DIRTY_REFUSAL ("you have unsaved edits in that workbook — save it (⌘S) or close
+     it… Applying now would overwrite what you have not saved") DOES NOT FIRE → pressing
+     Apply overwrites the file and reloads the editor over the unsaved edits. Meanwhile
+     `office_read`'s own result text keeps telling the model "'unsaved_edits' true means a
+     write tool will refuse until Debi saves". The guarantee was real only while the tab was
+     in front, which is the one condition nobody was told about.
+
+     A HIDDEN PAGE STILL HOLDS UNSAVED STATE, so the beacon is not a rendering concern and
+     has no business behind the visibility gate. It is one small POST every HB_TICK_MS —
+     the cheapest honest mechanism available, and the same argument the comment above
+     already makes about a COLLAPSED AI panel, applied to a hidden tab.
+
+     Everything BELOW is screen work — the model pill, the mtime watch, the changeset poll
+     — and that half still stops, so a background tab costs three HTTP calls it cannot use
+     nothing at all. `visibilitychange` runs them the moment the tab comes back. */
   hbRun(true);
   tickN++;
+  if (document.hidden) return;
   if (tickN % SLOW_EVERY) return;
   if (aiPaneOpen()) aiRefreshModel();
   extCheck();
@@ -8192,6 +8769,38 @@ el('btn-rich').onclick = upgrade;
 // row was built on ("there is no toolbar-shaped copy of anything").
 el('btn-start').onclick = goStart;
 el('btn-info').onclick = helpAbout;
+
+/* ── the strip's ⋯ menu: the wiring (live finding B3) ─────────────────────
+   Every row closes the menu and then runs, which is `mi()`'s contract for a leaf — but
+   `mi()` also closes the WHITE bar, and these rows are not in it, so the pair is spelled
+   out here rather than borrowed. `bx()` on each one for the same reason mi() has it: a
+   deliberate row click is the useful line in a boot trace. */
+function mm(id, run) {
+  const n = el(id);
+  if (!n) return;
+  n.onclick = ev => {
+    ev.stopPropagation();
+    moreShow(false);
+    bx('more-row', id);
+    run();
+  };
+}
+el('btn-more').onclick = ev => { ev.stopPropagation(); moreShow(!moreOpen); };
+mm('mm-download', () => {
+  if (current) window.location.href = '/api/office/download/' + encodeURIComponent(current);
+});
+mm('mm-stats', colStats);
+mm('mm-sortaz', () => sortGo(false));
+mm('mm-sortza', () => sortGo(true));
+mm('mm-fidelity', helpFidelity);
+mm('mm-delete', () => deleteAsk(current));
+mm('mm-home', goHome);
+// A click anywhere else closes it, exactly as the menu bar's does — so a card can never
+// be left floating over the document with nothing attached to it.
+document.addEventListener('click', () => { if (moreOpen) moreShow(false); });
+window.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && moreOpen) { ev.preventDefault(); moreShow(false); }
+});
 el('btn-rail').onclick = () => railSetOpen(!railIsOpen(), 'header');
 const toggleNew = () => nameRow('create');
 el('btn-new').onclick = toggleNew;
@@ -8259,13 +8868,50 @@ mi('mi-home', goHome);
 mi('mi-start', goStart);
 // Delete the OPEN file, with the same two-step the rail's ✕ uses — through say()'s
 // inline action, so the question and its answer are in the same sentence.
-mi('mi-delete', () => {
-  if (!current || busy) return;
-  const name = current;
-  say('Delete “' + name + '”? This cannot be undone — File → Download first if you '
-      + 'want to keep a copy.', null,
-      { label: 'Delete ' + name, run: () => { say(''); remove(name); } });
-});
+mi('mi-delete', () => deleteAsk(current));
+
+/* ⚠️ ONE DELETE SENTENCE, AND IT NAMES CONTROLS THAT EXIST AT THAT MOMENT (live findings
+   B4, B5 and C6 — three findings about the same three lines).
+
+   B4: the sentence used to be "This cannot be undone — File → Download first if you want
+   to keep a copy." BOTH of those rows live in the white menu bar, which is hidden whenever
+   a workbook is open — so the advice could only ever be READ in a state where it could not
+   be FOLLOWED. It offers the download as a BUTTON now, right there in the same sentence.
+
+   B5: "This cannot be undone" was false in BOTH directions. Deleting a workbook through the
+   app's own route leaves its daily `<name>.YYYYMMDD.bak.xlsx` on disk, and
+   `is_backup_name()` filters those out of /api/office/files — so the copy is neither listed
+   nor deletable from the UI. It CAN be undone, from a file the user was not told about; and
+   somebody deleting a workbook for privacy kept its contents. The sentence says so, and
+   `remove()` now offers to take the backups with it.
+
+   C6: the rail's delete armed with the bare word `sure?` and no sentence at all — it
+   mentioned neither that this was the file being edited nor that unsaved edits went with
+   it. Both surfaces call THIS, so there is one sentence to get right. */
+function deleteAsk(name, opts) {
+  const n = String(name || '');
+  if (!n || busy) return;
+  const mine = n === current;
+  const row = (files || []).filter(f => f && f.name === n)[0] || null;
+  const bak = !!(row && row.has_backup);
+  say('Delete “' + n + '”?'
+      + (mine && dirty ? ' YOU HAVE UNSAVED EDITS IN IT — those go too, and ⌘Z cannot '
+                       + 'bring them back once the file is gone.' : '')
+      + (mine && !dirty ? ' This is the workbook you have open; it will close.' : '')
+      + (bak ? ' A safety copy from earlier today stays on disk as ' + n.replace(/\.xlsx$/i, '')
+             + '.<date>.bak.xlsx — it is not shown in the file list, so tick “and its '
+             + 'backups” if you are deleting this for privacy.'
+             : ' There is no safety copy of it, so this really cannot be undone.'),
+      null,
+      [{ label: 'Download it first', run: () => {
+           window.location.href = '/api/office/download/' + encodeURIComponent(n);
+           // The question stays up: downloading is not answering it.
+           setTimeout(() => deleteAsk(n, opts), 400);
+         } },
+       { label: 'Delete ' + n, run: () => { say(''); remove(n, false); } }]
+      .concat(bak ? [{ label: 'Delete it and its backups',
+                       run: () => { say(''); remove(n, true); } }] : []));
+}
 // The document title IS the rename control, the way it is in every office app.
 el('doctitle').onclick = () => { if (current && !busy) nameRow('rename'); };
 
@@ -8408,7 +9054,18 @@ window.addEventListener('storage', ev => {
 });
 window.addEventListener('focus', () => syncSkin('focus'));
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) syncSkin('visible');
+  if (document.hidden) return;
+  syncSkin('visible');
+  // ⚠️ AND THE THREE SCREEN-WORK DUTIES pageTick SKIPS WHILE HIDDEN ARE CAUGHT UP AT ONCE
+  // (live finding L7's second half). This handler used to call syncSkin and nothing else,
+  // so coming back to the tab left up to 15 s in which the mtime watch had not run — i.e.
+  // an agent write that landed while you were away was not on screen yet. A beat goes out
+  // too: it is free, and it closes the window between the tab coming forward and the next
+  // tick.
+  hbRun(true);
+  extCheck();
+  csTick();
+  bx('page-visible', current || 'no workbook');
 });
 
 // ── boot ─────────────────────────────────────────────────────────────────────

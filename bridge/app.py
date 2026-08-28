@@ -9631,12 +9631,22 @@ async def office_delete(req: Request) -> JSONResponse:
         body = await req.json()
     except Exception:                                            # noqa: BLE001
         body = {}
+    # ⚠️ `backups` IS OPT-IN AND IT EXISTS BECAUSE "This cannot be undone" WAS FALSE IN
+    # BOTH DIRECTIONS (live finding B5). Deleting a workbook through this route left its
+    # daily `<name>.YYYYMMDD.bak.xlsx` on disk, and `is_backup_name()` filters those out of
+    # /api/office/files — so the copy was neither listed nor deletable from the UI. The
+    # delete could therefore BE undone (from a file the user was not told about) and a user
+    # deleting a workbook for privacy KEPT its contents. The default is still to keep them
+    # (a backup exists to survive a mistake), but "delete it and its backups" is now a
+    # thing she can mean.
     ok, reason = await asyncio.to_thread(
-        _office.delete_doc, ROOT, ((body or {}).get("name") or ""))
+        _office.delete_doc, ROOT, ((body or {}).get("name") or ""),
+        bool((body or {}).get("backups")))
     if not ok:
         _office_log(f"delete reject: {reason}")
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
-    _office_log("deleted a workbook")
+    _office_log("deleted a workbook"
+                + (" and its backups" if (body or {}).get("backups") else ""))
     return JSONResponse({"ok": True})
 
 

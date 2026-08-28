@@ -472,6 +472,456 @@ for word in ("phone", "sku", "code"):
           word in oo.TEXT_HEADER_WORDS and f"'{word}'" in PANEL)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOURNEY 6 — THE ADVERSARIAL CAMPAIGN'S OWN JOURNEYS (2026-08-28, batch fix)
+#
+# Every finding below reproduced against the LIVE stack on 2026-08-28 and has a repro in
+# bridge/tests/test_office_adversarial.py under the same id. That file is the CAMPAIGN
+# LEDGER and is deliberately not a gate (it exits 0 always). THIS is the gate: the
+# journey-shaped ones are pinned here, forever, in the words of the user story they broke.
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n═══ JOURNEY 6: the adversarial campaign — availability and consent ═══")
+
+# ── F-18 · THE BRIDGE STOPPED ANSWERING ──────────────────────────────────────
+# "add a sheet called <31 characters>" twice. `add_sheet`'s collision walk re-truncated
+# the candidate back to the SAME 31 characters, so it could never find a free name — an
+# INFINITE LOOP at 100% CPU, reached from BOTH stage_changes and apply_changeset, so the
+# HTTP request never returned and a bridge worker thread was gone for the life of the
+# process. Availability, not honesty: the worst class on this lane.
+print("\n── F-18: a 31-character sheet name, twice ──")
+b = Bench()
+NAME31 = "x" * office.SHEET_NAME_MAX
+wb = openpyxl.Workbook()
+wb.active.title = "Data"
+wb.create_sheet(NAME31)
+wb.save(b.path("F18.xlsx"))
+import signal as _sig
+_hung = False
+if hasattr(_sig, "SIGALRM"):
+    def _boom(_s, _f):
+        raise TimeoutError("hung")
+    _old = _sig.signal(_sig.SIGALRM, _boom)
+    _sig.setitimer(_sig.ITIMER_REAL, 5.0)
+    try:
+        res = stage(b, [{"op": "add_sheet", "name": NAME31}], name="F18.xlsx")
+        got = apply(b, res)
+    except TimeoutError:
+        _hung = True
+        res = got = None
+    finally:
+        _sig.setitimer(_sig.ITIMER_REAL, 0)
+        _sig.signal(_sig.SIGALRM, _old)
+check("F-18 · adding a sheet whose name is taken AND already 31 characters long RETURNS "
+      "— it used to spin forever and burn a bridge thread permanently", not _hung)
+if not _hung and got:
+    names = openpyxl.load_workbook(b.path("F18.xlsx")).sheetnames
+    check("…and the second sheet really exists, under a stepped name inside Excel's "
+          "31-character limit", len(names) == 3 and all(len(n) <= 31 for n in names),
+          names)
+    check("…and the name it stepped to is DIFFERENT from the one that was taken",
+          len(set(n.lower() for n in names)) == 3, names)
+b.drop()
+
+# ── F-19 · APPLY ANSWERED HTTP 500 AND ATE THE CHANGESET ─────────────────────
+# "put this in A2 and add a sheet called Q1:Q2". `validate_ops` checked only LENGTH, so it
+# staged happily; then openpyxl's `create_sheet` raised a bare ValueError for the colon,
+# `save_doc` catches only OfficeError, and the route answered 500 WITH A TRACEBACK — after
+# the checkpoint, the daily .bak and the pre-agent copy had all been taken, with the whole
+# changeset (including the perfectly good `set`) lost and every retry crashing the same way.
+print("\n── F-19: an Excel-invalid sheet name ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "important"
+wb.save(b.path("F19.xlsx"))
+_before = os.path.getmtime(b.path("F19.xlsx"))
+res, err = oo.stage_changes(b.root, "journey", "F19.xlsx", None,
+                            [{"op": "set", "at": "A2", "values": [["also mine"]]},
+                             {"op": "add_sheet", "name": "Q1:Q2"}])
+check("F-19 · a sheet name holding one of Excel's forbidden characters is REFUSED AT "
+      "STAGING, before there is anything to approve", res is None and bool(err))
+check("…and the refusal says which character and why, rather than being a traceback",
+      ":" in str(err) and "Excel" in str(err), err)
+check("…and NOTHING was touched: no checkpoint, no .bak, no pre-agent copy, and the "
+      "workbook's own mtime did not move",
+      not oo.list_checkpoints(b.root, "F19.xlsx")
+      and os.path.getmtime(b.path("F19.xlsx")) == _before
+      and sorted(os.listdir(os.path.dirname(b.path("F19.xlsx")))) == ["F19.xlsx"])
+for bad in (":", "[", "]", "*", "?", "/", "\\"):
+    r2, e2 = oo.stage_changes(b.root, "journey", "F19.xlsx", None,
+                              [{"op": "add_sheet", "name": "A" + bad + "B"}])
+    check(f"…and every one of Excel's seven is refused ({bad!r})", r2 is None and bool(e2))
+# ⚠️ AND THE FLOOR UNDER IT: a snapshot that arrives from anywhere else must still not 500.
+try:
+    office.write_snapshot(
+        {"id": "w", "sheetOrder": ["s"], "styles": {},
+         "sheets": {"s": {"id": "s", "name": "Q1:Q2", "cellData": {}}}},
+        b.path("never.xlsx"))
+    _raised = "nothing"
+except office.OfficeError as e:
+    _raised = "OfficeError"
+except Exception as e:                                           # noqa: BLE001
+    _raised = type(e).__name__
+eq("…and write_snapshot turns an unwritable title into an OfficeError, never a bare "
+   "ValueError escaping to the route", _raised, "OfficeError")
+b.drop()
+
+# ── F-01 · APPLY OVER A FILE THAT MOVED SINCE THE PREVIEW ────────────────────
+# Stage a change; something else writes the workbook (the editor's writeback, Debi's own
+# save, another changeset); press Apply. It APPLIED, against a preview that was now
+# fiction — the card had promised `A1: 10 → 50` and the receipt afterwards read "0 of 4
+# re-read cell(s) hold what the change said they would". The dirty heartbeat does not
+# cover this, because a SAVED writeback clears dirty. The UNDO path had this fence already.
+print("\n── F-01: the apply's mtime fence ──")
+b = Bench()
+wb = openpyxl.Workbook()
+for r, v in enumerate([10, 20, 30, 40], start=1):
+    wb.active.cell(r, 1, v)
+wb.save(b.path("F01.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [[50], [60], [70], [80]]}],
+            name="F01.xlsx")
+eq("the card promises the four cells", res["cells_changed"], 4)
+# Somebody else writes the file between the preview and the press.
+import time as _t
+_t.sleep(0.01)
+wb2 = openpyxl.load_workbook(b.path("F01.xlsx"))
+wb2.active["A1"] = 999
+wb2.save(b.path("F01.xlsx"))
+got, err = oo.apply_changeset(b.root, res["changeset_id"])
+check("F-01 · Apply REFUSES when the workbook changed since the preview was computed",
+      got is None and bool(err))
+check("…in a sentence that says the preview is out of date and that nothing was applied",
+      "out of date" in str(err) and "Nothing was applied" in str(err), err)
+eq("…and the other writer's value is still there — the refusal wrote nothing",
+   b.sheet("F01.xlsx")["A1"].value, 999)
+check("…and the proposal is still pending, so re-staging is the way forward rather than "
+      "a lost changeset", oo.get_changeset(res["changeset_id"]) is not None)
+# The same fence must NOT fire on an untouched file: a guard that always refuses is the
+# same as no guard.
+res2 = stage(b, [{"op": "set", "at": "B1", "values": [["ok"]]}], name="F01.xlsx")
+got2, err2 = oo.apply_changeset(b.root, res2["changeset_id"])
+check("…and it does NOT fire on a workbook nobody touched", got2 is not None, err2)
+b.drop()
+
+# ── F-20 · TEN REFUSED PRESSES DESTROYED THE UNDO STACK ──────────────────────
+# `apply_changeset` pushed the checkpoint BEFORE `_apply` ran the dirty check, so each
+# REFUSED press ("you have unsaved edits…") added a checkpoint of an UNCHANGED file — and
+# CHECKPOINT_KEEP is 10. Measured: 3 real applies then 10 refused presses left 10
+# checkpoints, NONE of them from a real apply. The undo stack was destroyed by gestures
+# that changed nothing.
+print("\n── F-20: a refused Apply must not touch anything ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "v0"
+wb.save(b.path("F20.xlsx"))
+real = []
+for i in range(3):
+    r = stage(b, [{"op": "set", "at": "A1", "values": [[f"v{i + 1}"]]}], name="F20.xlsx")
+    apply(b, r)
+    real.append(r["changeset_id"])
+eq("three real applies leave three checkpoints",
+   len(oo.list_checkpoints(b.root, "F20.xlsx")), 3)
+oo.heartbeat("F20.xlsx", True)                 # the page now holds unsaved edits
+_refused = 0
+for i in range(10):
+    r = stage(b, [{"op": "set", "at": "A1", "values": [[f"x{i}"]]}], name="F20.xlsx")
+    got, err = oo.apply_changeset(b.root, r["changeset_id"])
+    if got is None:
+        _refused += 1
+eq("…ten presses while the editor is dirty are all refused", _refused, 10)
+stack = [e["changeset_id"] for e in oo.list_checkpoints(b.root, "F20.xlsx")]
+eq("F-20 · and NOT ONE of them added a checkpoint — the three real undo points survive",
+   sorted(stack), sorted(real))
+eq("…and the workbook still holds the last real apply", b.sheet("F20.xlsx")["A1"].value,
+   "v3")
+oo.heartbeat_clear()
+b.drop()
+
+# ── F-03 · A WIDE SHEET WAS CORRUPTED, PERMANENTLY, IN THE SAVED FILE ────────
+# `rc_apply` remapped only the first TIER1_MAX_COLS (200) columns — the PAGE'S RENDER
+# WINDOW, used as the width of the cell mover. On a sheet 250 columns wide a ROW INSERT
+# shifted A…GR down one and left GS…IP where they were, splitting the header row across
+# two different rows permanently; a COLUMN INSERT destroyed the value in column 200. The
+# only note that fired claimed one column had "fallen off the edge" — false on three
+# counts, and it fired for row inserts where no column moved at all.
+print("\n── F-03: insert and delete on a sheet wider than the render window ──")
+b = Bench()
+WIDE = 250
+wb = openpyxl.Workbook()
+for c in range(1, WIDE + 1):
+    wb.active.cell(1, c, f"h{c}")
+    wb.active.cell(2, c, c)
+wb.save(b.path("F03.xlsx"))
+res = stage(b, [{"op": "insert", "what": "row", "at": "1"}], name="F03.xlsx")
+apply(b, res)
+ws = b.sheet("F03.xlsx")
+check("F-03 · a ROW INSERT moves the WHOLE used width, not the first 200 columns — the "
+      "header row is one row, all the way across",
+      all(ws.cell(2, c).value == f"h{c}" for c in range(1, WIDE + 1)),
+      [ws.cell(2, c).value for c in (199, 200, 201, 250)])
+check("…and the new row is blank all the way across too",
+      all(ws.cell(1, c).value is None for c in range(1, WIDE + 1)))
+check("…and no note claims a column fell off an edge nothing reached",
+      not any("fell off" in n for n in res["notes"]), res["notes"])
+b2 = Bench()
+wb = openpyxl.Workbook()
+for c in range(1, WIDE + 1):
+    wb.active.cell(1, c, c)
+wb.save(b2.path("F03c.xlsx"))
+res = stage(b2, [{"op": "insert", "what": "col", "at": "A"}], name="F03c.xlsx")
+apply(b2, res)
+ws = b2.sheet("F03c.xlsx")
+check("…and a COLUMN INSERT shifts every column right instead of destroying the one at "
+      "the old cap", ws.cell(1, 1).value is None
+      and all(ws.cell(1, c + 1).value == c for c in range(1, WIDE + 1)),
+      [ws.cell(1, c).value for c in (1, 200, 201, 251)])
+b2.drop()
+# ── F-03b: and the note, when it can fire at all, names the gesture that happened ──
+res = stage(b, [{"op": "delete_rc", "what": "row", "at": "1"}], name="F03.xlsx")
+check("F-03b · a DELETE never gets a note that starts \"the insert reached\"",
+      not any(n.startswith("the insert reached") for n in res["notes"]), res["notes"])
+b.drop()
+
+# ── F-07 / F-22 · THE SAFETY COPY DESTROYED A REAL WORKBOOK ──────────────────
+# `pre_agent_for` returned the SIBLING `<stem>.pre-agent.xlsx`, and `op_list` listed such
+# files as ordinary workbooks — so Debi could make one from the panel. The first apply on
+# `report.xlsx` then silently overwrote her `report.pre-agent.xlsx`, and nothing on the
+# card, in the receipt or in the notes named the file it was about to destroy (F-07). And a
+# workbook actually named that could never be written at all: the copy resolved to ITSELF
+# and the refusal was a raw shutil.SameFileError with two absolute temp paths in it (F-22).
+print("\n── F-07 / F-22: the pre-agent copy, namespaced ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "main"
+wb.save(b.path("Report.xlsx"))
+wb = openpyxl.Workbook()
+wb.active["A1"] = "MY REAL DATA"                 # a workbook Debi actually has
+wb.save(b.path("Report.pre-agent.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [["changed"]]}], name="Report.xlsx")
+got = apply(b, res)
+eq("F-07 · Debi's own Report.pre-agent.xlsx is UNTOUCHED by an apply on Report.xlsx",
+   b.sheet("Report.pre-agent.xlsx")["A1"].value, "MY REAL DATA")
+check("…because the copy is namespaced under .checkpoints/<stem>/ instead of living in "
+      "the namespace of real documents",
+      got["pre_agent_copy"].startswith(office.CHECKPOINT_DIR + "/")
+      and os.path.isfile(oo.pre_agent_for(b.path("Report.xlsx"))))
+eq("…and it holds what the workbook said BEFORE the write, which is the whole point of it",
+   openpyxl.load_workbook(oo.pre_agent_for(b.path("Report.xlsx"))).active["A1"].value,
+   "main")
+check("…and the receipt NAMES the copy it took, so an undo is a question with an answer",
+      any(got["pre_agent_copy"] in n for n in got["notes"]))
+# F-22: and that workbook can now be written like any other.
+res = stage(b, [{"op": "set", "at": "A2", "values": [["fine"]]}],
+            name="Report.pre-agent.xlsx")
+got2, err2 = oo.apply_changeset(b.root, res["changeset_id"])
+check("F-22 · a workbook named *.pre-agent.xlsx can be written, instead of answering a "
+      "raw shutil.SameFileError with two temp paths in it", got2 is not None, err2)
+eq("…and its own copy goes to its own folder, not onto itself",
+   oo.pre_agent_label(b.path("Report.pre-agent.xlsx")),
+   office.CHECKPOINT_DIR + "/Report.pre-agent/pre-agent.xlsx")
+# C4: and neither copy is listed as a workbook Debi could open.
+listed = [f["name"] for f in oo.op_list(b.root)["files"]]
+check("C4 · a safety copy is not listed as an ordinary workbook, exactly as a .bak is "
+      "not — it has no size, no date and no delete link of its own in the rail",
+      "Report.pre-agent.xlsx" not in listed and "Report.xlsx" in listed, listed)
+b.drop()
+
+# ── F-21 · A RENAME KILLED UNDO FOR GOOD ─────────────────────────────────────
+# `checkpoint_dir` is keyed by the file STEM, and `rename_doc` moved neither the stack nor
+# the pre-agent sibling. After a rename `undo_changeset` answered "no such workbook" —
+# blaming a missing file for what was really an orphaned stack — while the checkpoint sat
+# on disk under the old stem, unreachable for ever.
+print("\n── F-21: undo after a rename ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "orig"
+wb.save(b.path("F21.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [["new"]]}], name="F21.xlsx")
+apply(b, res)
+eq("the apply landed", b.sheet("F21.xlsx")["A1"].value, "new")
+new_name, err = office.rename_doc(b.root, "F21.xlsx", "F21 renamed.xlsx")
+check("the rename succeeded", new_name == "F21 renamed.xlsx", err)
+check("F-21 · the checkpoint stack MOVED with the file, so it is reachable under the new "
+      "name", bool(oo.list_checkpoints(b.root, "F21 renamed.xlsx"))
+      and not oo.list_checkpoints(b.root, "F21.xlsx"))
+got, err = oo.undo_changeset(b.root, res["changeset_id"])
+check("…and 'Undo this change' still works after a rename, instead of answering 'no such "
+      "workbook' about a file that is right there", got is not None, err)
+eq("…and it really restored the pre-apply content",
+   b.sheet("F21 renamed.xlsx")["A1"].value, "orig")
+b.drop()
+
+# ── F-02 · THE CARD NAMED A SHEET THAT WAS NOT GOING TO BE WRITTEN ───────────
+# `public_changeset` returned the REQUESTED sheet name while `target_sid` falls back to
+# the first sheet for an unknown one — so staging against "Q3 Data" on a workbook of
+# Alpha/Beta/Gamma produced a card headed `sheet: "Q3 Data"` whose every preview row said
+# `Alpha`, with no note. The honest sentence existed and reached the APPLY result only,
+# i.e. after the write, on a surface whose whole job is consent BEFORE it.
+print("\n── F-02: the card names the sheet that will be written ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active.title = "Alpha"
+wb.create_sheet("Beta")
+wb.create_sheet("Gamma")
+wb.save(b.path("F02.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [["x"]]}], name="F02.xlsx",
+            sheet="Q3 Data")
+eq("F-02 · the card is headed with the sheet that will ACTUALLY be written",
+   res["sheet"], "Alpha")
+eq("…and it still carries what the model ASKED for, so the two can be compared",
+   res["sheet_asked"], "Q3 Data")
+check("…and a note on the CARD — before Apply — says the named sheet does not exist",
+      any("no sheet called 'Q3 Data'" in n for n in res["notes"]), res["notes"])
+check("…and every preview row agrees with the heading",
+      all(p["sheet"] == "Alpha" for p in res["preview"]), res["preview"])
+# The negative path: a sheet that DOES exist gets no warning and is named as itself.
+res = stage(b, [{"op": "set", "at": "A1", "values": [["y"]]}], name="F02.xlsx",
+            sheet="beta")
+eq("…and a sheet that exists is named as itself", res["sheet"], "Beta")
+check("…with no warning, because there is nothing to warn about",
+      not any("no sheet called" in n for n in res["notes"]))
+b.drop()
+
+# ── F-05 / F-06 / F-23 · THE RECEIPT'S "0 OF 0" GREEN BADGE ──────────────────
+# Three shapes of change that the consent surface could not see at all, because
+# `snapshot_diff` walks cell VALUES: a formatting-only change ("5 formatted — 0 cells
+# would change", receipt "0 of 0 re-read cell(s)", and A1 really WAS bold on red), a
+# change that only reshapes a merge, and a sheet add or rename. The panel's success badge
+# renders from those numbers.
+print("\n── F-05 / F-06 / F-23: formatting, merges and sheets on the card ──")
+b = Bench()
+wb = openpyxl.Workbook()
+for r in range(1, 6):
+    wb.active.cell(r, 1, r)
+wb.save(b.path("F06.xlsx"))
+res = stage(b, [{"op": "style", "at": "A1:A5", "set": {"bl": 1, "bg": "#ff0000"}}],
+            name="F06.xlsx")
+eq("F-06 · a formatting-only change has five FORMATTING before → after rows on the card",
+   res["style_total"], 5)
+check("…each naming what the cell said before and what it will say after",
+      res["style_preview"][0]["before"] == "(none)"
+      and "bold" in res["style_preview"][0]["after"], res["style_preview"][:1])
+check("…and the card's first line no longer ends '0 cells would change' with nothing "
+      "after it", "FORMATTING only" in res["summary"], res["summary"])
+got = apply(b, res)
+check("…and the RECEIPT re-read them from disk, rather than verifying nothing and "
+      "printing a green 0 of 0",
+      [v for v in got["verify"] if v.get("kind") == "format"]
+      and all(v["match"] for v in got["verify"]), got["verify_note"])
+check("…and the write really happened", b.sheet("F06.xlsx")["A1"].font.bold is True)
+b.drop()
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "t"
+wb.active.merge_cells("A1:A4")
+wb.save(b.path("F05.xlsx"))
+res = stage(b, [{"op": "delete_rc", "what": "row", "at": "2", "n": 2}], name="F05.xlsx")
+eq("F-05 · a change that reshapes a merge says so, with the before → after range",
+   [(m["before"], m["after"]) for m in res["merge_changes"]], [("A1:A4", "A1:A2")])
+check("…and the card's first line counts it, so the number cannot contradict the clause "
+      "before it", "merged range" in res["summary"], res["summary"])
+apply(b, res)
+eq("…and the file agrees with what the card said",
+   [str(m) for m in openpyxl.load_workbook(b.path("F05.xlsx")).active.merged_cells.ranges],
+   ["A1:A2"])
+b.drop()
+b = Bench()
+wb = openpyxl.Workbook()
+wb.create_sheet("Data")
+wb.save(b.path("F23.xlsx"))
+res = stage(b, [{"op": "add_sheet", "name": "Data"}], name="F23.xlsx")
+got = apply(b, res)
+_srows = [v for v in got["verify"] if v.get("kind") == "sheet"]
+check("F-23 · a sheet-add changeset VERIFIES the sheet, from a re-read of the workbook",
+      _srows and all(v["match"] for v in _srows), got["verify"])
+check("…and the receipt's sentence is about what it actually read, not '0 of 0 re-read "
+      "cell(s)'", "sheet(s)" in got["verify_note"], got["verify_note"])
+eq("…and the collision stepped, as it always did", got["sheets_added"], ["Data 2"])
+b.drop()
+
+# ── F-27 · DATA DEBI HID CAME BACK ON SCREEN ─────────────────────────────────
+# Freeze panes, gridline visibility, hidden rows, hidden columns and autofilter were lost
+# by every apply — and `sheet_snapshot` emitted HARD-CODED freeze/showGridlines/hd values,
+# read from nothing and written to nothing, so the snapshot ASSERTED "not frozen, gridlines
+# on, nothing hidden" about a sheet where all three were false. A present-but-fake field is
+# worse than an absent one, and a hidden column reappearing is data she deliberately hid.
+print("\n── F-27: the four things the round-trip did not carry ──")
+b = Bench()
+wb = openpyxl.Workbook()
+ws = wb.active
+for r in range(1, 11):
+    for c in range(1, 6):
+        ws.cell(r, c, r * c)
+ws.freeze_panes = "B2"
+ws.sheet_view.showGridLines = False
+ws.column_dimensions["D"].hidden = True
+ws.row_dimensions[11].hidden = True
+ws.auto_filter.ref = "A1:E10"
+wb.save(b.path("F27.xlsx"))
+snap = office.snapshot_from_path(b.path("F27.xlsx"))
+sh = snap["sheets"][snap["sheetOrder"][0]]
+eq("F-27 · the snapshot READS the freeze rather than asserting there is none",
+   (sh["freeze"]["xSplit"], sh["freeze"]["ySplit"]), (1, 1))
+eq("…and the gridline flag rather than always saying 1", sh["showGridlines"], 0)
+eq("…and the autofilter, which it had no field for at all", sh["autoFilter"], "A1:E10")
+eq("…and hd on the column Debi hid, rather than 0 on every column",
+   sh["columnData"]["3"]["hd"], 1)
+eq("…and on the row she hid", sh["rowData"]["10"]["hd"], 1)
+res = stage(b, [{"op": "set", "at": "A1", "values": [["poke"]]}], name="F27.xlsx")
+apply(b, res)
+ws2 = b.sheet("F27.xlsx")
+eq("…and all five SURVIVE an apply, instead of the hidden column coming back on screen",
+   (ws2.freeze_panes, ws2.sheet_view.showGridLines,
+    ws2.column_dimensions["D"].hidden, ws2.row_dimensions[11].hidden,
+    ws2.auto_filter.ref),
+   ("B2", False, True, True, "A1:E10"))
+check("…and the fidelity sentence for THIS save path no longer claims to lose them",
+      all(x in office.FIDELITY_NOTE
+          for x in ("freeze panes", "hidden rows and columns", "autofilter")))
+b.drop()
+
+# ── F-09 / F-10 · TWO TYPE LIES THE COERCION RULE COULD STILL TELL ───────────
+# F-09: a column Debi formatted `@` MEANS "this is text", and "1,200" was stored as the
+# NUMBER 1200 with `#,##0` — her own stated intent overridden, and a cell formatted
+# `0.00" kg"` lost her unit pattern the same way, under a note that said the value had
+# gained "a matching format" and never said what went.
+# F-10: "2026-01-15" written into a cell formatted `yyyy-mm-dd` KEEPS the format, so it
+# renders IDENTICALLY to the real dates above it while being a string that breaks =A3-A1
+# and every date sort. The card printed the raw serial, so the row read "46034 →
+# 2026-01-15" — which looks like a FIX. This is the $2,500 incident with the tell removed.
+print("\n── F-09 / F-10: an explicit format is an instruction ──")
+import datetime as _dt
+b = Bench()
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.cell(1, 1).number_format = "@"
+ws.cell(2, 1, 5).number_format = '0.00" kg"'
+ws.cell(1, 3, _dt.date(2026, 1, 10))
+ws.cell(2, 3, _dt.date(2026, 1, 11))
+ws.cell(3, 3, _dt.date(2026, 1, 12))
+wb.save(b.path("F09.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [["1,200"], ["1,200"]]},
+                {"op": "set", "at": "C3", "values": [["2026-01-15"]]}],
+            name="F09.xlsx")
+apply(b, res)
+ws = b.sheet("F09.xlsx")
+check("F-09 · a cell formatted `@` keeps the text it was given — an explicit text format "
+      "outranks the inference, the way the apostrophe and as_text do",
+      isinstance(ws["A1"].value, str) and ws["A1"].value == "1,200",
+      (ws["A1"].value, type(ws["A1"].value).__name__))
+check("…and the card SAYS it was kept as text, and why",
+      any("formatted as text (@)" in n for n in res["notes"]), res["notes"])
+check("…and when a coercion DOES replace a pattern, the card names the pattern it "
+      "replaced", any('0.00" kg"' in n for n in res["notes"]), res["notes"])
+check("F-10 · a value that stays TEXT in a DATE-formatted cell is flagged, the way a "
+      "currency coercion is", any("DATE" in n and "break every date" in n
+                                  for n in res["notes"]), res["notes"])
+_c = [p for p in res["preview"] if p["ref"] == "C3"]
+check("…and the card's before column renders the date, not the raw serial — '46034 → "
+      "2026-01-15' read like a FIX",
+      _c and _c[0]["before_display"].startswith("2026-01-12"), _c)
+b.drop()
+
+
 # ══ report ════════════════════════════════════════════════════════════════════
 print("")
 if FAIL:

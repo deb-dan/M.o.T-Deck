@@ -307,6 +307,13 @@ let ready = false;
 let dirtyNow = false;
 let editorTag = '';
 let openSeq = 0;             // guards a swap that a later swap superseded
+// ⚠️ TWO COUNTERS FOR ONE FINDING (L1), AND THEY EXIST TO BE MEASURED. `extSaves` is how
+// many times the EDITOR'S own Save control was routed into our write-back; `heldClears` is
+// how many times a `dirty:false` that no write-back produced was REFUSED. A probe can read
+// both off `probe()` and prove the fix rather than infer it — which is exactly what the
+// hunt could not do before.
+let extSaves = 0;
+let heldClears = 0;
 
 if (EMBED) document.body.classList.add('embed');
 
@@ -449,7 +456,40 @@ function mockServer() {
       } else if (t === 'getMessages') {
         editor.sendMessageToOO({type: 'message'});
       } else if (t === 'saveChanges') {
+        // The ACK the editor is waiting for. Withholding it would hang its save.
         editor.sendMessageToOO({type: 'unSaveLock', index: 0, time: Date.now()});
+        /* ⚠️⚠️ AND THIS IS WHERE THE EDITOR'S OWN SAVE BECOMES A REAL SAVE — THE FIX FOR
+           THE WORST BEHAVIOUR ON THE WHOLE SURFACE (live finding L1, measured end to end).
+
+           WHAT USED TO HAPPEN. The vendored bundle's header carries its own floppy-disk
+           Save (and ⌘S inside the grid reaches the same handler). Pressing it ran sdkjs's
+           DocumentServer save, which arrives HERE as `saveChanges`; we ACKed it and did
+           nothing else, so sdkjs considered the document saved and fired
+           onDocumentStateChange(FALSE) → we forwarded {kind:'state', dirty:false} → the
+           parent cleared THE dirty flag that guards every discard path, the heartbeat and
+           the "as last saved" note. The strip flipped to "all changes saved", the dot went
+           out, and THE FILE ON DISK WAS NOT TOUCHED (mtime identical before and after).
+           Clicking another workbook then found dirty === false, so confirmDiscard()
+           returned true immediately — no warning, no two-step, no "Save & open" — and the
+           work was gone. Silent data loss, two clicks apart.
+
+           THE FIX HAS TWO HALVES AND BOTH ARE NEEDED, because either alone still lies:
+             1. HERE: the editor's save gesture is ROUTED INTO ours, so the only Save
+                control in this window that appears to write the file actually does —
+                asc_nativeGetFile → x2t → /api/office/writeback, with the mtime fence and
+                the daily .bak. This is the half that keeps the work.
+             2. IN onDocumentStateChange: a dirty:false that no write-back produced must
+                never clear the parent's flag. That is the half that keeps us honest if
+                this route is ever unreachable — a save that did not happen must not read
+                as one, whatever sdkjs believes.
+
+           Deferred by one tick so the ACK is on the wire before the serialiser runs, and
+           gated on `saving` so our OWN save (which does not come through here) can never
+           re-enter. */
+        if (!saving && ready) {
+          extSaves++;
+          setTimeout(() => { if (!saving) save(false); }, 0);
+        }
       } else if (t === 'unLockDocument') {
         if (m.releaseLocks) editor.sendMessageToOO({type: 'releaseLock', locks: []});
         if (m.isSave) editor.sendMessageToOO({type: 'unSaveLock', time: -1, index: -1});
@@ -619,6 +659,12 @@ function applyOps(list, sheetName) {
     const o = list[i] || {};
     try {
       if (o.k === 'set') {
+        /* ⚠️ THE RANGE THE PARENT SENDS IS THE WHOLE RECTANGLE, AND IT HAS TO BE — see the
+           block in office.html::ooEditorOps for the measurement. ApiRange.SetValue writes
+           an array ACROSS ITS OWN RANGE, so a 1×1 range handed a 3×2 grid stores exactly
+           one cell and drops the rest in silence. `done.cells` is what the card's "N
+           written" comes from, so it is counted from what was SENT — which is only honest
+           because the range now matches the array. */
         ooRange(ws, o.at).SetValue(o.values);
         (o.values || []).forEach((row) => { done.cells += (row || []).length; });
       } else if (o.k === 'style') {
@@ -955,6 +1001,26 @@ function openDoc(name) {
             // uses to refuse an agent write all hang off this one event.
             if (!ready) return;
             const d = !!(e && e.data);
+            /* ⚠️⚠️ SECOND HALF OF THE L1 FIX, AND IT IS THE FLOOR UNDER THE FIRST. sdkjs
+               fires dirty:FALSE whenever IT believes the document is saved — which, with
+               a mock co-authoring server that ACKs `saveChanges`, means "the ACK arrived",
+               not "bytes reached the disk". Forwarding that cleared the parent's dirty
+               flag with nothing on disk, and the next file switch binned the work with no
+               warning at all.
+               A CLEAR IS ONLY BELIEVED WHEN A WRITE-BACK PRODUCED IT: either one is in
+               flight right now (`saving`), or we already know the document is clean
+               (dirtyNow false — the event is then consistent and a no-op). Anything else
+               is sdkjs's opinion about a save that did not happen, and the honest answer
+               is to STAY DIRTY and say so. Never the other way round: a dirty:TRUE is
+               always believed, because unsaved work is never something to be optimistic
+               about. */
+            if (!d && dirtyNow && !saving) {
+              heldClears++;
+              state('unsaved changes — the editor thinks it saved, but nothing was '
+                    + 'written to the file yet');
+              tell('state', {dirty: true});
+              return;
+            }
             dirtyNow = d;
             state(d ? 'unsaved changes' : 'ready');
             tell('state', {dirty: d});
@@ -972,20 +1038,52 @@ function openDoc(name) {
 // and threw away the warm editor to do it.
 function reloadDoc() { return openDoc(DOC); }
 
+/* ══ THE DOCUMENT'S NAME MOVED, AND THE EDITOR HAS TO BE TOLD ══════════════════
+   THE FIX FOR live finding B1, and the finding is worth restating because it is the most
+   expensive kind of bug this page can have: unsaved work that can NEVER be written.
+
+   Measured: open QA-A.xlsx → type something (dot on) → rename it from the rail to
+   "QA-A renamed". The rename succeeded, the title updated, and the dot stayed on
+   deliberately ("a rename is not a save"). But NOTHING TOLD THE EDITOR: `DOC` was still
+   the old name, so the next Save posted to /api/office/writeback/QA-A.xlsx, got a 404, and
+   answered "Not saved: no such workbook". There was no way out that kept the work —
+   saving always 404'd, reopening discarded the edit, and the message named no file and
+   offered no next step.
+
+   THE EMBED CONTRACT FOLLOWS THE RENAME. It is a NAME change and nothing else: the bytes
+   did not move (os.rename preserves both content and mtime), so the document in memory,
+   the dirty flag and `openedMtime` are all still correct and are deliberately left alone.
+   Re-opening the file here would have been the "simpler" answer and it would have thrown
+   away the very edits the finding is about. */
+function renameTo(to) {
+  const want = String(to || '').trim();
+  if (!want) return {ok: false, error: 'no new name was given'};
+  const from = DOC;
+  DOC = want;
+  el('docname').textContent = want;
+  document.title = want + ' — LOffice editor';
+  // The note strip, if it is showing a stale "no such workbook", is now wrong.
+  noteClear();
+  if (dirtyNow) state('unsaved changes');
+  return {ok: true, doc: DOC, was: from};
+}
+
 // ── the API the parent gets, i.e. the contract ────────────────────────────────
 window.LOfficeEmbed = {
-  // ⚠️ BUMPED 1 → 2 AT 2026-08-28: `readCells` is a new member of this contract, and the
-  // parent probes for the FUNCTION rather than the number (a version check that gates a
-  // capability the object plainly has is a way to break a working page), so an older
-  // frame degrades to "the computed check is unavailable" and says so.
-  contract: 2,
+  // ⚠️ BUMPED 2 → 3 AT loffice-2026-08-28d: `renameTo` is a new member (live finding B1).
+  // The parent probes for the FUNCTION rather than the number (a version check that gates
+  // a capability the object plainly has is a way to break a working page), so an older
+  // frame degrades to an honest sentence rather than to a silent 404 on the next save.
+  contract: 3,
   open: openDoc,
   save: save,
   reload: reloadDoc,
+  renameTo: renameTo,
   applyOps: applyOps,
   readCells: readCells,
   probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
-                 editorTag: editorTag}),
+                 editorTag: editorTag, extSaves: extSaves,
+                 heldClears: heldClears}),
   destroy: () => {
     openSeq++;
     if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }

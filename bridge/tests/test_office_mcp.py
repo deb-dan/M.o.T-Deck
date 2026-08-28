@@ -61,9 +61,14 @@ from bridge import office, office_mcp, office_ops              # noqa: E402
 FAILS = []
 
 
-def check(name, cond):
+def check(name, cond, extra=""):
+    """`extra` is printed only on a FAILURE — the evidence, so a red line is legible
+    without re-running by hand. Added at loffice-2026-08-28d, matching every other office
+    suite in this repo; the older two-argument calls are unaffected."""
     print(("PASS" if cond else "FAIL"), name)
     if not cond:
+        if extra != "":
+            print(f"     {extra!r}")
         FAILS.append(name)
 
 
@@ -455,7 +460,8 @@ if HAVE_XL:
     eq("…and a refused op is a change with NOTHING in it, so the card says so instead of "
        "offering an Apply that would do nothing visible", st["cells_changed"], 0)
     check("…and the pre-agent copy was still taken, because a refused OP is not a "
-          "refused CALL", out["pre_agent_copy"] == "merged.pre-agent.xlsx")
+          "refused CALL",
+          out["pre_agent_copy"] == office_ops.pre_agent_label("merged.xlsx"))
 
     print("\n── 3b. A SORT THAT RUNS, on a real workbook ──")
     make("plain.xlsx", [["b", 30], ["a", 10], ["c", 20]])
@@ -494,9 +500,22 @@ if HAVE_XL:
     eq("…the inserted row is blank", grid[2][:2], [None, None])
     eq("THE MERGE WAS RENUMBERED", merges, ["C4:D4"])
     eq("THE FORMULA WAS NOT: it still says =A1", grid[3][1], "=A1")
-    check("…and the result says both halves out loud",
+    # ⚠️ THE FORMULA NOTE IS AIMED AS OF loffice-2026-08-28d (findings F-25 and F-04). It
+    # used to fire whenever the sheet held ANY formula, so an insert far below every
+    # reference told Debi to go and check formulas that could not possibly have moved —
+    # crying wolf until the real warning stopped being read. Here `=A1` references row 1,
+    # the insert is at row 3, so nothing moved AND THE RESULT SAYS THAT rather than warning.
+    check("…and the result says both halves out loud: the formula text was not rewritten, "
+          "and no reference in it could have moved",
           out["rows_or_columns_inserted"] == 1
-          and office_ops.RC_FORMULA_NOTE in out["notes"])
+          and office_ops.RC_FORMULA_NOTE not in out["notes"]
+          and any("could have been moved" in n for n in out["notes"]))
+    # …and the SAME note DOES fire when a reference really is at risk, which is the half a
+    # narrowing must not lose.
+    make("ins2.xlsx", [["top"], [1], ["=A2"]])
+    out2, _r2 = run("ins2.xlsx", [{"op": "insert", "what": "row", "at": 2}])
+    check("…while an insert AT OR ABOVE a referenced row still gets the warning",
+          office_ops.RC_FORMULA_NOTE in out2["notes"])
 
     print("\n── 3e. A DELETE PULLS THE REST UP ──")
     make("del.xlsx", [["b", 30], ["a", 10], ["c", 20]])
@@ -560,10 +579,18 @@ if HAVE_XL:
     out, reason = office_ops.op_read(TMP, "read.xlsx", None, "A1:B3")
     byref = {c["ref"]: c for c in out["cells"]}
     eq("a value cell comes back as a value", byref["B2"]["value"], 900)
-    check("a formula cell comes back as TEXT, flagged cached, and NEVER as 'value'",
-          byref["B3"]["formula"] == "=SUM(B2:B2)"
-          and byref["B3"]["cached"] is True
-          and "value" not in byref["B3"])
+    # ⚠️ `cached` CHANGED FROM AN UNCONDITIONAL TRUE TO THE TRUTH (finding F-14). It used
+    # to be set True for EVERY formula, with `cached_value` added only when one existed —
+    # and a workbook this lane wrote has none (F-33), so every formula read back as
+    # {"formula": …, "cached": true}: a flag ASSERTING a value that is not there. `make()`
+    # writes with openpyxl, so this file has no cached result and `cached` must be FALSE,
+    # with a reason.
+    check("a formula cell comes back as TEXT and NEVER as 'value'",
+          byref["B3"]["formula"] == "=SUM(B2:B2)" and "value" not in byref["B3"])
+    check("…and `cached` says whether a cached result is actually THERE, with a reason "
+          "when it is not — a flag that asserts a value it does not carry is a lie",
+          byref["B3"]["cached"] is False
+          and "no computed result" in byref["B3"]["cached_reason"])
     check("…and the result carries the whole honesty paragraph, so the model cannot "
           "mistake a cached number for a computed one",
           office_ops.CACHED_NOTE in out["notes"])
@@ -638,33 +665,58 @@ if HAVE_XL:
 
 # ══ 4. THE WRITE-SAFETY RULES ═══════════════════════════════════════════════
 print("\n── 4a. the pre-agent copy: it exists, and it holds the PRE-write content ──")
-eq("the name is <stem>.pre-agent.xlsx, beside the file and distinct from the daily .bak",
-   os.path.basename(office_ops.pre_agent_for("/x/Sales.xlsx")), "Sales.pre-agent.xlsx")
-check("…and it can never become .pre-agent.pre-agent.xlsx",
+# ⚠️ THE COPY MOVED OUT OF data/office/ AT loffice-2026-08-28d, AND THE MOVE IS THE FIX FOR
+# THREE MEASURED FINDINGS AT ONCE (server F-07, F-22, live C4). It used to be the SIBLING
+# `<stem>.pre-agent.xlsx`, which meant a safety copy lived in the namespace of real
+# documents: a workbook Debi actually had called `report.pre-agent.xlsx` was silently
+# OVERWRITTEN by the first apply on `report.xlsx` (F-07), a workbook so named could never
+# be written at all because the copy resolved to ITSELF and handed her a raw
+# shutil.SameFileError (F-22), and the copies sat in the file rail with a download/delete
+# pair, indistinguishable from documents (C4). Namespacing kills all three with no special
+# cases — and puts the pre-write copy in the same folder as the checkpoint stack, which
+# `office.rename_doc` now moves with the file (F-21).
+eq("the copy lives under .checkpoints/<stem>/, NOT beside the workbook",
+   office_ops.pre_agent_for("/x/Sales.xlsx"),
+   os.path.join("/x", office.CHECKPOINT_DIR, "Sales", office.PRE_AGENT_NAME))
+eq("…and the label the card and the tool result print is that relative path, so nobody "
+   "reads it as a sibling workbook they could open",
+   office_ops.pre_agent_label("/x/Sales.xlsx"),
+   office.CHECKPOINT_DIR + "/Sales/" + office.PRE_AGENT_NAME)
+check("…so a workbook actually NAMED *.pre-agent.xlsx gets its own copy and is never the "
+      "destination of anybody else's (F-07 and F-22 are the same root cause)",
       office_ops.pre_agent_for("/x/Sales.pre-agent.xlsx")
-      == "/x/Sales.pre-agent.xlsx")
+      == os.path.join("/x", office.CHECKPOINT_DIR, "Sales.pre-agent",
+                      office.PRE_AGENT_NAME)
+      and office_ops.pre_agent_for("/x/Sales.pre-agent.xlsx")
+      != "/x/Sales.pre-agent.xlsx")
+check("…and a legacy sibling copy already on disk is filtered out of the workbook list "
+      "the way a .bak is, rather than shown as a document (live finding C4)",
+      office.is_agent_copy_name("Sales.pre-agent.xlsx")
+      and not office.is_agent_copy_name("Sales.xlsx"))
 if HAVE_XL:
     make("undo.xlsx", [["before"]])
     out, reason = run("undo.xlsx", [{"op": "set", "at": "A1", "values": [["after"]]}])
     eq("the apply reports the copy it took", out["pre_agent_copy"],
-       "undo.pre-agent.xlsx")
+       office.CHECKPOINT_DIR + "/undo/" + office.PRE_AGENT_NAME)
     check("the daily .bak is taken as well — the two are not substitutes: the .bak "
           "answers 'the way it was this morning', the pre-agent copy answers 'the way "
           "it was before the agent touched it'",
           bool(out["daily_backup"]))
     check("the copy EXISTS on disk",
-          os.path.isfile(os.path.join(D, "undo.pre-agent.xlsx")))
+          os.path.isfile(office_ops.pre_agent_for(os.path.join(D, "undo.xlsx"))))
     eq("…and it holds what the cell said BEFORE the write — this is the convenience "
        "undo, so its CONTENT is the assertion, not its existence",
-       read("undo.pre-agent.xlsx")[0][0][0], "before")
+       read(os.path.join(office.CHECKPOINT_DIR, "undo",
+                         office.PRE_AGENT_NAME))[0][0][0], "before")
     eq("…while the workbook itself holds the write", read("undo.xlsx")[0][0][0], "after")
     out, reason = run("undo.xlsx", [{"op": "set", "at": "A1", "values": [["again"]]}])
     eq("a SECOND apply overwrites the copy — it is one level, and it answers 'put it "
        "back the way it was before the last apply'",
-       read("undo.pre-agent.xlsx")[0][0][0], "after")
+       read(os.path.join(office.CHECKPOINT_DIR, "undo",
+                         office.PRE_AGENT_NAME))[0][0][0], "after")
     check("…and the note in the result NAMES the file, because a model that reports a "
           "write must be able to say how to undo it",
-          any("undo.pre-agent.xlsx" in n for n in out["notes"]))
+          any(office_ops.pre_agent_label("undo.xlsx") in n for n in out["notes"]))
     check("every apply also carries the fidelity contract, because it re-saves the "
           "whole workbook the way ⌘S does",
           any(office.FIDELITY_NOTE in n for n in out["notes"]))
@@ -706,7 +758,7 @@ if HAVE_XL:
           "⌘S" in office_ops.APPLY_DIRTY_REFUSAL)
     eq("…and nothing was written", read("busy.xlsx")[0][0][0], "mine")
     check("…and no pre-agent copy was made either — the refusal is BEFORE the copy",
-          not os.path.exists(os.path.join(D, "busy.pre-agent.xlsx")))
+          not os.path.exists(office_ops.pre_agent_for(os.path.join(D, "busy.xlsx"))))
     office_ops.heartbeat("busy.xlsx", False)
     out, reason = office_ops.apply_changeset(TMP, st["changeset_id"])
     eq("open-and-CLEAN is allowed, and the SAME changeset applies — a refusal does not "
@@ -741,7 +793,7 @@ if HAVE_XL:
        open(path, "rb").read(), before_bytes)
     eq("…and its size", os.path.getsize(path), before_size)
     check("…and no sibling was created either: no .pre-agent, no .bak, no checkpoint",
-          not os.path.exists(os.path.join(D, "purity.pre-agent.xlsx"))
+          not os.path.exists(office_ops.pre_agent_for(os.path.join(D, "purity.xlsx")))
           and not os.path.isdir(os.path.join(D, office_ops.CHECKPOINT_DIR, "purity")))
 
     print("\n── 4c-2. BEFORE VALUES, computed from the file for every touched cell ──")
@@ -836,8 +888,14 @@ if HAVE_XL:
     check("VERIFY IS A RE-READ OF THE TOUCHED CELLS FROM THE SAVED FILE, and every one "
           "matches", rc["verify"] and all(v["match"] for v in rc["verify"])
           and len(rc["verify"]) == 4)
-    eq("…and it says so in a sentence a person can read", rc["verify_note"],
-       "4 of 4 re-read cell(s) hold what the change said they would.")
+    # ⚠️ "cell(s)" BECAME "item(s)" AT loffice-2026-08-28d, AND THE WORD CHANGE IS THE
+    # VISIBLE HALF OF TWO FIXES. The receipt now also re-reads FORMATTING (finding F-06,
+    # where a style-only changeset got "0 of 0 re-read cell(s)" and a green badge) and
+    # SHEET-LEVEL outcomes (finding F-23, same sentence for a sheet-add that had worked),
+    # so the noun has to cover all three — and the parenthesis names which kinds were read.
+    eq("…and it says so in a sentence a person can read, naming WHAT was re-read",
+       rc["verify_note"],
+       "4 of 4 re-read item(s) hold what the change said they would (4 cell(s)).")
     check("…the verify names the cell, what was expected and what was FOUND, so a "
           "mismatch is legible rather than a boolean",
           all({"ref", "expected", "found", "match"} <= set(v) for v in rc["verify"]))
@@ -957,7 +1015,8 @@ if HAVE_XL:
           os.path.getmtime(os.path.join(D, "cp.xlsx")) > out["at"] - 5)
     check("…and the file as it was a moment before the undo is kept, so undoing the "
           "undo is a question with an answer",
-          read("cp.pre-agent.xlsx")[0][0][0] == "v13")
+          read(os.path.join(office.CHECKPOINT_DIR, "cp",
+                            office.PRE_AGENT_NAME))[0][0][0] == "v13")
     # ⚠️⚠️ THE MTIME FENCE. The whole reason one-click Apply is responsible is that it
     # can be taken back — and an undo that silently threw away work done SINCE the apply
     # would be a worse bug than the one it fixes.
@@ -1468,6 +1527,226 @@ try:
                                                 "args": ["@browsermcp/mcp"]})
 except Exception as _e:                                          # noqa: BLE001
     check(f"the bridge-side registration helpers could be exercised (got {_e!r})", False)
+
+
+# ══ THE 2026-08-28 ADVERSARIAL CAMPAIGN — the tool-surface half ══════════════
+# Every id below reproduced against the live stack and has its repro in
+# bridge/tests/test_office_adversarial.py, which is the campaign LEDGER and deliberately
+# not a gate (it exits 0 always). THIS is the gate for the ones whose home is the tool
+# surface; the journey-shaped ones live in test_office_journey.py.
+print("\n── 8. the adversarial campaign: honesty on the tool surface ──")
+
+# F-24 — a DESTRUCTIVE count we cannot read is refused, not defaulted to 1. `n: 0`,
+# `n: -5`, `n: "all"` and `n: 1.9` ALL deleted exactly one row, and the only thing
+# contradicting a model that reported "deleted all the rows" was the card's own op line.
+for bad in (0, -5, "all", 1.9, None, True):
+    ops, _cnt, why = office_ops.validate_ops(
+        [{"op": "delete_rc", "what": "row", "at": 2, "n": bad}])
+    if bad is None:
+        check("F-24 · a delete with NO count still means one row — omitting it is not a "
+              "misread count", ops is not None and ops[0]["n"] == 1)
+    else:
+        check(f"F-24 · a delete with n={bad!r} is REFUSED rather than silently doing 1",
+              ops is None and "whole number" in str(why), why)
+ops, _c, _w = office_ops.validate_ops([{"op": "insert", "what": "row", "at": 2, "n": 0}])
+check("…while an INSERT keeps the forgiving default, because adding empty space loses "
+      "nothing — the asymmetry is the ruling", ops is not None and ops[0]["n"] == 1)
+
+# F-12 — an integer past 2^53 cannot be stored exactly: `_fin` floated it, the disk got
+# …570 and the card printed a THIRD value, with no note. An order number or an id silently
+# changing digits.
+ops, _c, why = office_ops.validate_ops(
+    [{"op": "set", "at": "A1", "values": [[12345678901234567]]}])
+check("F-12 · an integer past 2^53 is refused with the reason and the escape hatch named, "
+      "rather than written as a different number",
+      ops is None and "2^53" in str(why) and "as_text" in str(why), why)
+
+# F-16 — renaming a sheet onto a name another sheet already holds yielded ["Beta",
+# "Beta(2)"]: office._sheet_names' dedup step renamed DEBI'S Beta, and the card had only
+# ever offered to rename one sheet.
+if HAVE_XL:
+    _wb = openpyxl.Workbook()
+    _wb.active.title = "Alpha"
+    _wb.create_sheet("Beta")
+    _wb.save(os.path.join(D, "clash.xlsx"))
+    st, _r = stage("clash.xlsx", [{"op": "sheet", "rename": "Beta", "at": "Alpha"}])
+    out, _r2 = office_ops.apply_changeset(TMP, st["changeset_id"])
+    eq("F-16 · a rename onto a name another sheet holds is SKIPPED — Debi's own sheet is "
+       "not renamed out from under her",
+       openpyxl.load_workbook(os.path.join(D, "clash.xlsx")).sheetnames,
+       ["Alpha", "Beta"])
+    check("…with a note that says Excel refuses two sheets with the same name",
+          any("already called" in n for n in out["notes"]), out["notes"])
+    # F-15 — a rename whose `at` names no sheet renamed the FIRST one, and op_summary
+    # never said WHICH sheet it was about.
+    st, _r = stage("clash.xlsx", [{"op": "sheet", "rename": "Renamed",
+                                   "at": "Nonexistent"}])
+    out, _r2 = office_ops.apply_changeset(TMP, st["changeset_id"])
+    eq("F-15 · a rename whose `at` names no sheet is SKIPPED, not redirected to the first "
+       "one", openpyxl.load_workbook(os.path.join(D, "clash.xlsx")).sheetnames,
+       ["Alpha", "Beta"])
+    check("…and the card's own op line NAMES the sheet, which is the one word the reader "
+          "needed and the one word that was missing",
+          any("'Nonexistent'" in line for line in st["op_list"]), st["op_list"])
+
+# F-31 — the dedup step produced 32-character titles from the tenth duplicate on, past
+# Excel's limit; openpyxl warned and wrote the file anyway.
+_dupe = {"id": "w", "sheetOrder": [], "styles": {}, "sheets": {}}
+for i in range(14):
+    sid = f"s{i}"
+    _dupe["sheetOrder"].append(sid)
+    _dupe["sheets"][sid] = {"id": sid, "name": "Z" * office.SHEET_NAME_MAX, "cellData": {}}
+_names = [n for _sid, n in office._sheet_names(_dupe)]
+check("F-31 · no title the dedup step invents is longer than Excel's 31 characters",
+      all(len(n) <= office.SHEET_NAME_MAX for n in _names),
+      [n for n in _names if len(n) > office.SHEET_NAME_MAX])
+eq("…and they are still all distinct, which is what the dedup is FOR",
+   len({n.lower() for n in _names}), len(_names))
+
+# F-13 — sheet_stats classed a formula as TEXT as well as a FORMULA, so a column of five
+# `=A1*2` cells reported {"numbers": 0, "text": 5, "formulas": 5}: ten things in a
+# five-cell column, no aggregate at all, under a note claiming "every number here is
+# computed from the values in the file". A model reading `numbers: 0, text: 5` concluded
+# the column was text.
+if HAVE_XL:
+    make("stats.xlsx", [["Amount", "Double"]]
+         + [[i, f"=A{i + 1}*2"] for i in range(1, 6)])
+    out, _r = office_ops.op_sheet_stats(TMP, "stats.xlsx")
+    colB = [c for c in out["columns"] if c["column"] == "B"][0]
+    eq("F-13 · a formula cell counts ONCE, as a formula — five cells are five things",
+       (colB["formulas"], colB["text"], colB["numbers"], colB["blanks"]), (5, 1, 0, 0))
+    check("…and the column says IN WORDS that it is formulas, so `numbers: 0` cannot be "
+          "read as 'this column is text'",
+          "FORMULAS" in colB.get("formula_note", ""), colB)
+    check("…and the notes warn a reader about exactly that misreading",
+          any("column of FORMULAS, not a column of text" in n for n in out["notes"]))
+
+# F-11 / F-14 — a date cell came back as {"value": 46037.0, "text": "46037"} with no
+# number format and no note, so an agent asked "what is the invoice date in A1?" answered
+# 46037; and `cached: true` was emitted unconditionally for every formula, asserting a
+# value that after any apply is not there at all.
+if HAVE_XL:
+    import datetime as _dtm
+    _wb = openpyxl.Workbook()
+    _wb.active["A1"] = _dtm.date(2026, 1, 15)
+    _wb.active["A2"] = _dtm.time(9, 30)
+    _wb.active["A3"] = "=A1+1"
+    _wb.save(os.path.join(D, "dates.xlsx"))
+    out, _r = office_ops.op_read(TMP, "dates.xlsx")
+    byref = {c["ref"]: c for c in out["cells"]}
+    eq("F-11 · a date cell hands the model the DATE, with the serial beside it and the "
+       "cell's own number format", byref["A1"]["text"], "2026-01-15")
+    check("…and says it is a date, so the serial is never mistaken for the answer",
+          byref["A1"]["is_date"] is True and byref["A1"]["serial"] == 46037
+          and byref["A1"]["number_format"], byref["A1"])
+    check("…and a TIME the same way", byref["A2"]["text"] == "09:30:00", byref["A2"])
+    check("…and the result NOTES it, because a model reads the notes",
+          any("DATES" in n for n in out["notes"]))
+    eq("F-14 · `cached` says whether a cached result is actually THERE",
+       byref["A3"]["cached"], False)
+    check("…with a reason, rather than a flag asserting a value it does not carry",
+          "no computed result" in byref["A3"]["cached_reason"])
+    check("…and the notes say how many formulas could not be read that way",
+          any("NO cached value" in n for n in out["notes"]), out["notes"])
+
+# F-26 — op_read's merge note told the model "office_sort REFUSES a sheet with any merge
+# on it". There has been no office_sort tool since the changeset ruling.
+if HAVE_XL:
+    make("mg.xlsx", [["a", None], ["b", None]], merges=["A1:B1"])
+    out, _r = office_ops.op_read(TMP, "mg.xlsx")
+    check("F-26 · the merge note describes a `sort` OPERATION inside a staged change, "
+          "which is what actually exists",
+          any("\"sort\" operation" in n and "SKIPPED" in n for n in out["notes"])
+          and not any("office_sort" in n for n in out["notes"]), out["notes"])
+
+# F-17 — the store cap dropped the four oldest changesets in SILENCE: staging 30 proposals
+# across 30 workbooks left ONE pending, while the other 29 models had all been told "NOT
+# applied — Debi reviews and applies this in LOffice" and their cards simply did not exist.
+if HAVE_XL:
+    office_ops.changeset_clear()
+    _ids = []
+    for i in range(office_ops.CHANGESET_MAX + 6):
+        nm = f"cap{i}.xlsx"
+        make(nm, [[1]])
+        o, _r = office_ops.stage_changes(TMP, f"cap-s{i}", nm, None,
+                                         [{"op": "set", "at": "A1", "values": [[2]]}])
+        _ids.append((o["changeset_id"], f"cap-s{i}"))
+    _gone = [sess for cid, sess in _ids if not office_ops.get_changeset(cid)]
+    check("the cap really does evict, which is the behaviour being made honest rather "
+          "than removed", len(_gone) > 0)
+    _told = [s for s in _gone if office_ops.peek_session_lines(s)]
+    eq("F-17 · every evicted proposal's session is TOLD, so the next turn cannot talk "
+       "about a card that does not exist", len(_told), len(_gone))
+    check("…and the line says it was NEVER applied and that re-staging is the way forward",
+          any("NEVER applied" in x and "Stage it again" in x
+              for x in office_ops.peek_session_lines(_gone[0])),
+          office_ops.peek_session_lines(_gone[0]))
+    office_ops.changeset_clear()
+
+# F-32 — apply after a rename or a delete answered a bare "no such workbook": it never
+# said the workbook had MOVED, nor that the proposal was still pending and re-stageable.
+if HAVE_XL:
+    make("gone.xlsx", [["v"]])
+    st, _r = stage("gone.xlsx", [{"op": "set", "at": "A1", "values": [["w"]]}])
+    os.remove(os.path.join(D, "gone.xlsx"))
+    out, why = office_ops.apply_changeset(TMP, st["changeset_id"])
+    check("F-32 · the refusal says the workbook was renamed or deleted, and what to do "
+          "next", out is None and "renamed or deleted" in str(why)
+          and "Ask for the change again" in str(why), why)
+
+# F-33 — every apply wipes every CACHED formula result in the workbook (openpyxl writes
+# formulas with no cached value). Excel and the editor recalculate on open, so the visible
+# damage is nil — but the MODEL can no longer read any computed number out of the file it
+# just changed, and that is a grounding cliff nothing warned about.
+if HAVE_XL:
+    make("wipe.xlsx", [[10], [20], ["=SUM(A1:A2)"]])
+    out, _r = run("wipe.xlsx", [{"op": "set", "at": "B1", "values": [["poke"]]}])
+    check("F-33 · an apply on a workbook holding formulas SAYS that it cleared every "
+          "cached result, and that a real engine will recompute them",
+          any(office_ops.CACHE_WIPE_NOTE == n for n in out["notes"]), out["notes"])
+    make("nowipe.xlsx", [[10], [20]])
+    out, _r = run("nowipe.xlsx", [{"op": "set", "at": "B1", "values": [["poke"]]}])
+    check("…and it stays silent on a workbook with no formulas in it — a note that fires "
+          "on everything is the same as one that fires on nothing",
+          not any(office_ops.CACHE_WIPE_NOTE == n for n in out["notes"]))
+
+# F-08 — parse_input stored the formula UNSTRIPPED while office._write_cell writes
+# `f.strip()`, so the snapshot, the preview and `_verify`'s `expected` all carried
+# "=SUM(B1:B2) " while the disk correctly held "=SUM(B1:B2)" — and the receipt reported
+# "0 of 1 re-read cell(s) hold what the change said they would". A PERFECT WRITE read as a
+# failure, on the one surface whose whole job is to be trustworthy.
+if HAVE_XL:
+    make("trail.xlsx", [[1], [2]])
+    out, _r = run("trail.xlsx", [{"op": "set", "at": "A3",
+                                  "values": [["=SUM(A1:A2) "]]}])
+    eq("F-08 · a trailing space on a formula is stripped on the way in, so snapshot, "
+       "preview and disk agree", read("trail.xlsx")[0][2][0], "=SUM(A1:A2)")
+    check("…and the receipt reports the perfect write as a match",
+          all(v["match"] for v in out["verify"]), out["verify_note"])
+
+# L7 — the page's heartbeat used to stop while the tab was hidden, and HEARTBEAT_TTL is
+# 15 seconds: unsaved edits, switch tabs, and 15 s later the bridge believed no page held
+# the workbook, so APPLY_DIRTY_REFUSAL did not fire and Apply overwrote them. The bridge's
+# half of that promise is pinned here; the page's half is pinned in test_office_ai.js.
+PAGE_SRC = (ROOT / "bridge" / "panel" / "office.html").read_text(encoding="utf-8")
+_tick = PAGE_SRC.split("function pageTick()")[1].split("\n}")[0]
+# ⚠️ COMMENTS STRIPPED BEFORE THE ORDER IS READ. The block explaining the fix necessarily
+# quotes the line it replaced (`if (document.hidden) return;` used to OPEN this function),
+# so a raw index() finds the prose, not the code.
+_tick_code = re.sub(r"/\*[\s\S]*?\*/", "", _tick)
+_tick_code = re.sub(r"//[^\n]*", "", _tick_code)
+check("L7 · the page beats the heartbeat BEFORE it checks document.hidden — a hidden page "
+      "still holds unsaved state, so the beacon is not a rendering concern",
+      _tick_code.index("hbRun(true)") < _tick_code.index("document.hidden"),
+      _tick_code[:300])
+check("…and the screen work still stops while hidden, so a background tab is not making "
+      "three HTTP calls it cannot use", "if (document.hidden) return;" in _tick_code)
+check("…and coming back to the tab catches up the mtime watch at once, rather than "
+      "leaving up to 15 s in which an agent write is not on screen",
+      "hbRun(true);" in PAGE_SRC.split("visibilitychange")[1][:600]
+      and "extCheck();" in PAGE_SRC.split("visibilitychange")[1][:600])
+check("…and the bridge's TTL is still the number the promise is about",
+      office_ops.HEARTBEAT_TTL == 15.0)
 
 
 # ══ housekeeping ════════════════════════════════════════════════════════════

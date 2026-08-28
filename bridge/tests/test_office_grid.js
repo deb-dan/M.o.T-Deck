@@ -81,7 +81,7 @@ function num(name) {
   return parseInt(m[1], 10);
 }
 // A contiguous RUN of const declarations, first..last inclusive, taken verbatim out of
-// the page. Added at loffice-2026-08-28c for the coercion rule, whose constants are
+// the page. Added at loffice-2026-08-28d for the coercion rule, whose constants are
 // regexes built over several lines — restating them here would be a second copy of the
 // exact thing this test exists to pin.
 function grabConsts(first, last) {
@@ -114,7 +114,7 @@ eval(grab('putCell'));
 eval(grab('valueText'));
 eval(grab('displayText'));
 eval(grab('editText'));
-// ⚠️ THE COERCION RULE'S OWN FUNCTIONS, added at loffice-2026-08-28c. parseInput is no
+// ⚠️ THE COERCION RULE'S OWN FUNCTIONS, added at loffice-2026-08-28d. parseInput is no
 // longer self-contained: it delegates "is this string a number, and in what format" to
 // coerceNumeric, and the apostrophe convention to stripTextMark.
 eval(grabConsts('CO_MAX_LEN', 'CO_LEADING_ZERO'));
@@ -949,7 +949,17 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           !/if\s*\(\s*!name/.test(src));
     check('…while the busy guard, which is a real one, stays', /if\s*\(busy\)\s*return/.test(src));
     check('create() sends whatever is in the box, empty included, and lets the bridge '
-          + 'choose the default name', /JSON\.stringify\(\{ name: name \}\)/.test(src));
+          + 'choose the default name',
+          /JSON\.stringify\(\{ name: name, step: !!step \}\)/.test(src));
+    // ⚠️ `step` ARRIVED AT loffice-2026-08-28d (live finding B2), AND IT DOES NOT WEAKEN
+    // THE NEVER-CLOBBER RULING — it is how the caller SAYS which of the two meanings it
+    // has. A name the USER TYPED still collides and is still refused; a TEMPLATE CARD
+    // takes the ' (n)' walk, because refusing it left the card permanently dead after one
+    // use with an error that offered no way forward.
+    check('…and a TEMPLATE says so, so the bridge can step its name instead of refusing',
+          /await create\(true\)/.test(grab('newFromTemplate')));
+    check('…while newBlank still passes no flag: an empty name already takes the walk',
+          !/create\(true\)/.test(grab('newBlank')));
     check('a create that throws on the wire beacons create-fail too — the message box '
           + 'was the very thing that was broken the first time round',
           /catch[\s\S]{0,400}bx\('create-fail', 'threw/.test(src));
@@ -974,7 +984,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
     // it; nothing else in this file changed.
-    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28c');
+    eq('the build stamp is this slice\'s', STAMP, 'loffice-2026-08-28d');
     check('…and the static fallback banner carries the SAME one, so "is the bridge '
           + 'serving what I shipped?" is answerable by eye, with no console',
           html.indexOf('<code>' + STAMP + '</code>') > 0);
@@ -1166,9 +1176,23 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           && /<div class="hcards">/.test(html));
     check('…and the template cards are generated from the routes we already have, so '
           + 'there is no template file to ship and nothing new on the bridge',
-          /const TPL = \{/.test(html) && /await create\(\)/.test(grab('newFromTemplate'))
+          /const TPL = \{/.test(html) && /await create\(true\)/.test(grab('newFromTemplate'))
           && /await save\(\)/.test(grab('newFromTemplate'))
           && !/fetch\(/.test(grab('newFromTemplate')));
+    /* ⚠️ AND THE ROWS GO THROUGH THE EDITOR WHEN THE EDITOR HOLDS THE FILE (live finding
+       L2, the template half of it). The tail of newFromTemplate was tier-1 — putCell into
+       `snap`, then save() — and with the editor installed save() routes to ooSave(), which
+       writes THE EDITOR'S document: the empty file the create route had just made. So the
+       template rows went into a hidden snapshot, the file on disk stayed empty, and the
+       strip reported a save. Same defect as the AI lane's create-with-data, same fix. */
+    check('…and with the editor installed the rows go through ooApplyApi, after WAITING '
+          + 'for the editor to hold the new file — not into a snapshot nobody is looking '
+          + 'at',
+          /ooWaitReady\(/.test(grab('newFromTemplate'))
+          && /ooApplyApi\(/.test(grab('newFromTemplate')));
+    check('…and if the editor never takes it, the template REFUSES and says the file is '
+          + 'empty, rather than reporting rows it did not write',
+          /were not written/.test(grab('newFromTemplate')));
     check('…with a bolded header row, which also makes a template a live demonstration '
           + 'that styles round-trip', /cell\.s = \{ bl: 1 \}/.test(grab('newFromTemplate')));
     check('the recent list and the file rail are drawn from ONE array by ONE call, so '
@@ -1211,6 +1235,15 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
       function renderFiles() {}
       function remove() {}
       const HOME_MAX = num('HOME_MAX');
+      // ⚠️ THE START-SCREEN NOTE IS `fnoteText()` AS OF loffice-2026-08-28d, NOT THE
+      // MAPPER'S SENTENCE (live finding L3). It used to greet a first-time user with
+      // "Complex styling may be simplified — keep your original file", which is the limit
+      // of the NARROW save path and not the one their ⌘S will take: the embedded editor's
+      // x2t save measurably keeps charts, images, filters and validation. The stub returns
+      // the same literal the old span did, so the two checks below still pin the SHAPE of
+      // the note (capped / not capped) rather than being rewritten around the wording.
+      const fnoteText = () => 'the fidelity sentence';
+      const deleteAsk = () => {};
       eval(grab('renderHome'));
       eval(grab('homeDel'));
 

@@ -91,14 +91,22 @@ ACT_MAX_ROW = 4999              # office.html:4420 — 0-based; row 5000
 ACT_MAX_COL = 199               # office.html:4421 — column GR
 ACT_STR_MAX = 2000              # office.html:4422 — one cell's text
 ACT_SHEET_MAX = 31              # office.html:4424 — Excel's own limit
+ADD_SHEET_TRIES = 200           # the bounded walk in add_sheet — see finding F-18
+MAX_EXACT_INT = 2 ** 53         # past this a float loses digits — see finding F-12
 ACT_NAME_MAX = 80               # office.html:4425 — office.NAME_MAX
 RC_MAX = 200                    # office.html:2435 — rows/cols in one gesture
-TIER1_MAX_COLS = 200            # office.html:2925
+TIER1_MAX_COLS = 200            # office.html:2925 — the PAGE'S RENDER WINDOW ONLY
+# ⚠️ NOT A MIRROR OF THE PAGE, AND THAT IS THE POINT (finding F-03). TIER1_MAX_COLS is
+# how many columns LOffice's own grid DRAWS; it was being used as the width of the
+# insert/delete cell remap, which silently corrupted every sheet wider than it. This is
+# the real ceiling — Excel's last column, XFD — so a remap covers the whole file.
+RC_MAX_TOTAL_COLS = 16384
 SORT_BLANK = 3                  # office.html:2335 — blanks sort last, either direction
 ACT_HT = {"left": 1, "center": 2, "centre": 2, "right": 3}        # office.html:4432
 ACT_VT = {"top": 1, "middle": 2, "center": 2, "centre": 2, "bottom": 3}   # :4433
 
 CV_STRING, CV_NUMBER, CV_BOOLEAN = office.CV_STRING, office.CV_NUMBER, office.CV_BOOLEAN
+CV_FORCE_STRING = office.CV_FORCE_STRING     # "text ON PURPOSE" — see findings F-09/F-28
 
 # office.html:2313. The ⌘Z at the end is the PAGE's undo; the agent lane's is the
 # pre-agent copy, so the tool results append AGENT_UNDO_NOTE rather than editing this
@@ -116,12 +124,27 @@ CACHED_NOTE = ("formula cells are returned as TEXT plus the value CACHED in the 
                "openpyxl has no formula engine — so a cached value may be stale if the "
                "inputs changed since that save, and a formula this workbook has never "
                "been opened in has no cached value at all.")
-AGENT_UNDO_NOTE = ("the workbook as it was BEFORE this write is kept beside it as "
-                   "{backup} — that is the only undo for an agent write, because "
-                   "LOffice's in-page undo stack cannot see a write it did not make.")
-FIDELITY_WRITE_NOTE = ("this write re-saved the whole workbook from LOffice's snapshot, "
-                       "which is what the LOffice page's own ⌘S does: " +
+AGENT_UNDO_NOTE = ("the workbook as it was BEFORE this write is kept as {backup} — that "
+                   "is the only undo for an agent write, because LOffice's in-page undo "
+                   "stack cannot see a write it did not make.")
+# ⚠️ THIS SENTENCE USED TO SAY "which is what the LOffice page's own ⌘S does" AND THAT
+# WAS FALSE (live finding L3). The page's ⌘S goes through the EMBEDDED EDITOR, whose x2t
+# round-trip keeps charts, images, filters and validation — measured. This path is the
+# openpyxl mapper, which does not. Naming the difference is the fix; claiming they are
+# the same understated our own product AND overstated this path.
+FIDELITY_WRITE_NOTE = ("this write re-saved the whole workbook through LOffice's own "
+                       ".xlsx mapper, NOT through the full editor: " +
                        office.FIDELITY_NOTE)
+# ⚠️ THE GROUNDING CLIFF NOTHING USED TO MENTION (finding F-33). openpyxl writes formulas
+# with NO cached result, so every apply wipes every computed number in the workbook.
+# Excel and ONLYOFFICE recalculate on open, so a HUMAN sees no damage — but the MODEL can
+# no longer read any computed value out of the file it just changed, and it must be told
+# rather than left to conclude the numbers vanished.
+CACHE_WIPE_NOTE = ("this write cleared every CACHED formula result in the workbook — "
+                   "LOffice's mapper stores formulas as text with no computed value. "
+                   "Excel and the full editor recalculate on open, so nothing is wrong "
+                   "with the file, but office_read will report no cached value for any "
+                   "formula until it is opened in a real engine and saved.")
 
 # ── THE OPEN-DIRTY REFUSAL (spec §3 rule 2) ────────────────────────────────
 # ADVISORY, NEVER A LOCK FILE. The page beacons {name, dirty} while a workbook is open;
@@ -139,7 +162,7 @@ APPLY_DIRTY_REFUSAL = ("you have unsaved edits in that workbook — save it (⌘
                        "it, then press Apply again. Applying now would overwrite what "
                        "you have not saved.")
 
-PRE_AGENT_SUFFIX = ".pre-agent" + office.DOC_EXT
+PRE_AGENT_SUFFIX = ".pre-agent" + office.DOC_EXT     # LEGACY: read below, never written
 
 # ═══ THE CHANGESET LANE (docs/FABLE-AGENT-CHANGESET-SPEC.md) ═════════════════
 # ⚠️ THE MCP WRITE TOOLS STOPPED WRITING. Everything below this line is v2's answer to
@@ -150,7 +173,7 @@ CHANGESET_TTL = 600.0            # spec §1: "TTL ~10 min"
 CHANGESET_MAX = 24               # a cheap bound on the bridge-held store
 PREVIEW_MAX_CELLS = 400          # the card lists this many before→after rows, then says
                                  # how many more there are — never a silent truncation
-CHECKPOINT_DIR = ".checkpoints"  # under data/office/, one folder per workbook stem
+CHECKPOINT_DIR = office.CHECKPOINT_DIR   # under data/office/, one folder per stem
 CHECKPOINT_KEEP = 10             # spec §3: "keep last 10 per workbook, prune oldest"
 
 # THE SENTENCE THAT TRAVELS IN EVERY STAGING RESULT, so the MODEL reads it and not only
@@ -171,6 +194,28 @@ DISMISSED_LINE = ("[LOffice] changeset {cid} was DISMISSED by the user at {when}
                   "otherwise.")
 UNDONE_LINE = ("[LOffice] changeset {cid} was UNDONE by the user at {when} — \"{name}\" "
                "was restored to the checkpoint taken before that apply.")
+# ⚠️ THE FOURTH OUTCOME, ADDED FOR FINDING F-17: a proposal that was pushed out of the
+# bridge's store before Debi ever saw it. The model was told it was staged; if nothing says
+# otherwise, its next turn will talk about a card that does not exist.
+EVICTED_LINE = ("[LOffice] changeset {cid} for \"{name}\" was DROPPED before Debi saw it "
+                "— this bridge holds at most {max} pending proposals and older ones are "
+                "evicted. It was NEVER applied. Stage it again if it still matters.")
+# ⚠️ THE APPLY'S OWN mtime FENCE (finding F-01). `stage_changes` recorded the file's mtime
+# and NOTHING EVER READ IT: stage a sort → the editor writes back, or another changeset
+# lands → press Apply → it applied, against a preview that was now fiction. The card
+# promised `A1: 10 → 50`; the receipt afterwards said "0 of 4 re-read cell(s) hold what the
+# change said they would". The dirty-heartbeat refusal does not cover it, because a SAVED
+# writeback clears dirty. The UNDO path had exactly this fence already.
+APPLY_FENCE_REFUSAL = ("\"{name}\" changed on disk after this change was previewed, so the "
+                       "before → after you are looking at is out of date and applying it "
+                       "would write over whatever happened since. Nothing was applied. Ask "
+                       "for the change again and it will be previewed against the file as "
+                       "it is now.")
+# F-32: "no such workbook" blamed a missing file for a rename or a delete, and never said
+# the proposal was still re-stageable.
+APPLY_GONE_REFUSAL = ("there is no workbook called \"{name}\" any more — it was renamed or "
+                      "deleted since this change was previewed. Nothing was applied. Ask "
+                      "for the change again against the name it has now.")
 
 # The undo's mtime fence (spec §3). An honest refusal, never a silent clobber.
 # ⚠️ THE SLACK IS 2ms, NOT THE HALF-SECOND THE PAGE'S POLLING USES, AND THE DIFFERENCE
@@ -473,6 +518,18 @@ def validate_ops(raw):
             for row in grid:
                 for x in row:
                     n += 1
+                    # ⚠️ AN INTEGER PAST 2^53 CANNOT BE STORED EXACTLY (finding F-12).
+                    # `_fin` floats everything, so 12345678901234567 landed on disk as
+                    # …570 while the preview printed a THIRD value — an order number or
+                    # an id silently changing digits, with no note anywhere. Refused,
+                    # with the escape hatch named, rather than mangled.
+                    if (isinstance(x, (int, float)) and not isinstance(x, bool)
+                            and abs(x) >= MAX_EXACT_INT):
+                        return None, None, (
+                            at + f"{x!r} is too large for a spreadsheet cell to hold "
+                            "exactly (past 2^53 — the digits would change). Send it as a "
+                            'STRING with "as_text": true if it is an id or an order '
+                            "number.")
                     if x is None or x == "":
                         count["cleared"] += 1
                     else:
@@ -525,17 +582,24 @@ def validate_ops(raw):
                 o = dict(o, add=o["name"])       # `add_sheet` is `sheet`+`add`, spelled
             add = o["add"].strip() if isinstance(o.get("add"), str) else ""
             ren = o["rename"].strip() if isinstance(o.get("rename"), str) else ""
+            # ⚠️ THE NAME IS CHECKED AGAINST WHAT openpyxl CAN ACTUALLY WRITE, NOT ONLY
+            # AGAINST A LENGTH (finding F-19). A title holding `: [ ] * ? / \` staged
+            # happily and then raised an uncaught ValueError inside apply_changeset — the
+            # route answered HTTP 500 with a traceback, AFTER the checkpoint, the daily
+            # `.bak` and the pre-agent copy had been taken, with the whole changeset
+            # (including its `set` ops) lost and every retry crashing the same way.
             if add:
-                if len(add) > ACT_SHEET_MAX:
-                    return None, None, (at + "a sheet name is at most "
-                                        f"{ACT_SHEET_MAX} characters")
+                safe, why = office.valid_sheet_title(add)
+                if not safe:
+                    return None, None, at + why
                 count["sheets"] += 1
                 count["lines"] += 1
-                ops.append({"op": "sheet", "add": add})
+                ops.append({"op": "sheet", "add": safe})
             elif ren:
-                if len(ren) > ACT_SHEET_MAX:
-                    return None, None, (at + "a sheet name is at most "
-                                        f"{ACT_SHEET_MAX} characters")
+                safe, why = office.valid_sheet_title(ren)
+                if not safe:
+                    return None, None, at + why
+                ren = safe
                 count["renames"] += 1
                 count["lines"] += 1
                 ops.append({"op": "sheet", "rename": ren,
@@ -588,8 +652,22 @@ def validate_ops(raw):
                 return None, None, (at + "that is past "
                                     + (str(ACT_MAX_ROW + 1) if axis == "row"
                                        else col_name(ACT_MAX_COL)))
-            fa = _fin(1 if o.get("n") is None else o.get("n"))
+            raw_n = o.get("n")
+            fa = _fin(1 if raw_n is None else raw_n)
             asked = math.floor(fa) if fa is not None else 0
+            # ⚠️ A DESTRUCTIVE COUNT IS REFUSED, NOT DEFAULTED (finding F-24). `n: 0`,
+            # `n: -5`, `n: "all"` and `n: 1.9` ALL deleted exactly one row, and the only
+            # thing contradicting a model that reported "deleted all the rows" was the
+            # card's own op line. A count we cannot read is a request we do not
+            # understand, and guessing "1" on a DELETE is the wrong way to be wrong.
+            # `insert` keeps the forgiving default: adding empty space loses nothing.
+            if kind == "delete_rc" and raw_n is not None:
+                if fa is None or fa != math.floor(fa) or asked < 1:
+                    return None, None, (
+                        at + '"n" is not a whole number of ' + axis + "s to delete ("
+                        + json.dumps(raw_n if isinstance(
+                            raw_n, (str, int, float, bool, type(None))) else str(raw_n))
+                        + ") — say how many, as a number")
             want = asked if asked >= 1 else 1
             # ⚠️ THE ASYMMETRY, for the third time and the same reason: an INSERT adds
             # empty space and is CLAMPED, a DELETE destroys data and is REFUSED over the
@@ -704,6 +782,15 @@ def sheet_formulas(sh) -> int:
         for cell in row.values():
             if isinstance(cell, dict) and isinstance(cell.get("f"), str) and cell["f"]:
                 n += 1
+    return n
+
+
+def sheet_formulas_any(snapshot) -> int:
+    """How many formulas the WHOLE WORKBOOK holds. F-04 and F-33 both need this: the
+    honesty notes were scoped to one sheet and the damage never was."""
+    n = 0
+    for sid in sheet_ids(snapshot):
+        n += sheet_formulas((snapshot.get("sheets") or {}).get(sid))
     return n
 
 
@@ -841,7 +928,20 @@ def rc_apply(sh, kind, axis, at, n):
     urows, ucols = used_extent(sh)
     rows = (urows if delete else urows + count) if axis == "row" else urows
     cols = (ucols if delete else ucols + count) if axis == "col" else ucols
-    cap_cols = min(cols, TIER1_MAX_COLS)
+    # ⚠️ THE REMAP COVERS THE FULL USED WIDTH (finding F-03). It used to be
+    # `min(cols, TIER1_MAX_COLS)` — 200 — which on a sheet 250 columns wide meant:
+    #   · a ROW INSERT shifted A…GR down one and left GS…IP where they were, splitting
+    #     the header row across two different rows PERMANENTLY, in the saved file;
+    #   · a COLUMN INSERT destroyed the value in column 200 and left 201…250 put.
+    # The only note that fired said "the insert reached the right-hand edge of this grid
+    # (column GR), so the last column fell off it" — false on three counts, and it fired
+    # for row inserts where no column moved at all. `sort` already used the full `ucols`,
+    # which is exactly what made the asymmetry invisible from outside.
+    #
+    # TIER1_MAX_COLS is the PAGE'S RENDER WINDOW, not a property of the file, and it has
+    # no business deciding which of Debi's columns survive a write. The real ceiling is
+    # Excel's, and it is unreachable in one gesture.
+    cap_cols = min(cols, RC_MAX_TOTAL_COLS)
 
     def shift(i):
         if i < at:
@@ -867,11 +967,14 @@ def rc_apply(sh, kind, axis, at, n):
     else:
         cc = int(_fin(sh.get("columnCount")) or 0)
         sh["columnCount"] = min(
-            TIER1_MAX_COLS,
+            RC_MAX_TOTAL_COLS,
             max(1, max(cc - count, ucols - count) if delete else cc + count))
     return {"kind": kind, "axis": axis, "at": at, "n": count, "cells": wrote,
-            "clipped": cap_cols < cols, "merges": sheet_merges(sh),
-            "formulas": sheet_formulas(sh)}
+            # `clipped` now means what its NAME means: data really did fall off the
+            # right-hand end, which can only happen for a COLUMN insert that pushed the
+            # used width past Excel's own last column. A row insert can never clip.
+            "clipped": (axis == "col" and not delete and cap_cols < cols),
+            "merges": sheet_merges(sh), "formulas": sheet_formulas(sh)}
 
 
 # ═══ 5b. NUMERIC COERCION — THE ROOT FIX (2026-08-28) ═══════════════════════
@@ -1277,13 +1380,28 @@ def parse_input(text, prev=None, styles=None, as_text=False):
         out["v"], out["t"] = s, CV_STRING
         return out
     if s[:1] == "=":
-        out["f"] = s
+        # ⚠️ STRIPPED HERE, BECAUSE THE DISK STRIPS IT (finding F-08). `office._write_cell`
+        # writes `f.strip()`, so an UNSTRIPPED formula meant the snapshot, the preview and
+        # `_verify`'s `expected` all carried `"=SUM(B1:B2) "` while the file correctly held
+        # `"=SUM(B1:B2)"` — and the receipt reported "0 of 1 re-read cell(s) hold what the
+        # change said they would". A PERFECT WRITE read as a failure, on the one surface
+        # whose whole job is to be trustworthy.
+        out["f"] = s.strip()
         return out
     low = s.lower()
     if low in ("true", "false"):
         out["v"], out["t"] = (low == "true"), CV_BOOLEAN
         return out
     co = coerce_numeric(s)
+    # ⚠️ AN EXPLICIT TEXT FORMAT IS AN INSTRUCTION, AND IT WINS (finding F-09). A column
+    # Debi formatted `@` MEANS "this is text"; coercing `"1,200"` into the number 1200
+    # with `#,##0` overrode her own stated intent AND flattened the pattern she had set,
+    # while the card's coercion note said the value was stored "as a real NUMBER with a
+    # matching format" and never mentioned the format it replaced. `@` is the same escape
+    # hatch as the leading apostrophe, expressed in the file instead of in the value.
+    if co is not None and office.is_text_format(cell_format(prev, styles)):
+        out["v"], out["t"] = s, CV_FORCE_STRING
+        return out
     if co is not None:
         out["v"], out["t"] = co["v"], CV_NUMBER
         if co["n"]:
@@ -1402,9 +1520,25 @@ def add_sheet(snapshot, name, seq=0):
     taken = [str((snapshot["sheets"].get(i) or {}).get("name") or "").lower()
              for i in ids]
     base = (("" if name is None else str(name)).strip() or "Sheet")[:ACT_SHEET_MAX]
+    # ⚠️ THIS LOOP BURNT A BRIDGE THREAD AT 100% CPU, FOREVER (finding F-18). The old
+    # body was `nm = f"{base} {n}"[:ACT_SHEET_MAX]` — RE-TRUNCATED back to the same 31
+    # characters — so adding a sheet whose name was already taken AND already at the
+    # limit could never find a free name. It was reachable from BOTH stage_changes and
+    # apply_changeset, so the HTTP request never returned and the worker was gone for the
+    # life of the process. Confirmed with a SIGALRM guard in the repro.
+    #
+    # TWO FIXES, BOTH REQUIRED. The suffix is built INSIDE the budget so the candidate
+    # actually changes, and the walk is BOUNDED so no future arithmetic slip can spin:
+    # a name that cannot be freed in ADD_SHEET_TRIES falls back to a positional one.
     nm, n = base, 2
     while nm.lower() in taken:
-        nm = f"{base} {n}"[:ACT_SHEET_MAX]
+        if n > ADD_SHEET_TRIES:
+            nm = f"Sheet {len(taken) + 1}"[:ACT_SHEET_MAX]
+            while nm.lower() in taken:              # bounded by construction: 8 hex chars
+                nm = ("Sheet " + secrets.token_hex(4))[:ACT_SHEET_MAX]
+            break
+        sfx = f" {n}"
+        nm = base[:max(1, ACT_SHEET_MAX - len(sfx))] + sfx
         n += 1
     sid = f"sheet-{int(time.time() * 1000):x}-{seq}"
     while sid in snapshot["sheets"]:
@@ -1416,6 +1550,117 @@ def add_sheet(snapshot, name, seq=0):
         snapshot["sheetOrder"] = list(ids)
     snapshot["sheetOrder"].append(sid)
     return nm
+
+
+# ═══ 7b. FORMULA READING — ENOUGH TO BE HONEST, AND NOT ONE INCH MORE ═══════
+# ⚠️ THIS IS NOT A FORMULA PARSER AND MUST NEVER GROW INTO ONE. It exists to answer
+# exactly two yes/no questions that three findings turn on, and both of them are safe to
+# answer PESSIMISTICALLY (say "maybe affected" when unsure — a note nobody needed costs a
+# sentence; a missing note costs a wrong document):
+#   · F-25 — could an insert/delete at this line have moved any reference in this sheet?
+#     The note used to fire for an insert at row 900 on a sheet whose only formula was
+#     `B1=A1*2`, telling Debi to check formulas that could not possibly have moved.
+#   · F-04 — does a formula on ANOTHER sheet reference the one being changed? The honesty
+#     note was gated on `sheet_formulas(sh)` — the TARGET sheet — so inserting a row in
+#     `Data` while `Summary!A1` held `=SUM(Data!A1:A5)` broke it with NO note on the card,
+#     the receipt or the tool result.
+_FX_REF = re.compile(r"(?<![A-Za-z0-9_$!.])(\$?)([A-Za-z]{1,3})(\$?)([0-9]{1,7})\b")
+_FX_SHEETQ = re.compile(r"(?:'([^']+)'|([A-Za-z0-9_À-￿ .]+))!")
+# A run of letters that is a real column reference, not a function name: refs are
+# anchored by the digits after them, which is what the regex above already requires.
+
+
+def formula_cells(text):
+    """A formula's text → [(r, c), …] 0-based, for every plain A1 reference in it.
+    PURE. Sheet-qualified references are INCLUDED (the caller decides whether it cares
+    which sheet); a name it cannot read simply is not returned."""
+    out = []
+    for m in _FX_REF.finditer(str(text or "")):
+        c = 0
+        for ch in m.group(2).upper():
+            c = c * 26 + (ord(ch) - 64)
+        r = int(m.group(4)) - 1
+        if r >= 0 and c >= 1:
+            out.append((r, c - 1))
+    return out
+
+
+def formula_sheets(text):
+    """The SHEET NAMES a formula qualifies a reference with, lower-cased. PURE."""
+    out = set()
+    for m in _FX_SHEETQ.finditer(str(text or "")):
+        nm = (m.group(1) or m.group(2) or "").strip().lower()
+        if nm:
+            out.add(nm)
+    return out
+
+
+def rc_formula_risk(snapshot, sid, axis, at):
+    """Could an insert/delete of `axis` at `at` have moved a reference anybody holds?
+
+    Returns (risky, [other sheet names whose formulas point at this one]). PURE over the
+    snapshot it is handed, and called AFTER the gesture so the answer describes the sheet
+    that now exists.
+    """
+    sheets = (snapshot or {}).get("sheets") or {}
+    target = sheets.get(sid) or {}
+    tname = str(target.get("name") or "").strip().lower()
+    risky, others = False, []
+    for other in sheet_ids(snapshot):
+        sh = sheets.get(other) or {}
+        mine = other == sid
+        hit = False
+        for row in (sh.get("cellData") or {}).values():
+            if not isinstance(row, dict):
+                continue
+            for cell in row.values():
+                f = cell.get("f") if isinstance(cell, dict) else None
+                if not (isinstance(f, str) and f):
+                    continue
+                if mine:
+                    # A reference on THIS sheet is at risk when it points at or past the
+                    # line that moved. `at` is 0-based and so is the parsed reference.
+                    for (rr, cc) in formula_cells(f):
+                        if (rr if axis == "row" else cc) >= at:
+                            risky = True
+                            break
+                    if risky:
+                        break
+                elif tname and tname in formula_sheets(f):
+                    hit = True
+                    break
+            if risky or hit:
+                break
+        if hit:
+            others.append(str(sh.get("name") or "?"))
+    return (risky or bool(others)), others
+
+
+# ⚠️ TWO SHAPES openpyxl AND EXCEL WILL BOTH ACCEPT AND NEITHER WILL LIKE (F-29, F-30).
+# Neither is refused: a formula is the model's business and Excel may well repair it. Both
+# get a NOTE, because a workbook that opens with "needs repair" and a circular reference
+# that quietly shows 0 are both things Debi is entitled to hear about before she presses
+# Apply rather than after.
+_FX_BAD = (
+    (re.compile(r"^==+"), "starts with more than one = sign"),
+    (re.compile(r"[-+*/^&,(]\s*$"), "ends part-way through an expression"),
+    (re.compile(r"^=\s*$"), "is just an = sign with nothing after it"),
+)
+
+
+def formula_flaws(text, ref, own=None):
+    """[sentence, …] for a formula that will be written verbatim and may not work."""
+    s = str(text or "")
+    out = []
+    for rx, why in _FX_BAD:
+        if rx.search(s):
+            out.append(f"{ref} was written exactly as sent ({s[:48]!r}) and it {why} — "
+                       "a spreadsheet may report this workbook as needing repair.")
+            break
+    if own is not None and own in formula_cells(s):
+        out.append(f"{ref} refers to itself ({s[:48]!r}), which is a circular reference "
+                   "— every engine will show 0 or an error for it.")
+    return out
 
 
 # ═══ 8. RUN THE OPS (office.html:4938-5046, mirrored) ═══════════════════════
@@ -1430,12 +1675,14 @@ def run_ops(snapshot, sid, ops):
     """
     done = {"cells": 0, "cleared": 0, "styled_cells": 0, "sheets": [], "renamed": "",
             "skipped": 0, "sorted": 0, "inserted": 0, "deleted": 0, "created": False,
-            "notes": [], "coerced": [], "kept_text": []}
+            "notes": [], "coerced": [], "kept_text": [], "text_in_date": [],
+            "renamed_from": "", "styled_refs": []}
     sheets = (snapshot or {}).get("sheets")
     sh = sheets.get(sid) if isinstance(sheets, dict) else None
     if not isinstance(sh, dict) or not isinstance(ops, list):
         return None
     seq = 0
+    rc_track = []                    # (axis, at) per insert/delete — see the note below
     styles = (snapshot or {}).get("styles")
     styles = styles if isinstance(styles, dict) else {}
     for o in ops:
@@ -1451,22 +1698,46 @@ def run_ops(snapshot, sid, ops):
                     rr, cc = o["r"] + r, o["c"] + c
                     keep_text = raw_text
                     co = None
+                    prev_cell = cell_at(sh, rr, cc)
+                    prev_pat = cell_format(prev_cell, styles)
                     if isinstance(val, str) and not raw_text:
                         marked_txt, was_marked = strip_text_mark(val)
                         co = None if was_marked else coerce_numeric(marked_txt)
                         if co is not None and co["n"]:
+                            seat = ctx.get(cc) or {}
+                            # ⚠️ AN EXPLICIT `@` FORMAT OUTRANKS THE INFERENCE (F-09).
+                            # Debi formatted that cell as text; that is a decision, not a
+                            # signal to be weighed against a header word.
+                            if office.is_text_format(prev_pat):
+                                keep_text = True
+                                done["kept_text"].append(
+                                    {"ref": a1(rr, cc), "raw": val,
+                                     "why": "that cell is formatted as text (@), which "
+                                            "says so on purpose"})
+                                co = None
                             # THE ONE DECISION POINT, and it is automatic: a numeric-shaped
                             # string in a column the context reads as TEXT stays text.
                             # Nobody is asked; the reason is recorded so the card can say
                             # what happened without turning it into a question.
-                            seat = ctx.get(cc) or {}
-                            if seat and not seat.get("numeric"):
+                            elif seat and not seat.get("numeric"):
                                 keep_text = True
                                 done["kept_text"].append(
                                     {"ref": a1(rr, cc), "raw": val,
                                      "why": seat.get("why", "")})
                                 co = None
-                    cell = act_cell(val, cell_at(sh, rr, cc), styles, keep_text)
+                    cell = act_cell(val, prev_cell, styles, keep_text)
+                    # ⚠️ A TEXT DATE IN A DATE-FORMATTED CELL IS THE $2,500 INCIDENT WITH
+                    # THE VISUAL TELL REMOVED (finding F-10). "2026-01-15" written into a
+                    # cell formatted `yyyy-mm-dd` KEEPS the format, so it renders
+                    # IDENTICALLY to the real dates above it while being a string that
+                    # breaks `=A3-A1` and every date sort. `coerced` was false, no note
+                    # fired, and the receipt said match: true. It is flagged now, exactly
+                    # the way a currency coercion is flagged.
+                    if (isinstance(cell, dict) and isinstance(cell.get("v"), str)
+                            and cell.get("t") in (CV_STRING, CV_FORCE_STRING)
+                            and office.is_date_format(prev_pat)):
+                        done["text_in_date"].append(
+                            {"ref": a1(rr, cc), "raw": cell["v"], "pattern": prev_pat})
                     # ⚠️ THE COERCION IS RECORDED WHERE IT HAPPENS, not inferred from the
                     # diff afterwards: the diff cannot tell "the model wrote $2,500 and
                     # we made it a number" apart from "the model wrote 2500", and the
@@ -1475,7 +1746,17 @@ def run_ops(snapshot, sid, ops):
                         done["coerced"].append(
                             {"ref": a1(rr, cc), "raw": val, "v": co["v"],
                              "n": co["n"], "shape": co["shape"],
+                             # ⚠️ AND WHAT PATTERN IT REPLACED (finding F-09). A cell
+                             # formatted `0.00" kg"` lost Debi's unit pattern silently;
+                             # the card said the value gained "a matching format" and
+                             # never said what went.
+                             "replaced": prev_pat,
                              "why": (ctx.get(cc) or {}).get("why", "")})
+                    # F-29 / F-30: a formula written verbatim that will not work.
+                    if isinstance(cell, dict) and isinstance(cell.get("f"), str):
+                        for w in formula_flaws(cell["f"], a1(rr, cc), (rr, cc)):
+                            if w not in done["notes"]:
+                                done["notes"].append(w)
                     put_cell(sh, rr, cc, cell)
                     if cell and ("v" in cell or "f" in cell):
                         done["cells"] += 1
@@ -1497,18 +1778,61 @@ def run_ops(snapshot, sid, ops):
                         cell["s"] = nxt
                     put_cell(sh, r, c, cell if cell else None)
                     done["styled_cells"] += 1
+                    # ⚠️ THE STYLED CELLS ARE RECORDED BY REFERENCE (finding F-06), so the
+                    # dry run can DIFF them and the receipt can RE-READ them. Without this
+                    # a formatting-only changeset previewed as nothing at all.
+                    if len(done["styled_refs"]) < PREVIEW_MAX_CELLS:
+                        done["styled_refs"].append(
+                            {"sheet": sh.get("name") or "?", "ref": a1(r, c)})
         elif kind == "sheet":
             if o.get("add"):
                 seq += 1
                 done["sheets"].append(add_sheet(snapshot, o["add"], seq))
             elif o.get("rename"):
-                tid = target_sid(snapshot, o.get("at")) if o.get("at") else sid
+                asked = o.get("at") or ""
+                want = str(o["rename"])[:ACT_SHEET_MAX]
+                # ⚠️ A RENAME WHOSE `at` NAMES NO SHEET IS SKIPPED, NOT REDIRECTED
+                # (finding F-15). `target_sid` falls back to the FIRST sheet for an unknown
+                # name, so `{"rename":"Renamed","at":"Nonexistent"}` renamed Alpha —
+                # `op_summary` never said WHICH sheet, the preview was empty, and there was
+                # no note. A rename is a name the model typed; guessing a different target
+                # for it is the one thing this must never do.
+                if asked and not sheet_exists(snapshot, asked):
+                    done["skipped"] += 1
+                    done["notes"].append(
+                        f"the rename was skipped: there is no sheet called {asked!r} in "
+                        "this workbook, and renaming a different one would not be what "
+                        "was asked. Ask for office_sheet_stats to see the real names.")
+                    continue
+                tid = target_sid(snapshot, asked) if asked else sid
                 t = sheets.get(tid)
-                if isinstance(t, dict):
-                    t["name"] = str(o["rename"])[:ACT_SHEET_MAX]
-                    done["renamed"] = t["name"]
+                # ⚠️ AND A RENAME ONTO A NAME ANOTHER SHEET ALREADY HOLDS IS REFUSED
+                # (finding F-16). Renaming Alpha to "Beta" on a workbook that already had
+                # a Beta yielded ["Beta", "Beta(2)"] — office._sheet_names' dedup step
+                # renamed DEBI'S Beta, and the card had only ever offered to rename one
+                # sheet. This is the same ruling office.rename_doc already makes for files.
+                clash = ""
+                for other in sheet_ids(snapshot):
+                    if other == tid:
+                        continue
+                    nm = str((sheets.get(other) or {}).get("name") or "")
+                    if nm.strip().lower() == want.strip().lower():
+                        clash = nm
+                        break
+                if clash:
+                    done["skipped"] += 1
+                    done["notes"].append(
+                        f"the rename was skipped: another sheet in this workbook is "
+                        f"already called {clash!r}, and Excel refuses two sheets with the "
+                        "same name. Pick a different name.")
+                elif isinstance(t, dict):
+                    done["renamed_from"] = str(t.get("name") or "")
+                    t["name"] = want
+                    done["renamed"] = want
                 else:
                     done["skipped"] += 1
+                    done["notes"].append("the rename was skipped: that sheet could not "
+                                         "be read.")
         elif kind == "resize":
             if o.get("rows") and int(_fin(sh.get("rowCount")) or 0) < o["rows"]:
                 sh["rowCount"] = o["rows"]
@@ -1542,11 +1866,17 @@ def run_ops(snapshot, sid, ops):
                 done["inserted"] += info["n"]
             else:
                 done["deleted"] += info["n"]
+            # ⚠️ THE NOTE NAMES THE GESTURE THAT HAPPENED (finding F-03b: it said "the
+            # insert reached…" on a delete) AND IT CAN ONLY FIRE WHEN DATA REALLY FELL OFF
+            # (finding F-03: it fired for row inserts where nothing moved). Reaching
+            # Excel's last column takes 16384 columns, so in practice it never fires — and
+            # when it does, it is true.
             if info["clipped"]:
                 done["notes"].append(
-                    "the insert reached the right-hand edge of this grid (column "
-                    + col_name(TIER1_MAX_COLS - 1) + "), so the last column fell off "
-                    "it.")
+                    "the insert reached the last column a spreadsheet has (column "
+                    + col_name(RC_MAX_TOTAL_COLS - 1) + "), so the "
+                    + str(info["n"]) + " right-most column(s) fell off it.")
+            rc_track.append((o["axis"], o["at"]))
         elif kind == "create_workbook":
             # ⚠️ NOTHING TO DO HERE, DELIBERATELY. A create is not a mutation of a
             # snapshot — apply_changeset makes the empty workbook BEFORE loading one,
@@ -1559,10 +1889,40 @@ def run_ops(snapshot, sid, ops):
         done["notes"].insert(0, "this sorted the whole sheet, ROW 1 INCLUDED: LOffice "
                                 "does not guess at a header row. Blank cells went to "
                                 "the bottom in both directions.")
-    # ⚠️ THE FORMULA NOTE, ONCE PER CHANGE AND NOT ONCE PER OPERATION, and only when the
-    # sheet STILL holds a formula. Same sentence as the page, from the same constant.
-    if (done["sorted"] or done["inserted"] or done["deleted"]) and sheet_formulas(sh):
+    # ⚠️ THE FORMULA NOTE, ONCE PER CHANGE AND NOT ONCE PER OPERATION — and now aimed
+    # (findings F-04 and F-25, which are the same note failing in opposite directions).
+    #
+    #   F-25, TOO EAGER: it was gated only on "does this sheet hold any formula", so an
+    #   insert at row 900 on a sheet whose only formula was `B1=A1*2` told Debi to go and
+    #   check formulas that could not possibly have moved. Cried wolf, so the real warning
+    #   stopped being read.
+    #   F-04, TOO NARROW: it was gated on `sheet_formulas(sh)` — the TARGET sheet — so an
+    #   insert in `Data` while `Summary!A1` held `=SUM(Data!A1:A5)` broke it with NO note
+    #   on the card, the receipt or the tool result. That is the whole "does the honesty
+    #   note reach every path" question, and the answer was no.
+    #
+    # A SORT still fires unconditionally when the sheet holds any formula: a sort moves
+    # EVERY row, so every relative reference in it is in play.
+    if done["sorted"] and sheet_formulas(sh):
         done["notes"].append(RC_FORMULA_NOTE)
+    elif rc_track:
+        risky, others = False, []
+        for axis, at in rc_track:
+            r, o2 = rc_formula_risk(snapshot, sid, axis, at)
+            risky = risky or r
+            for nm in o2:
+                if nm not in others:
+                    others.append(nm)
+        if risky:
+            note = RC_FORMULA_NOTE
+            if others:
+                note += (" Formulas on " + ", ".join(repr(n) for n in others)
+                         + " also reference this sheet by name, so check those too.")
+            done["notes"].append(note)
+        elif sheet_formulas(sh):
+            done["notes"].append("no formula reference in this workbook could have been "
+                                 "moved by this change — every one of them points before "
+                                 "the line that changed.")
     return done
 
 
@@ -1611,27 +1971,58 @@ def open_state(name, now=None) -> dict:
 
 # ═══ 10. THE PRE-WRITE SIBLING COPY (spec §3 rule 1) ════════════════════════
 def pre_agent_for(path) -> str:
-    """`<stem>.pre-agent.xlsx` beside the file. ONE level, overwritten per agent write:
-    it answers "put it back the way it was before the agent touched it", which is the
-    only question the page's undo stack cannot answer at all. Distinct from the daily
-    `.bak` (office.backup_for), which answers "put it back the way it was this morning"
-    — the two are not substitutes and a write takes both."""
-    stem = os.path.splitext(str(path))[0]
-    if stem.endswith(".pre-agent"):              # never .pre-agent.pre-agent.xlsx
-        stem = stem[: -len(".pre-agent")]
-    return stem + PRE_AGENT_SUFFIX
+    """`data/office/.checkpoints/<stem>/pre-agent.xlsx`. ONE level, overwritten per
+    agent write: it answers "put it back the way it was before the agent touched it",
+    which is the only question the page's undo stack cannot answer at all. Distinct from
+    the daily `.bak` (office.backup_for), which answers "put it back the way it was this
+    morning" — the two are not substitutes and a write takes both.
+
+    ⚠️ IT MOVED OUT OF data/office/ AT loffice-2026-08-28d, AND IT IS A DELIBERATE
+    DEVIATION FROM THE OLD SIBLING-FILE RULING. Three measured defects came from the old
+    `<stem>.pre-agent.xlsx` sibling, and every one of them was the SAME root cause — a
+    safety copy living in the namespace of real documents:
+
+      · F-07 (LIE, destroys data): a workbook Debi actually had called
+        `report.pre-agent.xlsx` — and `op_list` listed such files as ordinary workbooks,
+        so she could make one from the panel — was silently overwritten by the first
+        apply on `report.xlsx`. Nothing named the file it was about to destroy.
+      · F-22 (REFUSES WRONGLY): `pre_agent_for("report.pre-agent.xlsx")` returned
+        ITSELF (the `.pre-agent` strip existed to avoid `.pre-agent.pre-agent`), so
+        `copy2(x, x)` handed Debi a raw `shutil.SameFileError` with two absolute temp
+        paths in it, and that workbook could never be written at all.
+      · C4 (CONFUSING): the copies sat in the file rail with a size, a date and a
+        download/delete pair, indistinguishable from documents.
+
+    Namespacing kills all three at once and needs no special cases: the copy for
+    `report.pre-agent.xlsx` is `.checkpoints/report.pre-agent/pre-agent.xlsx`, which is
+    neither itself nor a document. It also puts the pre-write copy in the SAME place as
+    the checkpoint stack, which is where somebody looking for "the version before" will
+    look — and `office.rename_doc` now moves that folder, so F-21 is fixed by the same
+    change.
+    """
+    d = os.path.dirname(str(path)) or "."
+    stem = os.path.splitext(os.path.basename(str(path)))[0]
+    return os.path.join(d, office.CHECKPOINT_DIR, stem, office.PRE_AGENT_NAME)
+
+
+def pre_agent_label(path) -> str:
+    """What the CARD, the receipt and the tool result call that copy: a relative path,
+    so nobody reads it as a sibling workbook they could open in the rail."""
+    stem = os.path.splitext(os.path.basename(str(path)))[0]
+    return office.CHECKPOINT_DIR + "/" + stem + "/" + office.PRE_AGENT_NAME
 
 
 def take_pre_agent(path):
-    """(basename, None) or (None, reason). A copy we cannot write is a reason to STOP,
+    """(label, None) or (None, reason). A copy we cannot write is a reason to STOP,
     never to write anyway — the same ruling office.save_doc makes about the daily
     `.bak`, for the same reason: this file is the only undo the agent lane has."""
     dst = pre_agent_for(path)
     try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(str(path), dst)
-    except OSError as e:
-        return None, f"could not write the pre-agent copy beside that workbook: {e}"
-    return os.path.basename(dst), None
+    except (OSError, shutil.Error) as e:
+        return None, f"could not write the pre-agent copy for that workbook: {e}"
+    return pre_agent_label(path), None
 
 
 # ═══ 11. THE SIX TOOLS ══════════════════════════════════════════════════════
@@ -1671,6 +2062,7 @@ def op_list(root) -> dict:
                       "modified": time.strftime("%Y-%m-%d %H:%M:%S",
                                                 time.localtime(e["modified"])),
                       "has_daily_backup": bool(e["has_backup"]),
+                      "agent_copy": e.get("agent_copy", ""),
                       "open_in_loffice": st["open"],
                       "unsaved_edits": st["dirty"]})
     return {"ok": True, "folder": "data/office", "count": len(files), "files": files,
@@ -1678,8 +2070,10 @@ def op_list(root) -> dict:
                       "write anything outside data/office.",
                       "'unsaved_edits' true means a write tool will refuse until Debi "
                       "saves or closes it.",
-                      "a *.pre-agent.xlsx is the copy an earlier agent write kept of "
-                      "the workbook it was about to change."]}
+                      "'agent_copy', when it is not empty, is where the copy of that "
+                      "workbook from before the last applied change is kept — under "
+                      + office.CHECKPOINT_DIR + "/, which is why it is not in this list "
+                      "as a workbook of its own."]}
 
 
 def op_read(root, name, sheet=None, cell_range=None):
@@ -1710,7 +2104,8 @@ def op_read(root, name, sheet=None, cell_range=None):
     if area > READ_MAX_CELLS:
         return None, (f"that range is {area} cells and the read cap is "
                       f"{READ_MAX_CELLS} — ask for it in a few smaller pieces")
-    cells, formulas = [], 0
+    cells, formulas, dates, uncached = [], 0, 0, 0
+    styles = snap.get("styles") if isinstance(snap.get("styles"), dict) else {}
     for r in range(r0, r1 + 1):
         for c in range(c0, c1 + 1):
             cell = cell_at(sh, r, c)
@@ -1720,13 +2115,40 @@ def op_read(root, name, sheet=None, cell_range=None):
             f = cell.get("f")
             if isinstance(f, str) and f:
                 formulas += 1
-                out = {"ref": ref, "formula": f, "cached": True}
-                if "v" in cell:
+                # ⚠️ `cached` NOW MEANS WHAT IT SAYS (finding F-14). It was set to True
+                # UNCONDITIONALLY for every formula, with `cached_value` added only when
+                # one existed — and after any apply (F-33) NONE does, so every formula in
+                # the workbook read back as {"formula": …, "cached": true}: a flag
+                # ASSERTING a value that is not there.
+                has = "v" in cell
+                out = {"ref": ref, "formula": f, "cached": bool(has)}
+                if has:
                     out["cached_value"] = cell["v"]
+                else:
+                    uncached += 1
+                    out["cached_reason"] = ("this file holds no computed result for that "
+                                            "formula — nothing here can evaluate it")
                 cells.append(out)
             elif "v" in cell:
-                cells.append({"ref": ref, "value": cell["v"],
-                              "text": display_text(cell)})
+                pat = cell_format(cell, styles)
+                row = {"ref": ref, "value": cell["v"], "text": display_text(cell)}
+                if pat:
+                    row["number_format"] = pat
+                # ⚠️ A DATE IS A NUMBER WITH A FORMAT, AND THE MODEL MUST SEE THE DATE
+                # (finding F-11). A date cell came back as {"value": 46037.0, "text":
+                # "46037"} and a time cell as 0.3958333333333333, with no number format and
+                # no note anywhere — so an agent asked "what is the invoice date in A1?"
+                # answered 46037.
+                if (office.is_date_format(pat)
+                        and isinstance(cell["v"], (int, float))
+                        and not isinstance(cell["v"], bool)):
+                    when = office.serial_text(cell["v"], pat)
+                    if when:
+                        row["text"] = when
+                        row["serial"] = cell["v"]
+                        row["is_date"] = True
+                        dates += 1
+                cells.append(row)
     merges = []
     for m in sh.get("mergeData") or []:
         if not isinstance(m, dict):
@@ -1741,10 +2163,23 @@ def op_read(root, name, sheet=None, cell_range=None):
     notes = []
     if formulas:
         notes.append(CACHED_NOTE)
+    if uncached:
+        notes.append(f"{uncached} of those {formulas} formula(s) have NO cached value in "
+                     "this file, so this result cannot tell you what they compute to. "
+                     "That is normal for a workbook LOffice itself last wrote.")
+    if dates:
+        notes.append(f"{dates} cell(s) are DATES: the file stores a serial number and the "
+                     "cell's number format renders it, so 'value' is the serial and "
+                     "'text' is the date. Write a date back as text in the same format "
+                     "('2026-01-15'), never as the serial.")
     if merges:
+        # F-26: there has been no `office_sort` tool since the changeset ruling. The real
+        # behaviour is that a `sort` op INSIDE a changeset is skipped, with its own
+        # sentence, on a different surface.
         notes.append(f"this range holds {len(merges)} merged "
-                     f"{'range' if len(merges) == 1 else 'ranges'} — office_sort "
-                     "REFUSES a sheet with any merge on it.")
+                     f"{'range' if len(merges) == 1 else 'ranges'} — a \"sort\" operation "
+                     "inside a staged change is SKIPPED, with a note, on any sheet that "
+                     "has a merge on it.")
     sn = _sheet_note(snap, sheet, sid)
     if sn:
         notes.append(sn)
@@ -1776,13 +2211,25 @@ def op_sheet_stats(root, name, sheet=None):
     sh = snap["sheets"][sid]
     urows, ucols = used_extent(sh)
     cols, clipped = [], ucols > STATS_MAX_COLS
+    any_formula_col = False
     for c in range(min(ucols, STATS_MAX_COLS)):
         nums, texts, bools, blanks, fx = [], 0, 0, 0, 0
+        cached = []
         for r in range(urows):
             cell = cell_at(sh, r, c)
-            k = sort_key(cell)
+            # ⚠️ A FORMULA COUNTS ONCE, AS A FORMULA (finding F-13). `sort_key` classes a
+            # formula as TEXT — correct for sorting, wrong for a census — so a column of
+            # five `=A1*2` cells reported {"numbers": 0, "text": 5, "formulas": 5}: TEN
+            # things in a five-cell column, with no sum/min/max at all, under a note
+            # claiming "every number here is computed from the values in the file". A model
+            # reading `numbers: 0, text: 5` concluded the column was text.
             if isinstance(cell, dict) and isinstance(cell.get("f"), str) and cell["f"]:
                 fx += 1
+                cv = cell.get("v")
+                if isinstance(cv, (int, float)) and not isinstance(cv, bool):
+                    cached.append(float(cv))
+                continue
+            k = sort_key(cell)
             if k[0] == SORT_BLANK:
                 blanks += 1
             elif k[0] == 0:
@@ -1800,11 +2247,35 @@ def op_sheet_stats(root, name, sheet=None):
             ent["max"] = _numeric(max(nums))
             ent["sum"] = _numeric(total)
             ent["mean"] = _numeric(round(total / len(nums), 10))
+        if fx:
+            any_formula_col = True
+            # ⚠️ THE CACHED AGGREGATE IS REPORTED SEPARATELY AND LABELLED, never merged
+            # into `sum`. It is what a real engine last computed, which may be stale — so
+            # it is a different question with a different name, and the note says so.
+            ent["formula_note"] = (
+                f"{fx} cell(s) in column {col_name(c)} are FORMULAS. Their values are not "
+                "computed here and are not in 'sum'/'min'/'max'"
+                + (f"; {len(cached)} of them carry a CACHED result, aggregated below as "
+                   "'cached_*'." if cached else " and none of them carries a cached "
+                   "result, so nothing in this file says what they compute to."))
+            if cached:
+                ctot = math.fsum(cached)
+                ent["cached_numbers"] = len(cached)
+                ent["cached_min"] = _numeric(min(cached))
+                ent["cached_max"] = _numeric(max(cached))
+                ent["cached_sum"] = _numeric(ctot)
+                ent["cached_mean"] = _numeric(round(ctot / len(cached), 10))
         cols.append(ent)
     notes = ["'first_row_value' is row 1 as it is — these tools never guess at a "
-             "header row, and neither does office_sort (it sorts row 1 with the rest).",
+             "header row, and neither does a \"sort\" operation (it sorts row 1 with "
+             "the rest).",
              "every number here is computed from the values in the file: a formula "
-             "cell counts as a FORMULA, not as its cached number. " + CACHED_NOTE]
+             "cell counts ONCE, as a FORMULA, and never as its cached number. "
+             + CACHED_NOTE]
+    if any_formula_col:
+        notes.append("a column reported as `numbers: 0` with a `formulas` count is a "
+                     "column of FORMULAS, not a column of text — read its "
+                     "'formula_note' before concluding anything about its type.")
     if clipped:
         notes.append(f"column stats stop at {col_name(STATS_MAX_COLS - 1)} "
                      f"({STATS_MAX_COLS} columns); this sheet is wider.")
@@ -1854,6 +2325,8 @@ def _apply(root, name, sheet, ops, count, label):
     notes = list(done["notes"])
     notes.append(AGENT_UNDO_NOTE.format(backup=backup))
     notes.append(FIDELITY_WRITE_NOTE)
+    if sheet_formulas_any(snap):
+        notes.append(CACHE_WIPE_NOTE)                    # finding F-33
     sn = _sheet_note(snap, sheet, sid)
     if sn:
         notes.insert(0, sn)
@@ -1918,9 +2391,58 @@ def face_display(cell, styles=None) -> str:
     v = cell.get("v")
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         pat = cell_format(cell, styles)
+        # ⚠️ A DATE-FORMATTED NUMBER RENDERS AS THE DATE (finding F-10). It used to print
+        # the raw serial next to the pattern — `46034 (yyyy-mm-dd)` — so a text date
+        # written into a date cell read as "46034 → 2026-01-15" on the card, which looks
+        # like a FIX rather than like the type change it actually is.
+        if office.is_date_format(pat):
+            when = office.serial_text(v, pat)
+            if when:
+                return when + " (" + pat + ")"
         if pat:
             return face + " (" + pat + ")"
     return face
+
+
+# ⚠️ THE STYLE FACE — WHAT A `style` OP ACTUALLY CHANGES, AS ONE COMPARABLE STRING.
+# It exists because `cell_face` ignores `s` entirely (finding F-06): a formatting-only
+# changeset produced `preview == []` and `cells_changed == 0`, so the card said
+# "5 formatted — 0 cells would change" with an empty before→after table, the receipt said
+# "0 of 0 re-read cell(s) hold what the change said they would", and the panel's GREEN
+# SUCCESS BADGE rendered from those numbers — while A1 really did go bold on red.
+STYLE_FACE_KEYS = ("bl", "it", "ul", "st", "ff", "fs", "cl", "bg", "ht", "vt", "tb", "n")
+_STYLE_WORDS = {"bl": "bold", "it": "italic", "ul": "underline", "st": "strikethrough",
+                "ff": "font", "fs": "size", "cl": "colour", "bg": "fill",
+                "ht": "align", "vt": "valign", "tb": "wrap", "n": "format"}
+
+
+def style_face(cell, styles=None) -> str:
+    """A cell's carried formatting as one short human string, or ''. PURE."""
+    s = cell.get("s") if isinstance(cell, dict) else None
+    if isinstance(s, str):
+        s = (styles or {}).get(s) if isinstance(styles, dict) else None
+    if not isinstance(s, dict):
+        return ""
+    bits = []
+    for k in STYLE_FACE_KEYS:
+        if k not in s:
+            continue
+        v = s[k]
+        word = _STYLE_WORDS[k]
+        if k in ("bl", "it", "ul", "st", "tb"):
+            if v:
+                bits.append(word)
+        elif k in ("cl", "bg"):
+            rgb = v.get("rgb") if isinstance(v, dict) else v
+            if rgb:
+                bits.append(f"{word} {rgb}")
+        elif k == "n":
+            pat = v.get("pattern") if isinstance(v, dict) else v
+            if pat:
+                bits.append(f'{word} "{pat}"')
+        elif v not in (None, ""):
+            bits.append(f"{word} {v}")
+    return ", ".join(bits)
 
 
 def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
@@ -1969,6 +2491,85 @@ def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
     return rows, total
 
 
+def style_diff(before, after, refs, limit=PREVIEW_MAX_CELLS):
+    """[{sheet, ref, before, after}, …], total — every cell whose FORMATTING changed
+    (finding F-06). `refs` is run_ops' own `styled_refs`, so this looks only where a
+    style op actually landed rather than walking the workbook twice.
+
+    KEPT OUT OF `preview` DELIBERATELY. `_verify` re-reads `preview` and compares cell
+    FACES; a formatting row has no face to compare and would report as a mismatch on
+    every receipt. Two lists, two verifications, one card.
+    """
+    sb = (before or {}).get("styles")
+    sa = (after or {}).get("styles")
+    sb = sb if isinstance(sb, dict) else {}
+    sa = sa if isinstance(sa, dict) else {}
+    by_before, by_after = {}, {}
+    for src, dst in ((before, by_before), (after, by_after)):
+        for sid in sheet_ids(src):
+            sh = ((src or {}).get("sheets") or {}).get(sid) or {}
+            dst[str(sh.get("name") or "?")] = sh
+    out, total, seen = [], 0, set()
+    for ent in (refs or []):
+        nm, ref = ent.get("sheet") or "?", ent.get("ref") or ""
+        rg = act_range(ref)
+        if rg is None or (nm, ref) in seen:
+            continue
+        seen.add((nm, ref))
+        cb = cell_at(by_before.get(nm), rg[0], rg[1])
+        ca = cell_at(by_after.get(nm), rg[0], rg[1])
+        fb, fa = style_face(cb, sb), style_face(ca, sa)
+        if fb == fa:
+            continue
+        total += 1
+        if len(out) < max(int(limit or 0), 0):
+            out.append({"sheet": nm, "ref": ref, "before": fb or "(none)", "after": fa})
+    return out, total
+
+
+def merge_diff(before, after):
+    """[{sheet, before, after}, …] — every merged range this change reshapes (F-05).
+
+    `snapshot_diff` walks `cellData` only, so deleting two rows inside `A1:A4` (which
+    reshapes the merge to `A1:A2`) read as "2 row/column(s) DELETED — 0 cells would
+    change" with an EMPTY before→after table, and inserting a row above a merge shifted
+    `A1:C1` → `A2:C2` with no mention at all.
+    """
+    def faces(sh):
+        out = []
+        for m in (sh or {}).get("mergeData") or []:
+            if not isinstance(m, dict):
+                continue
+            sr, sc = _fin(m.get("startRow")), _fin(m.get("startColumn"))
+            er, ec = _fin(m.get("endRow")), _fin(m.get("endColumn"))
+            if None in (sr, sc, er, ec):
+                continue
+            out.append(f"{a1(int(sr), int(sc))}:{a1(int(er), int(ec))}")
+        return sorted(out)
+
+    rows = []
+    for sid in sheet_ids(after):
+        a = ((after or {}).get("sheets") or {}).get(sid) or {}
+        b = ((before or {}).get("sheets") or {}).get(sid) or {}
+        fa, fb = faces(a), faces(b)
+        if fa == fb:
+            continue
+        nm = a.get("name") or "?"
+        gone = [x for x in fb if x not in fa]
+        made = [x for x in fa if x not in fb]
+        # Paired positionally when the counts match, which is what a shift or a reshape
+        # looks like; otherwise listed as removed / added, which is what it really is.
+        if len(gone) == len(made):
+            for x, y in zip(gone, made):
+                rows.append({"sheet": nm, "before": x, "after": y})
+        else:
+            for x in gone:
+                rows.append({"sheet": nm, "before": x, "after": "(no longer merged)"})
+            for y in made:
+                rows.append({"sheet": nm, "before": "(not merged)", "after": y})
+    return rows
+
+
 def op_summary(op) -> str:
     """One human line per operation, for the card's op list. PURE."""
     k = op.get("op")
@@ -1985,7 +2586,12 @@ def op_summary(op) -> str:
     if k == "sheet":
         if op.get("add"):
             return f"add a sheet called {op['add']!r}"
-        return f"rename a sheet to {op.get('rename')!r}"
+        # ⚠️ IT NAMES WHICH SHEET (finding F-15). "rename a sheet to 'Renamed'" was the
+        # whole card for an operation that renamed Alpha because `at` matched nothing —
+        # the one word the reader needed was the one word missing.
+        at = op.get("at") or ""
+        return (f"rename the sheet {at!r} to {op.get('rename')!r}" if at
+                else f"rename THIS sheet to {op.get('rename')!r}")
     if k == "resize":
         return (f"grow the sheet to {op.get('rows') or '—'} rows × "
                 f"{op.get('cols') or '—'} columns")
@@ -2241,7 +2847,20 @@ def public_changeset(cs) -> dict:
     the page would invite a page-side writer to grow around it."""
     if not isinstance(cs, dict):
         return {}
-    return {"changeset_id": cs["id"], "name": cs["name"], "sheet": cs["sheet"],
+    return {"changeset_id": cs["id"], "name": cs["name"],
+            # ⚠️ THE *RESOLVED* SHEET, NOT THE ONE THE MODEL ASKED FOR (finding F-02).
+            # This returned `cs["sheet"]` — the REQUESTED name — while `target_sid` falls
+            # back to the first sheet for an unknown one. So staging against "Q3 Data" on a
+            # workbook of Alpha/Beta/Gamma produced a card headed `sheet: "Q3 Data"` whose
+            # every preview row said `Alpha`, with no note; the warning arrived in the
+            # apply result, AFTER the write. `sheet_asked` travels too, so the card can say
+            # both when they differ.
+            "sheet": cs.get("sheet_resolved") or cs["sheet"],
+            "sheet_asked": cs["sheet"],
+            "style_preview": [dict(s) for s in cs.get("style_preview") or []],
+            "style_total": cs.get("style_total", 0),
+            "merge_changes": [dict(m) for m in cs.get("merge_changes") or []],
+            "text_in_date": [dict(t) for t in cs.get("text_in_date") or []],
             "session": cs["key"][0], "staged_at": cs["staged_at"],
             "staged_at_text": time.strftime("%H:%M:%S",
                                             time.localtime(cs["staged_at"])),
@@ -2299,6 +2918,10 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     if done is None:
         return None, "refused: those operations could not be applied to that sheet"
     preview, total = snapshot_diff(snap, after)
+    # F-06 / F-05: formatting and merges are real changes with their own before → after,
+    # and the card lists them beside the cell rows instead of reporting "0 cells".
+    style_preview, style_total = style_diff(snap, after, done["styled_refs"])
+    merge_changes = merge_diff(snap, after)
     # THE COERCION, MARKED ON THE ROWS IT HAPPENED ON, so the card's before → after
     # column can say `"$2,500" → 2500 ($#,##0)` on exactly those cells and nowhere else.
     co_refs = {c["ref"]: c for c in done["coerced"]}
@@ -2319,12 +2942,42 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     notes = list(done["notes"])
     if not exists:
         notes.insert(0, f"{base!r} does not exist yet — applying this creates it.")
+    # ⚠️ THE SHEET NOTE REACHES STAGING NOW (finding F-02). The honest sentence already
+    # existed (`_sheet_note`) and was wired into `_apply` and `op_read` only — i.e. it
+    # arrived AFTER the write, on the receipt, having never been on the consent surface.
+    sheet_note = _sheet_note(snap, sheet, sid)
+    if sheet_note:
+        notes.insert(0, sheet_note)
+    if style_total:
+        shown = ", ".join(f"{s['ref']} {s['before']} → {s['after']}"
+                          for s in style_preview[:8])
+        notes.append(f"{style_total} cell(s) change FORMATTING only (no value changes): "
+                     + shown + (f", +{style_total - 8} more" if style_total > 8 else "")
+                     + ".")
+    if merge_changes:
+        shown = ", ".join(f"{m['before']} → {m['after']}" for m in merge_changes[:6])
+        notes.append(f"{len(merge_changes)} merged range(s) are reshaped by this change: "
+                     + shown + ".")
+    if done["text_in_date"]:
+        shown = ", ".join(f"{t['ref']} {t['raw']!r} (cell format {t['pattern']})"
+                          for t in done["text_in_date"][:8])
+        notes.insert(0, f"⚠ {len(done['text_in_date'])} value(s) stay TEXT in a cell "
+                        "whose number format is a DATE, so they will LOOK like the real "
+                        "dates around them and break every date subtraction and sort: "
+                     + shown + ". Send a date as a JSON number (the serial) with the date "
+                     "format, or accept that this cell is a label.")
     if done["coerced"]:
         # ⚠️ SAID OUT LOUD, EVERY TIME. A writer that quietly changes what the model sent
         # is a writer nobody can debug, and Debi is entitled to know her document holds a
         # number where the agent typed a string.
-        shown = ", ".join(f"{c['ref']} {c['raw']!r} → {c['v']} ({c['n']})"
-                          for c in done["coerced"][:8])
+        # ⚠️ AND WHAT PATTERN EACH ONE REPLACED, WHEN IT REPLACED ONE (finding F-09). A
+        # cell formatted `0.00" kg"` lost Debi's unit pattern to the generated `#,##0` and
+        # this sentence said only that the value gained "a matching number format".
+        shown = ", ".join(
+            f"{c['ref']} {c['raw']!r} → {c['v']} ({c['n']})"
+            + (f" — this REPLACED the format {c['replaced']!r} that cell had"
+               if c.get("replaced") else "")
+            for c in done["coerced"][:8])
         more = len(done["coerced"]) - 8
         notes.append(
             f"{len(done['coerced'])} value(s) sent as a numeric-shaped STRING are stored "
@@ -2356,7 +3009,7 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     if st["dirty"]:
         notes.append("Debi has UNSAVED edits in that workbook right now. Apply will "
                      "refuse until she saves or closes it — say so if she asks why.")
-    summary = _summary_line(base, done, total, exists)
+    summary = _summary_line(base, done, total, exists, style_total, len(merge_changes))
     t = _now(now)
     key = (_sesskey(session), base)
     cid = secrets.token_hex(8)
@@ -2364,16 +3017,34 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     if old:
         _drop(old)                       # REPLACED, never accumulated (spec §1)
     if len(_CHANGESETS) >= CHANGESET_MAX:
+        # ⚠️ AN EVICTION IS TOLD TO THE SESSION IT BELONGED TO (finding F-17). This
+        # dropped the four oldest changesets in silence: staging 30 proposals across 30
+        # workbooks left ONE pending, while the other 29 models had all been told "NOT
+        # applied — Debi reviews and applies this in LOffice" and their cards simply did
+        # not exist. No session line, no note, nothing in the panel. `push_session_line`
+        # already existed for exactly this shape of news.
         for dead in sorted(_CHANGESETS, key=lambda c: _CHANGESETS[c]["staged_at"])[:4]:
+            gone = _CHANGESETS.get(dead)
+            if isinstance(gone, dict) and gone.get("status") == "pending":
+                push_session_line(gone["key"][0], EVICTED_LINE.format(
+                    cid=gone["id"], name=gone["name"], max=CHANGESET_MAX))
             _drop(dead)
     _CHANGESETS[cid] = {
         "id": cid, "key": key, "name": base, "sheet": sheet or "",
+        # The RESOLVED sheet, recorded once at staging, so the card, the receipt and the
+        # apply all name the same one (F-02).
+        "sheet_resolved": (after["sheets"][sid] or {}).get("name") or "",
         "ops": parsed, "op_list": op_list, "planned": {k: v for k, v in count.items()
                                                        if v},
         "preview": preview, "preview_total": total, "summary": summary,
+        "style_preview": style_preview, "style_total": style_total,
+        "merge_changes": merge_changes,
+        # What the receipt must re-read at the SHEET level (finding F-23).
+        "expect_sheets": list(done["sheets"]), "expect_rename": done["renamed"],
         "notes": notes, "staged_at": t, "status": "pending",
         "warnings": warnings, "coerced": list(done["coerced"]),
         "kept_text": list(done["kept_text"]),
+        "text_in_date": list(done["text_in_date"]),
         "creates_workbook": not exists,
         "file_mtime": (os.path.getmtime(target) if exists else 0.0),
     }
@@ -2385,8 +3056,15 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
     return out, None
 
 
-def _summary_line(name, done, cells, exists) -> str:
-    """The card's first line, and the model's own summary. PURE-ish."""
+def _summary_line(name, done, cells, exists, styles=0, merges=0) -> str:
+    """The card's first line, and the model's own summary. PURE-ish.
+
+    ⚠️ THE TAIL COUNTS MORE THAN CELL VALUES NOW (findings F-05, F-06). It used to end
+    "— 0 cells would change" for a formatting-only change (which formatted five cells) and
+    for a delete that reshaped a merge, because `cells` comes from a diff that walked only
+    cell VALUES. A first line whose number contradicts the clause before it is worse than
+    no number.
+    """
     bits = []
     if not exists:
         bits.append("create the workbook")
@@ -2407,7 +3085,15 @@ def _summary_line(name, done, cells, exists) -> str:
     if done["renamed"]:
         bits.append(f"a sheet renamed to {done['renamed']!r}")
     what = ", ".join(bits) if bits else "no visible change"
-    return (f"{name}: {what} — {cells} cell{'' if cells == 1 else 's'} would change.")
+    tail = f"{cells} cell{'' if cells == 1 else 's'} would change"
+    extra = []
+    if styles:
+        extra.append(f"{styles} would change FORMATTING only")
+    if merges:
+        extra.append(f"{merges} merged range(s) would be reshaped")
+    if extra:
+        tail += " (" + ", ".join(extra) + ")"
+    return f"{name}: {what} — {tail}."
 
 
 # ═══ 15. CHECKPOINTS (spec §3) ══════════════════════════════════════════════
@@ -2436,6 +3122,12 @@ def list_checkpoints(root, name) -> list:
         return out
     for f in entries:
         if not f.endswith(office.DOC_EXT):
+            continue
+        # ⚠️ THE PRE-AGENT COPY LIVES IN THIS FOLDER NOW AND IT IS NOT A CHECKPOINT.
+        # Counting it as one would put it in the prune window (so the newest real
+        # checkpoint would be dropped to keep it) and offer it to "Undo this change"
+        # under the changeset id `pre-agent`, which belongs to no changeset.
+        if f == office.PRE_AGENT_NAME:
             continue
         p = os.path.join(d, f)
         try:
@@ -2566,6 +3258,47 @@ def drain_session_lines(session) -> list:
     return _SESSION_LINES.pop(_sesskey(session), [])
 
 
+def _apply_gate(root, cs):
+    """'' when this changeset may be applied, else the sentence that refuses it.
+
+    EVERY REASON TO SAY NO, IN ONE PLACE, BEFORE ANY FILE IS TOUCHED — that ordering IS
+    finding F-20's fix. It is deliberately read-only: it copies nothing, writes nothing and
+    prunes nothing, so a refused Apply leaves the workbook and its undo stack exactly as
+    they were. `_apply` still repeats the dirty and sheet checks (cheap, and it has other
+    callers); this is the gate that runs FIRST.
+    """
+    name = cs["name"]
+    creating = bool(cs.get("creates_workbook"))
+    target, reason = office.doc_target(root, name, must_exist=False)
+    if not target:
+        return reason
+    exists = os.path.isfile(target)
+    if not exists and not creating:
+        return APPLY_GONE_REFUSAL.format(name=name)          # F-32
+    st = open_state(name)
+    if st["dirty"]:
+        return APPLY_DIRTY_REFUSAL
+    if exists:
+        # ⚠️ THE APPLY'S mtime FENCE (finding F-01), with the SAME slack the undo fence
+        # uses and for the same reason: this compares an mtime the bridge recorded at
+        # staging against the same file now, so any real difference is somebody else's
+        # save — including one that landed in the same second.
+        staged = _fin(cs.get("file_mtime")) or 0.0
+        try:
+            live = os.path.getmtime(target)
+        except OSError as e:
+            return f"could not read that workbook: {e}"
+        if staged > 0 and abs(live - staged) > FENCE_EPS:
+            return APPLY_FENCE_REFUSAL.format(name=name)
+        try:
+            snap = office.snapshot_from_path(target)
+        except office.OfficeError as e:
+            return str(e)
+        if not target_sid(snap, cs["sheet"] or None):
+            return "that workbook has no readable sheets"
+    return ""
+
+
 def apply_changeset(root, cid, now=None):
     """(receipt, None) or (None, reason). The HUMAN gesture, and the only write path a
     changeset has.
@@ -2582,6 +3315,16 @@ def apply_changeset(root, cid, now=None):
     name = cs["name"]
     t = _now(now)
     created = False
+    # ⚠️ EVERY REFUSAL RUNS BEFORE ANYTHING IS COPIED OR WRITTEN (finding F-20). This used
+    # to call `push_checkpoint` FIRST and let `_apply` do the dirty check afterwards, so
+    # each REFUSED press ("you have unsaved edits…") added a checkpoint of an UNCHANGED
+    # file — and `CHECKPOINT_KEEP` is 10, so ten refused presses pruned out every
+    # checkpoint from a real apply. Verified: 3 real applies then 10 refused presses left
+    # 10 checkpoints, NONE of them from a real apply. The undo stack was destroyed by
+    # gestures that changed nothing.
+    gate = _apply_gate(root, cs)
+    if gate:
+        return None, gate
     if cs["creates_workbook"]:
         target, reason = office.doc_target(root, name, must_exist=False)
         if not target:
@@ -2659,6 +3402,7 @@ def _verify(root, name, cs):
     by_sheet = {}
     for i in sheet_ids(snap):
         by_sheet[(snap["sheets"][i] or {}).get("name")] = snap["sheets"][i]
+    styles = snap.get("styles") if isinstance(snap.get("styles"), dict) else {}
     rows, matched = [], 0
     for p in cs["preview"]:
         sh = by_sheet.get(p["sheet"])
@@ -2666,11 +3410,53 @@ def _verify(root, name, cs):
         got = cell_face(cell_at(sh, rg[0], rg[1])) if (sh and rg) else ""
         ok = got == p["after"]
         matched += 1 if ok else 0
-        rows.append({"sheet": p["sheet"], "ref": p["ref"], "expected": p["after"],
-                     "found": got, "match": ok})
-    note = (f"{matched} of {len(rows)} re-read cell(s) hold what the change said they "
-            "would" + ("." if matched == len(rows) else
-                       " — the ones that do not are listed above."))
+        rows.append({"kind": "cell", "sheet": p["sheet"], "ref": p["ref"],
+                     "expected": p["after"], "found": got, "match": ok})
+    # ⚠️ FORMATTING IS RE-READ TOO (finding F-06). A formatting-only changeset previewed as
+    # nothing and got the receipt "0 of 0 re-read cell(s) hold what the change said they
+    # would" — a GREEN badge over an unverified write that really had happened.
+    styled = 0
+    for s in cs.get("style_preview") or []:
+        sh = by_sheet.get(s["sheet"])
+        rg = act_range(s["ref"])
+        got = style_face(cell_at(sh, rg[0], rg[1]), styles) if (sh and rg) else ""
+        ok = got == s["after"]
+        styled += 1
+        matched += 1 if ok else 0
+        rows.append({"kind": "format", "sheet": s["sheet"], "ref": s["ref"],
+                     "expected": s["after"], "found": got or "(none)", "match": ok})
+    # ⚠️ AND SO ARE SHEET-LEVEL OUTCOMES (finding F-23). A sheet-add or sheet-rename
+    # changeset has an EMPTY preview, so `_verify` iterated nothing and reported "0 of 0" —
+    # a sentence that reads as a failure about a change that had in fact worked, with
+    # nothing at all re-reading the workbook to confirm it.
+    live = {str((snap["sheets"][i] or {}).get("name") or "").strip().lower()
+            for i in sheet_ids(snap)}
+    sheet_rows = 0
+    for want in list(cs.get("expect_sheets") or []) + (
+            [cs["expect_rename"]] if cs.get("expect_rename") else []):
+        ok = str(want).strip().lower() in live
+        sheet_rows += 1
+        matched += 1 if ok else 0
+        rows.append({"kind": "sheet", "sheet": str(want), "ref": "(sheet)",
+                     "expected": f"a sheet called {want!r}",
+                     "found": (f"{want!r} is in the workbook" if ok
+                               else f"no sheet called {want!r}"), "match": ok})
+    n = len(rows)
+    if not n:
+        note = ("nothing in this change had a cell, a format or a sheet to re-read, so "
+                "there was nothing to verify.")
+    else:
+        what = []
+        if len(cs["preview"]):
+            what.append(f"{len(cs['preview'])} cell(s)")
+        if styled:
+            what.append(f"{styled} formatting change(s)")
+        if sheet_rows:
+            what.append(f"{sheet_rows} sheet(s)")
+        note = (f"{matched} of {n} re-read item(s) hold what the change said they would "
+                "(" + ", ".join(what) + ")"
+                + ("." if matched == n else
+                   " — the ones that do not are listed above."))
     if cs["preview_total"] > len(cs["preview"]):
         note += (f" (the change touched {cs['preview_total']} cells; the first "
                  f"{len(cs['preview'])} were verified.)")
@@ -2707,6 +3493,18 @@ def undo_changeset(root, cid, now=None):
     fence = None
     if cs is not None:
         name, fence = cs["name"], cs.get("applied_mtime")
+        # ⚠️ THE UNDO FOLLOWS A RENAME (finding F-21). `office.rename_doc` now moves
+        # `.checkpoints/<stem>/` with the file, but the CHANGESET still remembers the name
+        # it was staged under — so this used to answer "no such workbook", blaming a
+        # missing file for a workbook that was right there under a new name. The stack the
+        # checkpoint sits in IS the answer to "which workbook is this now".
+        tgt, _why = office.doc_target(root, name)
+        if not tgt or not os.path.isfile(tgt):
+            for moved in _checkpoint_owner(root, cid):
+                name = moved
+                # The mtime fence belonged to the file at its old path; the rename did not
+                # change the bytes, so it still holds. os.rename preserves mtime.
+                break
     else:
         for entry in _checkpoint_owner(root, cid):
             name = entry

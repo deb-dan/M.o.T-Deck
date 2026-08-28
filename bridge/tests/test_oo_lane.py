@@ -513,10 +513,10 @@ except Exception as _e:                                          # noqa: BLE001
 # silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28c")
+   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-28d")
 check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
       "document cannot claim to be this build",
-      "loffice-2026-08-28c</code>" in PAGE)
+      "loffice-2026-08-28d</code>" in PAGE)
 
 # ── the embed itself ──
 check("the editor is EMBEDDED: the page carries a stage and an iframe for it",
@@ -618,7 +618,7 @@ check("the Quick lane's Apply routes into the editor when the editor owns the do
       "if (editorActive()) { return ooActApply(card, plan); }" in PAGE)
 check("…and the routing decision is a PURE function, so the card can print it BEFORE "
       "anything is applied",
-      # ⚠️ `ooEditorOps(ops, sh)` AS OF loffice-2026-08-28c: the sheet arrives as a
+      # ⚠️ `ooEditorOps(ops, sh)` AS OF loffice-2026-08-28d: the sheet arrives as a
       # PARAMETER precisely so this function stays pure. It now decides, per column,
       # whether a numeric-shaped string is meant as a number (setContext), and reading
       # the page's `snap` to do that would have made the card's own preview impure.
@@ -752,17 +752,46 @@ check("the parent↔child contract is ONE object each way and is documented in t
       and "THE PARENT ↔ CHILD CONTRACT" in OO)
 check("…it is DIRECT same-origin property access, and the file says why not postMessage",
       "NO postMessage" in OO and "no origin boundary to cross" in OO)
-# ⚠️ THE CHILD'S VERSION MOVED 1 → 2 AT loffice-2026-08-28c (readCells was added) WHILE
+# ⚠️ THE CHILD'S VERSION MOVED 1 → 2 AT loffice-2026-08-28d (readCells was added) WHILE
 # THE HOST'S STAYED 1 — and that asymmetry is correct, not a slip: they are two separate
 # contracts. `LOfficeEmbed.contract` is what the CHILD publishes to the parent, and it
 # gained a member; `LOfficeHost.contract` is what the PARENT publishes to the child, and
 # it did not change. Pinning them as one number was the shortcut that had to go.
 check("…both sides carry a contract VERSION, so a signature change is a visible one",
-      "contract: 2," in OO and "contract: 1," in PAGE)
+      "contract: 3," in OO and "contract: 1," in PAGE)
 check("…and the child's version is the one that moved, because the child is the side "
-      "that gained a member (readCells)",
-      "readCells: readCells," in OO and "readCells" not in
+      "that gained a member (readCells at 28c, renameTo at 28d)",
+      "readCells: readCells," in OO and "renameTo: renameTo," in OO and "readCells" not in
       PAGE.split("register: (embed)")[0].split("contract: 1,")[-1])
+# ⚠️⚠️ THE THREE THINGS THE CHILD GAINED AT loffice-2026-08-28d, AND EACH ONE IS A MEASURED
+# FINDING FROM THE LIVE ADVERSARIAL PASS. They are pinned HERE, in the oo lane's own suite,
+# because they are the embed's half of the contract.
+#
+# L1 — THE WORST BEHAVIOUR ON THE WHOLE SURFACE, and it lost work. The vendored header
+# carries ONLYOFFICE's own floppy-disk Save; pressing it ran sdkjs's DocumentServer save,
+# which reaches the mock server as `saveChanges`. We ACKed it and did nothing else, so sdkjs
+# considered the document saved and fired onDocumentStateChange(false), which we forwarded
+# as {kind:'state', dirty:false} — clearing THE dirty flag that guards every discard path,
+# the heartbeat and the "as last saved" note. The strip flipped to "all changes saved", the
+# dot went out, and the file on disk was NOT touched (mtime identical before and after).
+# Clicking another workbook then found dirty === false, so confirmDiscard() returned true
+# immediately: no warning, no two-step, no "Save & open". The edit was gone.
+check("L1a: the editor's OWN save gesture is routed into the write-back, so the only Save "
+      "control in this window that looks like it writes the file actually does",
+      "t === 'saveChanges'" in OO and "extSaves++" in OO
+      and "if (!saving && ready)" in OO)
+check("L1b: and a dirty:false that NO write-back produced is REFUSED rather than "
+      "forwarded — the floor under L1a, and the half that stays honest if that route is "
+      "ever unreachable",
+      "if (!d && dirtyNow && !saving)" in OO and "heldClears++" in OO)
+check("…both are countable off probe(), so the fix is measurable rather than inferred",
+      "extSaves: extSaves" in OO and "heldClears: heldClears" in OO)
+# B1 — rename a workbook while the editor holds it and the next save posted to the OLD
+# name, got a 404, and the unsaved work could never be written by any route at all.
+check("B1: the embed follows a rename WITHOUT re-opening the file, so a rename cannot "
+      "cost the unsaved edits it deliberately keeps",
+      "function renameTo(to)" in OO and "renameTo: renameTo," in OO
+      and "openDoc(" not in OO.split("function renameTo(to)")[1].split("\n}")[0])
 check("…and the child never has to wait for the host, because the host created it",
       "HOST.register(window.LOfficeEmbed)" in OO)
 for verb in ("open:", "save:", "reload:", "applyOps:", "readCells:", "probe:",
