@@ -99,6 +99,8 @@ class _Cur:
 
     def __init__(self, fh, budget=MAX_META_BYTES):
         self.fh, self.left = fh, int(budget)
+        self.cur_key = ""
+        self.last_array_len, self.last_array_key = 0, ""
 
     def take(self, n):
         n = int(n)
@@ -148,6 +150,13 @@ class _Cur:
         if vtype == _T_ARRAY:
             et = self.u32()
             n = self.u64()
+            # ⚠️ RECORDED BEFORE THE PAYLOAD IS WALKED, and that is the whole point on
+            # the S2 range-read path: `tokenizer.ggml.tokens` is where a 2 MB prefix
+            # runs out, and its COUNT — which is n_vocab, an input to the compute-buffer
+            # term — is already known here. Losing it made every remote estimate ~0.27
+            # GB light (a 32k default standing in for a 152k vocab), in the direction
+            # that says "fits".
+            self.last_array_len, self.last_array_key = n, getattr(self, "cur_key", "")
             if et == _T_ARRAY:
                 raise ValueError("nested gguf array")
             if et in _FIXED_FMT:
@@ -196,47 +205,135 @@ def gguf_hparams(path: str) -> "dict | None":
     return got
 
 
+def gguf_hparams_bytes(blob: bytes) -> "dict | None":
+    """The same header read, over a byte PREFIX instead of a file (S2).
+
+    The HF browser prices quants that are not on this disk: the first megabytes of a
+    remote .gguf are fetched with one HTTP range request and parsed here. Same parser,
+    same keys, same None-means-no-estimate contract — a browser badge computed by a
+    second implementation is exactly the drift this engine exists to prevent.
+
+    A prefix that stops inside the metadata raises inside _Cur and comes back None, so
+    the caller can widen the range and try once more rather than guess."""
+    import io
+    if not blob:
+        return None
+    return _gguf_hparams_parse(io.BytesIO(blob), partial_ok=True)
+
+
 def _gguf_hparams_read(path: str) -> "dict | None":
     try:
         with open(path, "rb") as fh:
-            c = _Cur(fh)
-            if c.take(4) != b"GGUF":
-                return None
-            version = c.u32()
-            if version == 1:
-                c.u32()
-                kv = c.u32()
-            elif version in (2, 3):
-                c.u64()
-                kv = c.u64()
-            else:
-                return None
-            if kv > MAX_KV_COUNT:
-                return None
-            raw, arch, n_vocab = {}, None, None
-            for _ in range(kv):
-                key = c.string()
-                vtype = c.u32()
-                if key == "general.architecture":
-                    arch = c.value(vtype, True)
-                    continue
-                if key == "tokenizer.ggml.tokens":
-                    got = c.value(vtype, False)
-                    if isinstance(got, dict):
-                        n_vocab = int(got.get("_len") or 0)
-                    continue
-                short = key.split(".", 1)[1] if "." in key else key
-                keep = short in _WANTED and not key.startswith("general.")
-                val = c.value(vtype, keep)
-                if keep and val is not None:
-                    raw[short] = val
-    except (ValueError, OSError, struct.error):
+            return _gguf_hparams_parse(fh)
+    except OSError:
         return None
+
+
+# What the KV/compute arithmetic actually needs before a PARTIAL header may be used.
+# Without this guard a prefix that stopped early would return {architecture, block_count}
+# and the formula would price a model with no attention shape at all — a small, precise,
+# entirely fictional number, which is the failure mode this whole engine is against.
+_MIN_HP = ("block_count",)
+
+
+def _hp_priceable(hp: "dict | None") -> bool:
+    """⚠️ A HEADER THAT PARSED IS NOT A HEADER WE CAN PRICE. Caught by the new gate on
+    a hand-built body: `GGUF` + version 3 + a zero tensor/kv count parses PERFECTLY —
+    zero keys, no exception — and formula_estimate then prices it as weights with a
+    zero KV cache and a zero compute buffer, i.e. a cheerful "Fits" for a model whose
+    shape we never read. The honest answer to a shapeless header is No estimate.
+
+    ⚠️ AND IT IS NOT "MUST HAVE ATTENTION HEADS". A pure state-space model legitimately
+    has none, and its cache IS the recurrent state — refusing it would turn a correct
+    verdict into a blank chip. Either shape counts."""
+    if not hp or not hp.get("block_count"):
+        return False
+    has_attn = bool((hp.get("attention.head_count_kv") or hp.get("attention.head_count"))
+                    and (hp.get("attention.key_length") or hp.get("embedding_length")))
+    has_ssm = bool(hp.get("ssm.state_size") or hp.get("ssm.inner_size"))
+    return has_attn or has_ssm
+
+
+def _hp_usable(hp: dict) -> bool:
+    """⚠️ THE ORDERING INVARIANT IS THE LOAD-BEARING CHECK HERE, not the key list.
+
+    llama.cpp writes general.* → <arch>.* → tokenizer.*, so a parse that reached
+    `tokenizer.ggml.tokens` has ALREADY read every architecture key this file has. A
+    parse that stopped earlier may be missing exactly the key that matters most — this
+    engine's own headline correction is `full_attention_interval`, whose absence prices
+    33 hybrid-Mamba layers where 8 hold KV (4.1× out). Missing it does not read as
+    missing: it reads as a confident, precise, wrong verdict. So a partial header is
+    accepted ONLY past the tokens array, and anything earlier falls to the wider read.
+    Measured: this rule rejects Qwen3.5-9B's 2 MB and 8 MB prefixes (its header needs
+    ~24 MB) and accepts Qwen3-4B's 2 MB one, which is exactly the split we want."""
+    return bool(hp and hp.get("_past_tokens") and _hp_priceable(hp))
+
+
+def _gguf_hparams_parse(fh, partial_ok: bool = False) -> "dict | None":
+    """`partial_ok` exists for the S2 range read and ONLY for it.
+
+    A remote GGUF's architecture keys are written before its tokenizer arrays, and the
+    tokenizer arrays are most of the header's bytes — so a 2 MB prefix reliably carries
+    everything the arithmetic needs and then runs out of file inside a token list we
+    were skipping anyway. Reading 8 MB per repo to avoid that cost 34 seconds on this
+    connection, measured; keeping the keys we already have costs 8. The guard on the way
+    out (_hp_usable) is what makes it safe: partial is allowed to mean 'less', never
+    'guess'. n_vocab survives too — an array's element count is read from its header,
+    before the payload we could not reach."""
+    raw, arch, n_vocab = {}, None, None
+    try:
+        c = _Cur(fh)
+        if c.take(4) != b"GGUF":
+            return None
+        version = c.u32()
+        if version == 1:
+            c.u32()
+            kv = c.u32()
+        elif version in (2, 3):
+            c.u64()
+            kv = c.u64()
+        else:
+            return None
+        if kv > MAX_KV_COUNT:
+            return None
+        for _ in range(kv):
+            key = c.string()
+            c.cur_key = key
+            vtype = c.u32()
+            if key == "general.architecture":
+                arch = c.value(vtype, True)
+                continue
+            if key == "tokenizer.ggml.tokens":
+                got = c.value(vtype, False)
+                if isinstance(got, dict):
+                    n_vocab = int(got.get("_len") or 0)
+                continue
+            short = key.split(".", 1)[1] if "." in key else key
+            keep = short in _WANTED and not key.startswith("general.")
+            val = c.value(vtype, keep)
+            if keep and val is not None:
+                raw[short] = val
+    except (ValueError, OSError, struct.error):
+        if not partial_ok:
+            return None
+        past = (c.last_array_key == "tokenizer.ggml.tokens")
+        if n_vocab is None and past:
+            n_vocab = int(c.last_array_len or 0)
+        hp = dict(raw)
+        hp["architecture"] = arch or ""
+        if n_vocab and not hp.get("vocab_size"):
+            hp["vocab_size"] = n_vocab
+        hp["partial_header"] = True
+        hp["_past_tokens"] = past
+        if not _hp_usable(hp):
+            return None
+        hp.pop("_past_tokens", None)
+        return hp
     hp = dict(raw)
     hp["architecture"] = arch or ""
     if n_vocab and not hp.get("vocab_size"):
         hp["vocab_size"] = n_vocab
-    return hp
+    return hp if _hp_priceable(hp) else None
 
 
 # ── the KV element table (block quants carry their scale bytes) ──────────────
@@ -721,6 +818,28 @@ MMPROJ_RUNTIME = 0.4            # encoder buffers on top of the projector file
                                 # (Unsloth's measured 1.4× total; ollama flats +1 GiB)
 
 
+def formula_estimate(hp: dict, file_bytes: int, settings: dict) -> dict:
+    """weights + KV (+ recurrent state) + compute buffer, from a HEADER alone.
+
+    Lifted out of estimate() unchanged so that the HF browser can price a quant that
+    is not on this disk (S2): its header is read over an HTTP range request and THIS
+    function does the arithmetic. One formula, two callers — a browser badge computed
+    by a second implementation is LM Studio's documented defect, and the way to not
+    have it is to not write the arithmetic twice."""
+    kvq = str(settings.get("kv_quant") or "off").lower()
+    kind = KV_DEFAULT if kvq in ("", "off") else kvq
+    fa = str(settings.get("flash_attn", "auto")).lower() != "off"
+    kv = kv_cache_bytes(hp, settings["ctx"], kind, kind,
+                        n_parallel=settings.get("parallel", 1),
+                        flash_attn=fa)
+    rs = recurrent_state_bytes(hp, settings.get("parallel", 1))
+    comp = compute_buffer_bytes(hp, settings["ctx"],
+                                kv_quantised=(kind != KV_DEFAULT))
+    fb = int(file_bytes or 0)
+    return {"weights_bytes": fb, "kv_bytes": kv + rs, "compute_bytes": comp,
+            "total_bytes": fb + kv + rs + comp, "source": "formula"}
+
+
 def estimate(entry: dict, settings: dict, cached_oracle: bool = False) -> dict:
     """need, itemised, oracle-first with the formula as cross-check.
 
@@ -743,20 +862,7 @@ def estimate(entry: dict, settings: dict, cached_oracle: bool = False) -> dict:
         file_bytes = os.path.getsize(path)
     except OSError:
         file_bytes = int(entry.get("size_bytes") or 0)
-    formula = None
-    if hp:
-        kvq = str(settings.get("kv_quant") or "off").lower()
-        kind = KV_DEFAULT if kvq in ("", "off") else kvq
-        fa = str(settings.get("flash_attn", "auto")).lower() != "off"
-        kv = kv_cache_bytes(hp, settings["ctx"], kind, kind,
-                            n_parallel=settings.get("parallel", 1),
-                            flash_attn=fa)
-        rs = recurrent_state_bytes(hp, settings.get("parallel", 1))
-        comp = compute_buffer_bytes(hp, settings["ctx"],
-                                    kv_quantised=(kind != KV_DEFAULT))
-        formula = {"weights_bytes": file_bytes, "kv_bytes": kv + rs,
-                   "compute_bytes": comp,
-                   "total_bytes": file_bytes + kv + rs + comp, "source": "formula"}
+    formula = formula_estimate(hp, file_bytes, settings) if hp else None
     got = (oracle_cached(path, settings) if cached_oracle
            else oracle_gguf(path, settings))
     if got is None:
@@ -882,14 +988,22 @@ def _ctx_label(n: int) -> str:
     return f"{n // 1024}k" if n >= 1024 else str(n)
 
 
-def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list) -> list:
+def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list,
+             price=None) -> list:
     """The settings that change the answer — COMPUTED, never generic.
 
     This is the half of the grammar the field leaves out: LM Studio says "not enough
     resources" and points at a settings page; Ollama's error names two numbers and no
     way out. Every remedy here carries its own post-remedy figure, because a suggestion
-    you cannot price is a suggestion you cannot act on."""
+    you cannot price is a suggestion you cannot act on.
+
+    `price(settings) -> estimate` lets a caller that has no local FILE (the HF browser's
+    per-quant verdicts) re-price at another context through the same loop, so the hover
+    hint the browser shows is computed by this function and not by a second one."""
     out = []
+    if price is None:
+        def price(st):
+            return estimate(entry, st)
     need = int(est.get("total_bytes") or 0)
     b = int(bud.get("budget_bytes") or 0)
     if not b or need <= BAND_FITS * b:
@@ -898,7 +1012,7 @@ def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list) -> list:
     for ctx in (32768, 16384, 8192, 4096):
         if ctx >= int(s["ctx"]):
             continue
-        alt = estimate(entry, {**s, "ctx": ctx})
+        alt = price({**s, "ctx": ctx})
         if not alt.get("known"):
             break
         tot = int(alt["total_bytes"])
@@ -912,7 +1026,7 @@ def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list) -> list:
             break
     # 2. quantise the KV cache
     if str(s.get("kv_quant") or "off").lower() in ("", "off"):
-        alt = estimate(entry, {**s, "kv_quant": "q8_0"})
+        alt = price({**s, "kv_quant": "q8_0"})
         if alt.get("known"):
             tot = int(alt["total_bytes"])
             if tot < need:
@@ -998,3 +1112,299 @@ def copy_for(verdict: str, need: int, bud: dict, s: dict, est: dict,
             "remedy": (rem[0]["text"] if rem else ""),
             "caveat": ("What else is running moves this number; the verdict is a "
                        "recommendation, never a lock.")}
+
+
+# ══ S2: PRICING A FILE THAT IS NOT ON THIS DISK ══════════════════════════════
+# The HF browser's chips. Everything above prices a model the user HAS; this prices
+# one they are looking at. Two facts are kept apart on purpose, because conflating
+# them is the field's most common download-time lie:
+#
+#   DOWNLOAD ≠ RUN. A file that will not fit in memory downloads perfectly well, and
+#   nothing here may disable a Get. LM Studio prints "Downloading this file is NOT
+#   recommended" on a red badge; disk is cheap, the verdict belongs to the load, and
+#   a user who wants the file for later is not making a mistake.
+#
+# There is no oracle on this path (llama-fit-params needs the file), so every verdict
+# here is FORMULA, hedged as such by copy_for's own non-oracle wording.
+# MEASURED, not guessed: 8 MB took 34 s against the hub on this connection and 2 MB
+# takes ~8 s, and 2 MB already carries every architecture key (the tokenizer arrays that
+# make up the rest are skipped anyway — see _gguf_hparams_parse's partial_ok).
+REMOTE_META_BYTES = 2 * MIB          # first pass: the architecture keys
+REMOTE_META_BYTES_WIDE = 24 * MIB    # second pass, only when the first yields nothing
+
+
+def remote_fit(hp: "dict | None", file_bytes: int, bud: dict,
+               ctx: int = 0, replaces: str = "") -> dict:
+    """One verdict for a remote GGUF, from its header prefix and its size.
+
+    The context is the one this model WOULD load at here — our default, clamped by the
+    model's own trained ceiling — so the chip in the browser and the chip on the row
+    after downloading are the same sentence about the same configuration. A browser
+    that prices at a context the loader will not use is a browser that changes its mind
+    after you commit, which is the drift this engine exists to prevent."""
+    b = dict(bud or {})
+    b["replaces"] = replaces or ""
+    fb = int(file_bytes or 0)
+    if not hp or not fb:
+        return {"verdict": "unknown", "need_bytes": None, "gap_bytes": None,
+                "oracle": False, "estimate": True, "remedies": [],
+                "copy": {"chip": "No estimate",
+                         "line": "We could not read this file's header from the hub, so "
+                                 "there is no honest number to show — the download is "
+                                 "unaffected."}}
+    cap = 0
+    try:
+        cap = int(hp.get("context_length") or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    want = int(ctx or DEFAULT_CTX)
+    use = min(want, cap) if cap else want
+    s = {"ctx": int(use), "kv_quant": "off", "flash_attn": "auto", "parallel": 1,
+         "ctx_capped_at": (cap if (cap and want > cap) else 0),
+         "hand_set_ctx": False, "ctx_source": "the default"}
+    est = dict(formula_estimate(hp, fb, s), oracle=False, known=True)
+    need = int(est["total_bytes"])
+    verdict = band(need, int(b.get("budget_bytes") or 0))
+
+    def _price(st):
+        return dict(formula_estimate(hp, fb, st), known=True)
+
+    rem = remedies({}, s, est, b, [], price=_price)
+    copy = copy_for(verdict, need, b, s, est, rem)
+    # The chip says ESTIMATE in its own words, once, where the number is — not only in
+    # fine print. There is no local file, so nothing on this path was measured.
+    copy["provenance"] = "estimate"
+    copy["hedge"] = ("Estimated from this file's own header — no local copy exists yet, "
+                     "so nothing here was measured.")
+    copy["at_ctx"] = _ctx_label(int(use))
+    return {"verdict": verdict, "need_bytes": need,
+            "gap_bytes": need - int(b.get("budget_bytes") or 0),
+            "settings": s, "budget": b, "breakdown": est, "source": "formula",
+            "oracle": False, "estimate": True, "remedies": rem, "refuse": None,
+            "copy": copy}
+
+
+def remote_mlx_fit(conf: "dict | None", total_bytes: int, bud: dict,
+                   ctx: int = 0, replaces: str = "") -> dict:
+    """The same, for an MLX repo: config.json is a small JSON the hub serves whole,
+    so this path needs no range read at all. MLX weights stay fully resident (no
+    memory-mapped relief), which mlx_estimate already says and this repeats."""
+    b = dict(bud or {})
+    b["replaces"] = replaces or ""
+    tb = int(total_bytes or 0)
+    if not tb:
+        return {"verdict": "unknown", "need_bytes": None, "oracle": False,
+                "estimate": True, "remedies": [],
+                "copy": {"chip": "No estimate",
+                         "line": "The hub did not list this repo's weight sizes, so "
+                                 "there is no honest number to show."}}
+    c = conf if isinstance(conf, dict) else {}
+    use = int(ctx or DEFAULT_CTX)
+    cap = 0
+    for k in ("max_position_embeddings", "max_seq_len"):
+        try:
+            cap = int(c.get(k) or 0) or cap
+        except (TypeError, ValueError):
+            pass
+    if cap:
+        use = min(use, cap)
+    kv = 0
+    try:
+        layers = int(c.get("num_hidden_layers") or 0)
+        kvh = int(c.get("num_key_value_heads") or c.get("num_attention_heads") or 0)
+        hd = int(c.get("head_dim") or 0) or (
+            int(c.get("hidden_size") or 0) // max(1, int(c.get("num_attention_heads") or 1)))
+        kv = int(layers * kvh * hd * 2 * 2.0 * use)
+    except (TypeError, ValueError, ZeroDivisionError):
+        kv = 0
+    head = int(tb * 0.10)
+    est = {"weights_bytes": tb, "kv_bytes": kv, "compute_bytes": head,
+           "total_bytes": tb + kv + head, "source": "formula", "oracle": False,
+           "known": True}
+    need = int(est["total_bytes"])
+    verdict = band(need, int(b.get("budget_bytes") or 0))
+    s = {"ctx": int(use), "kv_quant": "off"}
+    copy = copy_for(verdict, need, b, s, est, [])
+    copy["provenance"] = "estimate"
+    copy["hedge"] = ("Estimated from this repo's config and file sizes — MLX weights "
+                     "stay fully resident, so none of this is memory-mapped relief.")
+    copy["at_ctx"] = _ctx_label(int(use))
+    return {"verdict": verdict, "need_bytes": need,
+            "gap_bytes": need - int(b.get("budget_bytes") or 0),
+            "settings": s, "budget": b, "breakdown": est, "source": "formula",
+            "oracle": False, "estimate": True, "remedies": [], "refuse": None,
+            "copy": copy}
+
+
+# ══ AUDIO WORKERS ════════════════════════════════════════════════════════════
+# The Audio tab shipped with NO verdicts at all, which is its own small lie: every
+# chat row carries a number and the voice rows carried none, so the tab read as
+# "these cost nothing". They do — a resident TTS worker held 2.6 GB on this machine.
+#
+# ⚠️ AN AUDIO WORKER SITS *BESIDE* THE RUNNER. It does not replace the chat model, so
+# NOTHING is freed by loading one and its budget is the plain `budget()` — never
+# `budget_after_eject`. Getting this backwards is how an advisor tells you that a
+# second model fits when what it priced was the first one leaving.
+#
+# PROVENANCE IS THE POINT HERE. There is no oracle and no header arithmetic for these
+# engines, so a verdict is one of exactly three things and the copy always says which:
+#   measured-now   — the resident worker's OWN footprint, read from the ledger
+#   measured-here  — the highest this model's worker has ever reached on this Mac,
+#                    recorded below the first time it ran (data/audio_peaks.json)
+#   estimate       — weights on disk × a stated runtime factor, for one never run here
+# ⚠️ THE FIRST NUMBER HERE WAS 1.25 AND IT WAS A LIE, CAUGHT BY DRIVING IT. That figure
+# came from the S2S research's published envelopes (9.18 GB of weights → an 11 GB
+# envelope; 21.84 → 24), i.e. from models that report their own weights honestly. The
+# first live render on this machine — OmniVoice-bfloat16, 2.04 GB on disk — put the
+# worker at a MEASURED 4.81 GB footprint: a 2.36× overhead, because an mlx-audio worker
+# carries a Python interpreter, MLX's own allocator and a vocoder that no weight file
+# lists. The chip had said "Fits · ~2.4 GB" for a thing that costs 4.8, which is the
+# direction that lies, on a tab whose whole job is to stop that.
+#
+# So the factor is now DERIVED FROM THIS MACHINE where it can be, and only falls back
+# to a constant when nothing has ever run here — and the fallback is the measured 2.4,
+# not the published 1.25. An estimate is allowed to be wide; it is not allowed to be
+# cheerful.
+AUDIO_RUNTIME_FACTOR = 2.4     # fallback only; see _audio_factor()
+AUDIO_FACTOR_MIN = 1.2
+AUDIO_FACTOR_MAX = 4.0
+AUDIO_RUNTIME_FLOOR = 384 * MIB
+AUDIO_PEAKS_PATH = ROOT / "data" / "audio_peaks.json"
+_AUDIO_PEAKS: "dict | None" = None
+
+
+def _audio_peaks() -> dict:
+    global _AUDIO_PEAKS
+    if _AUDIO_PEAKS is None:
+        import json as _json
+        try:
+            with open(AUDIO_PEAKS_PATH, "r", encoding="utf-8") as fh:
+                got = _json.load(fh)
+            _AUDIO_PEAKS = got if isinstance(got, dict) else {}
+        except (OSError, ValueError):
+            _AUDIO_PEAKS = {}
+    return _AUDIO_PEAKS
+
+
+def _audio_factor() -> tuple:
+    """(factor, source) — the runtime overhead an audio worker adds over its weights.
+
+    Measured on THIS machine wherever a worker has actually run (peak ÷ weights, the
+    median across models so one odd checkpoint cannot set the rule), clamped to a sane
+    band, and only otherwise the constant. This is the contextual-inference rule the
+    doctrine asks for in its smallest useful form: the number improves every time the
+    machine is used, instead of being a table somebody has to remember to update."""
+    ratios = []
+    for rec in _audio_peaks().values():
+        try:
+            w = int(rec.get("weights_bytes") or 0)
+            p = int(rec.get("peak_bytes") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if w > 0 and p > 0:
+            ratios.append(p / w)
+    if not ratios:
+        return AUDIO_RUNTIME_FACTOR, "published envelopes for this class of worker"
+    ratios.sort()
+    med = ratios[len(ratios) // 2]
+    med = max(AUDIO_FACTOR_MIN, min(AUDIO_FACTOR_MAX, med))
+    return med, (f"the {len(ratios)} voice worker"
+                 f"{'s' if len(ratios) != 1 else ''} measured on this Mac")
+
+
+def record_audio_peak(model_id: str, peak_bytes: int, weights_bytes: int = 0) -> bool:
+    """Remember the highest footprint a voice worker reached for this model.
+
+    Monotonic per model, written only when it GROWS, so the file is stable and a
+    render that happened to be short cannot talk the number back down. This is what
+    upgrades a row from 'estimate' to 'measured here' — the advisor gets more honest
+    the more the machine is used, which is the opposite of a hardcoded requirement
+    table (GPT4All's 'RAM required: 8 GB' is quant-, context- and machine-blind)."""
+    mid = str(model_id or "").strip()
+    val = int(peak_bytes or 0)
+    if not mid or val <= 0:
+        return False
+    peaks = _audio_peaks()
+    old = peaks.get(mid) or {}
+    prev = int(old.get("peak_bytes") or 0)
+    w = int(weights_bytes or 0) or int(old.get("weights_bytes") or 0)
+    if val <= prev and w == int(old.get("weights_bytes") or 0):
+        return False
+    peaks[mid] = {"peak_bytes": max(val, prev), "weights_bytes": w,
+                  "at": int(time.time())}
+    import json as _json
+    try:
+        AUDIO_PEAKS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(AUDIO_PEAKS_PATH) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            _json.dump(peaks, fh, indent=1, sort_keys=True)
+        os.replace(tmp, str(AUDIO_PEAKS_PATH))
+    except OSError:
+        return False
+    return True
+
+
+def audio_fit(entry: dict, bud: dict, resident_bytes: int = 0,
+              resident_peak: int = 0) -> dict:
+    """A voice model's verdict, with its provenance in its own sentence."""
+    e = entry if isinstance(entry, dict) else {}
+    mid = str(e.get("id") or "")
+    weights = int(e.get("size_bytes") or 0)
+    b = int((bud or {}).get("budget_bytes") or 0)
+    role = str(e.get("role") or "tts")
+    if resident_bytes:
+        chip = f"Live · ~{_gb(resident_bytes)} GB"
+        line = (f"Loaded now — the {role.upper()} worker's own footprint is "
+                f"~{_gb(resident_bytes)} GB"
+                + (f", and its highest so far is ~{_gb(resident_peak)} GB."
+                   if resident_peak and resident_peak > resident_bytes else "."))
+        return {"verdict": "live", "need_bytes": int(resident_bytes),
+                "gap_bytes": 0, "provenance": "measured-now", "remedies": [],
+                "copy": {"chip": chip, "line": line,
+                         "math": (f"weights on disk ~{_gb(weights)} GB → resident "
+                                  f"~{_gb(resident_bytes)} GB" if weights else ""),
+                         "hedge": ("Measured, not estimated — the worker process's own "
+                                   "footprint, the figure Activity Monitor shows."),
+                         "caveat": ("Unload returns roughly this much; nothing here "
+                                    "competes with the chat model's slot.")}}
+    rec = int((_audio_peaks().get(mid) or {}).get("peak_bytes") or 0)
+    if rec:
+        need, prov = rec, "measured-here"
+        hedge = ("Measured on this Mac the last time it ran, not predicted — the "
+                 "highest its worker reached.")
+    elif weights:
+        fac, src = _audio_factor()
+        need = max(int(weights * fac), weights + AUDIO_RUNTIME_FLOOR)
+        prov = "estimate"
+        hedge = (f"Estimated: ~{_gb(weights)} GB of weights on disk × {fac:.1f} for the "
+                 f"interpreter, the allocator and the vocoder a weight file does not "
+                 f"list — the overhead from {src}. Running it here once replaces this "
+                 f"with its own measurement.")
+    else:
+        return {"verdict": "unknown", "need_bytes": None, "gap_bytes": None,
+                "provenance": "none", "remedies": [],
+                "copy": {"chip": "No estimate",
+                         "line": "We do not know this model's size on disk, so there is "
+                                 "no honest number to show."}}
+    verdict = band(need, b) if b else "unknown"
+    if verdict == "over":
+        chip = f"Over by ~{_gb(need - b)} GB"
+        line = (f"Needs ~{_gb(need)} GB and there is ~{_gb(b)} GB usable beside what is "
+                f"already loaded.")
+    elif verdict == "tight":
+        chip = f"Tight · ~{_gb(need)} GB"
+        line = (f"Needs ~{_gb(need)} GB of the ~{_gb(b)} GB usable beside what is "
+                f"already loaded — it runs, with little room left.")
+    elif verdict == "fits":
+        chip = f"Fits · ~{_gb(need)} GB"
+        line = (f"Needs ~{_gb(need)} GB and there is ~{_gb(b)} GB usable beside what is "
+                f"already loaded.")
+    else:
+        chip, line = "No estimate", "We could not read this machine's free memory."
+    return {"verdict": verdict, "need_bytes": int(need),
+            "gap_bytes": int(need - b) if b else None, "provenance": prov,
+            "remedies": [],
+            "copy": {"chip": chip, "line": line, "hedge": hedge,
+                     "caveat": ("A voice worker runs BESIDE the chat model — loading "
+                                "one frees nothing, so this is priced against what is "
+                                "free right now.")}}

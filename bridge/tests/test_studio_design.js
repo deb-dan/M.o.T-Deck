@@ -298,8 +298,37 @@ console.log('2. Editorial does not pay for the second design');
                ⚠️ AND THE PAGE HOLDS NO VISION LOGIC. The evidence gate, the
                pre-caption, the never-clobber decision and the provenance text all
                live in bridge/routers/ody.py; the panel renders one event and one
-               line. Same structural argument as the fit arithmetic above. */
-  const CEILING = 798000;
+               line. Same structural argument as the fit arithmetic above.
+       820000  THE FIT ADVISOR S2 + DEBI'S 2026-08-29 DESIGN REVIEW (v1.5.33) —
+               +17.7KB, and per the protocol, what it bought. NEW BEHAVIOUR, nearly all
+               of it: the VERDICT TOOLTIP LAYER — one payload rendered on mouseenter,
+               on CLICK and on keyboard focus, closed by leave / second click / Escape /
+               scroll / resize, with `title` kept underneath as the fallback, which is
+               what lets Debi's "the long text should be when someone hovers" ruling
+               work in WKWebView and under a finger rather than only under a mouse;
+               the Models rows and the detail pane restructured around it (chip alone on
+               the row; chip + one line + a disclosed arithmetic in the pane); the memory
+               strip's STATUS+DELTA headline with the intent pair on its own hover; fit
+               chips in the COMPOSER'S MODEL PICKER, including the re-anchor a popover
+               whose height changes after opening needs; fit chips on the AUDIO tab
+               (which had none at all) and their painter; and the HF browser's per-quant
+               chips, which replace a badge that compared a file size to a hardcoded 64
+               with verdicts fetched from the engine.
+               ~55 lines of it is CSS: the tooltip surface (built on .float-surface, so
+               it is correct in all six looks by construction rather than by six rules),
+               the disclosure, and Debi's composer polish — ⊕ / ● talk / the audio switch
+               lose the outlines that made them read as objects sitting in the field
+               instead of parts of it.
+               The PROSE half is the argued kind this ceiling allows AT the rule it
+               excuses, and it is again mostly records of what would otherwise be
+               "simplified" back: why the tooltip cannot be :hover-only; why the audio
+               switch's border is made TRANSPARENT rather than deleted (the geometry
+               test_audio_switch.js pins must not move); and, at the code that had it,
+               the hardcoded 64 the HF browser used to divide by.
+               ⚠️ AND THE PAGE STILL HOLDS NO FIT ARITHMETIC. Every new number and every
+               new sentence comes from bridge/core/fit.py over /api/memory* and
+               /api/models/hf/fit; the panel formats bytes and paints. */
+  const CEILING = 820000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
@@ -915,13 +944,13 @@ console.log('6. the states another rule owns (the collision trap)');
   ok(!!edCol, 'Editorial states the collapsed strip width');
   ok(col && new RegExp('width:' + edCol[1] + 'px').test(col.body) && /padding-right:0/.test(col.body),
      'the collapsed sessions rail is the SAME ' + edCol[1] + 'px in studio as in Editorial, '
-     + 'with no padding (24px pre-v1.5.24, 44px in v1.5.24, 34px since Debi ruled for '
-     + 'office.html\'s own reopener width)');
-  ok(+edCol[1] === 34, '…and that width is office.html\'s house 34px in this design too. '
-     + 'The hit floor is met by the FULL-HEIGHT reopener, not by the strip\'s narrow axis '
-     + '— the rule that carries the argument is the `flex:1 1 auto` + `min-height:44px` '
-     + 'pair fenced in test_editorial_debt.js §6, so shrinking the width without keeping '
-     + 'the full-height click area fails there.');
+     + 'with no padding (24px pre-v1.5.24, 44px in v1.5.24, 34px in v1.5.26, 26px since '
+     + 'Debi\'s 2026-08-29 review said 34 is "a bit big still")');
+  ok(+edCol[1] === 26, '…and that width is 26px in this design too. The hit floor is met '
+     + 'by the FULL-HEIGHT reopener, not by the strip\'s narrow axis — the rule that '
+     + 'carries the argument is the `flex:1 1 auto` + `min-height` pair fenced in '
+     + 'test_editorial_debt.js §6 (which asserts width × min-height ≥ 44×44), so '
+     + 'shrinking the width without raising that floor fails there.');
   const sro34 = RULES.find(x => x.sel === 'html[data-design="studio"] body.sessions-collapsed #cs-reopen');
   ok(sro34 && !/width:\s*\d/.test(sro34.body),
      '…and studio\'s reopener restatement is TYPOGRAPHY ONLY: it must not re-declare a '

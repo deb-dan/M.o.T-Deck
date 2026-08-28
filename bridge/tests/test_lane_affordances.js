@@ -24,6 +24,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
+const sd = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'assets', 'studio-design.css'), 'utf8');
 
 let fails = [];
 function check(name, cond) {
@@ -299,6 +300,49 @@ check('musicScrollToCreate — the SECOND copy found by the sweep — is fixed t
 check('NO executable behavior:smooth survives anywhere in the panel (the sweep, '
       + 'pinned: this is a proven bug class, not a one-off)',
       !/behavior:\s*['"]smooth/.test(decomment(html)));
+
+
+console.log('\n-- THE COMPOSER IS ONE CONTROL ROW, NOT FOUR OBJECTS IN A BOX (Debi, 2026-08-29) --');
+/* Her words on the non-Studio looks: "the plus button and the others though, they feel
+   like they're outside the box… like in lm studio which doesn't demarcate it". v1.5.26
+   put the controls INSIDE the field but left each one wearing its own outline, so the
+   row read as four bordered objects inside a fifth. These pins hold the answer: the
+   quiet controls are ink, Send is the single filled anchor, and the audio switch keeps
+   its GEOMETRY while losing its edge. */
+function rule(sel){
+  const css = html.split('<style>')[1].split('</style>')[0];
+  const at = css.indexOf('\n  ' + sel + ' {');
+  if (at < 0) return '';
+  return css.slice(at, css.indexOf('}', at));
+}
+check('⊕ is ink inside the field: no ground and no outline of its own',
+      /border-color:transparent/.test(rule('#chat-attach.chip'))
+      && /background:transparent/.test(rule('#chat-attach.chip')));
+check('● talk likewise — it was the second outline in the row',
+      /border-color:transparent/.test(rule('#chat-talk')));
+check('…and both still get an affordance ON HOVER, so quiet is not invisible',
+      /#chat-attach\.chip:hover \{[^}]*border-color:var\(--gold\)/.test(html)
+      && /#chat-send:hover, #chat-talk:hover \{ border-color:var\(--gold\)/.test(html));
+check('Send stays the ONE filled accent control (a control row with no anchor is the '
+      + 'opposite failure)', /button\.primary \{ background:var\(--cream\)/.test(html));
+check('the audio switch loses its ground and its edge…',
+      /background:transparent/.test(rule('#chat-audiosw'))
+      && /border:1px solid transparent/.test(rule('#chat-audiosw')));
+check('…but its border is made TRANSPARENT, not deleted, so the 66px track and the '
+      + '18px zones test_audio_switch.js pins do not move',
+      /width:66px/.test(rule('#chat-audiosw'))
+      && !/border:0/.test(rule('#chat-audiosw')));
+check('…and the knob still paints in every position, so the state signal survives the '
+      + 'un-drawing', /#chat-audiosw::after \{ content:''/.test(html));
+/* "both sides space needs to shrink by a 3rd" — the row's flex gap and its right
+   padding are 8px each, and a flex gap cannot be set per item, so the pill takes 3px
+   off each side. Measured live afterwards: 5px to Send, 6px to the field's edge. */
+check('the pill gives back ~a third of the space on each side, and the text box takes it',
+      /margin-left:-3px; margin-right:-3px/.test(rule('#chat-audiosw'))
+      && /#chat-input \{ flex:1/.test(html));
+check('studio restates the pair for its OWN 5/7 numbers rather than inheriting -3',
+      /margin-left:-2px; margin-right:-2px/.test(sd));
+
 
 console.log();
 if (fails.length) {

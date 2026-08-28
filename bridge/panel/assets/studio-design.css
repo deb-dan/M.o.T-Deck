@@ -555,9 +555,12 @@ html[data-design="studio"] #chat-sessions { padding-right:12px; }
    here is what keeps the trap answered: without it
    `html[data-design="studio"] #chat-sessions` below would silently reinstate the
    12px padding on a 34px strip and push the label off its own centre — a worse
-   collision at 34 than it was at 44. */
+   collision at 34 than it was at 44.
+   v1.5.33 — 34px → 26px (Debi again: "that SESSIONS is a bit big still", said of THIS
+   look). The number is still read from Editorial's rule by the fence rather than
+   argued twice; the hit-floor arithmetic moved with it (min-height 60 → 76). */
 html[data-design="studio"] body.sessions-collapsed #chat-sessions {
-  width:34px; padding-right:0; border-right:0; }
+  width:26px; padding-right:0; border-right:0; }
 /* THE REOPENER, in studio's voice. Editorial's strip is tracked mono caps — its
    signature — which is precisely what impeccable's wide-tracking / all-caps-body
    rules are about and what this design does not borrow. Same object, sentence case
@@ -840,8 +843,15 @@ html[data-design="studio"] #chat-talk.rec .talk-dot { color:var(--bad); }
    about. Here they are sans, sentence case, normal tracking, at this design's own 11px
    floor. GEOMETRY IS NOT RESTATED: the track's 60px width and its 18px zones are the
    same object in both designs, exactly as the collapsed sessions rail is, and a
-   per-design collapse geometry is how the studio slice once shipped a 22×14px target. */
+   per-design collapse geometry is how the studio slice once shipped a 22×14px target.
+   v1.5.33 — the SIDE MARGINS are restated, and only those. Editorial takes 3px off
+   each side of the pill (its gap and padding are 8/8, so −3 is Debi's third); studio's
+   own row is 5/7, where −3 would cut the left gap to 2px. −2 is the same ruling
+   applied to this design's own numbers: 5 → 3 and 7 → 5. The track's ground and edge
+   are KEPT here — Debi's "doesn't demarcate it" note was explicitly about the
+   non-Studio looks ("our studio lane looks great though, just the other"). */
 html[data-design="studio"] #chat-audiosw {
+  margin-left:-2px; margin-right:-2px;
   background:var(--st-btn); border-color:var(--line2); border-radius:var(--sd-r); }
 html[data-design="studio"] #chat-audiosw .asw-zone {
   font-family:var(--sd-sans); font-size:11px; font-weight:600;

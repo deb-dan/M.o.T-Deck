@@ -643,9 +643,26 @@
      ⚠️ IT IS LAYOUT, NOT RE-THEMING. Editorial keeps its inks, its mono labels and its
      own words (`Send`, `● talk`, `auto`, `conv`); nothing here touches a colour token,
      a family or a case. */
+  /* ══ v1.5.33 — THE CONTROLS ARE PART OF THE FIELD, NOT OBJECTS SITTING IN IT ═════
+     Debi, on the non-Studio looks: "the plus button and the others though, they feel
+     like they're outside the box… like in lm studio which doesn't demarcate it."
+     v1.5.26 moved the controls INSIDE the field but left each of them wearing its own
+     outline and its own ground — a bordered chip (⊕), an outlined ghost (● talk) and a
+     bordered track (the audio switch) stacked inside a bordered field. Four edges in a
+     row is what reads as "not professional": the field already draws the boundary, so
+     anything inside it drawing a second one is a box in a box.
+     THE ANSWER IS THE ONE STUDIO ALREADY SHIPPED HERE and Debi called great: the
+     quiet controls lose their border and their ground entirely and become ink, with the
+     ground appearing on hover only; Send stays the single filled accent, because a
+     control row with no anchor is the opposite failure. Editorial keeps its inks, its
+     mono labels and its words — this touches border, background and padding, nothing
+     else. Applies to Editorial and therefore to all three theme packs (token swaps
+     only); studio's own rules are untouched. */
   #chat-inputrow { display:flex; gap:8px; align-items:flex-end;
       background:var(--card); border:1px solid var(--line2); border-radius:16px;
       padding:6px 8px 6px 14px; }
+  #chat-attach.chip { border-color:transparent; background:transparent; }
+  #chat-attach.chip:hover { border-color:var(--gold); color:var(--cream); background:transparent; }
   #chat-inputrow:focus-within { border-color:var(--gold); }
   #chat-input { flex:1; resize:none; background:transparent; color:var(--cream);
                 border:0; border-radius:0; padding:8px 0 6px;
@@ -670,8 +687,10 @@
   #chat-send, #chat-talk { flex:none; font-size:10px; letter-spacing:.06em;
       height:30px; padding:0 12px; border-radius:10px;
       display:inline-flex; align-items:center; justify-content:center; }
+  /* v1.5.33: border-color:var(--line2) → transparent. ● talk was the second outline
+     inside the field; it is ink now, and its ground arrives on hover. */
   #chat-talk { white-space:nowrap; font-size:9.5px; padding:0 9px;
-      background:transparent; border-color:var(--line2); color:var(--dim); }
+      background:transparent; border-color:transparent; color:var(--dim); }
   #chat-talk:hover:not(:disabled) { color:var(--cream); }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
@@ -711,9 +730,26 @@
      Every rule is scoped under #chat-audiosw so it outranks `button.primary` without
      touching it: the two ends keep the `primary` class they have always carried, and
      every existing selector that names #chat-auto / #chat-conv still resolves. */
+  /* v1.5.33, TWO CHANGES, BOTH DEBI'S, BOTH GEOMETRY-PRESERVING:
+     1. THE TRACK LOSES ITS OUTLINE AND ITS GROUND (was `background:var(--bg);
+        border:1px solid var(--line2)`). It was the third demarcated object inside a
+        bordered field. The border is kept at 1px and made TRANSPARENT rather than
+        deleted, so the 66px track and the 18px zones still measure exactly what
+        test_audio_switch.js pins — the switch is not re-laid-out, only un-drawn. The
+        state signal does not weaken: the knob (::after) is always painted, so there is
+        always a filled block on screen saying which of the three positions is engaged.
+     2. THE SIDE SPACE SHRINKS BY ~A THIRD. Debi: "the auto/off/conv pill could be a
+        bit less space on both sides so it just pushes to the left and the box can
+        expand a bit… both sides space needs to shrink by a 3rd." The space on its left
+        is the row's 8px flex gap and on its right the row's 8px padding; a flex gap
+        cannot be set per item, so the pill takes 3px off each side with a negative
+        margin — 8 → 5 and 8 → 5, and the 6px it gives up is taken by #chat-input,
+        which is the only `flex:1` in the row. Studio restates its own pair (its
+        gap/padding are 5/7, so −3 would over-cut) in studio-design.css. */
   #chat-audiosw { flex:none; align-self:flex-end; position:relative;
       display:flex; flex-direction:column; width:66px; padding:1px;
-      background:var(--bg); border:1px solid var(--line2); border-radius:10px; }
+      margin-left:-3px; margin-right:-3px;
+      background:transparent; border:1px solid transparent; border-radius:10px; }
   #chat-audiosw[hidden] { display:none; }
   /* THE KNOB. Behind the zones (z-index 0 vs 1) so the labels stay legible on it. */
   #chat-audiosw::after { content:''; position:absolute; left:1px; right:1px; top:1px;
@@ -969,6 +1005,42 @@
       cursor:pointer; color:var(--dim); }
   .fit-consent .fc-act button.go { color:var(--gold); border-color:var(--gold); }
   .fit-consent .fc-hedge { margin-top:9px; font:10.5px var(--mono); color:var(--faint); line-height:1.5; }
+
+  /* ══ THE VERDICT TOOLTIP — CHIP FIRST, WORDS ON DEMAND (Debi, 2026-08-29) ══════
+     WHAT WAS WRONG, in her words: "it's so texty/lengthy and is not visually appealing
+     like lm studio or unsloth… the long text should be when someone then hovers".
+     Every verdict printed its whole sentence INLINE — need, usable-after-eject, the
+     weights+context+working arithmetic and the hedge — so a list of six models was a
+     wall of prose. The reference apps put a chip on the row and keep the sentence for
+     a hover; the pattern library this slice is built from says the same thing in one
+     line ("a verdict is one line; arithmetic lives one level down").
+     ⚠️ IT CANNOT BE :hover-ONLY, AND THAT IS NOT A PREFERENCE. This panel runs in
+     WKWebView inside the app, where `title` is not reliably rendered, and a hover does
+     not exist on a tap at all. So the tip is a real element opened by mouseenter, by
+     CLICK and by keyboard focus, and closed by leaving, by a second click, by Escape,
+     by scroll and by resize. `title` is still set underneath as the last-resort
+     fallback — belt and braces, one payload, no second wording.
+     Ground/edge/blur come from .float-surface, which is the one floating grammar every
+     design and theme pack already paints (the 2026-08-21 uniformity ruling), so this
+     surface is correct in all six looks without a rule per look. */
+  .fit-tip { position:fixed; z-index:9800; max-width:340px; padding:11px 13px;
+      font:11px var(--mono); color:var(--dim); line-height:1.65; pointer-events:none; }
+  .fit-tip[hidden] { display:none; }
+  .fit-tip .t-line { color:var(--fg); display:block; margin-top:7px; }
+  .fit-tip .t-math { color:var(--cream); display:block; margin-top:6px; }
+  .fit-tip .t-hedge { color:var(--faint); display:block; margin-top:6px; }
+  /* the chip is a control now, so it says so and is reachable by keyboard */
+  .fitpill.tipped { cursor:help; }
+  .fitpill.tipped:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
+  /* THE DETAIL PANE'S STRUCTURED BREAKDOWN. Chip + ONE need-vs-free line, with the
+     arithmetic and the hedge behind a disclosure — the same information, two levels
+     instead of one paragraph. */
+  .fit-line .fit-more { margin-top:7px; font:10px var(--mono); letter-spacing:.1em;
+      text-transform:uppercase; color:var(--gold); background:transparent;
+      border:1px solid var(--line2); border-radius:7px; padding:3px 9px; cursor:pointer; }
+  .fit-line .fit-more:hover { border-color:var(--gold); }
+  .fit-line .fit-math { margin-top:7px; color:var(--cream); }
+  .fit-line .fit-hedge { margin-top:5px; color:var(--faint); }
 
   /* ---------- command palette ---------- */
   #palette { padding:0; overflow:hidden; }
@@ -1294,16 +1366,25 @@
      the transcript with no JS — measured 1078px → 1068px main at 34px, vs 950px open.
      Expand restores exactly: the width comes from --sessions-width, which this rule
      never touches, so a rail dragged to 500px collapses and reopens at 500px. ══ */
-  body.sessions-collapsed #chat-sessions { width:34px; padding-right:0; border-right:0; }
+  /* ⚠️ v1.5.33 — 34px → 26px (Debi, 2026-08-29: "that SESSIONS is a bit big still").
+     This is the THIRD ruling on this number (24 → 44 → 34 → 26) and it now goes BELOW
+     office.html's house 34px, so the house-precedent argument above no longer carries
+     it. What carries it is the same arithmetic, restated: the target is the FULL-HEIGHT
+     reopener, so the hit floor is met on AREA, and the min-height that floors the
+     degenerate case moves with the width (60 → 76: 26 × 76 = 1,976px² still clears
+     44 × 44 = 1,936px²). The two numbers are ONE decision and test_editorial_debt.js §6
+     asserts their product, so shrinking the width again without raising min-height
+     fails there rather than shipping. Live the strip is 26 × ≈718px. */
+  body.sessions-collapsed #chat-sessions { width:26px; padding-right:0; border-right:0; }
   body.sessions-collapsed #chat-sessions .cs-head,
   body.sessions-collapsed #chat-sessions #cs-list { display:none; }
   #cs-reopen { display:none; }
   body.sessions-collapsed #cs-reopen {
       display:flex; align-items:center; justify-content:center;
-      /* min-height 44 → 60 (v1.5.26): with the width at 34, the DEGENERATE case (a rail
-         shorter than the target) needs 34 × 60 = 2,040px² to clear 44 × 44 = 1,936px².
-         Live the rail is ~718px tall and this never applies. */
-      flex:1 1 auto; width:100%; min-height:60px; padding:0;
+      /* min-height 44 → 60 (v1.5.26) → 76 (v1.5.33): with the width at 26, the
+         DEGENERATE case (a rail shorter than the target) needs 26 × 76 = 1,976px² to
+         clear 44 × 44 = 1,936px². Live the rail is ~718px tall and this never applies. */
+      flex:1 1 auto; width:100%; min-height:76px; padding:0;
       background:transparent; border:0; border-right:1px solid var(--line);
       cursor:pointer; color:var(--dim);
       font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase; }
@@ -6805,13 +6886,12 @@ function toggleModelPop(ev){
   if (pop.hidden) openModelPop(); else closeModelPop();
 }
 
-function openModelPop(){
+/* anchor ABOVE the chip (the composer sits at the bottom of the Chat view). Split out
+   of openModelPop because the fit chips arrive AFTER the open and change the popover's
+   height — a surface anchored to a stale height rides over the control that opened it. */
+function positionModelPop(){
   const pop = document.getElementById('model-pop'), btn = document.getElementById('chat-model-btn');
-  if (!pop || !btn) return;
-  renderModelPop();
-  pop.hidden = false;
-  btn.setAttribute('aria-expanded', 'true');
-  // anchor ABOVE the chip (the composer sits at the bottom of the Chat view)
+  if (!pop || !btn || pop.hidden) return;
   const rect = btn.getBoundingClientRect();
   const w = pop.offsetWidth || 380, h = pop.offsetHeight || 0;
   let left = rect.left;
@@ -6820,6 +6900,25 @@ function openModelPop(){
   if (top < 10) top = Math.min(rect.bottom + 8, window.innerHeight - h - 10);   // flip below
   pop.style.left = left + 'px';
   pop.style.top  = Math.max(10, top) + 'px';
+}
+
+function openModelPop(){
+  const pop = document.getElementById('model-pop'), btn = document.getElementById('chat-model-btn');
+  if (!pop || !btn) return;
+  renderModelPop();
+  pop.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  // The verdicts live in memFits, which only the Models view used to fill. The picker
+  // paints IMMEDIATELY from whatever is already known and upgrades when the ledger
+  // answers — never a blocking wait, and never a chip guessed to fill the gap.
+  try {
+    refreshMemory().then(() => {
+      if (pop.hidden) return;
+      renderModelPop();
+      positionModelPop();      // the chips change its height; re-anchor or it rides
+    });                        // over the chip it is anchored to
+  } catch (e) {}
+  positionModelPop();
   // close on outside click / Esc / OUTSIDE scroll / resize (no live repositioning by
   // design; scrolling the popover's own list must NOT close it)
   document.addEventListener('mousedown', modelPopOutside, true);
@@ -6884,6 +6983,19 @@ function renderModelPop(){
     if (modelHasTools(m)) pill('vision', 'tools');
     const fmt = m.format || m.engine || ''; if (fmt) pill('fmt', fmt);
     if (m.size_bytes) pill('fmt', fmtGB(m.size_bytes));
+    // ══ THE VERDICT, BESIDE THE SIZE (Debi, 2026-08-29: "the drop down too should
+    // sort of have that or rather show the fits.. over by, etc"). SAME engine, same
+    // chip class, same tooltip as the Models pane — this picker is where a switch is
+    // actually chosen, and choosing a model that will not fit from a list that knew
+    // and did not say is the exact failure the advisor exists to prevent.
+    const fv = memFits[m.id];
+    if (fv && fv.copy && fv.copy.chip){
+      const fc = document.createElement('span');
+      fc.className = 'fitpill ' + fitChipClass(fv.verdict);
+      fc.textContent = fv.copy.chip;
+      meta.appendChild(fc);
+      tipBind(fc, fitTipHtml(fv), fitTipPlain(fv));
+    }
     if (modelAuxId && m.id === modelAuxId) pill('aux', 'aux');
 
     const acts = document.createElement('div');
@@ -8947,14 +9059,105 @@ const MEM_GB = 1073741824;
 function memGB(b){ return (Number(b || 0) / MEM_GB).toFixed(1); }
 function shortName(s){ s = String(s || ''); return s.length > 26 ? s.slice(0, 25) + '…' : s; }
 
+let memAudioFits = {};       // audio model id → verdict (the Audio tab's chips)
+let fitMathOpen = false;     // detail pane: is the arithmetic disclosed?
+
 async function refreshMemory(){
   let r = null;
   try { r = await (await fetch('/api/memory/fits')).json(); } catch (e) { return; }
   if (!r || !r.ok) return;
-  memLedger = r; memFits = r.fits || {};
+  memLedger = r; memFits = r.fits || {}; memAudioFits = r.audio_fits || {};
   renderMemStrip();
   paintFitChips();
+  paintAudioFitChips();
   try { renderDetail(); } catch (e) {}
+}
+
+/* ══ THE VERDICT TOOLTIP — ONE PAYLOAD, THREE INPUT METHODS ═══════════════════
+   Debi's ruling (2026-08-29): the row keeps the CHIP; the sentence, the arithmetic
+   and the hedge move to a hover. The implementation detail that matters is that
+   hover alone would ship the feature to half its users and none of its taps —
+   WKWebView does not reliably render `title`, and a trackpad hover is not a tap. So
+   every tipped chip answers to mouseenter, to click, and to keyboard focus, and the
+   `title` attribute is set underneath as the fallback that costs nothing.
+
+   ONE payload builds both, so a tooltip can never contradict the chip it belongs to
+   (the LIE class: a green chip whose hover says "over by 4 GB"). Both are read off
+   the same verdict object, formatted by the same function. */
+let _tipEl = null, _tipFor = null;
+function tipNode(){
+  if (_tipEl) return _tipEl;
+  _tipEl = document.createElement('div');
+  _tipEl.className = 'fit-tip float-surface';
+  _tipEl.hidden = true;
+  _tipEl.setAttribute('role', 'tooltip');
+  document.body.appendChild(_tipEl);
+  return _tipEl;
+}
+function tipHide(){ const t = tipNode(); t.hidden = true; _tipFor = null; }
+function tipShow(el, html){
+  const t = tipNode();
+  t.innerHTML = html;
+  t.hidden = false;
+  _tipFor = el;
+  // Measured AFTER it is in the DOM and visible: an offsetWidth read on a hidden node
+  // is 0, which parked every tooltip at the left edge in the first walk.
+  const r = el.getBoundingClientRect();
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = Math.min(r.left, window.innerWidth - w - 10);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 8);
+  t.style.left = Math.max(10, left) + 'px';
+  t.style.top = top + 'px';
+}
+function tipBind(el, html, plain){
+  if (!el) return;
+  el.classList.add('tipped');
+  el.setAttribute('tabindex', '0');
+  el.title = plain || '';                 // last-resort fallback, never the only path
+  el._tipHtml = html;
+  // THE LEDGER PUSHES EVERY COUPLE OF SECONDS AND THE CHIP IS REPAINTED IN PLACE. If
+  // the tip for this chip is open while that happens, it must move with it — a tooltip
+  // showing the previous sample beside a chip showing the current one is the exact
+  // chip-contradicts-its-own-hover lie this payload is shared to prevent.
+  if (_tipFor === el) tipShow(el, html);
+  if (el._tipWired) return;
+  el._tipWired = true;
+  el.addEventListener('mouseenter', () => tipShow(el, el._tipHtml));
+  el.addEventListener('mouseleave', () => { if (_tipFor === el) tipHide(); });
+  el.addEventListener('focus', () => tipShow(el, el._tipHtml));
+  el.addEventListener('blur', () => { if (_tipFor === el) tipHide(); });
+  // THE TAP PATH. stopPropagation because these chips sit inside clickable rows, and
+  // a tap that both opened the tip and navigated away would show it for one frame.
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); e.stopPropagation();
+      if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml); }
+  });
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') tipHide(); }, true);
+window.addEventListener('scroll', () => tipHide(), true);
+window.addEventListener('resize', () => tipHide(), true);
+
+/* PURE: the tooltip body for one verdict. The chip is NOT repeated inside it — the
+   chip is the thing being hovered and is still on screen. */
+function fitTipHtml(v){
+  if (!v || !v.copy) return '';
+  const c = v.copy;
+  let h = '<span class="t-line">' + esc(c.line || '') + '</span>';
+  if (c.math) h += '<span class="t-math">' + esc(c.math) + '</span>';
+  if (c.remedy) h += '<span class="t-line">' + esc(c.remedy) + '</span>';
+  if (c.hedge) h += '<span class="t-hedge">' + esc(c.hedge) + '</span>';
+  if (c.caveat) h += '<span class="t-hedge">' + esc(c.caveat) + '</span>';
+  return h;
+}
+function fitTipPlain(v){
+  if (!v || !v.copy) return '';
+  const c = v.copy;
+  return [c.line, c.math, c.remedy, c.hedge].filter(Boolean).join('  ');
 }
 
 function memDotClass(p){ return p === 'critical' ? 'crit' : (p === 'warn' ? 'warn' : ''); }
@@ -8984,11 +9187,29 @@ function renderMemStrip(){
   const ours = Number(memLedger.ours_bytes || 0);
   const other = Number(memLedger.other_bytes || 0);
   const pct = (b) => total ? Math.max(0, Math.min(100, 100 * b / total)) : 0;
+  // ══ STATUS + DELTA, THE GRAMMAR DEBI CHOSE (2026-08-29) ═══════════════════════
+  // WAS: "…~15.5 GB usable for a model right now, ~30.3 GB once <60-char-model-id> is
+  // ejected — of 64.0 GB." One sentence carrying three numbers, a model id and a
+  // subordinate clause, in a strip that is read at a glance.
+  // NOW: pressure first (unchanged — it is the only thing here that is a warning),
+  // then two figures in the shape she named: what is free, and what a switch adds.
+  // The INTENT-BASED pair — "Run alongside" vs "Replace active (eject X)" — is one
+  // level down, on the strip's own hover and in Details, because it answers a
+  // question ("which of these two am I doing?") that only some readings are asking.
+  const freeNow = Number(bud.budget_bytes || 0);
+  const afterB = after ? Number(after.budget_bytes || 0) : 0;
+  const delta = afterB ? Math.max(0, afterB - freeNow) : 0;
+  const headline = `Free now: ~${memGB(freeNow)} GB`
+      + (delta ? ` · +${memGB(delta)} GB on eject` : '');
+  const intent = `Run alongside: ~${memGB(freeNow)} GB`
+      + (afterB ? ` · Replace active (eject ${shortName(memLedger.live_model)}): ~${memGB(afterB)} GB`
+                : '')
+      + `. Of ${memGB(total)} GB installed; we hold ${memGB(ours)} GB, everything else `
+      + `holds ${memGB(other)} GB.`;
   const head = `<div class="mem-head">
       <span class="mem-dot ${memDotClass(sys.pressure)}"></span>
       <span class="mem-title">Memory</span>
-      <span class="mem-sub">${esc(memHeadline(sys))} ~${memGB(bud.budget_bytes)} GB usable for a model right now${
-        after ? `, ~${memGB(after.budget_bytes)} GB once ${esc(shortName(memLedger.live_model))} is ejected` : ''} — of ${memGB(total)} GB.</span>
+      <span class="mem-sub" id="mem-sub">${esc(memHeadline(sys))} ${esc(headline)}</span>
       <button class="mem-more" onclick="toggleMemLedger()">${memOpen ? 'Less' : 'Details'}</button>
     </div>
     <div class="mem-bar">
@@ -8997,6 +9218,8 @@ function renderMemStrip(){
     </div>`;
   let body = '';
   if (memOpen){
+    // The intent pair, spelled out where there is room for it.
+    body += `<div class="mem-note">${esc(intent)}</div>`;
     const rows = (memLedger.components || []).slice()
       .sort((a, b) => (b.footprint_bytes || 0) - (a.footprint_bytes || 0));
     body += '<div class="mem-rows">';
@@ -9025,6 +9248,12 @@ function renderMemStrip(){
       We name what other apps hold; we never touch them.</div>`;
   }
   el.innerHTML = head + body;
+  // The strip's own hover carries the intent pair too, so the answer is one gesture
+  // away without opening the ledger. Same payload as the Details line above.
+  const sub = document.getElementById('mem-sub');
+  if (sub) tipBind(sub, '<span class="t-line">' + esc(intent) + '</span>'
+    + '<span class="t-hedge">Pressure is the warning; a full machine at normal '
+    + 'pressure is healthy.</span>', intent);
 }
 
 async function toggleMemLedger(){
@@ -9060,22 +9289,53 @@ function paintFitChips(){
     if (!v || !v.copy || !v.copy.chip){ chip.hidden = true; continue; }
     chip.hidden = false;
     chip.className = 'fitpill mfit ' + fitChipClass(v.verdict);
+    // THE ROW IS THE CHIP AND NOTHING ELSE (Debi, 2026-08-29). The sentence, the
+    // arithmetic and the hedge are the tooltip's, and both come off THIS object.
     chip.textContent = v.copy.chip;
-    chip.title = (v.copy.line || '') + (v.copy.hedge ? '  ' + v.copy.hedge : '');
+    tipBind(chip, fitTipHtml(v), fitTipPlain(v));
   }
 }
 
-/* The detail pane's need-vs-free line: verdict, the arithmetic, and the hedge that
-   says which of the two it is (llama.cpp's own fitter, or our formula). */
+/* The Audio tab's chips — the same painter, the same grammar, a different list.
+   Before this slice the voice rows carried no verdict at all, which read as "these
+   cost nothing"; a resident TTS worker is measured in gigabytes like everything else. */
+function paintAudioFitChips(){
+  const nodes = document.querySelectorAll('#audio-listcol .mrow');
+  for (const row of nodes){
+    const chip = row.querySelector('.afit');
+    if (!chip) continue;
+    const v = memAudioFits[row.dataset.aid];
+    if (!v || !v.copy || !v.copy.chip){ chip.hidden = true; continue; }
+    chip.hidden = false;
+    chip.className = 'fitpill afit ' + fitChipClass(v.verdict);
+    chip.textContent = v.copy.chip;
+    tipBind(chip, fitTipHtml(v), fitTipPlain(v));
+  }
+}
+
+/* THE DETAIL PANE, RESTRUCTURED (Debi, 2026-08-29). It used to print four lines at
+   once — verdict, need-vs-free, the weights+context+working arithmetic and the hedge —
+   which is the "text wall" she named. It is now chip + ONE line, with the arithmetic
+   and the hedge behind a disclosure. Nothing was deleted and nothing moved to a place
+   it cannot be found: the same three facts are one click down, and the tooltip on the
+   row's own chip carries them too. */
 function fitDetailHtml(mid){
   const v = memFits[mid];
   if (!v || !v.copy) return '';
   const c = v.copy;
-  const math = c.math ? `<br>${esc(c.math)}` : '';
-  const hedge = c.hedge ? `<br>${esc(c.hedge)}` : '';
+  const deep = (c.math || c.hedge);
+  const more = deep
+    ? (fitMathOpen
+        ? `<button class="fit-more" onclick="fitToggleMath()">Hide the arithmetic</button>`
+          + (c.math ? `<div class="fit-math">${esc(c.math)}</div>` : '')
+          + (c.hedge ? `<div class="fit-hedge">${esc(c.hedge)}</div>` : '')
+          + (c.caveat ? `<div class="fit-hedge">${esc(c.caveat)}</div>` : '')
+        : `<button class="fit-more" onclick="fitToggleMath()">Show the arithmetic</button>`)
+    : '';
   return `<div class="fit-line"><span class="fitpill ${fitChipClass(v.verdict)}">${esc(c.chip)}</span>
-          <span class="num"> ${esc(c.line || '')}</span>${math}${hedge}</div>`;
+          <span class="num"> ${esc(c.line || '')}</span>${more}</div>`;
 }
+function fitToggleMath(){ fitMathOpen = !fitMathOpen; renderDetail(); }
 
 function fitCancel(){ fitConsent = null; renderDetail(); }
 
@@ -9458,6 +9718,9 @@ function audioRowHtml(a, isDefault){
   b.push('<span class="mpill fmt">' + esc(audioEngineLabel(a)) + '</span>');
   const sb = srcBadge(a.source); if (sb) b.push(sb);
   if (a.size_bytes) b.push('<span class="msize">' + fmtGB(a.size_bytes) + '</span>');
+  // The fit verdict placeholder — hidden until one exists, exactly as the chat rows'
+  // is: a chip drawn before the answer arrives is a guess wearing a verdict's clothes.
+  b.push('<span class="fitpill afit fit-unk" hidden></span>');
   return `<div class="mname" style="font-size:13.5px;word-break:break-all">${esc(a.id)}</div>`
        + `<div class="mbadges">${b.join('')}</div>`;
 }
@@ -9484,6 +9747,7 @@ function renderAudio(r){
   renderAudioDetail();
   renderAudioGet();
   markAudioSelRows();
+  paintAudioFitChips();      // fill any verdicts we already hold for these rows
 }
 function selectAudio(id){ aSel = id; voiceErr = ''; renderAudioDetail(); markAudioSelRows(); }
 /* PURE-ish: which model the persistent TTS worker currently holds in memory ('' =
@@ -11040,12 +11304,36 @@ async function toggleHfCard(repo, btn){
   } catch { box.innerHTML = '<div class="cs-empty">Failed to load model card.</div>'; }
 }
 
-function fitPill(bytes){
-  if (!bytes) return '<span class="fitpill">size ?</span>';
-  const gb = bytes / 1073741824, frac = gb / 64;
-  if (frac < 0.55) return `<span class="fitpill fit-ok">Fits · ${gb.toFixed(1)}GB</span>`;
-  if (frac < 0.9)  return `<span class="fitpill fit-slow">May be slow · ${gb.toFixed(1)}GB</span>`;
-  return `<span class="fitpill fit-no">Won't fit · ${gb.toFixed(1)}GB</span>`;
+/* ══ S2 — A REAL VERDICT PER QUANT, BEFORE THE DOWNLOAD ═══════════════════════
+   ⚠️ WHAT THIS REPLACED WAS A LIE THE PANEL TOLD ON EVERY SEARCH. The old fitPill
+   compared the file size to a HARDCODED 64 (this machine's RAM, as a literal, in the
+   browser layer) and printed "Fits · 12.4GB" / "Won't fit". It knew nothing about
+   context, nothing about architecture, nothing about what is already resident, and it
+   would have said "Fits" on any other Mac's 16 GB just as confidently. Every number
+   now comes from /api/models/hf/fit — the same engine, the same words, the same
+   arithmetic as the installed rows, computed from the file's OWN header read over one
+   range request per repo.
+
+   THE DOWNLOAD IS NEVER BLOCKED. Get stays enabled on every row whatever the chip
+   says, because download ≠ run: the file is useful on disk (a smaller context, a
+   later machine, an ejected model), and the verdict belongs to the load. */
+function fitPillSize(bytes){
+  return bytes ? `<span class="fitpill fit-unk hffit">~${(bytes / 1073741824).toFixed(1)} GB</span>`
+               : '<span class="fitpill fit-unk hffit">size ?</span>';
+}
+async function paintHfFits(repo, box){
+  if (!box) return;
+  let d = null;
+  try { d = await (await fetch('/api/models/hf/fit?repo=' + encodeURIComponent(repo))).json(); }
+  catch (e) { return; }                    // offline: the size chips stay, honestly
+  if (!d || !d.ok || !d.fits) return;
+  for (const node of box.querySelectorAll('.hffit')){
+    const v = d.fits[node.dataset.hffile] || d.fits['__repo__'];
+    if (!v || !v.copy || !v.copy.chip) continue;
+    node.className = 'fitpill hffit ' + fitChipClass(v.verdict);
+    node.textContent = v.copy.chip;
+    tipBind(node, fitTipHtml(v), fitTipPlain(v));
+  }
 }
 
 async function renderHfFiles(repo, box){
@@ -11065,9 +11353,10 @@ async function renderHfFiles(repo, box){
     // whole via the download manager (same UI as GGUF). One repo-level Get.
     box.innerHTML = '';
     const head = document.createElement('div'); head.className = 'hffile';
-    head.innerHTML = `${fitPill(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span> `
+    head.innerHTML = `${fitPillSize(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span> `
       + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '')">Get</button>`;
     box.appendChild(head);
+    paintHfFits(repo, box);
     // Also route the detail-panel primary button through the download manager
     // (the old switch path rejects "/" HF ids). <!-- FABLE: style/label pass -->
     const pb = document.querySelector('#md-actions .primary');
@@ -11086,10 +11375,16 @@ async function renderHfFiles(repo, box){
   box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into the harness’s own models dir.</div>';
   for (const f of d.files){
     const line = document.createElement('div'); line.className = 'hffile';
-    line.innerHTML = `${fitPill(f.size_bytes)} <span>${esc(f.filename)}</span> `
+    line.innerHTML = `${fitPillSize(f.size_bytes)} <span>${esc(f.filename)} · ${fmtGB(f.size_bytes)} to download</span> `
       + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '${escAttr(f.filename)}')">Get</button>`;
+    const chip = line.querySelector('.hffit');
+    if (chip) chip.dataset.hffile = f.filename;
     box.appendChild(line);
   }
+  // The chips upgrade from "~4.1 GB on disk" to a real verdict when the bridge has
+  // read this repo's header. Painted asynchronously ON PURPOSE: the list must not wait
+  // on the network, and a repo whose header will not read keeps the honest size chip.
+  paintHfFits(repo, box);
 }
 
 // Two-step (WKWebView has no confirm()): first click arms, second within 3s downloads.

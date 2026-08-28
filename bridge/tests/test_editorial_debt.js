@@ -324,7 +324,9 @@ const HIT = 44;
   const strip = ALL.find(r => r.sel === 'body.sessions-collapsed #chat-sessions');
   ok(!!strip, 'the collapsed state has its own width rule');
   const w = parseInt((strip.body.match(/width:\s*(\d+)px/) || [])[1], 10);
-  ok(w >= 34 && w <= 48, 'the strip is ' + w + 'px — inside Debi\'s ratified 34–48px band');
+  ok(w >= 24 && w <= 48, 'the strip is ' + w + 'px — inside the ratified band (34–48 in '
+     + 'v1.5.26; the floor moved to 24 when Debi\'s 2026-08-29 review said 34 was still '
+     + '"a bit big")');
   // v1.5.26 — 44 → 34, AND THE FLOOR ARGUMENT MOVED WITH THE NUMBER, deliberately.
   // v1.5.24 pinned `w >= 44` so the target cleared the hit floor on BOTH axes with no
   // argument. Debi's ruling: 44 still reads as "even bigger space… should really be
@@ -335,9 +337,15 @@ const HIT = 44;
   // now the CONJUNCTION (narrow axis == the house 34, long axis unbounded + a 44px
   // min-height floor), so nobody can shrink the width again without also shrinking the
   // click axis, and nobody can quietly delete the full-height rule.
-  ok(w === 34, 'the strip is exactly office.html\'s house width (34px) — the same number '
-     + '`body.railoff #files` has shipped since the LOffice arc, so the panel and LOffice '
-     + 'have ONE collapse geometry rather than two');
+  // v1.5.33 — 34 → 26, THIRD ruling on this number, and the floor argument moved with
+  // it AGAIN (min-height 60 → 76). This is the first time the strip goes BELOW
+  // office.html's house 34px, so the house-precedent sentence no longer carries it;
+  // what carries it is the area arithmetic asserted below, which is why that assertion
+  // is the one written as a product rather than as two literals.
+  ok(w === 26, 'the strip is 26px — Debi\'s 2026-08-29 review ("that SESSIONS is a bit '
+     + 'big still"), below office.html\'s 34px house width. The panel and LOffice no '
+     + 'longer share the literal; they share the RULE — a full-height reopener whose '
+     + 'area clears the hit floor, asserted as a product two checks down');
   ok(/padding-right:0/.test(strip.body) && /border-right:0/.test(strip.body),
      '…with no padding and no border of its own, so the reclaimed width goes to the '
      + 'transcript rather than to a second rule of dead space');

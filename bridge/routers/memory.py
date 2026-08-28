@@ -22,10 +22,57 @@ from fastapi.responses import JSONResponse
 
 from ..core import fit as _fit
 from ..core import memory as _mem
-from ..core.appctx import app
+from ..core.appctx import _voice, app
 from ..core.modelid import _live_model_id
 from ..core.procs import _port_alive_sync, _registry_models, cfg
 from .models import _split_audio
+
+
+def _audio_resident() -> dict:
+    """What the persistent voice worker holds, measured: {'model','footprint','peak'}.
+
+    ⚠️ THE VOICE WORKER IS A CHILD OF THE BRIDGE, so the ledger's component rows fold it
+    into the "Bridge" row and there is no per-model line to read. Its pid is on the
+    worker's own info(), and proc_footprint reads the same phys_footprint the rest of
+    the ledger uses — so this is a ledger measurement, not a second accounting."""
+    if _voice is None:
+        return {}
+    try:
+        info = _voice.worker_resident()
+    except Exception:                                            # noqa: BLE001
+        return {}
+    if not isinstance(info, dict) or not info.get("pid"):
+        return {}
+    got = _mem.proc_footprint(int(info["pid"]))
+    if not got:
+        return {}
+    out = {"model": str(info.get("model") or ""),
+           "footprint": int(got["footprint"]), "peak": int(got["peak"])}
+    # THE MEASUREMENT IS KEPT. Next session this model's row reads "measured here"
+    # instead of "estimate" — the advisor gets more honest the more the machine is
+    # used, which a hardcoded requirement table can never do.
+    if out["model"]:
+        _fit.record_audio_peak(out["model"], max(out["footprint"], out["peak"]),
+                               int(info.get("size_bytes") or 0))
+    return out
+
+
+def _audio_fits(bud: dict) -> dict:
+    """A verdict per installed VOICE model. Priced against the plain budget: an audio
+    worker sits BESIDE the runner and frees nothing, so `budget_after_eject` would be
+    the wrong denominator here and the chip would be a cheerful lie."""
+    _models, audio = _split_audio(_registry_models())
+    res = _audio_resident()
+    out = {}
+    for a in audio:
+        mid = a.get("id") or ""
+        if not mid:
+            continue
+        live = (res.get("model") == mid)
+        out[mid] = _fit.audio_fit(a, bud,
+                                  resident_bytes=(res.get("footprint") or 0) if live else 0,
+                                  resident_peak=(res.get("peak") or 0) if live else 0)
+    return out
 
 
 def _live_slot() -> dict:
@@ -205,7 +252,11 @@ def api_memory_fits(req: Request) -> JSONResponse:
     # its weights are GPU-WIRED and a switch releases them. Showing only the first
     # makes every "Fits" chip look like an arithmetic error; showing only the second
     # is an invitation to load two models. The strip prints both.
-    return JSONResponse({"ok": True, "fits": out, "budget": _fit.budget(),
+    _bud = _fit.budget()
+    return JSONResponse({"ok": True, "fits": out, "budget": _bud,
+                         # THE AUDIO TAB'S CHIPS (v1.5.33). They were missing entirely,
+                         # which read as "voice models cost nothing"; they do.
+                         "audio_fits": _audio_fits(_bud),
                          "budget_after_eject": (_fit.budget(freeing_bytes=resident)
                                                 if resident else None),
                          "warming": len(warm),

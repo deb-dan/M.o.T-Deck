@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import os
 from fastapi.responses import JSONResponse
+from ..core import fit as _fit
 from ..core.appctx import _voice, app
-from ..core.hfclient import _HF
+from ..core.hfclient import _HF, _HF_ANY
 from .downloads import _mlx_repo_files
 
 
@@ -62,6 +63,208 @@ async def hf_files(repo: str) -> JSONResponse:
                              "total_size": sum((f["size_bytes"] or 0) for f in mlx)})
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=502)
+
+
+# ══ S2: A FIT VERDICT PER DOWNLOADABLE QUANT ═════════════════════════════════
+# Every file in the browser gets the SAME verdict grammar the installed rows carry,
+# BEFORE the download — because "which quant should I take" is the whole question the
+# browser is asked, and answering it with a file size alone makes the user do the
+# arithmetic in their head (GPT4All's defect) or trust a badge with no number in it
+# (LM Studio's). What was here before this slice was worse than both: a chip that
+# compared the file size to a HARDCODED 64 GB and ignored context, architecture and
+# what is currently resident.
+#
+# ⚠️ THE DOWNLOAD IS NEVER BLOCKED, AND THE VERDICT NEVER TOUCHES THE Get BUTTON.
+# Download ≠ run: both are facts, neither is a wall. A red chip on a Get that still
+# works is the whole design.
+#
+# HOW A FILE THAT IS NOT ON THIS DISK GETS A REAL VERDICT: the GGUF header lives in
+# the first few MB of the file and the hub serves ranges. One range read per repo —
+# not per quant — because every quant in a repo is the same architecture and only the
+# WEIGHTS change; the per-file size is then the only per-file input. That is 8 MB of
+# traffic for a whole file list instead of 8 MB × 30.
+_HDR_CACHE: dict = {}
+_HDR_CACHE_MAX = 64
+_PART_RE = None
+
+
+def _part_family(name: str) -> str:
+    """PURE: the model a multi-part GGUF file belongs to.
+
+    `x-00002-of-00009.gguf` → `x`; anything else → itself. Split files are ONE model
+    and pricing each shard on its own would print nine chips, each of them wrong by a
+    factor of nine — a confident, precise, entirely fictional number."""
+    import re as _re
+    global _PART_RE
+    if _PART_RE is None:
+        _PART_RE = _re.compile(r"^(.*)-\d{5}-of-\d{5}\.gguf$", _re.I)
+    m = _PART_RE.match(str(name or ""))
+    return m.group(1) if m else str(name or "")
+
+
+def _is_projector(name: str) -> bool:
+    return "mmproj" in os.path.basename(str(name or "")).lower()
+
+
+# ⚠️ THE QUANT SUFFIX IS WHAT MAKES ONE MODEL LOOK LIKE THIRTY. Found by TIMING the
+# live route: the first draft keyed the header cache on the filename, so a 26-quant
+# repo did 26 range reads — 27 s where one read is 1 s. Every quant of a model has the
+# SAME architecture and differs only in its weight bytes, which is the whole reason one
+# read can price a file list. Stripping the quant token is what turns 26 keys into 1,
+# and it is done by PATTERN rather than by "assume one model per repo", because repos
+# that hold two sizes (…-4B-Q4_K_M and …-8B-Q4_K_M) genuinely need two reads — pricing
+# the 8B's KV with the 4B's shape would be a precise, confident, wrong number.
+_QUANT_RE = None
+
+
+def _quant_family(name: str) -> str:
+    """PURE: the MODEL a quant file belongs to. `x-UD-Q4_K_XL.gguf` → `x`."""
+    import re as _re
+    global _QUANT_RE
+    if _QUANT_RE is None:
+        _QUANT_RE = _re.compile(
+            r"[-_.](?:I?Q\d[_A-Z0-9]*|F16|F32|BF16|FP16|FP8|MXFP\d[_A-Z0-9]*|"
+            r"TQ\d[_A-Z0-9]*|UD|XL|K|S|M|L|NL|XS|XSS)$", _re.I)
+    base = _part_family(str(name or ""))
+    base = base[:-5] if base.lower().endswith(".gguf") else base
+    base = base.rsplit("/", 1)[-1]
+    for _ in range(4):                      # -UD-Q4_K_XL is three tokens deep
+        cut = _QUANT_RE.sub("", base)
+        if cut == base:
+            break
+        base = cut
+    return base or str(name or "")
+
+
+async def _hf_prefix(repo: str, filename: str, nbytes: int) -> bytes:
+    """The first `nbytes` of a repo file, as a bounded STREAM.
+
+    ⚠️ STREAMED AND CAPPED, NOT `GET` WITH A Range HEADER AND HOPE. A server (or a CDN
+    in front of one) that ignores Range answers 200 with the WHOLE object, and the whole
+    object here is up to 40 GB. Reading the stream and breaking at the cap means the
+    bound holds whether or not the range was honoured."""
+    from urllib.parse import quote
+    url = f"https://huggingface.co/{repo}/resolve/main/{quote(filename)}"
+    buf = bytearray()
+    try:
+        async with _HF_ANY.stream("GET", url,
+                                  headers={"Range": f"bytes=0-{int(nbytes) - 1}"}) as r:
+            if r.status_code not in (200, 206):
+                return b""
+            async for chunk in r.aiter_bytes(256 * 1024):
+                buf.extend(chunk)
+                if len(buf) >= nbytes:
+                    break
+    except Exception:                                            # noqa: BLE001
+        return b""
+    return bytes(buf[:nbytes])
+
+
+async def _repo_hparams(repo: str, filename: str) -> "dict | None":
+    """The architecture header for one repo file, cached. Two passes: the common case
+    is a header well under 8 MB, and only a big tokenizer (which we SKIP but still have
+    to walk past) needs the wider read."""
+    key = (repo, _quant_family(filename))
+    if key in _HDR_CACHE:
+        return _HDR_CACHE[key]
+    hp = None
+    for width in (_fit.REMOTE_META_BYTES, _fit.REMOTE_META_BYTES_WIDE):
+        blob = await _hf_prefix(repo, filename, width)
+        if not blob:
+            break
+        hp = _fit.gguf_hparams_bytes(blob)
+        if hp:
+            break
+    if len(_HDR_CACHE) > _HDR_CACHE_MAX:
+        _HDR_CACHE.clear()
+    _HDR_CACHE[key] = hp
+    return hp
+
+
+@app.get("/api/models/hf/fit")
+async def hf_fit(repo: str) -> JSONResponse:
+    """A fit verdict for every downloadable weight file in one repo.
+
+    Priced at the SAME budget the installed rows use — including the memory the
+    resident chat model gives back, because loading a downloaded model into the main
+    slot ejects what is there. A browser that priced against "free right now" would
+    read "Over by ~2 GB" for a file whose own row says "Fits" ten seconds after the
+    download finishes, and two true numbers that look like a contradiction are read as
+    a bug."""
+    repo = (repo or "").strip()
+    if not repo:
+        return JSONResponse({"ok": False, "error": "repo required"}, status_code=400)
+    tree = await _hf_json(f"/api/models/{repo}/tree/main", {"recursive": "true"})
+    if tree is None:
+        return JSONResponse({"ok": False, "error": "HuggingFace did not answer"},
+                            status_code=502)
+    gguf, mlx = [], []
+    for it in tree:
+        if not isinstance(it, dict):
+            continue
+        p, sz = str(it.get("path") or ""), int(it.get("size") or 0)
+        low = p.lower()
+        if low.endswith(".gguf"):
+            gguf.append((p, sz))
+        elif low.endswith(".safetensors"):
+            mlx.append((p, sz))
+    from .memory import _live_slot, _runner_row
+    from ..core import memory as _mem
+    snap = _mem.snapshot()
+    live = _live_slot()
+    row = _runner_row(snap)
+    freeing = int((row or {}).get("footprint_bytes") or 0) if live["up"] else 0
+    bud = _fit.budget(freeing_bytes=freeing)
+    replaces = live["id"] if freeing else ""
+    out = {}
+    if gguf:
+        fams: dict = {}
+        for p, sz in gguf:
+            if _is_projector(p):
+                continue
+            fam = _part_family(p)
+            e = fams.setdefault(fam, {"bytes": 0, "files": [], "first": p})
+            e["bytes"] += sz
+            e["files"].append(p)
+            if p < e["first"]:
+                e["first"] = p
+        for fam, e in fams.items():
+            hp = await _repo_hparams(repo, e["first"])
+            got = _fit.remote_fit(hp, e["bytes"], bud, replaces=replaces)
+            for p in e["files"]:
+                out[p] = {"verdict": got["verdict"], "need_bytes": got.get("need_bytes"),
+                          "gap_bytes": got.get("gap_bytes"), "estimate": True,
+                          "copy": got["copy"], "settings": got.get("settings"),
+                          "parts": len(e["files"]),
+                          "download_bytes": e["bytes"] if len(e["files"]) > 1 else None}
+        for p, _sz in gguf:
+            if _is_projector(p):
+                out[p] = {"verdict": "projector", "estimate": True, "need_bytes": None,
+                          "copy": {"chip": "Vision add-on",
+                                   "line": "A projector, not a model on its own — it is "
+                                           "downloaded alongside a backbone and its cost "
+                                           "is counted with that model."}}
+        return JSONResponse({"ok": True, "repo": repo, "kind": "gguf", "fits": out,
+                             "budget": bud, "replaces": replaces})
+    total = sum(s for _p, s in mlx)
+    conf = None
+    try:
+        r = await _HF.get(f"/{repo}/raw/main/config.json")
+        if r.status_code == 200:
+            import json as _json
+            conf = _json.loads(r.text)
+            if not isinstance(conf, dict):
+                conf = None
+    except Exception:                                            # noqa: BLE001
+        conf = None
+    got = _fit.remote_mlx_fit(conf, total, bud, replaces=replaces)
+    return JSONResponse({"ok": True, "repo": repo, "kind": "mlx",
+                         "fits": {"__repo__": {"verdict": got["verdict"],
+                                               "need_bytes": got.get("need_bytes"),
+                                               "gap_bytes": got.get("gap_bytes"),
+                                               "estimate": True, "copy": got["copy"],
+                                               "settings": got.get("settings")}},
+                         "budget": bud, "replaces": replaces})
 
 
 @app.get("/api/models/hf/card")

@@ -312,6 +312,22 @@ def _our_strings():
         c2 = F.copy_for(verdict, est["total_bytes"], dict(bud, replaces=""), s,
                         dict(est, oracle=False), [])
         out += [str(v) for v in c2.values() if v]
+    # v1.5.33 — the two NEW copy surfaces (audio verdicts, remote/per-quant verdicts)
+    # go through the same collision check as the rest. A provenance check that only
+    # covers the copy it was written for is a provenance check with a hole in it.
+    for res, peak in ((0, 0), (3 * 1024 ** 3, 4 * 1024 ** 3)):
+        a = F.audio_fit({"id": "voice-x", "size_bytes": 2 * 1024 ** 3, "role": "tts"},
+                        {"budget_bytes": 6 * 1024 ** 3},
+                        resident_bytes=res, resident_peak=peak)
+        out += [str(v) for v in (a.get("copy") or {}).values() if v]
+    _hp = {"block_count": 32, "embedding_length": 4096, "attention.head_count": 32,
+           "attention.head_count_kv": 8, "attention.key_length": 128,
+           "attention.value_length": 128, "vocab_size": 32000, "architecture": "llama"}
+    for _b in (6 * 1024 ** 3, 60 * 1024 ** 3):
+        r = F.remote_fit(_hp, 5 * 1024 ** 3, {"budget_bytes": _b})
+        out += [str(v) for v in (r.get("copy") or {}).values() if v]
+    out += [str(v) for v in (F.remote_fit(None, 0, {"budget_bytes": 1})
+                             .get("copy") or {}).values() if v]
     # the strings the panel spells itself
     panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
     block = panel.split("THE RAM FIT ADVISOR — panel side")[1].split("function modelRowHtml")[0]
@@ -448,6 +464,174 @@ check("…the MOT Deck tile", "Memory for a model" in PANEL)
 check("…and the ledger's SSE kind is dispatched", "kind === 'memory'" in PANEL)
 check("the ledger tile does not pin the sampler fast just by existing",
       "/api/memory?watch=0" in PANEL)
+
+
+# ══ 7. S2 — VERDICTS FOR FILES THAT ARE NOT ON THIS DISK, AND THE 2026-08-29 ══
+#         DESIGN REVIEW (v1.5.33)
+print("\n── 7. S2: remote per-quant verdicts, audio verdicts, chip-first UX ──")
+
+# ---- 7a. THE PARTIAL HEADER. The HF browser reads a 2 MB PREFIX of a remote .gguf
+# instead of the whole file. The property that makes that safe is not "it usually
+# works": it is that a prefix which stopped before the tokenizer arrays is REFUSED,
+# because llama.cpp writes general.* → <arch>.* → tokenizer.*, so anything that
+# reached the token list has already read every architecture key — including
+# `full_attention_interval`, whose absence prices 33 hybrid-Mamba layers where 8 hold
+# KV. This is the 4.1× error the whole engine exists to avoid, arriving by a new door.
+_prefix_checked = 0
+for _m in _registry():
+    _p = str(_m.get("path") or "")
+    if not _p.endswith(".gguf") or not os.path.isfile(_p):
+        continue
+    _full = F.gguf_hparams(_p)
+    if not _full:
+        continue
+    _s = {"ctx": 65536, "kv_quant": "off", "flash_attn": "auto", "parallel": 1}
+    _sz = os.path.getsize(_p)
+    _want = F.formula_estimate(_full, _sz, _s)["total_bytes"]
+    for _n in (2, 8, 24):
+        with open(_p, "rb") as _fh:
+            _blob = _fh.read(_n * 1024 * 1024)
+        _part = F.gguf_hparams_bytes(_blob)
+        if not _part:
+            continue                      # refused: the wider read is the answer
+        _got = F.formula_estimate(_part, _sz, _s)["total_bytes"]
+        check(f"{_m.get('id','?')[:38]}: the {_n} MB prefix prices it EXACTLY as the "
+              f"whole header does ({_got / F.GIB:.3f} vs {_want / F.GIB:.3f} GB)",
+              _got == _want)
+        _prefix_checked += 1
+        break
+if not _prefix_checked:
+    skip("partial-header equivalence", "no readable .gguf in this registry")
+
+check("a prefix too short to reach ANY architecture key is refused, not guessed",
+      F.gguf_hparams_bytes(b"GGUF" + b"\x03\x00\x00\x00" + b"\x00" * 32) is None)
+check("…and a prefix that is not a GGUF at all is refused",
+      F.gguf_hparams_bytes(b"NOTGGUF" + b"\x00" * 4096) is None)
+check("…and an empty body is refused (an offline hub must not become a green chip)",
+      F.gguf_hparams_bytes(b"") is None)
+
+# ---- 7b. THE REMOTE VERDICT ITSELF
+_hp = {"block_count": 32, "embedding_length": 4096, "attention.head_count": 32,
+       "attention.head_count_kv": 8, "attention.key_length": 128,
+       "attention.value_length": 128, "vocab_size": 32000, "architecture": "llama",
+       "context_length": 8192}
+_rf = F.remote_fit(_hp, 5 * F.GIB, {"budget_bytes": 60 * F.GIB})
+check("a remote quant gets a real verdict, not a size", _rf["verdict"] == "fits"
+      and "Fits" in _rf["copy"]["chip"])
+check("…priced at the context it would actually load with, clamped by the model's own "
+      "trained ceiling (so the browser chip and the installed-row chip are the same "
+      "sentence about the same configuration)", _rf["settings"]["ctx"] == 8192)
+check("…labelled an ESTIMATE, because there is no local file for the oracle to read",
+      _rf["estimate"] is True and _rf["oracle"] is False
+      and _rf["copy"]["provenance"] == "estimate")
+_over = F.remote_fit(_hp, 5 * F.GIB, {"budget_bytes": 2 * F.GIB})
+check("…with the GAP on the chip when it does not fit",
+      _over["verdict"] == "over" and _over["copy"]["chip"].startswith("Over by ~"))
+# The remedy leg needs a model whose default context is ABOVE the ladder's rungs — at
+# 8k there is no smaller context to offer and an empty list is the honest answer, which
+# is what the first version of this check got wrong about its own fixture.
+_big = dict(_hp, context_length=262144)
+_rem = F.remote_fit(_big, 5 * F.GIB, {"budget_bytes": 9 * F.GIB})
+check(f"…and a REMEDY computed at a smaller context ('at 16k ctx: fits'), the half LM "
+      f"Studio's badge leaves out — got: "
+      f"{(_rem['remedies'] or [{}])[0].get('text', 'none')}",
+      any(r["kind"] == "ctx" and r.get("fits_after") for r in _rem["remedies"]))
+check("…and a model with no smaller context to offer gets an EMPTY remedy list, not a "
+      "suggestion that does not close the gap",
+      _over["settings"]["ctx"] == 8192
+      and not any(r["kind"] == "ctx" for r in _over["remedies"]))
+check("NOTHING on the download path can refuse: a remote verdict has no `refuse` and "
+      "no verdict value that a caller could read as a block (download ≠ run)",
+      _over.get("refuse") is None and _rf.get("refuse") is None)
+check("an unreadable remote header is 'No estimate', never a cheerful default",
+      F.remote_fit(None, 5 * F.GIB, {"budget_bytes": 60 * F.GIB})["verdict"] == "unknown")
+check("…and so is a file the hub gave no size for",
+      F.remote_fit(_hp, 0, {"budget_bytes": 60 * F.GIB})["verdict"] == "unknown")
+
+from bridge.routers import hf as _HFR                                # noqa: E402
+check("every quant of a repo shares ONE header read (the quant token is stripped) — "
+      "keying the cache per FILENAME cost 27 s on a 26-quant repo, measured, where "
+      "one read costs 1.2 s",
+      _HFR._quant_family("Qwen3-4B-Instruct-2507-UD-Q4_K_XL.gguf")
+      == _HFR._quant_family("Qwen3-4B-Instruct-2507-IQ4_NL.gguf")
+      == "Qwen3-4B-Instruct-2507")
+check("…but two SIZES in one repo stay two reads (pricing an 8B's KV with a 4B's shape "
+      "would be a precise, confident, wrong number)",
+      _HFR._quant_family("Qwen3-8B-Q8_0.gguf") != _HFR._quant_family("Qwen3-4B-Q8_0.gguf"))
+check("a multi-part GGUF is ONE model, summed — nine shards would be nine chips, each "
+      "wrong by a factor of nine",
+      _HFR._part_family("m-00002-of-00009.gguf") == "m")
+check("the remote read is STREAMED and capped, so a hub that ignores Range cannot hand "
+      "us a 40 GB body", "aiter_bytes" in _HFR._hf_prefix.__doc__.lower()
+      or "aiter_bytes" in (ROOT / "bridge" / "routers" / "hf.py").read_text())
+
+# ---- 7c. AUDIO VERDICTS (the tab shipped with none at all)
+_abud = {"budget_bytes": 6 * F.GIB}
+_live = F.audio_fit({"id": "v", "size_bytes": 2 * F.GIB, "role": "tts"}, _abud,
+                    resident_bytes=int(4.8 * F.GIB), resident_peak=int(5.1 * F.GIB))
+check("a RESIDENT voice model reports its measurement, not a prediction",
+      _live["provenance"] == "measured-now" and _live["copy"]["chip"].startswith("Live"))
+_est = F.audio_fit({"id": "never-run", "size_bytes": 2 * F.GIB, "role": "tts"}, _abud)
+check("one that has never run here is an ESTIMATE, and says so in its own hedge",
+      _est["provenance"] == "estimate" and "Estimated" in _est["copy"]["hedge"])
+# ⚠️ THE INCIDENT THIS NUMBER RECORDS. The first factor was 1.25, taken from published
+# envelopes. The first live render on this Mac measured OmniVoice-bfloat16 at 4.81 GB
+# resident against 2.04 GB of weights — 2.36×. The chip had said "Fits · ~2.4 GB" for
+# a thing that costs 4.8, on the tab whose job is to stop exactly that.
+check("the audio overhead factor is the MEASURED one, not the published 1.25 that made "
+      "a 4.8 GB worker read as 2.4 GB", F.AUDIO_RUNTIME_FACTOR >= 2.0)
+check("…and it is derived from this machine wherever a worker has actually run",
+      isinstance(F._audio_factor(), tuple) and F._audio_factor()[0] >= F.AUDIO_FACTOR_MIN)
+check("a size we do not know is 'No estimate' — silence is not a verdict",
+      F.audio_fit({"id": "x", "role": "tts"}, _abud)["verdict"] == "unknown")
+_MEMR = (ROOT / "bridge" / "routers" / "memory.py").read_text()
+check("AN AUDIO WORKER SITS BESIDE THE RUNNER: the audio verdicts are priced against "
+      "the plain budget, never budget_after_eject (nothing is freed by loading one, and "
+      "crediting the chat model's memory would be a cheerful lie)",
+      "_audio_fits(_bud)" in _MEMR and "_audio_fits(_fit.budget(freeing_bytes" not in _MEMR)
+check("…and the measured peak is REMEMBERED, so the estimate becomes a measurement",
+      "record_audio_peak" in _MEMR and "def record_audio_peak" in
+      (ROOT / "bridge" / "core" / "fit.py").read_text())
+check("/api/models/hf/fit is registered", '@app.get("/api/models/hf/fit")' in
+      (ROOT / "bridge" / "routers" / "hf.py").read_text())
+
+# ---- 7d. THE UX RULING: chip on the row, words on demand, reachable without a mouse
+_P = (ROOT / "bridge" / "panel" / "index.html").read_text()
+check("THE ROW CARRIES THE CHIP AND NOTHING ELSE — paintFitChips writes the chip and "
+      "binds a tooltip; it no longer prints copy.line into the row",
+      "chip.textContent = v.copy.chip" in _P
+      and "tipBind(chip, fitTipHtml(v), fitTipPlain(v));" in _P
+      and "chip.title = (v.copy.line" not in _P)
+check("…and the tooltip is NOT hover-only: click and keyboard open it too (WKWebView "
+      "does not reliably render `title`, and a tap has no hover)",
+      "addEventListener('mouseenter'" in _P and "addEventListener('click'" in _P
+      and "addEventListener('focus'" in _P and "tabindex" in _P)
+check("…closed by Escape, by scroll and by resize, so it can never be stranded",
+      "e.key === 'Escape') tipHide()" in _P and "'scroll', () => tipHide()" in _P)
+check("…and BOTH the chip and its hover come off ONE verdict object, so a green chip "
+      "cannot carry a red sentence", "function fitTipHtml(v)" in _P
+      and "function fitTipPlain(v)" in _P)
+check("the detail pane discloses the arithmetic instead of printing it",
+      "function fitToggleMath()" in _P and "Show the arithmetic" in _P)
+check("the strip's headline is STATUS + DELTA, in Debi's grammar",
+      "Free now: ~${memGB(freeNow)} GB" in _P and "GB on eject" in _P)
+check("…with the INTENT pair one level down, on its hover and in Details",
+      "Run alongside: ~" in _P and "Replace active (eject " in _P)
+check("the composer's model picker carries the same chips (a switch is CHOSEN there)",
+      "const fv = memFits[m.id];" in _P and "positionModelPop()" in _P)
+check("the Audio tab has verdict chips and a painter for them",
+      "fitpill afit fit-unk" in _P and "function paintAudioFitChips()" in _P)
+check("the HF browser's chips come from the engine, and the hardcoded 64 GB divisor is "
+      "GONE (it would have said 'Fits' just as confidently on a 16 GB Mac)",
+      "paintHfFits(repo, box)" in _P and "gb / 64" not in _P)
+# THE DOWNLOAD BUTTON, IN THE PANEL'S OWN MARKUP. A verdict may colour a chip; it may
+# never reach the Get. This asserts the Get is rendered with no state that a verdict
+# could set — the chip and the button are built in the same template, so a future
+# "disable it when it's red" edit lands right here.
+_getline = _P.split("class=\"hfget\"")[1][:120] if 'class="hfget"' in _P else ""
+check("Get is never disabled by a verdict: download ≠ run, and both are facts",
+      bool(_getline) and "disabled" not in _getline)
+
 
 print(f"\n{PASS} passed, {len(FAILS)} failed, {len(SKIPS)} skipped")
 for f in FAILS:
