@@ -73,7 +73,7 @@ def aider_spawn_spec() -> tuple:
     rc = cfg().get("runner") or {}
     live = _live_model_id(int(rc.get("port") or 6767))
     if not live:
-        return None, None, None, ("no model is loaded — load one in MOT Main → "
+        return None, None, None, ("no model is loaded — load one in MOT Deck → "
                                   "Models, then reopen this tab.")
     wire = wire_model_id(live, _registry_models())
     cwd = _pty.workspace_path(ROOT)

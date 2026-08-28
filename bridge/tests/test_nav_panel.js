@@ -279,7 +279,7 @@ console.log('render (executed)');
      'the components group lists the registry ones in nav order, then the rest: ' + comps.join(','));
   ok(/title="open the Hermes tab"/.test(out.comp),
      'a RUNNING component with a tab says so');
-  ok(/title="show odysseus on MOT Main — not running"/.test(out.comp),
+  ok(/title="show odysseus on MOT Deck — not running"/.test(out.comp),
      '…and a stopped one points at its card, where Start lives');
   ok(/class="dot ok"/.test(out.comp) && /class="dot warn"/.test(out.comp),
      'the live status dots survive the move into the renderer');

@@ -1553,7 +1553,7 @@
   <div id="view-mc">
     <div class="kicker"><span class="num">I.</span><span class="rule"></span>
       <span class="lbl">MOT Main</span></div>
-    <h1>MOT Main</h1>
+    <h1>MOT Deck</h1>
     <div class="sub">Status of every component, every port, every pin.</div>
     <div class="stamp" id="stamp">—</div>
 
@@ -2058,7 +2058,7 @@ function showProvLog(name) {
    on mc/chat/models/caps, which are panel views — pinning one of those as a tab gives
    it a strip segment without making the sidebar row jump out of the panel. */
 const NAV_ENTRIES = [
-  { id:'mc',      label:'MOT Main',        ico:'◫', kind:'view', view:'mc',     tab:'MOT Main' },
+  { id:'mc',      label:'MOT Deck',        ico:'◫', kind:'view', view:'mc',     tab:'MOT Deck' },
   { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
   { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
@@ -2345,8 +2345,8 @@ function renderSidebar() {
               : c.running ? 'ok' : c.installed ? 'warn' : '';
     const tabTitle = TAB_FOR_COMPONENT[name];
     const tip = (tabTitle && c.running) ? `open the ${tabTitle} tab`
-              : tabTitle ? `show ${name} on MOT Main — not running`
-              : `show ${name} on MOT Main`;
+              : tabTitle ? `show ${name} on MOT Deck — not running`
+              : `show ${name} on MOT Deck`;
     // id="nav-<name>": the same shape the workspace rows use, so navShellNote can write
     // its aside onto the row that was clicked. Component ids never collide with view ids.
     return `<a id="nav-${escAttr(name)}" onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
@@ -3312,7 +3312,7 @@ async function initCaps() {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
   } catch (e) {
-    stamp.textContent = 'Odysseus unreachable — start it in MOT Main';
+    stamp.textContent = 'Odysseus unreachable — start it in MOT Deck';
     // The voice rows and the Hermes toolset rows write HERMES's config, not
     // Odysseus's, so both stay usable on this path.
     const t = document.getElementById('caps-sec-tools');
@@ -5090,7 +5090,7 @@ async function initChat() {
   }
   try {
     const list = await loadSessions();
-    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT MAIN'; return; }
+    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT DECK'; return; }
     const want = localStorage.getItem('harness-chat-sid');
     const pick = (want && list.find(s => s.id === want)) || list[0];
     if (pick) await selectSession(pick.id);
@@ -12418,7 +12418,7 @@ const commands = () => {
   }
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
-    {t:'MOT Main', k:'◫', f:()=>showView('mc')},
+    {t:'MOT Deck', k:'◫', f:()=>showView('mc')},
     {t:'Music', k:'♫', f:()=>showView('music')},
     {t:'Generate music', k:'♫', f:()=>{ showView('music'); setTimeout(()=>{
         const el = document.getElementById('mus-prompt'); if (el) el.focus(); }, 120); }},

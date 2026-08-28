@@ -29,10 +29,10 @@ struct HarnessTab {
 // data/nav.json. The ID is the stable key — webviews are keyed by it, so reordering or
 // hiding a tab never reloads a page — while the TITLE is only ever a label.
 let tabRegistry: [HarnessTab] = [
-    // MOT Main — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
+    // MOT Deck — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
     // app's home, the page the bridge-wait screen writes into, and the only file-drop
     // target (DropOverlay). Keep it first. (The id stays "mc": ids are internal keys.)
-    HarnessTab(id: "mc", title: "MOT Main", url: bridgeURL),
+    HarnessTab(id: "mc", title: "MOT Deck", url: bridgeURL),
     HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
     HarnessTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
     // Optional components — usually NOT running, so their first load normally fails into
@@ -2159,7 +2159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             "<body style='background:#0b0a10;color:#6f6a80;font-family:-apple-system;" +
             "display:flex;align-items:center;justify-content:center;height:100vh'>" +
             "<div style='text-align:center'><h2 style='color:#efe7d7;font-weight:500'>Not reachable yet</h2>" +
-            "<p>Start the component in MOT Main,<br>then re-select this tab &mdash; or press &#8984;R.</p></div></body>",
+            "<p>Start the component in MOT Deck,<br>then re-select this tab &mdash; or press &#8984;R.</p></div></body>",
             baseURL: nil)
     }
 

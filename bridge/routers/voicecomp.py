@@ -156,11 +156,11 @@ async def voice_toggle(req: Request) -> JSONResponse:
     if on:
         if not comp.get("installed"):
             return JSONResponse({"ok": False, "error":
-                                 f"{spec['label']} isn't installed yet — install it in MOT Main first"},
+                                 f"{spec['label']} isn't installed yet — install it in MOT Deck first"},
                                 status_code=409)
         if not await _port_alive(int(comp["port"])):
             return JSONResponse({"ok": False, "error":
-                                 f"{spec['label']} isn't running — start it in MOT Main first "
+                                 f"{spec['label']} isn't running — start it in MOT Deck first "
                                  f"(nothing is listening on :{comp['port']})"},
                                 status_code=409)
     log, ody_on, hermes_on = [], None, None   # None = the host couldn't be reached
