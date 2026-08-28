@@ -1356,6 +1356,288 @@ function aiPluginsConfig() {
   return cfg;
 }
 
+// ── THE IN-RIBBON CHAT SURVIVES A DOCUMENT SWAP, AND IT IS PER FILE ──────────
+//
+// ⚠️ THE OBSERVED DEFECT (Debi, 2026-08-28): open A, chat in the ribbon's Chatbot,
+// switch to B — the conversation is gone. Root-caused in the VENDORED plugin, and the
+// cause is not "in-memory state": it is a save that is never triggered.
+//
+//   ai/scripts/chat.js         let localStorageKey = "onlyoffice_ai_chat_state";
+//                              setState()      writes {messages, inputValue, attachedText}
+//                              restoreState()  reads it, from Asc.plugin.init
+//                              attachEvent("onUpdateState", …)  ← the ONLY caller of setState
+//   ai/scripts/engine/register.js   chatWindow.command("onUpdateState")  ← the ONLY
+//                              caller of that event, and it lives inside
+//                              onDockedChanged. Nothing else, anywhere, commands it.
+//
+// So the plugin DOES persist its chat, in OUR origin's localStorage, under ONE GLOBAL
+// key — but it only saves when the user happens to dock/undock the chat panel. Our
+// `destroyEditor()` tears the plugin frame down without that ever firing, so the
+// messages die in the frame. MEASURED, not read: see the live proof in the report.
+//
+// Two consequences, and we fix both:
+//   1. NOTHING IS SAVED on a swap  ⇒ we command the plugin's OWN onUpdateState before
+//      destroying the editor, exactly as its own onDockedChanged does, and wait for
+//      the write to land.
+//   2. THE KEY IS GLOBAL, NOT PER DOCUMENT ⇒ even once saving works, A's conversation
+//      would reappear inside B, attached to B's cells. So the flushed blob is MOVED to
+//      our own per-file key and the plugin's key is set to the INCOMING file's blob (or
+//      cleared when it has none) before the editor is constructed, so the plugin's own
+//      restoreState() picks up the right conversation with no knowledge of us.
+//
+// ⚠️ NOT ONE VENDORED BYTE IS TOUCHED. This uses the plugin's own published event and
+// its own storage key, in an iframe that is same-origin with us — the identical
+// mechanism, and the identical justification, as the provider seed above.
+//
+// ⚠️ VERSION FENCE. Both the key name and the {messages,inputValue,attachedText} shape
+// are read out of plugin 3.2.2. A bump can rename either silently, and a silently
+// renamed key degrades to exactly today's behaviour (a chat that does not survive) —
+// never to a WRONG chat on the wrong file, because we only ever move a blob we found
+// under the name we know. test_oo_ai_lane.py asserts these constants against the
+// vendored file whenever the plugin is installed.
+const AI_CHAT_KEY = 'onlyoffice_ai_chat_state';       // ai/scripts/chat.js
+const AI_CHAT_PLUGIN_VER = '3.2.2';                   // the pin this was read from
+const AI_CHAT_MINE = 'mot.ooai.chat.';                // + file name → our per-file blob
+const AI_CHAT_INDEX = 'mot.ooai.chat.index';          // LRU list of file names
+const AI_CHAT_MAX_FILES = 12;                         // keep the last dozen documents
+const AI_CHAT_MAX_BYTES = 512 * 1024;                 // one conversation's ceiling
+let aiChatSaves = 0, aiChatRestores = 0, aiChatDrops = 0;   // reported by probe()
+let aiChatLast = '';        // what the last handover actually did, for a probe to read
+
+// Every same-origin frame under this page, the editor iframe and the plugin iframes
+// inside it included. A cross-origin frame throws on property access — skipped, never
+// fatal: this whole feature is a convenience and must never cost anyone an editor.
+function aiFrames(win, out, depth) {
+  out = out || []; depth = depth || 0;
+  if (depth > 6) return out;
+  try {
+    out.push(win);
+    for (let i = 0; i < win.frames.length; i++) {
+      try { aiFrames(win.frames[i], out, depth + 1); } catch (e) { /* cross-origin */ }
+    }
+  } catch (e) { /* cross-origin */ }
+  return out;
+}
+
+// The plugin's background frame publishes `window.chatWindow` (register.js's last line
+// of chatWindowShow). Absent until the user has opened the Chatbot at least once —
+// which is exactly the case where there is nothing to save.
+function aiChatWindow() {
+  const fr = aiFrames(window);
+  for (let i = 0; i < fr.length; i++) {
+    try {
+      const cw = fr[i].chatWindow;
+      if (cw && typeof cw.command === 'function') return cw;
+    } catch (e) { /* cross-origin */ }
+  }
+  return null;
+}
+
+function aiChatRead() {
+  try { return window.localStorage.getItem(AI_CHAT_KEY); } catch (e) { return null; }
+}
+
+// FLUSH. Command the plugin's own save and wait for the value to actually change —
+// polling rather than attachEvent because attachEvent("onUpdateState") would REPLACE
+// the plugin's own dock-change handler and break a feature to fix a feature.
+//
+// ⚠️ BOUNDED BY WALL TIME, NOT BY TICK COUNT, AND THAT DISTINCTION IS A MEASURED BUG
+// (live WKWebView, 2026-08-28). The first draft polled "14 times, 50ms apart" and
+// called that 700ms. It is not 700ms: WebKit CLAMPS timers hard in a window that is
+// not on screen, so those fourteen ticks took over THIRTY SECONDS — and because the
+// swap awaits the flush, the whole document switch sat at "converted to the editor
+// format" and never started the new editor. A background tab, an occluded window and
+// a Mac on battery all reach that state, so this was a real hang and not a probe
+// artefact. Timers are a HINT about delay and a PROMISE about order; only the clock
+// says how long anything took.
+const AI_CHAT_FLUSH_MS = 800;
+async function aiChatFlush() {
+  const cw = aiChatWindow();
+  if (!cw) return aiChatRead();          // never opened, or already torn down
+  const before = aiChatRead();
+  try { cw.command('onUpdateState'); } catch (e) { return before; }
+  const t0 = Date.now();
+  while (Date.now() - t0 < AI_CHAT_FLUSH_MS) {
+    await new Promise((r) => setTimeout(r, 30));
+    const now = aiChatRead();
+    if (now !== null && now !== before) return now;
+  }
+  return aiChatRead();
+}
+
+function aiChatIndex() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(AI_CHAT_INDEX) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch (e) { return []; }
+}
+
+// STORE the outgoing document's conversation under its own name. Bounded three ways —
+// a per-conversation ceiling, an LRU over documents, and a quota retry — because a
+// localStorage that fills up would break the PROVIDER SEED that shares it, i.e. it
+// would cost the AI tab itself. Losing an old chat is the right thing to lose.
+function aiChatStore(name, blob) {
+  if (!name) return;
+  // ⚠️ NOTHING IS EVER DELETED BECAUSE THE FLUSH CAME BACK EMPTY, and this cost a
+  // whole live run to find (2026-08-28, walking the swap in a real WKWebView). The
+  // first draft treated a null flush as "this file has no conversation" and removed
+  // the stored one — so a swap through a document whose plugin frame had not finished
+  // waking up SILENTLY ATE the previous file's chat. That is a LIE-TO-USER (typed
+  // work vanishing with no message), and it is exactly the shape the doctrine ranks
+  // above a crash. "I could not read the chat" and "there is no chat" are different
+  // facts, and only the second one may delete anything.
+  if (blob === null || blob === undefined || blob === 'null') { aiChatDrops++; return; }
+  let idx = aiChatIndex().filter((n) => n !== name);
+  if (blob.length > AI_CHAT_MAX_BYTES) { aiChatDrops++; return; }
+  const wrapped = JSON.stringify({v: AI_CHAT_PLUGIN_VER, blob: blob});
+  idx.unshift(name);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      while (idx.length > AI_CHAT_MAX_FILES) {
+        const gone = idx.pop();
+        try { window.localStorage.removeItem(AI_CHAT_MINE + gone); } catch (e) { }
+      }
+      window.localStorage.setItem(AI_CHAT_MINE + name, wrapped);
+      window.localStorage.setItem(AI_CHAT_INDEX, JSON.stringify(idx));
+      aiChatSaves++;
+      return;
+    } catch (e) {
+      // Quota. Drop the oldest and try again; give up quietly on the third failure —
+      // an unsaved chat is a disappointment, a broken editor is a defect.
+      if (idx.length > 1) { const gone = idx.pop();
+        try { window.localStorage.removeItem(AI_CHAT_MINE + gone); } catch (e2) { } }
+      else { aiChatDrops++; return; }
+    }
+  }
+  aiChatDrops++;
+}
+
+// RESTORE the incoming document's conversation into the plugin's own key — or CLEAR
+// it. The clear is the load-bearing half: without it the plugin would open B showing
+// A's conversation, which is a LIE-TO-USER (a chat about the wrong sheet) and strictly
+// worse than the empty chat we started from.
+function aiChatRestore(name) {
+  let blob = null;
+  try {
+    const raw = window.localStorage.getItem(AI_CHAT_MINE + name);
+    if (raw) {
+      const o = JSON.parse(raw);
+      // A blob written by a DIFFERENT plugin version is not replayed into it. The
+      // shape is that version's, not this one's, and a half-understood chat state is
+      // the kind of thing that renders as an empty panel with no explanation.
+      if (o && o.v === AI_CHAT_PLUGIN_VER && typeof o.blob === 'string') blob = o.blob;
+    }
+  } catch (e) { blob = null; }
+  try {
+    if (blob) { window.localStorage.setItem(AI_CHAT_KEY, blob); aiChatRestores++; }
+    else { window.localStorage.removeItem(AI_CHAT_KEY); }
+  } catch (e) { /* storage refused — the plugin simply opens with an empty chat */ }
+  return !!blob;
+}
+
+// The whole handover, in the order that makes it safe: save what the OLD document had
+// (which requires the old editor to still be alive), then plant what the NEW one had.
+// ⚠️ SERIALISED, NOT GUARDED, AND THE DIFFERENCE IS THE WHOLE FEATURE. The first draft
+// used a boolean "busy" flag and DROPPED any handover that arrived while another was
+// running — measured live: the 20s autosave holds the flag for its 700ms poll, a swap
+// landing inside that window skipped BOTH halves, and the incoming file's conversation
+// was therefore never planted. A dropped save is a lost chat; a dropped restore is an
+// empty panel. So every handover queues behind the one before it instead.
+let aiChatQueue = Promise.resolve();
+function aiChatHandover(fromName, toName) {
+  if (!aiSeeded) return Promise.resolve();   // no AI tab this session — nothing to move
+  aiChatQueue = aiChatQueue.then(async function () {
+    try {
+      if (fromName) {
+        const t0 = Date.now();
+        aiChatStore(fromName, await aiChatFlush());
+        aiChatLast = 'saved ' + fromName + ' in ' + (Date.now() - t0) + 'ms';
+      }
+      if (toName) aiChatLast = 'restore ' + toName + ': ' + aiChatRestore(toName);
+    } catch (e) {
+      aiChatLast = 'error ' + e;
+      console.log('[oo ai-chat] ' + e);
+    }
+  });
+  return aiChatQueue;
+}
+
+// ⚠️ TRAP FIVE, AND IT IS THE ONE THAT ACTUALLY DESTROYS THE CHAT (measured live,
+// 2026-08-28, after the save/restore pair above was already working):
+//
+//     ai/scripts/code.js
+//         function clearChatState() {
+//             let key = 'onlyoffice_ai_chat_state';
+//             if (window.localStorage.getItem(key)) window.localStorage.removeItem(key);
+//         }
+//         window.Asc.plugin.init = async function() { … clearChatState(); … }
+//
+// The plugin DELETES its own conversation on every start — deliberately, because
+// upstream's plugin lives in one long-running editor session and treats a reload as a
+// new conversation. In OUR one-editor world every document swap re-inits the plugin,
+// so that line is the disappearance Debi reported. It also lands AFTER the seed the
+// glue page plants before construction, which is why planting once is not enough: we
+// plant, the editor comes up, the plugin's init wipes it, and the Chatbot then opens
+// on nothing. MEASURED exactly that: `restore MOTA-A.xlsx: true` in the probe, and the
+// key gone from localStorage 30 seconds later with no other writer in the frame.
+//
+// So the plant is HELD rather than done once. Until the user actually opens the
+// Chatbot (at which point chat.js's restoreState has read the key and the plugin owns
+// it again), a cheap watcher re-plants the document's conversation whenever the key
+// goes missing. It only ever WRITES when the key is absent, so it is one write per
+// wipe and a single localStorage read per second otherwise; it stops the moment a chat
+// window exists or the document changes under it.
+// Carry a stored conversation across a RENAME. Pure key move — the blob is already in
+// this plugin version's shape, so re-wrapping it would only invent a chance to differ.
+function aiChatRename(from, to) {
+  if (!aiSeeded || !from || !to || from === to) return;
+  try {
+    const raw = window.localStorage.getItem(AI_CHAT_MINE + from);
+    if (raw === null) return;
+    window.localStorage.setItem(AI_CHAT_MINE + to, raw);
+    window.localStorage.removeItem(AI_CHAT_MINE + from);
+    const idx = aiChatIndex().map((n) => (n === from ? to : n));
+    window.localStorage.setItem(AI_CHAT_INDEX, JSON.stringify(idx));
+  } catch (e) { /* the chat simply stays under the old name; nothing else breaks */ }
+}
+
+// ⚠️ MEASURED: the wipe is not a one-off. Walking a real swap, the key was cleared
+// roughly every two seconds for as long as the Chatbot stayed shut (54 re-plants in
+// 100s) — the plugin re-runs clearChatState from more than one lifecycle hook. So the
+// hold is a standing one, it is CAPPED so a pathological loop cannot run for ever, and
+// its re-plants are counted separately from real restores: a metric that silently
+// counts housekeeping as work is a metric that cannot answer "did the swap restore it".
+const AI_CHAT_HOLD_MAX = 600;
+let aiChatHold = null, aiChatHolds = 0;
+function aiChatArm(name) {
+  if (aiChatHold) { clearInterval(aiChatHold); aiChatHold = null; }
+  if (!aiSeeded || !name) return;
+  let planted = 0;
+  aiChatHold = setInterval(function () {
+    if (DOC !== name || aiChatWindow() || planted >= AI_CHAT_HOLD_MAX) {
+      clearInterval(aiChatHold); aiChatHold = null; return;   // the plugin has it now
+    }
+    if (aiChatRead() !== null) return;
+    const was = aiChatRestores;
+    if (aiChatRestore(name)) { planted++; aiChatHolds++; aiChatRestores = was; }
+  }, 1000);
+}
+
+// ⚠️ AND THE SWAP IS NOT THE ONLY WAY THE FRAME DIES. Quitting the app, ⌘R, or the
+// host replacing the embed all destroy the plugin without any swap — and the flush
+// above is ASYNC (it waits on a postMessage round trip), so it cannot be completed
+// from `pagehide`. So the conversation is also checkpointed on a slow timer whenever a
+// chat window is actually open. The cost is one postMessage and one small
+// localStorage write every 20s, and ONLY while the user has the Chatbot open; the
+// benefit is that "I typed a question, then quit" is no longer a silent loss.
+// The residual limit — up to 20s of chat can still be lost to a hard quit — is stated
+// in LOffice's Help → About rather than hidden.
+const AI_CHAT_AUTOSAVE_MS = 20000;
+setInterval(function () {
+  if (!aiSeeded || !DOC || !aiChatWindow()) return;
+  aiChatHandover(DOC, '').catch(() => { /* never fatal */ });
+}, AI_CHAT_AUTOSAVE_MS);
+
 // Everything that has to happen ONCE per page: the status check, the attribution, the
 // 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
 // repeat it — that split IS the "keep one editor instance alive" requirement.
@@ -1491,11 +1773,22 @@ function openDoc(name) {
     // ⚠️ THE OLD INSTANCE GOES DOWN HERE AND NOT EARLIER. Everything above can fail,
     // and a failure that had already destroyed a working editor would turn "could not
     // open the OTHER file" into "you no longer have an editor".
+    // ⚠️ THE IN-RIBBON CHAT IS SAVED WHILE THE OLD EDITOR IS STILL ALIVE. The plugin
+    // frame is a child of the editor iframe: one line later there is nothing left to
+    // ask. See aiChatHandover — this is the whole "the chat vanished on a file switch"
+    // fix, and it is two calls around the destroy that was already here.
+    const wasDoc = DOC;
     if (editor) {
+      await aiChatHandover(wasDoc, '');
       try { editor.destroyEditor(); } catch (e) { console.log('[oo] destroy: ' + e); }
       editor = null;
     }
+    // …and the incoming document's own conversation is planted BEFORE the editor is
+    // constructed, and then HELD there — the plugin's own init deletes the key (trap
+    // five above), so a single plant is erased by the very editor it was planted for.
+    await aiChatHandover('', want);
     DOC = want;
+    aiChatArm(want);
     el('docname').textContent = want;
     document.title = want + ' — LOffice editor';
 
@@ -1673,6 +1966,13 @@ function renameTo(to) {
   if (!want) return {ok: false, error: 'no new name was given'};
   const from = DOC;
   DOC = want;
+  // ⚠️ THE CONVERSATION IS KEYED ON THE FILE NAME, SO A RENAME HAS TO CARRY IT. Without
+  // this the chat about this very sheet would be orphaned under the OLD name and the
+  // renamed file would open with an empty panel — the "another feature touched the same
+  // data" journey, and a silent loss of the user's own words. It is a key move, not a
+  // re-save: whatever was stored is exactly what the new name should hold.
+  aiChatRename(from, want);
+  aiChatArm(want);          // the hold was watching the old name and has just retired
   el('docname').textContent = want;
   document.title = want + ' — LOffice editor';
   // The note strip, if it is showing a stale "no such workbook", is now wrong.
@@ -1720,9 +2020,20 @@ window.LOfficeEmbed = {
                  ai: {enabled: !aiGate && !!aiSeeded, gate: aiGate,
                       model: (aiStatus && aiStatus.runner
                               && aiStatus.runner.model) || '',
-                      version: (aiStatus && aiStatus.version) || ''}}),
-  destroy: () => {
+                      version: (aiStatus && aiStatus.version) || '',
+                      // The chat-persistence counters, reported for the same reason the
+                      // save counters are: a probe can PROVE the handover ran on this
+                      // swap instead of inferring it from a screenshot.
+                      chat: {key: AI_CHAT_KEY, pinned: AI_CHAT_PLUGIN_VER,
+                             saves: aiChatSaves, restores: aiChatRestores,
+                             drops: aiChatDrops, holds: aiChatHolds,
+                             files: aiChatIndex().length,
+                             last: aiChatLast, live: !!aiChatWindow()}}}),
+  destroy: async () => {
     openSeq++;
+    // Same rule as the swap: the conversation is saved while the frame that holds it
+    // is still there. A host that tears the embed down does not lose the chat either.
+    if (editor) { await aiChatHandover(DOC, ''); }
     if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }
     editor = null; ready = false; dirtyNow = false;
   }

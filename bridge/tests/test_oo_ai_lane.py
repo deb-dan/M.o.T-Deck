@@ -503,6 +503,182 @@ check("the old 'no plugins' limit sentence is gone — it stopped being true",
 check("About still says the AI PANEL is untouched and still owns the agent tools",
       "panel is unchanged" in PAGE or "AI panel on the right is unaffected" in PAGE)
 
+
+# ══ 8. THE IN-RIBBON CHAT SURVIVES A DOCUMENT SWAP, PER FILE ═════════════════
+#
+# Debi's finding: chat in the ribbon's Chatbot, switch file, the conversation is gone.
+# Root cause is in the VENDORED plugin and it is NOT "in-memory state": chat.js DOES
+# persist to localStorage, but its setState() is reachable from exactly ONE event
+# (`onUpdateState`) which exactly ONE caller commands (`onDockedChanged`). A swap
+# destroys the frame without ever passing through it. Our fix commands that same
+# published event before destroying the editor, then MOVES the blob to a per-file key
+# of ours — because the plugin's key is GLOBAL and would otherwise show A's
+# conversation inside B.
+#
+# Every check below is a fence over something that fails SILENTLY on a plugin bump.
+AI_CHAT_KEY = "onlyoffice_ai_chat_state"
+
+check("the glue page pins the plugin's own chat key, and only that key",
+      f"AI_CHAT_KEY = '{AI_CHAT_KEY}'" in OO)
+check("…with the plugin version it was read from, as a fence",
+      "AI_CHAT_PLUGIN_VER = '3.2.2'" in OO)
+check("…and a per-FILE namespace of our own, distinct from the plugin's global key",
+      "AI_CHAT_MINE = 'mot.ooai.chat.'" in OO)
+
+check("⚠️ the conversation is flushed while the OLD editor is still alive — the plugin "
+      "frame is a CHILD of the editor iframe, so one line later there is nothing to ask",
+      OO.index("await aiChatHandover(wasDoc, '')")
+      < OO.index("try { editor.destroyEditor(); } catch (e) { console.log"))
+check("…and the INCOMING file's conversation is planted before the editor is built, "
+      "because the plugin reads that key once, from its chat window's init",
+      OO.index("await aiChatHandover('', want)") < OO.index("new DocsAPI.DocEditor"))
+check("the flush uses the plugin's OWN published event, not a reach into its internals",
+      "command('onUpdateState')" in OO)
+check("⚠️ …by COMMAND + poll, never attachEvent('onUpdateState') — attaching would "
+      "REPLACE the plugin's own dock-change handler, i.e. break a feature to fix one",
+      "cw.attachEvent(" not in OO and "chatWindow.attachEvent(" not in OO)
+check("…and it is bounded, so a plugin that never answers costs the swap and not the "
+      "editor", "AI_CHAT_FLUSH_MS" in OO)
+# ⚠️ A MEASURED HANG, PINNED. The first draft bounded the flush by TICK COUNT ("14
+# times, 50ms apart") and called that 700ms. WebKit clamps timers hard in a window
+# that is not on screen: those fourteen ticks took over THIRTY SECONDS in a live
+# WKWebView, and since the swap awaits the flush, the document switch stopped dead at
+# "converted to the editor format". A background tab, an occluded window and a Mac on
+# battery all reach that state. Timers promise ORDER, not DURATION.
+check("⚠️ …and bounded by the CLOCK, not by a tick count — a throttled timer turned a "
+      "'700ms' poll into a 30-SECOND swap hang, measured live",
+      "Date.now() - t0 < AI_CHAT_FLUSH_MS" in OO
+      and "for (let i = 0; i < 14; i++)" not in OO)
+check("…with the reason written down where the next person will edit it",
+      "CLAMPS timers" in OO or "clamps timers" in OO.lower())
+
+# ⚠️ TRAP FIVE — the one that actually destroys the conversation.
+check("⚠️ the plant is HELD, not done once: the plugin's own init DELETES the chat key, "
+      "so a single pre-construction write is erased by the editor it was written for",
+      "function aiChatArm" in OO and "aiChatArm(want)" in OO)
+check("…and the hold stops as soon as the plugin owns the key again (a chat window "
+      "exists) or the document changes under it",
+      "if (DOC !== name || aiChatWindow() || planted >= AI_CHAT_HOLD_MAX)" in OO)
+check("…and it only ever WRITES when the key is missing — one write per wipe",
+      "if (aiChatRead() !== null) return;" in OO)
+# MEASURED: the wipe repeats (54 re-plants in 100 seconds with the Chatbot shut), so
+# the hold is standing rather than one-shot — and therefore has to be capped.
+check("…is CAPPED, so a pathological wipe loop cannot run for ever",
+      "AI_CHAT_HOLD_MAX" in OO and "planted >= AI_CHAT_HOLD_MAX" in OO)
+check("…and its housekeeping re-plants are counted apart from real restores — a metric "
+      "that counts housekeeping as work cannot answer 'did the swap restore it'",
+      "aiChatHolds" in OO and "aiChatRestores = was" in OO and "holds: aiChatHolds" in OO)
+check("…and clearChatState is named in the glue page so the next reader knows why",
+      "clearChatState" in OO)
+
+check("⚠️ THE LIE-TO-USER GUARD: a file with no saved conversation CLEARS the plugin's "
+      "key rather than leaving the previous file's chat in it",
+      "window.localStorage.removeItem(AI_CHAT_KEY)" in OO)
+check("…and a blob written by a DIFFERENT plugin version is not replayed into this one",
+      "o.v === AI_CHAT_PLUGIN_VER" in OO)
+
+check("the store is bounded by conversation size…", "AI_CHAT_MAX_BYTES" in OO)
+check("…by number of documents (LRU)…", "AI_CHAT_MAX_FILES" in OO and "idx.pop()" in OO)
+check("…and survives a quota, because a full localStorage would cost the PROVIDER SEED "
+      "that shares it — i.e. the AI tab itself",
+      "attempt < 3" in OO and "aiChatDrops" in OO)
+check("a hard quit is covered too — the conversation is checkpointed on a timer while "
+      "the chat is open", "AI_CHAT_AUTOSAVE_MS" in OO and "setInterval" in OO)
+check("…and only while a chat window actually exists (no idle churn)",
+      "!aiChatWindow()) return" in OO)
+check("the frame walk is depth-bounded and a cross-origin frame is skipped, never fatal",
+      "depth > 6" in OO and OO.count("/* cross-origin */") >= 3)
+check("a probe can PROVE the handover ran, instead of inferring it from a screenshot",
+      "saves: aiChatSaves" in OO and "restores: aiChatRestores" in OO
+      and "drops: aiChatDrops" in OO)
+check("the host teardown path saves too — a swap is not the only way the frame dies",
+      "destroy: async () =>" in OO and "await aiChatHandover(DOC, '')" in OO)
+
+check("⚠️ a RENAME carries the conversation with the file — the key is the file name, "
+      "so without this the user's own words are orphaned under the old one",
+      "function aiChatRename" in OO
+      and OO.index("aiChatRename(from, want)") > OO.index("function renameTo(to)"))
+check("…and the hold is re-armed on the new name (the old one has just retired)",
+      "aiChatArm(want);          // the hold was watching the old name" in OO)
+
+check("Help → About tells the user the conversation is kept per file",
+      "kept per file" in PAGE)
+check("…and states the residual limit rather than hiding it",
+      "hard quit can still cost" in PAGE)
+
+# ── the version fence, against the VENDORED bytes ────────────────────────────
+if base is not None:
+    pdir = Path(ooai.plug_dir(base))
+    chat_js = pdir / "ai" / "scripts" / "chat.js"
+    reg_js = pdir / "ai" / "scripts" / "engine" / "register.js"
+    if chat_js.is_file() and reg_js.is_file():
+        CJ, RJ = chat_js.read_text(errors="replace"), reg_js.read_text(errors="replace")
+        check("⚠️ the VENDORED chat.js still uses the key our handover moves",
+              f'localStorageKey = "{AI_CHAT_KEY}"' in CJ, "a plugin bump renamed it")
+        check("…and still restores it from its own init (which is what makes the "
+              "planted blob appear)",
+              "restoreState();" in CJ and "Asc.plugin.init" in CJ)
+        check("⚠️ …and setState is STILL only reachable from onUpdateState — the whole "
+              "reason a swap loses the chat",
+              CJ.count("setState({") == 1 and 'attachEvent("onUpdateState"' in CJ)
+        # ⚠️ TRAP FIVE, fenced against the vendored bytes. If a bump ever REMOVES this
+        # line, the hold becomes unnecessary — harmless, but the comment in oo.html
+        # would then be a lie about the current plugin, which is its own kind of debt.
+        code_js = pdir / "ai" / "scripts" / "code.js"
+        if code_js.is_file():
+            KJ = code_js.read_text(errors="replace")
+            check("⚠️ the VENDORED plugin STILL deletes its own chat state on init — the "
+                  "actual cause of 'the chat vanished when I switched file'",
+                  "function clearChatState()" in KJ
+                  and "localStorage.removeItem(key)" in KJ
+                  and "clearChatState();" in KJ)
+        check("the VENDORED register.js still publishes window.chatWindow (our handle)",
+              "window.chatWindow = chatWindow" in RJ)
+        check("…and still commands onUpdateState itself, so we are using a path the "
+              "plugin already uses on its own",
+              'chatWindow.command("onUpdateState")' in RJ)
+        eq("the version our glue page pins is the version actually installed",
+           ooai.install_state(base)["version"], "3.2.2")
+    # NOT ONE VENDORED BYTE. The whole mechanism is our key namespace plus the plugin's
+    # own published event; nothing of ours may appear inside the vendored tree.
+    ours = 0
+    for p in pdir.rglob("*.js"):
+        try:
+            if "mot.ooai" in p.read_text(errors="replace"):
+                ours += 1
+        except OSError:
+            pass
+    eq("⚠️ the vendored plugin carries NONE of our identifiers — still unmodified",
+       ours, 0)
+
+
+# ══ 9. PROMPT CACHING — WHAT WAS MEASURED, AND WHAT THEREFORE WAS NOT BUILT ══
+#
+# Measured live against llama.cpp b10662 (2026-08-28); oracle = the runner's own
+# `prompt eval time = X ms / N tokens` line; 29,624-token sheet prefix; three
+# consecutive asks each time:
+#     cache_prompt OMITTED  116.1s / 29,624 tok → 3.71s / 516 → 3.80s / 517
+#     cache_prompt: true      3.68s /    515    → 3.71s / 515 → 3.69s / 516
+#     cache_prompt: false   115.0s / 29,624    → 116.6s / 29,624 → 122.7s / 29,625
+# OMITTED behaves identically to TRUE: prompt caching is ON BY DEFAULT at this pin.
+# So injecting cache_prompt into the plugin's request body — which would have needed a
+# bridge proxy, because the plugin's base Provider builds {model, messages} and its
+# getRequestBodyOptions() returns {} with no data hook — was NOT built: it would have
+# been a no-op wearing a proxy, and a proxy is a second place for the key and the URL
+# to drift. What IS pinned is the control: the direct lane keeps sending it explicitly,
+# because `false` is a real setting and a future default flip must not silently cost
+# that lane two minutes a turn.
+CHATPY = (ROOT / "bridge" / "routers" / "chat.py").read_text()
+check("the Quick (direct) lane still sends cache_prompt explicitly",
+      '"cache_prompt": True' in CHATPY)
+START = (ROOT / "scripts" / "start_component.sh").read_text()
+check("⚠️ the runner argv was NOT changed for caching — measurement said no flag was "
+      "required, and that argv is contract-pinned",
+      "--no-cont-batching --cache-ram -1" in START and "--cache-reuse" not in START)
+check("…and the host-memory prompt cache stays unbounded (--cache-ram -1), which is "
+      "what lets another lane's turn not evict the sheet's prefix",
+      "--cache-ram -1" in START)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED:")

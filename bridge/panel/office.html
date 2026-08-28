@@ -3263,7 +3263,25 @@ async function helpAbout() {
            ? '  Status: ON, answering from ' + ((ai.runner || {}).model || 'the runner')
              + '.\n  Chat, Summarization, Translation and Text analysis are bound to it;\n'
              + '  image generation, OCR and vision are NOT (a local text model cannot).\n'
-             + '  The AI panel is unchanged and still owns the agent tools + approvals.'
+             + '  The AI panel is unchanged and still owns the agent tools + approvals.\n'
+             // ⚠️ THE TWO THINGS DEBI ACTUALLY HITS, SAID PLAINLY. Both were measured
+             // (2026-08-28) and neither is fixable from our side without patching a
+             // vendored AGPL bundle, so the honest answer is to name them where
+             // somebody who just sat through one will look. Numbers, not adjectives.
+             + '\n  The FIRST ask about a sheet is slow — around a minute on a 27B,\n'
+             + '  because the whole sheet has to be read before a single word comes\n'
+             + '  back. Follow-up asks about the SAME sheet are seconds: the runner\n'
+             + '  keeps the work and re-reads only what changed (measured: 29,624\n'
+             + '  tokens on the first ask, ~516 on each one after it). The panel’s own\n'
+             + '  Quick lane streams instead, so it starts answering immediately.\n'
+             + '  The big centred spinner is the editor’s own "busy" screen, which the\n'
+             + '  plugin puts up while it waits. In the CHATBOT panel it clears the\n'
+             + '  moment the first words arrive; the ribbon’s Summarization and\n'
+             + '  Translation buttons hold it until the whole answer is finished — so\n'
+             + '  for anything long, ask in the Chatbot.\n'
+             + '  The Chatbot conversation is kept per file: switch away and back and\n'
+             + '  it is still there. It is checkpointed on every file switch and every\n'
+             + '  20 seconds, so a hard quit can still cost the last few messages.'
            : '  Status: OFF — ' + (ai.gate || 'unavailable') + '\n'
              + '  The tab is left out of the ribbon rather than shown with nothing\n'
              + '  behind it. The AI panel on the right is unaffected.\n'

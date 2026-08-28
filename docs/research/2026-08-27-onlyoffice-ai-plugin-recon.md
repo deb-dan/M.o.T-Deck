@@ -93,3 +93,79 @@ as before, no Plugins tab, no AI tab, `probe().ai.gate` says why. Nothing leaves
 Translation and Text analysis only. Image generation, OCR and vision are deliberately left
 UNBOUND — a local text model cannot do them, and a bound-but-broken action would be worse
 than a visibly empty one.
+
+---
+
+## ✅ ROUND TWO — 2026-08-28 (Opus 5, v1.5.28): latency, chat persistence, the modal
+
+Three things Debi observed while USING the AI tab, all three root-caused by measurement.
+
+### A. Prompt caching — there was nothing to fix, and that is the finding
+`cache_prompt` is **on by default** in llama.cpp b10662. Measured against the live
+runner, 29,624-token sheet prefix, three consecutive asks, oracle = the runner's own
+`prompt eval time = X ms / N tokens` line:
+
+| body | ask 1 | ask 2 | ask 3 |
+|---|---|---|---|
+| `cache_prompt` **omitted** (what the plugin sends) | 116.1s / 29,624 tok | 3.71s / **516** | 3.80s / **517** |
+| `cache_prompt: true` | 3.68s / 515 | 3.71s / 515 | 3.69s / 516 |
+| `cache_prompt: false` (control) | 115.0s / 29,624 | 116.6s / 29,624 | 122.7s / 29,625 |
+
+OMITTED ≡ TRUE. So the bridge proxy that would have injected the flag into the plugin's
+body was **not built** — it would have been a no-op wearing a proxy, plus a second place
+for the runner URL and key to drift. (There is no data-only hook: the plugin's base
+`Provider.getChatCompletions` returns `{model, messages}` and `getRequestBodyOptions()`
+returns `{}`; `AI.createProviderInstance` drops to the BASE class for a custom provider,
+so a seeded provider cannot override a method.) The Quick lane keeps sending it
+explicitly — `false` is a real setting and a default flip must not cost it two minutes.
+
+**Cross-lane eviction does not happen either.** `--cache-ram -1` (llama.cpp PR 16391,
+host-memory prompt cache, unbounded) keeps several conversations' KV state resident:
+A(cached 505 tok) → B(full 22,950 tok prefill, 84.8s) → A again = **506 tok / 18.4s**,
+then 3.8s. Another lane's turn costs the sheet a KV restore, not a re-read. **The runner
+argv was not changed.**
+
+Real in-ribbon ask, measured end to end: 11,270-token prompt eval in 35.7s → the first
+ask on a sheet IS the physics, and the repeat is seconds.
+
+### C. The modal is the EDITOR's block, and its length is the first-token wait
+It is not a plugin loader and there is no settings knob. The plugin calls
+`Asc.Editor.callMethod("StartAction", ["Block", "AI (model)"])`:
+- **Chatbot panel** (`register.js:186`) — `chatRequestAgent(data, /*block*/ false, streamFunc)`
+  and `checkEndAction()` fires on the FIRST streamed chunk. The modal lasts **TTFT**,
+  then the answer streams into the docked panel.
+- **Ribbon actions** (Summarization, Translation, …, `register.js:455-635`) —
+  `chatRequest(prompt)` with block defaulting true and NO streamFunc, so the modal holds
+  for the **whole generation**.
+
+Shipped: the honest lines in LOffice Help → About (numbers, and "for anything long, ask
+in the Chatbot"). Nothing vendored was patched.
+
+### B. The chat vanished on a file switch — FIFTH upstream trap, and it is deliberate
+```
+ai/scripts/code.js
+    function clearChatState() { localStorage.removeItem('onlyoffice_ai_chat_state'); }
+    window.Asc.plugin.init = async function() { … clearChatState(); … }
+```
+The plugin **deletes its own conversation on every start**. It also only ever SAVES from
+`onUpdateState`, which only `onDockedChanged` commands (`register.js:395`) — so nothing
+is written unless the user happens to dock/undock. In our one-editor world every swap
+re-inits the plugin, so both halves fire on every file switch.
+
+Fixed in `bridge/panel/oo.html` with the plugin's OWN published surfaces, no vendored
+byte touched: command `onUpdateState` before `destroyEditor()`, move the blob to a
+per-file key of ours (`mot.ooai.chat.<file>`, LRU 12, 512 KB cap, quota-safe), plant the
+incoming file's blob before construction and **HOLD** it there (the plugin's init wipes
+it) until the Chatbot opens. Version-fenced on plugin 3.2.2 in `test_oo_ai_lane.py`.
+
+Two defects of our own, both found by walking the journey live and both pinned:
+1. **A null flush deleted a saved conversation.** "I could not read the chat" was being
+   treated as "there is no chat". LIE-TO-USER class. Nothing is deleted on an empty read.
+2. **A tick-count timeout is not a timeout.** The flush polled "14 × 50ms = 700ms";
+   WebKit clamps timers in an off-screen window and those ticks took **over 30 seconds**,
+   hanging the whole document swap at "converted to the editor format". Bounded by the
+   CLOCK now. General lesson: timers promise ORDER, not DURATION.
+
+Live proof (WKWebView, real editor swaps): type in the Chatbot on A → swap to B →
+**B's panel is clean** (no bleed) → swap back → **the conversation is back**; a rename
+carries it; `drops: 0`.
