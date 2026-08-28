@@ -14,7 +14,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | P2 | ⚪ SOMEDAY | Euro-Office editor bump (next CryptPad released pair = upstream switch; full re-verification slice) | ⚪ LOW | 🟡 High | ⚪ Low | 🟢 Good | 🟡 6-15 files | Large | `@status:blocked` waiting on CryptPad release to move past v9.2.0.119+5 |
 | P3 | 🔵 NEXT | Voice Chat M3 — push-to-talk/turn-based lane, VoiceChat-11B (measured 17.45GB peak), additive per ruling | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` Fable spec next, then build |
 | P4 | 🔵 NEXT | goose lane build — BUILD-READY (pins + kill switches verified); waiting on index.html owner to land | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:blocked` on UI-polish builder freeing index.html |
-| P5 | 🔵 NEXT | ComfyUI Video/Audio first-party surface — research in flight; then Fable spec, then S1 build | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:in-progress` research agent running 2026-08-29 |
+| P5 | 🔵 NEXT | ComfyUI Video/Audio first-party surface — research in flight; then Fable spec, then S1 build | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` research DONE (docs/research/2026-08-29-comfyui-tab.md); Fable spec next, gated on Debi's 6 answers |
 
 ### Detail - Paused plans
 
