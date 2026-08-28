@@ -171,6 +171,112 @@ async def ody_session_delete(sid: str) -> JSONResponse:
         return JSONResponse({"ok": False})
 
 
+# ── Multimodal history, made panel-shaped ────────────────────────────────────
+# Odysseus persists a user turn that carried an image as OpenAI CONTENT PARTS — a
+# LIST whose image part holds the whole picture as an inline base64 data URL
+# (src/document_processor.py:439-450, reached from routes/chat_helpers.py:416).
+# Everything downstream of us wants a STRING: the panel renders `m.content` into a
+# bubble, and the direct lane replays this same history into the runner. So the
+# shape is normalised at THIS boundary — the one place both readers pass through.
+#
+# ⚠️ This was ALREADY wrong before the Agent lane grew a ⊕: an image attached from
+# the Odysseus TAB (same session store) came back to the panel as a list and rendered
+# as "[object Object]", and the direct lane replayed a multi-megabyte data URL into
+# every later prompt. One helper fixes both.
+
+def flatten_ody_content(content):
+    """PURE: an Odysseus message's `content` → the text a string reader expects.
+
+    A plain string passes through byte-identical (the overwhelmingly common case).
+    A parts LIST yields its text parts joined by a blank line; non-text parts (image
+    / audio data URLs) are DROPPED rather than stringified — the picture comes back
+    through the attachment handle below, not through the bubble text. Never raises.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text" \
+                    and isinstance(p.get("text"), str) and p["text"]:
+                parts.append(p["text"])
+        return "\n\n".join(parts)
+    if content is None:
+        return ""
+    try:
+        return str(content)
+    except Exception:
+        return ""
+
+
+def flatten_history(history_rows):
+    """PURE: flatten_ody_content over every row, in place. Never raises."""
+    try:
+        for m in (history_rows or []):
+            if isinstance(m, dict) and not isinstance(m.get("content"), str):
+                m["content"] = flatten_ody_content(m.get("content"))
+    except Exception:
+        pass
+    return history_rows
+
+
+def ody_attachment_handles(history_rows):
+    """PURE: lift Odysseus's OWN upload ids onto user rows as attachment handles.
+
+    A turn attached through the Agent lane is stored by ODYSSEUS, not by our image
+    sidecar, so reopening it rehydrates from Odysseus's own message metadata
+    (`metadata.attachments` = [{id,name,mime,…}], routes/chat_helpers.py:415). The
+    handle carries `ody_id` instead of `id`; the panel reads that as "these bytes
+    live in Odysseus" and serves them from /api/ody/attachment/<id>.
+
+    Only IMAGE attachments get a handle (a thumbnail of a .txt is nothing), only the
+    FIRST per row (the composer stages one image per message), and never over a
+    handle the local sidecar already set. Never raises.
+    """
+    try:
+        for m in (history_rows or []):
+            if not isinstance(m, dict) or m.get("role") != "user" or m.get("attachment"):
+                continue
+            meta = m.get("metadata")
+            atts = meta.get("attachments") if isinstance(meta, dict) else None
+            if not isinstance(atts, list):
+                continue
+            for a in atts:
+                if not isinstance(a, dict) or not a.get("id"):
+                    continue
+                mime = str(a.get("mime") or "")
+                name = str(a.get("name") or "image")
+                if not (mime.startswith("image/")
+                        or name.lower().endswith((".png", ".jpg", ".jpeg",
+                                                  ".webp", ".gif"))):
+                    continue
+                m["attachment"] = {"ody_id": str(a["id"]), "name": name}
+                break
+    except Exception:
+        pass
+    return history_rows
+
+
+@app.get("/api/ody/attachment/{fid}")
+async def ody_attachment(fid: str):
+    """Serve one ODYSSEUS-stored upload's bytes (the Agent lane's thumbnails).
+
+    A pure proxy: the panel cannot reach :7860 itself (CORS), and these bytes belong
+    to Odysseus — we never copy them into our sidecar and we never delete them.
+    """
+    from fastapi.responses import Response
+    try:
+        r = await _ody_req("GET", f"/api/upload/{fid}")
+    except Exception:
+        return JSONResponse({"error": "Odysseus unreachable"}, status_code=502)
+    if r.status_code != 200:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response(content=r.content,
+                    media_type=(r.headers.get("content-type")
+                                or "application/octet-stream"),
+                    headers={"X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/api/ody/history/{sid}")
 async def ody_history(sid: str) -> JSONResponse:
     try:
@@ -182,11 +288,17 @@ async def ody_history(sid: str) -> JSONResponse:
             # turns (matched by answer hash, consumed in order). Best-effort — a
             # sidecar miss just means no thinking disclosure, never a broken history.
             if isinstance(out, dict) and isinstance(out.get("history"), list):
+                # FLATTEN FIRST: every join below (and the panel) keys off string
+                # content, so a multimodal row has to become text before anything
+                # hashes it.
+                flatten_history(out["history"])
                 attach_thinking(out["history"], _thinking_rows(sid))
                 # Image sidecar: same story for the USER turns — Odysseus keeps
                 # only the "[image attached]" marker, so hand the panel back an
                 # {id, name} handle it can render as the original thumbnail.
                 attach_images(out["history"], _attachment_rows(sid))
+                # …and for AGENT-lane turns the bytes are Odysseus's own upload.
+                ody_attachment_handles(out["history"])
         except Exception:
             pass
         return JSONResponse(out)
@@ -377,6 +489,9 @@ async def ody_caps() -> JSONResponse:
     out = {"features": {}, "settings": {}, "search_providers": [],
            "mcp_servers": [], "builtin_tools": [],
            "skills_builtin": [], "skills_user": [],
+           # `vision` stays None until the settings fetch fills it: absent-not-false,
+           # so a caps read that FAILED can never be drawn as "no vision configured".
+           "vision": None,
            "model_endpoints": [], "models": [], "errors": {}}
     try:
         r = await _ody_req("GET", "/api/auth/features")
@@ -392,6 +507,20 @@ async def ody_caps() -> JSONResponse:
             full = r.json()
             # only surface the Phase-1 subset — never leak the whole bag / secrets
             out["settings"] = {k: full.get(k) for k in CAPS_SETTING_KEYS if k in full}
+            # ── VISION CONFIG, READ-ONLY (2026-08-28) ───────────────────────
+            # Deliberately NOT in CAPS_SETTING_KEYS: that tuple is also the WRITE
+            # allowlist, and these two are for telling the truth, not for editing
+            # from here. THE REASON THEY EXIST: Odysseus decides whether the main
+            # model can see pixels by NAME KEYWORDS (src/chat_helpers.py
+            # is_vision_model) — our registry's mmproj/vision_config evidence is
+            # invisible to it. A model it does not recognise falls back to its
+            # `vision_model`, and with that unset the user's image becomes the
+            # literal text "[No vision model configured…]". Driven on 2026-08-28:
+            # a genuinely vision-capable local model answered "Without a
+            # vision-enabled model, I can't see the image". The composer now says
+            # so BEFORE the send instead of after it.
+            out["vision"] = {"enabled": bool(full.get("vision_enabled", True)),
+                             "model": str(full.get("vision_model") or "")}
         else:
             out["errors"]["settings"] = r.text[:200]
     except Exception as e:

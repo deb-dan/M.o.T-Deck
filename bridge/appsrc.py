@@ -83,6 +83,7 @@ FILES: tuple[str, ...] = (
     # pair of neighbours some assertion slices between. See the matching note in
     # bridge/app.py's _LANES.
     "core/events.py",
+    "routers/help.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

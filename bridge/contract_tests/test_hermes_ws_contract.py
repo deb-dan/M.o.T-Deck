@@ -28,6 +28,9 @@ WS_METHODS = [
     "clarify.respond",    # methods_prompt.py  — ask-card answer (clarify tool)
     "session.interrupt",  # methods_session.py — panel Stop + the max-turn guard
     "session.active_list",# methods_session.py — the relay's liveness probe
+    "image.attach_bytes", # methods_prompt.py  — the lane's ⊕ (2026-08-28); its params
+                          # and its queue-onto-the-session behaviour are pinned in
+                          # test_attach_lanes_contract.py
 ]
 
 # Event types the bridge translates into panel SSE frames (emitted via

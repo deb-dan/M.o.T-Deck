@@ -600,26 +600,86 @@ async def _hermes_session_working(sid: str) -> bool:
         return True
 
 
+# ── HERMES-LANE IMAGE ATTACH (2026-08-28, the capability-affordance audit) ───
+# Hermes's gateway takes an image as BASE64 over the same WebSocket we already
+# hold: `image.attach_bytes {session_id, content_base64, filename}` writes the
+# bytes into the gateway's own images dir and queues the path on the SESSION
+# (tui_gateway/methods_prompt.py:801). The very next `prompt.submit` drains
+# `session["attached_images"]` (server.py:9780) and routes it either as native
+# image_url parts (vision model) or through vision_analyze for a text-only one
+# (agent/image_routing.py). So the panel's data URL crosses UNCHANGED — the helper
+# below only fences shape and size before we spend the round trip.
+#
+# ORDERING IS LOAD-BEARING: the attach must land on the session that is about to be
+# prompted, so it happens AFTER session.create — and AGAIN after the stale-sid retry
+# mints a NEW session, whose attached_images list is empty.
+HERMES_IMAGE_MAX_CHARS = 12 * 1024 * 1024   # dataURL chars (~9MB of image bytes);
+                                            # upstream's own cap is 25MB of bytes
+
+
+def hermes_attach_error(image) -> str:
+    """PURE: why this image cannot ride the Hermes lane, or "" when it can.
+
+    Same vocabulary as the other two lanes. No vision clause: Hermes decides
+    pixels-vs-description per turn from the active model's own capabilities.
+    """
+    if not image:
+        return ""
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        return "attachment is not an image data URL — attach removed"
+    if len(image) > HERMES_IMAGE_MAX_CHARS:
+        return "image too large — attach removed"
+    return ""
+
+
 @app.post("/api/hermes/chat")
 async def hermes_chat(req: Request) -> StreamingResponse:
     """Stream one Hermes turn to the panel as SSE (same protocol as the other lanes).
 
-    Body: {"session_id": <sid or empty>, "message": <text>}. No sid → session.create
-    first, and the NEW sid is announced early via {"type":"hermes_session","id":…}
-    so the panel can persist it before any tokens arrive. One stale-sid retry.
+    Body: {"session_id": <sid or empty>, "message": <text>, "image": <dataURL>}.
+    No sid → session.create first, and the NEW sid is announced early via
+    {"type":"hermes_session","id":…} so the panel can persist it before any tokens
+    arrive. One stale-sid retry.
     """
     body = await req.json()
     sid = (body.get("session_id") or "").strip()
     msg = (body.get("message") or "").strip()
     stored_sid = (body.get("stored_sid") or "").strip()   # durable id, for the guard audit
+    image = body.get("image") or ""
+    image_name = (body.get("image_name") or "")[:200]
 
     async def gen():
         import json as _json
         nonlocal sid, stored_sid
+
+        async def _attach_image(target_sid: str) -> str:
+            """Queue the staged image on `target_sid`. Returns "" or the reason.
+
+            An image the user attached and Hermes refused must FAIL the turn — never
+            be dropped silently and answered as if the message had been plain text.
+            That would be a LIE-TO-USER, which outranks a refusal.
+            """
+            if not image:
+                return ""
+            try:
+                res = await _HERMES.rpc("image.attach_bytes", {
+                    "session_id": target_sid,
+                    "content_base64": image,
+                    "filename": image_name or "image.png"})
+            except Exception as e:                        # noqa: BLE001
+                return f"hermes refused the image: {str(e)[:180]}"
+            if not (res or {}).get("attached"):
+                return "hermes did not attach the image (no reason given)"
+            return ""
+
         q = None
         try:
             if not msg:
                 yield 'data: {"type":"proxy_error","error":"empty message"}\n\n'
+                return
+            _imgerr = hermes_attach_error(image)
+            if _imgerr:      # shape/size — refuse before creating a session for it
+                yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
                 return
             if not sid:
                 res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
@@ -644,6 +704,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     pass
             # Open the fan-out queue BEFORE submitting so no early event is missed.
             q = _HERMES.open_queue(sid)
+            _imgerr = await _attach_image(sid)
+            if _imgerr:
+                yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
+                return
             try:
                 await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
             except RuntimeError as e:
@@ -664,6 +728,12 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     except Exception:                     # noqa: BLE001
                         pass
                 q = _HERMES.open_queue(sid)
+                # The image was queued on the session that turned out to be dead —
+                # this one's attached_images is empty, so re-attach before resubmitting.
+                _imgerr = await _attach_image(sid)
+                if _imgerr:
+                    yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
+                    return
                 await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
             # Relay gateway events until the turn completes. Watchdogs (Phase 1.1):
             #   • first-event: NOTHING within 60s of prompt.submit → end with a clear

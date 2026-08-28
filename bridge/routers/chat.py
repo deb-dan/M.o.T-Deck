@@ -8,7 +8,7 @@ from ..core.analytics import log_turn
 from ..core.appctx import app
 from ..core.modelid import _live_model_id, wire_model_id
 from ..core.procs import _registry_models, cfg
-from .ody import _ody_req
+from .ody import _ody_req, flatten_ody_content
 from .sampling import IMAGE_MAX_CHARS, _RUNNER, _vision_capable, build_user_content, sampling_merge, turn_metadata
 from .sidecars import log_attachment, log_thinking, parse_data_url, user_key
 
@@ -41,8 +41,13 @@ async def chat_direct(req: Request) -> StreamingResponse:
             h = await _ody_req("GET", f"/api/history/{sid}")
             if h.status_code == 200:
                 for m in (h.json().get("history") or [])[-30:]:
-                    if m.get("role") in ("user", "assistant") and m.get("content"):
-                        messages.append({"role": m["role"], "content": m["content"]})
+                    # FLATTEN: an AGENT-lane turn that carried an image is stored as
+                    # OpenAI content PARTS with the picture inline as base64. Replaying
+                    # that verbatim would re-send megabytes into every later direct-lane
+                    # prompt — and to a model that may not accept images at all.
+                    content = flatten_ody_content(m.get("content"))
+                    if m.get("role") in ("user", "assistant") and content:
+                        messages.append({"role": m["role"], "content": content})
         except Exception:
             pass  # degrade: direct chat works even with Odysseus down
 

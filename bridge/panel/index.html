@@ -1036,8 +1036,8 @@
   /* live-model capability pill — same .mpill.vision colors as the Models pane rows;
      the chat bar has no .mbadges font context, so only the type is restated here */
   #cap-vision { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
-  /* image attachment (direct lane, vision models): button left of the composer,
-     one thumbnail chip in a slim strip above it */
+  /* image attachment (ALL THREE LANES since 2026-08-28): button left of the
+     composer, one thumbnail chip in a slim strip above it */
   #chat-attachstrip { display:flex; align-items:center; gap:8px; margin:0 0 7px;
       font:10px var(--mono); letter-spacing:.06em; color:var(--dim); }
   #chat-attachstrip img { width:24px; height:24px; object-fit:cover; border-radius:4px;
@@ -1049,6 +1049,12 @@
   #chat-attachstrip .aclear:hover { color:var(--bad); }
   #chat-attachstrip .anote { color:var(--faint); }
   #chat-attach { align-self:flex-end; }
+  /* GREY-NOT-HIDE (the tools-pill grammar): a lane/model that cannot carry an
+     image keeps its ⊕ visible and quiet, and CLICKING it prints the reason in the
+     strip — a control that vanishes teaches nothing, and one that is `disabled`
+     is the silent no-op class this panel has been bitten by three times.
+     Opacity only: no colour token, so all six looks inherit their own ink. */
+  #chat-attach.off { opacity:.5; }
   /* drop-target cue while an image is dragged over the Chat view */
   #chat-bar.dropping { outline:1px dashed var(--gold); outline-offset:5px; border-radius:8px; }
   .cmsg .attachline { margin-top:5px; font:10.5px var(--mono); letter-spacing:.06em;
@@ -3115,7 +3121,14 @@ function renderSidebar() {
 function jumpToCard(name) {
   const el = document.getElementById('card-' + name);
   if (!el) return;
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  /* ⚠️ NO `behavior:'smooth'` — IN THIS WKWEBVIEW IT SILENTLY DOES NOTHING. Proven
+     by driving during the Help slice (v1.5.27): every TOC link was a dead click for
+     exactly this reason, and jumpToCard was flagged there as the same latent bug.
+     This is that fix. The object form WITHOUT behavior does scroll (office.html has
+     shipped it for the cell-cursor since v1.5.25); the bare call is the fallback for
+     an engine that rejects the options object outright. */
+  try { el.scrollIntoView({ block: 'center' }); }
+  catch (e) { try { el.scrollIntoView(true); } catch (e2) { /* not scrollable */ } }
   el.style.transition = 'box-shadow .2s';
   el.style.boxShadow = '0 0 0 2px var(--gold)';   // brief highlight
   setTimeout(() => { el.style.boxShadow = ''; }, 1200);
@@ -4470,6 +4483,16 @@ function sesResizeUp(e){
   try { localStorage.setItem('harness-sessions-width', String(_sesW)); } catch (_) {}
 }
 
+/* PURE: the one sentence under the composer for a lane. ONE source — it is
+   painted by setMode AND restored by toggleBrowse, and those two had drifted
+   (browse-off printed "plain model — no tools" over the Hermes lane, which has
+   more tools than either of the others). Unit-tested. */
+function laneNote(m){
+  return m === 'agent'  ? 'web search on · shell off'
+       : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
+       :                  'direct to runner — no tools, fastest';
+}
+
 async function setMode(m) {
   const prev = chatPane.mode;
   // 2026-08-14: a lane switch during a live turn used to leave the turn running
@@ -4481,10 +4504,7 @@ async function setMode(m) {
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
-  const noteText =
-    m === 'agent' ? 'web search on · shell off'
-    : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
-    : 'direct to runner — no tools, fastest';
+  const noteText = laneNote(m);
   const noteEl = document.getElementById('chat-note');
   noteEl.textContent = noteText;
   noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
@@ -6129,6 +6149,9 @@ async function ensureCapsStrip() {
     const r = await fetch('/api/ody/caps');
     capsSnap = await r.json();
     renderCapsStrip();
+    // The snapshot also carries Odysseus's READ-ONLY vision config, which decides
+    // whether the Agent lane's ⊕ needs a caveat — repaint it now that we know.
+    if (typeof applyVisionUi === 'function') applyVisionUi();
   } catch (e) { /* leave strip empty if Odysseus is down */ }
 }
 
@@ -6354,32 +6377,102 @@ async function initChat() {
   } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
 }
 
-/* ---------- vision capability + image attach (direct lane) ----------
+/* ---------- vision capability + image attach (ALL THREE LANES) ----------
    liveVision is refreshed from the SAME /api/models fetch that fills the model
-   picker (live_id + the entry's capabilities) — no extra poll. */
-let liveVision = false;   // a RUNNER property (does the live model accept images?)
+   picker (live_id + the entry's capabilities) — no extra poll.
+
+   ⚠️ 2026-08-28 — THE ⊕ USED TO EXIST ON THE CHAT LANE ONLY, and that was legacy
+   accident, not capability (Debi found it; the ruling is "every path has what it
+   can handle depending on the model"). All three lanes have a REAL image path:
+     chat   → /api/chat/direct sends OpenAI parts straight to the runner. Vision is
+              a HARD requirement here: the bridge refuses the turn without it.
+     agent  → Odysseus POST /api/upload + the `attachments` form field. Odysseus
+              hands the pixels to a vision main model, or DESCRIBES the image with
+              its own VL model for a text-only one.
+     hermes → gateway RPC image.attach_bytes; native image parts for a vision
+              model, vision_analyze otherwise.
+
+   THE VERDICT IS THREE-VALUED, exactly like the `tools` pill: null means "we could
+   not tell" (no live model, runner down, an id absent from the registry) and must
+   never be drawn as "no". A null WARNS and lets the attempt through, so the user
+   reads the backend's own honest refusal instead of a control we greyed on a
+   guess. False on the Chat lane is the one true block. */
+let liveVision = null;   // true | false | null — a RUNNER property, not a lane's
+
+function attachVerdict(mode, vision, odyVision){
+  // PURE (unit-tested by bridge/tests/test_lane_affordances.js):
+  // (lane, vision, Odysseus's vision config) → whether ⊕ carries an image on that
+  // lane, and the sentence for why not / what will happen instead.
+  //
+  // ⚠️ THE AGENT-LANE CAVEAT IS A DRIVEN RESULT (2026-08-28), not a precaution.
+  // Odysseus decides whether the MAIN model may see pixels by NAME KEYWORDS
+  // (vendor/odysseus/src/chat_helpers.py is_vision_model: "gemma-3", "llama-4",
+  // a standalone "vl"…). Our registry's real evidence — an mmproj sibling, an mlx
+  // vision_config — is invisible to it. A model it does not recognise falls back
+  // to its own `vision_model` setting, and with that UNSET the user's picture is
+  // replaced by the literal string "[No vision model configured…]".
+  // Driven: a genuinely vision-capable local model answered "Without a
+  // vision-enabled model, I can't see the image." That is a real dead end, so the
+  // composer says it BEFORE the send. `odyVision` null = we have not read the caps
+  // snapshot yet, which is NOT evidence of a missing config — say nothing then.
+  const odyBlind = mode === 'agent' && odyVision
+                   && (odyVision.enabled === false || !odyVision.model);
+  const odyWhy = odyVision && odyVision.enabled === false
+    ? "Odysseus has vision turned OFF (its Settings → Vision), so it will pass the "
+      + "file but not the picture"
+    : "Odysseus has no vision model set (its Settings → Vision) — it can only see "
+      + "this image if it recognises the loaded model as multimodal BY NAME";
+  if (vision === true)
+    return odyBlind ? {on: true, warn: true, why: odyWhy} : {on: true, why: ''};
+  if (vision !== false)
+    return {on: true, warn: true,
+            why: "no model is loaded — attach anyway and the lane will say if it can't"};
+  if (mode === 'chat')
+    return {on: false, warn: true,
+            why: "this model can't see images — try Agent or Hermes, which describe "
+                 + "it instead, or load a vision model"};
+  if (odyBlind) return {on: true, warn: true, why: odyWhy};
+  return {on: true, warn: true,
+          why: (mode === 'hermes' ? 'Hermes' : 'the agent')
+               + " will describe this image for you — the loaded model can't see it"};
+}
+
+/* The caps snapshot's read-only vision block, or null when we have not read one.
+   NEVER invented: no snapshot means "unknown", which prints no caveat at all. */
+function odyVisionCfg(){
+  return (typeof capsSnap === 'object' && capsSnap && capsSnap.vision) || null;
+}
 
 function applyVisionUi(){
   const pill = document.getElementById('cap-vision');
   if (pill){
-    pill.hidden = !liveVision;
-    // The model can see, but only the direct lane carries images — say so instead of
-    // leaving a bare "vision" pill next to a hidden ⊕ in Agent/Hermes mode.
-    if (liveVision && chatPane.mode !== 'chat'){
-      pill.textContent = 'vision · chat mode';
-      pill.title = 'Images attach in Chat mode — click CHAT';
-    } else {
-      pill.textContent = 'vision';
-      pill.title = 'This model accepts images';
-    }
+    pill.hidden = (liveVision !== true);
+    pill.textContent = 'vision';
+    pill.title = 'This model accepts images';
   }
   const btn = document.getElementById('chat-attach');
-  // Attach is direct-lane only: the Odysseus and Hermes lanes have no image path.
-  if (btn) btn.hidden = !(liveVision && chatPane.mode === 'chat');
-  if (!(liveVision && chatPane.mode === 'chat')) clearImage();
+  if (btn){
+    const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+    btn.hidden = false;                     // grey-not-hide: the ⊕ is always there
+    btn.classList.toggle('off', !!v.why);
+    btn.setAttribute('aria-disabled', v.on ? 'false' : 'true');
+    btn.title = v.why || 'Attach an image';
+    if (!v.on) clearImage();                // a staged image the lane cannot carry
+    // A STAGED image outlives a lane switch, so its caveat has to be REPAINTED for
+    // the lane it is now going to: staging on Hermes (clean) and then switching to
+    // Agent (no vision model configured) must not carry the silence across.
+    else if (chatPane.attachedImage)
+      showAttachedImage(chatPane.attachedImage.data, chatPane.attachedImage.name);
+  }
 }
 
-function pickImage(){ const f = document.getElementById('chat-file'); if (f) f.click(); }
+function pickImage(){
+  // A blocked ⊕ is not a dead ⊕: it says why, in the strip, where every other
+  // attach refusal already speaks.
+  const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+  if (!v.on){ attachNote(v.why); return; }
+  const f = document.getElementById('chat-file'); if (f) f.click();
+}
 
 function clearImage(){
   chatPane.attachedImage = null;
@@ -6447,14 +6540,23 @@ function showAttachedImage(dataUrl, name){
   x.title = 'Remove this image'; x.setAttribute('aria-label', 'Remove this image');
   x.onclick = clearImage;
   strip.appendChild(img); strip.appendChild(nm); strip.appendChild(x);
+  // …and the lane's honest caveat RIDES THE CHIP rather than being a toast that
+  // the thumbnail then overwrites: on a text-only model the user must be able to
+  // see, at send time, that this lane will describe the image rather than look at it.
+  const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+  if (v.why){
+    const n = document.createElement('span');
+    n.className = 'anote'; n.textContent = v.why;
+    strip.appendChild(n);
+  }
   strip.hidden = false;
 }
 
 /* native-app drop path: the Swift shell (DropWebView) catches Finder drags that
    WKWebView never forwards to the DOM, reads the file, and calls this directly. */
 window.harnessNativeDrop = function(name, dataUrl){
-  if (!liveVision){ attachNote("this model can't see images"); return; }
-  if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+  const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+  if (!v.on){ attachNote(v.why); return; }
   const b64 = String(dataUrl || '').split(',')[1] || '';
   if (b64.length * 0.75 > 8 * 1024 * 1024){ attachNote('image too large (max 8 MB)'); return; }
   showAttachedImage(dataUrl, name || 'image');
@@ -6531,8 +6633,8 @@ document.addEventListener('drop',     (e) => e.preventDefault());
     const file = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
                       .find(f => (f.type || '').startsWith('image/'));
     if (!file) return;
-    if (!liveVision){ attachNote("this model can't see images"); return; }
-    if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+    if (!v.on){ attachNote(v.why); return; }
     acceptImageFile(file);
   });
   // ⌘V an image (e.g. a screenshot) straight into the composer — same gate as drop.
@@ -6542,8 +6644,8 @@ document.addEventListener('drop',     (e) => e.preventDefault());
                       .find(i => i.kind === 'file' && (i.type || '').startsWith('image/'));
     if (!item) return;                       // plain text pastes stay untouched
     e.preventDefault();
-    if (!liveVision){ attachNote("this model can't see images"); return; }
-    if (chatPane.mode !== 'chat'){ attachNote('images attach in Chat mode — click CHAT'); return; }
+    const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+    if (!v.on){ attachNote(v.why); return; }
     const f = item.getAsFile();
     if (f) acceptImageFile(f);
   });
@@ -6567,7 +6669,10 @@ async function loadChatModels(){
     const r = await (await fetch('/api/models')).json();
     // capability of what the runner is ACTUALLY serving (live_id), not the pin
     const liveEntry = (r.installed || []).find(m => m.id === r.live_id);
-    liveVision = !!(liveEntry && (liveEntry.capabilities || []).includes('vision'));
+    // THREE-VALUED (see attachVerdict): no live entry = we cannot tell, which is
+    // `null` — never `false`. Reading "no model loaded" as "this model has no
+    // vision" is the absent-not-greyed mistake the tools pill already documents.
+    liveVision = liveEntry ? (liveEntry.capabilities || []).includes('vision') : null;
     applyVisionUi();
     modelEntries  = r.installed || [];
     modelLiveId   = r.live_id || null;
@@ -8239,7 +8344,10 @@ async function toggleBrowse(){
     chip.classList.toggle('on', !!r.on);
     const note = document.getElementById('chat-note');
     if (r.on) note.textContent = 'browser ON (Hermes + Odysseus) · install the Browser MCP extension + connect a tab';
-    else note.textContent = (chatPane.mode === 'agent' ? 'web search on · shell off' : 'plain model — no tools');
+    // …and restoring the note has to restore the note THIS LANE actually had:
+    // "plain model — no tools" was printed for Hermes too, which is false (Hermes
+    // is the lane with the most tools of the three).
+    else note.textContent = laneNote(chatPane.mode);
   } catch {} finally { chip.style.opacity = ''; }
 }
 
@@ -11102,7 +11210,7 @@ function lastAttachmentId(hist, userText){
   return newest;
 }
 
-function attachLineEl(src, name, onRemove){
+function attachLineEl(src, name, onRemove, removeTitle){
   // The one builder for a sent-message attachment line — used live at send time
   // (bytes in memory) AND on rehydration (bytes served from the sidecar). Same
   // DOM/classes both ways so a reopened turn is indistinguishable from a live one.
@@ -11115,8 +11223,12 @@ function attachLineEl(src, name, onRemove){
   nm.textContent = '🖼 ' + name;   // textContent: a filename is never markup
   const x = document.createElement('button');
   x.className = 'aclear'; x.textContent = '✕';
-  x.title = 'Remove this image from the app';
-  x.setAttribute('aria-label', 'Remove this image from the app');
+  // The ✕ says WHAT IT ACTUALLY DOES per lane: on the direct lane it forgets our
+  // own sidecar row; on the Agent/Hermes lanes the bytes belong to that backend and
+  // we only drop the line from this view. Promising a delete we do not perform
+  // would be the LIE-TO-USER class.
+  x.title = removeTitle || 'Remove this image from the app';
+  x.setAttribute('aria-label', x.title);
   x.onclick = () => { try { onRemove && onRemove(); } catch {} line.remove(); };
   line.appendChild(th); line.appendChild(nm); line.appendChild(x);
   return line;
@@ -11153,13 +11265,26 @@ async function dropSidecarAttachment(userText){
 }
 
 function addRestoredAttachment(wrap, att){
-  // Reopened direct-lane turn: the bridge's image sidecar (data/attachments.db)
-  // hands back {id, name}; the bytes come from /api/attachment/<id>. ✕ deletes
-  // that sidecar row only — the user's original file is NEVER touched.
+  // Reopened turn, TWO provenances:
+  //   {id}      — the bridge's own image sidecar (data/attachments.db), written by
+  //               the DIRECT lane. Bytes from /api/attachment/<id>; ✕ deletes that
+  //               sidecar row only — the user's original file is NEVER touched.
+  //   {ody_id}  — an ODYSSEUS upload, which is how an AGENT-lane attach is stored
+  //               (its own message metadata). Bytes proxied from
+  //               /api/ody/attachment/<id>; ✕ is view-only, because deleting
+  //               Odysseus's upload is not ours to do.
   try {
-    if (!wrap || !att || att.id === undefined || att.id === null) return;
+    if (!wrap || !att) return;
     const body = wrap.querySelector('.body');
     if (!body) return;
+    if (att.ody_id !== undefined && att.ody_id !== null && att.ody_id !== ''){
+      body.appendChild(attachLineEl(
+        '/api/ody/attachment/' + encodeURIComponent(att.ody_id),
+        att.name || 'image', null,
+        'Remove from this view — the copy kept by Odysseus stays'));
+      return;
+    }
+    if (att.id === undefined || att.id === null) return;
     const src = '/api/attachment/' + encodeURIComponent(att.id);
     body.appendChild(attachLineEl(src, att.name || 'image', () => {
       fetch(src + '/delete', {method:'POST'}).catch(() => {});
@@ -11709,20 +11834,35 @@ async function sendChat() {
   // Hermes mode needs no Odysseus session (works with Odysseus down) — the bridge
   // creates a gateway session on first send and announces it via hermes_session.
   if (chatPane.busy){
-    // Phase 1.1: during a Hermes turn the Send button reads "Stop" and stays
-    // enabled — a click (or Enter) here interrupts the turn instead of sending.
-    // ⚠ PENDING FABLE QA: no inline stop affordance exists in the other lanes
-    // (their Send just disables), so Send-becomes-Stop is the chosen pattern.
+    // During a turn the Send button reads "Stop" and stays enabled — a click (or
+    // Enter) here interrupts instead of sending.
+    // 2026-08-28: THIS IS NOW EVERY LANE. It was Hermes-only, and the recorded
+    // reason ("no inline stop affordance exists in the other lanes") was a
+    // description of the gap, not a justification for it: the panel has owned the
+    // end of its own turn since 2026-08-14, so stopTurnNow — abort the fetch,
+    // force-end locally — is a real stop on the direct and agent lanes too. The
+    // Hermes branch additionally issues session.interrupt upstream, which is the
+    // only per-lane difference.
     // 2026-08-14: route on the TURN's lane, not the CURRENT chip — a lane switch
     // during a wedged Hermes turn used to make this branch a silent no-op while
     // the button still read "Stop" (the dead end that needed an app restart).
     if (chatPane.mode === 'hermes' || (chatPane.curTurn && chatPane.curTurn.lane === 'hermes')) hermesStop('panel stop');
+    else stopTurnNow('panel stop');
     return;
   }
   if (chatPane.mode !== 'hermes' && !chatPane.sid) return;
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
-  if (!text) return;
+  if (!text){
+    // ADVERSARIAL PASS (2026-08-28): attach an image, type nothing, press Send —
+    // and the composer did NOTHING, silently. That is this panel's most-repeated
+    // defect class (the ⊕ bug, the drag bug, the mic-grant bug). All three
+    // backends refuse an empty message (Odysseus validate_message, Hermes's own
+    // "empty message"), so the honest answer is to SAY so rather than to invent a
+    // prompt on the user's behalf.
+    if (chatPane.attachedImage) attachNote('add a message to send with this image');
+    return;
+  }
   inp.value = '';
   growInput(inp);             // cleared → shrink back to the two-row base
   chatPane.busy = true;
@@ -11731,22 +11871,30 @@ async function sendChat() {
   // which is treated as a normal turn: spoken back, then listening resumes.
   if (typeof convOn === 'function' && convOn()) convEvent('turn_start');
   const sendBtn = document.getElementById('chat-send');
-  if (chatPane.mode === 'hermes'){
-    sendPaint('Stop');
-    sendBtn.title = 'Stop this Hermes turn'; sendBtn.setAttribute('aria-label', 'Stop this Hermes turn');
-  } else {
-    sendBtn.disabled = true;
-  }
-  // one image per message, direct lane only; taken (and cleared) at send time
-  const img = (chatPane.mode === 'chat' && chatPane.attachedImage) ? chatPane.attachedImage : null;
+  // EVERY lane gets the Stop affordance (2026-08-28): a disabled Send during a
+  // three-minute local prefill is a dead end with no way out but +NEW.
+  const _stopTitle = chatPane.mode === 'hermes' ? 'Stop this Hermes turn'
+                   : chatPane.mode === 'chat'   ? 'Stop this reply'
+                   :                              'Stop this agent turn';
+  sendPaint('Stop');
+  sendBtn.title = _stopTitle; sendBtn.setAttribute('aria-label', _stopTitle);
+  // one image per message, ANY LANE (2026-08-28); taken (and cleared) at send time.
+  // The lane's own verdict decided whether it could be staged at all (attachVerdict),
+  // so by here the only question is whether one IS staged.
+  const img = chatPane.attachedImage || null;
   const userWrap = addMsg('user', text);
   if (img){
     // clickable thumbnail for the live turn; the bytes are ALSO persisted by the
     // bridge's image sidecar, so reopening this session rehydrates the same line.
     // ✕ here removes it from this view AND (once the sidecar row exists, which is
     // after the turn completes) deletes that row — it never touches the source file.
+    const _lane = chatPane.mode;
     userWrap.querySelector('.body').appendChild(
-      attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text)));
+      _lane === 'chat'
+        ? attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text))
+        : attachLineEl(img.data, img.name, null,
+            'Remove from this view — the copy kept by '
+            + (_lane === 'hermes' ? 'Hermes' : 'Odysseus') + ' stays'));
   }
   clearImage();
   scrollChat(true);   // sending your own message always snaps to bottom
@@ -11780,13 +11928,17 @@ async function sendChat() {
     // stream renderer below is shared unchanged.
     const url = chatPane.mode === 'hermes' ? '/api/hermes/chat'
               : chatPane.mode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
+    // ONE attachment shape for all three lanes: {image: <dataURL>, image_name}.
+    // Each bridge lane translates it into its own backend's mechanism (runner
+    // content parts · Odysseus /api/upload + attachments · Hermes
+    // image.attach_bytes), so the panel never branches on the backend.
     const reqBody = chatPane.mode === 'hermes'
       ? {session_id: chatPane.hermesSid || '', message: text,
-         stored_sid: chatPane.hermesStoredSid || ''}   // durable id → guard audit's "Chat" jump
+         stored_sid: chatPane.hermesStoredSid || '',   // durable id → guard audit's "Chat" jump
+         ...(img ? {image: img.data, image_name: img.name} : {})}
       : {session:chatPane.sid, message:text, mode:chatPane.mode,
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset(),
-         // direct lane reads `image` (dataURL); `image_name` labels the sidecar row
          ...(img ? {image: img.data, image_name: img.name} : {})};
     const resp = await fetch(url, {method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -13270,7 +13422,12 @@ function musicTplCard(t){
    the fold reads as "the button did nothing" (Debi's report, classic view included). */
 function musicScrollToCreate(){
   const el = document.getElementById('music-create-wrap');
-  if (el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'});
+  if (!el || !el.scrollIntoView) return;
+  /* SAME BUG, SECOND COPY (swept 2026-08-28): `behavior:'smooth'` is a silent
+     no-op in this WKWebView, so this function — written precisely because Debi
+     reported "the button did nothing" — did nothing in the app. */
+  try { el.scrollIntoView({block: 'start'}); }
+  catch (e) { try { el.scrollIntoView(true); } catch (e2) { /* not scrollable */ } }
 }
 
 function musicUseTemplate(id, andGo){

@@ -206,6 +206,12 @@ _LANES = (
     # stable sort below is what puts them back here. That is precisely the mechanism
     # documented under ROUTE ORDER, RESTORED.
     "core.events",
+    # …and routers/help.py by the SAME rule, stated again so the next new lane copies
+    # the rule rather than the position. The Help surface's markdown route (roadmap
+    # §2.4) has no pre-split home either, so it goes LAST in both lists. It separates
+    # no pair of neighbours; it costs only where /api/help/explainers appears in
+    # /openapi.json.
+    "routers.help",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
