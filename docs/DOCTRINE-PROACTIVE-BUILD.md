@@ -70,3 +70,22 @@ end, and no surprise — including on paths they improvise.
   something usable" was written narrowly and therefore got applied narrowly.)
 - The QA question at every gate is not "does it pass the tests" but "which journeys
   did we walk, and what did the adversarial pass find."
+
+## 8. RESEARCH BEFORE BUILD (Debi, 2026-08-28 — general form)
+
+When a topic is technical and sensitive to get wrong, the user's points are the BRIEF,
+not the SPEC. Nothing we build is without prior art: the field has shipped apps solving
+the same problem, and our own vendored components often already contain the solution.
+Before designing, Fable runs a proactive research pass over BOTH — external references
+(open-source code as source of truth; closed-source as behavioral evidence only, per the
+copy-provenance rule) and our own tree (grep the vendored components: the answer may
+already be installed). The spec then cites its sources and states where it corrects the
+user's initial framing — correcting the brief with evidence is the job, not disloyalty.
+
+**The incident (example, not the rule):** the RAM fit advisor. Debi's points were right
+in shape; the deep-research pass they then demanded found the naive KV formula 4.1× wrong
+on our own resident models (hybrid-Mamba), llama.cpp's own fit oracle already sitting in
+data/llamacpp/build/bin, and the field's hard-won lesson (Ollama abandoned precise
+prediction). Building from the brief alone would have shipped confidently wrong verdicts —
+the LIES-TO-USER class, the worst class. The lesson is general: it applies to ANY
+technical topic (memory, formats, protocols, licensing, security), not to RAM math.
