@@ -97,7 +97,7 @@ plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apac
     al.) are NOT installed here; the tab only needs the Studio server.
   - data/unsloth-home is this component's ISOLATED home (UNSLOTH_STUDIO_HOME at launch):
     its engines/auth/outputs live there, never in ~/.unsloth — that home belongs to the
-    standalone Unsloth.app on :8888 and the two installs never share state again
+    standalone Unsloth.app (its own port) and the two installs never share state again
   - build its React SPA with bun: reuse a bun already on your PATH, otherwise download
     the pinned bun release (~35MB) into data/bun/ — never Homebrew, never sudo, nothing
     written outside this project folder
