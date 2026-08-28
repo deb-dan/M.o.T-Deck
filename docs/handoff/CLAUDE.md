@@ -2,6 +2,12 @@
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
 
+> **🎨 ALL-DESIGNS RULE (Debi, 2026-08-28): every UI change to a first-party surface must be
+> verified under EVERY design/theme it can render in — Editorial, the theme packs, and Studio
+> (light + dark) — before it ships. New UI carries tokens reachable by all of them (the
+> --on-wash lesson); a change verified in one look only is NOT verified. Builders state
+> per-design verification in their reports; the studio/theme fences are the mechanical floor.**
+
 > **📍 CURRENT STATE (2026-08-28, v1.5.12 — read this first):** LOffice is a ONE-EDITOR app:
 > ONLYOFFICE (vendored CryptPad static bundle, AGPL ruling GO, COOP/COEP served by bridge/oo.py)
 > embedded as the center of /office with our rail/strip/AI panel around it; tier-1 grid =
