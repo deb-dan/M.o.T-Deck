@@ -28,6 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import nav                                          # noqa: E402
 
 FAILS = []
@@ -249,14 +256,19 @@ def test_persistence():
 
 
 # ── 6. wiring ────────────────────────────────────────────────────────────────
-APP = (ROOT / "bridge" / "app.py").read_text()
+APP = _APP_SOURCE
 SWIFT = (ROOT / "app" / "main.swift").read_text()
 PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
 
 
 def test_wiring():
-    ok("from . import nav as _nav" in APP and "from bridge import nav as _nav" in APP,
-       "app.py imports nav defensively (a missing module = the default layout, not a 500)")
+    # `..`, not `.`: the defensive pair moved to bridge/core/appctx.py in the router/core
+    # split, one directory deeper, so the package-relative branch that means bridge.nav
+    # is now `from .. import`. What this pins is the PAIR — a relative try AND an
+    # absolute fallback, so a snapshot without nav.py still boots — not the dot count.
+    ok("from .. import nav as _nav" in APP and "from bridge import nav as _nav" in APP,
+       "the bridge imports nav defensively (a missing module = the default layout, "
+       "not a 500)")
     ok('@app.get("/api/nav")' in APP and '@app.post("/api/nav")' in APP,
        "both routes exist")
     ok('"nav_gen": nav_gen()' in APP,

@@ -209,7 +209,7 @@ check('an unknown/absent source is not hideable',
       P.isHideable('') === false && P.isHideable(undefined) === false);
 check('the panel hide rule matches the bridge allowlist',
       /HIDEABLE_SOURCES = \("lmstudio-import", "jan-import", "audio-hf-cache"\)/
-        .test(fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8')));
+        .test(require('./_appsrc.js').appSource()));
 check('hiding is a two-step, like Delete',
       /function hideBtn[\s\S]{0,800}dataset\.armed/.test(html));
 check('the hidden rows are unhide-able from the list bottom',

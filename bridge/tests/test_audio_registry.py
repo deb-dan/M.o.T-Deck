@@ -25,6 +25,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 # Neutralize any SOCKS proxy env so importing the app's httpx clients succeeds.
 for _v in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
     os.environ.pop(_v, None)
@@ -365,7 +372,7 @@ check("api_models: the RAM ledger ignores audio models (transient by design)",
       payload["ledger"]["used_bytes"] == 0)
 
 # ══ 7. app wiring the download path actually uses (source-pinned) ══════════════
-src = (ROOT / "bridge" / "app.py").read_text()
+src = _APP_SOURCE
 check("dl_start accepts the voice_format hint", 'body.get("voice_format")' in src)
 check("dl_start accepts an explicit mmproj filename", 'body.get("mmproj")' in src)
 check("_mk_download carries voice_format", "voice_format=voice_format" in src)

@@ -34,7 +34,10 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
-const appy = fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8');
+// ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28):
+// bridge/app.py is a facade over bridge/core/*.py + bridge/routers/*.py, so the
+// cross-file pins below read _appsrc.js's assembled view of the whole app layer.
+const appy = require('./_appsrc.js').appSource();
 
 let fails = [];
 function check(name, cond) {

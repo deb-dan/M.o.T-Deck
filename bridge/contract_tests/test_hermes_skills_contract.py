@@ -13,6 +13,15 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 HERMES = ROOT / "vendor" / "hermes"
 
 
@@ -143,7 +152,7 @@ def test_essential_skills_cannot_be_disabled_from_either_side():
         "either the toggle now really disables them (drop `pinned_on`) or the "
         "config and the resolver have gone asymmetric (a lie in the panel)")
     # Our own reporting must still be there.
-    app = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
+    app = _APP_SOURCE
     assert '"pinned_on": pinned_on' in app, (
         "the skills lever stopped reporting the names Hermes refuses to switch "
         "off — a request to disable one answers 200 and does nothing")

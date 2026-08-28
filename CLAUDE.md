@@ -14,9 +14,19 @@
 > gate) are the standing QA pattern. v1.5.11 updated 8 components/engines (llama.cpp b10662 —
 > its /v1/models now needs auth, probe fixed + contract-pinned; Odysseus rsync MUST exclude
 > /data/ + /.env or it deletes the live DB). Hermes v0.20.x bump in flight as its own sitting.
-> Queued: ONLYOFFICE AI plugin -> our runner, Download-as-PDF (x2t has PdfWriter), Docs/Slides,
-> app.py modularization (10,072 lines — router/facade split ratified), tier-1
-> deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
+> **bridge/app.py IS NO LONGER A MONOLITH (v1.5.15):** its 10,072 lines are now
+> bridge/core/*.py + bridge/routers/*.py (29 files, largest 1,206) and app.py is a
+> ~280-line FACADE — a module-class proxy so `bridge.app` still answers for every
+> symbol the suite imports AND still propagates the monkeypatches (`A.ROOT`,
+> `A._script`, …) into the modules that read them. The ~40 test files that assert
+> against app.py's SOURCE TEXT read bridge/appsrc.py's ordered view of the whole
+> layer instead; adding a lane means adding it to appsrc.FILES (a contract test
+> fences that, because a lane missing from the view makes every `not in` assertion
+> pass vacuously). ship.sh copies bridge/{core,routers}/ — the flat `bridge/*.py`
+> glob would have shipped a facade with nothing behind it. Read
+> docs/handoff/APP-FACADE-MANIFEST.md before touching this area.
+> Queued: ONLYOFFICE AI plugin -> our runner, Download-as-PDF (x2t has PdfWriter),
+> Docs/Slides, tier-1 deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
 
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
 > EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by

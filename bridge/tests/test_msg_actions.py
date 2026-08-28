@@ -23,7 +23,16 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = ROOT / "bridge" / "app.py"
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+APP = ROOT / "bridge" / "appsrc.py"
 PANEL = ROOT / "bridge" / "panel" / "index.html"
 
 PASS = 0
@@ -37,7 +46,7 @@ def check(name, cond):
 
 
 def _load():
-    tree = ast.parse(APP.read_text())
+    tree = ast.parse(_APP_SOURCE)
     want = ("fork_keep_count", "turn_metadata")
     body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in want]
     missing = set(want) - {n.name for n in body}

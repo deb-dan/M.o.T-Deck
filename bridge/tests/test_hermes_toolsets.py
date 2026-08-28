@@ -31,6 +31,13 @@ os.environ["HERMES_HOME"] = _TMP
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 import yaml  # noqa: E402
 from bridge.app import (  # noqa: E402
     HERMES_MINIMAL_TOOLSETS, HERMES_TOOLSETS_EMPTY_REASON,
@@ -278,7 +285,7 @@ check("an EXPLICIT empty list is reported as [] (distinct from None) so the pane
       _hermes_toolset_config()["platform_toolsets_cli"] == [])
 
 # ── bridge WIRING (read out of app.py's source) ──────────────────────────────
-SRC = (ROOT / "bridge" / "app.py").read_text()
+SRC = _APP_SOURCE
 check("GET endpoint exists", '@app.get("/api/hermes/toolsets")' in SRC)
 check("POST endpoint exists", '@app.post("/api/hermes/toolsets")' in SRC)
 check("the catalog is PROBED from Hermes, not hardcoded",
@@ -598,7 +605,7 @@ check("the skill-index gate is upstream's three tool names",
       == ["skill_manage", "skill_view", "skills_list"])
 
 # ── wiring ───────────────────────────────────────────────────────────────────
-SRC = (ROOT / "bridge" / "app.py").read_text()
+SRC = _APP_SOURCE
 check("the summary endpoint exists and is a GET",
       '@app.get("/api/hermes/toolsets/summary")' in SRC)
 check("the summary re-probes Hermes rather than reusing a cached view",
@@ -815,7 +822,7 @@ check("the always-on extras are the project toolset's three tools",
       == ("project_list", "project_create", "project_switch"))
 
 # ── wiring for the scope ─────────────────────────────────────────────────────
-_SRC = (ROOT / "bridge" / "app.py").read_text()
+_SRC = _APP_SOURCE
 check("the POST scopes a single-row toggle to that row",
       'scope = [nm]' in _SRC)
 check("the POST validates and plans with the SAME scope",

@@ -38,6 +38,15 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 HERMES = ROOT / "vendor" / "hermes"
 BRIDGE = ROOT / "bridge"
 
@@ -285,7 +294,7 @@ def test_apply_is_reachable_from_the_panel_and_from_no_tool():
             f"the MCP tool dispatcher can now reach {forbidden} — an MCP tool call must "
             "never be able to write a workbook. Apply is a human gesture: "
             "POST /api/office/changeset/{id}/apply")
-    app = (BRIDGE / "app.py").read_text(encoding="utf-8")
+    app = _APP_SOURCE
     assert '@app.post("/api/office/changeset/{cid}/apply")' in app, (
         "the apply route moved or vanished — the panel's Apply button has nowhere to go")
     ops = (BRIDGE / "office_ops.py").read_text(encoding="utf-8")

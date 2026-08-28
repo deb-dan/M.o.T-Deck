@@ -17,6 +17,15 @@ Purely static: greps the vendored source. Run: pytest bridge/contract_tests/
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 ODY = ROOT / "vendor" / "odysseus"
 HIST = ODY / "routes" / "history" / "history_routes.py"
 SESS = ODY / "routes" / "session_routes.py"
@@ -157,7 +166,7 @@ def test_bridge_never_pages_history():
     `limit is None` takes the metadata-preserving in-memory branch in
     routes/history/history_routes.py — that is the actual upstream invariant.
     """
-    src = (ROOT / "bridge" / "app.py").read_text(errors="replace")
+    src = _APP_SOURCE
     calls = [ln.strip() for ln in src.splitlines()
              if "/api/history/" in ln and "_ody_req" in ln]
     assert calls, (

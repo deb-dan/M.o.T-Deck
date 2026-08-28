@@ -14,7 +14,8 @@
 # What it does, in order:
 #   0. run the contract gate (scripts/verify.sh) and REFUSE to ship when it fails or
 #      cannot run — a vendored pin bump once shipped with the gate silently skipped
-#   1. repo bridge/panel + bridge/*.py + scripts/ + guards/ + policies/ → snapshot
+#   1. repo bridge/panel + bridge/*.py + bridge/{core,routers}/*.py + scripts/
+#      + guards/ + policies/ → snapshot
 #      (NEVER harness.yaml or data/ — those hold live state)
 #   2. if app/main.swift is newer than the installed app binary → recompile the
 #      Swift shell in place + ad-hoc re-sign (no full fat rebuild)
@@ -97,6 +98,20 @@ cp -R "$ROOT/bridge/panel/." "$DST/bridge/panel/"
 # was a bridge that cannot import on the first ship. Flagged, not assumed.
 for _m in "$ROOT"/bridge/*.py; do
   cp "$_m" "$DST/bridge/$(basename "$_m")"
+done
+# ⚠️ AND THE TWO PACKAGE DIRECTORIES, WHICH THE GLOB ABOVE DOES NOT REACH. app.py is a
+# FACADE since the router/core split (2026-08-28): the routes and the logic live in
+# bridge/core/*.py and bridge/routers/*.py, and app.py imports them. Shipping only the
+# top-level *.py would put a 250-line facade into the snapshot with nothing behind it —
+# the bridge would not import at all, which is the loudest possible version of this
+# failure and still worth spelling out, because the glob LOOKED complete for a year.
+# Everything else under bridge/ (tests/, contract_tests/, __pycache__/) stays out, as
+# it always has: the snapshot runs the bridge, it does not test it.
+for _pkg in core routers; do
+  if [[ -d "$ROOT/bridge/$_pkg" ]]; then
+    mkdir -p "$DST/bridge/$_pkg"
+    cp "$ROOT/bridge/$_pkg"/*.py "$DST/bridge/$_pkg/"
+  fi
 done
 for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
@@ -212,12 +227,23 @@ fi
 # An EMPTY curl body still hashes — to da39a3ee (sha1 of nothing). Printing that as
 # a "fingerprint" alongside "bridge is up" is how a half-started bridge looked green.
 API_JSON="$(curl -s http://127.0.0.1:8700/openapi.json 2>/dev/null || true)"
-SNAP="$(python3 -c 'import hashlib; print(hashlib.sha1(open("'"$DST"'/bridge/app.py","rb").read()).hexdigest()[:8])' 2>/dev/null || echo none)"
+# ⚠️ THE SNAPSHOT FINGERPRINT IS OVER THE WHOLE APP LAYER, NOT app.py ALONE. It used
+# to hash bridge/app.py, which WAS the app layer; since the router/core split
+# (2026-08-28) app.py is a 250-line facade that a normal slice never touches, so that
+# hash would have printed the same eight characters ship after ship — a "did my code
+# actually land" signal that says yes to everything. Sorted so it is reproducible.
+SNAP="$(python3 -c '
+import hashlib, sys, pathlib
+b = pathlib.Path(sys.argv[1]) / "bridge"
+h = hashlib.sha1()
+for p in sorted(list(b.glob("*.py")) + list(b.glob("core/*.py")) + list(b.glob("routers/*.py"))):
+    h.update(p.name.encode()); h.update(p.read_bytes())
+print(h.hexdigest()[:8])' "$DST" 2>/dev/null || echo none)"
 if [[ -z "$API_JSON" ]]; then
-  echo "[ship] bridge is up (fingerprint unavailable (bridge still starting?), snapshot app.py $SNAP)"
+  echo "[ship] bridge is up (fingerprint unavailable (bridge still starting?), snapshot app layer $SNAP)"
 else
   MARK="$(printf '%s' "$API_JSON" | python3 -c 'import sys,hashlib; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])' 2>/dev/null || echo none)"
-  echo "[ship] bridge is up (api fingerprint $MARK, snapshot app.py $SNAP)"
+  echo "[ship] bridge is up (api fingerprint $MARK, snapshot app layer $SNAP)"
 fi
 # ── optional component restarts, RUN FROM THE SNAPSHOT ────────────────────────
 # From the snapshot, not the repo: the app's venv is the upgraded one and the repo's

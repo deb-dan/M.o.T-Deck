@@ -21,7 +21,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = (ROOT / "bridge" / "app.py").read_text()
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+SRC = _APP_SOURCE
 SHIP = (ROOT / "scripts" / "ship.sh").read_text()
 
 PURE = ("hermes_max_turn_s", "hermes_segment_spent", "hermes_segment_overrun",

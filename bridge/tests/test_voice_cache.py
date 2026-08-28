@@ -25,6 +25,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import voice            # noqa: E402
 
 FAILS = []
@@ -243,7 +250,7 @@ with tempfile.TemporaryDirectory() as td:
 
 
 # ── wiring (read from the real sources, so a rename trips this) ─────────────────
-APP = (ROOT / "bridge" / "app.py").read_text()
+APP = _APP_SOURCE
 check("/api/voice/tts consults the replay cache before rendering",
       "entry_cache_key(entry, text)" in APP and "cache_get(ckey)" in APP)
 check("a cache hit is labelled in the response header",

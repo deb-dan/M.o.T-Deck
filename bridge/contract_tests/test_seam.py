@@ -9,6 +9,15 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 
 def test_harness_yaml_parses():
     c = yaml.safe_load((ROOT / "harness.yaml").read_text())
@@ -51,7 +60,7 @@ def test_harness_yaml_parses():
     # only the bridge knows both ROOT and the configured port. So the port is read from
     # THIS manifest at request time, and what must be pinned is that the redirect uses
     # it rather than a second copy of the number.
-    app_py = (ROOT / "bridge" / "app.py").read_text()
+    app_py = _APP_SOURCE
     assert '@app.get("/opencode")' in app_py
     route = app_py[app_py.index('@app.get("/opencode")'):]
     route = route[:route.index("\n\n\n")]
@@ -229,3 +238,44 @@ def test_hermes_mcp_url_entry_contract():
         assert "streamable_http" in t, (
             "Hermes dropped the streamable-HTTP MCP client — both voice components "
             "mount FastMCP's streamable-HTTP transport at /mcp (no stdio option we use)")
+
+
+def test_app_source_view_covers_the_whole_app_layer():
+    """bridge/appsrc.py's FILES must be exactly the app layer on disk.
+
+    ⚠️ THIS PROTECTS THE GATE FROM ITSELF, which is why it sits in the contract suite
+    rather than beside the other facade checks in bridge/tests/test_app_facade.py.
+
+    Seven tests in THIS directory assert against the app layer's source text, and they
+    read it through bridge/appsrc.py because app.py stopped being that layer on
+    2026-08-28. Every one of those assertions is a substring test, and several are
+    NEGATIVE ("this endpoint never mentions truncate", "there is no PUT here"). A
+    negative substring test against a source view that lost a module does not fail — it
+    PASSES, silently, forever. That is a gate that cannot go red, which this project has
+    already been burned by once (the 2026-08-15 ship where `python -m pytest` printed
+    "No module named pytest" and the ship continued).
+
+    So the view is checked against the directory, both ways: a module on disk and not in
+    FILES would be invisible to every source assertion, and a module in FILES and not on
+    disk would raise at import instead of lying. Adding a lane means adding it to FILES
+    at the position its code occupies — see that file's header on why order matters too.
+    """
+    import bridge.appsrc as appsrc
+
+    bridge_dir = ROOT / "bridge"
+    on_disk = {"app.py"}
+    for pkg in ("core", "routers"):
+        d = bridge_dir / pkg
+        if d.is_dir():
+            on_disk |= {f"{pkg}/{p.name}" for p in d.glob("*.py")
+                        if p.name != "__init__.py"}
+    listed = set(appsrc.FILES)
+    assert listed == on_disk, (
+        "bridge/appsrc.py's FILES has drifted from the app layer on disk.\n"
+        f"  on disk but NOT in the source view (invisible to every source assertion, "
+        f"and every `not in` assertion about it passes vacuously): {sorted(on_disk - listed)}\n"
+        f"  in the source view but NOT on disk: {sorted(listed - on_disk)}")
+    # appsrc.py is only load-bearing because these tests read it; assert the thing
+    # they actually do to it still works.
+    import ast
+    ast.parse(appsrc.APP_SOURCE)

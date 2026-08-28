@@ -24,12 +24,18 @@ import yaml
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 START = open(os.path.join(ROOT, "scripts", "start_component.sh"),
              encoding="utf-8", errors="replace").read()
 INSTALL = open(os.path.join(ROOT, "scripts", "install_opencode.sh"),
                encoding="utf-8", errors="replace").read()
-APP = open(os.path.join(ROOT, "bridge", "app.py"),
-           encoding="utf-8", errors="replace").read()
+APP = _APP_SOURCE
 PANEL = open(os.path.join(ROOT, "bridge", "panel", "index.html"),
              encoding="utf-8", errors="replace").read()
 SWIFT = open(os.path.join(ROOT, "app", "main.swift"),

@@ -32,6 +32,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 from bridge import pty_aider as P                                   # noqa: E402
 
 CHECKS = 0
@@ -535,7 +542,7 @@ def test_page_cannot_fail_silently():
 
 # ── 7. wiring greps (the seams that live outside this module) ────────────────
 def test_wiring():
-    appsrc = (ROOT / "bridge" / "app.py").read_text()
+    appsrc = _APP_SOURCE
     ok('@app.websocket("/api/pty/aider")' in appsrc, "the websocket route exists")
     ok('@app.get("/aider")' in appsrc, "the page route exists")
     ok('@app.get("/api/aider/status")' in appsrc, "status route")

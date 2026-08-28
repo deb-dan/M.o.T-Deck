@@ -13,6 +13,13 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 from bridge import app as A                                    # noqa: E402
 
 fails = []
@@ -262,7 +269,7 @@ check("audio_probe_voices survives junk",
       A.audio_probe_voices(None, None) == [] and A.audio_probe_voices(3, [(1, 2)]) == [])
 
 # ── the query table (the three web-verified facts) ────────────────────────────
-src = open(os.path.join(ROOT, "bridge", "app.py"), encoding="utf-8").read()
+src = _APP_SOURCE
 check("`library=` is NEVER sent to the HF API (it is silently ignored)",
       '"library"' not in src and "'library'" not in src)
 check("the TTS lane is the UNION of mlx-audio and mlx (mlx-audio misses Kokoro)",

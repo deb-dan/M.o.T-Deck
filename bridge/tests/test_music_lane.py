@@ -38,6 +38,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import music                                        # noqa: E402
 
 FAILS = []
@@ -671,7 +678,7 @@ with tempfile.TemporaryDirectory() as td:
           ok_ and not os.path.exists(music.sidecar_path(w)))
 
 # ══ 8. wiring: bridge endpoints, log name, ledger, script, panel ═════════════
-APP = (ROOT / "bridge" / "app.py").read_text()
+APP = _APP_SOURCE
 for route in ('@app.get("/api/music/status")', '@app.post("/api/music/install")',
               '@app.post("/api/music/generate")', '@app.get("/api/music/jobs")',
               '@app.get("/api/music/library")', '@app.get("/api/music/file/{name}")',

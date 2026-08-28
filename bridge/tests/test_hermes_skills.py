@@ -39,6 +39,13 @@ os.environ["HERMES_HOME"] = _TMP
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 import yaml  # noqa: E402
 from bridge.app import (  # noqa: E402
     HERMES_SKILL_DEFAULT_DISABLED, HERMES_SKILL_TOGGLE_PATH,
@@ -418,7 +425,7 @@ check("Hermes down on a read → running:false, source:config, no invention",
 A._hermes_dash = _real_dash
 
 # ── WIRING (read out of the source, so a rename trips here) ──────────────────
-SRC = (ROOT / "bridge" / "app.py").read_text()
+SRC = _APP_SOURCE
 check("the write goes through Hermes's own toggle route",
       'HERMES_SKILL_TOGGLE_PATH = "/api/skills/toggle"' in SRC
       and "_hermes_dash(\"PUT\", HERMES_SKILL_TOGGLE_PATH" in SRC)

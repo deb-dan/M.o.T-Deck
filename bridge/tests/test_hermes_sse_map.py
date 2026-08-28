@@ -10,9 +10,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 
 def _load_mapper():
-    src = (ROOT / "bridge" / "app.py").read_text()
+    src = _APP_SOURCE
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "hermes_event_to_frames")
@@ -303,7 +312,7 @@ fr, act = F({})
 check("empty event safe", fr == [] and act == "")
 
 # ── wiring greps: the pure mapper is only half the ask-card path ────────────
-_APP = (ROOT / "bridge" / "app.py").read_text()
+_APP = _APP_SOURCE
 check("answer endpoint exists", '@app.post("/api/hermes/answer")' in _APP)
 check("answer endpoint calls clarify.respond",
       '"clarify.respond"' in _APP and '"answer": answer' in _APP)

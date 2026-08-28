@@ -2240,7 +2240,7 @@ check('…and `clear` forgets it, because on this lane the history is not only o
 // The frames the page handles are the frames the BRIDGE emits — pinned across the file
 // boundary so a mapper change cannot silently strip this lane.
 {
-  const app = fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8');
+  const app = require('./_appsrc.js').appSource();
   const mapper = app.slice(app.indexOf('def hermes_event_to_frames'),
                            app.indexOf('class _HermesWS'));
   check('the bridge mapper really emits every type this lane branches on',
@@ -2976,8 +2976,7 @@ eval(grab('extPlan'));
         + 'it fires for native tools and for every MCP server alike',
         /if \(j && j\.is_error\)/.test(fr) && /csErrChip\(turn\.wrap/.test(fr));
   check('…and the bridge really sets it',
-        /fr\["is_error"\] = True/.test(
-          fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8')));
+        /fr\["is_error"\] = True/.test(require('./_appsrc.js').appSource()));
   check('…and the chip survives the end-of-turn re-render, which would otherwise delete '
         + 'it the moment the model\'s prose arrived',
         /held\.errors = \(held\.errors \|\| \[\]\)\.concat/.test(fr)

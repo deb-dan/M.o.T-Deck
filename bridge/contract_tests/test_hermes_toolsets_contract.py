@@ -12,6 +12,15 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 HERMES = ROOT / "vendor" / "hermes"
 
 
@@ -136,7 +145,7 @@ def test_our_session_source_is_honoured_and_is_not_the_desktop_surface():
         "the bridge now tags its sessions 'desktop' — the Check card must count " \
         "the desktop_ui toolset's tools as always-on extras"
     # every session this bridge opens carries it — no literal left behind
-    app = (ROOT / "bridge" / "app.py").read_text(encoding="utf-8")
+    app = _APP_SOURCE
     assert '"source": "harness"' not in app, \
         "a session.create/resume site went back to a literal source string"
     assert app.count('"source": HERMES_SESSION_SOURCE') >= 4, \

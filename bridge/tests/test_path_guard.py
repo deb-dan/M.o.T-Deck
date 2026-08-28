@@ -17,6 +17,15 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 GUARD = ROOT / "guards" / "harness-path-guard" / "__init__.py"
 
 PASS = 0
@@ -169,7 +178,7 @@ check("missing policy file → empty policy",
 
 # ── bridge audit tier (C): same containment, extracted from app.py ──────────
 def _load_bridge_helper():
-    src = (ROOT / "bridge" / "app.py").read_text()
+    src = _APP_SOURCE
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "guard_path_outside")
@@ -195,7 +204,7 @@ check("audit: empty path safe", not OUT("", roots=["/Users/debik/ws"]))
 # ── audit TRAIL (_guard_audit → data/logs/guard.log, one JSON line per flag) ──
 def _load_guard_audit(data_root):
     import ast as _ast
-    tree = _ast.parse((ROOT / "bridge" / "app.py").read_text())
+    tree = _ast.parse(_APP_SOURCE)
     fn = next(n for n in tree.body
               if isinstance(n, _ast.FunctionDef) and n.name == "_guard_audit")
     ns = {"ROOT": Path(data_root)}

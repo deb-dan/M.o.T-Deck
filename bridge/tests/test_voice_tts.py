@@ -35,6 +35,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import voice  # noqa: E402
 
 FAILS = []
@@ -258,7 +265,7 @@ check("audio_entry_view falls back to the id for a nameless entry",
       v["name"] == "qwen3-tts-q4")
 
 # ── app.py wiring (source-level: app.py can't be imported without network deps) ──
-asrc = (ROOT / "bridge" / "app.py").read_text()
+asrc = _APP_SOURCE
 ast.parse(asrc)   # the file must at least be syntactically whole
 check("app.py partitions the registry before building `installed`",
       "models, _audio_models = _split_audio(models)" in asrc)
@@ -599,7 +606,7 @@ finally:
 
 
 # Bridge wiring, read from app.py's SOURCE (importing app builds httpx clients).
-APP_SRC = (ROOT / "bridge" / "app.py").read_text()
+APP_SRC = _APP_SOURCE
 check("app.py exposes POST /api/voice/entry-voice",
       '@app.post("/api/voice/entry-voice")' in APP_SRC)
 check("the endpoint validates through voice.validate_voice_choice",

@@ -21,6 +21,15 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+
 fails = []
 
 
@@ -32,7 +41,7 @@ def check(name, got, want):
 # ── 1. registry entries persist `repo` ───────────────────────────────────────
 # Load the two pure builders out of app.py without importing the whole module
 # (it opens network clients at import time).
-src = open(os.path.join(ROOT, "bridge", "app.py")).read()
+src = _APP_SOURCE
 tree = ast.parse(src)
 ns = {}
 for node in tree.body:

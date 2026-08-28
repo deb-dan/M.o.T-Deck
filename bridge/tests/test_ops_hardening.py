@@ -22,6 +22,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import app  # noqa: E402
 
 PASS = 0
@@ -420,7 +427,7 @@ finally:
 
 check("bridge: the pure _port_kill_cmd helper is still there (takeover path)",
       "-sTCP:LISTEN" in app._port_kill_cmd(8080))
-BR = (ROOT / "bridge" / "app.py").read_text()
+BR = _APP_SOURCE
 check("bridge: every _kill_port_listener call site names its component",
       BR.count("_kill_port_listener(") - 1
       == BR.count("_kill_port_listener(int(port), force=True, component=")

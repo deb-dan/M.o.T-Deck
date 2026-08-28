@@ -86,7 +86,10 @@ check('a non-string is coerced', P.stripAttachMarker(42) === '42');
 check('empty stays empty', P.stripAttachMarker('') === '');
 
 // the panel's copy of the marker must still match the bridge's ATTACH_MARKER
-const appPy = fs.readFileSync(path.join(ROOT, 'bridge', 'app.py'), 'utf8');
+// ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28):
+// bridge/app.py is a facade over bridge/core/*.py + bridge/routers/*.py, so the
+// cross-file pins below read _appsrc.js's assembled view of the whole app layer.
+const appPy = require('./_appsrc.js').appSource();
 check('bridge ATTACH_MARKER is still "\\n[image attached]"',
       /ATTACH_MARKER\s*=\s*"\\n\[image attached\]"/.test(appPy));
 check('the bridge still appends that exact marker when persisting an image turn',

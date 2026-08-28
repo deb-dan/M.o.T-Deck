@@ -43,9 +43,18 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28).
+# bridge/app.py is a FACADE over bridge/core/*.py + bridge/routers/*.py, so the
+# source-text assertions below read bridge/appsrc.py's assembled view of the whole
+# app layer instead of one file. Read bridge/appsrc.py's header for why the
+# assertions are source-text in the first place and why order is part of it.
+import sys as _sys                                          # noqa: E402
+_sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 BIN = ROOT / "data" / "llamacpp" / "build" / "bin" / "llama-server"
 START = ROOT / "scripts" / "start_component.sh"
-APP = ROOT / "bridge" / "app.py"
+APP = ROOT / "bridge" / "appsrc.py"
 
 # The base ARGS block in start_component.sh's runner branch — passed with NO --help
 # gate, so each one is load-bearing on its own.
@@ -103,7 +112,7 @@ def test_runner_probe_sends_the_api_key():
     """bridge/app.py::_runner_loaded_id MUST authenticate. See the docstring above:
     /v1/models became api-key-guarded at b10662 and the keyless probe made Mission
     Control claim nothing was loaded while the runner was generating."""
-    src = APP.read_text(errors="replace")
+    src = _APP_SOURCE
     m = re.search(r"def _runner_loaded_id\(.*?\n(?=\n\ndef |\n\n# )", src, re.S)
     assert m, ("_runner_loaded_id is gone from bridge/app.py — this test can no "
                "longer see the seam it guards; re-point it at the new probe")
