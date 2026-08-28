@@ -30,6 +30,62 @@ def _is_hidden(m: object) -> bool:
     return bool(isinstance(m, dict) and m.get("hidden"))
 
 
+# ── A FOREIGN APP'S llama-server IS NOT OUR PINNED CONTRACT (bug-echo W-04) ─────
+# ⚠️ KEEP THIS IDENTICAL, IN RULES AND IN WORDS, TO scripts/start_component.sh's runner
+# branch — the binary-discovery order is already declared shared there, and a gate that
+# exists on only one of the two paths is a gate a user finds by getting past it.
+#
+# The last two steps of that order run a binary that belongs to Jan or LM Studio. A
+# different app upgrades it whenever it likes, while this harness's probe/auth
+# expectations are pinned against ONE build: llama.cpp b10662 made /v1/models REQUIRE a
+# key where the build before it did not, and the 401 regression that caused cost a
+# session to find. Starting a stranger's binary of unknown vintage re-opens exactly that.
+# An EXPLICIT runner.binary is exempt — that is a person naming a binary on purpose.
+FOREIGN_RUNNER_ENV = "HARNESS_ALLOW_FOREIGN_RUNNER"
+
+
+def _llama_build(binp: str) -> str:
+    """The llama.cpp BUILD NUMBER this binary reports ("10662"), or "". Never raises."""
+    import re as _re
+    try:
+        p = subprocess.run([binp, "--version"], capture_output=True, text=True,
+                           timeout=15)
+    except Exception:                                            # noqa: BLE001
+        return ""
+    m = _re.search(r"build (\d+)", (p.stdout or "") + (p.stderr or ""))
+    return m.group(1) if m else ""
+
+
+def foreign_runner_gate(binp: str, owner: str) -> tuple:
+    """(note, refusal). `owner` is the app the binary belongs to ("" = ours or explicit).
+
+    A matching build passes with a note; a mismatched or unreadable one is REFUSED with
+    the install command, unless HARNESS_ALLOW_FOREIGN_RUNNER=1 says otherwise. Either
+    way the binary and its build are NAMED — the one thing this must never do again is
+    run a foreign llama-server without saying so.
+    """
+    if not owner:
+        return "", ""
+    pin = str(((cfg().get("runner") or {}).get("llamacpp_pin") or "")).strip()
+    build = _llama_build(binp)
+    said = (f"⚠️ the runner binary is not ours — it belongs to {owner}: {binp} "
+            f"(build {build or 'unreadable'}; this harness is pinned to "
+            f"{pin or 'no pin set'})")
+    if pin and build and build == pin.lstrip("b"):
+        return said + " — the build MATCHES the pin, so the pinned contracts hold.", ""
+    if os.environ.get(FOREIGN_RUNNER_ENV) == "1":
+        return (said + f" — {FOREIGN_RUNNER_ENV}=1, starting it anyway, deliberately. "
+                "If /v1/models 401s or the panel reads the runner as down, suspect this "
+                "first."), ""
+    return said, (
+        said + f". REFUSED: {owner} can change that binary at any time without telling "
+        "us, and our /v1/models auth probe is pinned per build (b10662 made that "
+        "endpoint require a key where the build before it did not; the same drift the "
+        "other way reads as 'the runner is down'). Run ./scripts/install_llamacpp.sh, "
+        "or set runner.binary in harness.yaml to name a binary on purpose, or set "
+        f"{FOREIGN_RUNNER_ENV}=1 knowing the above.")
+
+
 def _hideable(m: object) -> bool:
     """PURE. True when this entry may be hidden from the lists."""
     return bool(isinstance(m, dict)
@@ -668,6 +724,7 @@ def aux_start() -> JSONResponse:
     main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
     `jan serve` path knew nothing about harness-downloaded models."""
     import json as _json, os as _os, glob as _glob
+    note = ""                    # the W-04 line about a foreign binary, "" when ours
     ax = cfg().get("aux", {}) or {}
     model, port = ax.get("model") or "", int(ax.get("port") or 6768)
     key = ax.get("api_key", "harness-aux")
@@ -702,6 +759,7 @@ def aux_start() -> JSONResponse:
         cmd += ["--model", path, "--host", "127.0.0.1", "--port", str(port)]
     else:
         binp = (cfg().get("runner") or {}).get("binary") or ""
+        owner = ""
         if not binp:
             # SHARED binary-discovery order (keep identical in start_component.sh):
             #   explicit runner.binary → OUR pin (data/llamacpp) → Jan backends → LM Studio.
@@ -709,14 +767,23 @@ def aux_start() -> JSONResponse:
             if _os.path.isfile(pin_bin) and _os.access(pin_bin, _os.X_OK):
                 binp = pin_bin
             else:
-                cands = (sorted(_glob.glob(_os.path.expanduser(
-                            "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
-                            key=_os.path.getmtime, reverse=True)
-                         or sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
-                            key=_os.path.getmtime, reverse=True))
+                jan = sorted(_glob.glob(_os.path.expanduser(
+                          "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
+                          key=_os.path.getmtime, reverse=True)
+                lms = sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
+                          key=_os.path.getmtime, reverse=True)
+                cands = jan or lms
                 if not cands:
                     return JSONResponse({"ok": False, "log": "no llama-server binary found — run scripts/install_llamacpp.sh"}, status_code=500)
                 binp = cands[0]
+                # WHOSE binary this is — the whole of the W-04 gate below rests on it.
+                owner = "Jan" if jan else "LM Studio"
+        # ⚠️ A FOREIGN llama-server IS NAMED, AND REFUSED UNLESS ITS BUILD IS THE PIN
+        # (bug-echo W-04). See foreign_runner_gate: same rules, same words, as
+        # scripts/start_component.sh's runner branch.
+        note, refusal = foreign_runner_gate(binp, owner)
+        if refusal:
+            return JSONResponse({"ok": False, "log": refusal}, status_code=409)
         helptxt = ""
         try:
             hp = subprocess.run([binp, "--help"], capture_output=True, text=True, timeout=15)
@@ -733,8 +800,16 @@ def aux_start() -> JSONResponse:
         if "--api-key" in helptxt:
             cmd += ["--api-key", key]
     logf = open(ROOT / "data" / "logs" / "aux.log", "ab")
+    # ⚠️ A FOREIGN BINARY THAT IS ALLOWED THROUGH IS STILL SAID OUT LOUD — on the card
+    # (the log string the pane renders) AND in aux.log, where somebody debugging the
+    # thing an hour later will be looking (bug-echo W-04). `note` is "" on every ordinary
+    # start, so this costs the normal path nothing.
+    if note:
+        logf.write(("[harness] " + note + "\n").encode())
+        logf.flush()
     subprocess.Popen(cmd, stdout=logf, stderr=logf, start_new_session=True)
-    return JSONResponse({"ok": True, "log": "loading in background — refresh in ~20-60s"})
+    return JSONResponse({"ok": True, "log": (note + " · " if note else "")
+                         + "loading in background — refresh in ~20-60s"})
 
 
 @app.post("/api/aux/stop")

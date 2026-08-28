@@ -324,18 +324,132 @@ def checkpoint_root(root) -> str:
     return os.path.join(office_dir(root), CHECKPOINT_DIR)
 
 
+# ══ THE CHECKPOINT NAMESPACE IS KEYED BY THE DOCUMENT, NOT BY ITS STEM ═══════════
+# ⚠️ bug-echo BE-03 — F-21 CAME BACK THROUGH THE STEM, AND F-07's FAMILY WITH IT. F-21
+# was "a rename orphaned `.checkpoints/<stem>/`", fixed by moving the folder with the
+# file. But `<stem>` is EXTENSION-BLIND, and since stage 3 three document types share
+# data/office: renaming `Budget.docx` → `Notes.docx` moved `.checkpoints/Budget/` — which
+# holds **Budget.xlsx's** checkpoint stack and pre-agent copy — and the spreadsheet's Undo
+# then refused with "there is no checkpoint for that change any more — the stack keeps the
+# last 10 per workbook", a false sentence blaming pruning for an orphaned stack. F-21's
+# exact symptom, one type-collision later. The same blindness made `list_docs` report the
+# spreadsheet's pre-agent copy on the DOCX's row, and `delete_doc` on `Budget.docx` erase
+# `Budget.xlsx`'s undo history.
+#
+# THE KEY: the default type keeps the BARE STEM and every other type carries its
+# extension — `Budget.xlsx → Budget`, `Budget.docx → Budget-docx`, `Deck.pptx →
+# Deck-pptx`. Two consequences, both deliberate:
+#   · today's folders on disk are ALREADY CORRECT (only spreadsheets have ever had a
+#     stack: the whole changeset/apply lane is `require_sheet`-gated), so the migration
+#     below has nothing to move in the normal case — the safest migration there is.
+#   · the page's own mirror of this path (bridge/panel/office.html's `preAgentName`,
+#     pinned across the two languages by test_office_ai.js) stays TRUE, because the only
+#     documents it ever names are spreadsheets.
+# AND THE KEY IS INJECTIVE, which a bare `stem + "-" + ext` would not be: a spreadsheet
+# genuinely named `Budget-docx.xlsx` would otherwise key to `Budget-docx` and collide with
+# `Budget.docx` — the same bug in a new spelling. A stem that already ends in one of these
+# marks therefore carries its own `-xlsx`, so no two documents can ever share a folder.
+CHECKPOINT_EXT_MARKS = tuple("-" + e.lstrip(".") for e in DOC_EXTS)
+
+
+def checkpoint_key(name) -> str:
+    """The ONE folder name under `.checkpoints/` that belongs to this document. PURE."""
+    stem, ext = os.path.splitext(os.path.basename(str(name)))
+    ext = (ext or DOC_EXT).lower()
+    if ext == DOC_EXT and not stem.lower().endswith(CHECKPOINT_EXT_MARKS):
+        return stem
+    return stem + "-" + ext.lstrip(".")
+
+
+def checkpoint_key_name(key) -> str:
+    """The inverse: which document a `.checkpoints/` folder belongs to. PURE.
+
+    Exact round-trip of `checkpoint_key`, which is what lets office_ops recover the
+    OWNING FILE NAME from a folder on disk (the no-record undo path) instead of
+    reconstructing `<key> + ".xlsx"` and being wrong about every other type.
+    """
+    k = str(key)
+    for e in DOC_EXTS:
+        mark = "-" + e.lstrip(".")
+        if k.lower().endswith(mark):
+            return k[: -len(mark)] + e
+    return k + DOC_EXT
+
+
+def checkpoint_dir_for(path) -> str:
+    """`<dir of path>/.checkpoints/<key>` — the stack + pre-agent folder. PURE."""
+    d = os.path.dirname(str(path)) or "."
+    return os.path.join(d, CHECKPOINT_DIR, checkpoint_key(path))
+
+
+def migrate_checkpoint_ns(path) -> str:
+    """`checkpoint_dir_for(path)`, after a ONE-TIME move of a folder still sitting under
+    the pre-BE-03 stem-only name. Returns the directory either way; never raises.
+
+    ⚠️ WHY THIS IS SAFE, AND WHY IT IS NARROW. A rename of the folder scheme that
+    orphaned today's stacks would be the very bug it is fixing, so the move happens only
+    where it is PROVABLY the same document's folder:
+      · `key == stem` — the overwhelming majority, every ordinary spreadsheet — needs no
+        move at all and returns before touching the filesystem.
+      · a NON-SHEET never migrates. `Budget.docx`'s legacy key would be `Budget`, and
+        that folder belongs to `Budget.xlsx` — claiming it is exactly BE-03. Nothing is
+        lost by refusing: the apply lane is `require_sheet`-gated, so no .docx or .pptx
+        has ever had a stack to inherit.
+      · which leaves the one real case: a SPREADSHEET whose stem ends in `-xlsx`/`-docx`/
+        `-pptx` (`Budget-docx.xlsx`), whose key gained the escape mark. Its old folder is
+        moved once, here, and the next call finds the new one and does nothing.
+    Called from every path where the folder's identity matters — the stack read/write,
+    the pre-agent copy, rename and delete — rather than from a lister, because a
+    function that lists files should not move them.
+    """
+    new = checkpoint_dir_for(path)
+    base = os.path.basename(str(path))
+    stem = os.path.splitext(base)[0]
+    if checkpoint_key(base) == stem or kind_of(base) != "sheet":
+        return new
+    old = os.path.join(os.path.dirname(str(path)) or ".", CHECKPOINT_DIR, stem)
+    try:
+        if os.path.isdir(old) and not os.path.exists(new):
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.rename(old, new)
+    except OSError:
+        pass                          # a courtesy move, never a reason to fail a write
+    return new
+
+
+def checkpoint_dir_to_move(path) -> str:
+    """The checkpoint folder a RENAME or DELETE of `path` may take with it, or "" when a
+    folder of that name could belong to ANOTHER document that still exists.
+
+    ⚠️ THE ESCAPE MARK MEETS THE LEGACY SCHEME, AND IT WAS FOUND BY DRIVING THE FIX
+    (live, on a real bridge, not by reading it). `Mig.docx`'s key is `Mig-docx` — which is
+    ALSO the pre-BE-03 stem-only folder name of the spreadsheet `Mig-docx.xlsx`. On an
+    install that has not migrated yet, renaming the .docx would therefore walk off with
+    that spreadsheet's stack: BE-03 itself, surviving in the one corner its own fix
+    created. So a DESTRUCTIVE operation on a non-sheet keeps its hands off a folder whose
+    name a real spreadsheet could still own. The cost is that such a .docx leaves a
+    folder behind (it has none to leave — the apply lane is sheet-only); the alternative
+    cost is somebody's undo history.
+    """
+    base = os.path.basename(str(path))
+    d = os.path.dirname(str(path)) or "."
+    key = checkpoint_key(base)
+    if kind_of(base) != "sheet" and os.path.isfile(os.path.join(d, key + DOC_EXT)):
+        return ""
+    return migrate_checkpoint_ns(path)
+
+
 def agent_copy_path(root, name) -> str:
-    """`data/office/.checkpoints/<stem>/pre-agent.xlsx` — the pre-write copy of ONE
-    workbook, namespaced so it can never collide with a document."""
-    stem = os.path.splitext(os.path.basename(str(name)))[0]
-    return os.path.join(checkpoint_root(root), stem, PRE_AGENT_NAME)
+    """`data/office/.checkpoints/<key>/pre-agent.xlsx` — the pre-write copy of ONE
+    document, namespaced so it can collide neither with a document nor with another
+    document that merely shares its stem (BE-03)."""
+    return os.path.join(checkpoint_root(root), checkpoint_key(name), PRE_AGENT_NAME)
 
 
 def agent_copy_rel(name) -> str:
     """The same path as the panel and the tool results say it: a relative path, so
     nobody reads it as a sibling workbook they could open."""
-    stem = os.path.splitext(os.path.basename(str(name)))[0]
-    return CHECKPOINT_DIR + "/" + stem + "/" + PRE_AGENT_NAME
+    return CHECKPOINT_DIR + "/" + checkpoint_key(name) + "/" + PRE_AGENT_NAME
 
 
 def valid_name(name, allowed=DOC_EXTS):
@@ -1448,9 +1562,56 @@ def import_doc(root, name, data):
     return {"name": final, "renamed": final != safe, "bytes": len(data)}, None
 
 
-def save_doc(root, name, snapshot):
+# ══ THE SAVE'S OWN mtime FENCE (bug-echo BE-02, the F-01 class) ══════════════════
+# ⚠️ THIS WRITER WAS THE ONE THAT NEVER GOT A FENCE, AND IT COULD NOT EVEN EXPRESS ONE.
+# Every sibling fences: `oo.writeback` refuses with a 409 + `force`, `apply_changeset`
+# and `undo_changeset` refuse on FENCE_EPS (finding F-01 — an mtime that was RECORDED and
+# never CHECKED). `save_doc` — behind the tier-1 grid's Save and the Quick lane's sort —
+# took (root, name, snapshot) and nothing else, so a write that landed between the page's
+# snapshot read and its save (an agent apply, a second tab, a `curl`) was silently
+# REVERTED to the page's stale snapshot, with only the once-per-day `.bak` behind it. A
+# client-side 5s poll (office.html's extCheck) narrows that window and cannot close it,
+# which is exactly the insufficiency F-01's fix ruled on.
+#
+# THE THREE STATES ARE ALL EXPLICIT, and that is the point (bug-echo W-01 generalised):
+#   expect_mtime=<float>  → fenced. Differ by more than the slack → refuse, write nothing.
+#   force=True            → fenced value ignored, deliberately, by a caller who was asked.
+#   unfenced=True         → skip, DELIBERATELY, because this caller genuinely does not
+#                           know the version it started from. It must SAY so.
+# `expect_mtime=None` with no `unfenced` is a REFUSAL TO GUESS, not a silent skip: a
+# caller that forgets the fence gets a sentence, not an unfenced overwrite of somebody
+# else's work. (A workbook that does not exist yet is never fenced — there is no version
+# to be stale against, and a first save must not need one.)
+SAVE_FENCE_SLACK = 1.0
+SAVE_FENCE_REFUSAL = ("that workbook changed on disk since it was opened — saving now "
+                      "would overwrite the newer version. Reload it, or save again with "
+                      "force to overwrite.")
+SAVE_UNFENCED_REFUSAL = ("refused: this save carries no record of the version it started "
+                         "from, so it cannot promise not to overwrite somebody else's "
+                         "write. Send the mtime the workbook was opened at.")
+
+
+def _fence_mtime(value):
+    """A usable fence value, or None. NaN/inf are None — a fence that can never compare
+    equal would refuse every save, and one that always does would fence nothing."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
+def save_doc(root, name, snapshot, expect_mtime=None, *, force=False, unfenced=False,
+             slack=SAVE_FENCE_SLACK):
     """(report, None) or (None, reason). Takes a .bak first when the workbook
     already exists and today's backup has not been made yet.
+
+    `expect_mtime` is the mtime the caller last SAW on disk — see the fence block above
+    this function for what each of the three states means. The refusal sentences are
+    module constants so a route can map SAVE_FENCE_REFUSAL onto a 409 (the shape
+    oo.writeback returns directly) without matching on prose.
 
     SPREADSHEETS ONLY: this is the snapshot mapper's write. A .docx or .pptx is saved by
     the EDITOR, through /api/office/writeback, which stores the editor's own bytes and
@@ -1462,6 +1623,31 @@ def save_doc(root, name, snapshot):
     reason = require_sheet(target)
     if reason:
         return None, reason
+    # ⚠️ THE FENCE RUNS BEFORE THE `.bak` AND BEFORE ANY BYTE IS WRITTEN (finding F-20's
+    # ordering: every reason to say no comes before any copy is taken, so a refused save
+    # leaves the workbook AND its backup exactly as they were).
+    want = _fence_mtime(expect_mtime)
+    fenced = False
+    existed = os.path.isfile(target)
+    if existed:
+        try:
+            disk_mtime = os.stat(target).st_mtime
+        except OSError as e:
+            return None, f"cannot read that workbook: {e.strerror or e}"
+        if want is None:
+            if not unfenced:
+                return None, SAVE_UNFENCED_REFUSAL
+        else:
+            fenced = True
+            # ⚠️ THE SLACK BELONGS TO THE CALLER, and the default is the wide one. A PAGE
+            # compares an mtime it read seconds or minutes ago, over JSON and a filesystem
+            # whose timestamp resolution is not ours to assume — oo.writeback's one second.
+            # A caller inside the bridge that read the mtime off the file it is about to
+            # write passes office_ops.FENCE_EPS instead, on the undo fence's argument: for
+            # THAT window any real difference is somebody else's save, including one that
+            # landed in the same second.
+            if not force and abs(want - disk_mtime) > max(0.0, float(slack)):
+                return None, SAVE_FENCE_REFUSAL
     backup = ""
     if os.path.isfile(target):
         bak = backup_for(target)
@@ -1479,6 +1665,19 @@ def save_doc(root, name, snapshot):
         return None, str(e)
     report["name"] = os.path.basename(target)
     report["backup"] = backup
+    # The fence's own facts travel back with the write: `mtime` is what the NEXT save
+    # must send (a caller that cannot learn the new mtime cannot stay fenced, which is
+    # how a fence quietly becomes an `unfenced=True`), and `fenced`/`forced` say which
+    # of the three states this save actually took rather than leaving it to be inferred.
+    try:
+        report["mtime"] = os.stat(target).st_mtime
+    except OSError:
+        report["mtime"] = time.time()
+    report["fenced"] = fenced
+    report["forced"] = bool(force and fenced)
+    # A workbook that did not exist a moment ago was never fenced and never could be —
+    # distinguished from `fenced: false` so nothing has to warn about the FIRST save.
+    report["created"] = not existed
     return report, None
 
 
@@ -1490,11 +1689,22 @@ def open_doc(root, name):
     reason = require_sheet(target)
     if reason:
         return None, reason
+    # ⚠️ THE mtime IS READ BEFORE THE CONTENT, AND IT TRAVELS WITH IT (bug-echo BE-02).
+    # This is the value `save_doc`'s fence wants back: "the version I started from". The
+    # ORDER matters and is the whole reason it is read here rather than in the route — a
+    # stat taken AFTER the snapshot could pick up a write that landed in between, so the
+    # caller would hold a NEWER mtime than the content it is holding and its next save
+    # would sail through a fence that should have stopped it.
+    try:
+        file_mtime = os.path.getmtime(target)
+    except OSError as e:
+        return None, f"cannot read that workbook: {e.strerror or e}"
     try:
         snap = snapshot_from_path(target)
     except OfficeError as e:
         return None, str(e)
     snap["name"] = os.path.splitext(os.path.basename(target))[0]
+    snap["file_mtime"] = file_mtime
     return snap, None
 
 
@@ -1596,8 +1806,14 @@ def delete_doc(root, name, backups: bool = False):
                     pass
     except OSError:
         pass
+    # ⚠️ THE STACK THAT GOES IS THIS DOCUMENT'S (bug-echo BE-03). Keyed by stem this
+    # deleted `Budget.xlsx`'s entire undo history when the user deleted `Budget.docx`.
+    # Migrated first so a folder still under the old name is erased with its own
+    # document rather than left behind as an orphan nothing can reach.
     try:
-        shutil.rmtree(os.path.join(checkpoint_root(root), stem), ignore_errors=True)
+        _ck = checkpoint_dir_to_move(target)
+        if _ck:
+            shutil.rmtree(_ck, ignore_errors=True)
     except OSError:
         pass
     return True, None
@@ -1641,16 +1857,21 @@ def rename_doc(root, name, to):
         os.rename(src, dst)
     except OSError as e:
         return None, f"could not rename: {e}"
-    # ⚠️ THE UNDO STACK FOLLOWS THE FILE (finding F-21). `.checkpoints/<stem>/` is keyed
-    # by the file stem, and a rename used to orphan it: `undo_changeset` then answered
+    # ⚠️ THE UNDO STACK FOLLOWS THE FILE (finding F-21). `.checkpoints/<key>/` is keyed
+    # by the document, and a rename used to orphan it: `undo_changeset` then answered
     # "no such workbook" — blaming a missing file for what was really an unreachable
     # stack — while the checkpoints, and the pre-agent copy that now lives beside them,
     # sat on disk under the old stem for ever. A rename is not a reason to lose an undo.
+    #
+    # ⚠️ AND IT FOLLOWS THE SAME DOCUMENT ONLY (bug-echo BE-03). Keyed by STEM this moved
+    # `Budget.xlsx`'s stack when `Budget.docx` was renamed — F-21's symptom exactly, with
+    # the Undo blaming the 10-checkpoint prune for it. `checkpoint_key` includes the type
+    # and a rename may never change the type (asserted above), so the folder this moves
+    # is now, by construction, the renamed document's own.
     try:
-        old_dir = os.path.join(checkpoint_root(root),
-                               os.path.splitext(os.path.basename(src))[0])
-        new_dir = os.path.join(checkpoint_root(root), os.path.splitext(safe)[0])
-        if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+        old_dir = checkpoint_dir_to_move(src)
+        new_dir = os.path.join(checkpoint_root(root), checkpoint_key(safe))
+        if old_dir and os.path.isdir(old_dir) and not os.path.exists(new_dir):
             os.makedirs(os.path.dirname(new_dir), exist_ok=True)
             os.rename(old_dir, new_dir)
     except OSError:

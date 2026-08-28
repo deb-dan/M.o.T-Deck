@@ -387,12 +387,19 @@ if HAVE_XL:
           len(set(n.lower() for n in names)) == 2)
 
     # ── the backup policy ──
-    saved, reason = office.save_doc(tmp, "budget.xlsx", office.empty_snapshot("budget"))
+    # ⚠️ EVERY SAVE OVER AN EXISTING WORKBOOK NOW CARRIES ITS FENCE (bug-echo BE-02).
+    # `mt()` is what a caller that has just read the file knows; a save with nothing to
+    # fence with is refused rather than written, which is what the block below pins.
+    def mt(n="budget.xlsx"):
+        return os.path.getmtime(os.path.join(D, n))
+    saved, reason = office.save_doc(tmp, "budget.xlsx", office.empty_snapshot("budget"),
+                                    mt())
     bak = office.backup_for(os.path.join(D, "budget.xlsx"))
     check("saving over an existing workbook takes a backup first",
           saved and saved["backup"] == os.path.basename(bak) and os.path.isfile(bak))
     before = os.path.getmtime(bak)
-    saved2, _ = office.save_doc(tmp, "budget.xlsx", office.empty_snapshot("budget"))
+    saved2, _ = office.save_doc(tmp, "budget.xlsx", office.empty_snapshot("budget"),
+                                mt())
     check("a SECOND save the same day does not re-copy",
           saved2 and saved2["backup"] == "" and os.path.getmtime(bak) == before)
     listed = [f["name"] for f in office.list_docs(tmp)]
@@ -408,11 +415,84 @@ if HAVE_XL:
           .get("backup") == "")
     check("save_doc refuses a junk name before touching disk",
           office.save_doc(tmp, "../evil.xlsx", office.empty_snapshot("x"))[0] is None)
-    check("save_doc refuses a junk snapshot", office.save_doc(tmp, "fresh.xlsx", "nope")[0] is None)
+    check("save_doc refuses a junk snapshot",
+          office.save_doc(tmp, "fresh.xlsx", "nope", mt("fresh.xlsx"))[0] is None)
+    check("…for the SNAPSHOT's reason, not the fence's — a caller that did everything "
+          "right must not be told it forgot the mtime",
+          office.save_doc(tmp, "fresh.xlsx", "nope", mt("fresh.xlsx"))[1]
+          != office.SAVE_UNFENCED_REFUSAL)
+
+    # ══ THE SAVE'S mtime FENCE (bug-echo BE-02, the F-01 class) ═════════════════════
+    # THE REPRO, EXECUTED: the page reads a snapshot at T0, somebody else writes at T1,
+    # the page saves at T2. It used to land, silently, reverting the other write to the
+    # page's stale copy with only the once-per-day .bak behind it.
+    import openpyxl as _px
+    race = os.path.join(D, "race.xlsx")
+    _w = _px.Workbook(); _w.active["A1"] = 10; _w.save(race)
+    snap_t0 = office.snapshot_from_path(race)                   # the page opens at T0
+    seen_t0 = os.path.getmtime(race)
+    _w2 = _px.load_workbook(race); _w2.active["A1"] = 999       # somebody else at T1
+    _w2.save(race)
+    os.utime(race, (seen_t0 + 60, seen_t0 + 60))                # unambiguously newer
+    rep_stale, why = office.save_doc(tmp, "race.xlsx", snap_t0, seen_t0)
+    check("a save whose fence is stale is REFUSED — nothing is written",
+          rep_stale is None and why == office.SAVE_FENCE_REFUSAL, why)
+    check("…and the OTHER writer's value is still on disk (the whole point)",
+          _px.load_workbook(race).active["A1"].value == 999)
+    check("…and the refusal says how to get past it",
+          "force" in office.SAVE_FENCE_REFUSAL)
+    check("…while force=True overwrites deliberately, and SAYS it did",
+          (office.save_doc(tmp, "race.xlsx", snap_t0, seen_t0, force=True)[0]
+           or {}).get("forced") is True)
+    check("a save with NO fence at all is a refusal to GUESS, not a silent skip",
+          office.save_doc(tmp, "race.xlsx", snap_t0)[1] == office.SAVE_UNFENCED_REFUSAL)
+    for _bad in (float("nan"), float("inf"), "lunchtime", [], {}):
+        check(f"…and {_bad!r} is refused the same way rather than skipping the fence",
+              office.save_doc(tmp, "race.xlsx", snap_t0, _bad)[1]
+              == office.SAVE_UNFENCED_REFUSAL)
+    check("unfenced=True is the DELIBERATE skip, and it writes and says it was unfenced",
+          (office.save_doc(tmp, "race.xlsx", snap_t0, None, unfenced=True)[0] or {})
+          .get("fenced") is False)
+    check("a matching fence writes, and says it WAS fenced",
+          (office.save_doc(tmp, "race.xlsx", snap_t0,
+                           os.path.getmtime(race))[0] or {}).get("fenced") is True)
+    check("…and the report carries the NEW mtime, so the next save can stay fenced",
+          abs((office.save_doc(tmp, "race.xlsx", snap_t0,
+                               os.path.getmtime(race))[0] or {}).get("mtime", 0)
+              - os.path.getmtime(race)) < 0.01)
+    check("A FILE THAT DOES NOT EXIST YET IS NEVER FENCED — a first save must not need "
+          "a version to be stale against",
+          (office.save_doc(tmp, "brandnew.xlsx",
+                           office.empty_snapshot("brandnew"))[0] or {})
+          .get("created") is True)
+    # ⚠️ THE FENCE RUNS BEFORE THE `.bak` — finding F-20's ordering, which says every
+    # reason to refuse comes before any copy is taken. A refused save must leave the
+    # workbook AND its backup exactly as they were, or a stale save would burn today's
+    # one-per-day backup slot on a write that never happened.
+    office.save_doc(tmp, "nobak.xlsx", office.empty_snapshot("nobak"))
+    nobak = office.backup_for(os.path.join(D, "nobak.xlsx"))
+    check("(fixture) the new workbook has no daily .bak yet", not os.path.isfile(nobak))
+    check("a stale save is refused…",
+          office.save_doc(tmp, "nobak.xlsx", office.empty_snapshot("nobak"), 1.0)[0]
+          is None)
+    check("…and took NO backup on the way out (F-20 ordering holds for this fence too)",
+          not os.path.isfile(nobak))
+    check("…and an un-fenced save is refused before the backup as well",
+          office.save_doc(tmp, "nobak.xlsx", office.empty_snapshot("nobak"))[0] is None
+          and not os.path.isfile(nobak))
 
     # ── open/delete ──
     got, reason = office.open_doc(tmp, "budget.xlsx")
     check("open_doc returns a snapshot", got and got["sheetOrder"])
+    # ⚠️ AND THE VERSION IT CAME FROM (bug-echo BE-02): an open is where a caller LEARNS
+    # what its next save must fence against, so the mtime travels with the content — read
+    # BEFORE it, so a write landing in between cannot hand the caller a newer stamp than
+    # the bytes it is holding.
+    check("…carrying the file's mtime, which is the fence value for the next save",
+          abs((got or {}).get("file_mtime", 0)
+              - os.path.getmtime(os.path.join(D, "budget.xlsx"))) < 0.001)
+    check("…and that value really is accepted as the fence by save_doc",
+          office.save_doc(tmp, "budget.xlsx", got, got["file_mtime"])[0] is not None)
     check("open_doc refuses a missing workbook", office.open_doc(tmp, "ghost.xlsx")[0] is None)
     ok, reason = office.delete_doc(tmp, "fresh.xlsx")
     check("delete_doc removes the workbook", ok and not os.path.exists(os.path.join(D, "fresh.xlsx")))
@@ -671,7 +751,21 @@ check("…and with the three cross-origin-isolation headers, from the ONE place 
       is not None)
 check("the blocking round-trip runs off the event loop",
       "asyncio.to_thread(_office.open_doc" in APP
-      and "asyncio.to_thread(_office.save_doc" in APP)
+      # The save's call wrapped onto its own line when it grew the mtime fence
+      # (bug-echo BE-02), so the anchor allows the wrap rather than pinning the layout.
+      and re.search(r"asyncio\.to_thread\(\s*_office\.save_doc", APP) is not None)
+# ⚠️ THE SAVE ROUTE PASSES THE FENCE, AND SAYS SO WHEN IT CANNOT (bug-echo BE-02). The
+# module-level fence is only half the fix: a route that never forwarded `expect_mtime`
+# would leave save_doc's new parameter permanently at its refusal default, and a route
+# that quietly passed `unfenced=True` with no log line would be the silent clobber again
+# wearing a keyword argument.
+check("the save route forwards the caller's fence…", "expect_mtime" in APP)
+check("…accepts the writeback route's spelling of it too, so one lane needs one word",
+      re.search(r'body\.get\("mtime"\)', APP) is not None)
+check("…maps the fence refusal onto a 409 like the editor's, not a 400",
+      re.search(r"409 if reason == _office\.SAVE_FENCE_REFUSAL", APP) is not None)
+check("…and when nothing was sent to fence with, the skip is EXPLICIT and LOGGED",
+      "unfenced=(fence is None)" in APP and "UNFENCED" in APP)
 check("the fidelity note reaches the panel from the module, not a second copy",
       "_office.FIDELITY_NOTE" in APP and office.FIDELITY_NOTE not in PAGE)
 

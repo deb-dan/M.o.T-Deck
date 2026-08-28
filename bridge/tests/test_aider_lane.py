@@ -539,6 +539,30 @@ def test_page_cannot_fail_silently():
     # (e) the absence of a Mission Control card is stated as intent, not left as a gap.
     ok("lane, not a component" in page, "the footer explains why there is no card")
 
+    # (f) ⚠️ NO HARDCODED INK ON A TOKENISED FILL (bug-echo W-06, the v1.5.13 .ap-cmd
+    #     class). This page copies the panel's palette into its own :root because a
+    #     separate document cannot inherit one, so a literal that HAPPENS to equal a
+    #     token today is a colour no palette can reach tomorrow: in the light theme
+    #     --cream is DARK ink (#221d14), and a near-black literal on a --cream fill is an
+    #     empty rectangle. The pin is on the SHAPE, not on one property.
+    css = page.split("<style>", 1)[1].split("</style>", 1)[0]
+    # Comments first — prose ABOUT a rule (including the one that explains this fix) is
+    # not a rule, and a grep that cannot tell them apart finds the bug in its own note.
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    prim = [ln for ln in css.splitlines() if "button.primary{" in ln.replace(" ", "")]
+    ok(len(prim) == 1, f"the primary button has exactly one rule (found {len(prim)})")
+    ok("color:var(--bg)" in prim[0].replace(" ", ""),
+       "the ink on the cream-filled primary is var(--bg), not a hardcoded near-black")
+    ok("#171420" not in css,
+       "…and the old literal is gone from the whole stylesheet")
+    # And the general form, so the next copied literal is caught rather than re-found:
+    # no rule that fills with a token may set its ink with a hex.
+    for ln in css.splitlines():
+        flat = ln.replace(" ", "")
+        if "background:var(--" in flat and re.search(r"color:#[0-9a-fA-F]{3,8}", flat):
+            ok(False, f"a tokenised fill with hardcoded ink: {ln.strip()}")
+    ok(True, "no rule fills with a token and inks with a hex")
+
 
 # ── 7. wiring greps (the seams that live outside this module) ────────────────
 def test_wiring():

@@ -22,6 +22,24 @@ Each check prints ONE line:
 Lines marked [CONTROL] print `holds` — they pin the SIBLING behaviour that is already
 correct (the thing each echo was measured against), so a batch fix cannot regress the
 original fix while chasing its echo. A CONTROL that prints BROKEN is a new bug.
+
+STATUS after the 2026-08-28 batch fix (this file is not the gate — the gate tests are):
+  · BE-02 FIXED — office.save_doc grew the fence (expect_mtime / force / unfenced, the
+    409-shaped refusal), /api/office/save forwards it and logs an explicit UNFENCED skip,
+    office_ops._apply passes the mtime it read. Gate: test_office_lane.py (the fence and
+    its F-20 ordering, the route's wiring) and test_oo_lane.py (writeback's own three
+    states, W-01). REMAINING HALF, NOT OURS THIS ROUND: bridge/panel/office.html still
+    sends no `expect_mtime`, so the tier-1 Save and the Quick lane's sort are written
+    UNFENCED-and-logged rather than fenced. One line each in `save()` and `actWrite()`
+    (`expect_mtime: extSeen`); that page is fenced to another builder this round.
+  · BE-03 FIXED — the checkpoint namespace is keyed by the DOCUMENT
+    (office.checkpoint_key: a spreadsheet keeps its bare stem, other types carry their
+    extension, a stem that already ends in a type mark carries its own), with a one-time
+    migration in office.migrate_checkpoint_ns and a hands-off rule for destructive ops
+    (checkpoint_dir_to_move). Gate: test_office_journey.py (the journey) and
+    test_office_mcp.py (the key, the inverse, the migration, the corner found live).
+  · BE-01 still REPRODUCES — DEFERRED by ruling to the SSE/panel slice that owns
+    bridge/panel/index.html. It is the only line left in this file.
 """
 from __future__ import annotations
 

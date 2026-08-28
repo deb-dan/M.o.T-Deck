@@ -198,7 +198,14 @@ async def office_new(req: Request) -> JSONResponse:
 
 @app.get("/api/office/open/{name}")
 async def office_open(name: str) -> JSONResponse:
-    """The .xlsx as an IWorkbookData snapshot the Univer facade can take directly."""
+    """The .xlsx as an IWorkbookData snapshot the Univer facade can take directly.
+
+    ⚠️ `mtime` COMES BACK WITH IT, AND IT IS THE FENCE VALUE FOR THE NEXT SAVE (bug-echo
+    BE-02). A caller that opens a workbook here has, by definition, the version it
+    started from; sending it back as `expect_mtime` on /api/office/save is what turns
+    that save from an unfenced overwrite into a refusal when somebody else got there
+    first. `open_doc` reads it BEFORE the content, on purpose — see its comment.
+    """
     if _office is None:
         return _office_unavailable()
     snap, reason = await asyncio.to_thread(_office.open_doc, ROOT, name)
@@ -206,26 +213,63 @@ async def office_open(name: str) -> JSONResponse:
         _office_log(f"open reject {name!r}: {reason}")
         return JSONResponse({"ok": False, "error": reason},
                             status_code=404 if "no such" in (reason or "") else 400)
-    return JSONResponse({"ok": True, "name": name, "snapshot": snap})
+    return JSONResponse({"ok": True, "name": name, "snapshot": snap,
+                         "mtime": snap.get("file_mtime")})
 
 
 @app.post("/api/office/save")
 async def office_save(req: Request) -> JSONResponse:
+    """{name, snapshot, expect_mtime?, force?} → the tier-1 snapshot write.
+
+    ⚠️ `expect_mtime` IS THE FENCE, AND IT IS THE SAME CONTRACT /api/office/writeback
+    ALREADY HAS (bug-echo BE-02). It is the mtime the caller last SAW on disk — for the
+    grid that is office.html's `extSeen`, the baseline its 5s extCheck maintains; for the
+    Quick lane's sort it is the mtime of the open it re-read a moment earlier. A workbook
+    that moved underneath gets a 409 and NO write, unless `force` is sent — the shape
+    oo.writeback's own fence uses, so the page's 409 handling is one grammar, not two.
+    A save that carries neither is written UNFENCED and SAYS SO IN THE LOG (below): the
+    one thing this route must never do again is overwrite a newer version in silence.
+    """
     if _office is None:
         return _office_unavailable()
     try:
         body = await req.json()
     except Exception:                                            # noqa: BLE001
         body = {}
-    name = ((body or {}).get("name") or "").strip()
-    snapshot = (body or {}).get("snapshot")
-    report, reason = await asyncio.to_thread(_office.save_doc, ROOT, name, snapshot)
+    if not isinstance(body, dict):        # a JSON body can legally be a list or a string
+        body = {}
+    name = (body.get("name") or "").strip()
+    snapshot = body.get("snapshot")
+    # `mtime` is accepted as well as `expect_mtime` because the writeback route spells it
+    # that way on the wire (`?mtime=`), and one lane should not need two spellings.
+    fence = body.get("expect_mtime")
+    if fence in (None, ""):
+        fence = body.get("mtime")
+    fence = None if fence in (None, "") else fence
+    force = bool(body.get("force"))
+    # ⚠️ THE SKIP IS EXPLICIT AND LOUD, NEVER IMPLIED. `unfenced=True` is what makes
+    # save_doc write without a fence at all, and this route passes it ONLY when the
+    # caller sent nothing to fence with — which today is every tier-1 Save, because
+    # bridge/panel/office.html does not yet put `extSeen` in the body (it HAS the value;
+    # it is a one-line change in `save()` and in the Quick lane's `actWrite`, and that
+    # page is owned elsewhere this round). Until it does, this line is the honest record
+    # that the guarantee is missing rather than met.
+    report, reason = await asyncio.to_thread(
+        _office.save_doc, ROOT, name, snapshot, fence,
+        force=force, unfenced=(fence is None))
     if report is None:
         _office_log(f"save reject {name!r}: {reason}")
-        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+        # The fence refusal is a 409 like the editor's, not a 400: nothing about the
+        # request was malformed — the file moved. The page distinguishes them by status.
+        code = 409 if reason == _office.SAVE_FENCE_REFUSAL else 400
+        return JSONResponse({"ok": False, "error": reason}, status_code=code)
     _office_log(f"saved {report['name']} ({report['cells']} cells, "
                 f"{report['sheets']} sheet(s))"
-                + (f" — backup {report['backup']}" if report.get("backup") else ""))
+                + (f" — backup {report['backup']}" if report.get("backup") else "")
+                + (", FORCED over a newer version" if report.get("forced") else "")
+                + ("" if report.get("fenced") or report.get("created") else
+                   " — UNFENCED: the caller sent no expect_mtime, so a write that landed "
+                   "since it read the file has just been overwritten if there was one"))
     return JSONResponse({"ok": True, **report})
 
 

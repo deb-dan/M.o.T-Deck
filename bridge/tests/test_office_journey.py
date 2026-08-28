@@ -750,6 +750,57 @@ eq("…and it really restored the pre-apply content",
    b.sheet("F21 renamed.xlsx")["A1"].value, "orig")
 b.drop()
 
+# ── BE-03 · F-21 CAME BACK THROUGH THE STEM ──────────────────────────────────
+# The bug-echo sweep (docs/research/2026-08-28-bug-echo-sweep.md) found F-21's fix undone
+# by stage 3: `.checkpoints/<stem>/` is EXTENSION-BLIND while three document types share
+# data/office. Debi has `Budget.xlsx` (with an undo stack) and `Budget.docx`. She renames
+# the WORD file to `Notes.docx` — and `.checkpoints/Budget/`, which holds the
+# SPREADSHEET's stack and pre-agent copy, moved with it. The spreadsheet's Undo then said
+# "there is no checkpoint for that change any more — the stack keeps the last 10 per
+# workbook": a false sentence blaming pruning for an orphaned stack, F-21's exact symptom.
+# This journey is the sweep's own repro, and it must end with the undo WORKING.
+print("\n── BE-03: two documents, one stem — an undo stack belongs to ONE of them ──")
+b = Bench()
+wb = openpyxl.Workbook()
+wb.active["A1"] = "sheet-orig"
+wb.save(b.path("Budget.xlsx"))
+res = stage(b, [{"op": "set", "at": "A1", "values": [["sheet-new"]]}],
+            name="Budget.xlsx")
+apply(b, res)
+eq("the spreadsheet's apply landed", b.sheet("Budget.xlsx")["A1"].value, "sheet-new")
+check("(fixture) it has a checkpoint stack and a pre-agent copy",
+      bool(oo.list_checkpoints(b.root, "Budget.xlsx"))
+      and os.path.isfile(oo.pre_agent_for(b.path("Budget.xlsx"))))
+# A Word document that merely SHARES THE STEM. rename_doc never inspects bytes, so any
+# bytes under the right name exercise the same path Debi's real .docx would.
+shutil.copyfile(b.path("Budget.xlsx"), b.path("Budget.docx"))
+check("…and the DOCX's own row does not claim the SPREADSHEET's safety copy — a stem is "
+      "not a document",
+      not [f for f in office.list_docs(b.root)
+           if f["name"] == "Budget.docx" and f["agent_copy"]],
+      [f for f in office.list_docs(b.root) if f["name"] == "Budget.docx"])
+new_name, err = office.rename_doc(b.root, "Budget.docx", "Notes.docx")
+eq("the WORD file renames fine", new_name, "Notes.docx")
+check("BE-03 · and the SPREADSHEET's checkpoint stack is still under its own name — the "
+      "docx's rename moved nothing of the xlsx's",
+      bool(oo.list_checkpoints(b.root, "Budget.xlsx")))
+check("…nothing landed under the new Word name either",
+      not oo.list_checkpoints(b.root, "Notes.docx"))
+check("…and the pre-agent copy is still where the receipt said it was",
+      os.path.isfile(oo.pre_agent_for(b.path("Budget.xlsx"))))
+got, err = oo.undo_changeset(b.root, res["changeset_id"])
+check("…so 'Undo this change' on the spreadsheet still WORKS, instead of blaming the "
+      "10-checkpoint prune for a stack somebody else's rename walked off with",
+      got is not None, err)
+eq("…and it really restored the pre-apply content",
+   b.sheet("Budget.xlsx")["A1"].value, "sheet-orig")
+# The other half of the same blindness: DELETE. Keyed by stem, deleting the Word file
+# erased the spreadsheet's entire undo history along with its own.
+ok, err = office.delete_doc(b.root, "Notes.docx", True)
+check("a DELETE of the same-stem Word file leaves the spreadsheet's stack alone too",
+      ok and bool(oo.list_checkpoints(b.root, "Budget.xlsx")), err)
+b.drop()
+
 # ── F-02 · THE CARD NAMED A SHEET THAT WAS NOT GOING TO BE WRITTEN ───────────
 # `public_changeset` returned the REQUESTED sheet name while `target_sid` falls back to
 # the first sheet for an unknown one — so staging against "Q3 Data" on a workbook of

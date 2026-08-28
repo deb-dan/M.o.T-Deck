@@ -300,6 +300,17 @@ def brotli_sibling(path, accept_encoding) -> str:
 #
 # The write itself is temp-file + os.replace in the SAME directory, so a crash
 # mid-write leaves the old workbook intact rather than a truncated one.
+#
+# ⚠️ AND THE FENCE IS NO LONGER CALLER-OPTIONAL BY ACCIDENT (bug-echo W-01). `expect_mtime
+# =None` used to mean "do not check", silently: every caller happened to supply one, so
+# the first future caller that forgot would have got an unfenced Save with nothing said
+# anywhere — the F-01 class arriving through a default argument. None now means REFUSE TO
+# GUESS. A caller that genuinely does not know the version it started from says
+# `unfenced=True` and gets a write plus a line in the log; a caller that forgets gets a
+# sentence. The same three states, in the same words, as office.save_doc's fence.
+UNFENCED_REFUSAL = ("refused: this save carries no record of the version it started from, "
+                    "so it cannot promise not to overwrite somebody else's write. Reopen "
+                    "the document and save again.")
 
 def _zip_looking(data) -> bool:
     """OOXML is a zip. Two signatures are legal: a normal local file header and an
@@ -313,11 +324,16 @@ def _zip_looking(data) -> bool:
         bytes(data[:4]) in (b"PK\x03\x04", b"PK\x05\x06"))
 
 
-def writeback(office, root, name, data, expect_mtime=None, force=False, today=None):
+def writeback(office, root, name, data, expect_mtime=None, force=False, today=None,
+              unfenced=False):
     """(report, None) or (None, (status, reason)).
 
     `office` is the office module, injected rather than imported so this stays
     testable and so oo.py cannot resurrect a lane whose own import failed.
+
+    `expect_mtime` is the mtime the editor saw when it opened the file. None is a
+    REFUSAL, not a skip — see UNFENCED_REFUSAL above; `unfenced=True` is how a caller
+    that truly cannot know says so out loud.
     """
     if office is None:
         return None, (503, "the office module failed to load")
@@ -347,14 +363,28 @@ def writeback(office, root, name, data, expect_mtime=None, force=False, today=No
         return None, (404, f"cannot read that workbook: {e.strerror or e}")
     disk_mtime = st.st_mtime
 
-    if expect_mtime is not None and not force:
+    want = None
+    if expect_mtime is not None:
         try:
             want = float(expect_mtime)
         except (TypeError, ValueError):
             want = None
+        if want is not None and (want != want or want in (float("inf"),
+                                                          float("-inf"))):
+            want = None                                  # NaN / inf compare with nothing
+        # ⚠️ A FENCE VALUE WE CANNOT READ IS NOT "NO FENCE". This used to fall through to
+        # an unfenced write: `?mtime=lunchtime` (or a JSON null-as-string, or a truncated
+        # float) skipped the check as thoroughly as sending nothing, and the caller had
+        # every reason to believe it was fenced because it sent one.
+        if want is None:
+            return None, (400, UNFENCED_REFUSAL)
+    elif not unfenced:
+        return None, (400, UNFENCED_REFUSAL)
+
+    if want is not None and not force:
         # One second of slack: the wire carries a float that has been through JSON
         # and a filesystem whose timestamp resolution is not ours to assume.
-        if want is not None and abs(want - disk_mtime) > 1.0:
+        if abs(want - disk_mtime) > 1.0:
             return None, (409, "that workbook changed on disk since the editor opened "
                                "it — saving now would overwrite the newer version. "
                                "Reopen it, or save again with force to overwrite.")
@@ -397,4 +427,7 @@ def writeback(office, root, name, data, expect_mtime=None, force=False, today=No
         new_mtime = time.time()
     return {"name": os.path.basename(target), "bytes": len(data),
             "backup": backup, "mtime": new_mtime,
-            "forced": bool(force and expect_mtime is not None)}, None
+            # `fenced` says which of the three states this save took, so a log line (and
+            # a reader of one) never has to infer it from the absence of a 409.
+            "fenced": want is not None,
+            "forced": bool(force and want is not None)}, None

@@ -693,6 +693,97 @@ check("…and a legacy sibling copy already on disk is filtered out of the workb
       "the way a .bak is, rather than shown as a document (live finding C4)",
       office.is_agent_copy_name("Sales.pre-agent.xlsx")
       and not office.is_agent_copy_name("Sales.xlsx"))
+
+# ══ THE FOLDER IS KEYED BY THE DOCUMENT, NOT BY ITS STEM (bug-echo BE-03) ══════════
+# `.checkpoints/<stem>/` was extension-blind while three types share data/office, so
+# `Budget.xlsx` and `Budget.docx` shared one folder: the docx's rename moved the xlsx's
+# undo stack (F-21's symptom, with the Undo blaming the prune), the docx's DELETE erased
+# it, and the docx's row in the rail claimed the xlsx's pre-agent copy. The journey lives
+# in test_office_journey.py; these are the key function's own edges.
+eq("a spreadsheet's key is still its BARE STEM — nothing on disk had to move, and the "
+   "page's own mirror of this path (office.html preAgentName) stays true",
+   office.checkpoint_key("Budget.xlsx"), "Budget")
+eq("…a Word document carries its type", office.checkpoint_key("Budget.docx"),
+   "Budget-docx")
+eq("…and so does a deck", office.checkpoint_key("Budget.pptx"), "Budget-pptx")
+check("SO NO TWO DOCUMENTS CAN SHARE A FOLDER — which is the whole finding",
+      len({office.checkpoint_key(n) for n in
+           ("Budget.xlsx", "Budget.docx", "Budget.pptx")}) == 3)
+eq("…a name given without an extension is a spreadsheet, as everywhere else here",
+   office.checkpoint_key("Budget"), "Budget")
+# ⚠️ THE ESCAPE. A bare `stem + "-" + ext` would NOT be injective: a spreadsheet Debi
+# genuinely named `Budget-docx.xlsx` would key to `Budget-docx` and collide with
+# `Budget.docx` — the same bug in a new spelling. A stem that already ends in one of the
+# marks therefore carries its own.
+eq("a spreadsheet whose stem ends in a type mark carries -xlsx, so it cannot forge "
+   "another document's folder", office.checkpoint_key("Budget-docx.xlsx"),
+   "Budget-docx-xlsx")
+check("…and that really is a different folder from the .docx's",
+      office.checkpoint_key("Budget-docx.xlsx")
+      != office.checkpoint_key("Budget.docx"))
+for _n in ("Budget.xlsx", "Budget.docx", "Deck.pptx", "Budget-docx.xlsx",
+           "Sales.pre-agent.xlsx", "a-pptx-b.xlsx"):
+    eq(f"the key round-trips back to the document that owns it ({_n})",
+       office.checkpoint_key_name(office.checkpoint_key(_n)), _n)
+eq("the pre-agent copy follows the key", office_ops.pre_agent_for("/x/Sales.docx"),
+   os.path.join("/x", office.CHECKPOINT_DIR, "Sales-docx", office.PRE_AGENT_NAME))
+eq("…and so does the label the card prints",
+   office_ops.pre_agent_label("/x/Sales.docx"),
+   office.CHECKPOINT_DIR + "/Sales-docx/" + office.PRE_AGENT_NAME)
+eq("…and the rail's per-row copy path, which is what made the DOCX's row claim the "
+   "spreadsheet's copy", office.agent_copy_rel("Sales.docx"),
+   office.CHECKPOINT_DIR + "/Sales-docx/" + office.PRE_AGENT_NAME)
+# THE MIGRATION. A folder left under the pre-BE-03 stem-only name must not be orphaned by
+# the renaming of the scheme itself — and must never be CLAIMED by a document that does
+# not own it, which is the bug wearing the migration's clothes.
+_MD = tempfile.mkdtemp(prefix="ckmig-")
+os.makedirs(os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx"), exist_ok=True)
+open(os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx", "abc.xlsx"), "w").close()
+eq("a NON-SHEET never migrates: `Budget.docx`'s legacy key is `Budget-docx`, which is a "
+   "SPREADSHEET's folder — claiming it would BE the bug",
+   office.migrate_checkpoint_ns(os.path.join(_MD, "Budget.docx")),
+   os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx"))
+check("…and it moved nothing (there was nothing of its own to move)",
+      os.path.isfile(os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx",
+                                  "abc.xlsx")))
+_moved = office.migrate_checkpoint_ns(os.path.join(_MD, "Budget-docx.xlsx"))
+eq("…while the one real case — a SPREADSHEET whose key gained the escape mark — is moved "
+   "ONCE, so today's stack is not orphaned by the new scheme",
+   _moved, os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx-xlsx"))
+check("…with the checkpoints inside it",
+      os.path.isfile(os.path.join(_moved, "abc.xlsx"))
+      and not os.path.isdir(os.path.join(_MD, office.CHECKPOINT_DIR, "Budget-docx")))
+check("…and the second call is a no-op rather than a second move",
+      office.migrate_checkpoint_ns(os.path.join(_MD, "Budget-docx.xlsx")) == _moved
+      and os.path.isfile(os.path.join(_moved, "abc.xlsx")))
+check("an ordinary spreadsheet's migration touches the filesystem not at all — its key "
+      "IS the legacy name",
+      office.migrate_checkpoint_ns(os.path.join(_MD, "Plain.xlsx"))
+      == os.path.join(_MD, office.CHECKPOINT_DIR, "Plain")
+      and not os.path.exists(os.path.join(_MD, office.CHECKPOINT_DIR, "Plain")))
+# ⚠️ THE ESCAPE MARK MEETS THE LEGACY SCHEME — FOUND BY DRIVING THE FIX ON A REAL BRIDGE,
+# not by reading it. `Mig.docx`'s key is `Mig-docx`, which is ALSO the pre-BE-03 stem-only
+# folder name of the SPREADSHEET `Mig-docx.xlsx`. On an install that has not migrated yet,
+# renaming or deleting that .docx walked off with the spreadsheet's stack — BE-03 itself,
+# surviving in the corner its own fix created. A destructive op on a non-sheet therefore
+# keeps its hands off a folder a real spreadsheet could still own.
+open(os.path.join(_MD, "Mig-docx.xlsx"), "w").close()
+open(os.path.join(_MD, "Mig.docx"), "w").close()
+os.makedirs(os.path.join(_MD, office.CHECKPOINT_DIR, "Mig-docx"), exist_ok=True)
+eq("a rename/delete of Mig.docx may NOT take .checkpoints/Mig-docx/ — Mig-docx.xlsx is "
+   "right there and that folder may be its pre-fix stack",
+   office.checkpoint_dir_to_move(os.path.join(_MD, "Mig.docx")), "")
+eq("…while the SPREADSHEET that owns it may (its own escaped key, migrated on the way)",
+   office.checkpoint_dir_to_move(os.path.join(_MD, "Mig-docx.xlsx")),
+   os.path.join(_MD, office.CHECKPOINT_DIR, "Mig-docx-xlsx"))
+check("…and that really did move the folder rather than inventing an empty one",
+      os.path.isdir(os.path.join(_MD, office.CHECKPOINT_DIR, "Mig-docx-xlsx"))
+      and not os.path.exists(os.path.join(_MD, office.CHECKPOINT_DIR, "Mig-docx")))
+eq("an ordinary .docx with no such spreadsheet beside it still owns its own folder — the "
+   "guard is narrow, not a blanket refusal",
+   office.checkpoint_dir_to_move(os.path.join(_MD, "Ordinary.docx")),
+   os.path.join(_MD, office.CHECKPOINT_DIR, "Ordinary-docx"))
+shutil.rmtree(_MD, ignore_errors=True)
 if HAVE_XL:
     make("undo.xlsx", [["before"]])
     out, reason = run("undo.xlsx", [{"op": "set", "at": "A1", "values": [["after"]]}])

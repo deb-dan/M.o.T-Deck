@@ -243,6 +243,14 @@ async def office_writeback(name: str, req: Request) -> JSONResponse:
     workbook that changed underneath gets a 409 and no write, unless `?force=1`.
     A daily .bak is taken first and the write is temp-file + os.replace — see
     oo.writeback, which owns all of that.
+
+    ⚠️ NO `?mtime=` IS A DELIBERATE, LOGGED SKIP — NEVER AN IMPLIED ONE (bug-echo W-01).
+    oo.html omits the param only when `openedMtime === null`, i.e. when the editor never
+    learned the file's mtime at all. That caller genuinely cannot fence, and refusing its
+    Save would trap the user's edits inside the editor to protect a file nobody else was
+    writing — a worse loss than the one the fence prevents. So this route says `unfenced`
+    OUT LOUD, in the call and in the log, instead of letting a default argument decide it
+    silently for every future caller too.
     """
     if _oo is None:
         return _oo_unavailable()
@@ -251,10 +259,11 @@ async def office_writeback(name: str, req: Request) -> JSONResponse:
     raw = await req.body()
     q = req.query_params
     mtime = q.get("mtime")
+    mtime = mtime if mtime not in (None, "") else None
     force = q.get("force") in ("1", "true", "yes")
     report, err = await asyncio.to_thread(
-        _oo.writeback, _office, ROOT, name, raw,
-        mtime if mtime not in (None, "") else None, force)
+        _oo.writeback, _office, ROOT, name, raw, mtime, force, None,
+        mtime is None)
     if report is None:
         status, reason = err
         _office_log(f"oo-writeback reject {name!r}: {status} {reason}")
@@ -262,5 +271,9 @@ async def office_writeback(name: str, req: Request) -> JSONResponse:
                             headers=_oo_headers())
     _office_log(f"oo-writeback saved {report['name']} ({report['bytes']} bytes"
                 + (f", .bak {report['backup']}" if report["backup"] else "")
-                + (", FORCED" if report["forced"] else "") + ")")
+                + (", FORCED" if report["forced"] else "")
+                + ("" if report.get("fenced") else
+                   ", UNFENCED: the editor sent no mtime, so nothing checked whether "
+                   "this overwrote a newer version")
+                + ")")
     return JSONResponse({"ok": True, **report}, headers=_oo_headers())

@@ -199,6 +199,196 @@ check("unknown flag exits non-zero", r.returncode != 0)
 check("unknown flag is named", "unknown argument '--wat'" in r.stdout)
 
 
+# ══ 2b. THE PACKAGE COPY IS RECURSIVE, AND FENCED ═════════════════════════════
+# bug-echo W-02 (the flat-glob class, the v1.5.15 near-miss). `cp "$ROOT/bridge/$_pkg"/*.py`
+# shipped bridge/core and bridge/routers ONE LEVEL DEEP. Nothing was wrong on the day it
+# was written — neither package had a subdirectory — but the failure it sets up is the
+# worst shape there is: the repo runs perfectly, the SNAPSHOT cannot import, and the
+# difference is invisible until the app is launched. So the copy walks every depth, and a
+# FENCE re-checks the result: if any .py the repo's packages hold is missing from the
+# snapshot, the ship stops instead of restarting onto a broken tree.
+#
+# ⚠️ BOTH HALVES ARE EXECUTED, NOT GREPPED. The block is extracted from ship.sh itself and
+# run against temp directories — a grep for the word "find" would have passed on a copy
+# that still lost the file.
+_A = SHIP.index("_pkg_pys() {")
+_Z = SHIP.index("for d in scripts guards policies")
+COPY_AND_FENCE = SHIP[_A:_Z]
+FENCE_ONLY = (SHIP[_A:SHIP.index("for _pkg in core routers", _A)]
+              + SHIP[SHIP.index('_missing=""', _A):_Z])
+check("(anchors) both halves were found in ship.sh",
+      "find ." in COPY_AND_FENCE and '_missing=""' in COPY_AND_FENCE
+      and "find ." in FENCE_ONLY and "for _pkg in core routers" not in
+      FENCE_ONLY.split('_missing=""')[0])
+
+
+def _shipbed():
+    """A repo-shaped source tree with a NESTED subpackage, and an empty snapshot."""
+    bed = tempfile.mkdtemp(prefix="shipglob-")
+    src, dst = os.path.join(bed, "repo"), os.path.join(bed, "snap")
+    for rel in ("bridge/core", "bridge/core/sub", "bridge/core/__pycache__",
+                "bridge/routers", "bridge/routers/deep/deeper"):
+        os.makedirs(os.path.join(src, rel), exist_ok=True)
+    for rel in ("bridge/core/flat.py", "bridge/core/sub/__init__.py",
+                "bridge/core/sub/nested.py", "bridge/routers/r.py",
+                "bridge/routers/deep/deeper/buried.py"):
+        open(os.path.join(src, rel), "w").write("# x\n")
+    open(os.path.join(src, "bridge/core/__pycache__/flat.cpython-313.pyc"),
+         "w").write("junk")
+    os.makedirs(os.path.join(dst, "bridge"), exist_ok=True)
+    return bed, src, dst
+
+
+def _runblock(block, src, dst):
+    return subprocess.run(["bash", "-c", 'set -euo pipefail\nROOT="$1"\nDST="$2"\n'
+                           + block, "_", src, dst], capture_output=True, text=True)
+
+
+_bed, _src, _dst = _shipbed()
+r = _runblock(COPY_AND_FENCE, _src, _dst)
+check("the package copy runs clean", r.returncode == 0 and not r.stdout.strip())
+check("flat modules still ship (the behaviour that was already right)",
+      os.path.isfile(os.path.join(_dst, "bridge/core/flat.py"))
+      and os.path.isfile(os.path.join(_dst, "bridge/routers/r.py")))
+check("A SUBPACKAGE SHIPS — with its __init__.py, which is what makes it importable",
+      os.path.isfile(os.path.join(_dst, "bridge/core/sub/nested.py"))
+      and os.path.isfile(os.path.join(_dst, "bridge/core/sub/__init__.py")))
+check("…at ANY depth, not just one level down",
+      os.path.isfile(os.path.join(_dst, "bridge/routers/deep/deeper/buried.py")))
+check("__pycache__ still never travels (the snapshot runs the bridge, it does not "
+      "carry its build droppings)",
+      not os.path.exists(os.path.join(_dst, "bridge/core/__pycache__")))
+check("the copy is idempotent — a second ship over the same snapshot is clean",
+      _runblock(COPY_AND_FENCE, _src, _dst).returncode == 0)
+
+# THE FENCE, against the exact regression it exists for: a snapshot populated by the OLD
+# flat glob. This is the state a future "tidy-up" back to `cp "$pkg"/*.py` would produce.
+_bed2, _src2, _dst2 = _shipbed()
+for _pkg in ("core", "routers"):
+    os.makedirs(os.path.join(_dst2, "bridge", _pkg), exist_ok=True)
+    for _f in os.listdir(os.path.join(_src2, "bridge", _pkg)):
+        if _f.endswith(".py"):
+            open(os.path.join(_dst2, "bridge", _pkg, _f), "w").write("# x\n")
+r = _runblock(FENCE_ONLY, _src2, _dst2)
+check("A FLAT-GLOB SNAPSHOT IS REFUSED — the fence catches the regression, it does not "
+      "merely describe it", r.returncode != 0)
+check("…and it NAMES every module that did not make it",
+      "bridge/core/sub/nested.py" in r.stdout
+      and "bridge/routers/deep/deeper/buried.py" in r.stdout)
+check("…and says what the consequence would have been, in words",
+      "would fail to" in r.stdout and "INCOMPLETE" in r.stdout)
+check("…and that nothing was restarted onto it",
+      "Nothing was restarted" in r.stdout)
+check("a COMPLETE snapshot passes the same fence (it is not a fence that always fires)",
+      _runblock(FENCE_ONLY, _src, _dst).returncode == 0)
+for _b in (_bed, _bed2):
+    subprocess.run(["rm", "-rf", _b], check=False)
+check("the ship's own packages are copied by the fenced block, not by a stray glob "
+      "left behind beside it",
+      'cp "$ROOT/bridge/$_pkg"/*.py' not in SHIP)
+
+
+# ══ 2c. A FOREIGN llama-server IS NAMED, AND REFUSED UNLESS IT IS THE PIN ═════
+# bug-echo W-04 — ruling #4's own class (a foreign app's state under our feet), crossed
+# with the wrong-oracle class. The runner's binary discovery falls back to Jan's and LM
+# Studio's home directories, and those apps upgrade that binary whenever they like while
+# THIS harness's probe/auth expectations are pinned against one build: llama.cpp b10662
+# made /v1/models require a key where the build before it did not, and finding that 401
+# cost a session. Starting a stranger's binary silently re-opens it.
+#
+# The gate block is EXTRACTED FROM start_component.sh AND RUN, against fake binaries that
+# report a build number — a grep for the pin would pass on a gate that never fires.
+START = (ROOT / "scripts" / "start_component.sh").read_text()
+_GA = START.index('if [[ -n "${BIN_OWNER:-}" ]]; then')
+_GZ = START.index("# CTX preference", _GA)
+GATE = START[_GA:_GZ]
+PIN = ""
+for _ln in (ROOT / "harness.yaml").read_text().splitlines():
+    if _ln.strip().startswith("llamacpp_pin:"):
+        PIN = _ln.split(":", 1)[1].split("#")[0].strip()
+        break
+check("(fixture) the pin is readable from harness.yaml", PIN.startswith("b"))
+check("the discovery records WHOSE binary it found, which is what the gate rests on",
+      'BIN_OWNER="Jan"' in START and 'BIN_OWNER="LM Studio"' in START)
+check("…and an EXPLICIT runner.binary is exempt — a person named it on purpose",
+      'BIN="$R_BIN"; BIN_OWNER=""' in START)
+
+_fbed = tempfile.mkdtemp(prefix="foreignrunner-")
+
+
+def _fake_llama(name, version_line):
+    p = os.path.join(_fbed, name)
+    with open(p, "w") as fh:
+        fh.write("#!/bin/sh\n" + (f'echo "{version_line}"\n' if version_line else "")
+                 + "exit 0\n")
+    os.chmod(p, 0o755)
+    return p
+
+
+def _rungate(binp, owner, env=None):
+    e = dict(os.environ)
+    e.pop("HARNESS_ALLOW_FOREIGN_RUNNER", None)
+    e.update(env or {})
+    return subprocess.run(
+        ["bash", "-c", 'set -uo pipefail\nBIN="$1"\nBIN_OWNER="$2"\n' + GATE, "_",
+         binp, owner],
+        capture_output=True, text=True, cwd=str(ROOT), env=e)
+
+
+_ok_bin = _fake_llama("match", f"version: 0.3.0-dev (build {PIN.lstrip('b')}, commit abc)")
+_old_bin = _fake_llama("drift", "version: 0.3.0-dev (build 9001, commit abc)")
+_mute_bin = _fake_llama("mute", "")
+
+r = _rungate(_ok_bin, "")
+check("no owner, no gate — an ordinary start on OUR pinned binary says nothing new",
+      r.returncode == 0 and not r.stdout.strip())
+
+r = _rungate(_ok_bin, "LM Studio")
+check("a foreign binary whose build IS the pin is allowed", r.returncode == 0)
+check("…but it is still SAID OUT LOUD, naming the app it belongs to",
+      "NOT OURS" in r.stdout and "LM Studio" in r.stdout)
+check("…and the exact path, because 'a foreign binary' is not something you can grep for",
+      _ok_bin in r.stdout)
+check("…and both build numbers, so the comparison is checkable rather than asserted",
+      PIN.lstrip("b") in r.stdout and PIN in r.stdout and "MATCHES the pin" in r.stdout)
+
+r = _rungate(_old_bin, "Jan")
+check("A BUILD THAT DIFFERS FROM THE PIN IS REFUSED, not run", r.returncode != 0)
+check("…naming the drift in numbers", "9001" in r.stdout and PIN in r.stdout)
+check("…and the app whose binary it is", "Jan" in r.stdout)
+check("…with the fix, not just the complaint",
+      "./scripts/install_llamacpp.sh" in r.stdout and "runner.binary" in r.stdout)
+check("…and the reason stated as the incident it comes from, so the refusal is arguable",
+      "b10662" in r.stdout and "401" in r.stdout)
+check("…and the override is named in the refusal itself",
+      "HARNESS_ALLOW_FOREIGN_RUNNER=1" in r.stdout)
+
+r = _rungate(_mute_bin, "Jan")
+check("A BINARY WHOSE BUILD CANNOT BE READ IS REFUSED TOO — 'unverifiable' is not "
+      "'fine' for a foreign binary under pinned contracts", r.returncode != 0)
+check("…and says so in those terms rather than inventing a version",
+      "unreadable" in r.stdout)
+
+r = _rungate(_old_bin, "Jan", {"HARNESS_ALLOW_FOREIGN_RUNNER": "1"})
+check("the override really opens the gate", r.returncode == 0)
+check("…and is LOUD about what it just allowed, including what to suspect first",
+      "deliberately" in r.stdout and "401" in r.stdout)
+subprocess.run(["rm", "-rf", _fbed], check=False)
+
+# The python half of the same discovery must carry the same gate, in the same words:
+# a rule that exists on one of two shared paths is a rule a user finds by getting past it.
+check("bridge/routers/models.py's aux start has the gate too",
+      "foreign_runner_gate(" in _APP_SOURCE and "FOREIGN_RUNNER_ENV" in _APP_SOURCE)
+check("…keyed on the SAME env var as the shell",
+      'HARNESS_ALLOW_FOREIGN_RUNNER' in _APP_SOURCE
+      and "HARNESS_ALLOW_FOREIGN_RUNNER" in START)
+check("…refusing with a 409 rather than starting the stranger's binary",
+      'return JSONResponse({"ok": False, "log": refusal}, status_code=409)'
+      in _APP_SOURCE)
+check("…and it knows WHOSE binary it picked, which the old flat `or` could not say",
+      'owner = "Jan" if jan else "LM Studio"' in _APP_SOURCE)
+
+
 # ══ 3. build stamp + backwards-seeding guard ══════════════════════════════════
 check("build_app.sh writes a SEED_STAMP into the staged seed",
       '> "$STAGE/SEED_STAMP"' in BUILD)

@@ -36,7 +36,14 @@
          padding:6px 13px;cursor:pointer}
   button:hover{border-color:var(--gold)}
   button:disabled{opacity:.45;cursor:default}
-  button.primary{background:var(--cream);color:#171420;border-color:var(--cream)}
+  /* ⚠️ THE INK ON A CREAM-FILLED CONTROL IS var(--bg), NEVER A HARDCODED NEAR-BLACK
+     (bug-echo W-06, the same shape as the .ap-cmd class fixed in v1.5.13). `#171420` was
+     a literal copy of the panel's dark background: right by coincidence in this palette,
+     and invisible the moment a light palette reaches this page — in light, --cream is
+     DARK ink (#221d14) and dark-on-dark reads as an empty rectangle. var(--bg) inverts
+     with the palette by construction, which is why index.html's own light block spells
+     it exactly this way: html[data-theme="light"] button.primary { color:var(--bg) }. */
+  button.primary{background:var(--cream);color:var(--bg);border-color:var(--cream)}
   .grow{flex:1 1 auto}
   #note{flex:none;padding:8px 16px;color:var(--faint);font-size:11.5px;
         border-bottom:1px solid var(--line);background:var(--bg2)}

@@ -194,15 +194,49 @@ PYRESOLVE
     if [[ -z "$R_BIN" ]]; then
       # SHARED binary-discovery order (keep identical in bridge/app.py aux_start):
       #   explicit runner.binary → OUR pin (data/llamacpp) → Jan backends → LM Studio.
-      BIN=""
+      BIN=""; BIN_OWNER=""
       [[ -x "data/llamacpp/build/bin/llama-server" ]] && BIN="data/llamacpp/build/bin/llama-server"
-      [[ -n "$BIN" ]] || BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1)
+      [[ -n "$BIN" ]] || { BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1); [[ -n "$BIN" ]] && BIN_OWNER="Jan"; }
       # Fallback: LM Studio's backends (often newer llama.cpp — needed for e.g. MTP models).
-      [[ -n "$BIN" ]] || BIN=$(ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1)
+      [[ -n "$BIN" ]] || { BIN=$(ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1); [[ -n "$BIN" ]] && BIN_OWNER="LM Studio"; }
       [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — run scripts/install_llamacpp.sh or set runner.binary in harness.yaml"; exit 1; }
     else
-      BIN="$R_BIN"
+      BIN="$R_BIN"; BIN_OWNER=""
       [[ -x "$BIN" ]] || { echo "ERROR: runner.binary is not executable: $BIN"; exit 1; }
+    fi
+    # ⚠️ A FOREIGN APP'S llama-server IS NOT OUR PINNED CONTRACT (bug-echo W-04, the
+    # Unsloth class crossed with the wrong-oracle class). The two fallbacks above run a
+    # binary that belongs to Jan or LM Studio: a different app upgrades it whenever it
+    # likes, and this harness's probe/auth expectations are pinned against ONE build.
+    # That is not hypothetical — llama.cpp b10662's /v1/models started REQUIRING auth
+    # where the previous build did not, and the 401 regression that caused took a session
+    # to find. Silently starting a stranger's binary of unknown vintage re-opens it.
+    # An EXPLICIT runner.binary is exempt: that is a person naming a binary on purpose.
+    if [[ -n "${BIN_OWNER:-}" ]]; then
+      L_PIN=$(awk '/^runner:/{f=1} f && /^  llamacpp_pin:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_pin:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      L_BUILD=$("$BIN" --version 2>&1 | sed -n 's/.*build \([0-9][0-9]*\).*/\1/p' | head -1)
+      echo "[harness] ⚠️  THE RUNNER BINARY IS NOT OURS. It belongs to ${BIN_OWNER}:"
+      echo "[harness]      $BIN"
+      echo "[harness]      build ${L_BUILD:-unreadable} · this harness is pinned to ${L_PIN:-(no pin set)}"
+      if [[ -n "$L_PIN" && "$L_BUILD" == "${L_PIN#b}" ]]; then
+        echo "[harness]      the build MATCHES the pin, so the pinned contracts hold. Using it."
+      elif [[ "${HARNESS_ALLOW_FOREIGN_RUNNER:-0}" == "1" ]]; then
+        echo "[harness]      HARNESS_ALLOW_FOREIGN_RUNNER=1 — starting it anyway, deliberately."
+        echo "[harness]      If the model answers but the panel says the runner is down, or"
+        echo "[harness]      /v1/models 401s, THIS is the first thing to suspect."
+      else
+        echo "ERROR: refusing to start the runner on ${BIN_OWNER}'s llama-server."
+        echo "  Its build (${L_BUILD:-unreadable}) is not the one this harness is pinned"
+        echo "  against (${L_PIN:-(none)}), and ${BIN_OWNER} can change it at any time"
+        echo "  without telling us. Our /v1/models auth probe is pinned per build: b10662"
+        echo "  made that endpoint require a key where the build before it did not (a 401"
+        echo "  regression that cost a whole session to find), and the same drift in the"
+        echo "  other direction reads to the panel as 'the runner is down'."
+        echo "  Fix it properly:   ./scripts/install_llamacpp.sh"
+        echo "  Name it on purpose: set runner.binary in harness.yaml"
+        echo "  Or override, knowing the above: HARNESS_ALLOW_FOREIGN_RUNNER=1 <this command>"
+        exit 1
+      fi
     fi
     # CTX preference: the model's SAVED load.ctx (Models → Load, v2) wins, then the
     # registry ctx, then harness.yaml ctx_size, then 65536.

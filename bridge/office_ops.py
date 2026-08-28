@@ -173,7 +173,9 @@ CHANGESET_TTL = 600.0            # spec §1: "TTL ~10 min"
 CHANGESET_MAX = 24               # a cheap bound on the bridge-held store
 PREVIEW_MAX_CELLS = 400          # the card lists this many before→after rows, then says
                                  # how many more there are — never a silent truncation
-CHECKPOINT_DIR = office.CHECKPOINT_DIR   # under data/office/, one folder per stem
+# Under data/office/, one folder per DOCUMENT — office.checkpoint_key, not the file stem
+# (bug-echo BE-03: three types share this folder and a stem is not a document).
+CHECKPOINT_DIR = office.CHECKPOINT_DIR
 CHECKPOINT_KEEP = 10             # spec §3: "keep last 10 per workbook, prune oldest"
 
 # THE SENTENCE THAT TRAVELS IN EVERY STAGING RESULT, so the MODEL reads it and not only
@@ -1999,23 +2001,31 @@ def pre_agent_for(path) -> str:
     the checkpoint stack, which is where somebody looking for "the version before" will
     look — and `office.rename_doc` now moves that folder, so F-21 is fixed by the same
     change.
+
+    ⚠️ AND THE FOLDER IS KEYED BY THE DOCUMENT, NOT BY ITS STEM (bug-echo BE-03). Keyed
+    by stem, `Budget.docx` and `Budget.xlsx` shared one — so the docx's row in the rail
+    claimed the SPREADSHEET's safety copy, and renaming either one moved the other's undo
+    history. `office.checkpoint_key` owns that naming now; a spreadsheet's key is still
+    its bare stem, so nothing on disk moved for the common case.
     """
-    d = os.path.dirname(str(path)) or "."
-    stem = os.path.splitext(os.path.basename(str(path)))[0]
-    return os.path.join(d, office.CHECKPOINT_DIR, stem, office.PRE_AGENT_NAME)
+    return os.path.join(office.checkpoint_dir_for(path), office.PRE_AGENT_NAME)
 
 
 def pre_agent_label(path) -> str:
     """What the CARD, the receipt and the tool result call that copy: a relative path,
     so nobody reads it as a sibling workbook they could open in the rail."""
-    stem = os.path.splitext(os.path.basename(str(path)))[0]
-    return office.CHECKPOINT_DIR + "/" + stem + "/" + office.PRE_AGENT_NAME
+    return (office.CHECKPOINT_DIR + "/" + office.checkpoint_key(path) + "/"
+            + office.PRE_AGENT_NAME)
 
 
 def take_pre_agent(path):
     """(label, None) or (None, reason). A copy we cannot write is a reason to STOP,
     never to write anyway — the same ruling office.save_doc makes about the daily
     `.bak`, for the same reason: this file is the only undo the agent lane has."""
+    # A folder still sitting under the pre-BE-03 stem-only name is moved to this
+    # document's key ONCE, here, before the copy lands — otherwise this write would put
+    # the new copy in a new folder and leave the old stack unreachable.
+    office.migrate_checkpoint_ns(path)
     dst = pre_agent_for(path)
     try:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -2319,6 +2329,16 @@ def _apply(root, name, sheet, ops, count, label):
     st = open_state(name)
     if st["dirty"]:
         return None, APPLY_DIRTY_REFUSAL
+    # ⚠️ THE VERSION THIS APPLY STARTED FROM (bug-echo BE-02). It is read HERE, one line
+    # before the snapshot, and handed to `office.save_doc` at the bottom as its fence: a
+    # write that lands between this read and that save — a second tab's ⌘S, the editor's
+    # writeback, another apply — must not be reverted to the snapshot taken below.
+    # `_apply_gate` already fenced the changeset's STAGED mtime; this fences the much
+    # shorter window between reading the file and writing it back, which no gate can.
+    try:
+        read_mtime = os.stat(target).st_mtime
+    except OSError as e:
+        return None, f"cannot read that workbook: {e.strerror or e}"
     try:
         snap = office.snapshot_from_path(target)
     except office.OfficeError as e:
@@ -2332,8 +2352,15 @@ def _apply(root, name, sheet, ops, count, label):
     done = run_ops(snap, sid, ops)
     if done is None:
         return None, "refused: those operations could not be applied to that sheet"
-    report, reason = office.save_doc(root, os.path.basename(target), snap)
+    report, reason = office.save_doc(root, os.path.basename(target), snap, read_mtime,
+                                     slack=FENCE_EPS)
     if report is None:
+        # The generic save refusal ("Reload it, or save again with force") is a sentence
+        # about a PAGE. In here the answer already has words, and they are the ones the
+        # card and the receipt use: this apply's preview is out of date, nothing landed,
+        # ask again and it is re-previewed against the file as it is now.
+        if reason == office.SAVE_FENCE_REFUSAL:
+            return None, APPLY_FENCE_REFUSAL.format(name=os.path.basename(target))
         return None, reason
     notes = list(done["notes"])
     notes.append(AGENT_UNDO_NOTE.format(backup=backup))
@@ -3116,8 +3143,16 @@ def _summary_line(name, done, cells, exists, styles=0, merges=0) -> str:
 # answer about a SPECIFIC apply rather than about the last one.
 
 def checkpoint_dir(root, name) -> str:
-    stem = os.path.splitext(os.path.basename(str(name)))[0]
-    return os.path.join(office.office_dir(root), CHECKPOINT_DIR, stem)
+    """This DOCUMENT's stack folder — `.checkpoints/<key>/`, not `.checkpoints/<stem>/`
+    (bug-echo BE-03: three types share data/office, and a stem is not a document).
+
+    ⚠️ THIS IS THE FUNNEL EVERY STACK PATH GOES THROUGH (push, list, prune, restore,
+    checkpoint_path), which is why the one-time migration of a folder left under the old
+    stem-only name is invoked HERE — one place, on every read and every write, so a
+    stack cannot be orphaned by the rename of the scheme itself.
+    """
+    return office.migrate_checkpoint_ns(
+        os.path.join(office.office_dir(root), os.path.basename(str(name))))
 
 
 def checkpoint_path(root, name, cid) -> str:
@@ -3538,15 +3573,21 @@ def undo_changeset(root, cid, now=None):
 
 
 def _checkpoint_owner(root, cid):
-    """Which workbook stems hold a checkpoint with this id. Used only by the
-    no-record undo path above."""
+    """Which DOCUMENTS hold a checkpoint with this id. Used only by the no-record undo
+    path above.
+
+    ⚠️ THE NAME COMES BACK THROUGH `checkpoint_key_name`, THE EXACT INVERSE OF THE KEY
+    (bug-echo BE-03). This used to be `stem + ".xlsx"`, which for any folder belonging to
+    a .docx or .pptx named a file that does not exist — and with the stem-only scheme it
+    could not have distinguished them anyway.
+    """
     base = os.path.join(office.office_dir(root), CHECKPOINT_DIR)
     try:
-        stems = os.listdir(base)
+        keys = os.listdir(base)
     except OSError:
         return []
     out = []
-    for stem in stems:
-        if os.path.isfile(os.path.join(base, stem, str(cid) + office.DOC_EXT)):
-            out.append(stem + office.DOC_EXT)
+    for key in keys:
+        if os.path.isfile(os.path.join(base, key, str(cid) + office.DOC_EXT)):
+            out.append(office.checkpoint_key_name(key))
     return out

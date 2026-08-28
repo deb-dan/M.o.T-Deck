@@ -107,12 +107,44 @@ done
 # failure and still worth spelling out, because the glob LOOKED complete for a year.
 # Everything else under bridge/ (tests/, contract_tests/, __pycache__/) stays out, as
 # it always has: the snapshot runs the bridge, it does not test it.
+#
+# ⚠️ RECURSIVE, NOT A FLAT GLOB — AND FENCED (bug-echo W-02). `cp "$pkg"/*.py` ships ONE
+# LEVEL. The comment above says why the packages must be copied at all, but the glob
+# itself repeated the shape of the near-miss it exists to fix: the day either package
+# grows a SUBpackage (`bridge/core/foo/*.py`), the snapshot silently loses it and the
+# bridge fails to import IN THE APP while the repo runs perfectly. So: every `*.py` at
+# every depth, with its directory structure. __pycache__ still never travels.
+_pkg_pys() {   # every .py under bridge/$1, relative to it, __pycache__ pruned
+  ( cd "$ROOT/bridge/$1" 2>/dev/null \
+    && find . -name '__pycache__' -prune -o -name '*.py' -print ) | sed 's|^\./||'
+}
 for _pkg in core routers; do
-  if [[ -d "$ROOT/bridge/$_pkg" ]]; then
-    mkdir -p "$DST/bridge/$_pkg"
-    cp "$ROOT/bridge/$_pkg"/*.py "$DST/bridge/$_pkg/"
-  fi
+  [[ -d "$ROOT/bridge/$_pkg" ]] || continue
+  mkdir -p "$DST/bridge/$_pkg"
+  while IFS= read -r _f; do
+    [[ -n "$_f" ]] || continue
+    mkdir -p "$DST/bridge/$_pkg/$(dirname "$_f")"
+    cp "$ROOT/bridge/$_pkg/$_f" "$DST/bridge/$_pkg/$_f"
+  done < <(_pkg_pys "$_pkg")
 done
+# AND THE FENCE, because "recursive today" is not "recursive for ever": a future edit
+# that reverts to a glob, or a single copy that fails, must STOP THE SHIP rather than
+# leave a snapshot that cannot import. Every .py the repo's packages hold must be in the
+# snapshot, by path. This is the assertion the flat glob never had.
+_missing=""
+for _pkg in core routers; do
+  [[ -d "$ROOT/bridge/$_pkg" ]] || continue
+  while IFS= read -r _f; do
+    [[ -n "$_f" ]] || continue
+    [[ -f "$DST/bridge/$_pkg/$_f" ]] || _missing="$_missing bridge/$_pkg/$_f"
+  done < <(_pkg_pys "$_pkg")
+done
+if [[ -n "$_missing" ]]; then
+  echo "[ship] ERROR: these package modules did not reach the snapshot:$_missing"
+  echo "[ship]   The snapshot is INCOMPLETE — the bridge in the app would fail to"
+  echo "[ship]   import. Nothing was restarted. Fix the copy above and ship again."
+  exit 1
+fi
 for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
