@@ -71,6 +71,31 @@ Verified: fastapi 0.139.2, starlette 1.3.1, uvicorn 0.51.0, websockets 17.0.1, o
 - **Update path:** these aren't pinned in harness.yaml; they ride whatever provisions bridge-venv (bootstrap/requirements). Any bump = reinstall into data/bridge-venv + run the contract suite + ship.sh.
 
 ### ONLYOFFICE bundles (LOffice tier 2) — INSTALLED (data/onlyoffice, hash-pinned)
+> **‼️ SUPERSEDED 2026-08-28 (same day): the bump was DONE, probed and KEPT.**
+> Editor is now **`v9.2.0.119+5`** — sha256 `3f4987af…0715`, sha512 `1f1184fb…04cfa`, and
+> that sha512 is **CryptPad's own pinned digest**. x2t stays **`v7.3+1`** (unchanged; its
+> sha512 already matched CryptPad's all along). Full WKWebView probe pass, old-vs-new, on
+> the real bridge: every journey identical, zero console errors, nothing rolled back —
+> **`docs/handoff/ONLYOFFICE-PROBE-RUNBOOK.md` → "RESULTS ADDENDUM — 2026-08-28"**.
+>
+> Two corrections to the bullets below, both from reading CryptPad live rather than from
+> search results: **(1) there was never an ambiguity.** CryptPad pins `+5` on every
+> RELEASED branch — `main`, `2026.5.1-rc`, `2026.4-rc`, `2026.2.2-rc`, identical hash in
+> all four — and the `v9.3.0+0` x2t appears only on their **unreleased** test branches
+> (`2026.4-test`: editor `v9.3.0.140+0`; `2026-autumn-test`: editor `v9.3.2+1`). Our "+3"
+> was simply two builds behind their tested pair, which is also the whole explanation of
+> the runbook's "our sha512 is not in their installer" note. **(2) the bump was far cheaper
+> than "deferred" implied:** 31 of 16604 files differ, and `x2t.js`, `x2t.wasm`, `api.js`,
+> `api-orig.js` and all three `sdkjs/*/sdk-all-min.js` are byte-identical FILES — so not one
+> integration surface moved. The real changes: `presentationeditor/app.js` (+41 bytes, the
+> Slide Master fix), the three `index.html`s (a dead `return;` removed from
+> `injectSvgIcons`, live only above 2.25 dppx), and 4 new fonts (91 → 95 faces, picked up
+> automatically because `/api/oo/fonts` reads the directory).
+>
+> The **v9.3 editor + x2t pair stays correctly deferred**: a new x2t means re-measuring the
+> entire PDF recipe (the `c_oAscFileType` codes and `m_bIsNoBase64`, both of which fail
+> SILENTLY when wrong), and CryptPad has not released it. Ranked recommendation #6 below
+> is DONE for the +5 half and still open for the v9.3 half.
 - **Our pin:** editor `cryptpad/onlyoffice-editor v9.2.0.119+3` (sha256 68ae8f0f…), x2t `cryptpad/onlyoffice-x2t-wasm v7.3+1` (sha256 86b6f1ac…). **The pin is the recorded HASH, not the tag** (2026-08-27 ruling; CryptPad's own installer pinned a neighbouring build).
 - **Latest:** editor family — `v9.2.0.119+5` ("Fix Slide Master view"; +4 fixed toolbar at large display zoom), then a newer **v9.3 train** up to `v9.3.2+2`. x2t — `v8.3.0+0` and `v9.3.0+0` (x2t upgraded to v9.3.0.140) exist above our v7.3+1.
 - **Delta:** **BUGFIX-WORTHWHILE but deliberately deferred** — the known open question from the probe runbook: CryptPad's install script itself reads two ways (`+5` in one reading, `+3` in another). `+4`/`+5` are small view/toolbar fixes; the v9.3 train + new x2t is a bigger move that would need a fresh WKWebView probe pass (the current bytes are the ones that were *measured*). Nothing security-flagged. If bumping, prefer the whole v9.3 editor+x2t pair as one re-probe, not a mixed set.

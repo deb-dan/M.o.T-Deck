@@ -216,7 +216,11 @@ touched — no component, no port, no manifest key, no venv, no `vendor/`, and n
   this exact class — assets exported from a Developer-Edition Docker image — as a licensing
   hazard. Track A is a **measurement vehicle only**; adoption vendors Track B's zips, whose
   lineage through CryptPad is clean and checksummed.
-- **The pins are ⚠️ unresolved between two readings.** The research read CryptPad's installer
+- **The pins are ⚠️ unresolved between two readings.** ✅ **RESOLVED 2026-08-28 — see the
+  RESULTS ADDENDUM at the bottom of this file. Both readings were right about different
+  things:** CryptPad's released pin is editor `v9.2.0.119+5` with x2t `v7.3+1`; the
+  `v9.3.0+0` x2t belongs to their *unreleased* test branches. We now vendor +5.
+  The original note, kept for the record: The research read CryptPad's installer
   as pinning editor `v9.2.0.119+5` with a newer x2t at `v9.3.0+0`; a second reading of the
   same file says `v9.2.0.119+3` and `v7.3+1`. `api.github.com` and `raw.githubusercontent.com`
   were both unreachable from the sandbox, so neither could be settled. The script **defaults
@@ -264,7 +268,11 @@ WKWebView honors all of it (`crossOriginIsolated === true` measured in-page).
 | 7 | Load time | Frame ~5s; fully interactive grid 40–75s COLD (includes first wasm compile + AllFonts.js over localhost, no HTTP cache). Warm-cache + precompiled expectations much lower — measure in the adoption slice |
 | 8 | Console errors | **ZERO** across landing, spreadsheet (cold+warm), rich import, and docx runs |
 
-**Recorded pins:** OnlyofficePersonal commit `0cb5e083cf7de6078c6230a2abacaf9447e6ff68` ·
+**Recorded pins** ⚠️ **SUPERSEDED 2026-08-28 by the RESULTS ADDENDUM at the bottom of this
+file — the editor is `v9.2.0.119+5` now, and the "NOT FOUND in CryptPad's installer" line
+below turned out to mean "CryptPad pins +5, we were on +3", not "upstream re-cut a
+release". Kept verbatim as the record of what the first pass measured.**
+OnlyofficePersonal commit `0cb5e083cf7de6078c6230a2abacaf9447e6ff68` ·
 editor `cryptpad/onlyoffice-editor @ v9.2.0.119+3` (sha256 `68ae8f0f…30f`, sha512 recorded in
 CHECKSUMS.txt — ⚠️ **NOT FOUND in CryptPad's live install-onlyoffice.sh**, the runbook's
 predicted pin drift; the recorded hashes ARE the pin now) · x2t `v7.3+1` · 3.2 GB on disk
@@ -330,3 +338,140 @@ delegate methods the app has: a click produced `Monthly budget.pdf`, 32,846 byte
 
 **It is the LIVE document, not the saved file** — proven with a marker typed into a workbook
 and never saved: it is in the PDF, and the `.xlsx` on disk stayed byte-identical.
+
+---
+
+## 🔁 RESULTS ADDENDUM — 2026-08-28: PIN MOVED `v9.2.0.119+3` → `+5` (Opus 5)
+
+**The rule this obeys:** any pin move requires a fresh WKWebView probe pass, because our
+pin *is* the measured hash. It got one — the full journey set below, on the real bridge,
+old bundle first and new bundle second, same documents, same harness.
+
+### The pin, and why THIS pair
+
+| | old | **new** |
+|---|---|---|
+| editor | `cryptpad/onlyoffice-editor v9.2.0.119+3` | **`v9.2.0.119+5`** |
+| editor sha256 | `68ae8f0f…30f` | **`3f4987af072ba18ad2543c82ada6e41e33a6f38b1ec5930f79b66d1afb7e0715`** |
+| editor sha512 | (not in CryptPad's installer) | **`1f1184fb…04cfa` — IS CryptPad's own pinned digest** |
+| x2t | `cryptpad/onlyoffice-x2t-wasm v7.3+1` | **unchanged, `v7.3+1`** |
+| x2t sha256 / sha512 | `86b6f1ac…a04` / `ab0c05b0…318c1` | **unchanged — and the sha512 already matched CryptPad's** |
+
+**✅ THE "PIN DRIFT" OPEN ITEM IS CLOSED, AND IT WAS NEVER DRIFT.** The 2026-08-27 note
+said our editor sha512 was "NOT FOUND in CryptPad's live install-onlyoffice.sh". Read
+live on 2026-08-28: CryptPad pins **+5**, and has done so on *every released branch* —
+`main`, `2026.5.1-rc`, `2026.4-rc`, `2026.2.2-rc`, identical hash in all four. We were
+simply two builds behind their tested pair. Both of our sha512s are now byte-for-byte the
+ones CryptPad's own installer verifies, which also settles the runbook's other unresolved
+reading: **both readings were right about different things** — `+5` was CryptPad's pin,
+`v7.3+1` was CryptPad's x2t, and the `v9.3.0+0` x2t belongs to their *unreleased* branches.
+
+**Newer tags exist and were deliberately NOT taken.** `cryptpad/onlyoffice-editor` has a
+v9.3 train up to `v9.3.2+2`, and `onlyoffice-x2t-wasm` has `v8.3.0+0` and `v9.3.0+0`.
+CryptPad ships those only on **unreleased test branches** (`2026.4-test` → editor
+`v9.3.0.140+0` + x2t `v9.3.0+0`; `2026-autumn-test` → editor `v9.3.2+1` + x2t `v9.3.0+0`).
+The rule "prefer the newest pair CryptPad itself ships together" points at +5, and the
+v9.3 pair is a *bigger* move for one concrete reason: **a new x2t means the whole PDF
+recipe — the `c_oAscFileType` format codes and the `m_bIsNoBase64` behaviour, both of
+which fail SILENTLY when wrong — has to be re-measured from scratch.** Next candidate,
+when CryptPad releases it: editor `v9.3.2+x` + x2t `v9.3.0+0`, together, as its own probe.
+
+### What actually changed in 1.0 GB of bundle: 31 files
+
+Hash-diffed file by file against the backup. **`x2t.js`, `x2t.wasm`, `api.js`,
+`api-orig.js` and ALL THREE `sdkjs/{cell,word,slide}/sdk-all-min.js` are byte-identical
+FILES between +3 and +5.** That is why this bump is as cheap as it turned out to be: the
+converter, the `connectMockServer` handshake and every serialiser we call live in files
+that did not move. What did change:
+
+- `presentationeditor/main/app.js` (+41 bytes) — the "Fix Slide Master view" of +5.
+- The `index.html` / `index_loader.html` of all three editors, `apps/common/index.html`
+  (+ their `.br` siblings). **The one substantive edit in them:** `injectSvgIcons()` had
+  `return;` as its literal first statement in +3 — the function was dead code — and in +5
+  that early return is gone, plus a `if(!text)return;` guard was added to its fetch. So
+  SVG icon injection now really runs on displays over 2.25 dppx. ⚠️ **This is the sprite
+  path behind the "dark theme rendered with NO ICONS" measurement in `oo.html`'s
+  `uiTheme` comment.** It changes nothing at 1–2× (the `pixel-ratio__2_5` media query does
+  not match, so the call is never made), which is where the probe and this Mac live, but a
+  >2.25× display is now genuinely a different code path and is **NOT covered by this pass**.
+- 4 new font faces (`OpenKhmerSchool-{Bold,Light,Medium,SemiBold}.ttf`), plus the
+  regenerated `AllFonts.js` and font thumbnails. **91 → 95 faces.** `/api/oo/fonts` reads
+  the directory live, so the all-or-nothing PDF font mount picked all 95 up with no code
+  change — the thing that would have broken here is a hardcoded count, and there is none.
+- **Nothing was removed.** 16600 → 16604 files.
+
+### The probe pass — old vs new, same documents, same rig
+
+Instrument: the same headless `WKWebView` harness (1440×900, console-error hook at
+documentStart, JS checks, download delegate, `WKP_FRESH=1` for an empty HTTP cache),
+driving the REAL bridge at `/oo-edit?doc=…` — not the probe server. Journeys per document:
+boot → read the ribbon/API/format-table/serialiser → Download-as-PDF → edit → Save →
+re-read from disk.
+
+| check | +3 (baseline) | **+5** |
+|---|---|---|
+| `crossOriginIsolated` / SharedArrayBuffer | true / present | **true / present** |
+| console errors, all runs | **0** | **0** |
+| xlsx ribbon tabs | File Home Insert Draw Layout Formula Data Collaboration Protection View Plugins **AI** Pivot Table Table Design (14) | **identical (14)** |
+| docx ribbon tabs | …References… Plugins **AI** (10) | **identical (10)** |
+| pptx ribbon tabs | …Design Transitions Animation **Slide Master**… Plugins **AI** (12) | **identical (12)** |
+| in-ribbon **AI tab** registers | yes — `probe().ai.enabled` true, model reported | **yes, same model, plugin v3.2.2** |
+| `connectMockServer` handshake | document opens (it is the proof) | **opens, all three types** |
+| `Asc.c_oAscFileType` read live | XLSY 4098 · DOCY 4097 · PPTY 4099 · PDF 513 · PDFA 521 · CANVAS_{SS 8194, WORD 8193, PRES 8195} | **identical, all nine** |
+| formulas on open (`=SUM`) | B6 1435 · C6 900 · D6 −535 | **identical** |
+| save-back serialiser prefix | `XLSY;v2` · `DOCY;v5` · `PPTY;v1` | **identical, and identical LENGTHS** |
+| xlsx save → disk | 5058 → **9150** bytes, mtime moved, formulas intact | 5058 → **9152** bytes, mtime moved, formulas intact |
+| docx save → disk | 985 → **20921** bytes | **20921 bytes** |
+| pptx save → disk | 28068 → **28476** bytes | **28481** bytes |
+| Download as PDF — xlsx | %PDF-1.7, 1 page, **32846** bytes, 232 ms | %PDF-1.7, 1 page, **32846** bytes, 244 ms |
+| Download as PDF — docx | 1 page, **96666** bytes, 167 ms | 1 page, **96666** bytes, 254 ms |
+| Download as PDF — pptx | 1 page, **2381** bytes, 122 ms | 1 page, **2381** bytes, 227 ms |
+| download delegate actually saves | yes, file on disk | **yes, file on disk** |
+| time to interactive (cold store) | 1275 ms | **1279 ms** |
+| time to interactive (warm) | 1222 / 1287 ms | **1248 / 1298 ms** |
+| ribbon screenshot | — | **pixel-identical to +3 apart from the save-status line** |
+
+The two- and five-byte deltas in the saved `.xlsx`/`.pptx` are OOXML container/metadata
+noise, not content: the serialiser byte lengths were identical and openpyxl read back
+every formula, the bold header and the written cells.
+
+⚠️ **The old "40–75 s cold" figure in the RESULTS table above is not comparable to the
+~1.3 s here, and neither number is wrong.** That one was Track A's bundle over the probe's
+own Python server on a genuinely first-ever run; this is the real bridge serving warm OS
+page-cache. `WKP_FRESH=1` empties WebKit's HTTP cache but not the filesystem's, so **the
+honest claim is "the two pins are indistinguishable", not "the editor boots in 1.3 s from
+nothing"**. The measurement floor is also ~1.0 s: the probe's timing poller can only be
+armed after the initial wait, and readiness had already happened by its first tick.
+
+### VERDICT: ADOPT +5. No rollback needed, and none was taken.
+
+Every journey the mission named passed, none regressed, and no integration surface moved:
+`connectMockServer`, `asc_nativeGetFile`, `asc_nativeGetPDF`, `m_bIsNoBase64: true`, the
+font mount, the format codes, the builder API and the AI-plugin machinery are all driven by
+files that are byte-identical between the two tags. The AGPL ruling's four conditions are
+unaffected (still CryptPad-lineage, still unmodified, still its own route), and provenance
+got *stronger*: two independent digests per asset, the sha512 now cross-checked against
+CryptPad's own installer, and `scripts/install_onlyoffice.sh` verifies both before it
+unzips a byte.
+
+**Rollback, if it is ever wanted:** the previous bundle is on disk at
+`~/Library/Application Support/Harness/data/onlyoffice.bak-v9.2.0.119+3` (1.0 GB, stamp
+included) and the +3 zip is at `data/office-probe/zips/onlyoffice-editor.zip`
+(sha256 `68ae8f0f…30f`). Restore = `rm -rf data/onlyoffice && mv` the backup back.
+
+### Honest limits of THIS pass
+
+- **Not covered: displays over 2.25 dppx**, i.e. the one code path +5 genuinely revived
+  (`injectSvgIcons`). The probe runs at 1× and this Mac is 2×.
+- **The edits were driven through sdkjs's builder API, not synthesised keystrokes.** Real
+  typing, real mouse selection, the ribbon's own buttons and the editor's own ⌘S floppy
+  (the L1 route) were **not** exercised headless — they need a human minute in a real tab.
+- **Pre-existing, NOT a bump regression:** cells written through `applyOps` land in the
+  model, in the PDF path and on disk, but are **not painted on screen** — verified
+  identically on +3 and +5 (the same "the builder api adds without laying out" finding
+  `oo.html` records for slides). Both screenshots are pixel-identical here, so the bump did
+  not cause it and did not fix it. Worth its own slice.
+- **One document per type, one machine, one sitting.** No large workbook, no chart-heavy
+  deck, no RTL document, no external-change/409 race re-run.
+- The `.br` brotli siblings changed with their sources but were not separately fetched by
+  the probe (the bridge picked whichever it serves; both are in the verified zip).

@@ -4808,7 +4808,7 @@ function ooEditorOps(ops, sh) {
         return co.v;
       }));
       /* ⚠️ THE "@" OPS COME FIRST, AND THEY ARE THE FINDING OF THE 2026-08-28 LIVE
-         MEASUREMENT. ApiRange.SetValue in the vendored ONLYOFFICE (v9.2.0.119+3) runs its
+         MEASUREMENT. ApiRange.SetValue in the vendored ONLYOFFICE (v9.2.0.119+3 — and still true at +5: sdkjs/cell/sdk-all-min.js is a BYTE-IDENTICAL file between the two tags, verified 2026-08-28) runs its
          OWN parser over a string, measured in the real editor:
              SetValue("$2,500") → 2500, shown "$2,500"   (agrees with us)
              SetValue("50%")    → 0.5,  shown "50%"      (agrees with us)
@@ -4827,7 +4827,7 @@ function ooEditorOps(ops, sh) {
          FOUND IN THE 2026-08-28d ADVERSARIAL SELF-PASS, LIVE, IN A REAL EDITOR.
 
          This used to emit `at: colName(o.c) + (o.r + 1)` — a 1×1 range — and hand it the
-         whole grid. MEASURED in the vendored bundle (v9.2.0.119+3), side by side in one
+         whole grid. MEASURED in the vendored bundle (v9.2.0.119+3 — and still true at +5: sdkjs/cell/sdk-all-min.js is a BYTE-IDENTICAL file between the two tags, verified 2026-08-28), side by side in one
          call:
              SetValue over 'D1'    with [[a,b],[c,d],[e,f]] → D1=a and NOTHING ELSE
              SetValue over 'G1:H3' with the same array       → all six cells

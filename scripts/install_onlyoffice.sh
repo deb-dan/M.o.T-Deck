@@ -22,26 +22,44 @@
 #      is a PATCHED web-apps build of unverified provenance; this script cannot even
 #      reach it.
 #
-# ⚠️ THE PIN IS THE RECORDED HASH, NOT THE TAG. CryptPad's live install-onlyoffice.sh
-# did not carry the editor sha512 we downloaded on 2026-08-27 (it pins a neighbouring
-# build of the same tag family). The runbook already ruled on that: the hashes
-# RECORDED BY THE PROBE are the pin. They are hardcoded below, and a mismatch is a
-# hard failure — not a warning — because these bytes are the ones that were measured
-# in a real WKWebView.
+# ⚠️ THE PIN IS THE RECORDED HASH, NOT THE TAG — and there is no OO_EDITOR_TAG
+# override here ON PURPOSE. A tag you can move without moving the hash is a way to
+# install bytes nobody measured; the documented way to bump is to edit the four
+# constants below and re-run with --force, which is exactly what happened on
+# 2026-08-28 (see the runbook's RESULTS ADDENDUM). `scripts/probe_onlyoffice.sh`
+# keeps its OO_EDITOR_TAG/OO_X2T_TAG overrides because measuring an unpinned
+# candidate is that script's whole job.
+#
+# ✅ 2026-08-28 — THE PIN DRIFT IS CLOSED. Our 2026-08-27 pin was editor
+# `v9.2.0.119+3`, whose sha512 was NOT in CryptPad's live install-onlyoffice.sh —
+# because CryptPad pins **+5**, on every released branch (main, 2026.5.1-rc,
+# 2026.4-rc, 2026.2.2-rc). We now vendor that same +5, and both sha512s below are
+# byte-for-byte the ones CryptPad's own installer verifies. The x2t half never moved:
+# `v7.3+1` is still CryptPad's released x2t and its sha512 already matched.
+# ⚠️ CryptPad's UNRELEASED test branches (2026.4-test, 2026-autumn-test) are moving to
+# editor v9.3.x + x2t v9.3.0+0. That is a bigger move — a new x2t means the PDF recipe
+# (format codes + m_bIsNoBase64) must be re-measured — and it is deliberately NOT
+# taken until CryptPad releases it. See the runbook's "next candidate" note.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 # ── the pin ──────────────────────────────────────────────────────────────────
+# sha256 is OUR recorded hash (the WKWebView-probed bytes); sha512 is the value
+# CryptPad's own install-onlyoffice.sh verifies. BOTH are checked, because two
+# independent digests over the same bytes is what makes "unmodified upstream"
+# (AGPL condition #1) a claim rather than an assertion.
 EDITOR_REPO="cryptpad/onlyoffice-editor"
-EDITOR_TAG="v9.2.0.119+3"
+EDITOR_TAG="v9.2.0.119+5"
 EDITOR_ASSET="onlyoffice-editor.zip"
-EDITOR_SHA256="68ae8f0fe14fdde1fd845085deeeb37d98b5a8bb034622cd2a11c2f54f40930f"
+EDITOR_SHA256="3f4987af072ba18ad2543c82ada6e41e33a6f38b1ec5930f79b66d1afb7e0715"
+EDITOR_SHA512="1f1184fb04cf72a7eb2a49a9740074b5419486c79e1fd713e1f8c09b8594a826050ae941fed6ac6a96807ba73cc751d7c807bd7e6b73de9e4f8e74cd5ed04cfa"
 
 X2T_REPO="cryptpad/onlyoffice-x2t-wasm"
 X2T_TAG="v7.3+1"
 X2T_ASSET="x2t.zip"
 X2T_SHA256="86b6f1ac8f110b5a416ad199efa4c08957d46d989defe791b9793a966cfb3a04"
+X2T_SHA512="ab0c05b0e4c81071acea83f0c6a8e75f5870c360ec4abc4af09105dd9b52264af9711ec0b7020e87095193ac9b6e20305e446f2321a541f743626a598e5318c1"
 
 # OO_DEST exists for two honest reasons: an ops move of the 1GB bundle onto another
 # volume, and bridge/tests/test_oo_lane.py, which exercises the hash gate against
@@ -131,6 +149,22 @@ fi
 # sha256 is verified BEFORE anything is unzipped, every time, including for a zip
 # that was already on disk. A cached zip is a convenience, never a trust boundary.
 sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+sha512_of() { shasum -a 512 "$1" | awk '{print $1}'; }
+
+# The SECOND digest, and it is the provenance half. sha256 says "these are the bytes we
+# measured"; sha512 says "these are the bytes CryptPad's own installer accepts". Checked
+# after sha256 so the failure message a human sees names the gate they moved.
+verify_sha512() {   # verify_sha512 <path> <expected-sha512> <label>
+  local dest="$1" want="$2" label="$3" got
+  [[ -n "$want" ]] || return 0
+  got="$(sha512_of "$dest")"
+  [[ "$got" == "$want" ]] || die "sha512 MISMATCH for ${label} — refusing to unzip.
+       want ${want}
+       got  ${got}
+       The sha256 matched but the sha512 did not, which cannot happen for the same
+       bytes: one of the two pins in this script is wrong. Fix the script, not the zip."
+  say "sha512 verified for ${label} (the digest CryptPad's installer pins)"
+}
 
 fetch_verified() {   # fetch_verified <url> <path> <expected-sha256> <label>
   local url="$1" dest="$2" want="$3" label="$4" got=""
@@ -180,6 +214,10 @@ fetch_verified "https://github.com/${EDITOR_REPO}/releases/download/${EDITOR_TAG
                "$EZ" "$EDITOR_SHA256" "${EDITOR_REPO} ${EDITOR_TAG} ${EDITOR_ASSET}"
 fetch_verified "https://github.com/${X2T_REPO}/releases/download/${X2T_TAG}/${X2T_ASSET}" \
                "$XZ" "$X2T_SHA256" "${X2T_REPO} ${X2T_TAG} ${X2T_ASSET}"
+# Outside fetch_verified deliberately: it short-circuits on a cached zip whose sha256
+# matches, and the second digest must be checked on THAT path too.
+verify_sha512 "$EZ" "$EDITOR_SHA512" "${EDITOR_REPO} ${EDITOR_TAG} ${EDITOR_ASSET}"
+verify_sha512 "$XZ" "$X2T_SHA512" "${X2T_REPO} ${X2T_TAG} ${X2T_ASSET}"
 
 # ── unzip into CryptPad's layout, UNMODIFIED ─────────────────────────────────
 # dist/v9 = sdkjs + web-apps + fonts + dictionaries; dist/x2t = the converter. The
@@ -237,12 +275,19 @@ editor  ${EDITOR_REPO} @ ${EDITOR_TAG}
   source  https://github.com/${EDITOR_REPO}/releases/tag/${EDITOR_TAG}
   code    https://github.com/${EDITOR_REPO}
   sha256  ${EDITOR_SHA256}
+  sha512  ${EDITOR_SHA512}
 
 x2t     ${X2T_REPO} @ ${X2T_TAG}
   asset   ${X2T_ASSET}
   source  https://github.com/${X2T_REPO}/releases/tag/${X2T_TAG}
   code    https://github.com/${X2T_REPO}
   sha256  ${X2T_SHA256}
+  sha512  ${X2T_SHA512}
+
+PROVENANCE: both sha512 values above are the ones CryptPad's own
+install-onlyoffice.sh verifies for this exact tag pair (checked live 2026-08-28 on
+branch main, and identical on 2026.5.1-rc / 2026.4-rc / 2026.2.2-rc). This is
+CryptPad's released, tested-together pair — not the newest tag in either repo.
 
 upstream (the editors themselves)
   https://github.com/ONLYOFFICE/web-apps
@@ -261,9 +306,11 @@ date $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 editor_repo ${EDITOR_REPO}
 editor_tag ${EDITOR_TAG}
 editor_sha256 ${EDITOR_SHA256}
+editor_sha512 ${EDITOR_SHA512}
 x2t_repo ${X2T_REPO}
 x2t_tag ${X2T_TAG}
 x2t_sha256 ${X2T_SHA256}
+x2t_sha512 ${X2T_SHA512}
 api_js ${API_JS_REL}
 x2t_js ${X2T_JS_REL}
 x2t_wasm ${X2T_WASM_REL}

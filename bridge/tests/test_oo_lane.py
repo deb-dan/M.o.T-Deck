@@ -106,24 +106,54 @@ check("it is NOT a component — no port, no manifest key, no venv, no registry 
       "flip_installed" not in SRC and "harness.yaml" not in SRC.split("# ⚖️")[0]
       and "uv venv" not in SRC)
 
-# The pin must still be the one the probe RECORDED. data/office-probe/CHECKSUMS.txt is
-# the probe's own output and the provenance the AGPL ruling points at, so if it is
-# still on disk the two must agree — a silent pin drift is exactly what this catches.
+# The pin must still be the one the probe RECORDED — a silent pin drift is exactly what
+# this catches.
+#
+# ⚠️ THE PIN MOVED ON 2026-08-28: editor v9.2.0.119+3 → **+5**; x2t unchanged at v7.3+1.
+# Reason in one line: CryptPad pins +5 on every RELEASED branch (main, 2026.5.1-rc,
+# 2026.4-rc, 2026.2.2-rc) — which is also what closed the old "our editor sha512 is not in
+# CryptPad's installer" note. It was never drift; we were two builds behind their tested
+# pair. The new bytes went through the FULL WKWebView probe pass BEFORE this test was
+# touched (runbook RESULTS ADDENDUM 2026-08-28: every journey identical, and x2t plus all
+# three sdk-all-min.js are byte-identical FILES between the two tags).
+#
+# TWO digests per asset now. sha256 is the hash the probe recorded on the bytes it
+# measured; sha512 is the hash CryptPad's own install-onlyoffice.sh verifies. Two
+# independent digests over the same bytes is what turns AGPL condition #1's "unmodified
+# upstream" from an assertion into a check.
 PROBE_SUMS = ROOT / "data" / "office-probe" / "CHECKSUMS.txt"
-EDITOR_SHA = "68ae8f0fe14fdde1fd845085deeeb37d98b5a8bb034622cd2a11c2f54f40930f"
+EDITOR_SHA = "3f4987af072ba18ad2543c82ada6e41e33a6f38b1ec5930f79b66d1afb7e0715"
 X2T_SHA = "86b6f1ac8f110b5a416ad199efa4c08957d46d989defe791b9793a966cfb3a04"
+EDITOR_SHA512 = ("1f1184fb04cf72a7eb2a49a9740074b5419486c79e1fd713e1f8c09b8594a826"
+                 "050ae941fed6ac6a96807ba73cc751d7c807bd7e6b73de9e4f8e74cd5ed04cfa")
+X2T_SHA512 = ("ab0c05b0e4c81071acea83f0c6a8e75f5870c360ec4abc4af09105dd9b52264a"
+              "f9711ec0b7020e87095193ac9b6e20305e446f2321a541f743626a598e5318c1")
 check("the editor sha256 in the installer is the one the probe recorded",
       f'EDITOR_SHA256="{EDITOR_SHA}"' in SRC)
 check("the x2t sha256 in the installer is the one the probe recorded",
       f'X2T_SHA256="{X2T_SHA}"' in SRC)
-check("the tags are CryptPad's tested pair",
-      'EDITOR_TAG="v9.2.0.119+3"' in SRC and 'X2T_TAG="v7.3+1"' in SRC)
+check("the tags are CryptPad's RELEASED tested pair",
+      'EDITOR_TAG="v9.2.0.119+5"' in SRC and 'X2T_TAG="v7.3+1"' in SRC)
+check("both sha512s — the digests CryptPad's own installer verifies — are pinned too",
+      f'EDITOR_SHA512="{EDITOR_SHA512}"' in SRC
+      and f'X2T_SHA512="{X2T_SHA512}"' in SRC)
+check("…and the sha512 is CHECKED, not merely recorded beside the sha256",
+      "verify_sha512 " in SRC and 'die "sha512 MISMATCH' in SRC)
+# Pattern, not word: the header EXPLAINS why probe_onlyoffice.sh has these overrides and
+# this script does not, so grepping for the name alone fails on its own documentation.
+check("no tag or hash in the installer comes from the environment — a movable tag beside "
+      "a fixed hash is a way to install bytes nobody measured",
+      '${OO_EDITOR_TAG' not in SRC and '${OO_X2T_TAG' not in SRC
+      and not any(f'{a}_{b}="$' in SRC
+                  for a in ("EDITOR", "X2T")
+                  for b in ("TAG", "SHA256", "SHA512")))
 if PROBE_SUMS.is_file():
-    sums = PROBE_SUMS.read_text()
-    check("…and both agree with data/office-probe/CHECKSUMS.txt",
-          EDITOR_SHA in sums and X2T_SHA in sums)
+    # Deliberately NOT an equality check any more: CHECKSUMS.txt is the 2026-08-27 probe's
+    # record of the +3 zips, kept as the history of how this lane was first measured. The
+    # pin lives in the installer and the runbook addendum is its provenance.
+    print("  (CHECKSUMS.txt holds the older +3 probe record — history, not the pin)")
 else:
-    print("  (CHECKSUMS.txt is gone — the probe dir was cleaned; pin cross-check skipped)")
+    print("  (CHECKSUMS.txt is gone — the probe dir was cleaned)")
 
 check("the sha256 is verified BEFORE the unzip, not after",
       SRC.index("fetch_verified ") < SRC.index("unzip -q -o"))
@@ -344,12 +374,32 @@ if HAVE_XL:
                                   force=True)
         check("…and force=True overwrites deliberately, and says it did",
               err4 is None and rep4 and rep4["forced"] is True, err4)
+        # ⚠️ THE THREE FENCE STATES ARE NOW ALL EXPLICIT (bug-echo W-01, the F-01 class).
+        # This block used to pin the OPPOSITE: "no mtime at all is allowed (the fence is a
+        # safety net, not a login)" and "an unparseable mtime does not become a refusal
+        # either". That is precisely how a default argument becomes a silent unfenced
+        # write — for the first caller that forgets to send one, and for the caller that
+        # sends `?mtime=lunchtime` and has every reason to believe it was checked. None is
+        # now a refusal to GUESS; a caller that truly cannot know says `unfenced=True`.
         rep5, err5 = oo.writeback(office, work3, "book.xlsx", NEW, None)
-        check("no mtime at all is allowed (the fence is a safety net, not a login)",
-              err5 is None and rep5, err5)
-        rep6, err6 = oo.writeback(office, work3, "book.xlsx", NEW, "not-a-number")
-        check("…and an unparseable mtime does not become a refusal either",
-              err6 is None and rep6, err6)
+        check("NO mtime is a REFUSAL TO GUESS, not a silent skip",
+              rep5 is None and err5 and err5[0] == 400, err5)
+        check("…and the refusal names what is missing instead of blaming the file",
+              "no record of the version it started from" in (err5[1] if err5 else ""))
+        rep5b, err5b = oo.writeback(office, work3, "book.xlsx", NEW, None,
+                                    unfenced=True)
+        check("…while unfenced=True is the DELIBERATE skip, and it writes",
+              err5b is None and rep5b and rep5b["fenced"] is False, err5b)
+        check("…a fenced save says so in its own report, so a log never has to infer it "
+              "from the absence of a 409",
+              (oo.writeback(office, work3, "book.xlsx", NEW,
+                            os.stat(target).st_mtime)[0] or {}).get("fenced") is True)
+        for _bad, _what in ((("not-a-number"), "unparseable"), (float("nan"), "NaN"),
+                            (float("inf"), "inf"), ([], "a list")):
+            rep6, err6 = oo.writeback(office, work3, "book.xlsx", NEW, _bad)
+            check(f"A FENCE VALUE WE CANNOT READ IS NOT 'NO FENCE' — {_what} is refused, "
+                  "because the caller sent one and is entitled to believe it was checked",
+                  rep6 is None and err6 and err6[0] == 400, err6)
 
         # TOTALITY: everything below must cost the request, never the workbook.
         A1_NOW = openpyxl.load_workbook(target).active["A1"].value

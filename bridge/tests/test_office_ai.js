@@ -3100,7 +3100,7 @@ eval(grab('ooEditorOps'));
    A LIE-TO-USER found in the loffice-2026-08-28d adversarial self-pass, live, in a real
    editor — not in either hunt's catalogue, and live since the one-editor ruling.
 
-   MEASURED in the vendored bundle (v9.2.0.119+3), the two forms side by side in one call:
+   MEASURED in the vendored bundle (v9.2.0.119+3 — and still true at +5: sdkjs/cell/sdk-all-min.js is a BYTE-IDENTICAL file between the two tags, verified 2026-08-28), the two forms side by side in one call:
        SetValue over 'D1'    with [[a,b],[c,d],[e,f]]  →  D1=a and NOTHING ELSE
        SetValue over 'G1:H3' with the same array        →  all six cells
    ApiRange.SetValue writes an array ACROSS ITS OWN RANGE. The parent used to emit the
@@ -3600,7 +3600,7 @@ OO_STYLE_KEYS.forEach(k => {
        .filter(o => o.k === 'style').map(o => o.set.n.pattern).sort(),
      ['$#,##0', '0%']);
   /* ⚠️⚠️ THE EDITOR HAS ITS OWN PARSER, AND IT IS NOT OURS. MEASURED IN THE REAL
-     VENDORED EDITOR (ONLYOFFICE v9.2.0.119+3) on 2026-08-28, not assumed:
+     VENDORED EDITOR (ONLYOFFICE v9.2.0.119+3 — and still true at +5: sdkjs/cell/sdk-all-min.js is a BYTE-IDENTICAL file between the two tags, verified 2026-08-28) on 2026-08-28, not assumed:
          SetValue("$2,500") → 2500 shown "$2,500"   · agrees with us
          SetValue("50%")    → 0.5  shown "50%"      · agrees with us
          SetValue("2,500")  → 2500 shown "2,500"    · agrees with us
