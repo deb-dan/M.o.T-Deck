@@ -68,9 +68,29 @@ DEFAULT_SIDEBAR = (
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
 )
-# …and this is the shell's `tabs` table as it shipped, in order, followed by the three
-# views that CAN be pinned as solo tabs but are not by default.
+# …and this is the shell's `tabs` table, in order, followed by the three views that CAN
+# be pinned as solo tabs but are not by default.
+#
+# ⚠️ v1.5.26 — DEBI'S ORDER. The strip is now read left-to-right as "the deck, then the
+# three agent/model lanes you actually work in, then everything else":
+#   MOT Deck · Hermes · Unsloth · OpenCode · Odysseus · VoiceStudio · ComfyUI · Aider ·
+#   LOffice · Music · Voicebox
+# The SET is unchanged (the same eleven ids) — only the order moved, so no entry gained
+# or lost a home and `validate` has nothing new to say. The same list appears in
+# app/main.swift (`navDefaultTopbar`) and in the panel (`NAV_DEFAULT_TOPBAR`); all three
+# are asserted to agree by test_nav_model.py, because a disagreement means the strip and
+# the panel's Appearance editor describe different windows.
 DEFAULT_TOPBAR = (
+    ("mc", True), ("hermes", True), ("unsloth", True), ("opencode", True),
+    ("odysseus", True), ("voicestudio", True), ("comfyui", True), ("aider", True),
+    ("loffice", True), ("music", True), ("voicebox", True),
+    ("chat", False), ("models", False), ("caps", False),
+)
+# THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
+# it is the ONLY way to tell "this user never customised their strip" from "this user
+# chose an order that happens to be short one tab" — see `migrate` below. Never edit it;
+# if the default moves again, add the next frozen tuple beside it.
+DEFAULT_TOPBAR_V1 = (
     ("mc", True), ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("music", True),
     ("aider", True), ("loffice", True), ("opencode", True),
@@ -92,6 +112,10 @@ FIXED_SIDE = "chat"
 
 NAV_TOPBAR_MAX = 12        # Debi's ruling: at most 12 pinned tabs on the strip.
 NAV_FILE = "nav.json"      # data/nav.json
+# The MODEL version written into nav.json (and mirrored into the panel's localStorage
+# copy). 1 = every build up to v1.5.24. 2 = the default-topbar reorder, which needs a
+# stamp so the one-time migration below runs exactly once per machine.
+MODEL_V = 2
 
 
 def entry(eid) -> "dict | None":
@@ -219,6 +243,57 @@ def repair(model) -> dict:
     return model
 
 
+# ── migration ────────────────────────────────────────────────────────────────
+# ⚠️ THE TRAP THIS EXISTS TO ANSWER (v1.5.26). Changing DEFAULT_TOPBAR changes what a
+# FRESH machine gets — and nothing else. Every machine that has ever opened the panel
+# has a data/nav.json (the panel writes one the first time it syncs), so on those
+# machines the SAVED order silently wins and the reorder would appear to have done
+# nothing at all. That is the failure mode: a shipped change that is invisible on the
+# only machine that matters.
+#
+# The rule is the one a user would state themselves: if you never touched your strip,
+# you get the new default; if you arranged it, your arrangement is yours and we do not
+# touch it. "Never touched" is decidable EXACTLY — the saved topbar is byte-for-byte
+# the old default, ids and pins, in order.
+#
+# It runs ONCE per machine: `read` stamps MODEL_V into the file afterwards whether or
+# not the layout moved, so a user who LATER arranges their tabs into the old order is
+# not migrated a second time.
+def _topbar_rows(raw) -> list:
+    """(id, pinned) pairs exactly as the file states them — no normalisation, because
+    the comparison below has to be against what was WRITTEN, not against what we would
+    repair it into."""
+    src = raw.get("topbar") if isinstance(raw, dict) else None
+    if not isinstance(src, list):
+        return []
+    out = []
+    for r in src:
+        if isinstance(r, str):
+            out.append((r, True))
+        elif isinstance(r, dict) and isinstance(r.get("id"), str):
+            out.append((r["id"], bool(r.get("pinned", True))))
+        else:
+            return []                       # a shape we did not write → not our default
+    return out
+
+
+def migrate(raw) -> tuple:
+    """(model_dict, moved). Total: anything unrecognisable comes back untouched."""
+    if not isinstance(raw, dict):
+        return raw, False
+    try:
+        ver = int(raw.get("v") or 1)
+    except Exception:                                   # noqa: BLE001
+        ver = 1
+    if ver >= MODEL_V:
+        return raw, False
+    if _topbar_rows(raw) != [(i, bool(p)) for i, p in DEFAULT_TOPBAR_V1]:
+        return raw, False                   # customised — leave it exactly alone
+    out = dict(raw)
+    out["topbar"] = [{"id": i, "pinned": bool(p)} for i, p in DEFAULT_TOPBAR]
+    return out, True
+
+
 # ── persistence ──────────────────────────────────────────────────────────────
 def nav_path(root) -> str:
     return os.path.join(str(root), "data", NAV_FILE)
@@ -234,7 +309,23 @@ def read(root) -> dict:
         return default_model()
     if not isinstance(raw, dict):
         return default_model()
-    return repair(normalize(raw))
+    raw, moved = migrate(raw)
+    model = repair(normalize(raw))
+    # STAMP THE VERSION, migrated or not. Writing here is the one deliberate side effect
+    # in a reader, and it is what makes the migration ONE-TIME rather than a rule that
+    # re-fires forever: after this, `v` is MODEL_V and `migrate` returns early. A failure
+    # to write is not a failure to read — the model is already correct in memory, and the
+    # worst case is that the (idempotent) migration is attempted again next boot.
+    try:
+        stale = int(raw.get("v") or 1) < MODEL_V
+    except Exception:                                   # noqa: BLE001
+        stale = True
+    if moved or stale:
+        try:
+            write(root, model)
+        except Exception:                               # noqa: BLE001
+            pass
+    return model
 
 
 def write(root, model) -> None:
@@ -244,7 +335,7 @@ def write(root, model) -> None:
     os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"v": 1, "sidebar": model["sidebar"], "topbar": model["topbar"]},
+        json.dump({"v": MODEL_V, "sidebar": model["sidebar"], "topbar": model["topbar"]},
                   fh, indent=2)
     os.replace(tmp, p)
 

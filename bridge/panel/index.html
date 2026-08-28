@@ -624,45 +624,140 @@
      stays available via its title attribute (set in setMode). */
   .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75;
                min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #chat-inputrow { display:flex; gap:10px; align-items:flex-end; }
-  #chat-input { flex:1; resize:none; background:var(--card); color:var(--cream);
-                border:1px solid var(--line2); border-radius:12px; padding:12px 14px;
+  /* ══ THE COMPOSER IS ONE BOUNDED FIELD (v1.5.26, Debi) ══════════════════════════
+     WHAT WAS WRONG: Editorial's composer was a bordered textarea with its controls
+     floating OUTSIDE it — Send, ● talk, auto and conv sat in the row beside the box,
+     so the "message box" was one object and "the things you do to a message" were four
+     others. Every modern chat of this class (Claude, LM Studio, Unsloth) draws ONE
+     field and puts the actions INSIDE it, and studio already did exactly that here.
+     THE FIX IS THE ONE THE HOUSE ALREADY OWNS: #chat-inputrow becomes the field (it
+     carries the ground, the border and the radius), the textarea inside it goes
+     transparent and borderless, and focus moves to the SHELL via :focus-within so the
+     whole composer lights up as one object. This is studio's structure adopted by
+     Editorial — deliberately the same rules in the same order, so the two designs can
+     no longer drift into two different composers.
+     ⚠️ IT IS LAYOUT, NOT RE-THEMING. Editorial keeps its inks, its mono labels and its
+     own words (`Send`, `● talk`, `auto`, `conv`); nothing here touches a colour token,
+     a family or a case. */
+  #chat-inputrow { display:flex; gap:8px; align-items:flex-end;
+      background:var(--card); border:1px solid var(--line2); border-radius:16px;
+      padding:6px 8px 6px 14px; }
+  #chat-inputrow:focus-within { border-color:var(--gold); }
+  #chat-input { flex:1; resize:none; background:transparent; color:var(--cream);
+                border:0; border-radius:0; padding:8px 0 6px;
                 font:14px -apple-system, "SF Pro Text", sans-serif; line-height:1.5; outline:none;
                 /* AUTO-GROW: growInput() sets an explicit height up to 3x the rows=2
                    base; past that the box scrolls internally rather than eating the
-                   transcript. (The ONE css change this slice makes.) */
+                   transcript. */
                 overflow-y:auto; }
-  #chat-input:focus { border-color:var(--gold); }
-  #chat-send:hover, #chat-talk:hover, #chat-auto:hover, #chat-conv:hover { border-color:var(--gold); }
+  /* the SHELL owns focus now — a second ring on the textarea would draw a box inside
+     the box, which is the exact look this change exists to remove */
+  #chat-input:focus { border:0; }
+  #chat-send:hover, #chat-talk:hover { border-color:var(--gold); }
   /* PHASE D: Send + ● talk share ONE reduced size (Fable: ~30% off the base button's
      12.5px/7px-15px). Scoped to these two ids — button.primary elsewhere (Models,
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
-     size that WebKit rounds unpredictably across zoom levels. */
-  #chat-send, #chat-talk { font-size:10px; padding:5px 10px; letter-spacing:.06em; }
-  /* talk sits AFTER Send and reads ~40% smaller than it (Debi 2026-08-13).
-     AUTO-DICTATION v1: the `auto` chip rides the SAME rule — it is the same class of
-     control at the same size, so it shares the selector rather than adding one.
-
-     ⚠️ v1.5.24 — 7px → 9.5px, AND THIS IS THE ONE PLACE THIS SLICE OVERRODE A STANDING
-     DEBI RULING, so it is flagged rather than buried. 7px was the smallest ink anywhere
-     in the panel and the only declaration under 9px; at 7px the words `talk`, `auto` and
-     `conv` are shapes, not labels, and they sit on INTERACTIVE controls that change what
-     the microphone does. What the 2026-08-13 ruling asked for is preserved in ORDER —
-     these three are still the smallest controls on the row and still visibly subordinate
-     to Send — but not in RATIO: 9.5/10 rather than 7/9. 9.5px is not a new size; it is a
-     step Editorial's own ramp already used. If Debi wants the ratio back, this line is
-     the single place to change, and the fence records the argument either way. */
-  #chat-talk, #chat-auto, #chat-conv { flex:none; white-space:nowrap; font-size:9.5px; padding:3px 6px; }
+     size that WebKit rounds unpredictably across zoom levels.
+     v1.5.26: they are now INSIDE the field, so they gain an explicit height (they no
+     longer take it from the textarea's line box) and the rounded-square radius Debi
+     named. Send stays the one filled accent control; ● talk is the quiet ghost beside
+     it, which is how the 2026-08-13 "talk is subordinate to Send" ruling survives the
+     reorder that put the mic first. */
+  #chat-send, #chat-talk { flex:none; font-size:10px; letter-spacing:.06em;
+      height:30px; padding:0 12px; border-radius:10px;
+      display:inline-flex; align-items:center; justify-content:center; }
+  #chat-talk { white-space:nowrap; font-size:9.5px; padding:0 9px;
+      background:transparent; border-color:var(--line2); color:var(--dim); }
+  #chat-talk:hover:not(:disabled) { color:var(--cream); }
   /* recording: the ■ glyph carries the only colour (existing --bad token, no new
      palette entry); the button itself stays a primary so the row doesn't jump. */
   #chat-talk.rec .talk-dot { color:var(--bad); }
-  #chat-talk .talk-t, #chat-auto .talk-t, #chat-conv .talk-t { font-family:var(--mono); }
-  /* AUTO-DICTATION v1 — the ONE new rule this slice adds: listening state. Same
-     glyph-carries-the-colour idiom as .rec above, gold instead of --bad (no pulse
-     animation: that would need a new @keyframes, and the panel has exactly one). */
-  /* CONVERSATION MODE rides the SAME rule — same class of control, same meaning of
-     "live". Zero new CSS rules this slice: only selector extensions. */
-  #chat-auto.on .talk-dot, #chat-conv.on .talk-dot { color:var(--gold); }
+  /* v1.5.26: scoped back to #chat-talk alone. The other two now live INSIDE the switch,
+     whose own `font:` shorthand sets the family for everything in a zone — a second
+     declaration on the inner span would just be a copy that the studio designs then had
+     to out-specify twice. */
+  #chat-talk .talk-t { font-family:var(--mono); }
+
+  /* ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═════════════════════════════
+     ONE vertical three-position switch, far right INSIDE the field, replacing the two
+     separate `auto` and `conv` chips. TOP hands-free · MIDDLE off · BOTTOM conversation,
+     with a knob that slides to the engaged position.
+       · GEOMETRY, AND WHY THE WIDTH IS 66px AND NOT 34px. The width is not a taste
+         choice — it is set by the widest thing a zone must ever SAY. Conversation mode
+         paints its live phase into its own label (`listening` / `…` / `speaking`,
+         convLabel), and "a state that becomes invisible is worse than no icon at all"
+         is this panel's own standing rule.
+         ⚠️ 60px WAS THE FIRST NUMBER AND IT WAS WRONG — found by driving, not by
+         reading: `listening` measures 56.6px, and a 60px track leaves a 56px content
+         box, so the live phase was CLIPPED by 3px (scrollWidth 59 vs clientWidth 56).
+         A state word that is silently cut off is the exact failure the rule above is
+         about. 66px leaves 62px of content, which clears every label convLabel can
+         produce with room, at a fixed width that never jumps mid-conversation.
+         The hit target that falls out of that is 66 × 18 = 1,188px² per zone. That is
+         still under the 44×44 = 1,936px² floor and is stated rather than buried — but
+         it is an IMPROVEMENT on what it replaces, not a regression: the `auto` and
+         `conv` chips were 9.5px labels at 3px/6px padding, ~34 × 18px ≈ 612px² each.
+         And there are two ways out of an engaged mode (click the engaged zone, or the
+         middle), so the middle is never the only way back. Pinned with the arithmetic
+         in test_audio_switch.js.
+       · THE KNOB IS ONE PSEUDO-ELEMENT driven by [data-pos] — three transforms, no JS
+         geometry, so it cannot desynchronise from the state that sets the attribute.
+       · GREY-NOT-HIDE lives in JS (renderAudioSwitch), because the REASON belongs in a
+         title attribute and only the code knows which reason applies.
+     Every rule is scoped under #chat-audiosw so it outranks `button.primary` without
+     touching it: the two ends keep the `primary` class they have always carried, and
+     every existing selector that names #chat-auto / #chat-conv still resolves. */
+  #chat-audiosw { flex:none; align-self:flex-end; position:relative;
+      display:flex; flex-direction:column; width:66px; padding:1px;
+      background:var(--bg); border:1px solid var(--line2); border-radius:10px; }
+  #chat-audiosw[hidden] { display:none; }
+  /* THE KNOB. Behind the zones (z-index 0 vs 1) so the labels stay legible on it. */
+  #chat-audiosw::after { content:''; position:absolute; left:1px; right:1px; top:1px;
+      height:18px; border-radius:8px; background:var(--line2); z-index:0;
+      transition:transform .14s ease, background .14s ease; }
+  #chat-audiosw[data-pos="off"]::after { transform:translateY(18px); }
+  #chat-audiosw[data-pos="conv"]::after { transform:translateY(36px); }
+  #chat-audiosw[data-pos="auto"]::after,
+  #chat-audiosw[data-pos="conv"]::after { background:var(--gold); }
+  #chat-audiosw .asw-zone { flex:none; position:relative; z-index:1;
+      height:18px; padding:0 3px; border:0; background:transparent; border-radius:8px;
+      font:9.5px var(--mono); letter-spacing:.06em; text-transform:none;
+      color:var(--dim); cursor:pointer; white-space:nowrap; overflow:hidden;
+      display:inline-flex; align-items:center; justify-content:center; }
+  /* THE KNOB IS THE STATE LIGHT NOW, so the ● / ▸ dot the two ends used to draw beside
+     their word is hidden inside the switch: `● listening` does not fit a 60px zone, and
+     a gold dot ON the gold knob would be invisible anyway. The colour signal did not go
+     away — it moved from a 4px glyph to a 58px sliding block, which is strictly louder.
+     The dot is untouched everywhere else (#chat-talk keeps its ■ recording glyph). */
+  #chat-audiosw .talk-dot { display:none; }
+  /* THE POSITIONS ARE LABELLED IN EVERY DESIGN, and that is a design decision, not an
+     oversight. The dual-child contract (.st-only icon / .ed-only text) is untouched —
+     both spans are still in the markup and every renderer stays mode-blind — but inside
+     the switch the CSS always picks the WORD. A three-position switch whose positions
+     are three abstract glyphs is a puzzle: `auto` / `off` / `conv` are the shortest
+     honest labels there are, and conversation mode paints its live phase into the same
+     span, which no icon could carry. These two rules are (1,1,0), which is what lets
+     them beat the .st-only / .ed-only swap BOTH icon-bearing axes declare at (0,2,1),
+     without either of those sheets knowing the switch exists. */
+  #chat-audiosw .st-only { display:none; }
+  #chat-audiosw .ed-only { display:inline; }
+  #chat-audiosw .asw-zone[hidden] { display:none; }
+  #chat-audiosw .asw-zone:hover:not(:disabled) { color:var(--cream); background:transparent; }
+  #chat-audiosw .asw-zone:disabled { opacity:.4; cursor:default; }
+  /* the ENGAGED zone sits on the gold knob and takes the accent's own ink token — the
+     same --on-accent every other gold fill in Editorial uses (v1.5.24's fourth sighting
+     of the hardcoded near-black was exactly this class of site) */
+  #chat-audiosw[data-pos="auto"] .asw-top,
+  #chat-audiosw[data-pos="conv"] .asw-bot { color:var(--on-accent); }
+  #chat-audiosw[data-pos="off"] .asw-mid { color:var(--cream); }
+  /* ⚠️ THE RULE THAT IS DELIBERATELY GONE: `#chat-auto.on .talk-dot,
+     #chat-conv.on .talk-dot { color:var(--gold) }`, the AUTO-DICTATION v1 /
+     CONVERSATION MODE listening signal. It is not lost, it MOVED: the state is now the
+     knob's position plus its gold fill, and the dot it coloured is hidden inside the
+     switch (above). Keeping the rule would have been dead CSS pointing at a
+     display:none element — the exact anti-pattern the design fences exist to catch.
+     The `.on` class itself is untouched: renderAutoBtn / renderConvBtn still set it,
+     and it is what test suites and future rules key off. */
 
   /* session rail + chat column live side by side under the header */
   /* CHAT DENSITY: 24 → 18px. This gap is BETWEEN the sessions rail and the chat column,
@@ -1027,6 +1122,38 @@
   body.rail-slim aside .pk-open { display:none; }
   body.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
 
+  /* ══ THE THIRD STATE — THE SIDEBAR FULLY HIDDEN (v1.5.26, Debi) ═════════════════
+     `full` → `slim` (56px icon rail) → `hidden`. The 56px rail already reclaimed 160px;
+     this reclaims the last 56 and leaves a 14px labelled edge strip, which is the SAME
+     grammar as the collapsed sessions rail (#cs-reopen) and office.html's #rail-tab:
+     the pane becomes a full-height labelled reopener rather than disappearing behind a
+     shortcut. HIT TARGET: 14 × the full window height (≈800px live) ≈ 11,000px², so the
+     narrow axis is not the target's measure — the same argument the 34px sessions strip
+     makes, and the reason both are strips rather than buttons.
+     ⌘\ cycles all three, so the keyboard never needs to know which state it is in. */
+  body.rail-hidden aside { display:none; }
+  #rail-reopen { display:none; }
+  body.rail-hidden #rail-reopen {
+      display:flex; align-items:center; justify-content:center;
+      /* ⚠️ `height:auto` IS LOAD-BEARING, and it was found by DRIVING, not by reading:
+         top:0 + bottom:0 only fills the viewport while the height is auto, and the studio
+         design's generic `button { height:var(--sd-h) }` (0,1,1) sets one. This rule is
+         (1,1,1) so it wins — but only over properties it actually states. Without this
+         line the strip rendered 14 × 30px in studio (a lone button floating in a gutter,
+         the exact shape this whole collapse pattern exists to remove) while being
+         14 × 589px in Editorial. Same specificity trap as the sessions reopener; sixth
+         instance, and the first one the fences did not catch because it is a property
+         the base rule simply omitted rather than one it stated. */
+      position:fixed; left:0; top:0; bottom:0; width:14px; height:auto;
+      z-index:40; padding:0;
+      background:var(--bg2); border:0; border-right:1px solid var(--line);
+      cursor:pointer; color:var(--faint);
+      font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase; }
+  body.rail-hidden #rail-reopen span { writing-mode:vertical-rl; white-space:nowrap; }
+  body.rail-hidden #rail-reopen:hover { color:var(--gold); }
+  /* the page starts after the strip, so nothing sits underneath it */
+  body.rail-hidden main { margin-left:14px; }
+
   /* Chat view → widen: drop the narrow centered caps, reclaim the sidebar space.
      ⚠️ CORRECTED v1.5.24: this sentence was STALE and therefore a lie in the source.
      `.cmsg.assistant .body` carries `max-width:none` (see its own rule, which says so
@@ -1084,12 +1211,16 @@
      WHAT IT IS NOW, per Debi's ratified proposal and office.html's collapsed-rail
      pattern (#files → #rail-tab): the pane IS the reopener. One full-height labelled
      button, vertical text, nothing else in the strip.
-       · 44px wide — inside Debi's ratified 34–48px band, and chosen at 44 rather than
-         office.html's 34 so the target clears the 44px floor on BOTH axes with no
-         argument (office's own 34px strip is the house look; this is the house look at
-         the accessibility floor, and 10px is a cheap price for that).
-       · the button is `flex:1 1 auto`, so the click target is 44 × the full rail height
-         (≈640px live) — the click axis is not a question any more.
+       · 34px wide — office.html's OWN reopener width (`body.railoff #files{width:34px}`),
+         i.e. the house precedent. v1.5.24 shipped 44 to clear the hit floor on the
+         narrow axis with no argument; Debi's v1.5.26 ruling is that 44 still reads as
+         "even bigger space… should really be smaller" and that the LOffice strip fits.
+         ⚠️ 34 IS NOT A HIT-TARGET REGRESSION: the floor is about the TARGET, and this
+         target is 34 × the full rail height (≈718px live; `min-height` below floors the
+         degenerate case at 60px so 34×60 still clears 44×44 by area). The arithmetic is
+         re-derived in test_editorial_debt.js §6 rather than restated here.
+       · the button is `flex:1 1 auto`, so the click target is 34 × the full rail height
+         — the click axis is not a question, and that rule is what carries the argument.
        · LABELLED. The chevron alone never said what came back; "Sessions »" does, and
          the tooltip repeats it. This is office.html's own finding ("collapsing to
          display:none was the other half of feels-off") applied to the panel.
@@ -1097,16 +1228,19 @@
          is the separator, so the reclaimed width goes to the transcript instead of to
          a second rule of dead space.
      Reflow: #chat-main is `flex:1 1 auto`, so every pixel the strip gives up is taken by
-     the transcript with no JS — measured 1078px → 1058px main at 44px, vs 950px open.
+     the transcript with no JS — measured 1078px → 1068px main at 34px, vs 950px open.
      Expand restores exactly: the width comes from --sessions-width, which this rule
      never touches, so a rail dragged to 500px collapses and reopens at 500px. ══ */
-  body.sessions-collapsed #chat-sessions { width:44px; padding-right:0; border-right:0; }
+  body.sessions-collapsed #chat-sessions { width:34px; padding-right:0; border-right:0; }
   body.sessions-collapsed #chat-sessions .cs-head,
   body.sessions-collapsed #chat-sessions #cs-list { display:none; }
   #cs-reopen { display:none; }
   body.sessions-collapsed #cs-reopen {
       display:flex; align-items:center; justify-content:center;
-      flex:1 1 auto; width:100%; min-height:44px; padding:0;
+      /* min-height 44 → 60 (v1.5.26): with the width at 34, the DEGENERATE case (a rail
+         shorter than the target) needs 34 × 60 = 2,040px² to clear 44 × 44 = 1,936px².
+         Live the rail is ~718px tall and this never applies. */
+      flex:1 1 auto; width:100%; min-height:60px; padding:0;
       background:transparent; border:0; border-right:1px solid var(--line);
       cursor:pointer; color:var(--dim);
       font:10px var(--mono); letter-spacing:.18em; text-transform:uppercase; }
@@ -1582,9 +1716,7 @@
      editorial build already carries) become the tooltips. */
   html[data-chrome="studio"] #chat-attach,
   html[data-chrome="studio"] #chat-send,
-  html[data-chrome="studio"] #chat-talk,
-  html[data-chrome="studio"] #chat-auto,
-  html[data-chrome="studio"] #chat-conv {
+  html[data-chrome="studio"] #chat-talk {
     height:var(--st-h); min-width:var(--st-h); padding:0 8px;
     display:inline-flex; align-items:center; justify-content:center;
     font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal; text-transform:none;
@@ -1594,10 +1726,23 @@
      gold-fills use, so an icon on gold stays readable in BOTH themes. */
   html[data-chrome="studio"] #chat-send {
     background:var(--gold); border-color:var(--gold); color:var(--on-accent); font-weight:600; }
-  /* recording / listening keep TODAY's signal, moved from the ● glyph to the icon */
+  /* recording keeps TODAY's signal, moved from the ● glyph to the icon */
   html[data-chrome="studio"] #chat-talk.rec .st-ico { color:var(--bad); }
-  html[data-chrome="studio"] #chat-auto.on .st-ico,
-  html[data-chrome="studio"] #chat-conv.on .st-ico { color:var(--gold); }
+  /* ⚠️ v1.5.26 — #chat-auto and #chat-conv LEFT the rule above, and this is the
+     collision the design fences keep catching: they are now the two ends of
+     #chat-audiosw, and `html[data-chrome="studio"] #chat-auto` is (1,1,1) while the
+     base switch rule `#chat-audiosw .asw-zone` is only (1,1,0). Left in the icon-button
+     list they would have WON — two 30px round buttons stacked inside a 58px track,
+     with the middle zone (which this axis has never heard of) keeping the editorial
+     look between them. So the axis restates the SWITCH instead: its ground and its
+     typography, which are the two things this chrome is for. The `.on` listening
+     signal is not restated because it no longer exists as ink — the knob carries it
+     (see the base rules), in every chrome. */
+  html[data-chrome="studio"] #chat-audiosw {
+    background:var(--st-btn); border-color:var(--st-edge); border-radius:var(--st-r); }
+  html[data-chrome="studio"] #chat-audiosw .asw-zone {
+    font-size:var(--st-fs-s); font-family:var(--st-font);
+    letter-spacing:normal; text-transform:none; color:var(--fg); }
 
   /* (2) THE BARE <button> — Mission Control's Start / Stop / Install / Logs / Retry,
      every .md-actions row, the download rows, the dialogs and the setup checklist are
@@ -1752,6 +1897,12 @@
     <line x1="2" y1="6" x2="2" y2="10"/><line x1="5" y1="4" x2="5" y2="12"/>
     <line x1="8" y1="2" x2="8" y2="14"/><line x1="11" y1="4" x2="11" y2="12"/>
     <line x1="14" y1="6" x2="14" y2="10"/></symbol>
+  <!-- v1.5.26 — the audio-mode switch's MIDDLE (off) position. Same primitive-only
+       rule as its five siblings: one line. It is deliberately the quietest glyph in
+       the set, because "off" is the resting state and a resting state that shouts is
+       a state you keep trying to leave. -->
+  <symbol id="i-audio-off" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="4.5" y1="6.5" x2="11.5" y2="6.5"/><line x1="4.5" y1="9.5" x2="11.5" y2="9.5"/></symbol>
   <symbol id="i-conv" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M3 9 A5 7 0 0 1 13 9"/><rect x="2" y="9" width="2.5" height="4" rx="1"/>
     <rect x="11.5" y="9" width="2.5" height="4" rx="1"/></symbol>
@@ -1760,6 +1911,16 @@
   <symbol id="i-theme" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="8" cy="8" r="5"/><path d="M8 3 A5 5 0 0 1 8 13 Z" fill="currentColor" stroke="none"/></symbol>
 </defs></svg>
+
+<!-- v1.5.26 — THE THIRD SIDEBAR STATE. `full` → `slim` (56px icons) → `hidden`, and this
+     strip is how `hidden` comes back. It is REAL MARKUP hidden by a class, exactly like
+     #cs-reopen and office.html's #rail-tab, so there is ONE collapse grammar in the
+     house: the pane becomes a labelled full-height reopener rather than vanishing into a
+     keyboard shortcut nobody can discover. Outside <aside> deliberately — the aside is
+     display:none in this state, and a reopener inside the thing it reopens is the bug
+     this pattern exists to avoid. -->
+<button id="rail-reopen" onclick="toggleSideRail()" title="Show sidebar (⌘\)"
+  aria-label="Show sidebar"><span>Menu »</span></button>
 
 <aside>
   <!-- FABLE: style pass — Phase 1 rail collapse toggle (Chat view only) -->
@@ -1898,22 +2059,57 @@
             <textarea id="chat-input" rows="2" placeholder="Message MOT…"
               oninput="growInput(this)"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-send"/></svg></span><span class="ed-only">Send</span></button>
-            <!-- PHASE D: dictation. Hidden until an STT default exists (loadVoiceCfg).
-                 AFTER Send + 40% smaller than it (Debi 2026-08-13). -->
+            <!-- PHASE D: dictation (push-to-talk). Hidden until an STT default exists
+                 (loadVoiceCfg).
+                 ⚠️ v1.5.26 — IT MOVED AHEAD OF SEND, and that is the whole point of the
+                 slice: Send is now the LAST plain control before the switch, pinned to
+                 the right INSIDE the bounded field, which is the grammar Claude / LM
+                 Studio / Unsloth all use. The 2026-08-13 ruling ("talk sits AFTER Send
+                 and reads smaller than it") governed a row of chips BELOW an input box;
+                 that row no longer exists. What the ruling protected — talk is visibly
+                 subordinate to Send — is preserved: Send is the one filled accent
+                 control and the mic is a quiet ghost button beside it. -->
             <button class="primary" id="chat-talk" onclick="toggleTalk()"
               title="Dictate — record and transcribe into the message box"
               aria-label="Dictate into the message box" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-mic"/></svg></span><span class="ed-only">● talk</span></button>
-            <!-- AUTO-DICTATION v1: hands-free continuous mode. Same visibility gate as
-                 ● talk (an STT default must exist); mutually exclusive with it. -->
-            <button class="primary" id="chat-auto" onclick="toggleAuto()"
-              title="Hands-free dictation — listen continuously and transcribe each utterance"
-              aria-label="Hands-free dictation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-auto"/></svg></span><span class="ed-only">auto</span></button>
-            <!-- CONVERSATION MODE: speak → auto-send → reply is auto-spoken → listen
-                 again. Needs BOTH an STT and a TTS default (renderConvBtn). -->
-            <button class="primary" id="chat-conv" onclick="toggleConv()"
-              title="Conversation — speak, the reply is sent and read back to you"
-              aria-label="Hands-free conversation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-conv"/></svg></span><span class="ed-only">conv</span></button>
+            <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-send"/></svg></span><span class="ed-only">Send</span></button>
+            <!-- ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═══════════════════════
+                 ONE vertical three-position switch replaces the separate `auto` and
+                 `conv` chips. TOP = hands-free dictation, MIDDLE = off (the resting
+                 state), BOTTOM = conversation. Clicking the engaged position again, or
+                 the middle, returns to off.
+
+                 ⚠️ IT IS A SURFACE, NOT A SECOND STATE MACHINE. The two ends ARE the
+                 existing #chat-auto and #chat-conv buttons — same ids, same onclick
+                 handlers, same `hidden` gates, same .on class — so renderAutoBtn,
+                 renderConvBtn, autoFlash, stopAuto and the whole conversation machine
+                 keep painting the controls they always painted, and there is not one
+                 branch anywhere asking "is the switch showing?". Only the MIDDLE is new,
+                 and all it does is call the same togglers. `talk` (push-to-talk) stays
+                 on the mic button, per Debi's split.
+
+                 role=radiogroup + role=radio + aria-checked: three mutually exclusive
+                 positions IS a radio group, and every zone is a real <button>, so it is
+                 tab-reachable with no tabindex bookkeeping. ↑/↓/Home/End move and
+                 engage (audioSwKey). -->
+            <div id="chat-audiosw" role="radiogroup" aria-label="Audio mode" hidden>
+              <!-- AUTO-DICTATION v1: hands-free continuous mode. Same visibility gate as
+                   ● talk (an STT default must exist); mutually exclusive with it. -->
+              <button class="primary asw-zone asw-top" id="chat-auto" role="radio" aria-checked="false"
+                onclick="toggleAuto()" onkeydown="audioSwKey(event)"
+                title="Hands-free dictation — listen continuously and transcribe each utterance"
+                aria-label="Hands-free dictation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-auto"/></svg></span><span class="ed-only">auto</span></button>
+              <button class="asw-zone asw-mid" id="chat-audio-off" role="radio" aria-checked="true"
+                onclick="audioModeOff()" onkeydown="audioSwKey(event)"
+                title="Audio off — the microphone only listens while you hold dictation"
+                aria-label="Audio mode off"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-audio-off"/></svg></span><span class="ed-only">off</span></button>
+              <!-- CONVERSATION MODE: speak → auto-send → reply is auto-spoken → listen
+                   again. Needs BOTH an STT and a TTS default (renderConvBtn). -->
+              <button class="primary asw-zone asw-bot" id="chat-conv" role="radio" aria-checked="false"
+                onclick="toggleConv()" onkeydown="audioSwKey(event)"
+                title="Conversation — speak, the reply is sent and read back to you"
+                aria-label="Hands-free conversation" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-conv"/></svg></span><span class="ed-only">conv</span></button>
+            </div>
           </div>
         </div>
         <!-- model picker popover — position:fixed, anchored to #chat-model-btn on open -->
@@ -2517,9 +2713,17 @@ const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','loffice','caps','logs',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
-const NAV_DEFAULT_TOPBAR = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
-                            'unsloth','music','aider','loffice','opencode'];
+/* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
+   authority, and from app/main.swift's navDefaultTopbar; test_nav_model.py asserts all
+   three agree). Same eleven ids, new reading order. */
+const NAV_DEFAULT_TOPBAR = ['mc','hermes','unsloth','opencode','odysseus','voicestudio',
+                            'comfyui','aider','loffice','music','voicebox'];
+/* The pre-v1.5.26 order, FROZEN — the only way to tell "never customised" from
+   "customised into something short". Mirrors nav.py's DEFAULT_TOPBAR_V1. */
+const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
+                               'unsloth','music','aider','loffice','opencode'];
 const NAV_TOPBAR_UNPINNED = ['chat','models','caps'];
+const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
 const NAV_KEY = 'harness-nav';
@@ -2588,17 +2792,45 @@ function navValidate(m) {
   return '';
 }
 
+/* PURE mirror of nav.py's `migrate` — the one-time default-topbar reorder (v1.5.26).
+   Returns the raw model, possibly with a NEW topbar. The rule, stated the way a user
+   would: if you never touched your strip you get the new default; if you arranged it,
+   your arrangement is yours. "Never touched" is decidable exactly — the saved topbar is
+   the old default, ids AND pins, in order.
+   ⚠️ This mirror matters even though data/nav.json wins on load: navGet() paints the
+   sidebar and the Appearance editor from localStorage BEFORE navSync() answers, so
+   without it the first frame after an upgrade shows the old order and then jumps. */
+function navMigrate(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  if ((+raw.v || 1) >= NAV_MODEL_V) return raw;
+  const rows = Array.isArray(raw.topbar) ? raw.topbar : null;
+  if (!rows) return raw;
+  const want = NAV_DEFAULT_TOPBAR_V1.map(id => id + ':1')
+    .concat(NAV_TOPBAR_UNPINNED.map(id => id + ':0'));
+  const got = rows.map(r => (typeof r === 'string' ? r + ':1'
+    : (r && typeof r === 'object' && typeof r.id === 'string')
+      ? r.id + ':' + ((r.pinned === undefined ? true : !!r.pinned) ? 1 : 0) : ' '));
+  if (got.join('|') !== want.join('|')) return raw;      // customised — leave it alone
+  return { ...raw, topbar: NAV_DEFAULT_TOPBAR.map(id => ({ id, pinned:true }))
+    .concat(NAV_TOPBAR_UNPINNED.map(id => ({ id, pinned:false }))) };
+}
+
 let navModel = null;
 function navGet() {
   if (!navModel) {
     let raw = null;
     try { raw = JSON.parse(localStorage.getItem(NAV_KEY) || 'null'); } catch (e) {}
-    navModel = navNormalize(raw && raw.v === 1 ? raw : null);
+    // v1 and v2 are both READABLE (the shapes are identical; only the default order
+    // moved), so the gate is "a version we know" rather than "the current one" — the
+    // old `raw.v === 1` test would have thrown away every saved layout on upgrade.
+    const known = raw && (+raw.v === 1 || +raw.v === NAV_MODEL_V);
+    navModel = navNormalize(known ? navMigrate(raw) : null);
+    if (known && (+raw.v || 1) < NAV_MODEL_V) navSaveLocal();   // stamp it: migrate once
   }
   return navModel;
 }
 function navSaveLocal() {
-  try { localStorage.setItem(NAV_KEY, JSON.stringify({ v:1, sidebar:navModel.sidebar, topbar:navModel.topbar })); }
+  try { localStorage.setItem(NAV_KEY, JSON.stringify({ v:NAV_MODEL_V, sidebar:navModel.sidebar, topbar:navModel.topbar })); }
   catch (e) {}
 }
 /* Two-tier, exactly like Unsloth: localStorage is the INSTANT copy (the sidebar draws
@@ -3681,30 +3913,58 @@ function peekKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closePeek()
    key still means exactly what it meant before, and only an explicit click/⌘\ pins the
    rail globally. */
 // PURE (unit-tested): stored value → 'slim' | 'full' | 'auto' (nothing stored yet).
-function railPref(v) { return (v === 'slim' || v === 'full') ? v : 'auto'; }
+/* v1.5.26 adds 'hidden' — a THIRD stored value, not a second key. Anything else is
+   still 'auto', so an older build's preference and a junk value both land where they
+   always did. */
+function railPref(v) { return (v === 'slim' || v === 'full' || v === 'hidden') ? v : 'auto'; }
+/* PURE (unit-tested): pref + view → the state that is on screen. railIsSlim below is
+   this function's old boolean face, kept because it is the one every other caller and
+   fence already speaks — 'hidden' is a slim rail that is also gone, so it answers true
+   there too and no existing behaviour has to learn about the third state. */
+function railState(pref, view) {
+  if (pref === 'hidden') return 'hidden';
+  if (pref === 'slim') return 'slim';
+  if (pref === 'full') return 'full';
+  return view === 'chat' ? 'slim' : 'full';
+}
+/* PURE (unit-tested): the next state in Debi's cycle. Deliberately a table and not
+   arithmetic — three states with a wrap is exactly where an index rotation quietly
+   grows a fourth. */
+function railNext(state) {
+  return state === 'full' ? 'slim' : (state === 'slim' ? 'hidden' : 'full');
+}
 // PURE (unit-tested): the whole decision table. 'auto' reproduces the pre-2026-08-28
 // behaviour exactly, so a fresh install and an untouched install are unchanged.
 function railIsSlim(pref, view) {
-  if (pref === 'slim') return true;
-  if (pref === 'full') return false;
-  return view === 'chat';
+  return railState(pref, view) !== 'full';
 }
 function applySideRail() {
   let raw = null;
   try { raw = localStorage.getItem('harness-chat-rail'); } catch (e) {}
-  const slim = railIsSlim(railPref(raw), curView);
-  document.body.classList.toggle('rail-slim', slim);
+  const st = railState(railPref(raw), curView);
+  document.body.classList.toggle('rail-slim', st !== 'full');
+  document.body.classList.toggle('rail-hidden', st === 'hidden');
   const t = document.getElementById('rail-toggle');
   if (t) {
-    t.textContent = slim ? '»' : '«';
-    const lbl = slim ? 'Expand sidebar (⌘\\)' : 'Collapse sidebar (⌘\\)';
-    t.title = lbl; t.setAttribute('aria-label', slim ? 'Expand sidebar' : 'Collapse sidebar');
+    // The chevron says what the NEXT click does, and in a three-state cycle that is the
+    // only honest thing it can say: « narrows, » widens, and from `slim` the next step
+    // is narrower still, so it stays «. The full sentence lives in the tooltip, because
+    // one glyph cannot carry a three-way cycle and pretending otherwise is how a
+    // control ends up meaning two things (the v1.5.24 sessions-chevron lesson).
+    const narrowing = st !== 'hidden';
+    t.textContent = narrowing ? '«' : '»';
+    const lbl = st === 'full' ? 'Collapse sidebar to icons (⌘\\)'
+              : st === 'slim' ? 'Hide sidebar (⌘\\)'
+                              : 'Show sidebar (⌘\\)';
+    t.title = lbl; t.setAttribute('aria-label', lbl.replace(' (⌘\\)', ''));
   }
 }
 function toggleSideRail() {
-  // Flip against what is ON SCREEN, not against the stored value: with the key absent
-  // the two disagree, and a chevron that reads » must expand on the first click.
-  const next = document.body.classList.contains('rail-slim') ? 'full' : 'slim';
+  // Cycle against what is ON SCREEN, not against the stored value: with the key absent
+  // the two disagree, and a chevron must do what it says on the FIRST click.
+  const on = document.body.classList.contains('rail-hidden') ? 'hidden'
+           : document.body.classList.contains('rail-slim') ? 'slim' : 'full';
+  const next = railNext(on);
   try { localStorage.setItem('harness-chat-rail', next); } catch (e) {}
   applySideRail();
 }
@@ -6654,6 +6914,13 @@ async function startTalk(){
     speakFlash(btn, 'err', String((e && e.message) || e)); return;
   }
   talkPaint(0);
+  // v1.5.26 — the recording is now LIVE, so the switch's two ends have to grey with
+  // their reason. Here, not in toggleTalk: this function is async (getUserMedia), so a
+  // repaint at the call site would run BEFORE talkRec exists and grey nothing. Through
+  // the renderers, because they own the resting titles the switch only overwrites while
+  // the exclusion actually applies. The teardown paths already come back through
+  // renderTalkBtn → renderAutoBtn → renderAudioSwitch, so they need nothing.
+  renderAutoBtn(); renderConvBtn();
 }
 
 /* cancel=true → tear everything down and transcribe NOTHING */
@@ -7008,11 +7275,99 @@ function renderAutoBtn(){
     ctlPaint(btn, 'i-auto', '', AUTO_LABEL, '');
     btn.title = (voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '') + AUTO_TITLE;
   }
+  renderAudioSwitch();   // v1.5.26: the switch is a VIEW of this state, painted last
 }
 
 function toggleAuto(){
   if (convOn()) stopConv('auto dictation started');   // conv and auto are exclusive
   if (autoVad) stopAuto(''); else startAuto('auto');
+}
+
+/* ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═══════════════════════════
+   A three-position vertical switch — TOP hands-free, MIDDLE off, BOTTOM conversation —
+   over the state that already exists. There is NO new state here and no new persistence:
+   `autoOn()` / `convOn()` are still the only truth, the two ends are still #chat-auto and
+   #chat-conv with their original handlers and gates, and this function only DERIVES what
+   the switch should look like from them. That is why it can be called from the bottom of
+   every existing renderer without any of them learning that a switch exists.
+
+   Clicking the engaged end again turns it off, because that is what toggleAuto and
+   toggleConv have always done; the middle is the only genuinely new affordance and all
+   it does is call the same togglers. */
+function renderAudioSwitch(){
+  const box = document.getElementById('chat-audiosw');
+  const a = document.getElementById('chat-auto');
+  const c = document.getElementById('chat-conv');
+  const off = document.getElementById('chat-audio-off');
+  if (!box || !a || !c || !off) return;
+  // VISIBILITY IS DERIVED, never decided here. Each end carries its own gate
+  // (renderAutoBtn wants an STT default, renderConvBtn wants STT *and* TTS), so the
+  // switch exists exactly when at least one end does — and a machine with no voice
+  // models set up sees no switch at all, exactly as it saw no chips before.
+  box.hidden = a.hidden && c.hidden;
+  const pos = autoOn() ? 'auto' : (convOn() ? 'conv' : 'off');
+  box.dataset.pos = pos;                       // the knob's position is one CSS rule
+  off.classList.toggle('on', pos === 'off');
+  a.setAttribute('aria-checked', String(pos === 'auto'));
+  c.setAttribute('aria-checked', String(pos === 'conv'));
+  off.setAttribute('aria-checked', String(pos === 'off'));
+  // GREY, NOT HIDE, WITH THE REASON IN THE TITLE (Debi's standing rule). Push-to-talk
+  // and hands-free listening are mutually exclusive in the CODE — startAuto calls
+  // stopTalk and toggleTalk calls stopAuto — so with the switch engaged the mic button
+  // silently cancelled the mode the user had just chosen. Now it says why it is quiet.
+  // ⚠️ only while NOT already recording: disabling a live recorder's own stop button
+  // would trap the microphone open, which is the worst bug this area can have.
+  const talk = document.getElementById('chat-talk');
+  if (talk && !talkRec){
+    const busy = pos !== 'off';
+    talk.disabled = busy;
+    talk.title = busy
+      ? ('Dictation is off while ' + (pos === 'auto' ? 'hands-free dictation' : 'conversation mode')
+         + ' is listening — set the audio switch to off first.')
+      : ((voiceCfg && voiceCfg.stt_model ? voiceCfg.stt_model + '\n' : '') + TALK_TITLE);
+  }
+  // …AND THE SAME COURTESY IN REVERSE. The exclusion is symmetric in the code, so it has
+  // to be symmetric on the screen: while a push-to-talk recording is live, the two ends
+  // of the switch would silently throw that recording away (startAuto calls stopTalk).
+  // The MIDDLE stays live — "off" is never a destructive answer.
+  if (talkRec){
+    for (const el of [a, c]){
+      el.disabled = true;
+      el.title = 'Finish or stop the dictation recording first — starting a hands-free '
+               + 'mode would discard it.';
+    }
+  } else {
+    a.disabled = false; c.disabled = false;      // their own renderers own the titles
+  }
+}
+
+/* The MIDDLE position. Not a third mode — the absence of the other two. */
+function audioModeOff(){
+  if (convOn()) stopConv('the audio switch was set to off');
+  else if (autoOn()) stopAuto('the audio switch was set to off');
+  else renderAudioSwitch();          // already off: repaint rather than do nothing
+}
+
+/* Keyboard, as a radio group actually behaves: ↑/↓ (and ←/→, which is what a vertical
+   group gets from users who learned the pattern on a horizontal one) MOVE AND SELECT in
+   one action, Home/End jump to the ends. Zones whose own gate hides or disables them are
+   skipped rather than focused, so a machine with no TTS default cannot arrow into a
+   conversation position that does not exist. */
+function audioSwKey(e){
+  const live = ['chat-auto', 'chat-audio-off', 'chat-conv']
+    .map(id => document.getElementById(id))
+    .filter(el => el && !el.hidden && !el.disabled);
+  let i = live.indexOf(e.currentTarget);
+  if (i < 0 || live.length < 2) return;
+  const k = e.key;
+  if (k === 'ArrowUp' || k === 'ArrowLeft') i = (i + live.length - 1) % live.length;
+  else if (k === 'ArrowDown' || k === 'ArrowRight') i = (i + 1) % live.length;
+  else if (k === 'Home') i = 0;
+  else if (k === 'End') i = live.length - 1;
+  else return;
+  e.preventDefault();
+  live[i].focus();
+  live[i].click();
 }
 
 /* `mode` is 'auto' (dictation — transcripts are APPENDED) or 'conv' (conversation —
@@ -7361,6 +7716,7 @@ function renderConvBtn(){
     ctlPaint(btn, 'i-conv', '', CONV_LABEL, '');
     btn.title = CONV_TITLE;
   }
+  renderAudioSwitch();   // v1.5.26: same state, second surface — see renderAudioSwitch
 }
 
 function toggleConv(){

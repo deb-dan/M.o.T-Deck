@@ -388,16 +388,21 @@ check('the output is always a Float32Array',
 
 /* ---- wiring facts read straight out of the panel source --------------------- */
 check('the auto chip exists in the composer', html.indexOf('id="chat-auto"') >= 0);
-check('the auto chip sits AFTER ● talk (Send → talk → auto)',
-  html.indexOf('id="chat-auto"') > html.indexOf('id="chat-talk"'));
+check('the auto end sits after ● talk and after Send (talk → Send → the switch)',
+  html.indexOf('id="chat-auto"') > html.indexOf('id="chat-send"')
+  && html.indexOf('id="chat-send"') > html.indexOf('id="chat-talk"'));
 check('the auto chip ships hidden (shown only when an STT default exists)',
   /id="chat-auto"[\s\S]{0,400}?hidden>/.test(html));
 // (CONVERSATION MODE later joined both selectors — same class of control, same
 //  size, same meaning of "live" — so these pin the widened form.)
-check('the auto chip shares ● talk\'s size rule instead of inventing one',
-  /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:9\.5px/.test(html));
-check('the listening state reuses the glyph-carries-the-colour idiom',
-  /#chat-auto\.on \.talk-dot,\s*#chat-conv\.on \.talk-dot\s*\{\s*color:var\(--gold\)/.test(html));
+// ⚠️ FENCES MOVED, v1.5.26: the auto chip is now the TOP position of Debi's audio
+// switch. Same claims, new object — one shared small size, and a listening state that
+// costs no new colour token (the knob's gold fill + its position now carry it).
+check('the auto end shares the switch\'s ONE size rule instead of inventing one',
+  /#chat-audiosw \.asw-zone \{[^}]*font:9\.5px var\(--mono\)/.test(html));
+check('the listening state is the knob, and it reuses --gold rather than a new token',
+  /#chat-audiosw\[data-pos="auto"\]::after/.test(html)
+  && /class="primary asw-zone asw-top" id="chat-auto"/.test(html));
 check('the auto chip rides the SAME config read as ● talk',
   /renderTalkBtn[\s\S]{0,900}?renderAutoBtn\(\);/.test(html));
 check('capture goes through an AudioWorklet (GATE 1\'s proven path), not MediaRecorder',

@@ -203,8 +203,23 @@ console.log('2. Editorial does not pay for the second design');
                (bridge/tests/test_editorial_debt.js, 96 checks) so nothing here is load-
                bearing for correctness; only the reasoning is in the page. The structural
                half of this budget — the design asset is not inlined — is unaffected and
-               is asserted below on its own terms. */
-  const CEILING = 720000;
+               is asserted below on its own terms.
+       745000  v1.5.26, Debi's composer + navigation wave — +23.7KB, and here is what it
+               bought, per the ceiling's own protocol. NEW BEHAVIOUR (not prose): the
+               audio-mode switch's markup, its state-derivation renderer, its keyboard
+               radio-group handler and its CSS in three looks; the composer's rewrite
+               into one bounded field; the sidebar's third (fully hidden) state with its
+               pure decision + cycle functions and its edge reopener; and the nav
+               reorder's one-time localStorage migration, which has to live in the page
+               because the page paints the sidebar before /api/nav answers. Measured:
+               ~14KB of that is code and markup, ~10KB is the argued exceptions the
+               v1.5.24 line already justifies keeping AT the rule (the 34px strip's
+               hit-floor argument, the switch's 60px width and why it is 60 and not 34,
+               the four specificity restatements, and the two moved Debi rulings — talk
+               before Send, and auto/conv becoming one control). The MEASURED numbers all
+               live in fences (test_editorial_debt.js, test_theme_packs.js,
+               test_audio_switch.js, test_audio_drop.js); only the reasoning is here. */
+  const CEILING = 745000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
@@ -790,6 +805,18 @@ console.log('6. the states another rule owns (the collision trap)');
     // studio control changed. Found by reading the trap this list already records —
     // which is what a pinned trap is for.
     ['html[data-design="studio"] body.sessions-collapsed #cs-reopen', 'font-size'],
+    // v1.5.26 — THE FIFTH INSTANCE. The sidebar gained a third (fully hidden) state with
+    // its own edge reopener, and `body.rail-hidden #rail-reopen` is (1,1,1) against this
+    // sheet's generic `button` at (0,1,1): without the restatement the one control that
+    // gets the sidebar back would keep Editorial's tracked mono caps while every other
+    // studio control changed. ⚠️ The SIXTH instance of the same trap in this wave was a
+    // property the base rule OMITTED rather than one it stated — this sheet's
+    // `button { height }` collapsed that strip to 30px — which is why the base rule now
+    // states `height:auto` (fenced in test_theme_packs.js).
+    ['html[data-design="studio"] body.rail-hidden #rail-reopen', 'font-size'],
+    // v1.5.26 — the audio-mode switch. Typography and ground only; the geometry is
+    // deliberately NOT restated (one object in every design, the sessions-rail lesson).
+    ['html[data-design="studio"] #chat-audiosw .asw-zone', 'font-family'],
   ]) {
     const r = RULES.find(x => x.sel === sel);
     ok(!!r, 'restated: ' + sel);
@@ -800,16 +827,25 @@ console.log('6. the states another rule owns (the collision trap)');
   ok(slim && /width:56px/.test(slim.body),
      'the collapsed rail is still 56px in studio (it was 228px of empty column)');
   const col = RULES.find(x => x.sel === 'html[data-design="studio"] body.sessions-collapsed #chat-sessions');
-  // v1.5.24: 24px → 44px. The number is no longer duplicated as a literal on both sides —
-  // it is read from EDITORIAL's rule and required to match, because a collapse geometry
-  // that differs per design is exactly how studio ended up with a 22×14px reopen target.
+  // v1.5.24: 24px → 44px. v1.5.26: 44px → 34px (Debi — office.html's house strip width).
+  // The number is not duplicated as a literal on both sides — it is read from EDITORIAL's
+  // rule and required to match, because a collapse geometry that differs per design is
+  // exactly how studio ended up with a 22×14px reopen target.
   const edCol = /body\.sessions-collapsed #chat-sessions \{[^}]*width:(\d+)px/.exec(inlineCss);
   ok(!!edCol, 'Editorial states the collapsed strip width');
   ok(col && new RegExp('width:' + edCol[1] + 'px').test(col.body) && /padding-right:0/.test(col.body),
      'the collapsed sessions rail is the SAME ' + edCol[1] + 'px in studio as in Editorial, '
-     + 'with no padding (it was 24px before Debi ratified the 34–48px reopen strip)');
-  ok(+edCol[1] >= 44, '…and that width is ≥44px, so the strip clears the hit floor on its '
-     + 'narrow axis in this design too');
+     + 'with no padding (24px pre-v1.5.24, 44px in v1.5.24, 34px since Debi ruled for '
+     + 'office.html\'s own reopener width)');
+  ok(+edCol[1] === 34, '…and that width is office.html\'s house 34px in this design too. '
+     + 'The hit floor is met by the FULL-HEIGHT reopener, not by the strip\'s narrow axis '
+     + '— the rule that carries the argument is the `flex:1 1 auto` + `min-height:44px` '
+     + 'pair fenced in test_editorial_debt.js §6, so shrinking the width without keeping '
+     + 'the full-height click area fails there.');
+  const sro34 = RULES.find(x => x.sel === 'html[data-design="studio"] body.sessions-collapsed #cs-reopen');
+  ok(sro34 && !/width:\s*\d/.test(sro34.body),
+     '…and studio\'s reopener restatement is TYPOGRAPHY ONLY: it must not re-declare a '
+     + 'width, or the two designs would drift apart again at the new narrower number');
   // and the states studio deliberately does NOT restate, because Editorial's rule is
   // MORE specific and correctly wins — recorded so the next reader does not "fix" it.
   ok(/body\.chat-mode main \{/.test(inlineCss),

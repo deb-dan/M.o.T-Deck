@@ -570,11 +570,60 @@ check('Mission Control cannot be lost from the strip, whatever the file says',
       /func rebuildTabs\([\s\S]{0,900}ids\.removeAll \{ \$0 == panelId \}[\s\S]{0,60}ids\.insert\(panelId, at: 0\)/.test(swift));
 check('a tab that is on screen stays on the strip even after it is un-pinned',
       /func rebuildTabs\([\s\S]{0,1600}for id in \(splitOn \? \[keepLeft, keepRight\] : \[keepLeft\]\) where !ids\.contains\(id\)/.test(swift));
-check('hidden tabs collect in a ⋯ overflow menu, hidden when there are none',
+// ⚠️ FENCE MOVED, v1.5.26 — the ⋯ button used to hide itself whenever no tab was
+// hidden. That was right while it did exactly one thing; it now also carries "Hide Tab
+// Bar" (Debi's affordance for the strip toggle), and a menu that only exists when an
+// unrelated condition holds is not a discoverable home for anything. The old meaning is
+// not lost — the menu STATES "No hidden tabs" instead of implying it by absence, which
+// is the assertion below.
+check('hidden tabs collect in a ⋯ overflow menu, which is always reachable',
       /overflowButton = NSButton\(title: "⋯"/.test(swift)
       && /func hiddenTabs\(\) -> \[HarnessTab\][\s\S]{0,200}tabRegistry\.filter/.test(swift)
-      && /overflowButton\.isHidden = hiddenTabs\(\)\.isEmpty/.test(swift)
+      && /overflowButton\.isHidden = false/.test(swift)
       && /NSMenu\(\)/.test(swift));
+check('...and it SAYS there are none rather than vanishing',
+      /"No hidden tabs"/.test(swift));
+
+// ── v1.5.26: HIDE / SHOW THE NATIVE TAB STRIP (Debi) ────────────────────────────
+check('the strip height is ONE constant, held as a constraint so it can be driven to 0',
+      /let tabBarHeight: CGFloat = 44/.test(swift)
+      && /tabBarH = tabBar\.heightAnchor\.constraint\(equalToConstant: tabBarHeight\)/.test(swift)
+      && /tabBarH\.constant = show \? tabBarHeight : 0/.test(swift));
+check('...and a 0pt strip is also isHidden, so it cannot still take a click',
+      /tabBar\.isHidden = !show/.test(swift));
+check('the preference is persisted and restored BEFORE the panes lay out (no flash)',
+      /UserDefaults\.standard\.set\(tabBarHidden, forKey: "harness\.tabbar\.hidden"\)/.test(swift)
+      && /tabBarHidden = ud\.bool\(forKey: "harness\.tabbar\.hidden"\)/.test(swift)
+      && swift.indexOf('tabBarHidden = ud.bool(forKey: "harness.tabbar.hidden")')
+         < swift.indexOf('let wasSplit = ud.bool'));
+check('BOTH entry points exist: a View-menu item carrying ⌘⇧T, and the ⋯ menu',
+      /NSMenuItem\(title: "Hide Tab Bar",\s*\n?\s*action: #selector\(AppDelegate\.toggleTabBar\(_:\)\), keyEquivalent: "t"\)/.test(swift)
+      && /tabBarItem\.keyEquivalentModifierMask = \[\.command, \.shift\]/.test(swift)
+      && /title: tabBarHidden \? "Show Tab Bar" : "Hide Tab Bar"/.test(swift));
+// ⌘⇧T was checked against every binding this app and the panel already own: ⌘R, ⌘Q,
+// ⌘C/⌘V/⌘A here and ⌘K / ⌘\ in the panel. The two "t" sites are the SAME action shown
+// in two places (the View menu owns the working binding; the ⋯ item shows it).
+check('⌘⇧T is unclaimed by every OTHER binding this shell owns',
+      (swift.match(/keyEquivalent: "t"/g) || []).length === 2
+      && (swift.match(/keyEquivalentModifierMask = \[\.command, \.shift\]/g) || []).length === 2
+      && (swift.match(/#selector\((?:AppDelegate\.)?toggleTabBar\(_:\)\), keyEquivalent: "t"/g) || []).length === 2
+      && !/keyEquivalent: "([^t])"[^\n]*\n[^\n]*\.shift/.test(swift));
+check('the menu item names the ACTION, not the state (the chevron lesson)',
+      /it\.title = tabBarHidden \? "Show Tab Bar" : "Hide Tab Bar"/.test(swift));
+check('the hover reveal is a mouse-moved MONITOR (a tracking area would have to sit on '
+    + 'top of a WKWebView), armed only while the strip is hidden',
+      /addLocalMonitorForEvents\(matching: \[\.mouseMoved\]\)/.test(swift)
+      && /window\.acceptsMouseMovedEvents = true/.test(swift)
+      && /guard on else \{ return \}/.test(swift)
+      && /if let m = tabPeekMonitor \{ NSEvent\.removeMonitor\(m\); tabPeekMonitor = nil \}/.test(swift));
+check('...and it closes when the pointer leaves the STRIP, not the 4pt trigger — '
+    + 'otherwise it would snap shut the instant it opened under the pointer',
+      /y >= top - 4/.test(swift) && /y < top - s\.tabBarHeight/.test(swift));
+check('a peek is NEVER persisted — only the deliberate toggle writes', (() => {
+  const i = swift.indexOf('func applyTabBar(peeking: Bool = false)');
+  const j = swift.indexOf('@objc func toggleTabBar(', i);
+  return i > 0 && j > i && !swift.slice(i, j).includes('UserDefaults');
+})());
 check('...and picking one is SESSION ONLY — it never writes the layout back',
       /func overflowPick\([\s\S]{0,400}tempShown\.append\(id\)[\s\S]{0,200}rebuildTabs\(\)/.test(swift)
       && !/func overflowPick\([\s\S]{0,400}navPinned =/.test(swift));
@@ -602,8 +651,11 @@ check('the arrangement is persisted by ID as well as by index (an index is strip
       /ud\.set\(tabId\(currentTab\), forKey: "harness\.split\.leftId"\)/.test(swift)
       && /ud\.set\(tabId\(rightTab\), forKey: "harness\.split\.rightId"\)/.test(swift)
       && /tabs\.firstIndex\(where: \{ \$0\.id == savedLeftId \}\)/.test(swift));
-check('the default strip is exactly the eleven default tabs, in order',
-      /let navDefaultTopbar = \["mc", "odysseus", "hermes", "voicestudio", "voicebox",\s*\n?\s*"comfyui", "unsloth", "music", "aider", "loffice", "opencode"\]/.test(swift));
+// v1.5.26 — DEBI'S ORDER. The same eleven ids in a new reading order; bridge/nav.py's
+// DEFAULT_TOPBAR and the panel's NAV_DEFAULT_TOPBAR carry the same list, and
+// test_nav_model.py is the fence that compares all three.
+check('the default strip is exactly the eleven default tabs, in Debi\'s order',
+      /let navDefaultTopbar = \["mc", "hermes", "unsloth", "opencode", "odysseus",\s*\n?\s*"voicestudio", "comfyui", "aider", "loffice", "music", "voicebox"\]/.test(swift));
 check('the three pinnable VIEWS load the panel chromeless, one per view',
       /HarnessTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
       && /HarnessTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)

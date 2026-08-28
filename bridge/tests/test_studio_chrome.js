@@ -53,8 +53,13 @@ const noComments = block.replace(/\/\*[\s\S]*?\*\//g, '');
 const sels = (noComments.match(/([^{}]+)\{/g) || [])
   .map(s => s.slice(0, -1).trim()).filter(Boolean);
 
-// 40 → 47: STUDIO PHASE 2 §C added the FORM-FIELD rules (7). Nothing else grew.
-ok(sels.length === 47, 'the studio block declares exactly 47 rules (got ' + sels.length + ')');
+// 40 → 47: STUDIO PHASE 2 §C added the FORM-FIELD rules (7).
+// 47 → 48: v1.5.26's composer redesign. NET +1, and the arithmetic matters more than the
+// number: the five-id icon-button rule lost #chat-auto and #chat-conv (they became the
+// two ends of the audio-mode switch), the now-meaningless `.on .st-ico` listening rule
+// went with them (-1), and the switch gained two of its own — its ground and its zone
+// typography (+2).
+ok(sels.length === 48, 'the studio block declares exactly 48 rules (got ' + sels.length + ')');
 
 // ---------------------------------------------------------------------------
 // STRUCTURAL GROUND TRUTH (inherited from 2026-08-14h, the third Mac failure).
@@ -133,7 +138,12 @@ for (const target of ['.chip', '.chip.chip-icon', '.caps-tab.on', '.mp-act',
                       '.mode-chip', '#chat-model-btn', '#chat-audio-btn',
                       'button.primary', '.cap-btn', '.cap-sw', '#cs-new',
                       '.cs-act button', '.hfget', '.art-btn', '.dlacts button',
-                      '#chat-send', '#chat-talk', '#chat-auto', '#chat-conv',
+                      '#chat-send', '#chat-talk',
+                      // v1.5.26: #chat-auto / #chat-conv are no longer addressed by id
+                      // here — they are the ends of #chat-audiosw, which this axis
+                      // restates as ONE object (ground + zone typography). Naming them
+                      // individually again would be the collision this slice removed.
+                      '#chat-audiosw', '.asw-zone',
                       '#chat-attach', '.st-only', '.ed-only', '.st-ico', '.st-word',
                       // PHASE 2 §C — the form fields, the half of the Music page the
                       // axis used to miss entirely.
@@ -195,7 +205,9 @@ ok(sels.some(x => x.includes('#chrome-chip')),
 // D4 — THE ICON SET. Six symbols, once each, built from primitives only.
 // ---------------------------------------------------------------------------
 {
-  const ids = ['i-send', 'i-mic', 'i-auto', 'i-conv', 'i-attach', 'i-theme'];
+  // v1.5.26 adds i-audio-off — the audio switch's MIDDLE position. Same rules as its
+  // six siblings: 16x16, currentColor, stroke-width 1.5, primitives only.
+  const ids = ['i-send', 'i-mic', 'i-auto', 'i-conv', 'i-attach', 'i-theme', 'i-audio-off'];
   const defs = (html.match(/<defs>[\s\S]*?<\/defs>/) || [''])[0];
   ok(defs.length > 0, 'the panel carries an inline <defs> sprite');
   ok(html.indexOf('<defs>') === html.lastIndexOf('<defs>'),
@@ -210,7 +222,7 @@ ok(sels.some(x => x.includes('#chrome-chip')),
     ok(html.includes('href="#' + id + '"'), 'symbol #' + id + ' is actually referenced');
   }
   const syms = defs.match(/<symbol[\s\S]*?<\/symbol>/g) || [];
-  ok(syms.length === 6, 'the sprite declares exactly 6 symbols (got ' + syms.length + ')');
+  ok(syms.length === 7, 'the sprite declares exactly 7 symbols (got ' + syms.length + ')');
   for (const sy of syms) {
     const id = (sy.match(/id="([\w-]+)"/) || [])[1];
     ok(/viewBox="0 0 16 16"/.test(sy), id + ' uses the 16x16 viewBox');
@@ -528,10 +540,24 @@ ok(!/html\[data-chrome="studio"\] \.cap-range \{/.test(noComments),
 ok(delta({ tag: 'span', id: 'mode-agent', cls: ['mode-chip', 'on'] },
          ['font-size', 'padding', 'text-transform', 'letter-spacing', 'height']).length >= 4,
    'a composer lane chip visibly changes when studio is on');
-for (const id of ['chat-send', 'chat-talk', 'chat-auto', 'chat-conv']) {
+// v1.5.26: chat-auto / chat-conv left this loop — they are switch ZONES now, not icon
+// buttons, and the axis restates them as part of #chat-audiosw (below) rather than by id.
+for (const id of ['chat-send', 'chat-talk']) {
   ok(delta({ tag: 'button', id: id, cls: ['primary'] },
            ['height', 'border-radius', 'font-size', 'background']).length >= 3,
      '#' + id + ' becomes an icon button when studio is on');
+}
+// …and the switch is restated as ONE object. Asserted on the SOURCE rather than through
+// the resolver because both rules are descendant selectors (`#chat-audiosw .asw-zone`),
+// which the compound-only resolver above cannot address — the invariant that matters is
+// that the two ends are no longer named by id in this block at all, which IS resolvable.
+ok(block.includes('#chat-audiosw'),
+   'the audio-mode switch is restated by this axis (ground + zone typography)');
+for (const id of ['#chat-auto', '#chat-conv']) {
+  ok(!noComments.includes(id),
+     id + ' is no longer addressed by id in the studio block — it would be (1,1,1) '
+     + 'against the base switch rule\'s (1,1,0) and would win, stacking two round icon '
+     + 'buttons inside the track with the middle zone untouched between them');
 }
 ok(delta({ tag: 'button', id: 'chat-attach', cls: ['chip', 'chip-icon'] },
          ['height', 'border-radius', 'background']).length >= 2,

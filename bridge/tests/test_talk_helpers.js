@@ -89,10 +89,20 @@ check('the mime always matches the fmt when a mime is chosen',
 
 /* ---- wiring facts read straight out of the panel source -------------------- */
 check('the ● talk button exists in the composer', html.indexOf('id="chat-talk"') >= 0);
-// Debi 2026-08-13: talk moved AFTER Send and reads ~40% smaller than it.
-check('● talk sits AFTER Send (textarea → Send → talk)',
-  html.indexOf('id="chat-send"') > html.indexOf('id="chat-input"')
-  && html.indexOf('id="chat-talk"') > html.indexOf('id="chat-send"'));
+// Debi 2026-08-13: talk sat AFTER Send and read ~40% smaller than it.
+// ⚠️ FENCE MOVED, v1.5.26 — reviewed, not quietly adjusted. Debi's composer redesign
+// puts every control INSIDE one bounded field, in the grammar Claude / LM Studio /
+// Unsloth share: the mic sits beside Send with Send LAST before the audio switch. So
+// the ORDER pinned here inverts. What the 2026-08-13 ruling was protecting — talk is
+// visibly subordinate to Send — is unchanged and is pinned on the next check instead:
+// Send is the one filled accent control, ● talk is the quiet ghost beside it.
+check('● talk sits INSIDE the field, immediately before Send (textarea → talk → Send)',
+  html.indexOf('id="chat-talk"') > html.indexOf('id="chat-input"')
+  && html.indexOf('id="chat-send"') > html.indexOf('id="chat-talk"'));
+check('…and the field is the composer row itself, not the textarea',
+  /#chat-inputrow \{[^}]*background:var\(--card\)[^}]*border-radius:16px/.test(html)
+  && /#chat-inputrow:focus-within \{ border-color:var\(--gold\); \}/.test(html)
+  && /#chat-input \{[^}]*background:transparent[^}]*border:0/.test(html));
 check('● talk ships hidden (shown only when an STT default exists)',
   /id="chat-talk"[\s\S]{0,400}?hidden>/.test(html));
 // AUTO-DICTATION v1 widened the smaller override to `#chat-talk, #chat-auto`, and
@@ -109,9 +119,18 @@ check('● talk ships hidden (shown only when an STT default exists)',
 // itself is now fenced properly in bridge/tests/test_editorial_debt.js, which asserts the
 // whole sheet has no font under 10px APART FROM this one named exception — the number is
 // pinned in ONE place with its reason instead of three places without one.
+// v1.5.26: `auto` and `conv` are no longer chips — they are the two ends of the
+// audio-mode switch, and its zones carry the same 9.5px. The claim is unchanged (ONE
+// small size, shared, never invented per control); the selector that carries it moved.
 check('Send keeps the shared size rule; talk carries its own smaller override',
   html.indexOf('#chat-send, #chat-talk {') >= 0
-  && /#chat-talk,\s*#chat-auto,\s*#chat-conv\s*\{[^}]*font-size:9\.5px/.test(html));
+  && /#chat-talk \{[^}]*font-size:9\.5px/.test(html));
+check('…and the audio switch\'s zones reuse that same 9.5px rather than inventing one',
+  /#chat-audiosw \.asw-zone \{[^}]*font:9\.5px var\(--mono\)/.test(html));
+check('Send is the one FILLED accent control and talk is the ghost beside it (what the '
+    + '2026-08-13 subordination ruling was actually about)',
+  /#chat-talk \{[^}]*background:transparent/.test(html)
+  && !/#chat-send \{[^}]*background:transparent/.test(html));
 check('the size rule does NOT touch button.primary globally',
   !/button\.primary\s*\{[^}]*font-size:/.test(html));
 check('the button rides loadVoiceCfg (same read as the AUDIO chip)',

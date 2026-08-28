@@ -336,7 +336,13 @@ def test_nav_registry_agrees_across_the_three_tables():
     assert "'opencode'];" in flat.replace("\n", "") or "'opencode'," in flat, (
         "opencode is in the panel's default layouts")
     assert 'HarnessTab(id: "opencode", title: "OpenCode"' in SWIFT
-    assert '"loffice", "opencode"' in SWIFT, "the shell's default strip carries it"
+    # v1.5.26: the strip was REORDERED (Debi), so this can no longer pin the pair of
+    # neighbours it used to. What actually matters here is membership — that the shell's
+    # default strip carries opencode at all — and the ORDER is fenced in exactly one
+    # place (test_nav_model.py, which compares the shell, nav.py and the panel).
+    _shell_top = re.search(r"let navDefaultTopbar = \[([^\]]+)\]", SWIFT)
+    assert _shell_top and "opencode" in re.findall(r'"([^"]+)"', _shell_top.group(1)), (
+        "the shell's default strip carries it")
 
 
 def test_swift_width_budget_was_rechecked():

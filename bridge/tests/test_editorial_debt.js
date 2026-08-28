@@ -23,8 +23,10 @@
  *      it is `.dot.ok`. The exception is allowed; a SECOND one fails the build.
  *   5. THE HARDCODED-LITERAL CLASS. The near-black that sat on the accent fill is a token
  *      now; the literal may not come back, at any site.
- *   6. THE COLLAPSED SESSIONS RAIL, per design. Geometry, the 44px hit floor on both
- *      axes, the labelled reopener, and studio's specificity restatement of all of it.
+ *   6. THE COLLAPSED SESSIONS RAIL, per design. Geometry (v1.5.26: 34px, office.html's
+ *      house width — the hit floor is met on AREA + the long axis, which is why the
+ *      full-height `flex:1 1 auto` rule is pinned in the same block), the labelled
+ *      reopener, and studio's specificity restatement of all of it.
  *
  * Thresholds are the ones the live sweep used, and they are stated where they are used.
  * Run: node bridge/tests/test_editorial_debt.js
@@ -149,7 +151,14 @@ console.log('   the accent fills');
 console.log('2. the type floor (Editorial\'s own 10px voice floor)');
 {
   const FLOOR = 10;
-  const EXEMPT = '#chat-talk, #chat-auto, #chat-conv';
+  // v1.5.26 — THE EXCEPTION MOVED, IT DID NOT MULTIPLY. `#chat-talk, #chat-auto,
+  // #chat-conv` was one rule covering three chips below the composer. Debi's redesign
+  // put the controls INSIDE the field and replaced `auto`/`conv` with the three-position
+  // audio switch, so the same 9.5px now lives on two selectors: the mic button that kept
+  // it, and the switch's zones that inherited it. Still ONE size, still the same argument
+  // (9.5px is a step Editorial's own ramp already used; below it the words are shapes),
+  // still every site named here rather than tolerated by a range.
+  const EXEMPT = ['#chat-audiosw .asw-zone', '#chat-talk'];
   const under = [];
   for (const r of ALL) {
     for (const m of r.body.matchAll(/font(?:-size)?:\s*([\d.]+)px/g)) {
@@ -157,11 +166,12 @@ console.log('2. the type floor (Editorial\'s own 10px voice floor)');
       if (v < FLOOR) under.push({ sel: r.sel, size: v });
     }
   }
-  eq('every font declaration under ' + FLOOR + 'px belongs to the ONE argued exception '
-     + '(the talk / auto / conv chips — see their rule, which says why and says whose '
-     + 'ruling it overrode)', under.map(u => u.sel).sort(), [EXEMPT]);
-  eq('…and that exception is at 9.5px, a step Editorial\'s ramp already used — not a new size',
-     under.map(u => u.size), [9.5]);
+  eq('every font declaration under ' + FLOOR + 'px belongs to the argued exception (the '
+     + 'dictate button and the audio switch\'s zones — see their rules, which say why and '
+     + 'whose ruling was overridden)', under.map(u => u.sel).sort(), EXEMPT);
+  eq('…and it is ONE size across both sites — 9.5px, a step Editorial\'s ramp already '
+     + 'used, not a new one, and not two different small sizes',
+     [...new Set(under.map(u => u.size))], [9.5]);
   // the 7px original is gone for good
   ok(!/font(?:-size)?:\s*[0-8](\.\d+)?px/.test(noC),
      'nothing in the sheet is 8px or smaller any more (the 7px talk label was the smallest '
@@ -315,10 +325,19 @@ const HIT = 44;
   ok(!!strip, 'the collapsed state has its own width rule');
   const w = parseInt((strip.body.match(/width:\s*(\d+)px/) || [])[1], 10);
   ok(w >= 34 && w <= 48, 'the strip is ' + w + 'px — inside Debi\'s ratified 34–48px band');
-  ok(w >= HIT, '…and ≥ ' + HIT + 'px, so the reopener clears the hit floor on the NARROW '
-     + 'axis too (office.html\'s house strip is 34px; this is the house look at the '
-     + 'accessibility floor). Before this slice the target was 22×22px in Editorial and '
-     + '22×14px in studio.');
+  // v1.5.26 — 44 → 34, AND THE FLOOR ARGUMENT MOVED WITH THE NUMBER, deliberately.
+  // v1.5.24 pinned `w >= 44` so the target cleared the hit floor on BOTH axes with no
+  // argument. Debi's ruling: 44 still reads as "even bigger space… should really be
+  // smaller", and office.html's own reopener strip (34px, `body.railoff #files`) is the
+  // one that fits. So the strip takes the HOUSE precedent and the floor is met on AREA
+  // instead of on the narrow axis — which is legitimate here and only here, because the
+  // reopener is `flex:1 1 auto` and therefore fills the rail's whole height. The pin is
+  // now the CONJUNCTION (narrow axis == the house 34, long axis unbounded + a 44px
+  // min-height floor), so nobody can shrink the width again without also shrinking the
+  // click axis, and nobody can quietly delete the full-height rule.
+  ok(w === 34, 'the strip is exactly office.html\'s house width (34px) — the same number '
+     + '`body.railoff #files` has shipped since the LOffice arc, so the panel and LOffice '
+     + 'have ONE collapse geometry rather than two');
   ok(/padding-right:0/.test(strip.body) && /border-right:0/.test(strip.body),
      '…with no padding and no border of its own, so the reclaimed width goes to the '
      + 'transcript rather than to a second rule of dead space');
@@ -340,12 +359,23 @@ const HIT = 44;
   ok(!!ro, 'the collapsed reopener has its own rule');
   ok(/flex:1 1 auto/.test(ro.body),
      '…and it FILLS the strip, so the click axis is the whole rail height (live: '
-     + '44 × 718.5px) — there is no lone button floating in an empty column any more');
+     + '34 × 718.5px) — there is no lone button floating in an empty column any more, '
+     + 'and this rule is what carries the 34px width\'s hit-floor argument');
   const mh = parseInt((ro.body.match(/min-height:\s*(\d+)px/) || [])[1], 10);
   ok(mh >= HIT, '…with a ' + mh + 'px floor for the degenerate case where the rail is '
      + 'shorter than the target');
+  // THE HIT-FLOOR ARGUMENT, AS ARITHMETIC. v1.5.24 met the floor on the narrow axis
+  // (44 ≥ 44) and needed no argument. v1.5.26 took Debi's ruling and office.html's house
+  // width (34), so the floor is met on AREA at the WORST geometry the layout can produce:
+  // width × min-height, not width × the ≈718px the rail actually is. min-height moved
+  // 44 → 60 in the same change to keep that true — the two numbers are one decision and
+  // this is the assertion that makes them inseparable.
+  ok(w * mh >= HIT * HIT, '…and ' + w + 'px × ' + mh + 'px = ' + (w * mh) + 'px² clears '
+     + 'the ' + HIT + '×' + HIT + ' = ' + (HIT * HIT) + 'px² floor by AREA even in that '
+     + 'degenerate case (live it is ' + w + ' × ≈718px ≈ ' + (w * 718) + 'px²). Shrinking '
+     + 'the width again without raising min-height fails HERE, which is the point.');
   ok(/writing-mode:vertical-rl/.test(ALL.find(r => r.sel === 'body.sessions-collapsed #cs-reopen span').body),
-     '…and the label runs vertically, which is what makes a 44px strip readable');
+     '…and the label runs vertically, which is what makes a 34px strip readable');
 
   // the chevron and the list are the things that go away
   const gone = ALL.find(r => r.sel.startsWith('body.sessions-collapsed #chat-sessions .cs-head'));
@@ -371,7 +401,8 @@ const HIT = 44;
   const SC = 'html[data-design="studio"]';
   const col = SDALL.find(r => r.sel === SC + ' body.sessions-collapsed #chat-sessions');
   ok(!!col, 'studio restates the collapsed strip (its own ' + SC + ' #chat-sessions rule '
-     + 'would otherwise put 12px of padding back on a 44px strip)');
+     + 'would otherwise put 12px of padding back on a 34px strip — a worse collision at '
+     + '34 than it was at 44, since 12px is more than a third of the strip)');
   const sw = parseInt((col.body.match(/width:\s*(\d+)px/) || [])[1], 10);
   const ew = parseInt((ALL.find(r => r.sel === 'body.sessions-collapsed #chat-sessions')
     .body.match(/width:\s*(\d+)px/) || [])[1], 10);

@@ -83,8 +83,16 @@ let tabRegistry: [HarnessTab] = [
 // also bridge/nav.py's DEFAULT_TOPBAR pinned prefix; the two are asserted to agree by
 // test, because a disagreement would mean the strip and the panel's Appearance editor
 // describe different windows.
-let navDefaultTopbar = ["mc", "odysseus", "hermes", "voicestudio", "voicebox",
-                        "comfyui", "unsloth", "music", "aider", "loffice", "opencode"]
+//
+// ⚠️ v1.5.26 — DEBI'S ORDER: MOT Deck · Hermes · Unsloth · OpenCode · Odysseus ·
+// VoiceStudio · ComfyUI · Aider · LOffice · Music · Voicebox. Same eleven ids, new
+// reading order. Changing this list alone changes only a FRESH machine: every machine
+// that has opened the panel has a data/nav.json whose saved order applyNav puts back.
+// bridge/nav.py's `migrate` is the half that makes the reorder visible on Debi's own
+// Mac — it rewrites a saved layout that is byte-for-byte the OLD default, and leaves a
+// customised one alone.
+let navDefaultTopbar = ["mc", "hermes", "unsloth", "opencode", "odysseus",
+                        "voicestudio", "comfyui", "aider", "loffice", "music", "voicebox"]
 func tabsFor(_ ids: [String]) -> [HarnessTab] {
     return ids.compactMap { i in tabRegistry.first(where: { $0.id == i }) }
 }
@@ -427,6 +435,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var park: NSView!                // hidden holder for un-borrowed webviews
     var splitButton: NSButton!
     var overflowButton: NSButton!
+    // ── the tab strip's own visibility (v1.5.26) ──
+    // The ONE number for the strip's height, so the layout constraint, the peek monitor's
+    // "has the pointer left the strip" test and the restore all read the same value.
+    let tabBarHeight: CGFloat = 44
+    var tabBar: NSView!
+    var tabBarH: NSLayoutConstraint!
+    var tabBarHidden = false          // the PERSISTED preference
+    var tabBarPeeked = false          // transient: the pointer is at the top edge
+    var tabPeekMonitor: Any?
     // ── nav (STUDIO PHASE 2) ──
     // Which entries are on the strip, in order, as data/nav.json last said. The shell
     // cannot read the panel's localStorage, which is exactly why that file exists.
@@ -546,7 +563,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.contentView = container
 
         // ── tab strip ──
-        let tabBar = NSView()
+        // A property now (v1.5.26): applyTabBar has to reach it to hide and show it.
+        tabBar = NSView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         tabBar.wantsLayer = true
         tabBar.layer?.backgroundColor = paneInk.cgColor
@@ -739,12 +757,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         leftMin.priority = NSLayoutConstraint.Priority(750)
         rightMin.priority = NSLayoutConstraint.Priority(750)
 
+        // v1.5.26: the height is a held constraint — applyTabBar drives it to 0 and back.
+        tabBarH = tabBar.heightAnchor.constraint(equalToConstant: tabBarHeight)
         NSLayoutConstraint.activate([
             leftMin, rightMin,
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
             tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tabBar.heightAnchor.constraint(equalToConstant: 44),
+            tabBarH,
             seg.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
             seg.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
             splitButton.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -12),
@@ -766,6 +786,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // a single-pane launch landing on a stopped Voicebox would be a worse first
         // impression than today's Mission Control.
         let ud = UserDefaults.standard
+        // v1.5.26 — restore the strip's own visibility BEFORE the panes are laid out, so
+        // a hidden strip never flashes on launch. The monitor is armed from the same
+        // fact, so the peek works on the first pointer move after a cold start.
+        tabBarHidden = ud.bool(forKey: "harness.tabbar.hidden")
+        applyTabBar()
+        setTabBarPeekMonitor(tabBarHidden)
         let wasSplit = ud.bool(forKey: "harness.split.on")
         // ID first (PHASE 2), the old integer key second so an upgrade from the previous
         // build still restores its arrangement rather than silently resetting it.
@@ -1219,8 +1245,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func hiddenTabs() -> [HarnessTab] {
         return tabRegistry.filter { r in !tabs.contains(where: { $0.id == r.id }) }
     }
+    // ⚠️ v1.5.26 — THE ⋯ BUTTON IS NOW ALWAYS PRESENT. It used to vanish whenever no tab
+    // was hidden, which was right while it did exactly one thing. It now also carries
+    // "Hide tab bar", and a menu that only appears when an unrelated condition holds is
+    // not a discoverable home for anything. The menu still says "No hidden tabs" when
+    // there are none, so the old meaning is not lost — it is stated instead of implied
+    // by absence.
     func updateOverflowButton() {
-        overflowButton.isHidden = hiddenTabs().isEmpty
+        overflowButton.isHidden = false
     }
     @objc func showOverflow(_ sender: Any?) {
         let menu = NSMenu()
@@ -1231,9 +1263,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             menu.addItem(it)
         }
         if menu.items.isEmpty { menu.addItem(NSMenuItem(title: "No hidden tabs", action: nil, keyEquivalent: "")) }
+        menu.addItem(NSMenuItem.separator())
+        // The affordance half of Debi's ask. The KEY EQUIVALENT is shown here but the
+        // working binding lives in the View menu (see the menu bar at the bottom of this
+        // file): a key equivalent on a menu that only exists while it is popped up would
+        // never fire, and ⌘⇧T has to work with a WKWebView holding first responder.
+        let hide = NSMenuItem(title: tabBarHidden ? "Show Tab Bar" : "Hide Tab Bar",
+                              action: #selector(toggleTabBar(_:)), keyEquivalent: "t")
+        hide.keyEquivalentModifierMask = [.command, .shift]
+        hide.target = self
+        menu.addItem(hide)
         _ = menu.popUp(positioning: nil,
                        at: NSPoint(x: 0, y: overflowButton.bounds.height + 4),
                        in: overflowButton)
+    }
+
+    // ══ HIDE / SHOW THE NATIVE TAB STRIP (v1.5.26, Debi) ═════════════════════════════
+    //
+    // WHAT IT DOES: collapses the 44pt strip to 0 so the page extends to the top of the
+    // window. ⌘⇧T (View menu) and "Hide Tab Bar" in the ⋯ menu both toggle it; while it
+    // is hidden, putting the pointer in the top 4pt of the window PEEKS it back for as
+    // long as the pointer stays on it. Persisted in UserDefaults.
+    //
+    // ⚠️ WHY THE STRIP IS PUSHED, NOT OVERLAID. The obvious design floats the peeked
+    // strip over the page so nothing reflows. It was rejected: `splitView` holds
+    // layer-backed WKWebViews, and NSView z-ordering over those is not reliable — the
+    // only deterministic way to put the strip in front is to re-add it above the split
+    // view, which drops and rebuilds its constraints. A height constraint always works,
+    // in every macOS version, with no ordering question at all. The cost is a 44pt
+    // reflow of the visible webview on peek, which is the same reflow the window already
+    // does on every resize.
+    //
+    // ⚠️ WHY A MOUSE-MOVED MONITOR AND NOT A TRACKING AREA. A 4pt reveal strip would
+    // have to sit ON TOP of a WKWebView to receive mouseEntered — the exact z-ordering
+    // problem above, one layer down. A local event monitor sees the event before it is
+    // delivered to any view, so it works over the page. `acceptsMouseMovedEvents` is set
+    // on the window because a window does not generate them otherwise. The monitor only
+    // exists while the strip is hidden, so the ordinary build runs zero extra code.
+    func applyTabBar(peeking: Bool = false) {
+        let show = !tabBarHidden || peeking
+        tabBarH.constant = show ? tabBarHeight : 0
+        tabBar.isHidden = !show          // so a 0pt strip cannot still take a click
+        tabBarPeeked = peeking
+        // The View menu item names the ACTION, not the state — a menu that says
+        // "Hide Tab Bar" while the bar is hidden is the same defect as a chevron that
+        // means two things. Looked up rather than held: the menu is built at global
+        // scope after the delegate, so there is no reference to store at init time.
+        if let v = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "View" }),
+           let it = v.submenu?.items.first(where: { $0.action == #selector(toggleTabBar(_:)) }) {
+            it.title = tabBarHidden ? "Show Tab Bar" : "Hide Tab Bar"
+        }
+    }
+    @objc func toggleTabBar(_ sender: Any?) {
+        tabBarHidden.toggle()
+        UserDefaults.standard.set(tabBarHidden, forKey: "harness.tabbar.hidden")
+        applyTabBar()
+        setTabBarPeekMonitor(tabBarHidden)
+        slog("tab bar \(tabBarHidden ? "hidden" : "shown")")
+    }
+    func setTabBarPeekMonitor(_ on: Bool) {
+        if let m = tabPeekMonitor { NSEvent.removeMonitor(m); tabPeekMonitor = nil }
+        guard on else { return }
+        window.acceptsMouseMovedEvents = true
+        tabPeekMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] ev in
+            guard let s = self, s.tabBarHidden, ev.window === s.window,
+                  let cv = s.window.contentView else { return ev }
+            // AppKit's window coordinates have y=0 at the BOTTOM, so "the top 4pt" is
+            // the top of the content view minus four.
+            let y = ev.locationInWindow.y
+            let top = cv.bounds.height
+            if !s.tabBarPeeked && y >= top - 4 {
+                s.applyTabBar(peeking: true)
+            } else if s.tabBarPeeked && y < top - s.tabBarHeight {
+                // Closes only once the pointer has left the STRIP, not the 4pt trigger —
+                // otherwise the strip would snap shut the instant it opened under the
+                // pointer, which is the classic auto-hide bug.
+                s.applyTabBar(peeking: false)
+            }
+            return ev
+        }
     }
     @objc func overflowPick(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
@@ -2325,6 +2433,23 @@ editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquiv
 editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
 editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 editItem.submenu = editMenu
+// v1.5.26 — a View menu, for exactly one item: the tab-strip toggle. A MENU item is the
+// reliable place for this shortcut, and that is why the menu exists at all — AppKit
+// dispatches menu key equivalents before the responder chain, so ⌘⇧T fires while a
+// WKWebView holds first responder, which a local key monitor competing with the page
+// would not reliably do. The ⋯ menu carries the same action as the discoverable
+// affordance; this carries the key.
+// ⌘⇧T was checked against every binding this app and the panel already own: ⌘R (Reload
+// Tab), ⌘Q, ⌘C/⌘V/⌘A here, and ⌘K (palette) + ⌘\ (sidebar) in the panel. Unclaimed.
+let viewItem = NSMenuItem()
+mainMenu.addItem(viewItem)
+let viewMenu = NSMenu(title: "View")
+let tabBarItem = NSMenuItem(title: "Hide Tab Bar",
+                            action: #selector(AppDelegate.toggleTabBar(_:)), keyEquivalent: "t")
+tabBarItem.keyEquivalentModifierMask = [.command, .shift]
+tabBarItem.target = delegate
+viewMenu.addItem(tabBarItem)
+viewItem.submenu = viewMenu
 app.mainMenu = mainMenu
 
 app.run()

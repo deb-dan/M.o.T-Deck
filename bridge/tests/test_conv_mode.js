@@ -329,10 +329,21 @@ check('the conv chip is rendered AFTER the auto chip in the composer', (() => {
   const a = html.indexOf('id="chat-auto"'), c = html.indexOf('id="chat-conv"');
   return a > 0 && c > a;
 })());
-check('the conv chip shares the ● talk / auto sizing rule (one size grammar)',
-  /#chat-talk, #chat-auto, #chat-conv \{[^}]*font-size:9\.5px/.test(html));
-check('the live state reuses the existing gold talk-dot rule — no new CSS colour',
-  /#chat-auto\.on \.talk-dot, #chat-conv\.on \.talk-dot \{ color:var\(--gold\); \}/.test(html));
+// ⚠️ BOTH FENCES MOVED, v1.5.26 — Debi replaced the separate auto / conv chips with ONE
+// three-position audio switch inside the composer. The claims survive, on the new object:
+check('the conv end shares ONE size grammar with the rest of the switch',
+  /#chat-audiosw \.asw-zone \{[^}]*font:9\.5px var\(--mono\)/.test(html));
+check('the conv end is the BOTTOM position of the switch, and the switch is a radiogroup',
+  /id="chat-audiosw" role="radiogroup"/.test(html)
+  && /id="chat-conv" role="radio"[\s\S]{0,40}aria-checked/.test(html)
+  && /class="primary asw-zone asw-bot" id="chat-conv"/.test(html));
+// The live state used to be a gold ● glyph beside the word. It is now the KNOB — its
+// position plus its gold fill — which is a 58px signal instead of a 4px one, and the
+// dot is hidden inside the switch because `● listening` does not fit a zone. Still no
+// new colour: the knob reuses --gold and the engaged label reuses --on-accent.
+check('the live state is the knob: gold fill, driven by [data-pos], no new colour token',
+  /#chat-audiosw\[data-pos="auto"\]::after,\s*\n?\s*#chat-audiosw\[data-pos="conv"\]::after \{ background:var\(--gold\); \}/.test(html)
+  && /#chat-audiosw \.talk-dot \{ display:none; \}/.test(html));
 
 check('there is exactly ONE conversation teardown path',
   (html.match(/function stopConv\(/g) || []).length === 1);

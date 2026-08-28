@@ -33,7 +33,8 @@ ok(start > 0 && end > start, 'the nav model block is where the test expects it')
 const src = html.slice(start, end);
 const M = new Function(src + `; return { NAV_ENTRIES, NAV_TOPBAR_MAX, NAV_SIDEBAR_ONLY,
   NAV_DEFAULT_SIDEBAR, NAV_DEFAULT_TOPBAR, NAV_TOPBAR_UNPINNED,
-  navEntry, navCanShow, navDefaultModel, navNormalize, navValidate };`)();
+  NAV_MODEL_V, NAV_DEFAULT_TOPBAR_V1,
+  navEntry, navCanShow, navDefaultModel, navNormalize, navValidate, navMigrate };`)();
 const ids = (m, bar) => m[bar].map(r => r.id);
 
 // ── 1. the registry ─────────────────────────────────────────────────────────
@@ -95,8 +96,11 @@ console.log('defaults');
      'the components group lists every component that has a tab');
   ok(d.sidebar.every(r => r.pinned), 'nothing starts hidden on the sidebar');
   const top = d.topbar.filter(r => r.pinned).map(r => r.id);
-  ok(top.join(',') === 'mc,odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,music,aider,loffice,opencode',
-     'the default strip is exactly the eleven default tabs, in order');
+  // v1.5.26 — DEBI'S ORDER. Same eleven ids, new reading order (the deck · the three
+  // agent/model lanes · everything else). Pinned as a literal on purpose: here the
+  // ORDER itself is the requirement, so it may not drift silently.
+  ok(top.join(',') === 'mc,hermes,unsloth,opencode,odysseus,voicestudio,comfyui,aider,loffice,music,voicebox',
+     'the default strip is exactly the eleven default tabs, in Debi\'s order');
   ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps',
      'the three pinnable VIEWS start hidden (they are one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
@@ -298,14 +302,71 @@ console.log('render (executed)');
      '…and hiding one takes nothing else with it');
 }
 
+// ── 5b. THE ONE-TIME REORDER MIGRATION (v1.5.26) ────────────────────────────
+// THE TRAP THIS TESTS: changing NAV_DEFAULT_TOPBAR changes only a FRESH machine. Every
+// machine that has ever opened the panel has a saved layout, and the saved layout wins
+// — so without a migration Debi's reorder is invisible on Debi's own Mac. The rule is
+// "untouched gets the new default, customised is left alone", and it must run ONCE.
+console.log('the reorder migration');
+{
+  const V1 = () => ({ v:1,
+    sidebar: M.NAV_DEFAULT_SIDEBAR.map(id => ({ id, pinned:true })),
+    topbar: M.NAV_DEFAULT_TOPBAR_V1.map(id => ({ id, pinned:true }))
+      .concat(M.NAV_TOPBAR_UNPINNED.map(id => ({ id, pinned:false })))
+  });
+  const topIds = m => m.topbar.filter(r => r.pinned).map(r => r.id).join(',');
+  const NEW = M.NAV_DEFAULT_TOPBAR.join(',');
+  const OLD = M.NAV_DEFAULT_TOPBAR_V1.join(',');
+  ok(NEW !== OLD, 'the reorder actually reorders something (a no-op migration is a lie)');
+  ok(M.NAV_DEFAULT_TOPBAR.slice().sort().join(',') === M.NAV_DEFAULT_TOPBAR_V1.slice().sort().join(','),
+     '…and it moves the SAME eleven ids — nothing gained a tab, nothing lost one, so '
+     + 'validate has nothing new to say and no entry can become unreachable');
+
+  // (a) UNTOUCHED — the case that must move
+  ok(topIds(M.navMigrate(V1())) === NEW,
+     'an UNTOUCHED v1 layout (byte-for-byte the old default) is replaced with Debi\'s order');
+  ok(M.navMigrate(V1()).sidebar.map(r => r.id).join(',') === M.NAV_DEFAULT_SIDEBAR.join(','),
+     '…and the SIDEBAR is not touched: this ruling was about the tab strip only');
+
+  // (b) CUSTOMISED — the cases that must NOT move
+  const reordered = V1(); reordered.topbar = reordered.topbar.slice().reverse();
+  ok(topIds(M.navMigrate(reordered)) === topIds(reordered),
+     'a REORDERED layout is left exactly alone (a user\'s arrangement is theirs)');
+  const unpinned = V1();
+  unpinned.topbar = unpinned.topbar.map(r => r.id === 'comfyui' ? { id:r.id, pinned:false } : r);
+  ok(topIds(M.navMigrate(unpinned)) === topIds(unpinned),
+     '…and so is one that only differs by a PIN — the comparison is over ids AND pins, '
+     + 'because unpinning a tab is customising just as much as dragging one');
+  const extra = V1();
+  extra.topbar = extra.topbar.concat([{ id:'nope', pinned:true }]);
+  ok(topIds(M.navMigrate(extra)) === topIds(extra),
+     '…and one carrying an id we do not know (a layout from a newer build)');
+
+  // (c) ONCE — the stamp
+  ok(topIds(M.navMigrate({ ...V1(), v:M.NAV_MODEL_V })) === OLD,
+     'a layout ALREADY stamped v' + M.NAV_MODEL_V + ' is never migrated again — so a user '
+     + 'who later arranges their tabs back into the old order keeps that arrangement');
+  ok(M.navMigrate(null) === null && M.navMigrate(undefined) === undefined,
+     '…and the function is TOTAL: junk in, junk back, never a throw on boot');
+  ok(M.navMigrate({ v:1, topbar:'not a list' }).topbar === 'not a list',
+     '…including a topbar that is not a list at all — it comes back untouched for '
+     + 'navNormalize to repair, rather than being treated as an untouched default');
+}
+
 // ── 6. persistence + the two-tier sync ─────────────────────────────────────
 console.log('persistence');
 {
   ok(/const NAV_KEY = 'harness-nav';/.test(html), 'the localStorage key is v1-named');
-  ok(/JSON\.stringify\(\{ v:1, sidebar:navModel\.sidebar, topbar:navModel\.topbar \}\)/.test(html),
+  ok(/JSON\.stringify\(\{ v:NAV_MODEL_V, sidebar:navModel\.sidebar, topbar:navModel\.topbar \}\)/.test(html),
      'the instant copy is versioned');
-  ok(/raw && raw\.v === 1 \? raw : null/.test(html),
-     'a copy from another version is ignored, not half-read');
+  // v1.5.26 — THE GATE CHANGED SHAPE, and the reason is the whole migration. It used to
+  // be `raw.v === 1`, i.e. "the current version"; bumping MODEL_V to 2 under that test
+  // would have thrown EVERY saved layout on every machine away on upgrade — a silent
+  // reset dressed as a reorder. It is now "a version we know how to read", because v1
+  // and v2 have identical SHAPES (only the default order moved).
+  ok(/\+raw\.v === 1 \|\| \+raw\.v === NAV_MODEL_V/.test(html),
+     'both known versions are readable — the bump does not discard a saved layout');
+  ok(/const NAV_MODEL_V = 2;/.test(html), 'and the panel mirrors nav.py MODEL_V');
   const sync = html.slice(html.indexOf('async function navSync()'),
                           html.indexOf('async function navSave()'));
   ok(/fetch\('\/api\/nav'\)/.test(sync) && /navModel = navNormalize\(r\.nav\)/.test(sync),

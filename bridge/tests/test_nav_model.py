@@ -236,7 +236,7 @@ def test_persistence():
         ok(os.path.exists(p), "write creates data/nav.json")
         ok(not os.path.exists(p + ".tmp"), "…atomically (no temp file left behind)")
         raw = json.load(open(p))
-        ok(raw.get("v") == 1, "the file is versioned")
+        ok(raw.get("v") == nav.MODEL_V, "the file is versioned (v%d)" % nav.MODEL_V)
         back = nav.read(td)
         ok(ids(back, "sidebar") == ids(m, "sidebar"), "the sidebar order round-trips")
         ok(ids(back, "topbar") == ids(m, "topbar"), "the strip order round-trips")
@@ -253,6 +253,88 @@ def test_persistence():
                     r["pinned"] = False
         json.dump({"v": 1, **bad}, open(p, "w"))
         ok(nav.validate(nav.read(td)) == "", "a bad file is repaired on read, never fatal")
+
+
+# ── 5b. THE ONE-TIME DEFAULT-TOPBAR REORDER MIGRATION (v1.5.26) ──────────────
+# ⚠️ THE TRAP. Changing DEFAULT_TOPBAR changes what a FRESH machine gets and nothing
+# else: every machine that has opened the panel has a data/nav.json, and applyNav puts
+# the SAVED order back. Without the migration Debi's reorder is invisible on Debi's own
+# Mac — a shipped change that does nothing where it matters. The rule: untouched gets
+# the new default, customised is left alone, and it happens ONCE per machine.
+def test_reorder_migration():
+    new = [i for i, p in nav.DEFAULT_TOPBAR]
+    old = [i for i, p in nav.DEFAULT_TOPBAR_V1]
+    ok(new != old, "the reorder actually reorders something")
+    ok(sorted(new) == sorted(old),
+       "…and it moves the SAME ids — no entry gained or lost a home, so `validate` has "
+       "nothing new to say and nothing can become unreachable")
+    ok([i for i, p in nav.DEFAULT_TOPBAR if p][:5]
+       == ["mc", "hermes", "unsloth", "opencode", "odysseus"],
+       "Debi's order leads with the deck and the three agent/model lanes")
+
+    def v1_file():
+        return {"v": 1,
+                "sidebar": [{"id": i, "pinned": p} for i, p in nav.DEFAULT_SIDEBAR],
+                "topbar": [{"id": i, "pinned": p} for i, p in nav.DEFAULT_TOPBAR_V1]}
+
+    # (a) UNTOUCHED — the case that must move
+    got, moved = nav.migrate(v1_file())
+    ok(moved and [r["id"] for r in got["topbar"]] == new,
+       "an UNTOUCHED v1 layout is replaced with Debi's order")
+    ok([r["id"] for r in got["sidebar"]] == [i for i, _p in nav.DEFAULT_SIDEBAR],
+       "…and the sidebar is untouched: this ruling was about the tab strip only")
+
+    # (b) CUSTOMISED — every case that must NOT move
+    f = v1_file(); f["topbar"] = list(reversed(f["topbar"]))
+    ok(nav.migrate(f)[1] is False, "a REORDERED layout is left exactly alone")
+    f = v1_file()
+    f["topbar"] = [dict(r, pinned=False) if r["id"] == "comfyui" else r for r in f["topbar"]]
+    ok(nav.migrate(f)[1] is False,
+       "…and so is one that differs only by a PIN (unpinning is customising too)")
+    f = v1_file(); f["topbar"] = f["topbar"] + [{"id": "nope", "pinned": True}]
+    ok(nav.migrate(f)[1] is False, "…and one from a newer build carrying an unknown id")
+    f = v1_file(); f["topbar"] = f["topbar"][:-1]
+    ok(nav.migrate(f)[1] is False, "…and one that is merely SHORT of the old default")
+
+    # (c) TOTALITY + the stamp
+    ok(nav.migrate(None) == (None, False) and nav.migrate("junk") == ("junk", False),
+       "migrate is TOTAL — junk in, junk back, never a throw on boot")
+    ok(nav.migrate({"v": "banana", **v1_file()})[1] is True,
+       "…and an unparseable version reads as OLD, so the migration still runs")
+    ok(nav.migrate({**v1_file(), "v": nav.MODEL_V})[1] is False,
+       "a layout already stamped v%d is never migrated again" % nav.MODEL_V)
+
+
+def test_reorder_migration_on_disk_runs_exactly_once():
+    """The end-to-end shape: an old file on disk migrates on the first read, is STAMPED,
+    and a layout the user then arranges into the old order is never taken away again."""
+    with tempfile.TemporaryDirectory() as td:
+        p = nav.nav_path(td)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        json.dump({"v": 1,
+                   "sidebar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_SIDEBAR],
+                   "topbar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_TOPBAR_V1]},
+                  open(p, "w"))
+        m = nav.read(td)
+        ok(nav.visible(m, "topbar") == [i for i, q in nav.DEFAULT_TOPBAR if q],
+           "an untouched v1 file on disk reads back as Debi's order")
+        ok(json.load(open(p)).get("v") == nav.MODEL_V,
+           "…and the file is STAMPED on that read, so this is a one-time event")
+
+        # now the user arranges their strip back into the old order. It must survive.
+        m2 = nav.normalize({"sidebar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_SIDEBAR],
+                            "topbar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_TOPBAR_V1]})
+        nav.write(td, m2)
+        ok(nav.visible(nav.read(td), "topbar") == [i for i, q in nav.DEFAULT_TOPBAR_V1 if q],
+           "a user who LATER chooses the old order keeps it — the stamp, not the shape, "
+           "is what says 'already considered'")
+
+    # …and a machine with no file at all simply gets the new default, no write needed.
+    with tempfile.TemporaryDirectory() as td:
+        ok(nav.visible(nav.read(td), "topbar") == [i for i, q in nav.DEFAULT_TOPBAR if q],
+           "a fresh machine gets Debi's order with no migration involved")
+        ok(not os.path.exists(nav.nav_path(td)),
+           "…and reading a machine with no nav.json still writes nothing")
 
 
 # ── 6. wiring ────────────────────────────────────────────────────────────────

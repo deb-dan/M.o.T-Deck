@@ -325,6 +325,60 @@ console.log('sidebar rail (executed decision table)');
     eq('explicit slim collapses ' + v, railIsSlim('slim', v), true);
     eq('explicit full expands ' + v, railIsSlim('full', v), false);
   }
+
+  // ── v1.5.26: THE THIRD STATE (Debi — the rail can now go away entirely) ──────
+  eval(grab('railState')); eval(grab('railNext'));
+  eq('an explicit hidden reads as hidden', railPref('hidden'), 'hidden');
+  for (const v of ['mc', 'chat', 'models', 'caps', 'music'])
+    eq('explicit hidden hides ' + v + ' — it is global like the other two',
+       railState('hidden', v), 'hidden');
+  eq('…and `hidden` still answers TRUE to the old boolean face, so nothing that only '
+     + 'knows about slim/full has to learn a third state',
+     railIsSlim('hidden', 'mc'), true);
+  // the AUTO row is untouched: the third state is reachable only by choosing it
+  eq('AUTO never resolves to hidden (on chat)', railState('auto', 'chat'), 'slim');
+  eq('AUTO never resolves to hidden (elsewhere)', railState('auto', 'mc'), 'full');
+  eq('junk never resolves to hidden', railState(railPref('nonsense'), 'mc'), 'full');
+  // the cycle: three states, wrapping, with no fourth
+  eq('the cycle is full → slim', railNext('full'), 'slim');
+  eq('…then slim → hidden', railNext('slim'), 'hidden');
+  eq('…then hidden → full (it wraps; there is no fourth state)', railNext('hidden'), 'full');
+  eq('three ⌘\\ presses from full return to full',
+     railNext(railNext(railNext('full'))), 'full');
+}
+// the reopener for the hidden state — the SAME grammar as the collapsed sessions rail
+{
+  ok(/<button id="rail-reopen" onclick="toggleSideRail\(\)"/.test(html),
+     'the hidden state has a real reopener in the markup (not injected), and it calls '
+     + 'the same cycle the chevron does');
+  ok(/id="rail-reopen"[\s\S]{0,160}aria-label="Show sidebar"/.test(html),
+     '…labelled for assistive tech');
+  ok(/id="rail-reopen"[\s\S]{0,200}<span>Menu/.test(html),
+     '…and VISIBLY labelled: office.html\'s finding about its own file rail, applied a '
+     + 'third time (a bare glyph never said what came back)');
+  const hid = ALL.find(r => r.sel === '#rail-reopen');
+  ok(hid && /display:none/.test(hid.body),
+     '…and hidden by a class while the sidebar is on screen');
+  const strip = ALL.find(r => r.sel === 'body.rail-hidden #rail-reopen');
+  ok(!!strip, 'the strip has its own rule');
+  const w = parseInt((strip.body.match(/width:\s*(\d+)px/) || [])[1], 10);
+  ok(w > 0 && w <= 20, 'the strip is ' + w + 'px — slim enough that `hidden` really is '
+     + 'hidden (the 56px icon rail is the state before this one)');
+  ok(/top:0; bottom:0/.test(strip.body) && /height:auto/.test(strip.body),
+     '…and FULL HEIGHT, which is the whole hit-target argument: ' + w + ' × ≈800px, not '
+     + w + ' × ' + w + '. Same argument as the 34px sessions strip. `height:auto` is '
+     + 'pinned WITH top/bottom because it is load-bearing and was found by driving: the '
+     + 'studio design sets a height on bare buttons, and top+bottom only fill while the '
+     + 'height is auto — without it the strip rendered 14 × 30px in studio and '
+     + '14 × 589px in Editorial, i.e. a lone button in a gutter, which is the exact '
+     + 'shape this collapse pattern exists to remove.');
+  ok(/writing-mode:vertical-rl/.test(
+       ALL.find(r => r.sel === 'body.rail-hidden #rail-reopen span').body),
+     '…and the label runs vertically, which is what makes it readable at that width');
+  const gone = ALL.find(r => r.sel === 'body.rail-hidden aside');
+  ok(gone && /display:none/.test(gone.body), 'the sidebar itself is really gone');
+  ok(!!ALL.find(r => r.sel === 'body.rail-hidden main'),
+     '…and the page starts after the strip, so nothing sits underneath it');
 }
 // persistence + the toggle's flip source
 ok(/localStorage\.setItem\('harness-chat-rail', next\)/.test(html),
@@ -406,8 +460,19 @@ console.log('the rail geometry');
   const sz = parseInt((t.body.match(/width:\s*(\d+)px/) || [])[1], 10);
   ok(sz >= 24, 'the chevron itself is at least 24px (got ' + sz + 'px)');
   ok(/id="rail-toggle" onclick="toggleSideRail\(\)"/.test(html), 'the chevron calls it');
-  ok(/textContent = slim \? '»' : '«'/.test(html),
-     'the glyph is « when expanded and » when collapsed (it shows the ACTION)');
+  // v1.5.26 — THE CYCLE GAINED A THIRD STATE (full → slim → hidden), so one glyph can
+  // no longer carry the whole meaning and the pin moves to what it CAN carry: « while
+  // there is something left to narrow, » only from `hidden`, and the actual sentence in
+  // the tooltip. (This is the v1.5.24 sessions-chevron lesson applied a second time: a
+  // control that means two things is the defect, not the glyph.)
+  ok(/textContent = narrowing \? '«' : '»'/.test(html),
+     'the glyph shows the ACTION: « while there is something left to collapse, » only '
+     + 'from the hidden state');
+  ok(/'Collapse sidebar to icons \(⌘\\\\\)'/.test(html)
+     && /'Hide sidebar \(⌘\\\\\)'/.test(html)
+     && /'Show sidebar \(⌘\\\\\)'/.test(html),
+     '…and the tooltip names the exact next step in all three states, which is the part '
+     + 'a single glyph cannot say');
   ok(/\(e\.metaKey\|\|e\.ctrlKey\) && e\.key==='\\\\'\)\{ e\.preventDefault\(\); toggleSideRail\(\)/
        .test(html),
      '⌘\\ toggles the rail — MIRRORED from LOffice, which binds ⌘\\ to its own file rail');
