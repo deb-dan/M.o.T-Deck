@@ -288,8 +288,10 @@ try:
                                officeblank.blank_bytes(".pptx"))
     check("the write-back REFUSES a package that is not what the name claims",
           rep is None and err[0] == 400, err)
+    # `unfenced=True` because this call is not testing the fence and has no mtime to
+    # fence with — and since bug-echo W-01 that has to be SAID rather than defaulted.
     rep, err = oomod.writeback(office, work, "n.docx",
-                               officeblank.blank_bytes(".docx"))
+                               officeblank.blank_bytes(".docx"), unfenced=True)
     check("…and accepts the right one", rep is not None, err)
     check("…taking the daily safety copy WITH THE RIGHT EXTENSION",
           rep and rep["backup"].endswith(".bak.docx"), rep)
