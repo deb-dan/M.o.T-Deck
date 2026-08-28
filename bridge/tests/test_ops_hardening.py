@@ -288,8 +288,28 @@ def owns(component, cmd):
 R = str(ROOT)
 check("shell: our own venv launch is OURS (comfyui)",
       owns("comfyui", f"{R}/data/comfyui-venv/bin/python main.py --port 8188"))
-check("shell: our own venv launch is OURS (unsloth)",
-      owns("unsloth", f"{R}/data/unsloth-venv/bin/unsloth studio --port 8899"))
+check("shell: our own venv launch is OURS (unsloth, isolated-home venv)",
+      owns("unsloth", f"{R}/data/unsloth-home/unsloth_studio/bin/unsloth studio --port 8899"))
+check("shell: a STANDALONE unsloth (its own ~/.unsloth managed venv) is NOT ours",
+      not owns("unsloth", str(Path.home() / ".unsloth/studio/unsloth_studio/bin/python")
+                          + " " + str(Path.home() / ".unsloth/studio/unsloth_studio/bin/unsloth")
+                          + " studio --api-only -H 127.0.0.1 -p 8888"))
+
+# ── unsloth isolated home (2026-08-28): our component must NEVER share ~/.unsloth
+# with the standalone Unsloth.app. Pin the three load-bearing pieces of the launch:
+# the home export, the fence, and the venv living AT the home's managed-venv path.
+check("unsloth launch exports UNSLOTH_STUDIO_HOME (the isolation itself)",
+      'export UNSLOTH_STUDIO_HOME="$US_HOME"' in START)
+check("unsloth home is data/unsloth-home, never ~/.unsloth",
+      'US_HOME="$ROOT/data/unsloth-home"' in START)
+check("unsloth launch fences ~/.unsloth (refuses to start into the standalone's home)",
+      '"$HOME/.unsloth"|"$HOME/.unsloth/"*' in START)
+check("unsloth venv lives AT $US_HOME/unsloth_studio (in-process serve, no re-exec)",
+      'US_VENV="$US_HOME/unsloth_studio"' in START)
+check("unsloth launch does not reference the retired shared-era venv path",
+      "data/unsloth-venv/bin" not in START)
+check("unsloth launch unsets the STUDIO_HOME alias so an env leak cannot redirect it",
+      "unset STUDIO_HOME" in START)
 check("shell: our own venv launch is OURS (voicebox)",
       owns("voicebox", f"{R}/data/voicebox-venv/bin/python -m backend.main --port 17493"))
 check("shell: our own venv launch is OURS (voicestudio)",

@@ -268,14 +268,33 @@ components:
                               # 2026.8.22, and this pin is feed-current. When bumping, confirm
                               # BOTH: newest v0.1.8xx-beta tag AND that its _version.py matches
                               # PyPI's latest — a tag can exist hours before the PyPI upload.
-                              # ⚠️ KNOWN WART: `unsloth studio` re-execs (os.execvp) into the
-                              # managed venv at ~/.unsloth/studio/unsloth_studio when it exists
-                              # (it does — Debi's STANDALONE app on 8888 owns it), so the
-                              # serving interpreter's installed `unsloth` dist (PyPI,
-                              # non-editable) is what /api/health `version` and the update
-                              # banner report — NOT this pin. Code executed is still our
-                              # vendored run.py tree. UNSLOTH_DISABLE_UPDATE_CHECK=1 on the
-                              # launch line (start_component.sh) keeps the banner off.
+                              # ISOLATED HOME (2026-08-28; the earlier KNOWN WART is RESOLVED):
+                              # the launch exports UNSLOTH_STUDIO_HOME=data/unsloth-home
+                              # (upstream's documented home override — verified in
+                              # unsloth_cli/commands/studio.py _resolve_studio_home; the
+                              # STUDIO_HOME alias also exists, UNSLOTH_STUDIO_HOME wins), so
+                              # our component NEVER touches ~/.unsloth again. That home is
+                              # 100% Debi's STANDALONE Unsloth.app's (:8888); sharing it had
+                              # (a) our /api/health reporting the standalone's stale PyPI dist
+                              # version — the CLI re-exec'd into its ~/.unsloth managed venv —
+                              # and (b) our running process holding that install so the
+                              # standalone's OWN self-updater greyed out. Our venv now lives
+                              # AT data/unsloth-home/unsloth_studio (the CLI's managed-venv
+                              # path), so `unsloth studio` serves in-process from our editable
+                              # install and /api/health reports THIS pin (2026.8.22). Its
+                              # engines (llama.cpp/whisper.cpp) download on demand into
+                              # data/unsloth-home — GB-scale, DATA side, never shipped by
+                              # ship.sh. start_component.sh fences ~/.unsloth (refuses a launch
+                              # that would resolve there) and still sets
+                              # UNSLOTH_DISABLE_UPDATE_CHECK=1 (version banner + probes off).
+                              # Fresh home ⇒ fresh Studio state: its own login/bootstrap
+                              # credential, chats, models — nothing inherited from ~/.unsloth.
+                              # MEASURED at cutover (2026-08-28): install (venv+SPA, warm pip
+                              # cache) 39s; first start from a cold home 10s; warm restart 3s.
+                              # On that first start the backend SELF-HEALED its MLX stack into
+                              # OUR venv (pip mlx/mlx-lm/mlx-vlm, ~6s, enables Train/Export) —
+                              # upstream's own flow, now correctly contained in our home; set
+                              # UNSLOTH_DISABLE_MLX_AUTOREPAIR=1 to forbid it.
     installed: false          # OPTIONAL
     enabled: false
     port: 8899                # ⚠️ DELIBERATELY NOT upstream's default 8888. Debi runs a
@@ -292,8 +311,8 @@ components:
     # the served HTML auto-fills the bootstrap credential.
     # ⚠️ We deliberately never export HERMES_HOME and never invoke `unsloth start` — that is
     # the CLI's agent-wiring path and it must not touch ~/.hermes.
-    # ⚠️ It can download its own (forked, floating-tag) llama.cpp into its own dirs. Contained,
-    # but those weights are invisible to the harness RAM ledger.
+    # ⚠️ It can download its own (forked, floating-tag) llama.cpp into data/unsloth-home.
+    # Contained, but those weights are invisible to the harness RAM ledger.
 
   # ── OPTIONAL second CODING lane (docs/research/2026-08-21-opencode-omnigent-recon.md) ──
   # aider stays the PTY lane (it needs no tool-calling and is the only structurally

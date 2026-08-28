@@ -91,10 +91,13 @@ plan_comfyui="PLAN (comfyui) — OPTIONAL, license GPL-3.0:
 
 plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apache-2.0 (library):
   - shallow-clone vendor/unsloth at the pinned tag from harness.yaml (not a submodule)
-  - create venv data/unsloth-venv and 'pip install -e vendor/unsloth[studio]' — the
-    studio extra is upstream's own declared server stack (fastapi/uvicorn/datasets/
+  - create venv data/unsloth-home/unsloth_studio and 'pip install -e vendor/unsloth[studio]'
+    — the studio extra is upstream's own declared server stack (fastapi/uvicorn/datasets/
     pandas/matplotlib/pymupdf/fastmcp …), a few hundred MB. Training extras (torch et
     al.) are NOT installed here; the tab only needs the Studio server.
+  - data/unsloth-home is this component's ISOLATED home (UNSLOTH_STUDIO_HOME at launch):
+    its engines/auth/outputs live there, never in ~/.unsloth — that home belongs to the
+    standalone Unsloth.app on :8888 and the two installs never share state again
   - build its React SPA with bun: reuse a bun already on your PATH, otherwise download
     the pinned bun release (~35MB) into data/bun/ — never Homebrew, never sudo, nothing
     written outside this project folder
@@ -110,8 +113,8 @@ plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apac
     UI's business — on a loopback launch it auto-fills its bootstrap credential
   - ⚠ AGPL-3.0-only for Studio: composed at ARM'S LENGTH ONLY — separate process over
     HTTP, never modified
-  - ⚠ it can download its own llama.cpp and models into its own dirs; contained, but
-    those weights are invisible to the harness model-RAM ledger"
+  - ⚠ it can download its own llama.cpp and models into data/unsloth-home (GB-scale,
+    on demand from its UI); contained, but invisible to the harness model-RAM ledger"
 
 var="plan_$NAME"; echo "${!var}"
 if [[ "$YES" != "--yes" ]]; then
@@ -646,8 +649,26 @@ elif [[ "$NAME" == "unsloth" ]]; then
   [[ -f vendor/unsloth/pyproject.toml ]] || {
     echo "ERROR: vendor/unsloth/pyproject.toml not found at the pin."; exit 1; }
 
-  US_VENV="$ROOT/data/unsloth-venv"
-  mkdir -p "$ROOT/data/logs"
+  # ISOLATED HOME (2026-08-28): everything Unsloth owns lives under data/unsloth-home —
+  # start_component.sh exports UNSLOTH_STUDIO_HOME=data/unsloth-home (upstream's
+  # documented home override), so its engines (llama.cpp/whisper.cpp — GB-scale, DATA
+  # side, never rsynced by ship.sh), auth state, outputs and logs land there and NEVER
+  # in ~/.unsloth, which belongs 100% to Debi's standalone Unsloth.app (:8888). The venv
+  # is created AT $UNSLOTH_STUDIO_HOME/unsloth_studio — the exact path the CLI treats as
+  # its managed venv — so `unsloth studio` serves in-process from THIS editable install
+  # and /api/health reports our pinned version, not some other install's.
+  # (Upstream does NOT self-provision this venv on launch: a missing managed venv makes
+  # `unsloth studio` exit 1. Its own provisioning flow is install.sh/`studio setup`,
+  # which we deliberately never run — forked floating-tag llama.cpp, its own Node, shell
+  # shims. So OUR installer builds the venv, here, exactly as before — new location.)
+  US_HOME="$ROOT/data/unsloth-home"
+  US_VENV="$US_HOME/unsloth_studio"
+  mkdir -p "$US_HOME" "$ROOT/data/logs"
+  if [[ -d "$ROOT/data/unsloth-venv" ]]; then
+    echo "[harness] NOTE: data/unsloth-venv is the OLD shared-home layout's venv — no"
+    echo "[harness]   longer used by anything. Safe to delete to reclaim space:"
+    echo "[harness]     rm -rf '$ROOT/data/unsloth-venv'"
+  fi
   US_ILOG="$ROOT/data/logs/unsloth-install.log"
   : > "$US_ILOG"
   US_PY="$(_pick_py)" || { echo "ERROR: no python3 found — install Python 3.12."; exit 1; }
@@ -677,7 +698,7 @@ elif [[ "$NAME" == "unsloth" ]]; then
   # tab does not need them. Editable so the SPA we build below is found in place.
   us_pip -e "vendor/unsloth[studio]"
   [[ -x "$US_VENV/bin/unsloth" ]] || {
-    echo "[harness] WARN: the 'unsloth' console script is not in data/unsloth-venv/bin —"
+    echo "[harness] WARN: the 'unsloth' console script is not in data/unsloth-home/unsloth_studio/bin —"
     echo "[harness]   start_component.sh falls back to 'python -m unsloth_cli'."; }
 
   # SPA. ⚠ UNLIKE voicestudio/voicebox this is NOT optional: at this pin

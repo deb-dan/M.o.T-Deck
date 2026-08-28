@@ -114,4 +114,41 @@ So the checklist for any in-app-updater component:
    through our installer: OpenCode `OPENCODE_DISABLE_AUTOUPDATE=1`; Unsloth
    `UNSLOTH_DISABLE_UPDATE_CHECK=1` (set in start_component.sh; kills the version
    banner + startup GitHub probes; its separate llama.cpp toast for its OWN engine
-   in `~/.unsloth/llama.cpp` is not covered and never touches our runner/tree).
+   is not covered and never touches our runner/tree).
+
+## STANDING RULE (added 2026-08-28): a vendored component NEVER shares a home
+## directory with a standalone install of the same upstream
+
+**When upstream software keeps per-install state in a default home (`~/.<name>`),
+our vendored component must be launched with that home redirected into our own
+data tree — find upstream's documented home-override mechanism in the vendored
+source and VERIFY it, never guess.** A shared home couples two installs that must
+not know about each other; the coupling is bidirectional and both directions bit
+us the same day. Case study: our Unsloth component (:8899) and Debi's standalone
+Unsloth.app (:8888) both resolved `~/.unsloth` — (a) our component's `/api/health`
+reported the STANDALONE's stale version string (upstream's CLI re-execs into the
+managed venv `~/.unsloth/studio/unsloth_studio` when it exists, so the standalone's
+non-editable PyPI dist answered for our pinned tree), and (b) our running process
+held that install so the standalone's own self-updater greyed out its Update
+button — we were breaking HER app, not just confusing ours.
+
+The fix shape (Unsloth's concrete instance):
+- The override is `UNSLOTH_STUDIO_HOME` (alias `STUDIO_HOME`; `UNSLOTH_STUDIO_HOME`
+  wins) — verified in `unsloth_cli/commands/studio.py _resolve_studio_home()` and
+  honored by the backend for engines (`$HOME/llama.cpp`, `$HOME/whisper.cpp`),
+  outputs, logs and auth state. start_component.sh exports it as
+  `data/unsloth-home`, set unconditionally (an inherited value can never redirect
+  us) with `STUDIO_HOME` unset.
+- The venv the installer builds lives AT `data/unsloth-home/unsloth_studio` — the
+  exact path the CLI treats as its managed venv — so `unsloth studio` serves
+  in-process from OUR editable install: no re-exec into a foreign interpreter, and
+  the version endpoint reports our pin. (Upstream does NOT self-provision that venv
+  on launch: a missing managed venv is `exit 1`, and its provisioning flow —
+  install.sh / `studio setup` — is exactly what we deliberately never run. Our
+  installer builds it, same content as before, new location.)
+- A FENCE in start_component.sh refuses any launch whose resolved home is (or is
+  under) `~/.unsloth`, so a future edit or env leak cannot re-couple the installs.
+- Consequence to expect: a fresh home is a fresh Studio state — new bootstrap
+  login credential (auto-filled on a loopback launch), no inherited chats/models/
+  engines; engines re-download on demand into the new home (GB-scale, DATA side —
+  ship.sh never copies data/).

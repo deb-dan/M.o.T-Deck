@@ -257,10 +257,14 @@ def install_plan(name: str) -> dict:
             "training library is Apache-2.0). Composed at ARM'S LENGTH ONLY: a separate "
             "process reached over HTTP, never modified",
             "Shallow-clone vendor/unsloth at the pinned tag (not a submodule)",
-            "Create venv data/unsloth-venv and pip install -e vendor/unsloth[studio] — "
-            "upstream's own declared server stack (fastapi, uvicorn, datasets, pandas, "
-            "matplotlib, pymupdf, fastmcp …), a few hundred MB. The heavy training "
-            "extras are NOT installed: the tab only needs the Studio server",
+            "Create venv data/unsloth-home/unsloth_studio and pip install -e "
+            "vendor/unsloth[studio] — upstream's own declared server stack (fastapi, "
+            "uvicorn, datasets, pandas, matplotlib, pymupdf, fastmcp …), a few hundred "
+            "MB. The heavy training extras are NOT installed: the tab only needs the "
+            "Studio server",
+            "data/unsloth-home is this component's ISOLATED home (UNSLOTH_STUDIO_HOME "
+            "at launch): its engines, login state and outputs live there — never in "
+            "~/.unsloth, which belongs to the standalone Unsloth app on :8888",
             "Build its React SPA with bun: reuse a bun already on your PATH, else "
             "download the pinned bun release (~35MB) into data/bun/ — never Homebrew, "
             "never sudo, nothing written outside this project folder",

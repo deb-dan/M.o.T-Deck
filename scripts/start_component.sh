@@ -723,10 +723,48 @@ PYWIRE
   unsloth)
     # OPTIONAL studio component (Studio is AGPL-3.0-only; arm's length: separate process,
     # HTTP only). One FastAPI process serves the API and the React SPA on the SAME port.
-    [[ -d data/unsloth-venv ]] || { echo "ERROR: unsloth venv missing — click Install first"; exit 1; }
-    [[ -f vendor/unsloth/studio/backend/run.py ]] || { echo "ERROR: vendor/unsloth missing — click Install first"; exit 1; }
+    #
+    # ISOLATED HOME (2026-08-28). Upstream's default home is ~/.unsloth, which Debi's
+    # STANDALONE Unsloth.app (:8888) owns. Sharing it coupled the two installs: our
+    # component reported the standalone's stale version string (/api/health served the
+    # ~/.unsloth managed venv's PyPI dist after the CLI re-exec'd into it), and our
+    # running process held that install so the standalone's own self-updater greyed out.
+    # Ruling: our component gets its OWN home, data/unsloth-home. UNSLOTH_STUDIO_HOME is
+    # upstream's documented override (unsloth_cli/commands/studio.py _resolve_studio_home;
+    # the STUDIO_HOME alias also exists but UNSLOTH_STUDIO_HOME wins) and the backend
+    # honors it everywhere — its llama.cpp/whisper.cpp engines, outputs, logs and auth
+    # state all land under the custom home, never in ~/.unsloth.
+    #
+    # The venv the installer builds now lives AT $UNSLOTH_STUDIO_HOME/unsloth_studio —
+    # exactly where the CLI looks for its "managed venv" — so `unsloth studio` serves
+    # IN-PROCESS from our editable install (no re-exec into a foreign interpreter), and
+    # /api/health reports OUR pinned version. Even if the in-venv detection ever missed
+    # (path canonicalization), the fallback re-exec target is this same venv: isolated
+    # either way.
     ROOT="$(pwd)"
-    USPY="$ROOT/data/unsloth-venv/bin/python"
+    US_HOME="$ROOT/data/unsloth-home"
+    US_VENV="$US_HOME/unsloth_studio"
+    # FENCE: never let our launch resolve into ~/.unsloth — that home belongs 100% to
+    # the standalone app. Guards against a mis-set US_HOME and against this script being
+    # edited back to the shared default. (We overwrite any inherited UNSLOTH_STUDIO_HOME/
+    # STUDIO_HOME below, so an env leak cannot redirect us either.)
+    case "$US_HOME" in
+      "$HOME/.unsloth"|"$HOME/.unsloth/"*)
+        echo "ERROR: unsloth home resolves to $US_HOME — that is the STANDALONE app's home."
+        echo "       Our component must use its own home under data/. Refusing to start."
+        exit 1 ;;
+    esac
+    [[ -d "$US_VENV" ]] || {
+      if [[ -d "$ROOT/data/unsloth-venv" ]]; then
+        echo "ERROR: unsloth is installed in the OLD layout (data/unsloth-venv, shared"
+        echo "       ~/.unsloth home). Re-run the install to provision the isolated home:"
+        echo "         ./scripts/install_component.sh unsloth --yes"
+      else
+        echo "ERROR: unsloth venv missing — click Install first"
+      fi
+      exit 1; }
+    [[ -f vendor/unsloth/studio/backend/run.py ]] || { echo "ERROR: vendor/unsloth missing — click Install first"; exit 1; }
+    USPY="$US_VENV/bin/python"
     [[ -x "$USPY" ]] || { echo "ERROR: $USPY not executable — reinstall unsloth"; exit 1; }
     US_PORT=$(awk '/^  unsloth:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
     # Fallback mirrors harness.yaml's 8899 — deliberately NOT upstream's 8888, which is
@@ -753,8 +791,8 @@ PYWIRE
     # agent-wiring path that relocates HERMES_HOME — our Hermes is never touched.
     # Prefer the venv's console script; fall back to the module (a uv-seeded venv can
     # lack bin/ scripts — the same failure mode as bin/pip).
-    if [[ -x "$ROOT/data/unsloth-venv/bin/unsloth" ]]; then
-      US_BIN=("$ROOT/data/unsloth-venv/bin/unsloth")
+    if [[ -x "$US_VENV/bin/unsloth" ]]; then
+      US_BIN=("$US_VENV/bin/unsloth")
     else
       US_BIN=("$USPY" -m unsloth_cli)
     fi
@@ -769,14 +807,21 @@ PYWIRE
     # /api/studio/update-status with reason "disabled" (no PyPI call), skips the
     # startup llama.cpp GitHub freshness probes (main.py), and skips the release-notes
     # fetch — a fully offline boot. It does NOT gate /api/llama/update-status, so the
-    # separate llama.cpp toast for ITS OWN engine (~/.unsloth/llama.cpp, shared with
-    # Debi's standalone app — never our runner on 6767, never data/llamacpp, never
-    # vendor/) can still appear; suppressing that at this pin would mean taking over
-    # its llama.cpp management (Settings custom path), which is its UI's business.
-    # The env survives the CLI's os.execvp re-exec into the managed studio venv.
+    # separate llama.cpp toast for ITS OWN engine (now $US_HOME/llama.cpp — never our
+    # runner on 6767, never data/llamacpp, never vendor/) can still appear; suppressing
+    # that at this pin would mean taking over its llama.cpp management (Settings custom
+    # path), which is its UI's business.
+    #
+    # UNSLOTH_STUDIO_HOME — the isolation itself (see the block comment above). Set
+    # unconditionally (not setdefault) so an inherited value can never point us back at
+    # ~/.unsloth; STUDIO_HOME is unset for the same reason (it is upstream's alias, and
+    # UNSLOTH_STUDIO_HOME winning over it is upstream behavior we'd rather not lean on).
+    mkdir -p "$US_HOME"
     (
       cd vendor/unsloth
       export UNSLOTH_DISABLE_UPDATE_CHECK=1
+      export UNSLOTH_STUDIO_HOME="$US_HOME"
+      unset STUDIO_HOME
       nohup "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
       echo $! > "$ROOT/data/unsloth.pid"
     )
