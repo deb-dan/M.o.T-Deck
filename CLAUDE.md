@@ -15,7 +15,7 @@
 > its /v1/models now needs auth, probe fixed + contract-pinned; Odysseus rsync MUST exclude
 > /data/ + /.env or it deletes the live DB). Hermes v0.20.x bump in flight as its own sitting.
 > Queued: ONLYOFFICE AI plugin -> our runner, Download-as-PDF (x2t has PdfWriter), Docs/Slides,
-> app.py modularization (10,072 lines — router/facade split ratified), warmup probe, tier-1
+> app.py modularization (10,072 lines — router/facade split ratified), tier-1
 > deletion after soak. Debi's clicks: PAT revoke; probe dir (3.2GB) + update .baks deletable.
 
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
