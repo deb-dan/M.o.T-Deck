@@ -97,3 +97,60 @@ but no sentence lifted verbatim from any closed-source product. Near is fine; id
 is not. (Open-source strings may be adapted where their license permits, still preferring
 our voice.) A test may pin OUR strings; none may match LM Studio's shipped strings —
 the builder checks its final copy against the extracted table and reports zero collisions.
+
+---
+
+# SPEC v2 — the synthesis (Fable, 2026-08-28, after the three-research pass)
+
+Supersedes §1's formula sketch. The three research docs are BINDING sources:
+`2026-08-28-fit-math-oss.md` · `2026-08-28-macos-memory-accounting.md` ·
+`2026-08-28-memory-ux-patterns.md`. The builder reads all three end to end.
+
+## V2-1. The engine, corrected by research
+
+- **GGUF fit = ask the oracle, not a formula.** `llama-fit-params` (already in
+  data/llamacpp/build/bin, ~0.3s, no allocation) is the primary source per model ×
+  settings; results cached by (model, ctx, kv-quant, build). Our own formula set (the
+  research's recommended one, incl. the hybrid-Mamba/SWA/GQA/MLA corrections) runs as
+  the CROSS-CHECK and the instant-UI estimate while the oracle runs — a >10% divergence
+  is logged and the oracle wins. The naive formula was measured 4.1× wrong on our own
+  models; nobody re-derives KV math by hand again.
+- **MLX fit = the estimator formulas** (the 5-path KV set found in the Unsloth tree,
+  adapted with provenance comments) — no oracle exists; label estimates accordingly.
+- **The budget** = 0.85 × min(Metal recommendedMaxWorkingSetSize [measured 81% of RAM
+  on this machine — read live, never hardcode], effective-available-now from the ledger).
+  Bands: fits < 80% of budget ≤ tight ≤ 100% < over. All advisory per the ruling, with
+  ONE exception the research legitimated: a hand-raised Metal over-commit is a
+  documented kernel-panic risk — that specific case refuses with the reason and an env
+  override (the nuance Debi named: gates are sophisticated, not absent).
+- **Workers** (voice/music): measured lifetime peaks via ri_lifetime_max_phys_footprint,
+  quoted with provenance.
+
+## V2-2. The ledger, corrected by research
+
+phys_footprint via proc_pid_rusage (NEVER RSS — measured 8.5GB understatement),
+tree-summed (footprint excludes clean shared pages, so summing is honest); WebKit XPC
+attributed via the responsibility API (Activity Monitor's own mechanism) with a labeled
+not-attributable fallback; pressure + kern.memorystatus effective-available headline the
+system view (measured here: 0.9GB "free" + 18GB swap at NORMAL pressure — raw free is a
+liar); compression/swap shown; sampling 2s-watched / 15s-idle / 0-unsubscribed with
+delta-suppressed SSE emits; the footprint(1) CLI only as click-to-drill-down. Present as
+"memory footprint", never "RAM used".
+
+## V2-3. The UX, corrected by research
+
+Per-surface pattern library in the UX doc governs. Non-negotiables: gap-on-the-chip
+("Over by ~7 GB"); verdict → reason → remedy → proceed everywhere; warn-once discipline
+(alarm-fatigue research: cry-wolf trains overrides); the guardrail SPECTRUM as a setting
+(our default = advisory, mirroring the field's own Relaxed lean) with the graded
+override interaction; remedies live-recalc on ctx/kv-quant changes (debounced, ± bands);
+headless/API paths NEVER blocked harder than the GUI (the lms#499 lesson). Copy per
+§3b: our voice, zero verbatim collisions with closed-source strings.
+
+## V2-4. Validation gate (before any verdict ships)
+
+The research's 7-step plan executes as part of the build: predicted-vs-measured on the
+resident 27B (KV at its running 65k ctx: 4 GiB, known), the 9B at 4 ctx sizes (oracle
+already validated to the MiB), one MLX model, one worker peak. A gate test pins the
+table; a verdict may not ship with any prediction >15% off measured without a written
+argument. Estimates display the band, not false precision.
