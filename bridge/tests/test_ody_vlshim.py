@@ -64,7 +64,7 @@ NS = _load(("ody_shim_base", "ody_shim_spec", "ody_shim_endpoint_pick",
             "ody_shim_stale_rows", "ody_shim_extract_image", "ody_shim_failure",
             "ody_shim_no_image_text", "ody_shim_envelope", "ody_shim_sse"),
            ("ODY_VLSHIM_PATH", "ODY_VLSHIM_MODEL", "ODY_VLSHIM_EP_NAME",
-            "ODY_VLSHIM_TIMEOUT", "ODY_VLSHIM_MAX_BYTES"))
+            "ODY_VLSHIM_EP_NAMES_ALL", "ODY_VLSHIM_TIMEOUT", "ODY_VLSHIM_MAX_BYTES"))
 base_of = NS["ody_shim_base"]
 spec_of = NS["ody_shim_spec"]
 pick = NS["ody_shim_endpoint_pick"]

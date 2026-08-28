@@ -106,7 +106,17 @@ ODY_VLSHIM_PATH = "/odyvision/v1"
 # honoured by the chat resolver but not by the vision one), and a user is better
 # served by a row they can read, inspect and delete than by an invisible one.
 ODY_VLSHIM_MODEL = "harness-image-describer"
-ODY_VLSHIM_EP_NAME = "Harness image describer"
+# The display name is a SENTENCE on purpose (Debi, 2026-08-29): the row sits in
+# Odysseus's endpoint list, and a user reading it should learn WHY it exists —
+# Odysseus only detects a vision-capable main model by its NAME, so MOT Deck
+# serves the describer for models it misses. Renaming by the user stays honoured
+# (matching is by base_url); only rows still wearing a DEFAULT name below are
+# migrated when the default changes.
+ODY_VLSHIM_EP_NAME = "MOT Deck image describer — Odysseus detects vision by model name only"
+# Every default name this row has EVER shipped under. Used for two things and
+# nothing else: recognising OUR stale rows (never a user-made row) and the
+# rename-forward migration in ensure(). A user-chosen name matches neither.
+ODY_VLSHIM_EP_NAMES_ALL = (ODY_VLSHIM_EP_NAME, "Harness image describer")
 # Our own budget for one caption. UNDER Odysseus's hard 120s on purpose: if the
 # runner is wedged we want to answer with an honest marker while it is still
 # listening, rather than have it time out and log a failure we could have named.
@@ -172,7 +182,7 @@ def ody_shim_stale_rows(rows, base: str) -> list:
         url = str(r.get("base_url") or "").strip().rstrip("/")
         if not url or url == want:
             continue
-        if str(r.get("name") or "").strip() != ODY_VLSHIM_EP_NAME:
+        if str(r.get("name") or "").strip() not in ODY_VLSHIM_EP_NAMES_ALL:
             continue
         if "127.0.0.1" not in url and "localhost" not in url:
             continue
@@ -252,7 +262,7 @@ def ody_shim_no_image_text() -> str:
     Its model id is visible in Odysseus's picker, so somebody will select it once.
     A silent wrong answer would be the LIE class; this is a sentence that says what
     the thing is and what to do instead."""
-    return ("This is the Harness image describer, not a chat model — it only turns "
+    return ("This is MOT Deck's image describer, not a chat model — it only turns "
             "an attached picture into a written description for the model you are "
             "actually chatting with. Pick your own model in the model selector.")
 
@@ -394,6 +404,19 @@ async def ody_vision_shim_ensure(settings=None) -> dict:
                       f"({d.status_code})", flush=True)
             except Exception:                                # noqa: BLE001
                 pass
+        if row and str(row.get("name") or "").strip() in ODY_VLSHIM_EP_NAMES_ALL \
+                and str(row.get("name") or "").strip() != ODY_VLSHIM_EP_NAME:
+            # Rename-forward migration: the row still wears an OLD default name of
+            # ours (so this is not a user rename — those are any OTHER string).
+            # Delete + recreate rather than update: create is the one admin call
+            # this file already depends on, and Odysseus dedupes on base_url.
+            try:
+                d = await _ody_req("DELETE", f"/api/model-endpoints/{row.get('id')}")
+                print(f"[ody-vlshim] renamed our endpoint to the current default "
+                      f"(delete {d.status_code} + recreate)", flush=True)
+            except Exception:                                # noqa: BLE001
+                pass
+            row = {}
         if not row:
             # Odysseus dedupes on base_url itself, so a concurrent create is safe.
             c = await _ody_req("POST", "/api/model-endpoints", data={
