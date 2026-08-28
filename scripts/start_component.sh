@@ -761,8 +761,22 @@ PYWIRE
     US_CMD=(studio --host 127.0.0.1 --port "$US_PORT" --frontend "$US_DIST")
     # cd into the repo so run.py's own relative resolution matches an editable install;
     # pid + log use ABSOLUTE paths so they can never land outside the project.
+    #
+    # UNSLOTH_DISABLE_UPDATE_CHECK=1 — upstream's documented opt-out
+    # (studio/backend/utils/update_status.py DISABLE_ENV_VAR). Pins move through OUR
+    # installer with recorded hashes, never through in-app self-update, so the
+    # "New Unsloth version" banner must not render. With =1 the backend answers
+    # /api/studio/update-status with reason "disabled" (no PyPI call), skips the
+    # startup llama.cpp GitHub freshness probes (main.py), and skips the release-notes
+    # fetch — a fully offline boot. It does NOT gate /api/llama/update-status, so the
+    # separate llama.cpp toast for ITS OWN engine (~/.unsloth/llama.cpp, shared with
+    # Debi's standalone app — never our runner on 6767, never data/llamacpp, never
+    # vendor/) can still appear; suppressing that at this pin would mean taking over
+    # its llama.cpp management (Settings custom path), which is its UI's business.
+    # The env survives the CLI's os.execvp re-exec into the managed studio venv.
     (
       cd vendor/unsloth
+      export UNSLOTH_DISABLE_UPDATE_CHECK=1
       nohup "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
       echo $! > "$ROOT/data/unsloth.pid"
     )

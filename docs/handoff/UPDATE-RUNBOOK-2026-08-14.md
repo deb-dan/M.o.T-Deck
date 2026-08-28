@@ -90,3 +90,28 @@ quality; the voice-critical files are byte-identical so worker parity is safe),
 Hermes →v2026.8.13, llama.cpp →b10427. NOT changed: Odysseus (deferred; its pin is
 on the DEV branch — comment corrected, never bump to "latest main"), VoiceStudio,
 Voicebox, mlx-lm, mlx-whisper, bun, uv, imageio-ffmpeg.
+
+## STANDING RULE (added 2026-08-28): components with an in-app updater
+
+**A component that ships its own updater defines "latest" by ITS feed, not by git
+tags — ask the feed before judging a pin stale or current.** Case study: Unsloth's
+tab showed "New Unsloth version 2026.8.18 → 2026.8.22" the day after we bumped to
+the newest git tag `v0.1.804-beta`. The tag was NOT stale — its
+`unsloth/_version.py` says `2026.8.22`, exactly PyPI's latest; the updater's feed
+is `pypi.org/pypi/unsloth/json` (CalVer), and tag ≡ PyPI release on the same day.
+The banner's "current 2026.8.18" came from a different install entirely: upstream's
+`unsloth studio` CLI re-execs into the managed venv `~/.unsloth/studio/unsloth_studio`
+(owned by Debi's standalone 8888 app), whose non-editable PyPI dist is what
+`importlib.metadata` — and therefore the banner and `/api/health version` — reports.
+So the checklist for any in-app-updater component:
+
+1. **Find its update-check code** (grep the vendored tree for the feed URL/env) and
+   query THAT feed for latest; map it back to a pinnable git tag/commit + hash.
+2. **Ask the LIVE process what it thinks it is** (its version endpoint) — a current
+   pin can still serve a stale version string if the serving interpreter's installed
+   dist differs from the vendored code (venv parasitism, re-exec, PATH surprises).
+3. **Disable the in-app updater at launch** via its own mechanism, so pins only move
+   through our installer: OpenCode `OPENCODE_DISABLE_AUTOUPDATE=1`; Unsloth
+   `UNSLOTH_DISABLE_UPDATE_CHECK=1` (set in start_component.sh; kills the version
+   banner + startup GitHub probes; its separate llama.cpp toast for its OWN engine
+   in `~/.unsloth/llama.cpp` is not covered and never touches our runner/tree).

@@ -259,6 +259,23 @@ components:
                               # month-named (March-2026 …) and older; the v0.1.8xx-beta line is
                               # the Studio one. MONOREPO: unsloth/ (Apache-2.0 training library)
                               # + studio/ (AGPL-3.0-only FastAPI server + React SPA).
+                              # 2026-08-28 VERSION-SCHEME NOTE: the in-app updater's feed is
+                              # PyPI (studio/backend/utils/update_status.py →
+                              # pypi.org/pypi/unsloth/json), which publishes CalVer — this tag
+                              # carries unsloth/_version.py __version__ = "2026.8.22", and PyPI
+                              # latest IS 2026.8.22 (uploaded 2026-08-27, same day as the tag).
+                              # So git tag ↔ PyPI release are the same train: v0.1.804-beta ≡
+                              # 2026.8.22, and this pin is feed-current. When bumping, confirm
+                              # BOTH: newest v0.1.8xx-beta tag AND that its _version.py matches
+                              # PyPI's latest — a tag can exist hours before the PyPI upload.
+                              # ⚠️ KNOWN WART: `unsloth studio` re-execs (os.execvp) into the
+                              # managed venv at ~/.unsloth/studio/unsloth_studio when it exists
+                              # (it does — Debi's STANDALONE app on 8888 owns it), so the
+                              # serving interpreter's installed `unsloth` dist (PyPI,
+                              # non-editable) is what /api/health `version` and the update
+                              # banner report — NOT this pin. Code executed is still our
+                              # vendored run.py tree. UNSLOTH_DISABLE_UPDATE_CHECK=1 on the
+                              # launch line (start_component.sh) keeps the banner off.
     installed: false          # OPTIONAL
     enabled: false
     port: 8899                # ⚠️ DELIBERATELY NOT upstream's default 8888. Debi runs a
