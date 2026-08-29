@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -32,6 +33,13 @@ _DL_SEQ = {"n": 0}
 _DL = httpx.AsyncClient(timeout=httpx.Timeout(30, read=120), follow_redirects=True)
 
 _SPLIT_RE = _dl_re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$")
+
+# The origin every `f["url"]` (a repo-relative /repo/resolve/main/... path) is
+# resolved against. A NAMED CONSTANT rather than an inline literal so the verify
+# gate below can be exercised against a local shim serving a real truncated /
+# tampered body — doctrine 2b wants the failure modes EXECUTED, and "no network in
+# the sandbox" is not a reason to leave the corruption path unwalked.
+_DL_BASE = "https://huggingface.co"
 
 
 def _safe_dir(name: str) -> str:
@@ -205,6 +213,121 @@ def _dl_cleanup(e: dict) -> None:
         pass
 
 
+# ══ THE VERIFY GATE (ledger A10, 2026-08-29) ═════════════════════════════════
+# ⚠️ WHY THIS EXISTS. Until this landed, `_run_download` renamed `.part`→dest
+# UNCONDITIONALLY. A stream that died with an exception kept its .part (correct);
+# a stream that ended early CLEANLY — a CDN truncation, a proxy cutting a 30 GB
+# transfer at 12 GB, a captive-portal 200 — simply fell out of the read loop, got
+# renamed onto the destination name, was written into data/models.json and shown
+# as "complete — in your library". That is the LIE class: the worst class, because
+# the user's next symptom is llama-server failing to load a model the app told
+# them it had. The comfy lane fixed exactly this in v1.5.36 ("renamed only after
+# BOTH the byte count and the sha256 match") and the rule never reached its older
+# sibling here, even though dl_start already had the numbers in hand.
+#
+# The two facts we verify with, both from the SAME HF tree fetch dl_start already
+# does:
+#   • size    — `size` on every tree entry, LFS or not.
+#   • sha256  — `lfs.oid`. ⚠️ NOT the top-level `oid`, which is the GIT BLOB sha1
+#               and is not a content digest of anything. A non-LFS file
+#               (config.json, merges.txt, tokenizer_config.json) genuinely has NO
+#               published digest, so it is size-verified only — and the download
+#               SAYS so rather than implying a full verification it did not do.
+_SHA_RE = _dl_re.compile(r"^[0-9a-f]{64}$")
+
+
+def _tree_sha256(tree: list) -> dict:
+    """{path: sha256} for every LFS file in an HF tree response. Files with no
+    `lfs` block (small text files, committed as plain git blobs) are ABSENT from
+    the map — that absence is what downgrades them to size-only verification."""
+    out = {}
+    for it in tree or []:
+        if not isinstance(it, dict):
+            continue
+        p = it.get("path") or ""
+        lfs = it.get("lfs")
+        oid = ((lfs or {}).get("oid") or "").strip().lower() if isinstance(lfs, dict) else ""
+        if p and _SHA_RE.match(oid):
+            out[p] = oid
+    return out
+
+
+def _verify_verdict(name: str, got: int, want, want_sha, digest) -> dict:
+    """PURE — the gate between a finished .part and the rename. Testable without a
+    socket, which is the point: this is the branch that used to not exist.
+
+      got      bytes actually on disk in the .part
+      want     bytes upstream says the whole file is (None = upstream said nothing)
+      want_sha sha256 upstream publishes (None = upstream publishes none)
+      digest   sha256 we actually computed (None when want_sha is None)
+
+    Returns {"ok", "error", "verified"}. `verified` is carried into the download's
+    own state so the UI can never imply a stronger check than the one that ran."""
+    if want is not None and got != want:
+        short = want - got
+        gap = (f"{short} bytes short" if short > 0 else f"{-short} bytes too long")
+        return {"ok": False, "verified": "size",
+                "error": (f"CORRUPT — {name}: the transfer ended at {got} bytes but "
+                          f"HuggingFace says this file is {want} bytes ({gap}). The "
+                          f"stream was cut short, so this is not the model. The "
+                          f"partial file was deleted and nothing was added to your "
+                          f"library — press Get again to retry.")}
+    if want_sha:
+        if (digest or "") != want_sha:
+            return {"ok": False, "verified": "sha256",
+                    "error": (f"CORRUPT — {name}: sha256 {(digest or '(not computed)')[:12]}"
+                              f"… does not match the {want_sha[:12]}… HuggingFace "
+                              f"publishes for this file. The byte count is right but "
+                              f"the bytes are not. The partial file was deleted and "
+                              f"nothing was added to your library — press Get again "
+                              f"to retry.")}
+        return {"ok": True, "error": None, "verified": "size+sha256"}
+    if want is not None:
+        return {"ok": True, "error": None, "verified": "size"}
+    return {"ok": True, "error": None, "verified": "unverified"}
+
+
+def _verify_summary(files: list) -> str:
+    """One honest sentence about how hard the completed download was checked. The
+    'size only' case is NOT hidden: an upstream that publishes no digest is a real
+    difference in what we can promise, and requirement (2) of the fix is that the
+    state say which check actually ran."""
+    modes = [f.get("verified") or "unverified" for f in files]
+    if not modes:
+        return "nothing to verify"
+    unver = [f["name"] for f in files if (f.get("verified") or "unverified") == "unverified"]
+    sized = [f["name"] for f in files if f.get("verified") == "size"]
+    pre = [f["name"] for f in files if f.get("verified") == "pre-existing"]
+    parts = []
+    if all(m == "size+sha256" for m in modes):
+        return "byte count and sha256 both verified against HuggingFace"
+    if any(m == "size+sha256" for m in modes):
+        parts.append("byte count and sha256 verified where HuggingFace publishes a digest")
+    if sized:
+        parts.append(f"size-only for {len(sized)} file(s) upstream publishes no digest for "
+                     f"({', '.join(sized[:3])}{'…' if len(sized) > 3 else ''})")
+    if pre:
+        parts.append(f"{len(pre)} file(s) were already on disk and were not re-checked")
+    if unver:
+        parts.append(f"NOT VERIFIED: {len(unver)} file(s) — upstream published neither a "
+                     f"size nor a digest ({', '.join(unver[:3])}"
+                     f"{'…' if len(unver) > 3 else ''})")
+    return "; ".join(parts) or "unverified"
+
+
+async def _sha256_file(path: str) -> str:
+    """Hash a multi-GB file WITHOUT blocking the event loop — the same reasoning as
+    comfy's `_sha256`: hashing 30 GB inline would freeze every other bridge route
+    for minutes, which reads to the user as "the app hung at 100%"."""
+    def _run() -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 22), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    return await asyncio.to_thread(_run)
+
+
 async def _run_download(dl_id: str) -> None:
     import os as _os, time as _t
     e = DOWNLOADS.get(dl_id)
@@ -216,16 +339,32 @@ async def _run_download(dl_id: str) -> None:
             dest, total = f["dest"], f["total"]
             part = dest + ".part"
             # Already complete? (full-size dest present)
+            # ⚠️ DELIBERATELY NOT RE-HASHED (requirement 4 of the A10 fix): the
+            # verify gate applies at COMPLETION, not retroactively. Re-digesting
+            # every model already in the library on every touch would be a rescan
+            # storm on tens of GB and would call files "corrupt" that nobody has
+            # any evidence against. The state says which ones were skipped.
             if _os.path.exists(dest) and (total == 0 or _os.path.getsize(dest) == total):
                 f["done"] = _os.path.getsize(dest)
+                f["verified"] = f.get("verified") or "pre-existing"
                 continue
             _os.makedirs(_os.path.dirname(dest), exist_ok=True)
             existing = _os.path.getsize(part) if _os.path.exists(part) else 0
+            # A .part LONGER than the file it claims to be is a leftover from a
+            # different revision of the same filename: resuming from its end asks
+            # for a range past EOF (416) and appending to it can never produce the
+            # right file. Start over. (Same guard comfy's `have > want` carries.)
+            if total and existing > total:
+                try:
+                    _os.remove(part)
+                except OSError:
+                    pass
+                existing = 0
             f["done"] = existing
             headers = {}
             if existing > 0:
                 headers["Range"] = f"bytes={existing}-"
-            url = "https://huggingface.co" + f["url"]
+            url = _DL_BASE + f["url"]
             last_ts, last_done = _t.time(), existing
             async with _DL.stream("GET", url, headers=headers) as resp:
                 if resp.status_code not in (200, 206):
@@ -241,7 +380,37 @@ async def _run_download(dl_id: str) -> None:
                 # A 200 to a Range request means the server ignored it → restart file.
                 mode = "ab" if (existing > 0 and resp.status_code == 206) else "wb"
                 if mode == "wb":
-                    f["done"] = last_done = 0
+                    f["done"] = last_done = existing = 0
+                # THE SIZE PIN, BEFORE A BYTE IS WRITTEN (A10, comfy's shape).
+                # content-length on a 206 is the REMAINDER, so the whole-file size
+                # is existing + length. ⚠️ SKIPPED when the response is encoded:
+                # HF serves small text files (config.json, tokenizer_config.json)
+                # gzipped, and content-length is then the COMPRESSED length while
+                # aiter_bytes yields decoded bytes — comparing the two would fail
+                # honest downloads. The post-write gate below still checks those.
+                stream_total = None
+                if not (resp.headers.get("content-encoding") or "").strip():
+                    try:
+                        clen = int(resp.headers.get("content-length") or 0)
+                    except ValueError:
+                        clen = 0
+                    if clen > 0:
+                        stream_total = existing + clen
+                if stream_total is not None:
+                    if total and stream_total != total:
+                        e["state"] = "error"
+                        e["error"] = (
+                            f"{_os.path.basename(dest)}: HuggingFace's file listing says "
+                            f"{total} bytes but the download itself is offering "
+                            f"{stream_total}. The file changed upstream mid-flight — "
+                            f"refusing to fetch something we cannot verify. Press Get "
+                            f"again to re-read the repo.")[:500]
+                        publish("download", id=dl_id, state="error")
+                        return
+                    # No size in the tree (a failed/redirected tree fetch): the
+                    # transfer's OWN declared length becomes the expectation, so a
+                    # truncation is still caught rather than silently accepted.
+                    f["expect"] = stream_total
                 # 1 MB read buffer (was 64 KB). Bigger chunks cut per-chunk Python
                 # overhead on multi-GB weights; no per-chunk flush/fsync (the OS page
                 # cache batches writes) — ISSUE 3 local perf. The observed ~1.4 MB/s
@@ -271,12 +440,58 @@ async def _run_download(dl_id: str) -> None:
                             publish("download", id=dl_id, state="downloading")
             if e["state"] == "cancelled":
                 break
+            # ══ THE VERIFY GATE — nothing reaches `dest` before this passes ══
+            # Both facts are checked on the FULL ASSEMBLED FILE, never on the
+            # resumed tail: a Range-resumed download whose earlier half was
+            # written by a different revision is exactly the corruption a
+            # tail-only check would wave through.
+            fname = _os.path.basename(dest)
+            got = _os.path.getsize(part) if _os.path.exists(part) else 0
+            want = total or f.get("expect") or None
+            want_sha = f.get("sha256") or None
+            digest = None
+            if want_sha and (want is None or got == want):
+                # Only worth hashing once the cheap check passed. `phase` (not
+                # `state`) so the download list keeps rendering as a running
+                # download rather than falling into an unknown-state branch.
+                f["state"] = "verifying"
+                e["phase"] = "verifying"
+                publish("download", id=dl_id, state="downloading")
+                digest = await _sha256_file(part)
+                # Cancel clicked while a multi-GB hash was running: honour it here
+                # rather than renaming a file into a library the user just backed
+                # out of. The .part survives — cancel's own cleanup owns it.
+                if e["state"] == "cancelled":
+                    e["phase"] = None
+                    break
+            v = _verify_verdict(fname, got, want, want_sha, digest)
+            e["phase"] = None
+            f["verified"] = v["verified"]
+            if not v["ok"]:
+                # No half-file at `dest`, no registry entry, no ".part" left to be
+                # mistaken for a resumable transfer of the right file.
+                try:
+                    if _os.path.exists(part):
+                        _os.remove(part)
+                except OSError:
+                    pass
+                f["state"] = "corrupt"
+                f["done"] = 0
+                e["corrupt"] = True
+                e["state"] = "error"
+                e["error"] = v["error"][:500]
+                publish("download", id=dl_id, state="error")
+                return
             _os.replace(part, dest)
+            f["state"] = "present"
         if e["state"] == "cancelled":
             _dl_cleanup(e)
             publish("download", id=dl_id, state="cancelled")
             return
-        # All files complete → register the model.
+        # All files complete AND VERIFIED → register the model. `verified` says
+        # which check actually ran, so nothing downstream can imply a digest match
+        # on files HuggingFace publishes no digest for.
+        e["verified"] = _verify_summary(e["files"])
         base = (_mlx_registry_entry(e) if e.get("kind") == "mlx"
                 else _gguf_registry_entry(e))
         # Phase A: an AUDIO download carries an explicit format hint from the Get
@@ -356,7 +571,10 @@ def _mk_download(repo: str, files: list, model_id: str, kind: str,
     dl_id = str(_DL_SEQ["n"])
     entry = {"id": dl_id, "repo": repo, "files": files, "state": "downloading",
              "error": None, "rate": 0.0, "model_id": model_id, "kind": kind,
-             "model_dir": model_dir, "voice_format": voice_format, "task": None}
+             "model_dir": model_dir, "voice_format": voice_format, "task": None,
+             # A10: the verify gate's own fields, present from the first poll so
+             # no consumer has to guess whether an older entry simply lacks them.
+             "corrupt": False, "phase": None, "verified": None}
     DOWNLOADS[dl_id] = entry
     entry["task"] = asyncio.create_task(_run_download(dl_id))
     # SSE: a new download exists. This is what lets the panel's Downloads section
@@ -410,6 +628,10 @@ async def dl_start(req: Request) -> JSONResponse:
             tree = r.json()
     except Exception:
         tree = []
+    # A10: the LFS sha256s were already in this response and were being thrown
+    # away. Keep them alongside the sizes — they are what makes the completion
+    # gate a real verification instead of a byte count.
+    oids = _tree_sha256(tree)
 
     if filename == "":
         # ── Whole-MLX-repo mode ──────────────────────────────────────────────
@@ -436,7 +658,8 @@ async def dl_start(req: Request) -> JSONResponse:
             part = dest + ".part"
             done = _os.path.getsize(part) if _os.path.exists(part) else 0
             files.append({"name": relpath, "url": f"/{repo}/resolve/main/{relpath}",
-                          "dest": dest, "total": int(size), "done": done})
+                          "dest": dest, "total": int(size), "done": done,
+                          "sha256": oids.get(relpath), "verified": None})
         entry = _mk_download(repo, files, model_id, "mlx", model_dir=str(dest_dir),
                              voice_format=voice_format)
         return JSONResponse(_dl_json(entry))
@@ -449,9 +672,15 @@ async def dl_start(req: Request) -> JSONResponse:
     file_names = _split_files(filename)
     # Look up sizes + a single mmproj sibling from the repo tree.
     sizes, mmproj_name = {}, None
+    # Keyed by BASENAME here (not path) because a GGUF download flattens the repo
+    # layout into one model dir — the sha256 map has to be keyed the same way or
+    # every gguf would silently drop to size-only verification.
+    sha_by_base = {}
     for it in tree:
         p = it.get("path", "")
         sizes[_os.path.basename(p)] = it.get("size") or 0
+        if p in oids:
+            sha_by_base[_os.path.basename(p)] = oids[p]
     mmprojs = [it.get("path", "") for it in tree
                if "mmproj" in _os.path.basename(it.get("path", "")).lower()
                and it.get("path", "").lower().endswith(".gguf")]
@@ -473,7 +702,8 @@ async def dl_start(req: Request) -> JSONResponse:
         part = dest + ".part"
         done = _os.path.getsize(part) if _os.path.exists(part) else 0
         files.append({"name": name, "url": f"/{repo}/resolve/main/{name}",
-                      "dest": dest, "total": int(sizes.get(base, 0)), "done": done})
+                      "dest": dest, "total": int(sizes.get(base, 0)), "done": done,
+                      "sha256": sha_by_base.get(base), "verified": None})
     entry = _mk_download(repo, files, model_id, "gguf", voice_format=voice_format)
     return JSONResponse(_dl_json(entry))
 
