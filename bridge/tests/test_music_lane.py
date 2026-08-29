@@ -743,8 +743,17 @@ check("the sidebar has a Music entry",
       "id:'music'" in PANEL and "showView('music')" in PANEL
       and 'id="nav-' in PANEL)
 check("showView routes to it", "document.getElementById('view-music').hidden" in PANEL)
+# ⚠️ WIDENED AT THE CONSOLIDATION SLICE (Debi 2026-08-29), NOT WEAKENED. ⌘K "Music" now
+# opens the STUDIO — the one Music door, the same call the sidebar row makes — so the
+# palette must also carry a NAMED way to the Classic look rather than making it the
+# thing you get by accident. Both prompt-jumps stay reachable, and the Classic one says
+# which surface it lands on instead of being a second "Generate music".
 check("the palette can reach Music AND the prompt",
-      "{t:'Music'" in PANEL and "{t:'Generate music'" in PANEL)
+      "{t:'Music'" in PANEL and "{t:'Generate music (Classic)'" in PANEL)
+check("...and names the Classic look as its own destination",
+      "{t:'Music Classic'" in PANEL and "f:openMusicClassic}" in PANEL)
+check("...while ⌘K Music opens the one door, exactly as the sidebar row does",
+      "{t:'Music', k:'♫', f:()=>navOpen('compose')}" in PANEL)
 check("the log dialog lists the music install log", "'music-install'" in PANEL)
 check("the panel POLLS ONLY WHILE SOMETHING RUNS",
       "function musicNeedsPoll()" in PANEL and "if (musicPollT || !musicNeedsPoll()) return;" in PANEL)

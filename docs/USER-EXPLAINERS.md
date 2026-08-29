@@ -107,13 +107,15 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
-## Music and Compose — making songs
+## Music — making songs
 
-- There are **two surfaces for the same job**, and they drive the same engines and the
-  same library: **Music** (the original page, everything on one screen) and **Compose**
-  (the redesigned one, where the latest song is the big thing at the top and plays in
-  place). Neither keeps its own copy of anything — rename or delete a track on one and
-  the other sees it immediately.
+- **One door, two looks.** The sidebar has a single **Music** row and the app a single
+  **Music** tab. It opens **Music Studio** — the latest song big at the top, playing in
+  place. The dropdown beside the page's title switches to **Music Classic**, the
+  original page with everything on one screen; the same switcher sits in Classic's own
+  header to bring you back. They drive the same engines and the same library, and
+  neither keeps its own copy of anything — rename or delete a track in one and the other
+  sees it immediately.
 - **What a render actually is:** a one-shot process. Nothing runs in the background, no
   port is opened, and no model stays in memory afterwards. One render happens at a time
   on purpose — two would fight over the GPU. You can leave the tab; the song is waiting
@@ -324,9 +326,10 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 - The terminal keeps a **dark background in every theme**. The colours in it are
   goose's own — its banner, its diffs, its prompts — and they were drawn for a dark
   terminal. The frame around it follows whatever theme you picked.
-- Both goose rows are on the **sidebar** by default, not on the tab strip: the strip is
-  nearly full. Clicking a sidebar row opens its tab; you can pin either one in
-  **Capabilities → Appearance** if you want it there permanently.
+- Both goose rows are on the **sidebar** by default rather than pinned to the tab strip.
+  Clicking a sidebar row opens its tab — and that tab then takes one of the strip's three
+  swappable slots (see *Window and layout*), so it is there while you are using it. Pin
+  either one in **Capabilities → Appearance** if you want it there permanently.
 - Sessions are named by time, not by a generated title, and that is deliberate: asking
   the model for a title costs a whole second request, and on a thinking model that
   request can outlive the answer you were waiting for.
@@ -365,6 +368,12 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ## Window and layout
 
+- **The tab strip holds twelve tabs: nine you pin, then three that follow you.** The
+  first nine are yours — set them in **Capabilities → Appearance**, and they never move.
+  The last three hold whatever you opened most recently: open something from the **⋯**
+  menu at the right of the strip (or click its sidebar row) and it takes a slot, pushing
+  the oldest of the three back into **⋯**. Nothing is lost either way — **⋯** always
+  lists every tab that is not on the strip.
 - **⫽** splits the window. The **gold rail** marks the focused pane; the tab strip
   always changes the focused pane. Picking the tab the other pane holds **swaps** them.
   Each pane has its own **✕**.

@@ -354,8 +354,40 @@ console.log('2. Editorial does not pay for the second design');
                extra `.dlbar` qualifier — load-bearing, because the obvious selector
                loses to the design pack's own rule and painted a CORRUPT download's bar
                in the accent colour (found by this slice's ALL-DESIGNS computed-value
-               pass, now fenced by specificity in that same file). */
-  const CEILING = 824000;
+               pass, now fenced by specificity in that same file).
+       834000  THE 9+3 STRIP + THE ONE MUSIC DOOR (v1.5.49, Debi's two rulings of
+               2026-08-29) — +9.7KB, and per the protocol, what it bought. NEW
+               BEHAVIOUR, nearly all of it, and all in the nav model's pure half:
+               THE LAST-THREE WINDOW — navPins/navStrip/navTouch and the `mru` list
+               through navNormalize, navDefaultModel, navClone and the localStorage
+               copy, which is what turns "the strip shows at most 12" from a rule the
+               shell quietly broke (its unbounded `tempShown` appended every tab you
+               opened on TOP of twelve pins, so the strip routinely drew fourteen) into
+               nine stable pins plus a three-slot most-recently-opened window that
+               swaps; navDefaultPos, the NEIGHBOUR-APPEND fix that closes ledger A8/S19
+               after three sightings (Generate, Compose and Goose UI each landed at the
+               BOTTOM of a customised sidebar while sitting where they were designed to
+               sit on a fresh one) — it chooses an insertion point and reorders nothing
+               the user placed; NAV_SUPERSEDED, which rewrites a saved `music` row into
+               the Music row IN PLACE rather than dropping it and appending elsewhere;
+               navCanTab, the superset of navCanShow that lets a tab own no row and
+               still be reachable; and the Appearance editor's honest 9+3 readout,
+               because "max 12" beside nine switches is a lie and "at most 9" with
+               nothing said reads as a cap that was cut.
+               ZERO NEW CSS: the Classic view's way back to the Studio is one chip in
+               the existing header row, in the page's own .chip grammar — the music-deck
+               block still declares exactly 29 rules and still owns no data-mview
+               selector outside itself.
+               The PROSE half is again the argued kind, and again mostly records of what
+               would otherwise be "simplified" back: why the window is most-recently-
+               OPENED rather than truly LRU (a strip that re-sorts under the pointer is
+               the bug, not the feature); why SUPERSEDED is applied to rows and NOT to
+               the window (that list names TABS, and `music` in it means the Classic tab
+               that still exists); and why an entry may be declared on NO bar and still
+               own a tab. The reasoning that could leave did: test_nav_model.py (345),
+               test_nav_panel.js (322) and test_compose_page.js (316) carry the
+               journeys. */
+  const CEILING = 834000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

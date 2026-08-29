@@ -780,8 +780,18 @@ default_ids = re.findall(r'"([^"]+)"', default_top.group(1)) if default_top else
 # (OpenCode landed after LOffice and took the last slot, 2026-08-21 — so the assertion
 # is that LOffice is ON the default strip and still ahead of anything added later, not
 # that it is last forever.)
+# ⚠️ THE COUNT MOVED FROM >=10 TO >=9 AT THE 9+3 RULING (Debi 2026-08-29) AND THE STRIP
+# DID NOT SHRINK: `navDefaultTopbar` is now the PINNED prefix only — nine — with two more
+# tabs coming from `navDefaultMru`, the last-three window's seed. The claim this fence
+# actually makes is unchanged and is checked against the whole strip below: LOffice is
+# on it, and it is still ahead of anything added later.
+default_mru = re.search(r'let navDefaultMru = \[([^\]]+)\]', SWIFT)
+default_strip = default_ids + (re.findall(r'"([^"]+)"', default_mru.group(1))
+                               if default_mru else [])
 check("LOffice is on the DEFAULT strip",
-      "loffice" in default_ids and len(default_ids) >= 10)
+      "loffice" in default_ids and len(default_ids) >= 9)
+check("...and the strip it sits on is still eleven tabs (nine pins + the window seed)",
+      len(default_strip) == 11 and default_strip.index("loffice") == 8)
 check("...and it is still a registry row",
       "LOffice" in tab_titles)
 check("the ROUTE did not churn with the wordmark — the tab still points at /office",

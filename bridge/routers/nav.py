@@ -37,8 +37,17 @@ def api_nav_get() -> JSONResponse:
     if _nav is None:
         return JSONResponse({"ok": False, "error": "nav module unavailable: " + _NAV_ERR},
                             status_code=503)
-    return JSONResponse({"ok": True, "nav": _nav.read(ROOT), "gen": nav_gen(),
-                         "max_topbar": _nav.NAV_TOPBAR_MAX, "ids": list(_nav.NAV_IDS)})
+    model = _nav.read(ROOT)
+    # `strip` is DERIVED here, not in the shell, and that is the point: the 9+3 rule
+    # (nine stable pins, then the three-slot most-recently-opened window) has exactly
+    # ONE implementation. An older shell that reads only `nav.topbar` still draws the
+    # nine pins — fewer tabs than it should, never wrong ones.
+    return JSONResponse({"ok": True, "nav": model, "gen": nav_gen(),
+                         "strip": _nav.strip(model),
+                         "max_topbar": _nav.NAV_TOPBAR_MAX,
+                         "max_pins": _nav.NAV_TOPBAR_PINS,
+                         "max_mru": _nav.NAV_TOPBAR_MRU,
+                         "ids": list(_nav.NAV_IDS)})
 
 
 @app.post("/api/nav")
@@ -72,3 +81,40 @@ async def api_nav_set(req: Request) -> JSONResponse:
     # the next without waiting for anybody's tick.
     publish("nav", gen=gen)
     return JSONResponse({"ok": True, "nav": model, "gen": gen})
+
+
+@app.post("/api/nav/mru")
+async def api_nav_mru(req: Request) -> JSONResponse:
+    """Open a tab that is not on the strip: it takes the first of the three swappable
+    slots and the oldest of them falls off into ⋯ (Debi's ruling 2026-08-29).
+
+    A SEPARATE ROUTE FROM `POST /api/nav`, deliberately. That one is a SAVE — the user
+    arranging their window in the Appearance editor, strict, refused with a reason when
+    it would lose something. This is a USE — the shell recording that you just opened
+    Goose from the ⋯ menu — and it must never be able to refuse, reorder or drop a row.
+    It touches ONE list, and when the window does not move (the tab was already on the
+    strip) it writes nothing and does not bump the generation, so a click on a tab that
+    is already there costs one request and changes no state anywhere.
+    """
+    if _nav is None:
+        return JSONResponse({"ok": False, "error": "nav module unavailable: " + _NAV_ERR},
+                            status_code=503)
+    try:
+        body = await req.json()
+    except Exception:                                    # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "bad json"}, status_code=400)
+    eid = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(eid, str) or not eid:
+        return JSONResponse({"ok": False, "error": "no id"}, status_code=400)
+    model = _nav.read(ROOT)
+    if not _nav.mru_touch(model, eid):
+        return JSONResponse({"ok": True, "moved": False, "nav": model,
+                             "strip": _nav.strip(model), "gen": nav_gen()})
+    try:
+        _nav.write(ROOT, model)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"could not save: {e}"}, status_code=500)
+    gen = _nav_bump()
+    publish("nav", gen=gen)
+    return JSONResponse({"ok": True, "moved": True, "nav": model,
+                         "strip": _nav.strip(model), "gen": gen})

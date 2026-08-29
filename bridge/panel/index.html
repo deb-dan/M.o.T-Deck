@@ -2472,7 +2472,17 @@
       </div>
       <div><span class="chip" id="music-view-chip" onclick="toggleMusicView()"
                  title="Switch this page between the editorial layout and the Studio deck"
-                 >✦ Studio view</span></div>
+                 >✦ Studio view</span>
+        <!-- THE REVERSE DOOR (Debi 2026-08-29, "ONE door, both looks"). The Studio page's
+             header dropdown brings you here; this is the way back, and it is the SMALLEST
+             possible addition to this view — one chip in the existing header row, in the
+             page's existing .chip grammar, ZERO new CSS (test_music_deck.js counts the
+             deck block's rules and forbids a data-mview selector outside it, and both
+             still hold). ⚠️ It is NOT the ✦ chip beside it: that one flips THIS page
+             between its two layouts, this one leaves for the other page. -->
+        <span class="chip" onclick="openMusicStudio()"
+              title="Open Music Studio — the other Music surface, same library"
+              style="margin-left:6px">♫ Music Studio →</span></div>
     </div>
     <div class="stamp" id="music-stamp">—</div>
 
@@ -2949,15 +2959,25 @@ const NAV_ENTRIES = [
   { id:'mc',      label:'MOT Deck',        ico:'◫', kind:'view', view:'mc',     tab:'MOT Deck' },
   { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
-  { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
-  // COMPOSE — the ALTERNATIVE music surface at /compose (docs/FABLE-MUSIC-COMPOSE-SPEC.md),
-  // driving the same /api/music/* routes as the Music row above. It does NOT replace it:
-  // both stay until Debi rules on which survives.
-  // ⚠️ THE ICON IS ≋, DELIBERATELY NOT ♫ — that is the Music row's own mark, and two rows
-  // wearing one glyph read as one surface. This is the v1.5.38 ❖ lesson in its general
-  // form: a nav row may never wear ANOTHER control's or row's glyph. ≋ is a waveform and
-  // is worn by nothing else in this document.
-  { id:'compose', label:'Compose',         ico:'≋', kind:'lane', view:null,     tab:'Compose', url:'/compose', prefersTab:true },
+  // MUSIC CLASSIC — the original Music view, untouched. It is NOT A BAR ENTRY any more
+  // (nav.py gives it `bars: ()`): Debi's 2026-08-29 ruling is ONE Music door with both
+  // looks behind it, so the row and the tab below are the door and this is the second
+  // look. It stays in this table for three jobs that all still need it — SOLO_VIEWS
+  // derives `?solo=music` from here, showView() highlights by `view`, and the shell's
+  // "Music Classic" tab is resolved from `tab` — and it is REACHED from the switcher in
+  // the Studio page's header (and its own switcher back).
+  // ⚠️ THE GLYPHS SWAPPED WITH COMPOSE'S AT THAT SLICE. ♫ belongs to whichever row says
+  // "Music" to the user, and that is now the row below; ≋ (a waveform, worn by nothing
+  // else here) moves to this one. Two entries may never share a glyph — v1.5.38's ❖
+  // lesson in its general form — and the census test still checks that.
+  { id:'music',   label:'Music Classic',   ico:'≋', kind:'view', view:'music',  tab:'Music Classic', prefersTab:true },
+  // MUSIC — the Studio at /compose (docs/FABLE-MUSIC-COMPOSE-SPEC.md), driving the same
+  // /api/music/* routes the Classic view drives. THE one Music row and THE one Music tab.
+  // ⚠️ THE ID IS STILL `compose` (the route, the tab id, the row in every saved
+  // nav.json) and only the LABEL moved — Goose CLI's rule verbatim: internal names do
+  // not churn with a wordmark. nav.py's SUPERSEDED map rewrites a saved `music` row into
+  // this one IN PLACE, so Debi's strip and sidebar keep their positions.
+  { id:'compose', label:'Music',           ico:'♫', kind:'lane', view:null,     tab:'Music', url:'/compose', prefersTab:true },
   // GENERATE — our own ComfyUI-driving page at /comfy (v1.5.36). The LABEL is what it
   // does, the id is its route. It is NOT the `comfyui` component row further down: that
   // one is upstream's stock UI on :8188, and both stay.
@@ -2999,17 +3019,33 @@ const NAV_SIDEBAR_ONLY = ['logs','help'];
 // `always`. Both are reachable from ⌘K whatever the sidebar says, which is the only
 // reason hiding them is allowed to be a real choice.
 const NAV_ALWAYS = ['logs','help'];
+/* …and the entries the model may put on NO bar (nav.py's `bars: ()`). `music` is the
+   Classic look, reached from the Studio page's header switcher rather than from a row
+   of its own — Debi's ONE-Music-door ruling. It is not "sidebar-only" and it is not
+   `always`: those two say WHERE a row may live, this one says there is no row. */
+const NAV_OFFBAR = ['music'];
+/* An id whose ROW is now another entry's row — mirrors nav.py's SUPERSEDED. The saved
+   layout is rewritten IN PLACE (same position, same pin), never dropped-and-appended. */
+const NAV_SUPERSEDED = { music:'compose' };
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
+/* THE 9 + 3 STRIP (Debi 2026-08-29): the twelve are nine stable pins in the user's own
+   order, then a three-slot most-recently-opened window over everything else. */
+const NAV_TOPBAR_PINS = 9;
+const NAV_TOPBAR_MRU = 3;
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
-const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','compose','comfy','aider','goose','gooseui','loffice','caps','logs',
+const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','compose','comfy','aider','goose','gooseui','loffice','caps','logs',
                              'help',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
 /* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
    authority, and from app/main.swift's navDefaultTopbar; test_nav_model.py asserts all
    three agree). Same eleven ids, new reading order. */
+/* ⚠️ NINE SINCE THE 9+3 RULING, NOT ELEVEN — and the strip a fresh machine draws is
+   still the same ELEVEN TABS, because the tenth and eleventh (Music, Voicebox) are now
+   the SEED of the last-three window rather than pins. Mirrors nav.py's DEFAULT_MRU. */
 const NAV_DEFAULT_TOPBAR = ['mc','hermes','unsloth','opencode','odysseus','voicestudio',
-                            'comfyui','aider','loffice','music','voicebox'];
+                            'comfyui','aider','loffice'];
+const NAV_DEFAULT_MRU = ['compose','voicebox'];
 /* The pre-v1.5.26 order, FROZEN — the only way to tell "never customised" from
    "customised into something short". Mirrors nav.py's DEFAULT_TOPBAR_V1. */
 const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
@@ -3022,8 +3058,12 @@ const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox'
    pinning both by default would put two surfaces for one job on the strip without
    anyone choosing that — and `gooseui` at the Goose UI slice, where the same objection
    is sharper still: pinning the embedded lane while `goose` waits behind ⋯ would pick a
-   winner between two coexisting lanes. Mirrors nav.py's DEFAULT_TOPBAR tail. */
-const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose','comfy','compose','gooseui'];
+   winner between two coexisting lanes.
+   ⚠️ AND `compose` + `voicebox` JOIN IT AT THE 9+3 SLICE FOR A DIFFERENT REASON, which
+   is why they lead the list rather than being appended to it: they are not waiting for a
+   pin, they are the SEED of the last-three window (NAV_DEFAULT_MRU) and are ON the
+   default strip. Order mirrors nav.py's DEFAULT_TOPBAR tail exactly. */
+const NAV_TOPBAR_UNPINNED = ['compose','voicebox','chat','models','caps','goose','comfy','gooseui'];
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
@@ -3032,14 +3072,53 @@ const NAV_KEY = 'harness-nav';
 function navEntry(id) { return NAV_ENTRIES.find(e => e.id === id) || null; }
 function navCanShow(id, bar) {
   if (!navEntry(id)) return false;
+  if (NAV_OFFBAR.indexOf(id) >= 0) return false;     // declared, but no row anywhere
   return bar === 'sidebar' || NAV_SIDEBAR_ONLY.indexOf(id) < 0;
+}
+/* May the STRIP draw it at all? A superset of navCanShow(id,'topbar') — mirrors nav.py's
+   `can_tab`. An off-bar entry can still own a native tab (Music Classic), and the
+   last-three window is over TABS, not over rows, so opening one has somewhere to land. */
+function navCanTab(id) {
+  const e = navEntry(id);
+  if (!e || !e.tab) return false;
+  return NAV_OFFBAR.indexOf(id) >= 0 || NAV_SIDEBAR_ONLY.indexOf(id) < 0;
 }
 function navDefaultModel() {
   return {
     sidebar: NAV_DEFAULT_SIDEBAR.map(id => ({ id, pinned:true })),
     topbar: NAV_DEFAULT_TOPBAR.map(id => ({ id, pinned:true }))
       .concat(NAV_TOPBAR_UNPINNED.map(id => ({ id, pinned:false }))),
+    mru: NAV_DEFAULT_MRU.slice(),
   };
+}
+/* Where a known id the caller OMITTED belongs: directly after the nearest DEFAULT-order
+   predecessor that their layout actually carries — mirrors nav.py's `_default_pos`.
+   LEDGER A8/S19: appending at the tail (right for Help, wrong for everything after it)
+   is why Generate, Compose and Goose UI each landed at the BOTTOM of a customised
+   sidebar. This reorders NOTHING the user placed; it only chooses an insertion point,
+   and falls back to the tail when no predecessor of theirs survives. */
+function navDefaultPos(order, id, rows) {
+  const at = order.indexOf(id);
+  if (at < 0) return rows.length;
+  for (let i = at - 1; i >= 0; i--) {
+    const j = rows.findIndex(r => r.id === order[i]);
+    if (j >= 0) return j + 1;
+  }
+  // No predecessor of theirs survives — land BEFORE the nearest successor instead, or
+  // the entry designed to be FIRST (mc) would tail-append onto a layout that lost it.
+  for (let i = at + 1; i < order.length; i++) {
+    const j = rows.findIndex(r => r.id === order[i]);
+    if (j >= 0) return j;
+  }
+  return rows.length;
+}
+/* THE STABLE PREFIX and THE STRIP — mirrors nav.py's `_pins` / `strip`. */
+function navPins(m) {
+  return ((m && m.topbar) || []).filter(r => r.pinned).map(r => r.id).slice(0, NAV_TOPBAR_PINS);
+}
+function navStrip(m) {
+  const pins = navPins(m);
+  return pins.concat(((m && m.mru) || []).filter(i => pins.indexOf(i) < 0).slice(0, NAV_TOPBAR_MRU));
 }
 /* PURE mirror of nav.py's normalize: drop unknown ids, drop an id that cannot live on
    this bar, dedupe, then APPEND every known id the caller omitted at its default state
@@ -3055,21 +3134,46 @@ function navNormalize(raw) {
       let id = null, pinned = true;
       if (typeof r === 'string') id = r;
       else if (r && typeof r === 'object') { id = r.id; pinned = (r.pinned === undefined) ? true : !!r.pinned; }
-      if (typeof id !== 'string' || seen[id] || !navCanShow(id, bar)) return;
+      if (typeof id !== 'string') return;
+      id = NAV_SUPERSEDED[id] || id;        // the row IS its successor's row, in place
+      if (seen[id] || !navCanShow(id, bar)) return;
       seen[id] = 1; rows.push({ id, pinned: !!pinned });
     });
     let pins = rows.filter(r => r.pinned).length;
+    const order = dflt[bar].map(d => d.id);
     dflt[bar].forEach(d => {
       if (seen[d.id]) return;
       let p = d.pinned;
-      if (bar === 'topbar' && p && pins >= NAV_TOPBAR_MAX) p = false;
-      rows.push({ id:d.id, pinned:!!p }); seen[d.id] = 1; if (p) pins++;
+      if (bar === 'topbar' && p && pins >= NAV_TOPBAR_PINS) p = false;
+      rows.splice(navDefaultPos(order, d.id, rows), 0, { id:d.id, pinned:!!p });
+      seen[d.id] = 1; if (p) pins++;
     });
     out[bar] = rows;
   });
   const mc = out.topbar.filter(r => r.id === NAV_FIXED_TOP);
   if (mc.length) { mc[0].pinned = true; out.topbar = mc.concat(out.topbar.filter(r => r.id !== NAV_FIXED_TOP)); }
   out.sidebar.forEach(r => { if (r.id === NAV_FIXED_SIDE) r.pinned = true; });
+  /* THE LAST-THREE WINDOW, cleaned the same way — mirrors nav.py's `_mru`. An ABSENT
+     key (every saved layout written before the ruling) seeds the default window, which
+     is what makes the upgrade invisible: what used to be pinned tenth and eleventh is
+     still on the strip, swappable now instead of fixed. An id already in the pinned
+     prefix is dropped rather than drawn twice. */
+  {
+    const pinned = navPins(out);
+    const src = (raw && Array.isArray(raw.mru)) ? raw.mru : NAV_DEFAULT_MRU;
+    const win = [], got = {};
+    src.forEach(r => {
+      const id = (r && typeof r === 'object') ? r.id : r;
+      if (typeof id !== 'string') return;
+      /* ⚠️ NO SUPERSEDE HERE: that map is about ROWS. In this list `music` means the
+         Music Classic TAB, which still exists — rewriting it would swap the look the
+         user last opened for the other one. */
+      if (got[id] || pinned.indexOf(id) >= 0 || !navCanTab(id)) return;
+      if (win.length >= NAV_TOPBAR_MRU) return;
+      got[id] = 1; win.push(id);
+    });
+    out.mru = win;
+  }
   return out;
 }
 /* PURE mirror of nav.py's validate: '' = saveable, else the reason. Two rules, both
@@ -3086,9 +3190,10 @@ function navValidate(m) {
     }
   }
   const n = Object.keys(pin.topbar).filter(k => pin.topbar[k]).length;
-  if (n > NAV_TOPBAR_MAX) {
-    return 'at most ' + NAV_TOPBAR_MAX + ' tabs can be pinned to the top strip (you asked for '
-         + n + ') — unpin one first.';
+  if (n > NAV_TOPBAR_PINS) {
+    return 'at most ' + NAV_TOPBAR_PINS + ' tabs can be pinned to the top strip (you asked for '
+         + n + ') — the last ' + NAV_TOPBAR_MRU + ' of its ' + NAV_TOPBAR_MAX
+         + ' slots follow what you open. Unpin one first.';
   }
   return '';
 }
@@ -3131,7 +3236,7 @@ function navGet() {
   return navModel;
 }
 function navSaveLocal() {
-  try { localStorage.setItem(NAV_KEY, JSON.stringify({ v:NAV_MODEL_V, sidebar:navModel.sidebar, topbar:navModel.topbar })); }
+  try { localStorage.setItem(NAV_KEY, JSON.stringify({ v:NAV_MODEL_V, sidebar:navModel.sidebar, topbar:navModel.topbar, mru:navModel.mru || [] })); }
   catch (e) {}
 }
 /* Two-tier, exactly like Unsloth: localStorage is the INSTANT copy (the sidebar draws
@@ -3221,6 +3326,22 @@ function navShellNote(id, why) {
   row.appendChild(s);
   setTimeout(() => { if (s.parentNode) s.parentNode.removeChild(s); }, 8000);
 }
+/* THE LAST-THREE WINDOW, from this side (Debi 2026-08-29). A sidebar row that opens a
+   tab which is not currently on the strip is exactly the ⋯-menu case: that tab takes the
+   first swappable slot and the oldest of the three falls off. The SHELL does the same
+   thing for its own menu, and both go through the bridge, so the two can never disagree
+   about what the strip is. Optimistic locally, fire-and-forget on the wire: a failed
+   POST costs the persistence of one swap, never the navigation itself. */
+function navTouch(id) {
+  const m = navGet();
+  if (!navCanTab(id) || navStrip(m).indexOf(id) >= 0) return;
+  m.mru = [id].concat((m.mru || []).filter(i => i !== id)).slice(0, NAV_TOPBAR_MRU);
+  navSaveLocal();
+  try {
+    fetch('/api/nav/mru', { method:'POST', headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify({ id }) }).catch(() => {});
+  } catch (e) {}
+}
 function switchTab(title, id) {
   const h = nativeShell();
   if (!h) return false;
@@ -3240,17 +3361,28 @@ function openComponent(name) {
     // Do not post a message the shell cannot resolve: an unknown id is IGNORED on the
     // other side, which is the silent half of this bug class (nothing happens, nothing
     // is said). `null` means the shell could not be asked, so we still try.
-    if (shellKnowsTab(name) !== false && switchTab(title, name)) return;
+    if (shellKnowsTab(name) !== false && switchTab(title, name)) { navTouch(name); return; }
     // Stale shell. Unlike a lane, a component has somewhere useful to land — its card —
     // so we say what happened AND still go there.
     if (inNativeApp()) navShellNote(name, SHELL_STALE_NOTE);
   }
   jumpToCard(name);
 }
-function openMusic() {
-  // Music has a native tab of its own (the chromeless ?solo=music load). In a browser
-  // — or in a shell without that tab — the in-panel Music view is unchanged.
-  if (switchTab('Music', 'music')) return;
+/* OPEN THE CLASSIC LOOK — the reverse of the Studio header's switcher, and the ONE
+   place the panel names that tab. Inside the app it is the chromeless `?solo=music`
+   native tab (title "Music Classic"); in a browser, or in a shell too old to know it,
+   the in-panel Music view is the same page and is what you get.
+   ⚠️ It is NOT a nav row: `music` is declared on no bar (Debi's ONE-Music-door ruling),
+   so this is reached from the Studio's header dropdown and from ⌘K, never from the
+   sidebar — and it must therefore never depend on a row existing. */
+/* OPEN THE STUDIO — the one Music door, and the reverse of the Classic header's chip.
+   It is `navOpen('compose')` and nothing else on purpose: that is the SAME code path
+   the sidebar row runs, so the tab-vs-browser rule, the stale-shell note and the
+   last-three window all behave identically however you got here. */
+function openMusicStudio() { navOpen('compose'); }
+function openMusicClassic() {
+  const e = navEntry('music');
+  if (e && shellKnowsTab('music') !== false && switchTab(e.tab, 'music')) { navTouch('music'); return; }
   showView('music');
 }
 /* ONE click handler for every sidebar row. A component keeps its own rule (running →
@@ -3262,7 +3394,7 @@ function navOpen(id) {
   if (e.id === 'logs') { showLogs(); return; }
   if (e.kind === 'component') { openComponent(id); return; }
   if (e.prefersTab && e.tab) {
-    if (shellKnowsTab(e.id) !== false && switchTab(e.tab, e.id)) return;
+    if (shellKnowsTab(e.id) !== false && switchTab(e.tab, e.id)) { navTouch(e.id); return; }
     // A LANE (Aider, LOffice) has no in-panel view: `e.url` below is its page on our own
     // bridge, and window.open() in a WKWebView hands that URL to NSWorkspace — i.e. the
     // DEFAULT BROWSER. Inside the app that is never the right answer, so stop here and
@@ -4957,8 +5089,18 @@ function navRowHtml(bar, r) {
 function navBarHtml(bar) {
   const rows = navGet()[bar] || [];
   const shown = rows.filter(r => r.pinned).length;
-  const cap = bar === 'topbar' ? (' · max ' + NAV_TOPBAR_MAX) : '';
-  let h = `<div class="nv-lbl">${esc(NAV_BAR_LABEL[bar])} — ${shown} shown${esc(cap)}</div>`;
+  /* THE 9+3 READOUT (Debi 2026-08-29). It says "pinned of 9", not "shown of 12",
+     because the switches on this bar control NINE slots — the other three are the
+     window and are not switchable. Naming the window here is the honest half: a cap
+     that used to read 12 and now reads 9, with nothing said, looks like something was
+     taken away. The window's CONTENTS are deliberately NOT listed: they change as you
+     work, and a list that goes stale the moment this overlay closes is a worse lie
+     than no list. */
+  const cap = bar === 'topbar'
+    ? (' — ' + shown + ' pinned of ' + NAV_TOPBAR_PINS + ' · the last ' + NAV_TOPBAR_MRU
+       + ' of the strip\'s ' + NAV_TOPBAR_MAX + ' follow what you open')
+    : (' — ' + shown + ' shown');
+  let h = `<div class="nv-lbl">${esc(NAV_BAR_LABEL[bar])}${esc(cap)}</div>`;
   navGroups(bar).forEach(g => {
     const mine = rows.filter(r => g.test(r.id));
     if (!mine.length) return;
@@ -4975,7 +5117,9 @@ function renderNavDlg(err) {
   b.innerHTML =
     `<div style="font-size:12px; color:var(--dim); line-height:1.5; margin:2px 6px 0">Drag <b>⠿</b> to reorder, switch a row off to
        hide it. Changes apply as you make them. A hidden tab is not gone — it collects in the
-       <b>⋯</b> menu at the right of the app's tab strip. Nothing can be hidden on both bars at
+       <b>⋯</b> menu at the right of the app's tab strip. The strip holds ${NAV_TOPBAR_MAX}: the
+       ${NAV_TOPBAR_PINS} you pin here, then ${NAV_TOPBAR_MRU} slots that hold whatever you opened
+       last — open one from <b>⋯</b> and it takes a slot; the oldest of the three goes back to <b>⋯</b>. Nothing can be hidden on both bars at
        once — except Logs and Help, which stay reachable from ⌘K even with their rows off.
        The tab strip only exists in the app window, and
        it follows within a few seconds.</div>
@@ -5074,7 +5218,8 @@ function navApply(next) {
   });
 }
 function navClone() { const m = navGet(); return { sidebar: m.sidebar.map(r => ({ ...r })),
-                                                  topbar: m.topbar.map(r => ({ ...r })) }; }
+                                                  topbar: m.topbar.map(r => ({ ...r })),
+                                                  mru: (m.mru || []).slice() }; }
 /* Capabilities → General keeps ONE line: the editor itself is the overlay now. */
 function renderAppearance() {
   return `<div class="caps-group"><span class="cap-h">Appearance</span><div class="cap-card">
@@ -14813,8 +14958,12 @@ const commands = () => {
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
     {t:'MOT Deck', k:'◫', f:()=>showView('mc')},
-    {t:'Music', k:'♫', f:()=>showView('music')},
-    {t:'Generate music', k:'♫', f:()=>{ showView('music'); setTimeout(()=>{
+    // ONE Music door here too (Debi 2026-08-29): ⌘K Music opens the Studio, exactly as
+    // the sidebar row does; Classic is its own named command rather than the thing you
+    // get by accident. `openMusicClassic` is the same call the Studio's switcher makes.
+    {t:'Music', k:'♫', f:()=>navOpen('compose')},
+    {t:'Music Classic', k:'≋', f:openMusicClassic},
+    {t:'Generate music (Classic)', k:'≋', f:()=>{ showView('music'); setTimeout(()=>{
         const el = document.getElementById('mus-prompt'); if (el) el.focus(); }, 120); }},
     {t:'Capabilities', k:'⚙', f:()=>showView('caps')},
     {t:'Refresh status', k:'↻', f:()=>refresh(true)},

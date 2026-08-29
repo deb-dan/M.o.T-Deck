@@ -99,9 +99,29 @@ ok(/library_target/.test(musicPy.split('def track_analysis')[1].split('\n\n\n')[
      + 're-measured instead of drawn from a picture of a different song');
 }
 ok(html.includes('/api/music/analysis/'), 'the page drives that route');
-ok(/id:'compose', label:'Compose'/.test(indexHtml) && /id:'music',\s+label:'Music'/.test(indexHtml),
-   'both nav rows exist — Compose does not replace Music');
-ok(/#view-music/.test(indexHtml), '…and the Music view itself is still in the panel');
+// ⚠️ REWRITTEN AT THE CONSOLIDATION SLICE (Debi 2026-08-29). The Compose slice's rule
+// was "two rows, both stay until Debi picks". She picked: ONE door, both looks. So the
+// assertion inverts on the ROW count and HOLDS on what it was really protecting — that
+// neither SURFACE is deleted, and the Classic view is still in the panel, untouched.
+ok(/id:'compose', label:'Music'/.test(indexHtml)
+   && /id:'music',\s+label:'Music Classic'/.test(indexHtml),
+   'ONE Music row (the Studio) and Classic named as the second look');
+ok(/const NAV_OFFBAR = \['music'\];/.test(indexHtml),
+   '…and Classic owns no row on either bar — that is the consolidation');
+ok(/#view-music/.test(indexHtml), '…while the Music view itself is still in the panel');
+// THE SWITCHER, both directions — the thing that makes one door legal.
+ok(/<select id="look"/.test(html) && /value="classic"/.test(html)
+   && /<option value="studio" selected>Music Studio<\/option>/.test(html),
+   'the Studio page carries the header switcher, defaulting to Studio');
+ok(/function musicClassic\(\)/.test(html) && /cmd:'switchTab', title:'Music Classic', id:'music'/.test(html)
+   && /location\.href = '\/\?solo=music'/.test(html),
+   '…which switches the TAB inside the app and falls back to the URL in a browser — '
+   + 'never a dead control');
+ok(/sel\.value = 'studio';/.test(html),
+   '…and re-asserts its own value afterwards: in the app this document stays loaded in '
+   + 'its tab, so a select left reading "Music Classic" would be a standing lie');
+ok(/openMusicStudio\(\)/.test(indexHtml),
+   'and the Classic view carries the way back');
 
 // ══ THE HARNESS ══════════════════════════════════════════════════════════════
 // The page's whole body script is executed in a stub DOM. Everything it writes with

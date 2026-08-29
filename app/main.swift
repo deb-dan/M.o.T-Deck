@@ -58,7 +58,15 @@ let tabRegistry: [HarnessTab] = [
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always
     // reachable, while the in-panel Music view keeps working exactly as before.
-    HarnessTab(id: "music", title: "Music", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
+    // ⚠️ THE TITLE BECAME "Music Classic" AT THE CONSOLIDATION SLICE (Debi's ruling
+    // 2026-08-29: ONE Music door, both looks behind it) AND THE ID DID NOT MOVE — the
+    // Goose CLI rule verbatim. `music` is still the id, still `?solo=music`, still the
+    // same untouched page; what changed is that the tab called "Music" is now the
+    // Studio below, and this one is the second look you reach from its header.
+    // ⚠️ IT IS ALSO THE ONE TAB THE NAV MODEL MAY NEVER PIN (nav.py gives it `bars: ()`
+    // + `tab_only`). It reaches the strip only through the last-three window, which is
+    // why `can_tab` exists there and why switchTab below must keep working for it.
+    HarnessTab(id: "music", title: "Music Classic", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
     // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
@@ -143,7 +151,11 @@ let tabRegistry: [HarnessTab] = [
     // verbatim: the registry is "does this build know that tab at all", navDefaultTopbar
     // is the PINNED prefix that test_nav_model.py asserts equals nav.py's pinned
     // defaults, and `compose` is declared unpinned there.
-    HarnessTab(id: "compose", title: "Compose", url: URL(string: "http://127.0.0.1:8700/compose")!),
+    // ⚠️ THE TITLE BECAME "Music" AT THE CONSOLIDATION SLICE AND THE ID DID NOT MOVE:
+    // `compose` is the route (/compose), the tab id and the row in every saved
+    // nav.json. This is THE Music tab now — the Studio look, opening by default, with
+    // Classic one header dropdown away.
+    HarnessTab(id: "compose", title: "Music", url: URL(string: "http://127.0.0.1:8700/compose")!),
     // PHASE 2: the three panel VIEWS that can be pinned to the strip. They are the same
     // chromeless `?solo=` load Music already used, generalised — the panel hides its own
     // sidebar/topbar and pins itself to that view. None of them is on the strip by
@@ -165,14 +177,24 @@ let tabRegistry: [HarnessTab] = [
 // bridge/nav.py's `migrate` is the half that makes the reorder visible on Debi's own
 // Mac — it rewrites a saved layout that is byte-for-byte the OLD default, and leaves a
 // customised one alone.
+// ⚠️ NINE SINCE THE 9+3 RULING (Debi 2026-08-29), NOT ELEVEN — and the strip is still
+// the same eleven tabs, because the tenth and eleventh are now the SEED of the
+// last-three window below rather than pins. test_nav_model.py asserts this list equals
+// nav.py's pinned defaults and that the two together equal nav.strip(default_model()).
 let navDefaultTopbar = ["mc", "hermes", "unsloth", "opencode", "odysseus",
-                        "voicestudio", "comfyui", "aider", "loffice", "music", "voicebox"]
+                        "voicestudio", "comfyui", "aider", "loffice"]
+// THE LAST-THREE WINDOW's default contents, mirroring nav.py's DEFAULT_MRU: the two
+// entries that used to be pinned tenth and eleventh, in their old order. A fresh
+// machine therefore draws exactly what it drew before — Music (the Studio) and
+// Voicebox — with those two now swappable instead of fixed.
+let navDefaultMru = ["compose", "voicebox"]
+let navWindowMax = 3
 func tabsFor(_ ids: [String]) -> [HarnessTab] {
     return ids.compactMap { i in tabRegistry.first(where: { $0.id == i }) }
 }
 // THE STRIP. A `var` now: applyNav rebuilds it from data/nav.json (order + hidden), and
 // every use site below reads it live rather than caching an index.
-var tabs: [HarnessTab] = tabsFor(navDefaultTopbar)
+var tabs: [HarnessTab] = tabsFor(navDefaultTopbar + navDefaultMru)
 var tabTitles: [String] { tabs.map { $0.title } }
 
 // WHAT THE SHELL TELLS THE PANEL ABOUT ITSELF (2026-08-21, the regression repair).
@@ -522,10 +544,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Which entries are on the strip, in order, as data/nav.json last said. The shell
     // cannot read the panel's localStorage, which is exactly why that file exists.
     var navPinned: [String] = navDefaultTopbar
-    // Session-only: entries the user picked out of the ⋯ menu (and any entry that was
-    // hidden while it was ON SCREEN — taking the page out from under the pointer would
-    // be worse than leaving it until they navigate away). ⚠️ never persisted.
-    var tempShown: [String] = []
+    // ══ THE LAST-THREE WINDOW (Debi's ruling 2026-08-29) ═════════════════════════
+    // WHAT IT REPLACES, and why the replacement was the ruling: this used to be
+    // `tempShown`, an UNBOUNDED session list of everything you had opened from the ⋯
+    // menu or from a sidebar row, appended AFTER the (then twelve) pins. So a strip
+    // whose rule said "at most 12" routinely drew fourteen — the creep Debi named.
+    //
+    // Now it is a bounded, PERSISTED window of `navWindowMax` ids, most-recently-opened
+    // first, drawn after the nine pins. Opening a tab that is not on the strip puts it
+    // in front and pushes the oldest out into ⋯; opening one that is already on the
+    // strip moves nothing (a strip that re-sorts under the pointer is the bug, not the
+    // feature). The bridge owns the rule (bridge/nav.py `mru_touch`) and this is its
+    // client — `POST /api/nav/mru` — so the panel's sidebar and this menu can never
+    // disagree about what the strip is.
+    var navWindow: [String] = navDefaultMru
     var navGen: Int?
     var navLoaded = false
     var navTimer: Timer?
@@ -652,10 +684,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             guard let id = UserDefaults.standard.string(forKey: key), !id.isEmpty,
                   tabRegistry.contains(where: { $0.id == id }),
                   !tabs.contains(where: { $0.id == id }),
-                  !tempShown.contains(id) else { continue }
-            tempShown.append(id)
+                  !navWindow.contains(id) else { continue }
+            // Front of the window: it is the most recent thing this user was looking at.
+            navWindow.insert(id, at: 0)
+            if navWindow.count > navWindowMax { navWindow.removeLast() }
         }
-        if !tempShown.isEmpty { tabs = tabsFor(navDefaultTopbar + tempShown) }
+        tabs = tabsFor(stripIds())
 
         seg = NSSegmentedControl(
             labels: tabTitles,
@@ -1283,7 +1317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // ── the tab strip is a VIEW of the nav model (STUDIO PHASE 2 §B) ──
     //
-    // `tabs` is rebuilt from `navPinned` + `tempShown`; every webview is keyed by ID, so
+    // `tabs` is rebuilt from `navPinned` + `navWindow`; every webview is keyed by ID, so
     // a rebuild reparents nothing and reloads nothing. The panes are remembered by ID
     // across the rebuild too, so reordering the strip does not move what you are
     // looking at.
@@ -1293,27 +1327,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func urlForId(_ id: String) -> URL {
         return tabRegistry.first(where: { $0.id == id })?.url ?? bridgeURL
     }
-    func rebuildTabs() {
-        let keepLeft = tabId(currentTab)
-        let keepRight = tabId(rightTab)
-        var ids = navPinned.filter { i in tabRegistry.contains(where: { $0.id == i }) }
+    // THE STRIP, derived: the stable pins, then the last-three window. ONE derivation,
+    // mirroring bridge/nav.py's `strip` — and the only thing that may ever build `tabs`.
+    func stripIds() -> [String] {
+        var pins = navPinned.filter { i in tabRegistry.contains(where: { $0.id == i }) }
         // Mission Control is FIRST and always present: it is the bridge-wait surface,
         // the file-drop target and `panelTab = 0`. The nav model already guarantees it;
         // this is the shell refusing to be broken by a file that does not.
-        ids.removeAll { $0 == panelId }
-        ids.insert(panelId, at: 0)
-        // Anything on screen, or picked from ⋯, stays on the strip for this session.
-        // ⚠️ deliberate: un-pinning the tab you are LOOKING AT does not yank the page out
-        // from under you — it stays until you navigate away, and lives in ⋯ after that.
-        // Only the panes that are actually on screen count (rightTab means nothing while
-        // the split is off), so hiding a tab the closed right pane once held is instant.
-        for id in tempShown where !ids.contains(id) { ids.append(id) }
-        for id in (splitOn ? [keepLeft, keepRight] : [keepLeft]) where !ids.contains(id) {
-            if tabRegistry.contains(where: { $0.id == id }) {
-                if !tempShown.contains(id) { tempShown.append(id) }
-                ids.append(id)
-            }
+        pins.removeAll { $0 == panelId }
+        pins.insert(panelId, at: 0)
+        var ids = pins
+        for id in navWindow where !ids.contains(id)
+            && tabRegistry.contains(where: { $0.id == id }) {
+            if ids.count - pins.count >= navWindowMax { break }
+            ids.append(id)
         }
+        return ids
+    }
+    // Put `id` in the window's first slot, dropping the oldest, and tell the bridge so
+    // it survives a relaunch. Returns false when nothing moved (already on the strip),
+    // which is also when NOTHING is written — a click on a tab that is already there
+    // must not churn nav.json or move the generation the panel watches.
+    @discardableResult
+    func touchWindow(_ id: String, persist: Bool = true) -> Bool {
+        guard tabRegistry.contains(where: { $0.id == id }) else { return false }
+        if stripIds().contains(id) { return false }
+        navWindow.removeAll { $0 == id }
+        navWindow.insert(id, at: 0)
+        if navWindow.count > navWindowMax { navWindow.removeLast(navWindow.count - navWindowMax) }
+        if persist { postWindow(id) }
+        return true
+    }
+    // FIRE AND FORGET, exactly like the nav poll's failure rule: a bridge that is down
+    // costs the PERSISTENCE of one swap, never the swap itself. The strip has already
+    // moved by the time this runs.
+    func postWindow(_ id: String) {
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/nav/mru"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 2.0
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id])
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            // Record the generation we just caused so the 5s poll does not read it as
+            // somebody else's change and re-fetch a layout we already have.
+            guard let d = data,
+                  let obj = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+                  let gen = obj["gen"] as? Int else { return }
+            DispatchQueue.main.async { self.navGen = gen }
+        }.resume()
+    }
+    func rebuildTabs() {
+        let keepLeft = tabId(currentTab)
+        let keepRight = tabId(rightTab)
+        // ⚠️ deliberate: un-pinning the tab you are LOOKING AT does not yank the page out
+        // from under you — it takes a window slot, which is where it would have gone if
+        // you had opened it from ⋯ anyway. Only the panes that are actually on screen
+        // count (rightTab means nothing while the split is off).
+        for id in (splitOn ? [keepLeft, keepRight] : [keepLeft]) { touchWindow(id) }
+        let ids = stripIds()
         tabs = tabsFor(ids)
         seg.segmentCount = tabs.count
         for (i, t) in tabs.enumerated() { seg.setLabel(t.title, forSegment: i) }
@@ -1330,6 +1401,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         slog("nav -> strip \(names) left=\(currentTab) right=\(rightTab)")
     }
 
+    // The ⋯ menu is "the registry minus the strip", which since the 9+3 ruling means
+    // minus the pins AND minus the window — an entry that fell out of the window comes
+    // back here, which is the other half of the swap being honest.
     func hiddenTabs() -> [HarnessTab] {
         return tabRegistry.filter { r in !tabs.contains(where: { $0.id == r.id }) }
     }
@@ -1433,8 +1507,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
     @objc func overflowPick(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        if !tempShown.contains(id) { tempShown.append(id) }
-        rebuildTabs()          // session only — nothing is written back to nav.json
+        touchWindow(id)        // …the swap Debi asked for: in at the front, oldest out
+        rebuildTabs()
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
         syncStrip()
@@ -1443,12 +1517,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Adopt a pinned list. No-ops when nothing changed, so the poll can run forever
     // without ever touching the layout.
-    func applyNav(_ ids: [String]) {
+    func applyNav(_ ids: [String], _ window: [String]) {
         let clean = ids.filter { i in tabRegistry.contains(where: { $0.id == i }) }
-        guard !clean.isEmpty, clean != navPinned else { return }
+        let win = window.filter { i in tabRegistry.contains(where: { $0.id == i }) }
+        guard !clean.isEmpty, clean != navPinned || win != navWindow else { return }
         navPinned = clean
-        // An entry that is pinned again no longer needs its session-only pass.
-        tempShown.removeAll { clean.contains($0) }
+        // The bridge is the authority on the window too — it is persisted there, and a
+        // second panel or another window may have moved it. An entry that is PINNED
+        // again no longer needs a window slot.
+        navWindow = win.filter { !clean.contains($0) }
         rebuildTabs()
     }
 
@@ -1499,14 +1576,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                   let obj = raw as? [String: Any],
                   let nav = obj["nav"] as? [String: Any],
                   let top = nav["topbar"] as? [[String: Any]] else { return }
-            let ids = top.compactMap { r -> String? in
+            // The PINS. The bridge caps them at nine (nav.py's NAV_TOPBAR_PINS) and
+            // repairs a file that says more, so this is already the stable prefix —
+            // the `prefix` here is the shell refusing to be broken by a bridge that
+            // is not, exactly as the mc-first rule is.
+            let ids = Array(top.compactMap { r -> String? in
                 guard let id = r["id"] as? String, (r["pinned"] as? Bool) == true else { return nil }
                 return id
-            }
+            }.prefix(9))
+            // THE WINDOW. Read from `nav.mru` — the persisted last-three. A bridge too
+            // old to know the key leaves this empty, which draws the nine pins and
+            // nothing else: fewer tabs than there should be, never wrong ones.
+            let win = Array(((nav["mru"] as? [String]) ?? []).prefix(navWindowMax))
             DispatchQueue.main.async {
                 self.navLoaded = true
                 if let g = obj["gen"] as? Int { self.navGen = g }
-                self.applyNav(ids)
+                self.applyNav(ids, win)
             }
         }.resume()
     }
@@ -1549,7 +1634,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 return
             }
             if !tabs.contains(where: { $0.id == hit }) {
-                if !tempShown.contains(hit) { tempShown.append(hit) }
+                // Same swap as the ⋯ menu, deliberately: a sidebar row and a menu item
+                // that open the same tab must leave the strip in the same state. The
+                // panel ALSO posts this (its own optimistic copy); `mru_touch` is
+                // idempotent, so the second one is a no-op that writes nothing.
+                touchWindow(hit)
                 rebuildTabs()
             }
             guard let idx = tabs.firstIndex(where: { $0.id == hit }) else { return }

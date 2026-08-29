@@ -34,7 +34,9 @@ const src = html.slice(start, end);
 const M = new Function(src + `; return { NAV_ENTRIES, NAV_TOPBAR_MAX, NAV_SIDEBAR_ONLY,
   NAV_DEFAULT_SIDEBAR, NAV_DEFAULT_TOPBAR, NAV_TOPBAR_UNPINNED, NAV_ALWAYS,
   NAV_MODEL_V, NAV_DEFAULT_TOPBAR_V1,
-  navEntry, navCanShow, navDefaultModel, navNormalize, navValidate, navMigrate };`)();
+  NAV_OFFBAR, NAV_SUPERSEDED, NAV_TOPBAR_PINS, NAV_TOPBAR_MRU, NAV_DEFAULT_MRU,
+  navEntry, navCanShow, navCanTab, navDefaultModel, navNormalize, navValidate,
+  navMigrate, navPins, navStrip, navDefaultPos };`)();
 const ids = (m, bar) => m[bar].map(r => r.id);
 
 // ── 1. the registry ─────────────────────────────────────────────────────────
@@ -74,23 +76,42 @@ console.log('registry');
     ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === g.ico).length === 1,
        '…and no other nav row wears it either');
   }
-  // THE MUSIC PAIR (Compose slice) — the comfy pair's argument, one surface down.
-  // `music` is the shipped panel view; `compose` is the redesigned alternative at
-  // /compose driving the SAME /api/music/* routes. Debi's ruling is that both stay
-  // until they pick one, so either collapse removes a real surface.
+  // THE MUSIC PAIR — REWRITTEN AT THE CONSOLIDATION SLICE (Debi 2026-08-29) AND NOT
+  // WEAKENED. The Compose slice's rule was "both stay until Debi picks"; she picked:
+  // ONE door, both looks. BOTH SURFACES STILL EXIST and neither may be collapsed into
+  // the other — what changed is that only ONE of them may be a ROW, and it is the one
+  // labelled Music, opening the Studio.
   {
     const m = M.navEntry('music'), c = M.navEntry('compose');
     ok(m && c, 'both music entries exist');
     ok(m.kind === 'view' && c.kind === 'lane', 'music is the VIEW, compose is our LANE');
-    ok(c.label === 'Compose' && c.tab === 'Compose' && c.url === '/compose',
-       'the Compose row is labelled for what it does and points at our own page');
+    ok(c.label === 'Music' && c.tab === 'Music' && c.url === '/compose',
+       'the one Music row opens the Studio at our own page');
+    ok(c.id === 'compose',
+       '…while its ID did not churn with the label (the Goose CLI rule verbatim)');
+    ok(m.label === 'Music Classic' && m.tab === 'Music Classic' && m.id === 'music',
+       'the original view is Music Classic, id unmoved');
+    ok(M.NAV_OFFBAR.join(',') === 'music'
+       && !M.navCanShow('music', 'sidebar') && !M.navCanShow('music', 'topbar'),
+       'ONE Music row: Classic may be a row on NEITHER bar');
+    ok(M.navCanTab('music') && M.navCanTab('compose'),
+       '…and yet the STRIP can still draw it — navCanTab is a superset of navCanShow, '
+       + 'which is how the header switcher reaches a tab that owns no row');
+    ok(M.NAV_SUPERSEDED.music === 'compose',
+       'a saved layout naming `music` is rewritten into the Music row, not dropped');
     ok(m.tab !== c.tab, 'they are two different native tabs');
     ok(m.view === 'music' && c.view === null,
        '…and the Music view is untouched: it still renders inside the panel');
     // The GENERAL form of the v1.5.38 lesson: a nav row may never wear another
     // control's OR another row's glyph. A row wearing Music's mark would read as Music.
+    // ⚠️ THE GLYPHS SWAPPED AT THE CONSOLIDATION SLICE. ♫ belongs to whichever row
+    // says "Music" to a user, and that is the Studio row now; ≋ (a waveform) moves to
+    // Classic. The RULE is unchanged and still enforced below: no two entries share a
+    // glyph, and no row wears a chrome control's mark.
+    ok(c.ico === '♫' && m.ico === '≋',
+       'the Music row wears the note; Classic wears the waveform');
     ok(c.ico !== m.ico && c.ico !== '✦' && c.ico !== '▣',
-       'the Compose icon is neither Music\u2019s note nor a chrome control\u2019s glyph');
+       'the Music icon is not another row\u2019s and not a chrome control\u2019s glyph');
     ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === c.ico).length === 1,
        '…and no other nav row wears it either');
     const nids = M.NAV_ENTRIES.map(e => e.id);
@@ -187,8 +208,12 @@ console.log('defaults');
   // …and the Goose UI slice adds a SIXTH, `gooseui`, DIRECTLY after Goose CLI — the two
   // goose surfaces read as the pair they are. Still an ADDITION only: no existing row
   // changed position relative to its neighbours.
-  ok(ws.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
-     'the workspace rail is today\'s order + the six lanes + Help under Logs: ' + ws.join(','));
+  // …and the CONSOLIDATION slice REMOVES one, which is the only removal in this list's
+  // history and is Debi's own ruling: `music` and `compose` were two rows for one job,
+  // and the surviving row (id `compose`, labelled Music) sits where Music sat. Classic
+  // is not lost — it is behind that page's header switcher.
+  ok(ws.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+     'the workspace rail is today\'s order with ONE Music row: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -197,8 +222,17 @@ console.log('defaults');
   // v1.5.26 — DEBI'S ORDER. Same eleven ids, new reading order (the deck · the three
   // agent/model lanes · everything else). Pinned as a literal on purpose: here the
   // ORDER itself is the requirement, so it may not drift silently.
-  ok(top.join(',') === 'mc,hermes,unsloth,opencode,odysseus,voicestudio,comfyui,aider,loffice,music,voicebox',
-     'the default strip is exactly the eleven default tabs, in Debi\'s order');
+  // ⚠️ NINE PINS SINCE THE 9+3 RULING — and eleven TABS still, because the tenth and
+  // eleventh became the window's seed. Both halves are literals here: the order is the
+  // requirement, and "the strip did not shrink" is the promise.
+  ok(top.join(',') === 'mc,hermes,unsloth,opencode,odysseus,voicestudio,comfyui,aider,loffice',
+     'the default PINS are the nine, in Debi\'s order: ' + top.join(','));
+  ok(M.NAV_DEFAULT_MRU.join(',') === 'compose,voicebox',
+     'the window\'s seed is what used to be pinned tenth and eleventh');
+  ok(M.navStrip(d).join(',') === 'mc,hermes,unsloth,opencode,odysseus,voicestudio,comfyui,aider,loffice,compose,voicebox',
+     'so the default STRIP is the same eleven tabs, Music in Music\'s slot');
+  ok(M.NAV_TOPBAR_PINS + M.NAV_TOPBAR_MRU === M.NAV_TOPBAR_MAX && M.NAV_TOPBAR_MAX === 12,
+     '9 pins + a 3-slot window = Debi\'s 12, unchanged');
   // ⚠️ WIDENED, NOT WEAKENED, at the goose slice: still a closed literal list, and
   // goose is on it because the strip is at 11 of 12 pins and a new lane must not spend
   // the last one silently. It is one sidebar click (or one ⋯) away.
@@ -213,9 +247,13 @@ console.log('defaults');
   // with the strongest form of the argument — it is an alternative SURFACE onto the same
   // product as `goose`, which is itself still behind ⋯ waiting for the one free pin, so
   // pinning the embedded lane would declare a winner between two coexisting lanes.
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy,compose,gooseui',
-     'the pinnable VIEWS + goose + comfy + compose + gooseui start hidden (one sidebar click away)');
-  ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
+  // ⚠️ WIDENED A FIFTH TIME AT THE 9+3 SLICE, STILL NOT WEAKENED: `compose` and
+  // `voicebox` LEAD the list because they join it for a different reason — they are the
+  // window's seed and are ON the strip, not waiting behind ⋯ for a pin.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'compose,voicebox,chat,models,caps,goose,comfy,gooseui',
+     'the window seed + the pinnable VIEWS + goose + comfy + gooseui are unpinned, in order');
+  ok(top.length <= M.NAV_TOPBAR_PINS, 'the default pins are inside the pin cap');
+  ok(M.navStrip(d).length <= M.NAV_TOPBAR_MAX, 'and the default strip inside the strip cap');
 }
 
 // ── 3. normalize — TOTALITY, order, and the two fixed rules ─────────────────
@@ -234,28 +272,38 @@ console.log('normalize');
   }
   let m = M.navNormalize({ sidebar: [{ id: 'ghost' }, { id: 'chat' }] });
   ok(ids(m, 'sidebar').indexOf('ghost') < 0, 'an unknown id is dropped, never rendered');
-  ok(ids(m, 'sidebar')[0] === 'chat', '…and the known ones keep the order given');
+  // ⚠️ NOT `[0] === 'chat'` SINCE THE NEIGHBOUR-APPEND FIX (ledger A8/S19): `mc` leads
+  // the default order, so a layout that lost it gets it back in FRONT, not at the tail.
+  ok(ids(m, 'sidebar').indexOf('chat') > ids(m, 'sidebar').indexOf('mc'),
+     '…the known ones are kept, and a missing first-in-order entry lands in front');
   m = M.navNormalize({ topbar: [{ id: 'logs' }, { id: 'odysseus' }] });
   ok(ids(m, 'topbar').indexOf('logs') < 0, 'logs cannot be put on the strip');
   ok(ids(m, 'topbar')[0] === 'mc' && m.topbar[0].pinned,
      'Mission Control is forced FIRST and PINNED on the strip');
-  ok(ids(m, 'topbar')[1] === 'odysseus', '…and the rest keep the order given');
+  ok(ids(m, 'topbar').indexOf('odysseus') > 0, '…and the rest keep the order given');
   m = M.navNormalize({ sidebar: [{ id: 'chat', pinned: false }] });
-  ok(m.sidebar[0].id === 'chat' && m.sidebar[0].pinned,
+  ok(m.sidebar.some(r => r.id === 'chat' && r.pinned),
      'Chat can never be un-pinned from the sidebar');
   m = M.navNormalize({ sidebar: [{ id: 'caps' }, { id: 'models', pinned: false }] });
-  ok(ids(m, 'sidebar').slice(0, 2).join() === 'caps,models',
-     'a HIDDEN row keeps its place in the order (un-hiding puts it back where it was)');
-  ok(m.sidebar[1].pinned === false, '…and stays hidden');
+  {
+    const g = ids(m, 'sidebar');
+    ok(g.indexOf('caps') < g.indexOf('models'),
+       'a HIDDEN row keeps its place in the order (un-hiding puts it back where it was)');
+    ok(m.sidebar.find(r => r.id === 'models').pinned === false, '…and stays hidden');
+  }
   ok(ids(m, 'sidebar').length === M.NAV_DEFAULT_SIDEBAR.length,
      'every omitted entry is appended, so a new registry row appears for everyone');
   // appending must never invalidate a model that was valid
-  const twelve = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
-                  'music','aider','loffice','chat','models'].map(id => ({id, pinned:true}));
-  m = M.navNormalize({ topbar: twelve });
-  ok(m.topbar.filter(r => r.pinned).length === M.NAV_TOPBAR_MAX,
+  // ⚠️ THE CAP THE APPEND RESPECTS IS THE PIN CAP (9) SINCE THE RULING, NOT THE STRIP
+  // SIZE (12). Same rule, same boundary case: growing the registry may never invalidate
+  // a model that was valid a moment ago.
+  const nine = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
+                'compose','aider'].map(id => ({id, pinned:true}));
+  m = M.navNormalize({ topbar: nine });
+  ok(m.topbar.filter(r => r.pinned).length === M.NAV_TOPBAR_PINS,
      'an appended entry is never pinned onto a full strip');
-  ok(M.navValidate(m) === '', '…so normalize can never hand back an over-full strip');
+  ok(M.navValidate(m) === '', '…so normalize can never hand back an over-pinned strip');
+  ok(M.navStrip(m).length <= M.NAV_TOPBAR_MAX, '…and the strip it derives fits in twelve');
   const a = M.navNormalize({ sidebar: [{ id: 'caps' }], topbar: [{ id: 'music' }] });
   ok(JSON.stringify(M.navNormalize(a)) === JSON.stringify(a), 'normalize is a fixed point');
 }
@@ -270,7 +318,10 @@ console.log('validate');
   ok(err && /Models/.test(err), 'an entry hidden on BOTH bars is refused, by LABEL: ' + err);
   m = M.navNormalize({});
   m.sidebar.forEach(r => { if (r.id === 'models') r.pinned = false; });
-  m.topbar.forEach(r => { if (r.id === 'models') r.pinned = true; });
+  // …and one pin comes off to make room: the default layout already spends all nine,
+  // which is the 9+3 cap being real rather than a wrinkle in this test.
+  m.topbar.forEach(r => { if (r.id === 'models') r.pinned = true;
+                          if (r.id === 'loffice') r.pinned = false; });
   ok(M.navValidate(m) === '', 'hidden on one bar and shown on the other is legal');
   m = M.navNormalize({});
   m.sidebar.forEach(r => { if (r.id === 'logs') r.pinned = false; });
@@ -284,13 +335,45 @@ console.log('validate');
   ok(e13 && e13.indexOf(String(M.NAV_TOPBAR_MAX)) >= 0,
      'pinning them all is refused and the message NAMES the limit: ' + e13);
   // Unpin from the END, the same rule navRepair follows, until exactly the cap remains.
-  let over = m.topbar.length - M.NAV_TOPBAR_MAX;
+  let over = m.topbar.length - M.NAV_TOPBAR_PINS;
   for (let i = m.topbar.length - 1; i >= 0 && over > 0; i--) {
     if (m.topbar[i].pinned) { m.topbar[i].pinned = false; over--; }
   }
-  ok(m.topbar.filter(r => r.pinned).length === M.NAV_TOPBAR_MAX, 'exactly the cap is pinned');
-  ok(M.navValidate(m) === '', 'exactly 12 is allowed (the boundary is inclusive)');
-  ok(M.NAV_TOPBAR_MAX === 12, 'the cap is Debi\'s 12');
+  ok(m.topbar.filter(r => r.pinned).length === M.NAV_TOPBAR_PINS, 'exactly the cap is pinned');
+  ok(M.navValidate(m) === '', 'exactly 9 pinned is allowed (the boundary is inclusive)');
+  ok(M.NAV_TOPBAR_MAX === 12, 'the STRIP is still Debi\'s 12');
+  // …and the message must say where the other three went, or a cap that used to read
+  // 12 and now reads 9 is read as loss.
+  ok(e13.indexOf(String(M.NAV_TOPBAR_MRU)) >= 0 && e13.indexOf('open') >= 0,
+     'the refusal names the window as well as the number: ' + e13);
+  // ⚠️ THE WINDOW ITSELF: nine pins, three slots, twelve tabs, whatever you open.
+  {
+    let w = M.navNormalize({});
+    const pins = M.navPins(w);
+    ok(M.navStrip(w).length === 11, 'the strip starts at eleven (nine pins + the seed)');
+    w.mru = ['goose'].concat(w.mru).slice(0, M.NAV_TOPBAR_MRU);
+    w = M.navNormalize(w);
+    ok(M.navStrip(w).join(',') === pins.concat(['goose','compose','voicebox']).join(','),
+       'opening a tab from ⋯ takes the FIRST swappable slot, straight after the pins');
+    ok(M.navStrip(w).length === M.NAV_TOPBAR_MAX, '…and the strip is now exactly twelve');
+    w.mru = ['comfy'].concat(w.mru).slice(0, M.NAV_TOPBAR_MRU);
+    w = M.navNormalize(w);
+    ok(M.navStrip(w).indexOf('voicebox') < 0,
+       '…and the least recent of the three fell off the end, back into ⋯');
+    ok(M.navPins(w).join(',') === pins.join(','), '…while not one pin moved');
+    // an off-bar tab (Music Classic) reaches the strip through the window and ONLY there
+    w = M.navNormalize({ mru: ['music'] });
+    ok(M.navStrip(w).indexOf('music') >= 0,
+       'Music Classic owns no row and still reaches the strip, through the window');
+    ok(w.sidebar.concat(w.topbar).every(r => r.id !== 'music'),
+       '…without ever becoming a row');
+    // junk in the window costs the WINDOW, never the strip
+    ['x', 7, null, ['logs','nope','mc','mc',{}], []].forEach(j => {
+      const g = M.navNormalize({ mru: j });
+      ok(M.navStrip(g).length <= M.NAV_TOPBAR_MAX && g.mru.every(i => M.navCanTab(i)),
+         'a junk window (' + JSON.stringify(j) + ') still yields a legal strip');
+    });
+  }
 }
 
 // ── 5. the sidebar is RENDERED from the model ──────────────────────────────
@@ -377,8 +460,8 @@ console.log('render (executed)');
   // ⚠️ WIDENED (not weakened) at the comfy-nav slice, in step with the defaults fence
   // above: this one proves the rail actually RENDERS what the model declares, so the
   // two literals must move together or the Generate row is declared but never drawn.
-  ok(rows.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
-     'with NO saved layout the workspace rail renders today\'s rows + the six lanes + Help');
+  ok(rows.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders ONE Music row: ' + rows.join(','));
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),
@@ -412,8 +495,13 @@ console.log('render (executed)');
      '…and neither goose row carries a class of its own (nothing for a design to miss)');
   // ⧉ = open as an overlay (2026-08-21). It rides the eligible workspace rows only.
   const peeks = [...out.ws.matchAll(/peekOpen\('([a-z]+)'/g)].map(m => m[1]).sort();
-  ok(peeks.join(',') === 'caps,help,models,music',
-     'the ⧉ overlay trigger is on Models / Music / Capabilities / Help: ' + peeks.join(',')
+  // ⚠️ `music` LEAVES THIS LIST AT THE CONSOLIDATION SLICE — not because peeking Music
+  // stopped being useful, but because ⧉ rides a sidebar ROW and Classic no longer has
+  // one. The Music row is now a LANE (its own page in its own tab), and no lane has ever
+  // been peekable: there is no in-panel view to borrow. Stated rather than left to be
+  // discovered, because "the overlay lost an entry" looks like a regression otherwise.
+  ok(peeks.join(',') === 'caps,help,models',
+     'the ⧉ overlay trigger is on Models / Capabilities / Help: ' + peeks.join(',')
      + ' — Help is in because "how does conv mode work" is a question you ask WHILE '
      + 'doing the thing, and it is read-only prose with no live state to borrow');
   for (const no of ['chat', 'mc', 'logs', 'aider', 'loffice']) {
@@ -461,8 +549,14 @@ console.log('the reorder migration');
   const NEW = M.NAV_DEFAULT_TOPBAR.join(',');
   const OLD = M.NAV_DEFAULT_TOPBAR_V1.join(',');
   ok(NEW !== OLD, 'the reorder actually reorders something (a no-op migration is a lie)');
-  ok(M.NAV_DEFAULT_TOPBAR.slice().sort().join(',') === M.NAV_DEFAULT_TOPBAR_V1.slice().sort().join(','),
-     '…and it moves the SAME eleven ids — nothing gained a tab, nothing lost one, so '
+  // ⚠️ COMPARED THROUGH navStrip SINCE THE 9+3 RULING: the v1 default was ELEVEN PINS,
+  // and today's equivalent is nine pins plus the window's two-entry seed — the same
+  // eleven TABS. Comparing the pin lists alone would now fail for the right reason and
+  // the wrong one at once, so the comparison is made at the level the user sees, with
+  // `music` mapped through SUPERSEDED because that row IS the Music row now.
+  ok(M.navStrip(M.navDefaultModel()).slice().sort().join(',')
+     === M.NAV_DEFAULT_TOPBAR_V1.map(i => M.NAV_SUPERSEDED[i] || i).slice().sort().join(','),
+     '…and it moves the SAME ids — nothing gained a tab, nothing lost one, so '
      + 'validate has nothing new to say and no entry can become unreachable');
 
   // (a) UNTOUCHED — the case that must move
@@ -500,8 +594,9 @@ console.log('the reorder migration');
 console.log('persistence');
 {
   ok(/const NAV_KEY = 'harness-nav';/.test(html), 'the localStorage key is v1-named');
-  ok(/JSON\.stringify\(\{ v:NAV_MODEL_V, sidebar:navModel\.sidebar, topbar:navModel\.topbar \}\)/.test(html),
-     'the instant copy is versioned');
+  ok(/JSON\.stringify\(\{ v:NAV_MODEL_V, sidebar:navModel\.sidebar, topbar:navModel\.topbar, mru:navModel\.mru \|\| \[\] \}\)/.test(html),
+     'the instant copy is versioned AND carries the window (an instant copy without it '
+     + 'would redraw the first frame with two tabs missing, then jump)');
   // v1.5.26 — THE GATE CHANGED SHAPE, and the reason is the whole migration. It used to
   // be `raw.v === 1`, i.e. "the current version"; bumping MODEL_V to 2 under that test
   // would have thrown EVERY saved layout on every machine away on upgrade — a silent
@@ -699,7 +794,13 @@ console.log('overlay behaviour');
      'Mission Control is fixed on the strip, so nothing can be dropped above it');
   ok((topHtml.match(/type="checkbox"/g) || []).length === model.topbar.length - 1,
      'every other strip row gets exactly one switch');
-  ok(/max 12/.test(topHtml), 'the strip names its cap');
+  // ⚠️ THE READOUT CHANGED SHAPE AT THE 9+3 RULING, and the fence with it: "max 12"
+  // beside nine switches would be the lie. It names what the switches control AND where
+  // the other three slots went.
+  ok(/9 pinned of 9/.test(topHtml) && /the last 3 of the strip's 12/.test(topHtml),
+     'the strip names its pin cap AND the window: ' + (topHtml.match(/nv-lbl">[^<]*/) || [''])[0]);
+  ok(!/max 12/.test(topHtml),
+     '…and no longer says "max 12" beside nine switches');
   // a HIDDEN row is still listed (hiding keeps its place — nav.py\'s design) and unchecked
   const m2 = { sidebar: model.sidebar.map(r => r.id === 'models' ? { ...r, pinned: false } : r),
                topbar: model.topbar };
@@ -747,8 +848,10 @@ console.log('routing');
   ok(/if \(e\.kind === 'component'\) \{ openComponent\(id\); return; \}/.test(open),
      'a component keeps its own rule (running → its tab, stopped → its card)');
   ok(/if \(e\.prefersTab && e\.tab\) \{/.test(open)
-     && /if \(shellKnowsTab\(e\.id\) !== false && switchTab\(e\.tab, e\.id\)\) return;/.test(open),
-     'a lane asks the shell for its tab first — and never with an id the shell says it lacks');
+     && /if \(shellKnowsTab\(e\.id\) !== false && switchTab\(e\.tab, e\.id\)\) \{ navTouch\(e\.id\); return; \}/.test(open),
+     'a lane asks the shell for its tab first — and never with an id the shell says it '
+     + 'lacks — and records the open in the last-three window, so a sidebar row and the '
+     + '⋯ menu leave the strip in the SAME state');
   ok(/if \(e\.view\) \{ showView\(e\.view\); return; \}/.test(open),
      'a panel view opens IN the panel');
   ok(/window\.open\(e\.url, '_blank'\)/.test(open),

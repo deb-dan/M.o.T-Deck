@@ -89,7 +89,9 @@ check('one table declares every tab (id + title + url together)',
       // PHASE 2: the table split in two — the REGISTRY (everything that CAN be a tab)
       // and the strip, which is a var rebuilt from the nav model.
       /let tabRegistry: \[HarnessTab\] = \[/.test(swift) &&
-      /var tabs: \[HarnessTab\] = tabsFor\(navDefaultTopbar\)/.test(swift));
+      // …and since the 9+3 ruling the strip's first draw is the PINS PLUS THE WINDOW,
+      // because the window's seed is on the default strip.
+      /var tabs: \[HarnessTab\] = tabsFor\(navDefaultTopbar \+ navDefaultMru\)/.test(swift));
 check('the two optional component tabs are rows in that table',
       /HarnessTab\(id: "comfyui", title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
       // 8899, NOT upstream's 8888: that port belongs to Debi's standalone Unsloth app and
@@ -98,8 +100,14 @@ check('the two optional component tabs are rows in that table',
       /HarnessTab\(id: "unsloth", title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
 check('...and the shell never points a tab at :8888 again',
       !/127\.0\.0\.1:8888/.test(swift));
-check('Music is a tab row loading OUR OWN panel chromeless (?solo=music)',
-      /HarnessTab\(id: "music", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
+// ⚠️ TITLED "Music Classic" SINCE THE CONSOLIDATION SLICE (Debi 2026-08-29: ONE Music
+// door, both looks). THE ID AND THE URL DID NOT MOVE — the page is byte-untouched and
+// still loads chromeless; what changed is which tab is called "Music" (the Studio, id
+// `compose`) and that this one is reached from that page's header switcher.
+check('Music Classic is a tab row loading OUR OWN panel chromeless (?solo=music)',
+      /HarnessTab\(id: "music", title: "Music Classic", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
+check('...and the Studio is THE "Music" tab, at our own /compose page',
+      /HarnessTab\(id: "compose", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/compose"\)!\)/.test(swift));
 check('special tabs are looked up BY ID, never written as a literal index',
       // PHASE 2: by ID rather than by title — the strip can be reordered now, and an id
       // survives a rename as well as a reorder. Strictly stronger than the title lookup.
@@ -527,8 +535,10 @@ check('switchTab resolves an ID (title as the fallback) against the REGISTRY',
       && /body\["id"\] as\? String/.test(handlerBody)
       && /tabRegistry\.contains\(where: \{ \$0\.id == w \}\)/.test(handlerBody)
       && /tabRegistry\.first\(where: \{ \$0\.title == t \}\)\?\.id/.test(handlerBody));
-check('...a hidden tab is SHOWN for the session rather than ignored',
-      /if !tabs\.contains\(where: \{ \$0\.id == hit \}\) \{[\s\S]{0,160}rebuildTabs\(\)/.test(handlerBody));
+check('...a hidden tab is SHOWN rather than ignored (it takes a window slot, exactly '
+    + 'as the \u22ef menu does it — a sidebar row and a menu item must leave the strip '
+    + 'in the SAME state)',
+      /if !tabs\.contains\(where: \{ \$0\.id == hit \}\) \{[\s\S]{0,400}touchWindow\(hit\)[\s\S]{0,60}rebuildTabs\(\)/.test(handlerBody));
 check('an unknown tab is ignored, never coerced to a tab',
       /else \{[\s\S]{0,160}unknown tab[\s\S]{0,60}return/.test(handlerBody)
       && !/firstIndex\(of: title\) \?\? 0/.test(handlerBody));
@@ -568,9 +578,16 @@ check('the sidebar rows call openComponent, not jumpToCard directly',
       // PHASE 2: the rows are rendered from the nav model, so the call site moved into
       // renderSidebar — the rule (a component row goes through openComponent) is the same.
       /onclick="openComponent\('\$\{escAttr\(name\)\}'\)"/.test(html));
-check('the Music nav entry routes to the native tab with an in-panel fallback',
-      /\{ id:'music',[\s\S]{0,120}prefersTab:true \}/.test(html)
-      && /function openMusic\(\)[\s\S]{0,260}if \(switchTab\('Music', 'music'\)\) return;[\s\S]{0,60}showView\('music'\)/.test(html));
+// ⚠️ REWRITTEN AT THE CONSOLIDATION SLICE. The RULE is unchanged and is what this has
+// always guarded: the Classic surface routes to its native tab and falls back to the
+// in-panel view, so it can never become a dead control. What moved is the ENTRY POINT —
+// there is no `music` sidebar row any more (ONE Music door), so the caller is the
+// Studio page's header switcher and ⌘K, and the function is named for that.
+check('the Music Classic route still prefers the native tab with an in-panel fallback',
+      /\{ id:'music',[\s\S]{0,200}prefersTab:true \}/.test(html)
+      && /function openMusicClassic\(\)[\s\S]{0,420}switchTab\(e\.tab, 'music'\)[\s\S]{0,140}showView\('music'\)/.test(html));
+check('...and the Studio\'s own switcher is the same call path as the sidebar row',
+      /function openMusicStudio\(\) \{ navOpen\('compose'\); \}/.test(html));
 
 // ── STUDIO PHASE 2: the strip is a VIEW of the nav model ──
 // The shell cannot read the panel's localStorage, so data/nav.json is the shared copy.
@@ -578,7 +595,10 @@ check('the Music nav entry routes to the native tab with an in-panel fallback',
 // Mission Control, and nothing it hides becomes unreachable.
 check('the strip is rebuilt from the pinned list, not from a literal table',
       /func rebuildTabs\(\)/.test(swift)
-      && /var ids = navPinned\.filter/.test(swift)
+      // …through ONE derivation since the 9+3 ruling: pins, then the window.
+      && /func stripIds\(\) -> \[String\]/.test(swift)
+      && /var pins = navPinned\.filter/.test(swift)
+      && /let ids = stripIds\(\)/.test(swift)
       && /tabs = tabsFor\(ids\)/.test(swift)
       && /seg\.segmentCount = tabs\.count/.test(swift)
       && /seg\.setLabel\(t\.title, forSegment: i\)/.test(swift));
@@ -588,9 +608,33 @@ check('a rebuild remembers each pane BY ID, so reordering never moves what you s
       /func rebuildTabs\(\)[\s\S]{0,300}let keepLeft = tabId\(currentTab\)[\s\S]{0,120}let keepRight = tabId\(rightTab\)/.test(swift)
       && /currentTab = tabs\.firstIndex\(where: \{ \$0\.id == keepLeft \}\) \?\? 0/.test(swift));
 check('Mission Control cannot be lost from the strip, whatever the file says',
-      /func rebuildTabs\([\s\S]{0,900}ids\.removeAll \{ \$0 == panelId \}[\s\S]{0,60}ids\.insert\(panelId, at: 0\)/.test(swift));
+      /func stripIds\([\s\S]{0,900}pins\.removeAll \{ \$0 == panelId \}[\s\S]{0,60}pins\.insert\(panelId, at: 0\)/.test(swift));
+// ⚠️ THE MECHANISM CHANGED AT THE 9+3 RULING, THE PROMISE DID NOT: un-pinning the tab
+// you are LOOKING AT does not yank the page out from under you. It used to be appended
+// to an unbounded session list; it now takes a WINDOW slot, which is where it would go
+// if you had opened it from ⋯ anyway.
 check('a tab that is on screen stays on the strip even after it is un-pinned',
-      /func rebuildTabs\([\s\S]{0,1600}for id in \(splitOn \? \[keepLeft, keepRight\] : \[keepLeft\]\) where !ids\.contains\(id\)/.test(swift));
+      /func rebuildTabs\([\s\S]{0,900}for id in \(splitOn \? \[keepLeft, keepRight\] : \[keepLeft\]\) \{ touchWindow\(id\) \}/.test(swift));
+// ══ THE LAST-THREE WINDOW ITSELF (Debi's ruling 2026-08-29) ══════════════════════
+// The creep this ends: `tempShown` was UNBOUNDED, so a strip whose rule said "at most
+// 12" routinely drew fourteen.
+check('the strip is BOUNDED: nine pins + at most three window slots',
+      /let navWindowMax = 3/.test(swift)
+      && /func stripIds\([\s\S]{0,600}if ids\.count - pins\.count >= navWindowMax \{ break \}/.test(swift)
+      && !/var tempShown/.test(swift));
+check('...and opening a tab already on the strip moves NOTHING (no re-sort under the pointer)',
+      /func touchWindow\([\s\S]{0,300}if stripIds\(\)\.contains\(id\) \{ return false \}/.test(swift));
+check('...the newest takes the first slot and the oldest is dropped',
+      /func touchWindow\([\s\S]{0,500}navWindow\.insert\(id, at: 0\)[\s\S]{0,200}navWindow\.removeLast/.test(swift));
+check('...and it is PERSISTED through the bridge, so a relaunch keeps the swap',
+      /func postWindow\(_ id: String\)/.test(swift)
+      && /api\/nav\/mru/.test(swift)
+      && /req\.httpMethod = "POST"/.test(swift));
+check('...fire-and-forget: a bridge that is down costs the persistence, never the swap',
+      /func touchWindow\([\s\S]{0,600}if persist \{ postWindow\(id\) \}/.test(swift));
+check('...and the shell reads the window back from the bridge, which owns the rule',
+      /nav\["mru"\] as\? \[String\]/.test(swift)
+      && /func applyNav\(_ ids: \[String\], _ window: \[String\]\)/.test(swift));
 // ⚠️ FENCE MOVED, v1.5.26 — the ⋯ button used to hide itself whenever no tab was
 // hidden. That was right while it did exactly one thing; it now also carries "Hide Tab
 // Bar" (Debi's affordance for the strip toggle), and a menu that only exists when an
@@ -645,8 +689,12 @@ check('a peek is NEVER persisted — only the deliberate toggle writes', (() => 
   const j = swift.indexOf('@objc func toggleTabBar(', i);
   return i > 0 && j > i && !swift.slice(i, j).includes('UserDefaults');
 })());
-check('...and picking one is SESSION ONLY — it never writes the layout back',
-      /func overflowPick\([\s\S]{0,400}tempShown\.append\(id\)[\s\S]{0,200}rebuildTabs\(\)/.test(swift)
+// ⚠️ "SESSION ONLY" BECAME "SWAPPED AND PERSISTED" AT THE 9+3 RULING, AND THAT IS THE
+// RULING ITSELF: picking from ⋯ swaps the tab into the last-three window, which is
+// saved. What this still guards is the half that must never change — picking from ⋯
+// does NOT re-pin anything, so the user's nine pins are untouched by using the app.
+check('...and picking one SWAPS it into the window without ever touching the pins',
+      /func overflowPick\([\s\S]{0,400}touchWindow\(id\)[\s\S]{0,200}rebuildTabs\(\)/.test(swift)
       && !/func overflowPick\([\s\S]{0,400}navPinned =/.test(swift));
 check('the overflow menu sits beside ⫽, at the strip\'s right end',
       /overflowButton\.trailingAnchor\.constraint\(equalTo: splitButton\.leadingAnchor/.test(swift));
@@ -667,7 +715,7 @@ check('the panel PUSHES a layout change so the strip does not wait for the poll'
       /case "navChanged":/.test(swift) && /syncNav\(force: true\)/.test(swift)
       && /cmd:'navChanged'/.test(html));
 check('applyNav no-ops when nothing changed (the poll can run forever safely)',
-      /func applyNav\(_ ids: \[String\]\)[\s\S]{0,300}guard !clean\.isEmpty, clean != navPinned else \{ return \}/.test(swift));
+      /func applyNav\(_ ids: \[String\], _ window: \[String\]\)[\s\S]{0,400}guard !clean\.isEmpty, clean != navPinned \|\| win != navWindow else \{ return \}/.test(swift));
 check('the arrangement is persisted by ID as well as by index (an index is strip-relative)',
       /ud\.set\(tabId\(currentTab\), forKey: "harness\.split\.leftId"\)/.test(swift)
       && /ud\.set\(tabId\(rightTab\), forKey: "harness\.split\.rightId"\)/.test(swift)
@@ -675,8 +723,11 @@ check('the arrangement is persisted by ID as well as by index (an index is strip
 // v1.5.26 — DEBI'S ORDER. The same eleven ids in a new reading order; bridge/nav.py's
 // DEFAULT_TOPBAR and the panel's NAV_DEFAULT_TOPBAR carry the same list, and
 // test_nav_model.py is the fence that compares all three.
-check('the default strip is exactly the eleven default tabs, in Debi\'s order',
-      /let navDefaultTopbar = \["mc", "hermes", "unsloth", "opencode", "odysseus",\s*\n?\s*"voicestudio", "comfyui", "aider", "loffice", "music", "voicebox"\]/.test(swift));
+// ⚠️ NINE PINS + A TWO-ENTRY WINDOW SEED SINCE THE 9+3 RULING — the same ELEVEN TABS,
+// with the Music surface (id `compose`) where Music was.
+check('the default strip is still the eleven default tabs, in Debi\'s order',
+      /let navDefaultTopbar = \["mc", "hermes", "unsloth", "opencode", "odysseus",\s*\n?\s*"voicestudio", "comfyui", "aider", "loffice"\]/.test(swift)
+      && /let navDefaultMru = \["compose", "voicebox"\]/.test(swift));
 check('the three pinnable VIEWS load the panel chromeless, one per view',
       /HarnessTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
       && /HarnessTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)

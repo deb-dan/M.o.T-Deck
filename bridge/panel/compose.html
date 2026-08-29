@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compose · MOT Deck</title>
+<title>Music · MOT Deck</title>
 <meta name="harness-build" content="compose-2026-08-29b">
 <!--
   ══ COMPOSE — THE ALTERNATIVE MUSIC SURFACE, SPECTRUM LAYOUT ═══════════════════
@@ -341,6 +341,11 @@
   #top { display:flex; align-items:center; gap:8px; padding:3px 10px; row-gap:4px;
          min-height:var(--zbar); flex-wrap:wrap;
          background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  /* the ONE-door switcher: the page's own tokens, so it is not browser chrome. */
+  #look { height:var(--pill-h); padding:0 4px; border:1px solid var(--zborder);
+          border-radius:var(--pill-r); background:var(--bg); color:var(--cream);
+          font:11px var(--sans); cursor:pointer; }
+  #look:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
   #bench { display:grid; grid-template-columns:var(--sw) minmax(0,1fr);
            gap:var(--grp); padding:var(--grp) var(--grp) 0; min-height:0;
            overflow:auto; }
@@ -614,7 +619,24 @@
 <div id="app">
 
   <div id="top">
-    <h1>Compose</h1>
+    <h1>Music</h1>
+    <!-- ══ THE ONE MUSIC DOOR (Debi's ruling 2026-08-29) ═══════════════════════════
+         Two surfaces, one entry: this page (Studio) is what "Music" opens, and the
+         original view (Classic) is one control away instead of a second nav row and a
+         second tab. It is a real <select> rather than a chip menu on purpose — this is
+         a two-state CHOICE with a current value, which is what a select is for, it is
+         keyboard- and VoiceOver-correct without a line of JS, and the page's own tokens
+         paint it (the four declarations in #look) so it is not the unthemed browser
+         surface the design review complained about.
+         ⚠️ It never navigates on its own: `value` is re-asserted after the switch,
+         because in the app this document STAYS LOADED in its tab while the shell moves
+         to another one — a select left reading "Music Classic" on a page that is the
+         Studio would be a small lie sitting in the header forever. -->
+    <select id="look" aria-label="Which Music surface"
+            title="Music Studio is this page · Music Classic is the original Music view">
+      <option value="studio" selected>Music Studio</option>
+      <option value="classic">Music Classic</option>
+    </select>
     <span class="chip" id="c-engines"><i class="dot"></i><span>checking…</span></span>
     <span class="chip c-gold hide" id="c-work"></span>
     <span class="grow"></span>
@@ -769,6 +791,39 @@ const S = {
   playing:false, pos:0,  /* the transport, read off the ONE <audio> element */
 };
 const $ = (id) => document.getElementById(id);
+
+/* ══ THE ONE MUSIC DOOR — the switcher's other half (Debi 2026-08-29) ═══════════
+   Inside Harness.app the answer is a TAB SWITCH, not a navigation: the shell owns the
+   window, `Music Classic` is its own tab (the chromeless ?solo=music load), and
+   replacing this document's URL would leave the Music tab showing the Classic page for
+   the rest of the session. The id is sent as well as the title, because the shell
+   resolves the STABLE id first and a title is only the fallback for an older build.
+   In a plain browser there is no shell, and the URL is the honest answer.
+   ⚠️ TOTAL: every failure path lands on the URL rather than doing nothing — a switcher
+   that silently does not switch is the dead-control class. */
+function musicClassic() {
+  const h = (window.webkit && window.webkit.messageHandlers
+             && window.webkit.messageHandlers.harness) || null;
+  if (h) {
+    try {
+      h.postMessage({ cmd:'switchTab', title:'Music Classic', id:'music' });
+      return true;
+    } catch (e) { /* fall through to the URL */ }
+  }
+  location.href = '/?solo=music';
+  return false;
+}
+addEventListener('DOMContentLoaded', () => {
+  const sel = $('look');
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    if (sel.value === 'classic') musicClassic();
+    // Re-assert the truth about THIS page whatever happened: in the app we are still
+    // the Studio, sitting in our own tab, and in a browser the navigation is already
+    // under way and this costs nothing.
+    sel.value = 'studio';
+  });
+});
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 /* The stub DOM the suite runs this script in has neither of these, and a bare
