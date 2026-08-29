@@ -109,43 +109,118 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ## Generate — pictures and video clips
 
+### What you see, and where everything else went
+
 - The **Generate** page turns a sentence into a still image or a short clip, on this
   Mac, offline. It drives the ComfyUI engine that is already installed here, so you
   never have to touch a node graph — the **ComfyUI** tab stays there for that.
-- It needs **model weights** first, and those are big files. Nothing downloads until
-  you press a button, every size is printed before you press it, and the **free space
-  on the volume the files land on** is in the header. Weights downloaded here are
-  shared with the ComfyUI tab: one copy, both surfaces.
-- The **starter set is two downloads**, one per job: *SDXL base 1.0* (6.94 GB,
+- **At rest the page is seven things:** the two status chips (the engine, and free
+  disk), the big result stage, the strip of recent results, the prompt box, the
+  Image/Clip switch, the model chip, and **Generate**. That is deliberate. Everything
+  else — licences, file paths, verification mechanics, the security rationale, the
+  measured numbers — is still there, and this section is where it lives in full.
+- **Hover (or tap, or focus and press Enter on) any chip.** Every chip on the page is
+  a control: the sentence behind it, the arithmetic, and the caveat are all in its
+  tooltip. Chip and tooltip come off one object, so they can never disagree.
+- **Nothing here is a paragraph you have to read to use the page.** If the page ever
+  stands a sentence in front of you, it is because something is true right now and
+  wants a decision — the engine is off, a file is missing, or you have not downloaded
+  a model yet.
+
+### Models — the sheet behind the model chip
+
+- **Click the model chip** (next to Image/Clip) to open the models sheet. One row per
+  model: name · what it is for · size · licence chip · any measured health verdict ·
+  the state chip that does the work.
+- **The state chip is the action and the truth**: `Get 6.94 GB` → `Downloading 42%`
+  (with a progress line under the row) → `Verifying…` → `On disk ✓`. If a download is
+  interrupted it becomes `Resume · 212 MB of 254 MB` — counted against what is *left
+  to fetch*, not against the whole model — and the part-file survives a bridge restart.
+- **The starter set is two downloads**, one per job: *SDXL base 1.0* (6.94 GB,
   CreativeML Open RAIL++-M) for stills and *Wan 2.1 T2V 1.3B* (9.83 GB, Apache-2.0)
   for clips. Take either on its own. Together they are **16.77 GB, which is 2.77 GB
-  over the 14 GB budget**, and the page says so rather than quietly dropping one.
+  over the 14 GB budget**, and the sheet says so rather than quietly dropping one.
   One model would have covered both — the video model can be asked for a single frame
   — but that was tried on this Mac and the picture came out unusable, so it is not
   offered as the image answer.
-- A curated model is **not a promise that its output is good on your machine**. Where
-  a model has been run here and found wanting, the verdict is printed on its card and
-  again beside the Generate button, with the date and the numbers.
-- Every downloaded file is checked against a **pinned size and sha256**. A file that
-  fails either check keeps its `.part` name and the card says so — it is never
-  reported as downloaded. If the bridge restarts mid-download the part-file survives
-  and the button offers **Resume**, stating how much is already down.
-- **Disk warnings never block a download.** They tell you what it needs, what is free
-  and what would be left; the decision stays yours.
-- Speed and memory are **measured, never predicted**. The first run of a given model
-  is the measurement; after it, the card reads `last run: 68s · peaked 21 GB`. Until
-  then it says so plainly rather than inventing a time.
-- **The gallery keeps everything.** Per-item and total size are shown; nothing is ever
-  deleted automatically. *Reveal* opens the file in Finder; *Graph* shows the exact
-  graph that produced it.
-- Only **stock ComfyUI nodes** are used, and no third-party node packs are installed
-  by this page. Those are arbitrary code loaded into the engine at startup and have
-  twice been used to ship credential stealers.
-- If a model file is missing, the page **names the file** and puts its Download button
-  in the refusal. If ComfyUI is not running, it says that instead of failing quietly —
-  start it from MOT Deck → Components and press Refresh.
+- **The licence chip's hover carries the licence note and the link to the full text.**
+  That link exists there and nowhere else: it is a legal document, not a button that
+  competes with Download.
+- **Every downloaded file is checked against a pinned size and sha256.** A file that
+  fails either check keeps its `.part` name and is **never** reported as downloaded.
+  The `On disk ✓` chip's hover says exactly this.
+- **The file manifest** — each weight file, its folder, its size and its state, plus
+  which files are shared between models (the umt5/T5 encoders) — is under the row's
+  **⋯ → Show the file list**. It is an installer's manifest; it appears when you ask.
+- **Where the files go** is not printed anywhere on the page, on purpose. Use
+  **⋯ → Reveal the models folder** and **Reveal** on a result: showing you the place
+  beats printing a path you cannot click.
+- **The model chip picks itself.** Choosing Image or Clip selects the model measured to
+  be good at that job; if you disagree, click a model's name in the sheet.
+
+### Honesty, measurement and refusals
+
+- **Disk warnings never block a download.** The `Get` chip's hover states what it needs,
+  what is free and what would be left; the decision stays yours. The disk chip in the
+  header is always on and turns gold while a download is spending the space.
+- **Speed and memory are measured, never predicted.** The first run of a model in a
+  given mode is the measurement, and until it happens the page says
+  `first run = measurement` rather than inventing a time. Afterwards the numbers ride
+  on the model chip's hover and on the finished result's caption chips
+  (`36s · peak 14.29 GB`), worded as what they are: the measured phys_footprint of the
+  ComfyUI process on this Mac.
+- **A curated model is not a promise that its output is good on your machine.** Where a
+  model has been run here and found wanting, its row wears one amber chip — today
+  `colour shift here` on Wan 2.1 — and when that model is the one selected, **the model
+  chip beside Generate turns amber and carries the same mark**. The full measured
+  verdict, with dates and numbers, is in the hover. Same words, same object, both places.
+- **If a model file is missing**, the page names the file and its size in one line and
+  puts a `Get 254 MB` button next to it. If a download for it is already running it says
+  *that* instead, rather than offering a button that would start nothing.
+- **If ComfyUI is not running**, the engine chip goes red and reads `engine off`,
+  Generate is disabled, and one line points at MOT Deck → Components. The page keeps
+  polling and recovers on its own once the engine is back — no refresh needed.
+- **One job at a time.** ComfyUI runs them in order; you can leave the tab and the
+  result is waiting when you come back. While a job runs the stage becomes the progress
+  surface (`step 14 of 30`), and if the live progress feed drops you see `(polling)` —
+  the *result* never depended on that feed.
+
+### Results
+
+- **The gallery keeps everything.** Recent results are the strip under the stage;
+  **All results ▸** expands the full grid in place. Per-item and total sizes are shown
+  and nothing is ever deleted automatically — pruning is a deliberate act you do in
+  Finder via **Reveal**.
+- A result whose file has been removed, or whose size changed since it was made, or
+  which was found on disk with no record of being made, is still listed, with an amber
+  or red chip saying which.
+- **The caption chips under the stage are the run.** Size, seed, wall time, peak memory,
+  file size. **Click the seed chip** to put that seed back in the field and make the
+  same picture again.
+- **A finished run writes its real values back into More ▸** — the resolved size, the
+  steps, and the frame count after it snaps to 4n+1 — so what you are looking at is what
+  you can edit and re-run. The **seed field is the exception**: it resets to random after
+  every run on purpose, and the seed that was actually drawn lives on the caption chip.
+- **⋯ on a result** gives you the exact API-format graph that produced it, Reveal in
+  Finder, and a link to the ComfyUI tab. Job records live in the bridge's memory, so the
+  graph for a result made before the last bridge restart is no longer on record — the
+  page says that rather than failing cryptically.
+- **More ▸ is the one disclosure gate**: width, height, steps, seed, negative prompt,
+  and for clips frames and fps. It carries a dot when anything under it differs from the
+  template's defaults, so a hidden edit is never silent. **Frame counts snap to 4n+1**
+  because this model's latents move four frames at a time; the number actually used is
+  written back after the run.
+
+### The fence
+
+- Only **stock ComfyUI nodes** are used, and no third-party node packs are installed by
+  this page. Those are arbitrary code loaded into the engine at startup and have twice
+  been used to ship credential stealers. When `custom_nodes/` is empty — the normal case
+  — the page says nothing about it at all; if packs appear, an amber chip appears in the
+  header naming how many, with this sentence in its hover.
 
 ---
+
 
 ## Goose — the agent lane in a terminal
 

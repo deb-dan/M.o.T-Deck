@@ -4,14 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Generate · MOT Deck</title>
-<meta name="harness-build" content="comfy-s1-2026-08-29a">
+<meta name="harness-build" content="comfy-v2-2026-08-29b">
 <!--
-  ══ THE GENERATE SURFACE (ComfyUI S1: image + video) ═══════════════════════════
-  docs/FABLE-COMFY-SURFACE-SPEC.md · bridge/routers/comfy.py serves everything here.
+  ══ THE GENERATE SURFACE — v2, chip-first ══════════════════════════════════════
+  docs/FABLE-COMFY-SURFACE-SPEC.md (SPEC v2) · design source:
+  docs/research/2026-08-29-generate-page-redesign.md (§4 IA · §5 honesty ledger).
+  bridge/routers/comfy.py serves everything here and is UNCHANGED by this redesign.
 
   WHAT THIS PAGE IS. Type a sentence, get a picture or a short clip. The stock
   ComfyUI tab stays the power exit (LoRA, ControlNet, graph editing, exotic models);
   this page owns exactly the curated path: acquire → generate → keep.
+
+  ⚠️ THE SENTENCE RULE (the whole point of v2). v1 was mechanically honest and
+  read as a wall: ~106 standing text elements at rest, 27 of them full sentences,
+  most of them duplicating docs/USER-EXPLAINERS.md §Generate onto the canvas. A
+  sentence may ship AT REST only if it is (a) an action's label, (b) a state that is
+  true right now and demands a decision, or (c) the first-run invitation. Everything
+  else is a CHIP whose hover carries the sentence, or Help. Nothing honest was
+  deleted — §5's ledger is conserved item by item; every mechanic was demoted from
+  prose to chip+tooltip, sheet row, or overflow menu.
+
+  ⚠️ ONE VERDICT OBJECT PER CHIP (the v1.5.34 grammar, borrowed from index.html).
+  A chip's LABEL and its TOOLTIP both come off the same object — `modelVerdict()`,
+  `diskVerdict()`, `stateVerdict()`, `licenseVerdict()`, `healthVerdict()`. A chip
+  that could disagree with its own hover is the lie this structure prevents by
+  construction, not by discipline.
 
   ⚠️ THERE IS DELIBERATELY NOTHING EXTERNAL IN <head> — no stylesheet link, no script
   src, no font fetch. It is the office.html lesson in one line: a render-blocking
@@ -21,8 +38,7 @@
   ⚠️ EVERY NUMBER ON THIS PAGE IS MEASURED OR PINNED, NEVER ESTIMATED. Disk comes from
   statvfs on the models directory's own volume. Model sizes are HEAD-verified and
   sha256-pinned. A run's seconds and peak memory come from the run that happened; until
-  one has, the card says "not measured yet" rather than inventing an ETA. That is the
-  LIES-TO-USER rule, and it is why there is no progress bar for anything we cannot see.
+  one has, the chip reads "first run = measurement" rather than inventing an ETA.
 -->
 <script>
 (function () {
@@ -86,6 +102,12 @@
     --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
     --on-wash:rgba(217,179,108,.22);
     --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    /* the ONE floating grammar — tooltips, menus and the models sheet all sit on it,
+       so every floating surface is correct in all six looks without a rule per look */
+    --float-bg:rgba(20,18,29,.94); --float-edge:var(--line2);
+    --float-blur:blur(20px) saturate(140%);
+    --float-shadow:0 24px 60px rgba(0,0,0,.5);
     --mono:"SF Mono", ui-monospace, Menlo, monospace;
     --serif:"New York", "Iowan Old Style", Georgia, serif;
     --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
@@ -97,6 +119,8 @@
     --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
     --gold:#886522; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
     --on-accent:#faf7f0;
+    --scrim:rgba(60,50,30,.34);
+    --float-bg:rgba(255,253,247,.96); --float-shadow:0 24px 60px rgba(60,50,30,.22);
   }
   html[data-theme="gold"] {
     --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
@@ -104,6 +128,8 @@
     --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
     --gold:#e8bf76; --ok:#4fc79b; --warn:#e8a95e; --bad:#e77070; --accent:#a89bf5;
     --on-wash:rgba(232,191,118,.22); --on-accent:#171420;
+    --scrim:rgba(4,3,2,.66);
+    --float-bg:rgba(19,17,16,.95);
   }
   html[data-theme="cyber"] {
     --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
@@ -111,6 +137,8 @@
     --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
     --gold:#7dd3fc; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#a78bfa;
     --on-wash:rgba(125,211,252,.20); --on-accent:#171420;
+    --scrim:rgba(4,7,14,.64);
+    --float-bg:rgba(17,24,40,.95);
   }
   /* ══ THE STUDIO DESIGN (✦) — palette + four shape properties ═══════════════════
      Its palette values are copied from bridge/panel/assets/studio-design.css so the
@@ -122,6 +150,8 @@
     --cream:#e9efef; --fg:#c3cccc; --dim:#aeb9b9; --faint:#909d9d;
     --gold:#41c2ac; --ok:#4ac98d; --warn:#e2aa5e; --bad:#ea7370; --accent:#41c2ac;
     --on-wash:rgba(65,194,172,.18); --on-accent:#03211d;
+    --scrim:rgba(5,9,10,.62);
+    --float-bg:rgba(22,28,30,.95);
     --sans:"Avenir Next", -apple-system, "SF Pro Text", system-ui, sans-serif;
     /* ⚠️ STUDIO IS A SANS DESIGN, AND THIS IS THE TOKEN SWAP, NOT A SELECTOR RULE —
        the first draft wrote `:where(html[data-design="studio"]) h1 { font-family:… }`
@@ -138,13 +168,14 @@
     --cream:#101a1b; --fg:#33403f; --dim:#4b5a5a; --faint:#5a6a6a;
     --gold:#097268; --ok:#0d7d5c; --warn:#8a600d; --bad:#b23636; --accent:#097268;
     --on-wash:rgba(9,114,104,.14); --on-accent:#e4fbf5;
+    --scrim:rgba(30,50,50,.30);
+    --float-bg:rgba(253,254,255,.96); --float-shadow:0 24px 60px rgba(20,50,50,.18);
   }
-  /* ══ STUDIO CHROME (▣) — control shapes only, never the palette ════════════════ */
+  /* ══ STUDIO CHROME (▣) — control shapes only, never the palette ════════════════
+     The shapes are token swaps here; the control FONT SIZE is a real declaration and
+     therefore has to live BELOW the base `button/input/textarea` block — see the note
+     beside it. */
   html[data-chrome="studio"] { --r:4px; --ctl-h:26px; }
-  :where(html[data-chrome="studio"]) button,
-  :where(html[data-chrome="studio"]) input,
-  :where(html[data-chrome="studio"]) select,
-  :where(html[data-chrome="studio"]) textarea { font-size:11.5px; }
 
   * { box-sizing:border-box; }
   body {
@@ -153,28 +184,121 @@
   }
   a { color:var(--gold); }
   h1 { font:600 17px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.2px; }
-  h2 { font:600 13px/1.2 var(--serif); color:var(--cream); margin:0 0 10px; letter-spacing:.3px; }
+  h2 { font:600 13px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.3px; }
   .caps { font:600 10px/1 var(--sans); letter-spacing:.10em; text-transform:uppercase; color:var(--faint); }
   .mono { font-family:var(--mono); font-size:11px; }
   .dim { color:var(--dim); } .faint { color:var(--faint); }
+  .hide { display:none !important; }
+  .grow { flex:1 1 auto; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-  header {
-    position:sticky; top:0; z-index:5; background:var(--bg2);
-    border-bottom:1px solid var(--line); padding:10px 16px;
-    display:flex; gap:14px; align-items:center; flex-wrap:wrap;
-  }
-  header .grow { flex:1 1 auto; }
-  .pill {
-    display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px;
+  /* ── THE PROSE CLASS ────────────────────────────────────────────────────────
+     `.say` is the ONLY element on this page allowed to carry a sentence, and it is
+     allowed in exactly three places (the sentence rule): the first-run invitation,
+     a live state that demands a decision, and a section-failure message. Everything
+     else is a chip + tooltip. bridge/tests/test_comfy_page.js renders every state
+     and FAILS the build if a sentence appears outside `.say`. */
+  .say { font-size:12px; color:var(--dim); margin:0; max-width:62ch; }
+  .say b { color:var(--cream); font-weight:600; }
+  .say.bad { color:var(--bad); }
+
+  /* ── CHIPS — the v1.5.34 grammar ────────────────────────────────────────────
+     A chip is ≤ ~5 words. The sentence, the arithmetic and the hedge live in the
+     tooltip, off the SAME verdict object. */
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
     border:1px solid var(--line2); border-radius:999px; background:var(--card);
-    font-size:11px; color:var(--dim); white-space:nowrap;
+    font:11px var(--sans); color:var(--dim); white-space:nowrap; max-width:100%;
   }
-  .pill b { color:var(--cream); font-weight:600; }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok    { color:var(--ok);   border-color:var(--ok); }
+  .chip.c-warn  { color:var(--warn); border-color:var(--warn); }
+  .chip.c-bad   { color:var(--bad);  border-color:var(--bad); }
+  .chip.c-gold  { color:var(--gold); border-color:var(--gold); }
+  .chip.c-dim   { color:var(--faint); border-color:var(--line2); }
+  .chip.act { cursor:pointer; }
+  .chip.act:hover { border-color:var(--gold); color:var(--cream); }
+  .chip.tipped { cursor:help; }
+  .chip.tipped:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none; }
   .dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
 
-  main { padding:16px; max-width:1180px; margin:0 auto; display:grid; gap:16px; }
-  section { background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg); padding:14px 16px; }
+  /* ── THE ONE FLOATING GRAMMAR — tooltip, menu, sheet ────────────────────────── */
+  .float-surface { background:var(--float-bg); border:1px solid var(--float-edge);
+                   border-radius:14px; box-shadow:var(--float-shadow);
+                   -webkit-backdrop-filter:var(--float-blur);
+                   backdrop-filter:var(--float-blur); }
+  #tip { position:fixed; z-index:9800; max-width:360px; padding:11px 13px;
+         font:11px var(--mono); color:var(--dim); line-height:1.65; }
+  #tip[hidden] { display:none; }
+  #tip .t-line  { color:var(--fg); display:block; margin-top:7px; }
+  #tip .t-line:first-child { margin-top:0; }
+  #tip .t-math  { color:var(--cream); display:block; margin-top:6px; }
+  #tip .t-hedge { color:var(--faint); display:block; margin-top:6px; }
+  #tip .t-link  { display:block; margin-top:8px; }
+  #tip.inert { pointer-events:none; }
+
+  #menu { position:fixed; z-index:9810; min-width:210px; padding:5px; }
+  #menu[hidden] { display:none; }
+  #menu button, #menu a {
+    display:block; width:100%; text-align:left; text-decoration:none;
+    background:transparent; border:0; border-radius:8px; color:var(--fg);
+    font:12px var(--sans); padding:7px 10px; cursor:pointer; }
+  #menu button:hover, #menu a:hover { background:var(--on-wash); color:var(--cream); }
+
+  /* ── header ─────────────────────────────────────────────────────────────────── */
+  header {
+    position:sticky; top:0; z-index:5; background:var(--bg2);
+    border-bottom:1px solid var(--line); padding:10px 16px;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+
+  main { padding:14px 16px 6px; max-width:1000px; margin:0 auto; display:grid; gap:12px; }
+
+  /* ── ② the result stage — the biggest thing on the page ─────────────────────── */
+  #stage {
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg);
+    min-height:min(52vh, 460px); display:grid; place-items:center; overflow:hidden;
+    padding:0;
+  }
+  #stage.empty { padding:26px; place-items:center; }
+  #stage img, #stage video { max-width:100%; max-height:min(52vh,460px); display:block;
+                             object-fit:contain; }
+  #stage-invite { display:grid; gap:12px; justify-items:center; text-align:center; }
+  #stage-invite h2.invite { font-size:16px; max-width:34ch; line-height:1.35;
+                            color:var(--cream); font-family:var(--serif); font-weight:600; }
+  #caps { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-height:22px; }
+
+  /* the in-progress surface */
+  #stage .prog { display:grid; gap:10px; justify-items:center; width:min(420px,80%); }
+  #stage .prog .row { width:100%; justify-content:center; }
+  .bar { height:5px; border-radius:3px; background:var(--line); overflow:hidden; width:100%; }
+  .bar > i { display:block; height:100%; background:var(--gold); transition:width .25s linear; }
+
+  /* ── ③ recent strip ─────────────────────────────────────────────────────────── */
+  #strip { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .thumb { width:52px; height:38px; border-radius:var(--r); overflow:hidden; flex:none;
+           border:1px solid var(--line2); background:var(--bg2); cursor:pointer;
+           display:grid; place-items:center; padding:0; }
+  .thumb.on { border-color:var(--gold); }
+  .thumb.bad { border-color:var(--warn); }
+  .thumb.gone { border-color:var(--bad); }
+  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; display:block; }
+  #allres { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); }
+  #allres .thumb { width:100%; height:88px; }
+
+  /* ── ④⑤⑥⑦ the composer ─────────────────────────────────────────────────────── */
+  #composer { display:grid; gap:9px; }
+  textarea, input, select {
+    background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
+    border-radius:var(--r); padding:7px 9px; font:12.5px var(--sans); width:100%;
+  }
+  textarea { resize:vertical; min-height:56px; font-family:var(--sans); }
+  label { display:block; }
+  label .caps { display:block; margin-bottom:3px; }
+  .seg { display:inline-flex; border:1px solid var(--line2); border-radius:var(--r); overflow:hidden; flex:none; }
+  .seg button { border:0; border-radius:0; background:transparent; height:var(--ctl-h); }
+  .seg button.on { background:var(--on-wash); color:var(--cream); }
 
   button {
     height:var(--ctl-h); padding:0 11px; border-radius:var(--r);
@@ -186,143 +310,95 @@
   button.primary:hover { background:var(--gold); filter:brightness(1.08); color:var(--on-accent); }
   button:disabled { opacity:.55; cursor:default; }
   button.ghost { background:transparent; }
+  /* ⚠️ AND HERE IS THE CHROME FONT RULE, DELIBERATELY AFTER THE BASE CONTROLS —
+     measured in the live page on 2026-08-29, inherited from v1. It used to sit up in
+     the chrome block, where `:where(html[data-chrome="studio"]) button { font-size }`
+     (specificity 0,0,1) lost to the LATER `button { font:500 12px … }` shorthand, which
+     is also (0,0,1): studio chrome silently kept the 12px type. Same tie the studio
+     --serif comment describes; the answer is the same — win by construction. */
+  :where(html[data-chrome="studio"]) button,
+  :where(html[data-chrome="studio"]) input,
+  :where(html[data-chrome="studio"]) select,
+  :where(html[data-chrome="studio"]) textarea { font-size:11.5px; }
+  button.dotted { position:relative; }
+  button.dotted::after { content:""; position:absolute; top:4px; right:4px; width:5px;
+                         height:5px; border-radius:50%; background:var(--gold); }
+  .ovf { width:var(--ctl-h); padding:0; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
-  input, select, textarea {
-    background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
-    border-radius:var(--r); padding:5px 8px; font:12px var(--sans); width:100%;
-  }
-  textarea { resize:vertical; min-height:60px; font-family:var(--sans); }
-  label { display:block; }
-  label .caps { display:block; margin-bottom:3px; }
+  #more { display:grid; gap:9px; border:1px solid var(--line); border-radius:var(--r);
+          padding:11px; background:var(--card); }
+  .grid4 { display:grid; gap:9px; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); }
 
-  .cards { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); }
-  .mcard { border:1px solid var(--line2); border-radius:var(--r-lg); background:var(--card2); padding:12px 13px; display:grid; gap:8px; }
-  .mcard.starter { border-color:var(--gold); }
-  .card-title { font:600 14px/1.2 var(--serif); color:var(--cream); }
-  .badge { display:inline-block; padding:1px 7px; border-radius:999px; font-size:10.5px; border:1px solid; }
-  .badge.green { color:var(--ok); border-color:var(--ok); }
-  .badge.amber { color:var(--warn); border-color:var(--warn); }
-  .badge.red   { color:var(--bad); border-color:var(--bad); }
-  .flist { display:grid; gap:2px; }
-  .frow { display:flex; gap:8px; font-size:11px; color:var(--dim); align-items:baseline; }
-  .frow .fn { font-family:var(--mono); font-size:10.5px; color:var(--fg); flex:1 1 auto; overflow-wrap:anywhere; }
+  /* ── the models sheet ───────────────────────────────────────────────────────── */
+  #scrim { position:fixed; inset:0; z-index:40; background:var(--scrim); display:grid;
+           place-items:start center; padding:52px 16px 16px; overflow:auto; }
+  #scrim[hidden] { display:none; }
+  #sheet { width:min(880px,100%); padding:16px 18px 14px; display:grid; gap:11px; }
+  .mrow { display:grid; gap:10px; align-items:center; padding:9px 2px;
+          grid-template-columns:minmax(150px,1.4fr) auto auto 1fr auto auto;
+          border-top:1px solid var(--line); position:relative; }
+  .mrow:first-of-type { border-top:0; }
+  .mname { font:600 13px/1.25 var(--serif); color:var(--cream); text-align:left;
+           background:transparent; border:0; padding:0; height:auto; }
+  button.mname { cursor:pointer; }
+  button.mname:hover { color:var(--gold); background:transparent; }
+  button.mname[aria-current="true"] { color:var(--gold); }
+  .mrow .under { position:absolute; left:0; bottom:0; height:2px; background:var(--gold); }
+  .manifest { grid-column:1/-1; display:grid; gap:3px; padding:2px 0 6px; }
+  .frow { display:flex; gap:8px; font-size:11px; align-items:baseline; }
+  .frow .fn { font-family:var(--mono); font-size:10.5px; color:var(--dim); flex:1 1 auto; overflow-wrap:anywhere; }
   .frow .fs { color:var(--faint); white-space:nowrap; }
-  .verdict { font-size:11.5px; padding:5px 8px; border-radius:var(--r); border:1px solid var(--line2); background:var(--bg2); }
-  .verdict.ok { color:var(--dim); }
-  .verdict.tight { color:var(--warn); border-color:var(--warn); }
-  .verdict.no { color:var(--bad); border-color:var(--bad); }
-  .verdict.done { color:var(--ok); }
-  .bar { height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
-  .bar > i { display:block; height:100%; background:var(--gold); transition:width .25s linear; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-  .grid4 { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
-  .seg { display:inline-flex; border:1px solid var(--line2); border-radius:var(--r); overflow:hidden; }
-  .seg button { border:0; border-radius:0; background:transparent; }
-  .seg button.on { background:var(--on-wash); color:var(--cream); }
-
-  .note { font-size:11.5px; color:var(--dim); }
-  .warnbox { border:1px solid var(--bad); border-radius:var(--r); padding:8px 10px; color:var(--bad); font-size:12px; background:var(--bg2); }
-  .warnbox b { color:var(--bad); }
-  .okbox { border:1px solid var(--line2); border-radius:var(--r); padding:8px 10px; font-size:12px; background:var(--bg2); color:var(--dim); }
   /* Inline toast — alert() is a SILENT NO-OP inside the app shell's WKWebView (no
      runJavaScriptAlertPanel delegate), so any feedback routed through alert() simply
      never appears there. Same silent-no-op class as runOpenPanelWith in main.swift. */
   #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
-    max-width:min(560px, 92vw); z-index:60;
+    max-width:min(560px, 92vw); z-index:9900;
     border:1px solid var(--gold); border-radius:var(--r-lg);
     background:var(--card2); color:var(--fg); padding:10px 14px; font-size:12.5px; }
   #toast.bad { border-color:var(--bad); color:var(--bad); }
 
-  .gal { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
-  .item { border:1px solid var(--line2); border-radius:var(--r-lg); background:var(--card2); overflow:hidden; display:grid; }
-  .item .thumb { background:var(--bg2); aspect-ratio:16/10; display:grid; place-items:center; overflow:hidden; }
-  .item .thumb img, .item .thumb video { width:100%; height:100%; object-fit:cover; display:block; }
-  .item .meta { padding:7px 9px; display:grid; gap:3px; }
-  .item .cap { font-size:11px; color:var(--fg); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .item .sub { font-size:10.5px; color:var(--faint); }
-  .item.bad { border-color:var(--bad); }
-
-  footer { padding:14px 16px 30px; max-width:1180px; margin:0 auto; color:var(--faint); font-size:11.5px; }
-  footer code { font-family:var(--mono); color:var(--dim); }
-  details summary { cursor:pointer; color:var(--dim); }
-  .hide { display:none !important; }
+  footer { padding:10px 16px 22px; max-width:1000px; margin:0 auto;
+           color:var(--faint); font-size:10.5px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Generate</h1>
-  <span class="pill" id="p-comfy"><i class="dot"></i><span>checking…</span></span>
-  <span class="pill" id="p-disk">disk —</span>
-  <span class="pill" id="p-gal">gallery —</span>
-  <span class="grow"></span>
-  <button class="ghost" id="btn-refresh" title="Re-read everything from disk and from ComfyUI">Refresh</button>
-  <a class="pill" id="a-comfy" href="#" target="_blank" title="The stock ComfyUI editor — the power exit">ComfyUI tab ↗</a>
+  <span class="chip" id="c-engine"><i class="dot"></i><span>checking…</span></span>
+  <span class="chip" id="c-disk">⛁ —</span>
+  <span class="chip c-warn hide" id="c-fence"></span>
 </header>
 
 <main>
   <!-- Where a header failure lands. Empty and invisible until something throws. -->
   <div id="pageerr"></div>
-  <!-- JOURNEY 0: the empty state. It is a first-class screen, not a fallback. -->
-  <section id="empty" class="hide">
-    <h2>Nothing is installed yet — here is what this does</h2>
-    <p class="note" style="max-width:70ch">
-      This page turns a sentence into a picture or a short video clip, on this Mac,
-      offline. It drives the ComfyUI engine that is already installed here, so you
-      never have to touch a node graph — the ComfyUI tab stays available for that.
-    </p>
-    <p class="note" style="max-width:70ch">
-      What it needs first are <b>model weights</b>, which are big files. Nothing is
-      downloaded until you press a button, every size is stated before you press it,
-      and the free space on the volume they land on is in the header above.
-      Models you download here are shared with the ComfyUI tab — one copy, both surfaces.
-    </p>
-    <p class="note" style="max-width:70ch" id="empty-cap"></p>
-    <div id="empty-cta" class="row"></div>
-  </section>
 
-  <section id="sec-models">
-    <h2>Models</h2>
-    <div class="note" id="cap-line" style="margin-bottom:10px"></div>
-    <div class="cards" id="models"></div>
-  </section>
+  <!-- ② THE RESULT STAGE. The picture is the product, so it is the biggest thing
+       on the page; while a job runs this is the progress surface; with nothing on
+       disk it is the first-run invitation (Debi's fork answer 4). -->
+  <section id="stage"><div id="stage-body"></div></section>
+  <div id="caps"></div>
 
-  <section id="sec-make">
-    <h2>Make something</h2>
-    <div id="make-body"></div>
-  </section>
+  <!-- ③ RECENT STRIP + "All results ▸" expanding in place (fork answer 1). -->
+  <div id="strip"></div>
+  <div id="allres" class="hide"></div>
 
-  <section id="sec-queue" class="hide">
-    <h2>Running</h2>
-    <div id="queue"></div>
-  </section>
-
-  <section id="sec-gallery">
-    <h2>Gallery</h2>
-    <div class="note" id="gal-line" style="margin-bottom:10px"></div>
-    <div class="gal" id="gallery"></div>
+  <!-- ④⑤⑥⑦ THE COMPOSER -->
+  <section id="composer">
+    <textarea id="f-prompt" rows="2"
+      placeholder="a red fox moving quickly through a snowy forest, morning light"></textarea>
+    <div class="row" id="crow"></div>
+    <div id="more" class="hide"></div>
+    <div id="refusal"></div>
   </section>
 </main>
 
-<footer>
-  <p>
-    <b>Stock nodes only.</b> Every graph this page submits is built from node types that
-    ship with ComfyUI itself; <code>custom_nodes/</code> stays empty
-    (<span id="fence-line">—</span>). Third-party node packs are arbitrary code loaded
-    into the engine at startup and have twice been the delivery vehicle for credential
-    stealers, so they are not installed by this surface at all.
-  </p>
-  <details>
-    <summary>Where the files go, and how to get rid of them</summary>
-    <p>Weights: <code id="f-models">—</code><br>
-       Results: <code id="f-output">—</code></p>
-    <p>The gallery keeps everything, forever, on purpose — deleting output is a
-       deliberate act you do in Finder (“Reveal” on any item), never something this page
-       does behind your back. Both totals are in the header.</p>
-  </details>
-  <p class="faint" id="stamp">—</p>
-</footer>
+<footer><span id="stamp">—</span></footer>
+
+<!-- ONE TAP: the models sheet. Acquisition is a visit, not a residence. -->
+<div id="scrim" hidden><div id="sheet" class="float-surface"></div></div>
 
 <script>
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -336,7 +412,10 @@
    download somebody started in another tab — and at 1s only while THIS page has a live
    download or job. Nothing ticks fast when nothing is running.
    ══════════════════════════════════════════════════════════════════════════════ */
-const S = { state:null, gallery:null, form:{}, busy:false, err:null, validation:null };
+const S = {
+  state:null, gallery:null, form:{}, busy:false, err:null, validation:null,
+  sheet:false, more:false, all:false, sel:null, wroteBack:null,
+};
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -353,23 +432,182 @@ function gb(n) {
 }
 function secs(s) { return s == null ? '—' : (s < 90 ? s.toFixed(0) + 's'
                                                     : (s / 60).toFixed(1) + ' min'); }
-/* PURE: what a card's action button should say and do, given its state. Extracted so
-   the "downloaded" claim has exactly ONE source and can be tested without a browser. */
+
+/* PURE: what a model row's STATE CHIP says and does, given its state. v2 keeps this
+   as the single source of the word "downloaded" on this page — the label grammar is
+   now chip-length (≤ ~5 words) and the mechanics sentence moved into `stateVerdict`'s
+   tooltip, which is built off THIS SAME object. */
 function cardAction(card, dl) {
-  if (dl && dl.state === 'downloading') return { label:'Downloading…', act:'cancel', busy:true };
-  if (dl && dl.state === 'verifying')   return { label:'Verifying…',   act:'cancel', busy:true };
-  if (dl && dl.state === 'error')       return { label:'Retry download', act:'download' };
-  if (card.corrupt && card.corrupt.length) return { label:'Re-download', act:'download' };
-  if (card.downloaded)                  return { label:'On disk',      act:null, done:true };
+  if (dl && dl.state === 'downloading')
+    return { label:'Downloading ' + Math.round(dl.pct || 0) + '%', act:'cancel',
+             busy:true, pct:dl.pct || 0 };
+  if (dl && dl.state === 'verifying')   return { label:'Verifying…',  act:'cancel', busy:true, pct:100 };
+  if (dl && dl.state === 'error')       return { label:'Retry',       act:'download', bad:true };
+  if (card.corrupt && card.corrupt.length) return { label:'Re-download', act:'download', bad:true };
+  if (card.downloaded)                  return { label:'On disk ✓',   act:null, done:true };
   /* A .part on disk with no live download is the bridge-restarted-mid-download case
      (walked, at 2.4 GB of 9.8). It RESUMES — say so, and say from where, rather than
-     offering a "Download 9.83 GB" that would restate bytes already spent. */
+     offering a "Get 9.83 GB" that would restate bytes already spent. */
+  /* ⚠️ THE DENOMINATOR IS THE OUTSTANDING WORK, NOT THE MODEL. The first draft wrote
+     "Resume · 212 MB of 9.83 GB" for a model whose other 9.6 GB were already sitting
+     on disk — a true numerator against the wrong total, which reads as "you have 2% of
+     this model" when you have 98% of it. Walked live on 2026-08-29 by cancelling one
+     254 MB file inside an otherwise complete 9.83 GB pick. */
   if (card.partial_bytes)
-    return { label:'Resume — ' + gb(card.partial_bytes) + ' already down, ' +
-                    card.need_h + ' to go', act:'download' };
-  if (dl && dl.state === 'cancelled')   return { label:'Resume download', act:'download' };
-  return { label:'Download ' + card.need_h, act:'download' };
+    return { label:'Resume · ' + gb(card.partial_bytes) + ' of ' +
+                    gb(Number(card.partial_bytes) + Number(card.need_bytes || 0)),
+             act:'download', resume:true };
+  if (dl && dl.state === 'cancelled')   return { label:'Resume',      act:'download', resume:true };
+  return { label:'Get ' + card.need_h, act:'download' };
 }
+
+/* ══ THE VERDICT OBJECTS ═══════════════════════════════════════════════════════
+   ONE object per chip. `chip` is the label (≤ ~5 words), `cls` the colour class, and
+   `line/math/hedge/link` are the tooltip. A chip and its hover are physically the
+   same object, so they cannot contradict — the v1.5.34 ruling, kept by construction.
+   All of these are PURE and are executed by the suite. */
+function stateVerdict(card, dl) {
+  const a = cardAction(card, dl);
+  const v = { chip:a.label, act:a.act, pick:card.id, dl:(dl && dl.id) || null,
+              pct:a.pct, done:a.done, busy:a.busy,
+              cls:a.done ? 'c-ok' : a.bad ? 'c-bad' : a.busy ? 'c-gold' : 'c-gold' };
+  if (a.done) {
+    v.line = 'Every file is on disk at its pinned byte count.';
+    v.math = card.total_h + ' across ' + card.files.length + ' file'
+           + (card.files.length === 1 ? '' : 's');
+    v.hedge = 'sha256-verified against the pinned hash when it landed; the size is '
+            + 're-checked on every render.';
+  } else if (a.bad && card.corrupt && card.corrupt.length) {
+    v.line = 'Wrong size on disk: ' + card.corrupt.join(', ') + '.';
+    v.hedge = 'That is a truncated or stale file. It is never reported as downloaded, '
+            + 'and it will not be used until it is fetched again.';
+  } else if (a.bad) {
+    v.line = 'The last attempt failed.';
+    v.hedge = (dl && dl.error) || 'Whatever landed is kept as a .part and the next '
+            + 'attempt resumes from there.';
+  } else if (a.busy) {
+    v.line = dl ? (dl.done_h + ' of ' + dl.total_h) : 'working';
+    v.hedge = 'Each file is checked against its pinned sha256 after it lands. Nothing '
+            + 'is reported as downloaded until that check passes.';
+  } else {
+    const d = card.disk || {};
+    v.line = 'Downloads ' + card.need_h + ' into the ComfyUI models folder.';
+    v.math = d.text || '';
+    v.hedge = 'Sizes are HEAD-verified against HuggingFace and every file is checked '
+            + 'against a pinned sha256. Shared with the ComfyUI tab: one copy, both '
+            + 'surfaces. Disk warnings never block a download.';
+  }
+  return v;
+}
+/* The first-run Get button's hover: the download verdict AND the licence, one object,
+   so the button that spends 7 GB says what it is spending it on and under what terms. */
+function inviteVerdict(card) {
+  const sv = stateVerdict(card, dlFor(card.id));
+  const lv = licenseVerdict(card);
+  return Object.assign({}, sv, {
+    line: sv.line + ' Licence: ' + lv.chip + '.',
+    hedge: lv.line + ' ' + sv.hedge,
+    link: lv.link, linkLabel: lv.linkLabel });
+}
+function licenseVerdict(card) {
+  return { chip:card.license, cls:card.license_badge === 'green' ? 'c-ok'
+                                : card.license_badge === 'red' ? 'c-bad' : 'c-warn',
+           line:card.license_note, link:card.license_url, linkLabel:'read the licence text ↗' };
+}
+/* The measured health defect — Wan's colour shift today, any measured defect tomorrow.
+   ONE object feeds the sheet row's chip, the composer's model chip, and both hovers
+   (§4.4): the moment-of-choice visibility the advisory doctrine requires, at chip rank
+   instead of a repeated verdict box. */
+function healthVerdict(card, mode) {
+  const h = card.health || {};
+  const modes = mode ? (h[mode] ? [mode] : []) : Object.keys(h);
+  if (!modes.length) return null;
+  return { chip:'colour shift here', cls:'c-warn', short:'colour shift',
+           line:modes.map(m => m + ': ' + h[m]).join('  '),
+           hedge:'Measured on this Mac, not inherited from the model card. Kept so a '
+               + 'fix can be A/B’d against these numbers.' };
+}
+function measuredVerdict(card, mode) {
+  const m = (card.measured || {})[mode];
+  if (!m) {
+    return { chip:'first run = measurement', cls:'c-dim', unmeasured:true,
+             line:'This model has never run on this Mac in this mode.',
+             hedge:'The next run is the measurement, so it may take a while. No time is '
+                 + 'shown until one has been measured here — we never guess.' };
+  }
+  return { chip:'last ' + secs(m.wall_s) + ' · peak ' + gb(m.peak_bytes), cls:'c-dim',
+           line:'Last ' + mode + ' run here: ' + secs(m.wall_s) + ', peaked ' + gb(m.peak_bytes) + '.',
+           math:m.label || '',
+           hedge:'Measured phys_footprint of the ComfyUI process on this Mac, not an '
+               + 'estimate.' };
+}
+function diskVerdict(state) {
+  const cu = (state && state.curation) || {};
+  const d = cu.disk || {};
+  const dls = (state && state.downloads) || [];
+  const live = dls.filter(x => ['downloading', 'verifying'].includes(x.state));
+  if (!d.ok) {
+    return { chip:'⛁ disk unreadable', cls:'c-warn',
+             line:'Free space could not be read on this volume.',
+             hedge:'Sizes are still exact; only the free-space arithmetic is missing.' };
+  }
+  let pending = 0;
+  for (const c of (cu.picks || [])) {
+    if (live.some(x => x.pick === c.id)) pending += Number(c.need_bytes || 0);
+  }
+  const v = { chip:'⛁ ' + gb(d.free_bytes) + ' free', cls:pending ? 'c-gold' : '',
+              line:'Free now: ' + gb(d.free_bytes) + ' of ' + gb(d.total_bytes)
+                 + (pending ? ' · −' + gb(pending) + ' on this download' : ''),
+              math:'measured with statvfs on ' + (d.measured_at || '?'),
+              hedge:'This is the volume the weights land on, not the boot volume by '
+                  + 'assumption. Disk verdicts are advisory and never block a download.' };
+  return v;
+}
+function engineVerdict(state) {
+  const st = (state && state.comfy) || {};
+  if (st.up) {
+    return { chip:'ComfyUI ' + (st.version || '?'), cls:'', up:true,
+             line:'Running on port ' + st.port + '.',
+             math:'torch ' + (st.torch || '?') + ' · templates ' + (st.templates_version || '?'),
+             hedge:'One job at a time — ComfyUI runs them in order. You can leave this '
+                 + 'tab; the result is waiting when you come back.' };
+  }
+  return { chip:'engine off', cls:'c-bad', up:false,
+           line:'ComfyUI is not answering on port ' + (st.port || 8188) + '.',
+           math:st.error || '',
+           hedge:'Start it in MOT Deck → Components. Nothing here can run until it is up.' };
+}
+/* The model chip: ONE object carrying name, readiness and — when the selected model
+   has a measured defect — the amber mark, echoed from the sheet row's own chip. */
+function modelVerdict(card, mode, dl) {
+  if (!card) {
+    return { chip:'no model yet', cls:'c-warn', none:true,
+             line:'Nothing is on disk to generate with.',
+             hedge:'The two starter models are one download each; sizes are on the buttons.' };
+  }
+  const health = healthVerdict(card, mode);
+  const meas = measuredVerdict(card, mode);
+  const lic = licenseVerdict(card);
+  const live = dl && ['downloading', 'verifying'].includes(dl.state);
+  const v = {
+    chip:card.title + (live ? ' · ' + (dl.pct || 0) + '%'
+                            : health ? ' · ' + health.short : ' · ready'),
+    cls:health ? 'c-warn' : live ? 'c-gold' : '',
+    pct:live ? (dl.pct || 0) : null,
+    line:(health ? health.line : (card.total_h + ' on disk · ' + lic.chip)),
+    math:meas.chip === 'first run = measurement' ? '' : meas.line,
+    hedge:health ? health.hedge
+                 : (meas.unmeasured ? meas.hedge
+                                    : 'Click to open the models sheet — licence, files '
+                                    + 'and disk arithmetic live there.'),
+  };
+  return v;
+}
+
+/* PURE: how many text elements this page is standing at rest. Not used by the page —
+   it is the shape the gate test asserts against, kept here so the budget is a
+   published number rather than folklore. */
+const AT_REST_BUDGET = { regions:7, plusDiskChip:1 };
 
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts || {}));
@@ -392,326 +630,622 @@ async function load() {
   render();
 }
 
-/* ── header ─────────────────────────────────────────────────────────────────── */
+/* ══ TOOLTIPS — the v1.5.34 tipBind grammar, mirrored ══════════════════════════
+   The chip is a control: hover, tap, and keyboard all open it; Escape, scroll,
+   resize and leaving all close it. `title` is still set underneath as the
+   last-resort fallback — one payload, no second wording.
+
+   ⚠️ ONE THING IS NEW HERE vs index.html: a tooltip that carries a LINK (the licence
+   text) must be reachable with the pointer, so it drops `pointer-events:none` and
+   gets a short grace period on leave. A licence link that cannot be clicked would be
+   the "demoted into invisibility" failure the ledger forbids. */
+let _tipFor = null, _tipHideT = null;
+function tipNode() {
+  let t = $('tip');
+  if (!t) { t = document.createElement('div'); t.id = 'tip';
+            t.className = 'float-surface inert'; t.hidden = true;
+            t.setAttribute('role', 'tooltip'); document.body.appendChild(t);
+            t.addEventListener('mouseenter', () => clearTimeout(_tipHideT));
+            t.addEventListener('mouseleave', () => tipHide()); }
+  return t;
+}
+function tipHide() { const t = tipNode(); t.hidden = true; _tipFor = null; }
+function tipShow(el, html) {
+  const t = tipNode();
+  clearTimeout(_tipHideT);
+  t.innerHTML = html;
+  t.classList.toggle('inert', !/t-link/.test(html));
+  t.hidden = false;
+  _tipFor = el;
+  // Measured AFTER it is in the DOM and visible: an offsetWidth read on a hidden node
+  // is 0, which parks every tooltip at the left edge.
+  const r = el.getBoundingClientRect();
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = Math.min(r.left, window.innerWidth - w - 10);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 8);
+  t.style.left = Math.max(10, left) + 'px';
+  t.style.top = top + 'px';
+}
+function tipBind(el, html, plain) {
+  if (!el) return;
+  el.classList.add('tipped');
+  if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+  el.title = plain || '';
+  el._tipHtml = html;
+  if (_tipFor === el) tipShow(el, html);
+  if (el._tipWired) return;
+  el._tipWired = true;
+  el.addEventListener('mouseenter', () => tipShow(el, el._tipHtml));
+  el.addEventListener('mouseleave', () => {
+    if (_tipFor !== el) return;
+    clearTimeout(_tipHideT);
+    _tipHideT = setTimeout(() => { if (_tipFor === el) tipHide(); }, 220);
+  });
+  el.addEventListener('focus', () => tipShow(el, el._tipHtml));
+  el.addEventListener('blur', () => { if (_tipFor === el) tipHide(); });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); e.stopPropagation();
+      if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
+    }
+  });
+}
+/* PURE: the tooltip body for one verdict object. The chip is NOT repeated inside it —
+   the chip is the thing being hovered and is still on screen. */
+function tipHtml(v) {
+  if (!v) return '';
+  let h = '';
+  if (v.line)  h += '<span class="t-line">' + esc(v.line) + '</span>';
+  if (v.math)  h += '<span class="t-math">' + esc(v.math) + '</span>';
+  if (v.hedge) h += '<span class="t-hedge">' + esc(v.hedge) + '</span>';
+  if (v.link)  h += '<span class="t-link"><a href="' + esc(v.link) + '" target="_blank" ' +
+                    'rel="noopener">' + esc(v.linkLabel || 'read more ↗') + '</a></span>';
+  return h;
+}
+function tipPlain(v) {
+  if (!v) return '';
+  return [v.line, v.math, v.hedge, v.link].filter(Boolean).join('  ');
+}
+/* Verdict objects are handed to the markup by KEY, never by serialising them into an
+   attribute: the payload stays out of the DOM text entirely, which is what keeps the
+   at-rest prose count honest. */
+let TIPS = {}, _tipSeq = 0;
+function tipRef(v) {
+  if (!v || (!v.line && !v.math && !v.hedge)) return '';
+  const k = 't' + (++_tipSeq);
+  TIPS[k] = v;
+  return ' data-tip="' + k + '"';
+}
+function wireTips(root) {
+  (root || document).querySelectorAll('[data-tip]').forEach(el => {
+    const v = TIPS[el.dataset.tip];
+    if (v) tipBind(el, tipHtml(v), tipPlain(v));
+  });
+}
+function chipHtml(v, extra) {
+  if (!v) return '';
+  return '<span class="chip ' + esc(v.cls || '') + ' ' + (extra || '') + '"' +
+         tipRef(v) + '>' + esc(v.chip) + '</span>';
+}
+
+/* ══ THE OVERFLOW MENU — where the power exits live ════════════════════════════
+   Graph, Open-template and the licence text are kept (they are provenance gold) and
+   made invisible at rest, which is Debi's fork answer 3. */
+function menuNode() {
+  let m = $('menu');
+  if (!m) { m = document.createElement('div'); m.id = 'menu';
+            m.className = 'float-surface'; m.hidden = true; document.body.appendChild(m); }
+  return m;
+}
+function menuHide() { menuNode().hidden = true; }
+function menuShow(anchor, items) {
+  const m = menuNode();
+  m.innerHTML = items.map(it => it.href
+    ? '<a href="' + esc(it.href) + '" target="_blank" rel="noopener">' + esc(it.label) + '</a>'
+    : '<button data-act="' + esc(it.act) + '"' +
+      (it.pick ? ' data-pick="' + esc(it.pick) + '"' : '') +
+      (it.job ? ' data-job="' + esc(it.job) + '"' : '') +
+      (it.fn ? ' data-fn="' + esc(it.fn) + '" data-sf="' + esc(it.sf || '') + '"' : '') +
+      '>' + esc(it.label) + '</button>').join('');
+  m.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10)) + 'px';
+  m.style.top = (r.bottom + h > window.innerHeight - 10
+                 ? Math.max(10, r.top - h - 6) : r.bottom + 6) + 'px';
+}
+
+/* ── ① header ───────────────────────────────────────────────────────────────── */
 function renderHeader() {
-  const st = (S.state && S.state.comfy) || {};
-  const cu = (S.state && S.state.curation) || {};
-  const p = $('p-comfy');
-  p.innerHTML = '<i class="dot ' + (st.up ? 'on' : 'off') + '"></i><span>' +
-    (st.up ? 'ComfyUI <b>' + esc(st.version || '?') + '</b> · :' + esc(st.port)
-           : 'ComfyUI not running on :' + esc(st.port || '8188')) + '</span>';
-  p.title = st.up ? ('torch ' + (st.torch || '?')) : (st.error || '');
-  const d = cu.disk || {};
-  $('p-disk').innerHTML = d.ok
-    ? 'disk <b>' + gb(d.free_bytes) + '</b> free of ' + gb(d.total_bytes)
-    : 'disk — unreadable';
-  $('p-disk').title = d.ok ? ('measured on ' + d.measured_at) : '';
-  const g = S.gallery || {};
-  $('p-gal').innerHTML = 'gallery <b>' + esc(g.total_h || '0') + '</b> · ' +
-    ((g.items || []).length) + ' item' + ((g.items || []).length === 1 ? '' : 's');
-  const a = $('a-comfy');
-  a.href = st.url || '#';
-  $('f-models').textContent = cu.models_dir || '—';
-  $('f-output').textContent = (S.state && S.state.output_dir) || '—';
+  const ev = engineVerdict(S.state);
+  const e = $('c-engine');
+  e.className = 'chip ' + ev.cls;
+  e.innerHTML = '<i class="dot ' + (ev.up ? 'on' : 'off') + '"></i><span>' + esc(ev.chip) + '</span>';
+  tipBind(e, tipHtml(ev), tipPlain(ev));
+
+  /* THE DISK CHIP IS ALWAYS ON (Debi's fork answer 2, amending the researcher's
+     contextual-only proposal). It goes gold while a download is spending the space. */
+  const dv = diskVerdict(S.state);
+  const d = $('c-disk');
+  d.className = 'chip ' + dv.cls;
+  d.textContent = dv.chip;
+  tipBind(d, tipHtml(dv), tipPlain(dv));
+
+  /* The stock-node fence says NOTHING when it is intact — which is the normal case
+     and therefore the normal appearance. The essay moved to Help. */
   const cn = ((S.state && S.state.fence && S.state.fence.custom_nodes) || []);
-  $('fence-line').textContent = cn.length
-    ? cn.length + ' custom node pack(s) present: ' + cn.join(', ') + ' — NOT installed by this page'
-    : 'verified empty just now';
-  $('stamp').textContent = 'comfy-s1-2026-08-29a · ' + new Date().toLocaleTimeString();
+  const f = $('c-fence');
+  f.classList.toggle('hide', !cn.length);
+  if (cn.length) {
+    const v = { chip:cn.length + ' node packs — not ours', cls:'c-warn',
+                line:cn.join(', '),
+                hedge:'Third-party node packs are arbitrary code loaded into the engine '
+                    + 'at startup and have twice shipped credential stealers. This page '
+                    + 'installs none and submits only stock node types.' };
+    f.textContent = v.chip;
+    tipBind(f, tipHtml(v), tipPlain(v));
+  }
+  $('stamp').textContent = 'comfy-v2-2026-08-29b · ' + new Date().toLocaleTimeString();
 }
 
-/* ── models ─────────────────────────────────────────────────────────────────── */
-function renderModels() {
-  const cu = (S.state && S.state.curation) || {};
-  const picks = cu.picks || [];
-  const dls = (S.state && S.state.downloads) || [];
-  const anyDown = picks.some(c => c.downloaded);
-  $('empty').classList.toggle('hide', anyDown);
-  $('empty-cap').textContent = (cu.cap || {}).text || '';
-  const cap = cu.cap || {};
-  $('cap-line').innerHTML =
-    '<span class="' + (cap.over ? 'verdict tight' : '') + '" style="display:block' +
-      (cap.over ? '' : ';padding:0;border:0;background:none') + '">' +
-      esc(cap.text || '') + '</span>' +
-    '<div style="margin-top:6px">Sizes below are HEAD-verified against HuggingFace and ' +
-    'every file is checked against a pinned sha256 after it lands; a file that fails ' +
-    'either check is <b>never</b> reported as downloaded.</div>';
-
-  $('models').innerHTML = picks.length ? picks.map(c => {
-    const dl = dls.filter(d => d.pick === c.id).slice(-1)[0];
-    const act = cardAction(c, dl);
-    const v = c.disk || {};
-    const meas = c.measured || {};
-    const measLines = Object.keys(meas).map(m =>
-      '<div class="note">' + esc(m) + ' — last run <b>' + secs(meas[m].wall_s) +
-      '</b> · peaked ' + gb(meas[m].peak_bytes) + ' <span class="faint">(measured ' +
-      'phys_footprint of the ComfyUI process, not an estimate)</span></div>').join('');
-    return '<div class="mcard ' + (c.starter ? 'starter' : '') + '">' +
-      '<div class="row"><span class="card-title">' + esc(c.title) + '</span>' +
-        (c.starter ? '<span class="badge green">starter · ' + esc(c.role || '') + '</span>'
-                   : '<span class="badge">optional</span>') +
-        '<span class="badge ' + esc(c.license_badge) + '" title="' + esc(c.license_note) + '">' +
-          esc(c.license) + '</span></div>' +
-      '<div class="note">' + esc(c.vendor) + ' · does ' + c.modes.join(' + ') +
-        ' · template <span class="mono">' + esc(c.template) + '</span></div>' +
-      '<div class="note">' + esc(c.note) + '</div>' +
-      '<div class="flist">' + c.files.map(f =>
-        '<div class="frow"><span class="fn">' + esc(f.directory) + '/' + esc(f.name) + '</span>' +
-        '<span class="fs">' + gb(f.bytes) + '</span>' +
-        '<span class="fs" style="color:var(--' +
-          (f.state === 'present' ? 'ok' : f.state === 'corrupt' ? 'bad' : 'faint') + ')">' +
-          esc(f.state) + '</span></div>' +
-        (f.shared ? '<div class="frow faint" style="font-size:10.5px">↳ ' + esc(f.shared) + '</div>' : '')
-      ).join('') + '</div>' +
-      (c.registry_drift ? '<div class="warnbox"><b>registry drift.</b> ' + esc(c.registry_drift) + '</div>' : '') +
-      (c.corrupt && c.corrupt.length
-        ? '<div class="warnbox"><b>wrong size on disk:</b> ' + esc(c.corrupt.join(', ')) +
-          '. That is a truncated or stale file — it will not be used until it is re-downloaded.</div>' : '') +
-      '<div class="verdict ' + esc(v.level || '') + '">' + esc(v.text || '') + '</div>' +
-      /* THE MEASURED VERDICT PER MODE, on the card, before the button. It is the
-         honest counterweight to a curated list: being curated is not a promise that
-         the output is good on THIS machine, and where we have measured otherwise we
-         say so in the same place we offer the download. */
-      Object.keys(c.health || {}).map(m =>
-        '<div class="verdict tight"><b>' + esc(m) + ':</b> ' + esc(c.health[m]) + '</div>'
-      ).join('') +
-      measLines +
-      (dl ? '<div class="bar"><i style="width:' + (dl.pct || 0) + '%"></i></div>' +
-            '<div class="note">' + esc(dl.state) + ' · ' + esc(dl.done_h) + ' of ' +
-            esc(dl.total_h) + ' (' + (dl.pct || 0) + '%)</div>' +
-            (dl.error ? '<div class="warnbox">' + esc(dl.error) + '</div>' : '') : '') +
-      '<div class="row">' +
-        '<button class="' + (act.done ? '' : 'primary') + '" ' + (act.act ? '' : 'disabled') +
-          ' data-act="' + esc(act.act || '') + '" data-pick="' + esc(c.id) + '"' +
-          (dl ? ' data-dl="' + esc(dl.id) + '"' : '') + '>' + esc(act.label) + '</button>' +
-        '<button class="ghost" data-act="template" data-pick="' + esc(c.id) + '" ' +
-          'title="Copies this model\'s stock template into the ComfyUI tab\'s workflow list">' +
-          'Open template in ComfyUI</button>' +
-        '<a class="note" href="' + esc(c.license_url) + '" target="_blank">licence text ↗</a>' +
-      '</div>' +
-    '</div>';
-  }).join('') : '<div class="okbox">The curated list could not be built — the vendored '
-    + 'workflow-template registry is not readable in this install. The ComfyUI tab still '
-    + 'works; this page needs that registry to know what to offer.</div>';
-
-  $('empty-cta').innerHTML = picks.filter(c => c.starter).map(c =>
-    '<button class="primary" data-act="download" data-pick="' + esc(c.id) + '">' +
-    esc(c.role === 'video' ? 'Get the video model' : 'Get the image model') + ' — ' +
-    esc(c.total_h) + ', ' + esc(c.license) + '</button>').join('') +
-    '<span class="note">Two downloads, one per job. Take either on its own.</span>';
+/* ── helpers over the state ─────────────────────────────────────────────────── */
+function picks()      { return ((S.state && S.state.curation) || {}).picks || []; }
+function usablePicks(){ return picks().filter(c => c.downloaded); }
+function dlFor(id)    { return ((S.state && S.state.downloads) || [])
+                          .filter(d => d.pick === id).slice(-1)[0] || null; }
+/* ⚠️ THE MODE TOGGLE IS THE PRIMARY CHOICE, THE MODEL FOLLOWS IT — and the model that
+   follows is the one MEASURED to be good at it. The first draft let the toggle show
+   only the current model's modes, which had two defects the walk caught at once: with
+   the video model selected the page opened on a mode whose own measured verdict is
+   "the colours are wrong", and with the image model selected there was no way to reach
+   video at all. Picking for the user from the evidence we already hold is the
+   autocorrect standard; the override lives one tap away in the sheet. */
+const MODE_ORDER = ['image', 'video'];
+function modesAvailable() {
+  const s = new Set();
+  usablePicks().forEach(c => c.modes.forEach(m => s.add(m)));
+  const out = MODE_ORDER.filter(m => s.has(m));
+  return out.length ? out : ['image'];
 }
-
-/* ── the generate form ──────────────────────────────────────────────────────── */
-function usablePicks() {
-  const cu = (S.state && S.state.curation) || {};
-  return (cu.picks || []).filter(c => c.downloaded);
+function pickFor(mode) {
+  const can = usablePicks().filter(c => c.modes.includes(mode));
+  if (!can.length) return usablePicks()[0] || null;
+  return can.find(c => !(c.health || {})[mode] && c.role === mode)
+      || can.find(c => !(c.health || {})[mode])
+      || can[0];
 }
-function currentPick() {
+function currentPick(){
   const list = usablePicks();
-  return list.find(c => c.id === S.form.pick) || list[0] || null;
+  const mode = S.form.mode;
+  const held = list.find(c => c.id === S.form.pick);
+  if (held && (!mode || held.modes.includes(mode))) return held;
+  return pickFor(mode || modesAvailable()[0]) || list[0] || null;
 }
-function renderMake() {
-  const list = usablePicks();
-  const st = (S.state && S.state.comfy) || {};
-  if (!list.length) {
-    $('make-body').innerHTML = '<div class="okbox">No model is on disk yet, so there is ' +
-      'nothing to generate with. Pick one above — the starter set is one download and ' +
-      'covers both stills and clips.</div>';
+function liveJob() {
+  return ((S.state && S.state.jobs) || [])
+    .filter(j => ['running', 'finishing'].includes(j.state)).slice(-1)[0] || null;
+}
+function lastJob() {
+  const js = (S.state && S.state.jobs) || [];
+  return js.length ? js[js.length - 1] : null;
+}
+function items() { return ((S.gallery || {}).items) || []; }
+function selected() {
+  const list = items();
+  return list.find(i => i.filename === S.sel && i.state !== 'missing')
+      || list.find(i => i.state === 'ok') || list[0] || null;
+}
+function fileSrc(it) {
+  return '/api/comfy/file?filename=' + encodeURIComponent(it.filename) +
+         '&subfolder=' + encodeURIComponent(it.subfolder || '');
+}
+function itemVerdict(it) {
+  if (it.state === 'missing')
+    return { chip:'file is gone', cls:'c-bad',
+             line:'This surface made it, but the file is no longer on disk.',
+             hedge:'Nothing here deletes output. It was removed outside MOT Deck.' };
+  if (it.state === 'size_changed')
+    return { chip:'size changed', cls:'c-warn',
+             line:'The file changed size since it was made.',
+             hedge:'It may be truncated. The size shown is what is on disk right now.' };
+  if (it.state === 'orphan')
+    return { chip:'no record', cls:'c-dim',
+             line:'Found on disk; this surface has no record of making it.',
+             hedge:'Keep-everything means the disk is the truth, so it is listed anyway.' };
+  return null;
+}
+
+/* ── ② the result stage ─────────────────────────────────────────────────────── */
+function renderStage() {
+  const body = $('stage-body');
+  const stage = $('stage');
+  const caps = $('caps');
+  const job = liveJob();
+
+  /* FIRST RUN (Debi's fork answer 4): the composer stays the product's face and the
+     stage hosts the invitation with the two sized Get buttons. */
+  if (!usablePicks().length && !job) {
+    /* image first: the still is the shorter, cheaper, more certain first success, and
+       it is the one the video model was measured to be bad at. */
+    const st = picks().filter(c => c.starter)
+      .sort((a, b) => (a.role === 'image' ? 0 : 1) - (b.role === 'image' ? 0 : 1));
+    stage.className = 'empty';
+    body.innerHTML =
+      '<div id="stage-invite">' +
+        '<h2 class="say invite">Turn a sentence into a picture or a clip — on this Mac, offline.</h2>' +
+        '<div class="row" style="justify-content:center">' +
+        /* the licence rides ON the button's hover — never as a third control beside it */
+        st.map(c => '<button class="primary" data-act="download" data-pick="' + esc(c.id) + '"' +
+          tipRef(inviteVerdict(c)) + '>' +
+          esc(c.role === 'video' ? 'Get the video model' : 'Get the image model') +
+          ' · ' + esc(c.total_h) + '</button>').join('') +
+        '</div>' +
+        '<p class="say">Nothing downloads until you press. Every size is exact.</p>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
     return;
   }
-  const c = currentPick();
-  if (S.form.pick !== c.id) { S.form.pick = c.id; S.form.mode = null; }
-  const modes = c.modes;
-  if (!modes.includes(S.form.mode)) S.form.mode = modes[0];
-  const d = (c.defaults || {})[S.form.mode] || {};
-  const meas = (c.measured || {})[S.form.mode];
-  const f = S.form;
 
-  $('make-body').innerHTML =
-    (!st.up ? '<div class="warnbox"><b>ComfyUI is not running</b> on port ' + esc(st.port) +
-      '. Start it from MOT Deck → Components, then press Refresh. Nothing here can run ' +
-      'until it is up. <span class="faint">' + esc(st.error || '') + '</span></div>' : '') +
-    '<div class="row" style="margin-bottom:12px">' +
-      '<label style="width:auto"><span class="caps">model</span>' +
-        '<select id="f-pick">' + list.map(x =>
-          '<option value="' + esc(x.id) + '"' + (x.id === c.id ? ' selected' : '') + '>' +
-          esc(x.title) + '</option>').join('') + '</select></label>' +
-      '<div><span class="caps">what</span><div class="seg" id="f-mode">' +
-        modes.map(m => '<button data-mode="' + m + '" class="' + (m === f.mode ? 'on' : '') + '">' +
-          (m === 'image' ? 'Image' : 'Video clip') + '</button>').join('') + '</div></div>' +
-      '<div class="grow"></div>' +
-      '<span class="note">' + (meas
-        ? 'last ' + esc(f.mode) + ' run here: <b>' + secs(meas.wall_s) + '</b>, peaked ' + gb(meas.peak_bytes)
-        : 'never run on this Mac — the next one is the measurement, so it may take a while') +
-      '</span>' +
-    '</div>' +
-    /* If this exact model+mode has already been measured and its OUTPUT found wanting,
-       the warning belongs HERE — beside the button — not only up on the model card. */
-    ((c.health || {})[f.mode]
-      ? '<div class="verdict tight" style="margin-bottom:10px"><b>measured on this Mac: </b>'
-        + esc(c.health[f.mode]) + '</div>' : '') +
-    '<label style="margin-bottom:10px"><span class="caps">prompt</span>' +
-      '<textarea id="f-prompt" placeholder="a fox moving quickly through a snowy forest, morning light">' +
-      esc(f.prompt || '') + '</textarea></label>' +
-    '<details style="margin-bottom:10px"><summary class="caps">more — size, steps, seed' +
-      (f.mode === 'video' ? ', length' : '') + ', negative prompt</summary>' +
-      '<div class="grid4" style="margin-top:8px">' +
+  /* GENERATING: the stage is the progress surface. ETA only from a measured rate —
+     there is none here yet, so there is none shown. */
+  if (job) {
+    stage.className = 'empty';
+    const pct = (job.step && job.step_max) ? Math.round(100 * job.step / job.step_max) : null;
+    const el = Math.max(0, Math.round((Date.now() / 1000) - (job.submitted || 0)));
+    const pv = { chip:'step ' + (job.step || 0) + ' of ' + (job.step_max || '?'), cls:'c-gold',
+                 line:job.pick_title + ' · ' + job.mode + ' · ' + (job.shape || ''),
+                 math:'elapsed ' + secs(el),
+                 hedge:'One job at a time — ComfyUI runs them in order. You can leave '
+                     + 'this tab; the result is waiting when you come back.' };
+    body.innerHTML =
+      '<div class="prog">' +
+        '<div class="bar"><i style="width:' + (pct == null ? 6 : pct) + '%"></i></div>' +
+        '<div class="row" style="justify-content:center">' +
+          chipHtml(pv) +
+          (job.ws === false ? chipHtml({ chip:'(polling)', cls:'c-dim',
+            line:'The live progress feed dropped.',
+            hedge:'The result itself never depended on it — it is read from ComfyUI’s '
+                + 'history, which is polled unconditionally.' }) : '') +
+          (job.peak_bytes ? chipHtml({ chip:'peak ' + gb(job.peak_bytes), cls:'c-dim',
+            line:'Peak phys_footprint of the ComfyUI process so far.',
+            hedge:'Measured, not predicted.' }) : '') +
+        '</div>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
+    return;
+  }
+
+  const it = selected();
+  if (!it) {
+    stage.className = 'empty';
+    body.innerHTML = '<p class="say">What you make lands here and stays.</p>';
+    caps.innerHTML = '';
+    return;
+  }
+  stage.className = '';
+  const src = fileSrc(it);
+  body.innerHTML = it.state === 'missing'
+    ? '<p class="say bad">The file for this result is gone from disk.</p>'
+    : (it.kind === 'video'
+        ? '<video src="' + src + '" controls loop muted playsinline preload="metadata"></video>'
+        : it.kind === 'image'
+          ? '<img src="' + src + '" alt="">'
+          : '<p class="say">' + esc(it.kind) + '</p>');
+
+  /* THE CAPTION CHIP ROW — chips, not prose, and the same job record that feeds the
+     write-back. The seed chip is click-to-reuse. */
+  const iv = itemVerdict(it);
+  caps.innerHTML =
+    (it.shape ? chipHtml({ chip:it.shape, cls:'c-dim', line:'The size actually rendered.',
+        hedge:'Written back into More ▸ so what you see is what you can re-run.' }) : '') +
+    (it.seed != null ? '<span class="chip c-dim act" data-act="reuse-seed" data-seed="' +
+        esc(it.seed) + '"' + tipRef({ chip:'seed', line:'The seed this run drew.',
+          math:String(it.seed),
+          hedge:'Click to put it back in the seed field. The field itself resets to '
+              + 'random after every run, on purpose.' }) + '>seed ' + esc(it.seed) + '</span>' : '') +
+    (it.wall_s != null ? chipHtml({ chip:secs(it.wall_s), cls:'c-dim',
+        line:'Wall time of this run.', hedge:'Measured here, never estimated.' }) : '') +
+    (it.peak_bytes ? chipHtml({ chip:'peak ' + gb(it.peak_bytes), cls:'c-dim',
+        line:'Peak phys_footprint of the ComfyUI process during this run.',
+        hedge:'Measured, not predicted.' }) : '') +
+    chipHtml({ chip:it.size_h || '—', cls:'c-dim', line:it.pick_title || 'on disk',
+        math:it.prompt || '', hedge:'Kept forever; delete in Finder via Reveal.' }) +
+    (iv ? chipHtml(iv) : '') +
+    '<span class="grow"></span>' +
+    '<button class="ghost" data-act="reveal" data-fn="' + esc(it.filename) +
+      '" data-sf="' + esc(it.subfolder || '') + '">Reveal</button>' +
+    '<button class="ghost ovf" data-act="item-menu" data-fn="' + esc(it.filename) +
+      '" data-sf="' + esc(it.subfolder || '') + '" data-job="' + esc(it.job || '') +
+      '" aria-label="More actions">⋯</button>';
+  wireTips(caps);
+}
+
+/* ── ③ the recent strip + All results ───────────────────────────────────────── */
+function renderStrip() {
+  const list = items();
+  const g = S.gallery || {};
+  const sel = selected();
+  /* "0 items · nothing" is arithmetic, not English — an empty gallery says so plainly */
+  const tot = { chip:list.length
+                  ? (list.length + ' item' + (list.length === 1 ? '' : 's') + ' · ' +
+                     (g.total_h || '0'))
+                  : 'nothing kept yet', cls:'c-dim',
+                line:'Everything is kept — nothing here is ever deleted automatically.',
+                math:g.output_dir || '',
+                hedge:'Pruning is deliberate: Reveal an item and delete it in Finder.' };
+  const thumb = (it, cls) => {
+    const src = fileSrc(it);
+    const inner = it.state === 'missing' ? '' :
+      (it.kind === 'video' ? '<video src="' + src + '" muted preload="metadata"></video>'
+       : it.kind === 'image' ? '<img src="' + src + '" loading="lazy" alt="">' : '');
+    return '<button class="thumb ' + cls +
+      (sel && sel.filename === it.filename ? ' on' : '') +
+      (it.state === 'missing' ? ' gone' : it.state === 'ok' ? '' : ' bad') +
+      '" data-act="select" data-fn="' + esc(it.filename) + '" title="' +
+      esc((it.prompt || it.filename).slice(0, 120)) + '">' + inner + '</button>';
+  };
+  $('strip').innerHTML = list.length
+    ? list.slice(0, 8).map(it => thumb(it, '')).join('') +
+      chipHtml(tot) +
+      /* "All results ▸" is offered whenever there is anything to show, not only past
+         the strip's cut-off: it is Debi's fork answer 1 and it is how you get the big
+         grid without leaving the page. It expands IN PLACE, under the strip. */
+      '<button class="ghost" data-act="all">' +
+        (S.all ? 'Hide results' : 'All results ▸') + '</button>'
+    : chipHtml(tot);
+  $('allres').classList.toggle('hide', !S.all);
+  $('allres').innerHTML = S.all ? list.map(it => thumb(it, '')).join('') : '';
+  wireTips($('strip'));
+}
+
+/* ── ④⑤⑥⑦ the composer ─────────────────────────────────────────────────────── */
+function renderComposer() {
+  const allModes = modesAvailable();
+  if (!allModes.includes(S.form.mode)) S.form.mode = allModes[0];
+  const c = currentPick();
+  if (c && S.form.pick !== c.id) S.form.pick = c.id;
+  const f = S.form;
+  const ev = engineVerdict(S.state);
+  const mv = modelVerdict(c, f.mode, c ? dlFor(c.id) : null);
+  const meas = c ? measuredVerdict(c, f.mode) : null;
+  const d = (c && (c.defaults || {})[f.mode]) || {};
+  const dirty = ['width', 'height', 'steps', 'frames', 'fps'].some(
+    k => f[k] != null && d[k] != null && Number(f[k]) !== Number(d[k])) ||
+    (f.seed != null && f.seed !== '') ||
+    (f.negative != null && c && f.negative !== c.negative_default);
+
+  const prompt = $('f-prompt');
+  if (prompt && document.activeElement !== prompt && (f.prompt || '') !== prompt.value)
+    prompt.value = f.prompt || '';
+
+  $('crow').innerHTML =
+    '<div class="seg" id="f-mode">' + allModes.map(m =>
+      '<button data-mode="' + m + '" class="' + (m === f.mode ? 'on' : '') + '">' +
+      (m === 'image' ? 'Image' : 'Clip') + '</button>').join('') + '</div>' +
+    '<span class="chip act ' + esc(mv.cls) + '" data-act="sheet"' + tipRef(mv) + '>' +
+      esc(mv.chip) + '</span>' +
+    (meas && meas.unmeasured && c ? chipHtml(meas) : '') +
+    '<button class="ghost' + (dirty ? ' dotted' : '') + '" data-act="more">More ' +
+      (S.more ? '▾' : '▸') + '</button>' +
+    '<span class="grow"></span>' +
+    (!ev.up
+      /* ENGINE DOWN: one short line WITH an action, not a warnbox essay. The old
+         paragraph lives in the engine chip's hover and in Help. */
+      ? '<p class="say"><b>Engine is off.</b> Start it in MOT Deck → Components.</p>'
+      : '') +
+    '<button class="primary" data-act="' + (liveJob() ? 'stop' : 'go') + '"' +
+      ((S.busy || !c || !ev.up) && !liveJob() ? ' disabled' : '') + '>' +
+      (liveJob() ? 'Stop' : S.busy ? 'Submitting…' : 'Generate') + '</button>';
+
+  /* MORE ▸ — ONE disclosure gate, closed by default, with a dot when anything under
+     it differs from the template's defaults (hidden edits are never silent). */
+  $('more').classList.toggle('hide', !S.more || !c);
+  if (S.more && c) {
+    $('more').innerHTML =
+      '<div class="grid4">' +
         fld('f-width', 'width', f.width != null ? f.width : d.width) +
         fld('f-height', 'height', f.height != null ? f.height : d.height) +
         fld('f-steps', 'steps', f.steps != null ? f.steps : d.steps) +
-        (f.mode === 'video' ? fld('f-frames', 'frames', f.frames != null ? f.frames : d.frames) : '') +
+        (f.mode === 'video' ? fld('f-frames', 'frames', f.frames != null ? f.frames : d.frames,
+          { chip:'frames', line:'Frame counts snap to 4n+1.',
+            hedge:'This model’s latents move four frames at a time. The number '
+                + 'actually used is written back here after the run.' }) : '') +
         (f.mode === 'video' ? fld('f-fps', 'fps', f.fps != null ? f.fps : d.fps) : '') +
         '<label><span class="caps">seed</span><input id="f-seed" placeholder="random" value="' +
           esc(f.seed == null ? '' : f.seed) + '"></label>' +
       '</div>' +
-      '<label style="margin-top:8px"><span class="caps">negative prompt</span>' +
-        '<textarea id="f-neg" style="min-height:44px">' +
-        esc(f.negative != null ? f.negative : c.negative_default) + '</textarea></label>' +
-      (f.mode === 'video'
-        ? '<div class="note" style="margin-top:6px">Frame counts snap to 4n+1 — this model\'s ' +
-          'latents move four frames at a time. The number actually used is shown on the result.</div>'
-        : '') +
-    '</details>' +
-    (S.validation && !S.validation.ok ? validationBox(S.validation) : '') +
-    (S.err ? '<div class="warnbox">' + esc(S.err) + '</div>' : '') +
-    '<div class="row"><button class="primary" id="btn-go"' + (S.busy ? ' disabled' : '') + '>' +
-      (S.busy ? 'Submitting…' : (f.mode === 'image' ? 'Generate image' : 'Generate clip')) +
-    '</button>' +
-    '<span class="note">One job at a time — ComfyUI runs them in order. You can leave this tab; ' +
-      'the result is waiting when you come back.</span></div>';
+      '<label><span class="caps">negative prompt</span>' +
+        '<textarea id="f-neg" rows="2">' +
+        esc(f.negative != null ? f.negative : c.negative_default) + '</textarea></label>';
+    wireTips($('more'));
+  } else { $('more').innerHTML = ''; }
+
+  /* THE MISSING-MODEL REFUSAL (the 409): one line naming the file, and the Get chip
+     that fixes it, right there. Never a generic "generation failed". */
+  $('refusal').innerHTML = refusalHtml();
+  wireTips($('crow'));
+  wireTips($('refusal'));
 }
-function fld(id, label, val) {
-  return '<label><span class="caps">' + label + '</span><input id="' + id +
-         '" inputmode="numeric" value="' + esc(val == null ? '' : val) + '"></label>';
+function fld(id, label, val, tip) {
+  return '<label><span class="caps"' + (tip ? tipRef(tip) : '') + '>' + label + '</span>' +
+         '<input id="' + id + '" inputmode="numeric" value="' +
+         esc(val == null ? '' : val) + '"></label>';
 }
-/* THE MISSING-MODEL REFUSAL: named, with the button that fixes it right there. A
-   generic "generation failed" here is the exact dead end the doctrine forbids. */
-function validationBox(v) {
-  if (v.missing_models && v.missing_models.length) {
-    return '<div class="warnbox"><b>Cannot run — model file missing.</b><ul style="margin:6px 0 0 16px">' +
-      v.missing_models.map(m => '<li><span class="mono">' + esc(m.directory) + '/' + esc(m.name) +
-        '</span> (' + esc(m.size_h) + ') — ' + esc(m.how) + '</li>').join('') + '</ul>' +
-      '<div class="row" style="margin-top:8px">' + v.missing_models.slice(0, 1).map(m =>
-        '<button class="primary" data-act="download" data-pick="' + esc(m.pick) + '">Download ' +
-        esc(m.pick_title) + ' now</button>').join('') + '</div></div>';
+function refusalHtml() {
+  const v = S.validation;
+  if (v && !v.ok && v.missing_models && v.missing_models.length) {
+    const m = v.missing_models[0];
+    const dl = dlFor(m.pick);
+    /* ⚠️ "PRESS GET" WHILE IT IS DOWNLOADING IS A SMALL LIE, and this is the likeliest
+       moment to hit the refusal — so the live download is shown instead of a button
+       that would start nothing. The router says the same thing in `how`. */
+    const live = dl && ['downloading', 'verifying'].includes(dl.state);
+    return '<div class="row"><p class="say bad"><b>Missing:</b> ' + esc(m.name) +
+      ' (' + esc(m.size_h) + ')</p>' +
+      (live
+        ? chipHtml({ chip:'Downloading ' + (dl.pct || 0) + '%', cls:'c-gold',
+                     line:m.how, hedge:'It will run as soon as the file lands.' })
+        : '<button class="primary" data-act="download" data-pick="' + esc(m.pick) + '">Get ' +
+          esc(m.size_h) + '</button>') + '</div>';
   }
-  return '<div class="warnbox"><b>Cannot run.</b> ' + esc(v.reason || 'unknown') + '</div>';
+  if (v && !v.ok) return '<p class="say bad">' + esc(v.reason || 'cannot run') + '</p>';
+  if (S.err) return '<p class="say bad">' + esc(S.err) + '</p>';
+  return '';
 }
 
-/* ── queue ──────────────────────────────────────────────────────────────────── */
-function renderQueue() {
-  const jobs = ((S.state && S.state.jobs) || []).slice().reverse();
-  const live = jobs.filter(j => ['running', 'finishing'].includes(j.state));
-  $('sec-queue').classList.toggle('hide', !jobs.length);
-  $('queue').innerHTML = jobs.slice(0, 6).map(j => {
-    const pct = (j.step && j.step_max) ? Math.round(100 * j.step / j.step_max) : null;
-    return '<div class="mcard" style="margin-bottom:8px">' +
-      '<div class="row"><b>' + esc(j.pick_title) + '</b>' +
-        '<span class="badge">' + esc(j.mode) + '</span>' +
-        '<span class="note">' + esc(j.shape || '') + ' · seed ' + esc(j.seed) + '</span>' +
-        '<span class="grow"></span><span class="note">' + esc(j.state) + '</span></div>' +
-      '<div class="note">' + esc((j.prompt || '').slice(0, 140)) + '</div>' +
-      (pct != null ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
-        '<div class="note">step ' + j.step + ' of ' + j.step_max +
-        (j.ws === false ? ' <span class="faint">(live feed dropped — polling instead)</span>' : '') +
-        '</div>' : '') +
-      (j.peak_bytes ? '<div class="note faint">peak so far ' + gb(j.peak_bytes) + '</div>' : '') +
-      (j.error ? '<div class="warnbox">' + esc(j.error) + '</div>' : '') +
-      (j.wall_s != null ? '<div class="note">took ' + secs(j.wall_s) +
-        (j.peak_bytes ? ' · peaked ' + gb(j.peak_bytes) : '') + '</div>' : '') +
-      (['running', 'finishing'].includes(j.state)
-        ? '<div class="row"><button data-act="cancel-job" data-job="' + esc(j.id) + '">Stop</button></div>'
-        : '') +
-    '</div>';
-  }).join('');
-  return live.length;
+/* ── the models sheet ───────────────────────────────────────────────────────── */
+function renderSheet() {
+  $('scrim').hidden = !S.sheet;
+  if (!S.sheet) { $('sheet').innerHTML = ''; return; }
+  const cu = (S.state && S.state.curation) || {};
+  const cards = cu.picks || [];
+  const dv = diskVerdict(S.state);
+  const cap = cu.cap || {};
+  const st = (S.state && S.state.comfy) || {};
+  $('sheet').innerHTML =
+    '<div class="row"><h2>Models</h2><span class="grow"></span>' +
+      chipHtml(dv) +
+      '<button class="ghost" data-act="refresh">Refresh</button>' +
+      '<a class="chip act" href="' + esc(st.url || '#') + '" target="_blank" rel="noopener">ComfyUI tab ↗</a>' +
+      '<button class="ghost" data-act="close-sheet" aria-label="Close">✕</button></div>' +
+    /* THE CAP-OVERSHOOT STATEMENT — Debi's ruling, kept verbatim, as ONE line and
+       nowhere else on the page. ⚠️ IT SITS ABOVE THE ROWS, not in the footer the IA
+       proposed: the sentence the bridge generates ends "…the smallest template-native
+       pair is the one below", and printing it under the rows would have made a true
+       sentence point at nothing. Placement follows the copy; the copy is generated
+       from the same bytes the rows are. */
+    (cap.text ? '<p class="say">' + esc(cap.text) + '</p>' : '') +
+    (cards.length ? cards.map(c => modelRow(c)).join('')
+      : '<p class="say">The curated list could not be built — the vendored ' +
+        'workflow-template registry is not readable in this install. The ComfyUI tab ' +
+        'still works.</p>');
+  wireTips($('sheet'));
 }
-
-/* ── gallery ────────────────────────────────────────────────────────────────── */
-function renderGallery() {
-  const g = S.gallery || { items: [], total_h: '0' };
-  $('gal-line').innerHTML = 'Everything is kept — <b>' + esc(g.total_h) + '</b> across ' +
-    ((g.items || []).length) + ' file(s) in <span class="mono">' + esc(g.output_dir || '') +
-    '</span>. Nothing here is ever deleted automatically.';
-  if (!(g.items || []).length) {
-    $('gallery').innerHTML = '<div class="okbox">Nothing generated yet. What you make ' +
-      'lands here and stays, across restarts.</div>';
-    return;
-  }
-  $('gallery').innerHTML = g.items.map(it => {
-    const src = '/api/comfy/file?filename=' + encodeURIComponent(it.filename) +
-                '&subfolder=' + encodeURIComponent(it.subfolder || '');
-    let thumb;
-    if (it.state === 'missing') thumb = '<div class="note" style="padding:10px">file is gone from disk</div>';
-    else if (it.kind === 'video') thumb = '<video src="' + src + '" muted loop playsinline controls preload="metadata"></video>';
-    else if (it.kind === 'image') thumb = '<img src="' + src + '" loading="lazy" alt="">';
-    else thumb = '<div class="note" style="padding:10px">' + esc(it.kind) + '</div>';
-    return '<div class="item ' + (it.state === 'ok' ? '' : 'bad') + '">' +
-      '<div class="thumb">' + thumb + '</div>' +
-      '<div class="meta">' +
-        '<div class="cap">' + esc(it.prompt || it.filename) + '</div>' +
-        '<div class="sub">' + esc(it.size_h || '—') + ' · ' + esc(it.pick_title || '') +
-          (it.shape ? ' · ' + esc(it.shape) : '') + (it.seed != null ? ' · seed ' + esc(it.seed) : '') + '</div>' +
-        (it.wall_s != null ? '<div class="sub">' + secs(it.wall_s) +
-          (it.peak_bytes ? ' · peaked ' + gb(it.peak_bytes) : '') + '</div>' : '') +
-        (it.state === 'missing' ? '<div class="sub" style="color:var(--bad)">missing — this ' +
-          'surface made it, but the file is no longer on disk</div>' : '') +
-        (it.state === 'size_changed' ? '<div class="sub" style="color:var(--warn)">the file ' +
-          'changed size since it was made — it may be truncated</div>' : '') +
-        (it.state === 'orphan' ? '<div class="sub faint">found on disk; no record of making it</div>' : '') +
-        '<div class="row" style="margin-top:4px">' +
-          '<button class="ghost" data-act="reveal" data-fn="' + esc(it.filename) +
-            '" data-sf="' + esc(it.subfolder || '') + '">Reveal</button>' +
-          (it.job ? '<button class="ghost" data-act="graph" data-job="' + esc(it.job) +
-            '" title="The exact API-format graph that produced this">Graph</button>' : '') +
-        '</div>' +
-      '</div></div>';
-  }).join('');
+function modelRow(c) {
+  const dl = dlFor(c.id);
+  const sv = stateVerdict(c, dl);
+  const lv = licenseVerdict(c);
+  const hv = healthVerdict(c, null);
+  /* the measurement for the mode this model is FOR — a video model's row quoting its
+     (defective) still-image timing would be a true number answering the wrong question */
+  const mv = measuredVerdict(c, c.role && c.modes.includes(c.role) ? c.role : c.modes[0]);
+  const drift = c.registry_drift
+    ? { chip:'registry drift', cls:'c-warn', line:c.registry_drift,
+        hedge:'The pinned file list is what would be downloaded.' } : null;
+  const open = S.manifest === c.id;
+  return '<div class="mrow" data-pick="' + esc(c.id) + '">' +
+    /* THE OVERRIDE. The composer picks the measured-good model for the chosen mode by
+       itself; this is where a user who disagrees says so, without a second control on
+       the resting page. The current one is marked by colour and aria-current, not by
+       another word on screen. */
+    (c.downloaded
+      ? '<button class="mname" data-act="use" data-pick="' + esc(c.id) + '"' +
+        (c.id === S.form.pick ? ' aria-current="true"' : '') + '>' + esc(c.title) + '</button>'
+      : '<span class="mname">' + esc(c.title) + '</span>') +
+    chipHtml({ chip:c.role || c.modes.join('+'), cls:'c-dim',
+               line:c.vendor, math:'template ' + c.template, hedge:c.note }) +
+    chipHtml({ chip:c.total_h, cls:'c-dim', line:'Total size of this model’s files.',
+               math:c.files.map(f => f.name + ' · ' + gb(f.bytes)).join('\n'),
+               hedge:'HEAD-verified against HuggingFace and sha256-pinned.' }) +
+    '<span class="row">' + chipHtml(lv) + (hv ? chipHtml(hv) : '') +
+      (drift ? chipHtml(drift) : '') + chipHtml(mv) + '</span>' +
+    '<span class="chip act ' + esc(sv.cls) + '"' + (sv.act ? ' data-act="' + esc(sv.act) +
+      '" data-pick="' + esc(c.id) + '"' + (sv.dl ? ' data-dl="' + esc(sv.dl) + '"' : '') : '') +
+      tipRef(sv) + '>' + esc(sv.chip) + '</span>' +
+    '<button class="ghost ovf" data-act="row-menu" data-pick="' + esc(c.id) +
+      '" aria-label="More actions">⋯</button>' +
+    (sv.pct != null ? '<i class="under" style="width:' + sv.pct + '%"></i>' : '') +
+    (open ? '<div class="manifest">' + c.files.map(f =>
+        '<div class="frow"><span class="fn">' + esc(f.directory) + '/' + esc(f.name) +
+        '</span><span class="fs">' + gb(f.bytes) + '</span>' +
+        chipHtml({ chip:f.state, cls:f.state === 'present' ? 'c-ok'
+                     : f.state === 'corrupt' ? 'c-bad' : 'c-dim',
+                   line:f.shared || (f.state === 'present' ? 'On disk at its pinned size.'
+                        : f.state === 'corrupt' ? 'Wrong size on disk.'
+                        : f.state === 'partial' ? 'Partly downloaded; the next attempt resumes.'
+                        : 'Not downloaded yet.'),
+                   math:f.on_disk_bytes != null ? gb(f.on_disk_bytes) + ' on disk' : '' }) +
+        '</div>').join('') + '</div>' : '') +
+  '</div>';
 }
 
 /* ⚠️ EACH SECTION RENDERS INSIDE ITS OWN try/catch, AND THAT IS NOT DEFENSIVE
-   BOILERPLATE — IT IS A WALKED DEFECT. During the adversarial pass ComfyUI was stopped
-   under a live page and ONE typo (a reference to an element the markup had lost)
-   threw inside renderModels(); render() unwound, and Models, Make something AND the
-   Gallery all painted EMPTY. The header still said "ComfyUI not running", so the page
-   read as "there is nothing here" rather than "this half is broken" — a dead end
-   dressed as an empty state, which is precisely the failure the graceful-absence rule
-   exists to stop, and it was invisible from the server side.
+   BOILERPLATE — IT IS A WALKED DEFECT. During the S1 adversarial pass ComfyUI was
+   stopped under a live page and ONE typo threw inside a renderer; render() unwound and
+   three sections painted EMPTY, which read as "there is nothing here" rather than
+   "this half is broken" — a dead end dressed as an empty state.
 
-   So a section that throws now says so, IN THAT SECTION, with the message; every other
+   So a section that throws now says so, IN THAT SECTION, in one line; every other
    section still renders; and the poll keeps running so a transient fault self-heals. */
 function section(name, el, fn) {
   try { return fn(); }
   catch (e) {
     try {
       const box = $(el);
-      if (box) box.innerHTML = '<div class="warnbox"><b>This section failed to draw.</b> '
-        + esc(String(e && e.message || e)) + ' <span class="faint">(' + esc(name)
-        + '; the rest of the page is unaffected, and it will retry on the next poll.)'
-        + '</span></div>';
+      if (box) box.innerHTML = '<p class="say bad">' + esc(name) + ' failed to draw: ' +
+        esc(String(e && e.message || e)) + ' — retrying on the next poll.</p>';
     } catch (e2) { /* the error path may never throw */ }
     return null;
   }
 }
 
 function render() {
+  TIPS = {};                     /* the registry is per-render: no stale verdicts */
+  /* A tooltip whose chip was just repainted away would hang over the page showing a
+     verdict for an element that no longer exists — the stale-hover lie, cheaply. */
+  if (_tipFor && !document.body.contains(_tipFor)) tipHide();
   section('header', 'pageerr', renderHeader);
-  section('models', 'models', renderModels);
-  section('make', 'make-body', renderMake);
-  const live = section('queue', 'queue', renderQueue);
-  section('gallery', 'gallery', renderGallery);
+  section('stage', 'stage-body', renderStage);
+  section('results', 'strip', renderStrip);
+  section('composer', 'crow', renderComposer);
+  section('models', 'sheet', renderSheet);
+  const live = liveJob();
   const dlLive = ((S.state && S.state.downloads) || [])
     .some(d => ['downloading', 'verifying'].includes(d.state));
   arm(live || dlLive ? 1000 : 15000);
+  writeBack();
+}
+
+/* ══ WRITE-BACK (the Pixelmator mechanic) ══════════════════════════════════════
+   When a run finishes, the values ACTUALLY used — the snapped frame count, the
+   resolved size, the steps — land in the ordinary More ▸ fields, so what the user
+   sees is what they can edit and re-run. The seed deliberately does NOT: it resets to
+   random after every run (the shipped behaviour, kept), and the drawn seed lives in
+   the caption chip, which is click-to-reuse. */
+function writeBack() {
+  const j = lastJob();
+  if (!j || j.state !== 'done' || S.wroteBack === j.id) return;
+  S.wroteBack = j.id;
+  const m = /(\d+)\s*×\s*(\d+)(?:\s*·\s*(\d+)f)?/.exec(j.shape || '');
+  if (m) {
+    S.form.width = Number(m[1]);
+    S.form.height = Number(m[2]);
+    if (m[3]) S.form.frames = Number(m[3]);
+  }
+  if (j.steps) S.form.steps = Number(j.steps);
+  S.form.seed = null;
+  if (S.more) section('composer', 'crow', renderComposer);
 }
 
 /* ── the timer + the live stream ────────────────────────────────────────────── */
 let timer = null, cadence = 0;
+/* ⚠️ THE TIMER MUST BE NULLED WHEN IT FIRES, AND THIS IS A WALKED DEFECT, INHERITED
+   FROM v1. The guard is "an already-armed timer at this cadence stands" — but a fired
+   setTimeout leaves its id in `timer`, still truthy, so after the very first tick every
+   later arm() took the early return and NOTHING WAS EVER SCHEDULED AGAIN. Measured
+   here on 2026-08-29: ComfyUI was killed under a live page and the header went on
+   saying "ComfyUI 0.34.1" and Generate stayed enabled for 36 s and counting, because
+   the SSE stream only speaks when a download or job publishes and the engine dying
+   publishes nothing. A surface whose whole value is a number that is true had quietly
+   stopped asking. Nulling the id in the callback makes the guard mean what it says. */
 function arm(ms) {
-  if (cadence === ms && timer) return;
+  if (timer && cadence === ms) return;
   cadence = ms;
   clearTimeout(timer);
-  timer = setTimeout(() => load(), ms);
+  timer = setTimeout(() => { timer = null; load(); }, ms);
 }
 try {
   const sse = new EventSource('/api/events');
@@ -736,67 +1270,147 @@ function readForm() {
 document.addEventListener('input', (e) => {
   if (e.target.id && e.target.id.startsWith('f-')) readForm();
 });
-document.addEventListener('change', (e) => {
-  if (e.target.id === 'f-pick') { readForm(); S.form.pick = e.target.value; S.validation = null; render(); }
-});
+
 /* NOT alert(): the app shell's WKWebView has no runJavaScriptAlertPanel delegate, so
    alert() shows nothing there — "Open template in ComfyUI" looked dead in the app while
    the template was in fact written. This toast renders in every host. */
 let toastTimer = null;
 function toast(msg, bad) {
-  let t = document.getElementById('toast');
+  let t = $('toast');
   if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
   t.className = bad ? 'bad' : '';
   t.textContent = msg;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.remove(), 9000);
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { tipHide(); menuHide(); if (S.sheet) { S.sheet = false; render(); } }
+}, true);
+window.addEventListener('scroll', () => { tipHide(); menuHide(); }, true);
+window.addEventListener('resize', () => { tipHide(); menuHide(); }, true);
+
 document.addEventListener('click', async (e) => {
+  const inMenu = e.target.closest('#menu');
+  if (!inMenu && !e.target.closest('[data-act$="-menu"]')) menuHide();
+  if (!e.target.closest('.tipped') && !e.target.closest('#tip')) tipHide();
+
   const modeBtn = e.target.closest('#f-mode button');
-  if (modeBtn) { readForm(); S.form.mode = modeBtn.dataset.mode; S.validation = null; render(); return; }
-  const b = e.target.closest('[data-act]');
-  if (b) {
-    const act = b.dataset.act;
-    if (act === 'download') {
-      b.disabled = true;
-      const r = await api('/api/comfy/download', { method:'POST', body: JSON.stringify({ pick: b.dataset.pick }) });
-      if (!r.ok) S.err = r.error;
-      await load();
-    } else if (act === 'cancel') {
-      await api('/api/comfy/download/' + b.dataset.dl + '/cancel', { method:'POST' });
-      await load();
-    } else if (act === 'cancel-job') {
-      await api('/api/comfy/jobs/' + b.dataset.job + '/cancel', { method:'POST' });
-      await load();
-    } else if (act === 'reveal') {
-      await api('/api/comfy/reveal', { method:'POST',
-        body: JSON.stringify({ filename: b.dataset.fn, subfolder: b.dataset.sf }) });
-    } else if (act === 'template') {
-      const r = await api('/api/comfy/open-template', { method:'POST',
-        body: JSON.stringify({ pick: b.dataset.pick }) });
-      toast(r.ok ? r.note : ('Could not write the template: ' + r.error), !r.ok);
-    } else if (act === 'graph') {
-      const r = await api('/api/comfy/graph/' + b.dataset.job);
-      if (r.ok) {
-        const w = window.open('', '_blank');
-        if (w) { w.document.title = 'graph'; const pre = w.document.createElement('pre');
-                 pre.textContent = JSON.stringify(r.graph, null, 2); w.document.body.appendChild(pre); }
-        else toast('This window cannot open a viewer tab — open ' + location.origin +
-                   '/comfy in a browser to read the graph.', true);
-      } else toast(r.error, true);
-    }
-    return;
-  }
-  if (e.target.id === 'btn-refresh') { load(); return; }
-  if (e.target.id === 'btn-go') {
+  if (modeBtn) {
     readForm();
+    S.form.mode = modeBtn.dataset.mode;
+    const p = pickFor(S.form.mode);
+    if (p) S.form.pick = p.id;
+    S.validation = null; render(); return;
+  }
+  if (e.target.id === 'scrim') { S.sheet = false; render(); return; }
+
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+
+  if (act === 'sheet')        { S.sheet = true; render(); }
+  else if (act === 'close-sheet') { S.sheet = false; render(); }
+  else if (act === 'more')    { readForm(); S.more = !S.more; render(); }
+  else if (act === 'all')     { S.all = !S.all; render(); }
+  else if (act === 'refresh') { await load(); }
+  else if (act === 'select')  { S.sel = b.dataset.fn; render(); }
+  else if (act === 'use') {
+    const p = picks().find(x => x.id === b.dataset.pick);
+    if (p) {
+      S.form.pick = p.id;
+      if (!p.modes.includes(S.form.mode)) S.form.mode = p.modes[0];
+      S.sheet = false; S.validation = null; render();
+    }
+  }
+  else if (act === 'reuse-seed') {
+    S.form.seed = Number(b.dataset.seed); S.more = true; render();
+    toast('Seed ' + b.dataset.seed + ' is in the seed field.');
+  }
+  else if (act === 'download') {
+    b.disabled = true;
+    const r = await api('/api/comfy/download', { method:'POST', body: JSON.stringify({ pick: b.dataset.pick }) });
+    if (!r.ok) { S.err = r.error; toast(r.error, true); }
+    await load();
+  }
+  else if (act === 'cancel') {
+    await api('/api/comfy/download/' + b.dataset.dl + '/cancel', { method:'POST' });
+    await load();
+  }
+  else if (act === 'stop') {
+    const j = liveJob();
+    if (j) await api('/api/comfy/jobs/' + j.id + '/cancel', { method:'POST' });
+    await load();
+  }
+  else if (act === 'reveal') {
+    const r = await api('/api/comfy/reveal', { method:'POST',
+      body: JSON.stringify({ filename: b.dataset.fn, subfolder: b.dataset.sf }) });
+    if (!r.ok) toast(r.error || 'could not reveal that file', true);
+  }
+  else if (act === 'row-menu') {
+    const c = picks().find(x => x.id === b.dataset.pick);
+    if (!c) return;
+    menuShow(b, [
+      { label:'Open template in ComfyUI', act:'template', pick:c.id },
+      { label:(S.manifest === c.id ? 'Hide the file list' : 'Show the file list'),
+        act:'manifest', pick:c.id },
+      { label:'Reveal the models folder', act:'reveal-models' },
+      { label:'Licence text ↗', href:c.license_url },
+    ]);
+  }
+  else if (act === 'item-menu') {
+    const st = (S.state && S.state.comfy) || {};
+    const its = [];
+    if (b.dataset.job) its.push({ label:'The exact graph that made this', act:'graph', job:b.dataset.job });
+    its.push({ label:'Reveal in Finder', act:'reveal', fn:b.dataset.fn, sf:b.dataset.sf });
+    its.push({ label:'ComfyUI tab ↗', href:st.url || '#' });
+    menuShow(b, its);
+  }
+  else if (act === 'manifest') {
+    S.manifest = (S.manifest === b.dataset.pick) ? null : b.dataset.pick;
+    menuHide(); render();
+  }
+  else if (act === 'reveal-models') {
+    menuHide();
+    const r = await api('/api/comfy/reveal', { method:'POST', body: JSON.stringify({ filename:'' }) });
+    if (!r.ok) toast(r.error || 'could not open that folder', true);
+  }
+  else if (act === 'template') {
+    menuHide();
+    const r = await api('/api/comfy/open-template', { method:'POST',
+      body: JSON.stringify({ pick: b.dataset.pick }) });
+    toast(r.ok ? r.note : ('Could not write the template: ' + r.error), !r.ok);
+  }
+  else if (act === 'graph') {
+    menuHide();
+    const r = await api('/api/comfy/graph/' + b.dataset.job);
+    if (r.ok) {
+      const w = window.open('', '_blank');
+      if (w) { w.document.title = 'graph'; const pre = w.document.createElement('pre');
+               pre.textContent = JSON.stringify(r.graph, null, 2); w.document.body.appendChild(pre); }
+      else toast('This window cannot open a viewer tab — open ' + location.origin +
+                 '/comfy in a browser to read the graph.', true);
+    } else if (/no such job/i.test(r.error || '')) {
+      /* HONEST, NOT CRYPTIC. Job records live in the bridge's memory, so a result made
+         before the last bridge restart no longer has one, and the raw "no such job"
+         read as a bug in the button. Say what actually happened instead. (Ledger: the
+         gallery registry could carry the graph; it is dropped from the list payload
+         today, which is why this path exists at all.) */
+      toast('The exact graph for this result is no longer on record — job records are '
+          + 'kept until the bridge restarts. New results keep theirs.', true);
+    } else toast(r.error, true);
+  }
+  else if (act === 'go') {
+    readForm();
+    if (!(S.form.prompt || '').trim()) { toast('Type a prompt first.', true); return; }
     S.busy = true; S.err = null; S.validation = null; render();
     const c = currentPick();
     const body = Object.assign({}, S.form, { pick: c.id, mode: S.form.mode });
     const r = await api('/api/comfy/generate', { method:'POST', body: JSON.stringify(body) });
     S.busy = false;
-    if (!r.ok) { S.err = r.error; S.validation = r.validation || null; }
-    else { S.form.seed = null; }        /* a fresh random seed for the next one */
+    if (!r.ok) { S.err = r.error; S.validation = r.validation || null;
+                 if (!r.validation) toast(r.error, true); }
+    else { S.form.seed = null; S.sel = null; }   /* a fresh random seed for the next one */
     await load();
   }
 });
