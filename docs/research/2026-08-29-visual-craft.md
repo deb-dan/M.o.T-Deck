@@ -1,6 +1,10 @@
 # VISUAL CRAFT — the research behind the six mockups (2026-08-29)
 
-**Status: this document covers TWO rounds.** Round 1 (directions A–C per page) was rejected
+**Status: this document covers THREE rounds.** Round 3 (§3c) is the current one: Debi
+specified the structures herself and the only free variable left is visual treatment.
+Read §3c first; §1's craft rules still bind, §3 and §3b are superseded as recommendations.
+
+**Rounds 1–2 history below.** Round 1 (directions A–C per page) was rejected
 wholesale by Debi — "they all take so much space and don't use space well, all very give away
 to just the image/music/video… I want to be able to see everything at a glance, like Draw
 Things, yet not overconvoluted, and can click on what I want to expand on it and when left,
@@ -265,6 +269,53 @@ H is the only one of the three where the number of things visible at once **scal
 Its risk is honest: a table is the least *lovable* of the three at first glance, and the two pages' rows carry different columns, so it is the direction most likely to read as "a database" to someone expecting a creative tool.
 
 F is the safe pick and would photograph best in a deck: seven named zones, one hero, three footprints, everything at once, and the least new interaction vocabulary. G is the most professional-feeling and the most work — three expansion idioms is genuinely more surface to get right, and its rails re-open the "how much space does chrome deserve" argument that Stage Manager lost.
+
+---
+
+## 3c. Round 3 — Debi specified the structure; the variable is treatment
+
+**Round 2's verdict.** H "gets a tiny bit close", and everything else is wrong: *way too big, space poorly used, not captivating*. On the 1440 × 1000 evidence that is exactly right — H's expanded row eats 40 % of the page, and the waveform ships as **two identical gold strips**: redundant, monocolor, dead.
+
+**So round 3 inverts the exercise.** The structure below is **Debi's spec, fixed**, and identical across all three variants of each page. The only free variable is visual identity — colour, chrome, density unit.
+
+- **Compose** — a movable settings pane (drags to either edge, shrinks to half height and the freed space is a live drop slot); a 3 × 3 grid of compact draggable blocks with the run ledger reduced to **one** of them; prompt and lyrics side by side on one line growing **downward only** with the Compose button riding that line; a waveform with life; and a deliberately quiet **tool dock** at the bottom holding space for UNFORGET **P6** (stem separation, mini-DAW, Nightingale) with one ghost slot and no fake tools.
+- **Generate** — a compact left settings rail with a Basic/Advanced verbosity gate; one big media window that click-toggles fill-the-screen; the centre column's lower region carrying prompt, negative and key options; a slim right results rail showing two rows plus a measured 26 px peek, click-to-load.
+
+### The colour finding — the one piece of new research, and it is the whole round
+
+The named bar was Soundtrap/Soundverse: *"catches the eye and yet eases the eyes… engaging and not monotone/monocolor, yet not loud."* Both were read **live off the running apps**, not from memory (a plain text fetch returns no CSS — the tokens came out of the pages themselves):
+
+- **openDAW** (`opendaw.studio`) ships a **seven-hue wheel** — blue 189, green 150, yellow 60, cream 65, orange 31, red 354, purple 314 — and holds **every one of them at lightness 65–84 %**, on a ground of `hsl(197 8% 9%)` whose neutrals *all carry the same 197 tint*.
+- **Soundverse** (`soundverse.ai`) does the same with `#9dff3c` / `#4ad1e0` / `#7c5cff` / `#ff3d8a` / `#ffe84a` on `#030305` — and keeps a **ramp inside one hue** (`#ffb066` → `#ff7a2d` → `#ff4d1f`) for its one continuous element.
+
+**The rule both encode, which is not "use colour":** *many hues, one lightness band, small areas, and a ground that stays the darkest thing on screen.* Loud is a **lightness** problem, not a hue problem. Round 2 was monotone because it spent one hue at high area; a page can carry seven hues and stay calm if none of them is ever the biggest or the brightest object.
+
+**Our synthesis, which is ours and not theirs.** A waveform is *continuous*, so a categorical rainbow across it would be a lie. Hue is therefore made **information** in TouchDesigner's hue-as-type sense: the strip is coloured by musical **section**, so one glance reads the song's shape — quiet intro, two choruses, short outro — before you press play. Amplitude drives lightness *inside* the section's hue, and the unplayed region is the same hue at 30 % alpha, so progress never rides on colour alone. The `STRUCTURE` block is the same data as a readable list, which is what stops the colour being decoration. On generate the same wheel becomes a **type system**: one hue per settings family, one per model, carried onto every thumbnail — so the results rail is legible as a rail *of models* before you read a word.
+
+### The six, one line each
+
+| File | Variant | The treatment |
+|---|---|---|
+| `compose-i.html` | **Spectrum** | Chrome fully achromatic and **no block draws a border** — Geist's "earn borders; prefer spacing and alignment" taken literally, with the 2× group-gap rule (12 px inside, 24 px between) doing all the grouping; the work is the only coloured thing, and the waveform's hue is the musical **section**. |
+| `compose-j.html` | **Patchbay** | VoiceStudio's shipped chrome verbatim — radius 0, one hairline per boundary, 26 px mono bars — plus one addition: each label bar's **bottom hairline** carries its family's hue (an underline, deliberately *not* the banned side-stripe-on-a-rounded-box). Densest of the three at 18 px rows / 8 px gutters; waveform hue is the **engine**, anchored on its hue and pulled 34 % toward the section's so it still shows the song's shape. |
+| `compose-k.html` | **Aurora** | The only *large* colour is a fixed low-alpha three-field wash on the **ground**, with every block opaque on top of it — colour as ambience you feel, never ink you read, and the ground stays the darkest thing on the page. A ground, not glass: nothing blurred, nothing translucent for effect. Airiest at 22 px rows; waveform hue walks a **200° spectral arc** across the song. |
+| `generate-i.html` | **Spectrum** | Same achromatic chrome; hue is purely a type system (a 5 px family dot per settings group, a 2 px model bar per thumbnail). Rails at 228/204, one white-ring elevation recipe. |
+| `generate-j.html` | **Patchbay** | VoiceStudio chrome, family-hue underlines, and the **densest** layout of the six — 18 px rows, 8 px gutters, 10.5 px ink, rails at 208/184. This is the one that actually out-packs Draw Things rather than matching it. |
+| `generate-k.html` | **Aurora** | The ground wash again, with opaque panels and 12 px radii; the airiest, and the only variant whose at-rest screenshot carries colour *outside* the picture and the rail. |
+
+### What I would argue for — **compose-i and generate-j**, and they are deliberately not the same letter
+
+**Compose → I, Spectrum.** Compose's problem has never been that it lacked chrome; it is that its product has no visual form, so the page had nothing to look at. I answers that by spending the entire colour budget on the *one object that is the work* and giving the chrome none at all. That is the strongest possible reading of "workbench, not shrine": the waveform is the only saturated thing on a 1440 × 1000 screen, it is 176 px tall rather than a hero, and its colour is load-bearing — you can read the song's structure off it without playing it. J's family underlines are handsome but they put hue on the *chrome*, which competes with the strip for the same trick; K's wash is beautiful and is the one I expect to win a first look, but a fixed ground gradient is the round's only purely decorative element, and it is the first thing that will look dated.
+
+**Generate → J, Patchbay.** Different answer, same principle applied to a different problem. Generate's named sin is "defaults look so wide", and J is the only one of the three that actually wins on the measure the complaint names: 208/184 rails, 18 px rows, 10.5 px ink. Draw Things is the floor here, not the target, and I is merely level with it. J also has the better structural fit — a page whose content is *already* a big saturated picture wants achromatic-but-bounded chrome, and hairlines contain a bright image where borderless regions let it bleed into the layout. The family-hue underlines that compete with a waveform do not compete with a photograph.
+
+**If the pair has to match**, take **I** for both and accept that generate is a little wider than it needs to be — the cost is one notch of density; the cost of taking J for both is a compose page whose chrome argues with its own hero.
+
+**Take regardless of which wins:** the seven-hue wheel with the lightness band, hue-as-information rather than hue-as-decoration, the measured 26 px peek, the 0.4/0.6 label-field split on every settings row, and the fact that the media window is **3:2** — a square inside a wide column is the round-1 "border drawn around the emptiness" bug returning by another door, and it cost this round two rebuilds to see.
+
+### What round 3 was walked against
+
+Walked at **1440 × 1000 and 380 × 780** in the browser pane, at rest and through the interactions. **Working, verified by script rather than by eye:** block drag reorders across all three containers with slots reflowing (`wave,engines,ledger,queue…` → `queue,wave,engines,…`); the settings pane docks left/right as a grid-template-column swap; shrink reveals a spill slot that accepts a dropped block; prompt grows downward and **not wider** (34 → 78 px at constant width); fullscreen FLIPs to a true 3:2 fit and Esc returns; thumbnails load the big window; the results peek measures exactly 26 px; the verbosity gate moves 6 → 12 rows. **Caught and fixed in that pass:** generate-I read as one big media object with chrome — Debi's own stated failure — and was rebuilt with both rails filled and a real lower region; a square media in a wide column left ~200 px of dead ground each side (now 3:2); a `max-height` on the stage left 90 px of unowned gap above the prompt; J's plate artwork was loud until its bands were pushed to lightness 13–38 % with only two thin 66 % lines; J's engine-hue waveform was still effectively monochrome until it was blended 34 % toward the section hue; and at 380 both pages clipped panels inside `1fr` cells with internal scrollers, and compose's fixed footer covered its own last block.
 
 ## 4. Honest limits
 

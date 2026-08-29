@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose J · Patchbay</title>
+<!--
+  MOCKUP - NOT SHIPPED CODE. docs/mockups/2026-08-29/compose-j.html
+
+  ROUND 3. THE STRUCTURE BELOW IS DEBI'S SPEC, NOT MINE, and it is identical in
+  compose-i, -j and -k. What differs between the three is TREATMENT: colour
+  identity, chrome, density unit, and how the waveform is coloured.
+
+  THE SPEC, POINT BY POINT
+  1. Settings is a side pane that DRAGS to either edge (grab its label bar) and
+     SHRINKS to half height, freeing real, usable space beneath it - that space
+     is a live drop target for blocks, not decoration.
+  2. Everything else is a grid of COMPACT BLOCKS, three per row, three rows, all
+     draggable to rearrange with the slots reflowing under the pointer.
+  3. The run ledger is now ONE block, roughly a quarter of round-2's footprint.
+  4. Prompt and Lyrics sit side by side on ONE line and grow DOWNWARD only; the
+     Compose button rides that line.
+  5. The waveform has LIFE (see below).
+  6. A quiet DOCK STRIP holds the bottom of the page open for future tool blocks
+     (UNFORGET P6: stem separation, mini-DAW, Nightingale). One ghost slot, so
+     the affordance reads. No fake tools are drawn.
+
+  WHY THE WAVEFORM IS COLOURED THE WAY IT IS - the one piece of real research
+  this round turned on. Round 2 shipped two identical gold strips: redundant,
+  monocolor, and dead. The bar Debi set is Soundtrap/Soundverse - "catches the
+  eye and yet eases the eyes... engaging and not monotone, yet not loud."
+
+  Read live, not from memory:
+  - openDAW (opendaw.studio, tokens read off the running app) keeps a SEVEN-HUE
+    wheel - blue 189, green 150, yellow 60, cream 65, orange 31, red 354, purple
+    314 - and holds every one of them at LIGHTNESS 65-84%, on a ground of
+    hsl(197 8% 9%) whose neutrals all carry the same 197 tint. High saturation,
+    high lightness, tiny area. That is the whole trick: pastel-bright hues never
+    fight each other, because none of them is the darkest or the loudest thing
+    on screen.
+  - Soundverse (soundverse.ai, tokens read off the running site) does the same
+    with green #9dff3c / cyan #4ad1e0 / purple #7c5cff / magenta #ff3d8a, on
+    #030305, and - the detail worth stealing - keeps a RAMP inside one hue
+    (#ffb066 / #ff7a2d / #ff4d1f) for the one continuous element.
+
+  THE SYNTHESIS, WHICH IS OURS. A waveform is a continuous object, so a
+  categorical rainbow across it would be a lie. Hue here is INFORMATION, in
+  TouchDesigner's sense of hue-as-type: the strip is coloured by musical
+  SECTION, so one glance reads the song's shape - quiet intro, two choruses,
+  a short outro - before you press play. Amplitude drives lightness inside the
+  section's hue; the unplayed region is the same hue at low alpha, so progress
+  never depends on colour alone. Engaging because it is many hues; easy on the
+  eye because they share one lightness band; not loud because the ground stays
+  the darkest thing on the page and each hue owns a small area.
+
+  BOUND BY: Editorial dark tokens (bridge/panel/compose.html, inlined verbatim,
+  no literal colour written below the token block except the section wheel,
+  which is declared as tokens). VoiceStudio zone chrome (28px mono label bars,
+  1px hairlines, 12px pads, 20/3px pills, .12s/.2s) where it fits. Emil
+  Kowalski: --ease-out cubic-bezier(.23,1,.32,1), press scale(.97) on
+  pointer-DOWN at 120ms, expansion 260 in / 200 out, transform+opacity only,
+  no transition:all, reduced motion = fewer and gentler, never zero. Blender:
+  the 0.4/0.6 label-field split on every settings row, one global constant.
+  Geist: earn borders - spacing does the grouping first. Jakub: dark depth is
+  one white ring, the 2x group-gap rule, tabular figures on every changing
+  number, 16-32px of peek on anything hidden.
+-->
+<style>
+  :root {
+    /* Editorial dark - verbatim from bridge/panel/compose.html */
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    /* THE WHEEL. openDAW's lightness discipline (65-78%), re-hued to sit on a
+       violet-black ground rather than a blue-grey one. Seven hues, one band. */
+    --h1:hsl(189 74% 67%);  /* cyan     */
+    --h2:hsl(158 55% 66%);  /* mint     */
+    --h3:hsl( 46 74% 71%);  /* straw - the family our --gold already lives in */
+    --h4:hsl( 26 78% 70%);  /* amber    */
+    --h5:hsl(352 70% 72%);  /* rose     */
+    --h6:hsl(310 60% 74%);  /* orchid   */
+    --h7:hsl(248 72% 78%);  /* iris - the family our --accent already lives in */
+
+    /* VoiceStudio chrome */
+    --zbar:26px; --zpad:10px; --zlabel:10px; --ztrack:.07em;
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.13);
+    --zhover:rgba(255,255,255,.04);
+    --pill-h:20px; --pill-r:3px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --eo:cubic-bezier(0.23, 1, 0.32, 1);
+
+    /* set by treatment */
+    --gut:12px; --grp:24px; --row:22px; --rad:0px; --sw:236px; --bh:172px;
+    --ink:11px;
+  }
+
+  /* ══ TREATMENT J — PATCHBAY ═════════════════════════════════════════════
+     VoiceStudio's shipped chrome, literally: radius 0, one 1px hairline per
+     boundary, 26px mono label bars, 20/3px pills, .12s/.2s. Then one addition
+     — the label bar's BOTTOM hairline carries the hue of the family the block
+     belongs to (audio=cyan, model=orchid, system=straw), TouchDesigner's
+     hue-as-type rather than hue-as-decoration. It is an underline, not a side
+     stripe on a rounded box: that pattern is banned and this deliberately is
+     not it. Densest of the three — 18px rows, 8px gutters.
+     Waveform hue = ENGINE family, as a real ramp inside one hue (Soundverse's
+     orange-1/2/3 move), so two engines' output never look alike. */
+  :root {
+    --gut:8px; --grp:18px; --row:18px; --rad:0px; --sw:224px; --bh:164px;
+    --ink:10.5px;
+    --card:#100e18; --card2:#14121d;
+    --go-bg:transparent; --go-fg:var(--h1); --go-edge:var(--h1);
+    --sel-bg:rgba(255,255,255,.08);
+  }
+  body { background:#08070c; }
+  .panel { border:1px solid var(--zborder); background:var(--card); }
+  .pbar { --bar-bg:var(--bg2); border-bottom:1px solid var(--fam, var(--zborder)); }
+  #wave    { --fam:color-mix(in oklab, var(--h1) 62%, transparent); }
+  #engines { --fam:color-mix(in oklab, var(--h6) 62%, transparent); }
+  #ledger  { --fam:color-mix(in oklab, var(--h3) 62%, transparent); }
+  #queue   { --fam:color-mix(in oklab, var(--h2) 62%, transparent); }
+  #disk    { --fam:color-mix(in oklab, var(--h4) 62%, transparent); }
+  #reuse   { --fam:color-mix(in oklab, var(--h7) 62%, transparent); }
+  #settings{ --fam:color-mix(in oklab, var(--h5) 62%, transparent); }
+  .fbox { border:1px solid var(--zborder); background:var(--card); }
+  .fhead { background:var(--bg2); border-bottom:1px solid var(--zborder); height:22px; }
+  #go { height:56px; font-weight:600; }
+  @media (hover:hover) and (pointer:fine) {
+    #go:hover { background:color-mix(in oklab, var(--h1) 14%, transparent); } }
+  #dock { border-top:1px solid var(--zborder-strong); }
+  .lrow { height:17px; }
+  .legend { height:2px; border-radius:0; margin-top:4px; }
+
+
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:var(--ink)/1.45 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+  /* the surfaces we did not draw still carry the design */
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:7px; height:7px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--faint); background-clip:content-box; }
+  textarea, input { caret-color:var(--h3); }
+  :focus-visible { outline:2px solid var(--h7); outline-offset:-2px; border-radius:2px; }
+  button { font:inherit; touch-action:manipulation; }
+  .num { font-variant-numeric:tabular-nums; }
+
+  .caps { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .say { font-size:11px; line-height:1.55; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  /* ── press: respond on pointer-down, 120ms, scale(.97) ─────────────────── */
+  .press { transition:transform 120ms var(--eo), background-color var(--t-fast),
+                      border-color var(--t-fast), color var(--t-fast); }
+  .press:active { transform:scale(.97); }
+
+  .pill { display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border-radius:var(--pill-r); border:1px solid var(--zborder);
+    background:transparent; font:10px var(--sans); color:var(--dim); white-space:nowrap; }
+  .pill b { color:var(--cream); font-weight:600; }
+  .pill.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .pill.act:hover { border-color:var(--zborder-strong); color:var(--cream);
+                      background:var(--zhover); } }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--h2); }
+
+  /* ── layout ─────────────────────────────────────────────────────────────── */
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr); height:calc(100% - 22px); }
+
+  #top { display:flex; align-items:center; gap:10px; padding:3px 10px; row-gap:4px;
+         min-height:var(--zbar); flex-wrap:wrap;
+         background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  #top .wm { font:600 12px/1 var(--serif); color:var(--cream); letter-spacing:.01em; }
+  #top .grow { flex:1 1 auto; }
+
+  #bench { display:grid; grid-template-columns:var(--sw) minmax(0,1fr);
+           gap:var(--grp); padding:var(--grp) var(--grp) 0; min-height:0; }
+  body.dock-right #bench { grid-template-columns:minmax(0,1fr) var(--sw); }
+  #scol { grid-column:1; min-height:0; display:grid; grid-template-rows:minmax(0,1fr);
+          gap:var(--gut); transition:grid-template-rows 140ms var(--eo); }
+  body.dock-right #scol { grid-column:2; }
+  #work { grid-column:2; min-height:0; }
+  body.dock-right #work { grid-column:1; }
+  /* Blender ships split/join/dock at 0.10-0.15s: layout manipulation is not a
+     zoom and must not be paced like one. 140ms, and nothing else moves. */
+  body.shrunk #scol { grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
+
+  /* ── panel (the shared block chrome; treatment overrides the look) ──────── */
+  .panel { background:var(--card); border-radius:var(--rad); min-height:0;
+    display:grid; grid-template-rows:var(--zbar) minmax(0,1fr); overflow:hidden;
+    transition:box-shadow var(--t-fast), opacity 200ms var(--eo); }
+  .pbar { display:flex; align-items:center; gap:6px; padding:0 var(--zpad);
+          background:var(--bar-bg, transparent); }
+  .pbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--faint); white-space:nowrap; }
+  .pbar .grow { flex:1 1 auto; }
+  .pbody { overflow:auto; min-height:0; padding:0 var(--zpad) 8px; }
+  .zx { width:17px; height:17px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none; }
+  @media (hover:hover) and (pointer:fine) {
+    .zx:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* grab handle - the label bar is the handle, so say so */
+  .grab { cursor:grab; }
+  body.dragging .grab { cursor:grabbing; }
+  .grip { width:9px; height:9px; flex:none; opacity:.5;
+          background:
+            radial-gradient(circle at 1.5px 1.5px, currentColor 1.1px, transparent 1.2px) 0 0/4px 4px;
+          color:var(--faint); }
+
+  /* ── settings pane ─────────────────────────────────────────────────────── */
+  #settings .pbody { padding-bottom:10px; }
+  .sgroup { padding:9px 0 3px; }
+  .sgroup > .caps { display:block; margin-bottom:6px; color:var(--faint); }
+  /* Blender UI_ITEM_PROP_SEP_DIVIDE 0.4f - one global constant, every row */
+  .srow { display:grid; grid-template-columns:.4fr .6fr; align-items:center;
+          gap:8px; min-height:var(--row); }
+  .srow > label { font-size:10.5px; color:var(--dim); }
+  .srow > .v { justify-self:stretch; }
+  .field { width:100%; height:var(--row); background:var(--bg2); color:var(--cream);
+    border:1px solid var(--zborder); border-radius:var(--pill-r); padding:0 6px;
+    font:10.5px/1 var(--sans); font-variant-numeric:tabular-nums; }
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:var(--pill-r);
+         overflow:hidden; width:100%; }
+  .seg button { flex:1; height:var(--row); border:0; background:transparent;
+    color:var(--dim); font:10.5px var(--sans); cursor:pointer; }
+  .seg button[aria-pressed="true"] { background:var(--sel-bg, var(--zhover)); color:var(--cream); }
+  #settings.adv-off .adv { display:none; }
+
+  /* the space freed under a shrunk pane is REAL - a live drop slot */
+  #spill { display:none; border-radius:var(--rad); min-height:0;
+           border:1px dashed var(--zborder-strong); padding:var(--gut);
+           align-content:start; gap:var(--gut); grid-template-columns:minmax(0,1fr);
+           overflow:auto; }
+  body.shrunk #spill { display:grid; }
+  #spill:empty::after { content:"space freed - drag a block here";
+    font:var(--zlabel)/1.4 var(--mono); letter-spacing:var(--ztrack);
+    text-transform:uppercase; color:var(--faint); opacity:.65; }
+  #spill .block { height:auto; min-height:120px; }
+
+  /* ── work column ───────────────────────────────────────────────────────── */
+  #work { display:grid; grid-template-rows:auto auto minmax(96px,1fr); gap:var(--grp); }
+
+  /* ONE LINE: prompt | lyrics | Compose. Fields grow DOWN, never wide. */
+  #line { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) auto;
+          gap:var(--gut); align-items:start; }
+  .fbox { background:var(--card); border-radius:var(--rad); overflow:hidden;
+          border-top:var(--fbox-top, 0); }
+  .fhead { display:flex; align-items:center; gap:6px; height:20px; padding:0 var(--zpad); }
+  .fhead .caps { color:var(--faint); }
+  .fhead .grow { flex:1 1 auto; }
+  .fbox textarea { display:block; width:100%; resize:none; border:0; outline:0;
+    background:transparent; color:var(--cream); padding:0 var(--zpad) 9px;
+    font:11.5px/1.5 var(--sans); min-height:34px;
+    transition:height 200ms var(--eo); }
+  .fbox textarea::placeholder { color:var(--faint); }
+  #go { align-self:start; height:52px; padding:0 18px; border-radius:var(--rad);
+    border:1px solid var(--go-edge, transparent); background:var(--go-bg);
+    color:var(--go-fg); cursor:pointer; display:grid; place-items:center; gap:2px;
+    font:600 12px var(--sans); letter-spacing:.01em; }
+  #go small { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+              text-transform:uppercase; opacity:.7; }
+
+  /* THE GRID OF COMPACT BLOCKS - 3 per row, 3 rows, every one draggable */
+  #blocks { display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+            gap:var(--gut); align-content:start; }
+  .block { height:var(--bh); }
+  .block.w2 { grid-column:span 2; }
+  .block.drag { opacity:.92; box-shadow:0 18px 44px rgba(0,0,0,.55),
+                                        0 0 0 1px var(--zborder-strong); }
+  body.dragging .block:not(.drag) { transition:transform 240ms var(--eo); }
+  @media (max-width:1180px) { #blocks { grid-template-columns:repeat(2,minmax(0,1fr)); }
+                              .block.w2 { grid-column:span 2; } }
+
+  /* ── the waveform block: the colour hero ───────────────────────────────── */
+  #wave .pbody { padding:0; display:grid; grid-template-rows:auto minmax(0,1fr) auto;
+                 gap:0; overflow:hidden; }
+  .track { display:flex; align-items:baseline; gap:8px; padding:2px var(--zpad) 6px; }
+  .track .nm { font:600 13px/1.2 var(--serif); color:var(--cream); }
+  .track .mt { font:10px var(--mono); color:var(--faint); letter-spacing:.04em; }
+  canvas.wf { display:block; width:100%; height:100%; cursor:pointer;
+              outline:1px solid rgba(255,255,255,.10); outline-offset:-1px; }
+  .transport { display:flex; align-items:center; gap:8px; padding:6px var(--zpad) 0; }
+  .tbtn { width:24px; height:24px; border-radius:999px; border:1px solid var(--zborder-strong);
+    background:transparent; color:var(--cream); cursor:pointer; display:grid;
+    place-items:center; font-size:9px; flex:none; }
+  .clock { font:10.5px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums; }
+  /* the section legend is what makes the colour READ as information */
+  .legend { display:flex; gap:0; height:3px; margin:5px var(--zpad) 0;
+            border-radius:2px; overflow:hidden; }
+  .legend i { display:block; height:100%; }
+  .legnames { display:flex; gap:0; padding:3px var(--zpad) 2px; }
+  .legnames span { font:9px var(--mono); letter-spacing:.05em; text-transform:uppercase;
+                   color:var(--faint); overflow:hidden; white-space:nowrap; }
+
+  /* ── the run ledger, now ONE compact block ─────────────────────────────── */
+  .lrow { display:grid; grid-template-columns:14px 34px minmax(0,1fr) auto;
+          gap:7px; align-items:center; height:19px; cursor:pointer;
+          border-radius:2px; padding:0 3px; margin:0 -3px; }
+  @media (hover:hover) and (pointer:fine) { .lrow:hover { background:var(--zhover); } }
+  .lrow .i { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lrow .n { font-size:10.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .lrow .t { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lrow canvas { display:block; width:34px; height:12px; }
+  .lrow[aria-current="true"] .n { color:var(--cream); font-weight:600; }
+
+  /* ── engines / queue / disk ────────────────────────────────────────────── */
+  .erow { display:grid; grid-template-columns:6px minmax(0,1fr) auto; gap:7px;
+          align-items:center; min-height:var(--row); }
+  .erow .sw { width:6px; height:6px; border-radius:2px; }
+  .erow .n { font-size:10.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .erow .n small { display:block; font:9.5px var(--mono); color:var(--faint);
+                   font-variant-numeric:tabular-nums; }
+  .meter { height:3px; border-radius:2px; background:var(--zborder); overflow:hidden; }
+  .meter i { display:block; height:100%; border-radius:2px; }
+  .kv { display:flex; justify-content:space-between; align-items:center;
+        min-height:var(--row); font-size:10.5px; color:var(--dim); }
+  .kv b { color:var(--cream); font-weight:600; font-variant-numeric:tabular-nums; }
+  .chips { display:flex; flex-wrap:wrap; gap:5px; padding-top:3px; }
+
+  /* ── THE DOCK STRIP: deliberate quiet space, one ghost slot, no fake tools ─ */
+  #dock { border-top:1px solid var(--zborder); margin:0 calc(-1 * var(--grp));
+          padding:10px var(--grp) var(--grp);
+          display:grid; grid-template-rows:auto minmax(0,1fr); gap:8px; min-height:0; }
+  #dockbar { display:flex; align-items:center; gap:8px; }
+  #dockslots { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--gut);
+               align-content:stretch; min-height:76px; }
+  .ghost { border:1px dashed var(--zborder-strong); border-radius:var(--rad);
+    display:grid; place-items:center; align-content:center; gap:4px; text-align:center;
+    color:var(--faint); padding:8px; }
+  .ghost .caps { color:var(--faint); }
+  .ghost small { font-size:10px; color:var(--faint); opacity:.8; max-width:34ch;
+                 line-height:1.4; }
+  .ghost.mute { border-color:var(--zborder); opacity:.55; }
+  .ghost.mute::after { content:"reserved"; font:600 var(--zlabel)/1 var(--mono);
+    letter-spacing:var(--ztrack); text-transform:uppercase; color:var(--faint); opacity:.5; }
+
+  /* ── dock-edge hints while the settings pane is being moved ────────────── */
+  #hints { position:fixed; inset:0; pointer-events:none; z-index:50; opacity:0;
+           transition:opacity 200ms var(--eo); }
+  body.moving #hints { opacity:1; }
+  #hints i { position:absolute; top:var(--zbar); bottom:22px; width:var(--sw);
+    border:1px dashed var(--h7); background:color-mix(in oklab, var(--h7) 10%, transparent); }
+  #hints i.l { left:0; } #hints i.r { right:0; }
+  body.moving #hints i.on { background:color-mix(in oklab, var(--h7) 20%, transparent); }
+  #floater { position:fixed; z-index:55; pointer-events:none; opacity:0;
+             background:var(--card2); border:1px solid var(--zborder-strong);
+             border-radius:var(--rad); padding:6px 10px;
+             box-shadow:0 18px 44px rgba(0,0,0,.55); }
+  body.moving #floater { opacity:1; }
+
+  /* ── footer ────────────────────────────────────────────────────────────── */
+  #foot { position:fixed; left:0; right:0; bottom:0; height:22px; display:flex;
+    align-items:center; gap:10px; padding:0 10px; background:var(--bg2);
+    border-top:1px solid var(--zborder);
+    font:9.5px/1 var(--mono); letter-spacing:.04em; color:var(--faint);
+    white-space:nowrap; overflow:hidden; }
+  #foot b { color:var(--cream); font-weight:600; }
+  #foot .sep { opacity:.4; }
+
+  /* ── 380px ─────────────────────────────────────────────────────────────── */
+  @media (max-width:820px) {
+    :root { --grp:14px; --gut:10px; --sw:auto; }
+    #bench { grid-template-columns:minmax(0,1fr); }
+    body.dock-right #bench { grid-template-columns:minmax(0,1fr); }
+    #scol, #work, body.dock-right #scol, body.dock-right #work { grid-column:1; }
+    #scol { grid-template-rows:auto; }
+    body.shrunk #scol { grid-template-rows:auto auto; }
+    #settings { height:auto; max-height:none; }
+    #app { overflow:auto; grid-template-rows:auto auto; }
+    #bench { padding-bottom:var(--grp); }
+    #line { grid-template-columns:minmax(0,1fr); }
+    #go { width:100%; height:40px; }
+    #blocks, #dockslots { grid-template-columns:minmax(0,1fr); }
+    .block, .block.w2 { grid-column:span 1; height:auto; min-height:150px; }
+    body { overflow:auto; }
+    /* At 380 a panel must be content-height, not a 1fr cell with an internal
+       scroller: a scroller inside a page that already scrolls is two scrollbars
+       and a clipped panel. Walked at 380x780 on 2026-08-29 - the settings pane
+       was cutting LAST RUN in half. */
+    #app { height:auto; }
+    .panel { grid-template-rows:var(--zbar) auto; }
+    .pbody { overflow:visible; }
+    .block, .block.w2 { height:auto; min-height:0; }
+    #dockslots { min-height:0; }
+    .ghost.mute { min-height:56px; }
+    /* the footer joins the flow rather than covering the last block */
+    #foot { position:static; white-space:normal; height:auto; padding:6px 10px;
+            line-height:1.5; display:block; }
+    #foot .sep { padding:0 2px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* fewer and gentler, not zero: keep the state changes, drop the travel.
+       0.01ms rather than 0 so transitionend still fires. */
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; }
+    .press:active { transform:none; }
+  }
+</style>
+</head>
+<body class="dock-left">
+
+<div id="app">
+
+  <div id="top">
+    <span class="wm">Compose</span>
+    <span class="pill"><span class="dot on"></span> 2 of 2 ready</span>
+    <span class="pill">idle</span>
+    <span class="grow"></span>
+    <span class="caps">drag any label bar to rearrange &middot; drag SETTINGS to either edge</span>
+  </div>
+
+  <div id="bench">
+
+    <!-- ══ SETTINGS: movable pane, shrinkable to half height ══════════════ -->
+    <div id="scol">
+      <section class="panel" id="settings">
+        <div class="pbar grab" id="sgrab">
+          <span class="grip"></span>
+          <span class="t">Settings</span>
+          <span class="grow"></span>
+          <button class="zx press" id="shrink" title="Shrink to half height">&#9647;</button>
+          <button class="zx press" id="side" title="Move to the other edge">&#8646;</button>
+        </div>
+        <div class="pbody">
+
+          <div class="sgroup">
+            <span class="caps">Engine</span>
+            <div class="srow"><label for="eng">Use</label>
+              <div class="v seg" role="group">
+                <button aria-pressed="true">Stable</button><button aria-pressed="false">MusicGen</button>
+              </div></div>
+          </div>
+
+          <div class="sgroup">
+            <span class="caps">Basic</span>
+            <div class="srow"><label for="len">Length</label>
+              <input class="field v num" id="len" value="68" inputmode="numeric"></div>
+            <div class="srow"><label>Format</label>
+              <div class="v seg" role="group">
+                <button aria-pressed="true">wav</button><button aria-pressed="false">mp3</button>
+              </div></div>
+          </div>
+
+          <div class="sgroup">
+            <span class="caps">Advanced</span>
+            <div class="srow adv"><label for="stp">Steps</label>
+              <input class="field v num" id="stp" value="120" inputmode="numeric"></div>
+            <div class="srow adv"><label for="sd">Seed</label>
+              <input class="field v" id="sd" value="random"></div>
+            <div class="srow adv"><label>Lyrics</label>
+              <div class="v seg" role="group">
+                <button aria-pressed="true">none</button><button aria-pressed="false">use</button>
+              </div></div>
+          </div>
+
+          <div class="sgroup">
+            <span class="caps">Presets</span>
+            <div class="chips">
+              <span class="pill act" style="border-color:color-mix(in oklab,var(--h4) 45%,transparent);color:var(--h4)">Rock, loud</span>
+              <span class="pill act">Ambient bed</span>
+              <span class="pill act">Jazz trio</span>
+              <span class="pill act">Brass, live</span>
+            </div>
+          </div>
+
+          <div class="sgroup">
+            <span class="caps">Last run</span>
+            <div class="kv"><span>Engine</span><b>Stable Audio Open</b></div>
+            <div class="kv"><span>Length</span><b class="num">68 s</b></div>
+            <div class="kv"><span>Steps</span><b class="num">120</b></div>
+            <div class="kv"><span>Render</span><b class="num">41 s</b></div>
+            <div class="kv"><span>File</span><b class="num">2.4 MB</b></div>
+          </div>
+
+          <p class="say" style="padding-top:8px">Stable Audio Open is loaded and warm. <b>68&nbsp;s</b> at <b>120&nbsp;steps</b> took about <b>41&nbsp;s</b> last run.</p>
+        </div>
+      </section>
+      <div id="spill"></div>
+    </div>
+
+    <!-- ══ WORK ═══════════════════════════════════════════════════════════ -->
+    <div id="work">
+
+      <!-- ONE LINE: prompt | lyrics | Compose -->
+      <div id="line">
+        <div class="fbox" style="--fbox-top:2px solid var(--h3)">
+          <div class="fhead"><span class="caps">Prompt</span><span class="grow"></span>
+            <span class="caps num" id="pc">0</span></div>
+          <textarea id="prompt" rows="1" placeholder="High-energy rock and roll, gritty male vocal, crunchy live drums, 148 BPM">High-energy rock and roll, gritty male vocal, crunchy live drums, 148 BPM</textarea>
+        </div>
+        <div class="fbox" style="--fbox-top:2px solid var(--h6)">
+          <div class="fhead"><span class="caps">Lyrics</span><span class="grow"></span>
+            <span class="caps">optional</span></div>
+          <textarea id="lyrics" rows="1" placeholder="Leave empty for an instrumental"></textarea>
+        </div>
+        <button id="go" class="press">Compose<small>&#8984; &#9166;</small></button>
+      </div>
+
+      <!-- THE BLOCKS -->
+      <div id="blocks">
+
+        <section class="panel block w2" id="wave">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Now playing</span>
+            <span class="grow"></span>
+            <span class="caps">hue = engine</span>
+            <button class="zx press" title="More">&#8942;</button></div>
+          <div class="pbody">
+            <div class="track"><span class="nm">Gravel Road at First Light</span>
+              <span class="mt num">stable &middot; 1:04 &middot; 2.4 MB</span></div>
+            <canvas class="wf" id="bigwave"></canvas>
+            <div class="legend" id="legend"></div>
+            <div class="legnames" id="legnames"></div>
+            <div class="transport">
+              <button class="tbtn press" id="play">&#9654;</button>
+              <span class="clock num" id="clk">0:00</span>
+              <span class="grow" style="flex:1 1 auto"></span>
+              <span class="pill act">Reveal</span>
+              <span class="pill act">Reuse settings</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel block" id="engines">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Engines</span>
+            <span class="grow"></span><span class="caps">2 loaded</span></div>
+          <div class="pbody">
+            <div class="erow"><span class="sw" style="background:var(--h1)"></span>
+              <span class="n">Stable Audio Open<small>4.1 GB &middot; last 41 s</small></span>
+              <span class="pill">warm</span></div>
+            <div class="meter"><i style="width:78%;background:var(--h1)"></i></div>
+            <div class="erow"><span class="sw" style="background:var(--h6)"></span>
+              <span class="n">MusicGen Medium<small>3.2 GB &middot; last 63 s</small></span>
+              <span class="pill">on disk</span></div>
+            <div class="meter"><i style="width:41%;background:var(--h6)"></i></div>
+            <p class="say" style="margin-top:8px">Both read from disk on every call.</p>
+          </div>
+        </section>
+
+        <section class="panel block" id="ledger">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Run ledger</span>
+            <span class="grow"></span><span class="caps num">14 runs</span>
+            <button class="zx press" title="All runs">&#9656;</button></div>
+          <div class="pbody" id="ledbody"></div>
+        </section>
+
+        <section class="panel block" id="queue">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Queue</span>
+            <span class="grow"></span><span class="caps">idle</span></div>
+          <div class="pbody">
+            <div class="kv"><span>State</span><b>idle</b></div>
+            <div class="kv"><span>Concurrency</span><b>1 at a time</b></div>
+            <div class="kv"><span>Queued</span><b>0</b></div>
+            <div class="meter" style="margin-top:6px"><i id="qbar" style="width:0%;background:var(--h2)"></i></div>
+            <p class="say" style="margin-top:8px">Nothing is waiting. The next Compose starts immediately.</p>
+          </div>
+        </section>
+
+        <section class="panel block" id="disk">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Disk</span>
+            <span class="grow"></span><span class="caps num">62 MB</span></div>
+          <div class="pbody">
+            <div class="kv"><span>Tracks</span><b class="num">14</b></div>
+            <div class="kv"><span>Audio</span><b class="num">62 MB</b></div>
+            <div class="kv"><span>Free</span><b class="num">48 GB</b></div>
+            <div class="meter" style="margin-top:6px"><i style="width:12%;background:var(--h4)"></i></div>
+            <div class="chips"><span class="pill act">Open folder</span><span class="pill act">Manage</span></div>
+          </div>
+        </section>
+
+        <section class="panel block" id="reuse">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Recent prompts</span>
+            <span class="grow"></span><button class="zx press">&#9656;</button></div>
+          <div class="pbody" id="reusebody"></div>
+        </section>
+
+        <section class="panel block" id="sections">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Structure</span>
+            <span class="grow"></span><span class="caps num">7 sections</span></div>
+          <div class="pbody" id="secbody"></div>
+        </section>
+
+        <section class="panel block" id="library">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Library</span>
+            <span class="grow"></span><span class="caps num">14 tracks</span>
+            <button class="zx press">&#9656;</button></div>
+          <div class="pbody">
+            <div class="kv"><span>Keep</span><b class="num">6</b></div>
+            <div class="kv"><span>Drafts</span><b class="num">8</b></div>
+            <div class="kv"><span>Longest</span><b class="num">1:30</b></div>
+            <div class="kv"><span>Median render</span><b class="num">44 s</b></div>
+            <div class="chips"><span class="pill act">Keep only</span>
+              <span class="pill act">Drafts</span><span class="pill act">All</span></div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- THE DOCK: reserved, quiet, one ghost slot. Nothing fake. -->
+      <div id="dock">
+        <div id="dockbar">
+          <span class="caps">Tool dock</span>
+          <span class="grow" style="flex:1 1 auto"></span>
+          <span class="caps">reserved &middot; nothing installed</span>
+        </div>
+        <div id="dockslots">
+          <div class="ghost">
+            <span class="caps">Empty tool slot</span>
+            <small>Stem separation, a small DAW and Nightingale are meant to dock here. None is built.</small>
+          </div>
+          <div class="ghost mute"></div>
+          <div class="ghost mute"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div id="hints"><i class="l"></i><i class="r"></i></div>
+<div id="floater"><span class="caps">Settings</span></div>
+
+<div id="foot">
+  <b>compose-j</b> <span class="sep">/</span> Patchbay <span class="sep">&middot;</span>
+  VoiceStudio chrome verbatim, label bar underlined in its family hue; waveform hue = engine <span class="sep">&middot;</span>
+  leans hardest on: VoiceStudio 26px bars / radius 0 / hairlines &middot; TouchDesigner hue-as-type &middot; Soundverse one-hue ramp &middot; Blender 0.4/0.6 rows
+</div>
+
+<script>
+/* ══ ROUND-3 COMPOSE BEHAVIOUR ═════════════════════════════════════════════ */
+var WAVEMODE = 'engine';       /* section | engine | spectral */
+var BARW = 2, BARG = 1;
+var RM = matchMedia('(prefers-reduced-motion: reduce)');
+var EO = 'cubic-bezier(0.23, 1, 0.32, 1)';
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+var cssv = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+
+/* ── the song's shape. This is the data the colour is FOR. ───────────────── */
+var SECTIONS = [
+  { n: 'intro',  w: .11, e: .34, h: '--h1' },
+  { n: 'verse',  w: .21, e: .62, h: '--h2' },
+  { n: 'chorus', w: .19, e: 1.0, h: '--h4' },
+  { n: 'verse',  w: .16, e: .58, h: '--h2' },
+  { n: 'bridge', w: .10, e: .74, h: '--h6' },
+  { n: 'chorus', w: .17, e: .96, h: '--h4' },
+  { n: 'outro',  w: .06, e: .28, h: '--h3' }
+];
+
+function rng(seed) { var s = seed >>> 0 || 1;
+  return function () { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+
+function hsl(h, s, l, a) { return 'hsl(' + h + ' ' + s + '% ' + l + '% / ' + a + ')'; }
+
+/* hue of each token, read once so the wheel stays a token and not a literal */
+var HUE = {};
+['--h1','--h2','--h3','--h4','--h5','--h6','--h7'].forEach(function (t) {
+  var m = cssv(t).match(/hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
+  HUE[t] = m ? { h: +m[1], s: +m[2], l: +m[3] } : { h: 40, s: 60, l: 70 };
+});
+
+/* ── the painter ─────────────────────────────────────────────────────────── */
+function paintWave(cv, opt) {
+  var w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  var dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  var c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+
+  var bw = opt.bw || BARW, gp = opt.gap == null ? BARG : opt.gap;
+  var n = Math.max(8, Math.floor(w / (bw + gp)));
+  var r = rng(opt.seed || 7);
+  var prog = opt.progress == null ? .34 : opt.progress;
+  var mid = h / 2, cap = h / 2 - 1;
+  var base = opt.base || '--h3';
+
+  /* cumulative section edges */
+  var edges = [], acc = 0;
+  SECTIONS.forEach(function (s) { edges.push([acc, acc += s.w, s]); });
+  var total = acc;
+
+  for (var i = 0; i < n; i++) {
+    var t = (i + .5) / n, tt = t * total;
+    var sec = edges[edges.length - 1][2], si = edges.length - 1;
+    for (var k = 0; k < edges.length; k++) {
+      if (tt >= edges[k][0] && tt < edges[k][1]) { sec = edges[k][2]; si = k; break; }
+    }
+    /* energy: section level, a slow swell inside it, and grain */
+    var local = (tt - edges[si][0]) / (edges[si][1] - edges[si][0]);
+    var swell = .78 + .22 * Math.sin(local * Math.PI);
+    var grain = .55 + .45 * r();
+    var trem = 1 - .10 * Math.abs(Math.sin(i * 1.7));
+    var amp = Math.max(.06, sec.e * swell * grain * trem);
+
+    var col, a = t <= prog ? 1 : .30;
+    if (WAVEMODE === 'section') {
+      var H = HUE[sec.h];
+      col = hsl(H.h, H.s, H.l - 6 + 14 * amp, a);
+    } else if (WAVEMODE === 'engine') {
+      /* The ENGINE owns the strip, but a single hue is what made round 2 dead.
+         So: anchor on the engine's hue and pull 34% of the way toward the
+         section's hue - Soundverse's one-hue ramp, widened just enough that
+         the strip still shows the song's shape. Two engines stay unmistakably
+         different; neither is monochrome. Shortest arc, so cyan never wraps
+         the wrong way round the wheel. */
+      var E = HUE[base], S = HUE[sec.h];
+      var d = ((S.h - E.h + 540) % 360) - 180;
+      col = hsl((E.h + d * .34 + 360) % 360, E.s - 10 + 14 * amp, 44 + 32 * amp, a);
+    } else {
+      /* spectral: hue walks a 200-degree arc across the song, cyan through
+         orchid to amber, with amplitude on lightness. The whole wheel, in
+         one lightness band. */
+      var hz = (HUE['--h1'].h + 200 * t) % 360;
+      col = hsl(hz, 50 + 24 * amp, 42 + 32 * amp, a);
+    }
+    c.fillStyle = col;
+    var bh = Math.max(1.5, amp * cap);
+    var x = i * (bw + gp);
+    if (bw >= 3) {
+      var rr = Math.min(bw / 2, 1.5);
+      c.beginPath();
+      if (c.roundRect) c.roundRect(x, mid - bh, bw, bh * 2, rr); else c.rect(x, mid - bh, bw, bh * 2);
+      c.fill();
+    } else { c.fillRect(x, mid - bh, bw, bh * 2); }
+  }
+
+  if (opt.playhead !== false) {
+    var px = Math.round(prog * w) + .5;
+    c.fillStyle = cssv('--cream'); c.globalAlpha = .85;
+    c.fillRect(px, 0, 1, h); c.globalAlpha = 1;
+  }
+}
+
+/* ── legend: the colour is information, so it gets a key ─────────────────── */
+function buildLegend() {
+  var L = $('#legend'), N = $('#legnames');
+  if (!L) return;
+  L.innerHTML = ''; N.innerHTML = '';
+  SECTIONS.forEach(function (s) {
+    var i = document.createElement('i');
+    i.style.flex = s.w;
+    i.style.background = WAVEMODE === 'section' ? 'var(' + s.h + ')'
+      : 'color-mix(in oklab, var(' + s.h + ') ' + Math.round(35 + 55 * s.e) + '%, transparent)';
+    L.appendChild(i);
+    var sp = document.createElement('span');
+    sp.style.flex = s.w; sp.textContent = s.n;
+    N.appendChild(sp);
+  });
+}
+
+/* ── the run ledger, one compact block ───────────────────────────────────── */
+var RUNS = [
+  ['Gravel Road at First Light', 'stable', '1:04', '41 s'],
+  ['Slow Water, Long Room', 'stable', '0:48', '33 s'],
+  ['Nine Bar Brass', 'musicgen', '1:30', '46 s'],
+  ['Untitled sketch', 'stable', '0:28', '19 s'],
+  ['Kerosene Sunday', 'stable', '1:12', '46 s'],
+  ['Two Miles of Wire', 'stable', '0:54', '36 s'],
+  ['Brass and Rain', 'musicgen', '1:07', '58 s'],
+  ['Hollow Bell', 'stable', '1:18', '58 s'],
+  ['Paper Radio', 'stable', '0:42', '27 s']
+];
+function buildLedger() {
+  var b = $('#ledbody'); if (!b) return;
+  b.innerHTML = '';
+  RUNS.forEach(function (r, i) {
+    var d = document.createElement('div');
+    d.className = 'lrow'; d.tabIndex = 0;
+    if (i === 0) d.setAttribute('aria-current', 'true');
+    d.innerHTML = '<span class="i">' + String(i + 1).padStart(2, '0') + '</span>' +
+      '<canvas></canvas>' +
+      '<span class="n">' + r[0] + '</span>' +
+      '<span class="t">' + r[2] + '</span>';
+    b.appendChild(d);
+    var cv = d.querySelector('canvas');
+    cv.__opt = { seed: 91 + i * 37, bw: 1, gap: 1, progress: i === 0 ? .34 : 1,
+                 playhead: false, base: r[1] === 'stable' ? '--h1' : '--h6' };
+  });
+}
+
+var PROMPTS = [
+  'High-energy rock and roll, gritty male vocal, 148 BPM',
+  'Warm upright bass, brushed kit, late-night jazz trio',
+  'Slow ambient pads, no percussion, long tails',
+  'Nine-piece brass, second-line groove, New Orleans',
+  'Lo-fi tape piano, vinyl noise, 72 BPM'
+];
+function buildReuse() {
+  var b = $('#reusebody'); if (!b) return;
+  b.innerHTML = '';
+  PROMPTS.forEach(function (p, i) {
+    var d = document.createElement('div');
+    d.className = 'lrow';
+    d.style.gridTemplateColumns = '6px minmax(0,1fr) auto';
+    d.innerHTML = '<span class="sw" style="width:6px;height:6px;border-radius:2px;background:var(--h' +
+      ((i % 6) + 1) + ')"></span><span class="n">' + p + '</span><span class="t">use</span>';
+    d.title = p;
+    d.addEventListener('click', function () { $('#prompt').value = p; $('#prompt').dispatchEvent(new Event('input')); });
+    b.appendChild(d);
+  });
+}
+
+/* the structure block is the legend at full size: hue is INFORMATION here, so
+   it gets a place where you can read it as a list, not only as a colour bar. */
+function buildSections() {
+  var b = $('#secbody'); if (!b) return;
+  b.innerHTML = '';
+  var t = 0;
+  SECTIONS.forEach(function (s) {
+    var from = t; t += s.w;
+    var d = document.createElement('div');
+    d.className = 'lrow';
+    d.style.gridTemplateColumns = '6px minmax(0,1fr) auto auto';
+    d.innerHTML = '<span class="sw" style="width:6px;height:6px;border-radius:2px;background:var(' + s.h + ')"></span>' +
+      '<span class="n">' + s.n + '</span>' +
+      '<span class="t">' + Math.round(s.e * 100) + '%</span>' +
+      '<span class="t">' + fmt(from * LEN) + '</span>';
+    b.appendChild(d);
+  });
+}
+
+/* ── repaint every canvas on the page ────────────────────────────────────── */
+function repaintAll() {
+  var big = $('#bigwave');
+  if (big) paintWave(big, { seed: 2026, progress: PROG, base: '--h1' });
+  $$('#ledbody canvas').forEach(function (cv) { paintWave(cv, cv.__opt); });
+}
+window.repaintAll = repaintAll;
+
+/* ── transport ───────────────────────────────────────────────────────────── */
+var PROG = .34, PLAYING = false, TIMER = null, LEN = 64;
+function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
+function tick() {
+  PROG += 1 / LEN; if (PROG >= 1) { PROG = 1; stop(); }
+  $('#clk').textContent = fmt(PROG * LEN);
+  repaintAll();
+}
+function stop() { PLAYING = false; clearInterval(TIMER); $('#play').innerHTML = '&#9654;'; }
+
+/* ── FLIP ────────────────────────────────────────────────────────────────── */
+function flip(nodes, mutate, ms) {
+  var first = new Map();
+  nodes.forEach(function (n) { first.set(n, n.getBoundingClientRect()); });
+  mutate();
+  if (RM.matches) return;
+  nodes.forEach(function (n) {
+    var a = first.get(n), b = n.getBoundingClientRect();
+    var dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    n.style.transition = 'none';
+    n.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  });
+  document.body.getBoundingClientRect();
+  nodes.forEach(function (n) {
+    n.style.transition = 'transform ' + (ms || 240) + 'ms ' + EO;
+    n.style.transform = '';
+  });
+}
+
+/* ── block drag: pointer-based, slots reflow live ────────────────────────── */
+(function () {
+  var drag = null, containers = ['#blocks', '#spill', '#dockslots'];
+  document.addEventListener('pointerdown', function (e) {
+    if (e.button) return;
+    var bar = e.target.closest('.block > .pbar.grab');
+    if (!bar) return;
+    if (e.target.closest('button,input,textarea,select')) return;
+    var it = bar.parentNode;
+    var r = it.getBoundingClientRect();
+    drag = { it: it, dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height,
+             ph: document.createElement('div') };
+    drag.ph.className = 'block' + (it.classList.contains('w2') ? ' w2' : '');
+    drag.ph.style.cssText = 'border:1px dashed var(--zborder-strong);border-radius:var(--rad)';
+    it.parentNode.insertBefore(drag.ph, it);
+    it.classList.add('drag');
+    it.style.cssText = 'position:fixed;pointer-events:none;z-index:60;width:' + r.width +
+      'px;height:' + r.height + 'px;left:' + r.left + 'px;top:' + r.top + 'px';
+    document.body.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    drag.it.style.left = (e.clientX - drag.dx) + 'px';
+    drag.it.style.top = (e.clientY - drag.dy) + 'px';
+    var under = document.elementFromPoint(e.clientX, e.clientY);
+    if (!under) return;
+    var over = under.closest('.block'), cont = under.closest(containers.join(','));
+    var sibs = $$('#blocks > *, #spill > *, #dockslots > *');
+    if (over && over !== drag.ph && over !== drag.it) {
+      var rr = over.getBoundingClientRect();
+      var after = (e.clientX - rr.left) > rr.width / 2;
+      flip(sibs, function () {
+        over.parentNode.insertBefore(drag.ph, after ? over.nextSibling : over);
+      });
+    } else if (cont && !cont.contains(drag.ph)) {
+      flip(sibs, function () { cont.appendChild(drag.ph); });
+    }
+  });
+  document.addEventListener('pointerup', function () {
+    if (!drag) return;
+    var it = drag.it;
+    it.classList.remove('drag'); it.style.cssText = '';
+    drag.ph.parentNode.replaceChild(it, drag.ph);
+    document.body.classList.remove('dragging');
+    drag = null;
+    requestAnimationFrame(repaintAll);
+  });
+})();
+
+/* ── settings pane: move to either edge, shrink to half height ───────────── */
+(function () {
+  var pane = $('#settings'), grab = $('#sgrab'), moving = false;
+  grab.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('button')) return;
+    moving = true; document.body.classList.add('moving', 'dragging');
+    place(e); e.preventDefault();
+  });
+  function place(e) {
+    var f = $('#floater');
+    f.style.left = (e.clientX + 12) + 'px'; f.style.top = (e.clientY + 12) + 'px';
+    var left = e.clientX < innerWidth / 2;
+    $('#hints .l').classList.toggle('on', left);
+    $('#hints .r').classList.toggle('on', !left);
+  }
+  document.addEventListener('pointermove', function (e) { if (moving) place(e); });
+  document.addEventListener('pointerup', function (e) {
+    if (!moving) return;
+    moving = false; document.body.classList.remove('moving', 'dragging');
+    dock(e.clientX < innerWidth / 2 ? 'left' : 'right');
+  });
+  function dock(side) {
+    var nodes = $$('#scol, #work, .block');
+    flip(nodes, function () {
+      document.body.classList.toggle('dock-right', side === 'right');
+      document.body.classList.toggle('dock-left', side === 'left');
+    }, 280);
+    setTimeout(repaintAll, 300);
+  }
+  $('#side').addEventListener('click', function () {
+    dock(document.body.classList.contains('dock-right') ? 'left' : 'right');
+  });
+  $('#shrink').addEventListener('click', function () {
+    document.body.classList.toggle('shrunk');
+    this.title = document.body.classList.contains('shrunk')
+      ? 'Restore full height' : 'Shrink to half height';
+    setTimeout(repaintAll, 180);
+  });
+})();
+
+/* ── fields grow DOWN only ───────────────────────────────────────────────── */
+function autogrow(t, max) {
+  function fit() { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, max) + 'px'; }
+  t.addEventListener('input', fit); t.addEventListener('focus', fit);
+  requestAnimationFrame(fit); return fit;
+}
+
+/* ── boot ────────────────────────────────────────────────────────────────── */
+buildLegend(); buildLedger(); buildReuse(); buildSections();
+var fitP = autogrow($('#prompt'), 168), fitL = autogrow($('#lyrics'), 168);
+$('#prompt').addEventListener('input', function () { $('#pc').textContent = this.value.length; });
+$('#pc').textContent = $('#prompt').value.length;
+
+$('#play').addEventListener('click', function () {
+  if (PLAYING) { stop(); return; }
+  if (PROG >= 1) PROG = 0;
+  PLAYING = true; this.innerHTML = '&#10073;&#10073;';
+  TIMER = setInterval(tick, 1000 / 12);
+});
+$('#bigwave').addEventListener('click', function (e) {
+  var r = this.getBoundingClientRect();
+  PROG = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  $('#clk').textContent = fmt(PROG * LEN);
+  repaintAll();
+});
+
+/* segmented controls */
+$$('.seg').forEach(function (s) {
+  s.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $$('button', s).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+  });
+});
+
+/* Compose: a real progress cycle back to rest. Progress does not ease. */
+$('#go').addEventListener('click', function () {
+  var bar = $('#qbar'), p = 0;
+  bar.style.transition = 'none'; bar.style.width = '0%';
+  var t = setInterval(function () {
+    p += 4; bar.style.transition = 'width 90ms linear'; bar.style.width = p + '%';
+    if (p >= 100) { clearInterval(t);
+      setTimeout(function () { bar.style.transition = 'opacity 200ms ' + EO; bar.style.width = '0%'; }, 300); }
+  }, 90);
+});
+
+addEventListener('resize', function () { clearTimeout(window.__rz);
+  window.__rz = setTimeout(repaintAll, 80); });
+requestAnimationFrame(repaintAll);
+setTimeout(repaintAll, 120);
+
+</script>
+</body>
+</html>

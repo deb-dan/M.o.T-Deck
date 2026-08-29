@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generate K · Aurora</title>
+<!--
+  MOCKUP - NOT SHIPPED CODE. docs/mockups/2026-08-29/generate-k.html
+
+  ROUND 3. THE STRUCTURE BELOW IS DEBI'S SPEC, identical in generate-i, -j and
+  -k. What differs is TREATMENT: colour identity, chrome, density unit.
+
+  THE SPEC: "Draw Things, but better."
+  1. LEFT is a compact settings rail at Draw Things' density - narrow, real
+     controls, with a Basic/Advanced verbosity gate rather than a scroll.
+  2. CENTRE is ONE BIG MEDIA WINDOW. Click it and it fills the screen; click
+     again and it goes back. The centre column's LOWER region carries the
+     prompt and the key options, so the picture never owns the whole column.
+  3. RIGHT is a slim results rail showing only the first two rows of thumbs,
+     the rest behind scroll and an "All" control. Clicking a thumb puts it on
+     the big window.
+  4. COMPACT EVERYWHERE. "Defaults look so wide" is the named sin. Every
+     control here is 20-22px tall, every label 10px, every rail under 232px.
+
+  DENSITY, MEASURED RATHER THAN FELT. Blender's one-scalar model gives
+  unit = round(18 x scale) + 2 x line_width = 20px at scale 1.0, and its whole
+  UI is one type size - hierarchy comes from weight, colour and indentation,
+  never from heading size. Every settings row here is that unit, and every
+  label/field pair is split at UI_ITEM_PROP_SEP_DIVIDE 0.4f: 40% label, 60%
+  field, one global constant, blank spacers so the field column never jitters.
+
+  THE COLOUR ARGUMENT IS THE SAME ONE AS COMPOSE, AND IT MATTERS MORE HERE,
+  because a generate page's easiest failure is to become one big picture with
+  grey chrome around it. Read live off the running apps: openDAW keeps a
+  seven-hue wheel at lightness 65-84% on hsl(197 8% 9%); Soundverse keeps
+  green #9dff3c / cyan #4ad1e0 / purple #7c5cff / magenta #ff3d8a on #030305
+  plus a ramp inside one hue for its continuous element. The discipline both
+  share: many hues, one lightness band, tiny areas, and a ground that stays
+  the darkest thing on screen. Here the hue is a TYPE SYSTEM - each settings
+  family and each model owns one hue, thumbnails carry the hue of the model
+  that made them, so the results rail is legible as a rail of models before
+  you read a word of it.
+
+  BOUND BY: Editorial dark tokens (bridge/panel/comfy.html, inlined verbatim).
+  VoiceStudio zone chrome. Emil Kowalski: --ease-out cubic-bezier(.23,1,.32,1),
+  press scale(.97) on pointer-DOWN at 120ms, the fullscreen toggle FLIPped at
+  300ms in / 240ms out (a collapse is 15-20% shorter than its expansion) with
+  the scrim on its own much slower token - IBM Carbon slow-02, 620ms, so the
+  ground recedes instead of competing. transform and opacity only; never
+  width, height, top, left or a blur radius. WebKit names scaling animations a
+  vestibular trigger, so under prefers-reduced-motion the zoom degrades to an
+  opacity crossfade at 0.01ms - the feature stays, the travel goes.
+  Jakub: image outline is a neutral 1px white at 10%, never a tinted near-black
+  ("tinted outlines read as dirt on the image edge"); anything hidden shows
+  16-32px of peek, which is exactly what the results rail's third row does.
+
+  NO FAKE CAPABILITIES. Model, size, steps, sampler, seed, batch and a negative
+  prompt are what the shipped renderer takes; nothing else is drawn. The
+  pictures are abstract colour fields on purpose - drawing a convincing photo
+  would be claiming a render we did not make.
+-->
+<style>
+  :root {
+    /* Editorial dark - verbatim */
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --h1:hsl(189 74% 67%); --h2:hsl(158 55% 66%); --h3:hsl( 46 74% 71%);
+    --h4:hsl( 26 78% 70%); --h5:hsl(352 70% 72%); --h6:hsl(310 60% 74%);
+    --h7:hsl(248 72% 78%);
+
+    --zbar:26px; --zpad:10px; --zlabel:10px; --ztrack:.07em;
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.13);
+    --zhover:rgba(255,255,255,.04);
+    --pill-h:20px; --pill-r:3px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --eo:cubic-bezier(0.23, 1, 0.32, 1);
+
+    --gut:12px; --grp:20px; --row:20px; --rad:0px;
+    --railw:224px; --resw:200px; --ink:11px; --thumb:88px;
+  }
+
+  /* ══ TREATMENT K — AURORA ═══════════════════════════════════════════════
+     Soundverse's move taken structurally: the only LARGE colour is a fixed,
+     very-low-alpha wash on the ground, and every panel sits on it as an opaque
+     near-black card. Colour becomes ambience you feel, never ink you read, and
+     the ground stays the darkest thing on the page — which is the whole reason
+     a bright palette does not shout. A ground, not glass: nothing is blurred
+     and nothing is translucent for effect. Airiest of the three, and the only
+     one whose at-rest screenshot has colour outside the picture and the rail. */
+  :root {
+    --gut:14px; --grp:22px; --row:22px; --rad:12px;
+    --railw:236px; --resw:212px; --ink:11.5px; --tr:8px;
+    --card:#131120; --stage-bg:rgba(10,9,16,.55);
+    --go-bg:var(--h7); --go-fg:#12101f; --go-edge:transparent;
+    --sel-bg:color-mix(in oklab, var(--h7) 22%, transparent);
+  }
+  body {
+    background:
+      radial-gradient(56vw 46vh at 6% 2%,   color-mix(in oklab, var(--h1) 12%, transparent), transparent 70%),
+      radial-gradient(50vw 48vh at 98% 26%, color-mix(in oklab, var(--h6) 11%, transparent), transparent 72%),
+      radial-gradient(72vw 42vh at 44% 106%, color-mix(in oklab, var(--h4) 10%, transparent), transparent 74%),
+      var(--bg);
+    background-attachment:fixed;
+  }
+  /* dark depth is ONE white ring plus an inner top highlight, never a stack */
+  .panel, .fbox, #stage {
+    box-shadow:0 0 0 1px rgba(255,255,255,.08),
+               inset 0 1px 0 0 rgba(255,255,255,.05);
+  }
+  .panel, .fbox { background:var(--card); }
+  #media { border-radius:9px; }
+  .pbar { padding-top:3px; }
+  .pbar .t { color:var(--dim); }
+  #run { height:32px; }
+
+
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:var(--ink)/1.45 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:7px; height:7px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--faint); background-clip:content-box; }
+  textarea, input { caret-color:var(--h3); }
+  :focus-visible { outline:2px solid var(--h7); outline-offset:-2px; border-radius:2px; }
+  button { font:inherit; touch-action:manipulation; }
+  .num { font-variant-numeric:tabular-nums; }
+
+  .caps { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .say { font-size:11px; line-height:1.55; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+  .press { transition:transform 120ms var(--eo), background-color var(--t-fast),
+                      border-color var(--t-fast), color var(--t-fast); }
+  .press:active { transform:scale(.97); }
+
+  .pill { display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border-radius:var(--pill-r); border:1px solid var(--zborder);
+    background:transparent; font:10px var(--sans); color:var(--dim); white-space:nowrap; }
+  .pill b { color:var(--cream); font-weight:600; }
+  .pill.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .pill.act:hover { border-color:var(--zborder-strong); color:var(--cream);
+                      background:var(--zhover); } }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--h2); }
+
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr); height:calc(100% - 22px); }
+  #top { display:flex; align-items:center; gap:10px; padding:3px 10px; row-gap:4px;
+         min-height:var(--zbar); flex-wrap:wrap;
+         background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  #top .wm { font:600 12px/1 var(--serif); color:var(--cream); }
+  #top .grow { flex:1 1 auto; }
+
+  #frame { display:grid; grid-template-columns:var(--railw) minmax(0,1fr) var(--resw);
+           gap:var(--gut); padding:var(--gut); min-height:0; }
+
+  .panel { background:var(--card); border-radius:var(--rad); min-height:0;
+    display:grid; grid-template-rows:var(--zbar) minmax(0,1fr); overflow:hidden; }
+  .pbar { display:flex; align-items:center; gap:6px; padding:0 var(--zpad);
+          background:var(--bar-bg, transparent); }
+  .pbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--faint); white-space:nowrap; }
+  .pbar .grow { flex:1 1 auto; }
+  .pbody { overflow:auto; min-height:0; padding:0 var(--zpad) 8px; }
+  .zx { width:17px; height:17px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none; }
+  @media (hover:hover) and (pointer:fine) {
+    .zx:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* ── LEFT RAIL: Draw Things density, with a verbosity gate ─────────────── */
+  .sgroup { padding:8px 0 2px; }
+  .sgroup > .caps { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+  .sgroup > .caps::after { content:""; flex:1 1 auto; height:1px;
+                           background:var(--zborder); }
+  /* Blender UI_ITEM_PROP_SEP_DIVIDE 0.4f — 40/60, one constant, every row */
+  .srow { display:grid; grid-template-columns:.4fr .6fr; align-items:center;
+          gap:7px; min-height:var(--row); }
+  .srow > label { font-size:10.5px; color:var(--dim); }
+  .field { width:100%; height:var(--row); background:var(--bg2); color:var(--cream);
+    border:1px solid var(--zborder); border-radius:var(--pill-r); padding:0 6px;
+    font:10.5px/1 var(--sans); font-variant-numeric:tabular-nums; }
+  select.field { appearance:none; padding-right:16px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--faint) 50%),
+                     linear-gradient(135deg,var(--faint) 50%,transparent 50%);
+    background-position:calc(100% - 9px) 50%, calc(100% - 5px) 50%;
+    background-size:4px 4px, 4px 4px; background-repeat:no-repeat; }
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:var(--pill-r);
+         overflow:hidden; width:100%; }
+  .seg button { flex:1; height:var(--row); border:0; background:transparent;
+    color:var(--dim); font:10.5px var(--sans); cursor:pointer; }
+  .seg button[aria-pressed="true"] { background:var(--sel-bg, var(--zhover)); color:var(--cream); }
+  .rng { width:100%; height:var(--row); accent-color:var(--h1); }
+  #rail.basic .adv { display:none; }
+  #rail.basic #advnote { display:block; }
+  #advnote { display:none; padding-top:6px; }
+  .famdot { width:5px; height:5px; border-radius:1.5px; flex:none; }
+  .erow { display:grid; grid-template-columns:6px minmax(0,1fr) auto; gap:7px;
+          align-items:center; min-height:calc(var(--row) + 6px); }
+  .erow .sw { width:6px; height:6px; border-radius:2px; }
+  .erow .n { font-size:10.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .erow .n small { display:block; font:9.5px var(--mono); color:var(--faint);
+                   font-variant-numeric:tabular-nums; }
+
+  /* ── CENTRE ────────────────────────────────────────────────────────────── */
+  /* the picture is A citizen: the stage may not take more than 56% of the
+     column, and the lower region is a real region rather than a footer. */
+  /* The picture is A citizen. Two things keep it that way: the lower region is
+     a real region (prompt + negative + options + status), and the window is
+     3:2 rather than square - a square inside a wide column is exactly the
+     round-1 defect, "a border drawn around the emptiness". */
+  #centre { display:grid; grid-template-rows:minmax(0,1fr) auto; gap:var(--gut);
+            min-height:0; }
+  #stage { position:relative; min-height:0; display:grid; place-items:center;
+           background:var(--stage-bg, var(--bg2)); border-radius:var(--rad);
+           overflow:hidden; }
+  #media { position:relative; display:block; max-width:100%; max-height:100%;
+    aspect-ratio:3/2; height:100%; cursor:zoom-in;
+    outline:1px solid rgba(255,255,255,.10); outline-offset:-1px;
+    background:var(--bg); }
+  #media canvas { display:block; width:100%; height:100%; }
+  #media.full { position:fixed; z-index:40; cursor:zoom-out;
+                outline-color:rgba(255,255,255,.14); }
+  #scrim { position:fixed; inset:0; background:var(--scrim); z-index:35;
+    opacity:0; pointer-events:none;
+    /* Carbon slow-02: the ground fades SLOWER than the thing it backs */
+    transition:opacity 620ms cubic-bezier(.4,0,.2,1); }
+  body.full #scrim { opacity:1; pointer-events:auto; }
+  #mcap { position:absolute; left:0; right:0; bottom:0; display:flex; gap:7px;
+    align-items:center; padding:6px 8px; opacity:0;
+    background:linear-gradient(to top, rgba(6,5,10,.82), transparent);
+    transition:opacity 200ms var(--eo); }
+  #media:hover #mcap, #media.full #mcap, #media:focus-within #mcap { opacity:1; }
+  #mcap .caps { color:var(--cream); }
+  #zoomhint { position:absolute; top:6px; right:7px; opacity:0;
+              transition:opacity 200ms var(--eo); }
+  #media:hover #zoomhint { opacity:1; }
+
+  /* the lower region: prompt + the options you actually reach for */
+  #lower { display:grid; gap:var(--gut); }
+  .fbox { background:var(--card); border-radius:var(--rad); overflow:hidden;
+          border-top:var(--fbox-top, 0); }
+  .fhead { display:flex; align-items:center; gap:6px; height:20px; padding:0 var(--zpad); }
+  .fbox textarea { display:block; width:100%; resize:none; border:0; outline:0;
+    background:transparent; color:var(--cream); padding:0 var(--zpad) 8px;
+    font:11.5px/1.5 var(--sans); min-height:32px; transition:height 200ms var(--eo); }
+  .fbox textarea::placeholder { color:var(--faint); }
+  #keyrow { display:flex; align-items:center; gap:var(--gut); flex-wrap:wrap; }
+  .kopt { display:flex; align-items:center; gap:6px; }
+  .kopt .caps { color:var(--faint); }
+  .kopt .field { width:64px; }
+  .kopt .field.wide { width:88px; }
+  #run { margin-left:auto; height:30px; padding:0 16px; border-radius:var(--rad);
+    border:1px solid var(--go-edge, transparent); background:var(--go-bg);
+    color:var(--go-fg); cursor:pointer; font:600 11.5px var(--sans); }
+  #statusline { display:flex; align-items:center; gap:8px; padding:0 2px; }
+  #prog { height:2px; background:var(--zborder); border-radius:2px; overflow:hidden;
+          margin-top:2px; }
+  #prog i { display:block; height:100%; width:0; background:var(--h1); }
+
+  /* ── RIGHT: slim results rail, two rows visible + a real peek ──────────── */
+  #results .pbody { padding:0 var(--zpad) 8px; }
+  /* two rows of thumbs, plus 22px of the third — jakub: 16-32px of peek, or
+     "content hidden with zero cue may as well not exist". Not a fade, a slice. */
+  #thumbs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+            gap:6px; padding-top:6px;
+            max-height:calc(2 * var(--thumb) + 6px + 26px); overflow:hidden;
+            transition:max-height 300ms var(--eo); }
+  #results.all #thumbs { max-height:none; overflow:auto; }
+  .thumb { position:relative; aspect-ratio:3/2; cursor:pointer; border:0; padding:0;
+    background:var(--bg2); border-radius:var(--tr, 2px); overflow:hidden;
+    outline:1px solid rgba(255,255,255,.10); outline-offset:-1px;
+    transition:transform 120ms var(--eo), outline-color var(--t-fast); }
+  .thumb canvas { display:block; width:100%; height:100%; }
+  .thumb:active { transform:scale(.97); }
+  .thumb[aria-current="true"] { outline:1px solid var(--sel, var(--h1)); outline-offset:-1px; }
+  .thumb i { position:absolute; left:0; bottom:0; height:2px; width:100%; }
+  @media (hover:hover) and (pointer:fine) {
+    .thumb:hover { outline-color:rgba(255,255,255,.28); } }
+  #rmeta { display:grid; gap:0; padding-top:8px; }
+  .kv { display:flex; justify-content:space-between; align-items:center;
+        min-height:var(--row); font-size:10.5px; color:var(--dim); }
+  .kv b { color:var(--cream); font-weight:600; font-variant-numeric:tabular-nums; }
+
+  #foot { position:fixed; left:0; right:0; bottom:0; height:22px; display:flex;
+    align-items:center; gap:10px; padding:0 10px; background:var(--bg2);
+    border-top:1px solid var(--zborder); z-index:45;
+    font:9.5px/1 var(--mono); letter-spacing:.04em; color:var(--faint);
+    white-space:nowrap; overflow:hidden; }
+  #foot b { color:var(--cream); font-weight:600; }
+  #foot .sep { opacity:.4; }
+
+  @media (max-width:900px) {
+    :root { --railw:auto; --resw:auto; }
+    #app { grid-template-rows:auto auto; }
+    body, #app { overflow:auto; height:auto; min-height:100%; }
+    #frame { grid-template-columns:minmax(0,1fr); }
+    /* the window is sized BY the picture at 380, not the other way round:
+       a min-height here puts empty ground above a 3:2 image. */
+    #stage { min-height:0; }
+    #media { height:auto; width:100%; }
+    .panel { grid-template-rows:var(--zbar) auto; }
+    #rail .pbody { overflow:visible; }
+    #thumbs { grid-template-columns:repeat(4,minmax(0,1fr));
+              max-height:calc(2 * var(--thumb) + 6px + 26px); }
+    #keyrow { gap:8px; }
+    #run { width:100%; margin-left:0; }
+    #foot { position:static; height:auto; padding:6px 10px; line-height:1.5;
+            white-space:normal; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; }
+    .press:active, .thumb:active { transform:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <div id="top">
+    <span class="wm">Generate</span>
+    <span class="pill"><span class="dot on"></span> SDXL Turbo warm</span>
+    <span class="pill num">idle &middot; 0 queued</span>
+    <span class="grow"></span>
+    <span class="caps">click the picture to fill the screen &middot; esc to come back</span>
+  </div>
+
+  <div id="frame">
+
+    <!-- ══ LEFT: compact settings rail ═════════════════════════════════════ -->
+    <section class="panel" id="rail">
+      <div class="pbar"><span class="t">Settings</span><span class="grow"></span>
+        <span class="seg" id="verb" style="width:104px">
+          <button aria-pressed="true">Basic</button><button aria-pressed="false">Advanced</button>
+        </span></div>
+      <div class="pbody">
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h6)"></i>Model</span>
+          <div class="srow"><label>Model</label>
+            <select class="field" id="model">
+              <option>SDXL Turbo</option><option>SD 1.5</option><option>Flux Schnell</option>
+            </select></div>
+          <div class="srow adv"><label>VAE</label>
+            <select class="field"><option>bundled</option><option>sdxl-vae-fp16</option></select></div>
+        </div>
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h2)"></i>Size</span>
+          <div class="srow"><label>Width</label><input class="field num" value="1536"></div>
+          <div class="srow"><label>Height</label><input class="field num" value="1024"></div>
+          <div class="srow adv"><label>Batch</label><input class="field num" value="4"></div>
+        </div>
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h1)"></i>Sampling</span>
+          <div class="srow"><label>Steps</label><input class="field num" id="steps" value="6"></div>
+          <div class="srow"><label>Guidance</label><input class="field num" value="1.5"></div>
+          <div class="srow adv"><label>Sampler</label>
+            <select class="field"><option>Euler a</option><option>DPM++ 2M</option><option>UniPC</option></select></div>
+          <div class="srow adv"><label>Seed</label><input class="field" value="random"></div>
+        </div>
+
+        <div class="sgroup adv">
+          <span class="caps"><i class="famdot" style="background:var(--h5)"></i>Negative</span>
+          <div class="srow" style="grid-template-columns:1fr">
+            <input class="field" value="blurry, watermark, text"></div>
+        </div>
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h3)"></i>Output</span>
+          <div class="srow"><label>Format</label>
+            <div class="seg" role="group"><button aria-pressed="true">png</button><button aria-pressed="false">jpg</button></div></div>
+          <div class="srow adv"><label>Metadata</label>
+            <div class="seg" role="group"><button aria-pressed="true">embed</button><button aria-pressed="false">off</button></div></div>
+        </div>
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h6)"></i>On disk</span>
+          <div class="erow"><span class="sw" style="background:var(--h1)"></span>
+            <span class="n">SDXL Turbo<small>6.9 GB &middot; last 2.1 s</small></span>
+            <span class="pill">warm</span></div>
+          <div class="erow"><span class="sw" style="background:var(--h6)"></span>
+            <span class="n">Flux Schnell<small>23.8 GB &middot; last 6.4 s</small></span>
+            <span class="pill">on disk</span></div>
+          <div class="erow"><span class="sw" style="background:var(--h4)"></span>
+            <span class="n">SD 1.5<small>4.3 GB &middot; last 3.8 s</small></span>
+            <span class="pill">on disk</span></div>
+        </div>
+
+        <div class="sgroup">
+          <span class="caps"><i class="famdot" style="background:var(--h2)"></i>Queue</span>
+          <div class="kv"><span>State</span><b>idle</b></div>
+          <div class="kv"><span>Concurrency</span><b>1 at a time</b></div>
+          <div class="kv"><span>Queued</span><b class="num">0</b></div>
+        </div>
+
+        <p class="say" id="advnote">Six more controls are hidden. Switch to <b>Advanced</b> for VAE, batch, sampler, seed, metadata and the negative prompt.</p>
+        <p class="say adv" style="padding-top:8px">All thirteen controls are shown. <b>Basic</b> hides the six you rarely change.</p>
+      </div>
+    </section>
+
+    <!-- ══ CENTRE: one big media window + the lower region ═════════════════ -->
+    <div id="centre">
+
+      <div id="stage">
+        <div id="media" tabindex="0" role="button" aria-label="Expand to fill the screen">
+          <canvas id="big"></canvas>
+          <span class="pill" id="zoomhint">fill screen</span>
+          <div id="mcap">
+            <span class="caps" id="mtitle">run 24</span>
+            <span class="grow" style="flex:1 1 auto"></span>
+            <span class="pill num" id="mmeta">SDXL Turbo &middot; 1536&times;1024 &middot; 6 st &middot; 2.1 s</span>
+            <span class="pill act">Reveal</span>
+            <span class="pill act">Reuse</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="lower">
+        <div class="fbox" style="--fbox-top:2px solid var(--h3)">
+          <div class="fhead"><span class="caps">Prompt</span>
+            <span class="grow" style="flex:1 1 auto"></span>
+            <span class="caps num" id="pc">0</span></div>
+          <textarea id="prompt" rows="1">A red fox curled in dry grass at golden hour, shallow depth of field</textarea>
+        </div>
+        <div id="keyrow">
+          <span class="kopt"><span class="caps">Steps</span><input class="field num" value="6"></span>
+          <span class="kopt"><span class="caps">Size</span>
+            <select class="field wide"><option>1536&times;1024</option><option>1024&times;1024</option><option>1024&times;1536</option></select></span>
+          <span class="kopt"><span class="caps">Batch</span><input class="field num" value="4"></span>
+          <span class="kopt"><span class="caps">Seed</span><input class="field wide" value="random"></span>
+          <button id="run" class="press">Generate</button>
+        </div>
+        <div class="fbox" style="--fbox-top:2px solid var(--h5)">
+          <div class="fhead"><span class="caps">Negative</span>
+            <span class="grow" style="flex:1 1 auto"></span>
+            <span class="caps">applies to every image in the batch</span></div>
+          <textarea id="neg" rows="1">blurry, watermark, text, extra limbs</textarea>
+        </div>
+        <div id="statusline">
+          <span class="caps" id="sl1">SDXL Turbo &middot; 4 images &middot; 1536&times;1024 &middot; 6 steps</span>
+          <span class="grow" style="flex:1 1 auto"></span>
+          <span class="caps num">last batch 2.1 s each</span>
+        </div>
+        <div id="prog"><i></i></div>
+      </div>
+    </div>
+
+    <!-- ══ RIGHT: slim results rail ════════════════════════════════════════ -->
+    <section class="panel" id="results">
+      <div class="pbar"><span class="t">Results</span><span class="grow"></span>
+        <span class="caps num" id="rc">24</span>
+        <button class="zx press" id="allbtn" title="Show all results">&#9656;</button></div>
+      <div class="pbody">
+        <div id="thumbs"></div>
+        <div id="rmeta">
+          <div class="kv"><span>Model</span><b id="k1">SDXL Turbo</b></div>
+          <div class="kv"><span>Size</span><b class="num">1536&times;1024</b></div>
+          <div class="kv"><span>Steps</span><b class="num" id="k3">6</b></div>
+          <div class="kv"><span>Seed</span><b class="num" id="k4">418223</b></div>
+          <div class="kv"><span>Time</span><b class="num" id="k5">2.1 s</b></div>
+          <div class="kv"><span>On disk</span><b class="num">18.4 MB</b></div>
+        </div>
+        <div style="padding-top:10px">
+          <span class="caps">Models in these results</span>
+          <div id="mlegend" style="padding-top:5px"></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="scrim"></div>
+
+<div id="foot">
+  <b>generate-k</b> <span class="sep">/</span> Aurora <span class="sep">&middot;</span>
+  colour lives in a low-alpha ground wash, panels stay opaque; airiest of the three <span class="sep">&middot;</span>
+  leans hardest on: Soundverse ground wash &middot; jakub dark depth = one white ring &middot; neutral image outline at 10% &middot; WebKit vestibular fence
+</div>
+
+<script>
+/* ══ ROUND-3 GENERATE BEHAVIOUR ════════════════════════════════════════════ */
+var ARTMODE = 'bloom';   /* field | plate | bloom */
+var RM = matchMedia('(prefers-reduced-motion: reduce)');
+var EO = 'cubic-bezier(0.23, 1, 0.32, 1)';
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+var cssv = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+
+var HUE = {};
+['--h1','--h2','--h3','--h4','--h5','--h6','--h7'].forEach(function (t) {
+  var m = cssv(t).match(/hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
+  HUE[t] = m ? { h: +m[1], s: +m[2], l: +m[3] } : { h: 40, s: 60, l: 70 };
+});
+function rng(seed) { var s = seed >>> 0 || 1;
+  return function () { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+
+/* ── the results. Hue = the model that made it, so the rail reads as models. ─ */
+var MODELS = [
+  { n: 'SDXL Turbo',   h: '--h1' },
+  { n: 'Flux Schnell', h: '--h6' },
+  { n: 'SD 1.5',       h: '--h4' }
+];
+var RUNS = [];
+(function () {
+  var seeds = rng(4242);
+  for (var i = 0; i < 24; i++) {
+    var m = MODELS[i % 3 === 0 ? 0 : (i % 5 === 0 ? 1 : (i % 7 === 0 ? 2 : 0))];
+    RUNS.push({
+      i: 24 - i, m: m, seed: Math.floor(seeds() * 900000) + 10000,
+      steps: [4, 6, 8, 12, 20][Math.floor(seeds() * 5)],
+      t: (1.4 + seeds() * 4.2).toFixed(1) + ' s'
+    });
+  }
+})();
+
+/* ── abstract colour fields. Not a photograph, on purpose. ───────────────── */
+function paintArt(cv, run, big) {
+  var w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  var dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  var c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var r = rng(run.seed);
+  var H = HUE[run.m.h];
+  /* two neighbours on the wheel, so every picture is polychrome but stays in
+     one lightness band - the openDAW discipline applied to the artwork too */
+  var h2 = (H.h + 42 + r() * 60) % 360, h3 = (H.h - 36 - r() * 50 + 360) % 360;
+
+  c.fillStyle = 'hsl(' + H.h + ' 26% 9%)';
+  c.fillRect(0, 0, w, h);
+
+  if (ARTMODE === 'field') {
+    /* soft overlapping fields */
+    var n = 5;
+    for (var i = 0; i < n; i++) {
+      var hu = [H.h, h2, h3][i % 3];
+      var g = c.createRadialGradient(r() * w, r() * h, 0, r() * w, r() * h, (.35 + r() * .5) * w);
+      g.addColorStop(0, 'hsl(' + hu + ' ' + (52 + r() * 22) + '% ' + (52 + r() * 20) + '% / .55)');
+      g.addColorStop(1, 'hsl(' + hu + ' 40% 20% / 0)');
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+    }
+  } else if (ARTMODE === 'plate') {
+    /* hard-edged bands: the flattest, most graphic of the three */
+    /* Deep bands at lightness 13-38%, then TWO thin lines at 66% as the only
+       bright ink. Loud is a lightness problem, not a hue problem: many hues at
+       low lightness read as one calm image, one hue at high lightness shouts. */
+    var rows = 9 + Math.floor(r() * 5), y = 0;
+    for (var k = 0; k < rows; k++) {
+      var hh = h / rows * (.45 + r() * 1.1);
+      var hu2 = [H.h, h2, h3][k % 3];
+      c.fillStyle = 'hsl(' + hu2 + ' ' + (30 + r() * 26) + '% ' + (13 + r() * 25) + '%)';
+      c.fillRect(0, y, w, hh + 1); y += hh;
+    }
+    for (var L = 0; L < 2; L++) {
+      c.fillStyle = 'hsl(' + [h2, H.h][L] + ' 62% 66% / .92)';
+      c.fillRect(0, Math.round(h * (.30 + r() * .42)), w, Math.max(2, h * .012));
+    }
+  } else {
+    /* bloom: one bright core with a long falloff */
+    var g2 = c.createLinearGradient(0, 0, w, h);
+    g2.addColorStop(0, 'hsl(' + h3 + ' 40% 16%)');
+    g2.addColorStop(1, 'hsl(' + h2 + ' 44% 12%)');
+    c.fillStyle = g2; c.fillRect(0, 0, w, h);
+    for (var j = 0; j < 3; j++) {
+      var cx = w * (.28 + r() * .44), cy = h * (.28 + r() * .44), rad = w * (.18 + r() * .3);
+      var g3 = c.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      var hu3 = [H.h, h2, h3][j];
+      g3.addColorStop(0, 'hsl(' + hu3 + ' 80% 74% / .8)');
+      g3.addColorStop(.45, 'hsl(' + hu3 + ' 66% 52% / .34)');
+      g3.addColorStop(1, 'hsl(' + hu3 + ' 60% 40% / 0)');
+      c.fillStyle = g3; c.fillRect(0, 0, w, h);
+    }
+  }
+  /* grain, so a flat gradient does not read as a CSS box */
+  if (big) {
+    var d = c.getImageData(0, 0, cv.width, cv.height), p = d.data;
+    for (var q = 0; q < p.length; q += 4) {
+      var v = (r() - .5) * 12; p[q] += v; p[q + 1] += v; p[q + 2] += v;
+    }
+    c.putImageData(d, 0, 0);
+  }
+}
+
+/* ── the rail ────────────────────────────────────────────────────────────── */
+var CUR = 0;
+function buildThumbs() {
+  var t = $('#thumbs'); t.innerHTML = '';
+  RUNS.forEach(function (run, i) {
+    var b = document.createElement('button');
+    b.className = 'thumb'; b.type = 'button';
+    b.title = 'run ' + run.i + ' · ' + run.m.n + ' · ' + run.steps + ' steps';
+    b.style.setProperty('--sel', 'var(' + run.m.h + ')');
+    b.innerHTML = '<canvas></canvas><i style="background:var(' + run.m.h + ')"></i>';
+    b.addEventListener('click', function () { select(i); });
+    t.appendChild(b);
+  });
+  $('#rc').textContent = RUNS.length;
+}
+function select(i) {
+  CUR = i;
+  var run = RUNS[i];
+  $$('#thumbs .thumb').forEach(function (b, k) { b.setAttribute('aria-current', String(k === i)); });
+  $('#mtitle').textContent = 'run ' + run.i;
+  $('#mmeta').textContent = run.m.n + ' · 1536×1024 · ' + run.steps + ' st · ' + run.t;
+  $('#k1').textContent = run.m.n; $('#k3').textContent = run.steps;
+  $('#k4').textContent = run.seed; $('#k5').textContent = run.t;
+  $('#stage').style.setProperty('--sel', 'var(' + run.m.h + ')');
+  paintArt($('#big'), run, true);
+}
+/* the peek is measured, not guessed: exactly two rows plus 22px of the third */
+function syncPeek() {
+  var t = $('#thumbs .thumb');
+  if (t && t.offsetHeight) document.documentElement.style.setProperty('--thumb', t.offsetHeight + 'px');
+}
+function repaintAll() {
+  syncPeek();
+  $$('#thumbs .thumb').forEach(function (b, i) { paintArt(b.querySelector('canvas'), RUNS[i], false); });
+  paintArt($('#big'), RUNS[CUR], true);
+}
+window.repaintAll = repaintAll;
+
+/* ── fullscreen: a real FLIP, transform only, collapse 20% shorter ───────── */
+var full = false;
+function toggleFull() {
+  var el = $('#media');
+  if (RM.matches) {           /* vestibular: crossfade, no travel */
+    full = !full;
+    el.classList.toggle('full', full);
+    document.body.classList.toggle('full', full);
+    setFullBox(el);
+    requestAnimationFrame(repaintAll);
+    return;
+  }
+  var a = el.getBoundingClientRect();
+  full = !full;
+  el.classList.toggle('full', full);
+  document.body.classList.toggle('full', full);
+  setFullBox(el);
+  var b = el.getBoundingClientRect();
+  el.style.transformOrigin = 'top left';
+  el.style.transition = 'none';
+  el.style.transform = 'translate(' + (a.left - b.left) + 'px,' + (a.top - b.top) +
+    'px) scale(' + (a.width / b.width) + ',' + (a.height / b.height) + ')';
+  el.getBoundingClientRect();
+  el.style.transition = 'transform ' + (full ? 300 : 240) + 'ms ' + EO;
+  el.style.transform = 'none';
+  clearTimeout(window.__ft);
+  window.__ft = setTimeout(function () { el.style.transition = ''; repaintAll(); }, full ? 320 : 260);
+}
+function setFullBox(el) {
+  if (!full) { el.style.left = el.style.top = el.style.width = el.style.height = ''; return; }
+  var pad = 20, footer = 26;
+  var w = innerWidth - pad * 2, h = innerHeight - pad * 2 - footer;
+  /* fit 3:2 inside the viewport; never stretch the picture to fill */
+  var bw = Math.min(w, h * 1.5), bh = bw / 1.5;
+  el.style.left = Math.round((innerWidth - bw) / 2) + 'px';
+  el.style.top = Math.round((innerHeight - footer - bh) / 2) + 'px';
+  el.style.width = Math.round(bw) + 'px'; el.style.height = Math.round(bh) + 'px';
+}
+
+/* ── boot ────────────────────────────────────────────────────────────────── */
+buildThumbs();
+(function () {                       /* the hue legend: colour as a type system */
+  var m = $('#mlegend'); if (!m) return;
+  MODELS.forEach(function (md) {
+    var n = RUNS.filter(function (r) { return r.m === md; }).length;
+    var d = document.createElement('div');
+    d.className = 'kv';
+    d.innerHTML = '<span style="display:flex;align-items:center;gap:6px">' +
+      '<i style="width:6px;height:6px;border-radius:2px;background:var(' + md.h + ')"></i>' +
+      md.n + '</span><b class="num">' + n + '</b>';
+    m.appendChild(d);
+  });
+})();
+requestAnimationFrame(function () { select(0); repaintAll(); });
+setTimeout(repaintAll, 140);
+
+$('#media').addEventListener('click', toggleFull);
+$('#media').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFull(); } });
+$('#scrim').addEventListener('click', toggleFull);
+addEventListener('keydown', function (e) { if (e.key === 'Escape' && full) toggleFull(); });
+
+$('#allbtn').addEventListener('click', function () {
+  var on = $('#results').classList.toggle('all');
+  this.innerHTML = on ? '&#9662;' : '&#9656;';
+  this.title = on ? 'Show two rows' : 'Show all results';
+  setTimeout(repaintAll, 320);
+});
+
+$('#verb').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  $$('button', this).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+  $('#rail').classList.toggle('basic', b.textContent === 'Basic');
+});
+$('#rail').classList.add('basic');
+
+(function (t) {
+  var n = $('#neg');
+  if (n) { n.addEventListener('input', function () {
+    n.style.height = 'auto'; n.style.height = Math.min(n.scrollHeight, 90) + 'px'; }); }
+  function fit() { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 130) + 'px'; }
+  t.addEventListener('input', function () { fit(); $('#pc').textContent = t.value.length; });
+  t.addEventListener('focus', fit); requestAnimationFrame(fit);
+  $('#pc').textContent = t.value.length;
+})($('#prompt'));
+
+/* Generate: progress is linear. It does not ease. */
+$('#run').addEventListener('click', function () {
+  var i = $('#prog i'), p = 0;
+  i.style.transition = 'none'; i.style.width = '0%';
+  var t = setInterval(function () {
+    p += 5; i.style.transition = 'width 80ms linear'; i.style.width = p + '%';
+    if (p >= 100) { clearInterval(t);
+      setTimeout(function () { i.style.transition = 'opacity 200ms ' + EO; i.style.width = '0%'; }, 260); }
+  }, 80);
+});
+
+addEventListener('resize', function () {
+  if (full) setFullBox($('#media'));
+  clearTimeout(window.__rz); window.__rz = setTimeout(repaintAll, 90);
+});
+
+</script>
+</body>
+</html>
