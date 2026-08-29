@@ -1215,6 +1215,21 @@
       color:var(--faint); background:transparent; border:1px solid var(--line);
       border-radius:6px; padding:2px 8px; margin-left:6px; cursor:pointer; }
   .dlrow .dlacts button:hover { color:var(--gold); border-color:var(--gold); }
+  /* A14 download-row state chip — tokens only (why: test_download_rows.js). */
+  .dlrow .dlstate { font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+      border:1px solid var(--line2); border-radius:6px; padding:1px 7px; margin-right:8px;
+      white-space:nowrap; cursor:default; }
+  .dlrow .dlstate.bad { color:var(--bad); border-color:var(--bad); }
+  .dlrow .dlstate.warn { color:var(--warn); border-color:var(--warn); }
+  /* ⚠️ the extra .dlbar is LOAD-BEARING: it outranks the design pack's own .dlfill
+     rule, which otherwise repaints these in the accent colour. Fenced by specificity
+     in test_download_rows.js — do not simplify these three selectors. */
+  .dlrow .dlbar .dlfill.bad { background:var(--bad); }
+  /* a still 100% bar reads as stalled, so it breathes while the digest runs */
+  .dlrow .dlbar .dlfill.verifying { background:var(--warn); animation:dlpulse 1.1s ease-in-out infinite; }
+  @keyframes dlpulse { 0%,100% { opacity:.45 } 50% { opacity:1 } }
+  @media (prefers-reduced-motion: reduce) {
+    .dlrow .dlbar .dlfill.verifying { animation:none; opacity:.7 } }
 
   /* ---------- PHASE 1 (Artifacts spec) — roomier Chat workspace ----------
      Layout/affordance only. The collapse is SCOPED to the Chat view via
@@ -11486,6 +11501,9 @@ async function switchModel(id, name, confirmed){
 let dlPoll = null;
 const dlDismissed = new Set();
 let dlSeenDone = new Set();
+// A14: last /api/dl view per id — what Retry replays the original Get from (a Map,
+// so no repo/filename has to survive a round trip through an HTML attribute).
+const dlLast = new Map();
 
 // opts (Phase A, optional): {voice_format, mmproj} — set ONLY by the Audio tab's Get
 // buttons. Without them the body is byte-identical to before, so every chat-model
@@ -11519,6 +11537,9 @@ async function refreshDownloads(){
   let list;
   try { list = await (await fetch('/api/dl')).json(); } catch { return; }
   if (!Array.isArray(list)) return;
+  // A14: prune Retry's source of truth with the list. ABOVE the empty-list early
+  // return below — that is the exact case this exists for (bridge restart).
+  for (const id of dlLast.keys()) if (!list.some(x => x.id === id)) dlLast.delete(id);
   const visible = list.filter(e => !dlDismissed.has(e.id));
   const sec = document.getElementById('downloads-sec');
   const box = document.getElementById('dl-list');
@@ -11548,20 +11569,67 @@ async function refreshDownloads(){
     if (e.state === 'downloading') anyDownloading = true;
     if (e.state === 'done' && !dlSeenDone.has(e.id)){ dlSeenDone.add(e.id); newDone = true; doneModelId = e.model_id; }
 
-    let meta;
-    if (e.state === 'downloading')
+    dlLast.set(e.id, e);   // A14: what Retry replays the original Get from
+
+    /* A14 state chain — ORDER IS LOAD-BEARING (why + fences: test_download_rows.js).
+       corrupt before error: a failed verification carries BOTH. verifying before
+       downloading: the sha256 runs as state downloading + phase verifying, which
+       else renders as a 100% bar at 0.0 MB/s. Chip-first: label, sentence on hover. */
+    const badFile  = (e.files || []).find(f => f.state === 'corrupt');
+    const vfyFile  = (e.files || []).find(f => f.state === 'verifying');
+    const isCorrupt = !!(e.corrupt || badFile);
+    // a cancel/pause mid-hash keeps phase verifying; the user's action outranks it
+    const isVerifying = e.state === 'downloading' && (e.phase === 'verifying' || !!vfyFile);
+    let meta, fillCls = '', title = '';
+    if (isCorrupt){
+      // WHICH check failed is the bridge's own recorded fact, never guessed here
+      const which = badFile && badFile.verified === 'sha256' ? 'sha256 mismatch'
+                  : badFile && badFile.verified === 'size'   ? 'wrong size'
+                  : 'failed verification';
+      const who = badFile ? badFile.name.split('/').pop() : (e.model_id || '');
+      title = e.error || 'The finished file did not match what HuggingFace publishes for it.';
+      meta = `<span class="dlstate bad">Corrupt</span>${esc(who)} · ${which} · nothing added`;
+      fillCls = ' bad';
+    }
+    else if (isVerifying){
+      const who = vfyFile ? vfyFile.name.split('/').pop() : (e.model_id || '');
+      title = 'Downloaded. Now checking this file’s sha256 against the digest '
+            + 'HuggingFace publishes, before anything enters your library. A '
+            + 'multi-gigabyte file can take a minute — it is working, not stuck.';
+      meta = `<span class="dlstate warn">Verifying</span>${esc(who)} · checking sha256`;
+      fillCls = ' verifying';
+    }
+    else if (e.state === 'downloading')
       meta = `${fmtGB(done)} of ${fmtGB(total)} (${pct.toFixed(0)}%) · ${(e.rate/1048576).toFixed(1)} MB/s`;
     else if (e.state === 'paused')
       meta = `paused · ${fmtGB(done)} of ${fmtGB(total)}`;
-    else if (e.state === 'done')
+    else if (e.state === 'done'){
       meta = 'complete — in your library';
-    else if (e.state === 'error')
-      meta = 'error: ' + esc(e.error || '');
+      title = e.verified ? 'Verified: ' + e.verified : '';
+    }
+    else if (e.state === 'error'){
+      // these are paragraphs written for a human: head in the row, whole on hover
+      const first = String(e.error || 'no reason given').split(/(?<=\.)\s/)[0];
+      title = e.error || '';
+      meta = `<span class="dlstate bad">Failed</span>${esc(first.slice(0, 90))}`;
+    }
+    else if (e.state === 'cancelled')
+      meta = 'cancelled — nothing added to your library';
     else
-      meta = 'cancelled';
+      // THE A14 RULE: an unknown state renders ITS OWN NAME, never another
+      // state's word. This branch used to say 'cancelled', so every state the
+      // bridge gained after it announced itself as a cancellation that never was.
+      meta = `<span class="dlstate">${esc(e.state || 'unknown')}</span>`;
 
     let acts;
-    if (e.state === 'downloading')
+    if (isCorrupt || e.state === 'error')
+      // was Dismiss-only, i.e. a dead end; Retry does what the error text asks
+      acts = `<button onclick="dlRetry('${e.id}')">Retry</button><button onclick="dlDismiss('${e.id}')">Dismiss</button>`;
+    else if (isVerifying)
+      // no Pause: the bridge honours one only between chunks, so it would look
+      // ignored for the length of the hash. Cancel IS honoured once it ends.
+      acts = `<button onclick="dlAct('${e.id}','cancel')">Cancel</button>`;
+    else if (e.state === 'downloading')
       acts = `<button onclick="dlAct('${e.id}','pause')">Pause</button><button onclick="dlAct('${e.id}','cancel')">Cancel</button>`;
     else if (e.state === 'paused')
       acts = `<button onclick="dlAct('${e.id}','resume')">Resume</button><button onclick="dlAct('${e.id}','cancel')">Cancel</button>`;
@@ -11570,8 +11638,8 @@ async function refreshDownloads(){
 
     const row = document.createElement('div'); row.className = 'dlrow';
     row.innerHTML = `<div class="dlname">${esc(e.model_id)} <span style="color:var(--dim)">· ${esc(e.repo)}</span></div>
-      <div class="dlbar"><div class="dlfill" style="width:${pct.toFixed(1)}%"></div></div>
-      <div class="dlmeta"><span>${meta}</span><span class="dlacts">${acts}</span></div>`;
+      <div class="dlbar"><div class="dlfill${fillCls}" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="dlmeta"><span${title ? ' title="' + escAttr(title) + '"' : ''}>${meta}</span><span class="dlacts">${acts}</span></div>`;
     box.appendChild(row);
   }
   if (anyDownloading) ensureDlPoll();
@@ -11588,6 +11656,26 @@ async function refreshDownloads(){
 }
 
 function dlDismiss(id){ dlDismissed.add(id); refreshDownloads(); }
+
+/* A14 — RETRY a failed/corrupt download by REPLAYING the original Get from the
+   entry itself (every case pinned in test_download_rows.js): MLX whole-repo mode is
+   the empty filename; a GGUF replays its first file, from which the bridge re-expands
+   a split set; an explicit mmproj + voice_format ride along or an audio pair returns
+   as a chat model with no projector. The failed row is dismissed ONLY once the new
+   download really started — a refusal leaves the row and its Retry in place. */
+async function dlRetry(id){
+  const e = dlLast.get(id);
+  if (!e || !e.repo) return;
+  const names = (e.files || []).map(f => f.name).filter(Boolean);
+  const filename = e.kind === 'mlx' ? '' : (names[0] || '');
+  const opts = {};
+  if (e.voice_format) opts.voice_format = e.voice_format;
+  const mm = names.find(n => n !== filename && /mmproj/i.test(n));
+  if (mm) opts.mmproj = mm;
+  const r = await dlStart(e.repo, filename, opts);
+  if (r && r.ok){ dlDismissed.add(id); dlLast.delete(id); }
+  refreshDownloads();
+}
 
 /* PURE (v2.1 bug fix). What the byline over an assistant reply should say.
 

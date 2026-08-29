@@ -327,8 +327,35 @@ console.log('2. Editorial does not pay for the second design');
                the hardcoded 64 the HF browser used to divide by.
                ⚠️ AND THE PAGE STILL HOLDS NO FIT ARITHMETIC. Every new number and every
                new sentence comes from bridge/core/fit.py over /api/memory* and
-               /api/models/hf/fit; the panel formats bytes and paints. */
-  const CEILING = 820000;
+               /api/models/hf/fit; the panel formats bytes and paints.
+       824000  LEDGER A14 — THE CORRUPT / VERIFYING DOWNLOAD ROW (2026-08-29) — +5.8KB,
+               and per the protocol, what it bought. NEW BEHAVIOUR, all of it, in
+               refreshDownloads plus one new function: a first-class CORRUPT branch
+               (the file that failed, WHICH of the two checks said no — read from the
+               bridge's own `verified`, never guessed — and the honest sentence on
+               hover) with its own bar state; a VERIFYING branch for the post-download
+               sha256, which the page had no way to show at all, so a multi-GB hash
+               rendered as a 100% bar at 0.0 MB/s; dlRetry, which replays the original
+               Get from the entry (MLX repo mode's empty filename, a split GGUF's part
+               1, an audio pair's voice_format + explicit mmproj) and turns a
+               Dismiss-only dead end into a recovery; the dlLast map it reads, and its
+               prune; Pause withdrawn during the hash (the bridge honours one only
+               between chunks); and the unknown-state fallback, which used to render
+               EVERY state it did not know as the word "cancelled" — so both states
+               above would have announced themselves to the user as a cancellation
+               that never happened. ~12 lines is CSS: the state chip in the v1.5.34
+               chip grammar and the two bar states, tokens only, verified by COMPUTED
+               VALUE in all six looks.
+               The PROSE half is deliberately thin, because this ceiling's own note
+               says prose belongs in a test file — and it is there: test_download_rows.js
+               (106 checks) carries the reasoning and EXECUTES the shipped renderer.
+               What stayed in the page is only what an editor of those lines would
+               otherwise undo: the state chain's ORDER, why Pause is absent, and the
+               extra `.dlbar` qualifier — load-bearing, because the obvious selector
+               loses to the design pack's own rule and painted a CORRUPT download's bar
+               in the accent colour (found by this slice's ALL-DESIGNS computed-value
+               pass, now fenced by specificity in that same file). */
+  const CEILING = 824000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
