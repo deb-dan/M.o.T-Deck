@@ -410,7 +410,30 @@ console.log('2. Editorial does not pay for the second design');
                editor would otherwise "simplify" away. Everything else went where this
                ceiling's own note says it belongs — bridge/tests/test_dep_signal.py §6
                (125 checks) walks the states and EXECUTES the renderer's inputs. */
-  const CEILING = 840000;
+  /*     843000  THE COHERENCE WAVE — PIN-ALIGN (S28, 2026-08-29) — +2.7KB, and per the
+               protocol, what it bought. NEW BEHAVIOUR, all of it: the state
+               `pin_intent ≠ live_id` used to be UNENDABLE from this page. The served
+               model's own row offers Eject (it is loaded, so `modelAction` never
+               returns Switch for it) and the runner card's only advice was "pick
+               another model", which cannot name the model already serving — so the
+               drift persisted until somebody ejected a working model and reloaded it,
+               or hand-edited harness.yaml. Debi hit that wall. What landed: `drift`
+               hoisted out of the fileGone branch (it is pin ≠ served, not "the file is
+               deleted" — the narrow version fired only on the incident that produced
+               it), a drift sentence for the healthy-model case that previously said
+               NOTHING, and one button in three places that each already knew the two
+               ids — the runner card, the Models detail pane, and the composer's model
+               popover — all calling ONE `pinServedModel()` against ONE route
+               (/api/models/pin), which writes the pin and touches nothing else.
+               ZERO NEW CSS: every button reuses `.primary` / `.mp-act`, so the four
+               theme packs and Studio's two palettes reach it by swap with no new token.
+               THE PROSE HALF is five short comments — the drift hoist, why the button
+               is absent rather than greyed, and the route's own contract. The argument
+               lives where this ceiling's note says it belongs:
+               bridge/tests/test_dep_signal.py §7 walks the affordance and EXECUTES the
+               renderer's inputs, and routers/models.py::api_pin_model carries the
+               v1.5.57 "never silently rewrite the intent record" reasoning in full. */
+  const CEILING = 843000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

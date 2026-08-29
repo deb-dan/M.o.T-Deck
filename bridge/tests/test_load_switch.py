@@ -212,6 +212,65 @@ finally:
     app._live_model_id, app._registry_models = orig_live, orig_reg
     app._SWITCH.update(busy=False, log="")
 
+# ══ S28 — THE COHERENCE WAVE: A SWITCH RE-SEEDS EVERY DEPENDENT ═════════════
+#
+# THE USER STORY: Debi switches the runner from the 27B to Parable. Before this, the
+# only thing that fanned out was a RESTART of hermes/odysseus IF they happened to be
+# running; goose's files, a stopped Odysseus's DB and OpenCode's catalog kept the old
+# name until somebody restarted them by hand — which nobody did for a week, while
+# llama.cpp answered every request with Parable under the 27B's label.
+#
+# Every seam below is STUBBED: this test is about WHO gets called with WHAT, and a
+# real fan-out would touch a vendored DB and two config files.
+orig_goose, orig_ody = app._rebind_goose, app._rebind_odysseus_offline
+try:
+    app._set_runner_model = lambda *_: None
+    app._registry_models = lambda: _REG_U15
+    app._live_model_id = lambda *_a, **_k: None
+    seen, calls = {}, []
+    app._rebind_goose = lambda wire: (seen.__setitem__("goose", wire), "")[1]
+    app._rebind_odysseus_offline = lambda wire: (seen.__setitem__("ody", wire), "")[1]
+    app._script = lambda name, *a: (calls.extend([name, *a]),
+                                    types.SimpleNamespace(returncode=0, stdout="", stderr=""))[1]
+
+    app._SWITCH.update(busy=True, log="starting…")
+    seen.clear(); calls.clear()
+    app._do_switch("new", "old", False, False)
+    check("S28: a switch re-seeds goose file-side even with nothing running",
+          seen.get("goose") == "new")
+    check("S28: …and runs the Odysseus DB seed OFFLINE when Odysseus is not up",
+          seen.get("ody") == "new")
+    check("S28: the switch still ends 'active'", "active: new" in app._SWITCH["log"])
+
+    # …and when Odysseus IS running, the rebind is its RESTART (which runs the same
+    # seeder through start_component.sh) — never the DB script against a live app.
+    app._SWITCH.update(busy=True, log="starting…")
+    seen.clear(); calls.clear()
+    app._do_switch("new", "old", True, True)
+    check("S28: a running Hermes is restarted", "hermes" in calls)
+    check("S28: a running Odysseus is restarted", "odysseus" in calls)
+    check("S28: …and the offline DB seed is NOT run against a live Odysseus",
+          "ody" not in seen)
+    check("S28: goose is re-seeded either way", seen.get("goose") == "new")
+
+    # THE PATH THE REAL INCIDENT TOOK: start_component.sh exits non-zero (its keyless
+    # readiness poll 401s on b10662) while the runner is genuinely serving the new
+    # model. A fan-out hung only off the clean-exit branch would have missed it.
+    app._script = lambda name, *a: (calls.extend([name, *a]),
+                                    types.SimpleNamespace(returncode=1, stdout="", stderr=""))[1]
+    app._live_model_id = lambda *_a, **_k: "new"
+    app._SWITCH.update(busy=True, log="starting…")
+    seen.clear(); calls.clear()
+    app._do_switch("new", "old", False, False)
+    check("S28: the believe-the-probe arm ALSO re-seeds every dependent",
+          seen.get("goose") == "new" and seen.get("ody") == "new")
+    check("S28: …and still reports success", "active: new" in app._SWITCH["log"])
+finally:
+    app._rebind_goose, app._rebind_odysseus_offline = orig_goose, orig_ody
+    app._script, app._set_runner_model = orig_script, orig_set
+    app._live_model_id, app._registry_models = orig_live, orig_reg
+    app._SWITCH.update(busy=False, log="")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S):", FAILS)

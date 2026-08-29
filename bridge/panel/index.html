@@ -3632,11 +3632,9 @@ function rescanFromCard(){
   if (typeof rescanModels === 'function') return rescanModels();
 }
 
-/* PIN THE SERVED MODEL — the one click that ends `pin_intent ≠ live_id` (S28).
-   POSTs /api/models/pin, which writes harness.yaml's runner.model to the model the
-   runner is ALREADY serving and touches nothing else: no load, no restart, no eject.
-   The bridge publishes a `model` event, so every surface re-reads on its own; the
-   explicit refresh below is for the case where SSE is not connected. */
+/* PIN THE SERVED MODEL (S28) — POSTs /api/models/pin, which writes runner.model to the
+   model the runner is ALREADY serving and touches nothing else. The bridge publishes a
+   `model` event; the refresh below covers a disconnected SSE. */
 let _pinBusy = false;
 async function pinServedModel(){
   if (_pinBusy) return; _pinBusy = true;
@@ -7303,8 +7301,7 @@ function renderModelPop(){
     const acts = document.createElement('div');
     acts.className = 'mp-acts';
     if (isLive){
-      // S28: the live row is where the drift is visible, so it is where the fix lives
-      // too. Shown only while the pin disagrees — otherwise there is nothing to end.
+      // S28: the live row shows the drift, so it carries the fix. Only while it drifts.
       if (modelActiveId && modelActiveId !== m.id){
         const pn = document.createElement('button');
         pn.className = 'mp-act'; pn.textContent = 'Pin';
@@ -11419,11 +11416,8 @@ function renderDetail(){
       else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
     }
     acts.appendChild(primary);
-    // PIN THIS MODEL (S28). Only on the LIVE row, and only while the pin points
-    // somewhere else — the state the audit found was otherwise UNENDABLE from the UI:
-    // this row's primary is Eject (it is loaded), and the runner card's advice ("pick
-    // another model") cannot name the model already serving. Absent, not greyed, when
-    // there is nothing to fix.
+    // PIN THIS MODEL (S28). LIVE row only, and only while the pin points elsewhere —
+    // absent, not greyed, when there is nothing to fix.
     if (isLive && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
       const pinB = document.createElement('button');
       pinB.textContent = 'Pin this model';

@@ -324,3 +324,104 @@ def test_no_unconditional_assignment_survives():
     for banned in ("ep.name = NAME", "ep.is_enabled = True", "ep.api_key = API_KEY",
                    "ep.pinned_models = model_json", "ep.base_url = BASE_URL"):
         assert banned not in SRC, f"pre-U11 unconditional write is back: {banned}"
+
+
+# ── H. LIVE FIRST, PIN LAST (S28 — the post-switch coherence audit) ──────────
+#
+# THE INCIDENT, AS A USER STORY: Debi switched the runner to Parable-Qwen3-4B and
+# deleted the old 27B's weights. Every Odysseus Start after that RE-SEEDED the deleted
+# 27B — as the default AND into `pinned_models` — because `_wire_model()` read
+# harness.yaml's pin instead of asking the runner what it was serving. llama.cpp
+# ignores the request's `model` field, so her chats worked and were labelled with a
+# model that had not existed for days. The seeder did not merely inherit the drift, it
+# PROPAGATED it into a third-party picker.
+
+def test_a_probe_is_only_believed_when_it_maps_to_something_we_ship():
+    reg = [{"id": "small-4b"}, {"id": "mlx-9b", "format": "mlx", "path": "/m/mlx-9b"}]
+    assert seed.live_wire("small-4b", reg) == "small-4b"
+    assert seed.live_wire("/m/mlx-9b", reg) == "/m/mlx-9b", "MLX answers with its path"
+    # An MLX server's /v1/models enumerates the whole HuggingFace CACHE, so data[0] is
+    # routinely an unrelated repo. An unmappable probe is DISCARDED, never trusted —
+    # the same rule bridge/core/modelid.py::_reconcile_live has always applied.
+    assert seed.live_wire("meta-llama/Llama-3-70B", reg) == ""
+    assert seed.live_wire("", reg) == "" and seed.live_wire(None, reg) == ""
+
+
+def test_the_env_seam_finally_has_a_caller_and_it_wins():
+    """HARNESS_WIRE_MODEL existed from the start with ZERO callers (audit §1). The
+    switch trigger now passes the model it just loaded; it outranks everything."""
+    old = os.environ.get("HARNESS_WIRE_MODEL")
+    os.environ["HARNESS_WIRE_MODEL"] = "just-loaded-4b"
+    try:
+        assert seed.resolve_wire() == ("just-loaded-4b", "env")
+    finally:
+        os.environ.pop("HARNESS_WIRE_MODEL", None)
+        if old is not None:
+            os.environ["HARNESS_WIRE_MODEL"] = old
+
+
+def test_a_ghost_pin_is_never_offered_and_never_becomes_a_default():
+    """THE PROPAGATION BUG. `offerable` is the gate that stops it."""
+    reg = [{"id": "small-4b"}, {"id": "big-27b"}]
+    assert seed.offerable("small-4b", "pin", reg), "a REGISTERED pin is fine"
+    assert not seed.offerable("deleted-27b", "pin", reg), \
+        "a pin naming neither a registered nor a served model is a GHOST"
+    assert seed.offerable("weird-but-served", "live", reg), \
+        "…but something the runner is actually SERVING is real, registry or not"
+    assert seed.offerable("explicit", "env", reg), "…as is an explicit caller's answer"
+    assert not seed.offerable("", "live", reg)
+    # And with the ghost pruned, the picker list carries no trace of it…
+    assert "deleted-27b" not in seed.registry_wire_models(reg, "")
+    # …which is exactly what makes settings_plan repair the stale default: the
+    # configured choice now DANGLES against what this endpoint offers.
+    ch, notes = seed.settings_plan({"default_endpoint_id": "local-jan",
+                                    "default_model": "deleted-27b"},
+                                   "local-jan", True, ["small-4b"], "small-4b")
+    assert ch.get("default_model") == "small-4b"
+    assert any("no longer offered" in n for n in notes), \
+        "and it SAYS so — a silent repair is its own kind of lie"
+
+
+def test_the_script_still_says_why_it_prefers_live():
+    for phrase in ("live_wire", "resolve_wire", "offerable", "HARNESS_WIRE_MODEL",
+                   "GHOST"):
+        assert phrase in SRC, f"S28's reasoning must stay written: {phrase}"
+    assert "pin_wire" in SRC and "_active_model_id" in SRC, \
+        "the pin is still READABLE — it is the runner-down fallback, not a mistake"
+
+
+def test_our_own_stale_default_is_refreshed_but_the_humans_is_not():
+    """S28's fourth state. `default_model` had no marker, so a value THIS SCRIPT seeded
+    at the previous switch was honoured as if a human had picked it — switch twice and
+    Odysseus's chip keeps naming the model from the switch before, valid and stale."""
+    vis = ["new-4b", "old-9b", "hers-27b"]
+    # ours, and stale → refreshed, out loud
+    ch, notes = seed.settings_plan({"default_endpoint_id": "local-jan",
+                                    "default_model": "old-9b"},
+                                   "local-jan", True, vis, "new-4b",
+                                   None, {"default_model": "old-9b"})
+    assert ch.get("default_model") == "new-4b"
+    assert any("OUR OWN last seed" in n for n in notes), "and it SAYS whose value it was"
+    # hers → untouchable, marker or no marker
+    ch2, notes2 = seed.settings_plan({"default_endpoint_id": "local-jan",
+                                      "default_model": "hers-27b"},
+                                     "local-jan", True, vis, "new-4b",
+                                     None, {"default_model": "old-9b"})
+    assert "default_model" not in ch2
+    assert any("honoured your choice" in n for n in notes2)
+    # no marker at all (fresh clone, tidied state file) → the pre-S28 behaviour exactly:
+    # a working value is honoured. Losing the evidence must never license a clobber.
+    ch3, _ = seed.settings_plan({"default_endpoint_id": "local-jan",
+                                 "default_model": "old-9b"},
+                                "local-jan", True, vis, "new-4b")
+    assert "default_model" not in ch3
+
+
+def test_the_marker_records_only_what_we_wrote():
+    m = seed.next_marker({"default_model": "old"}, {"default_model": "new"})
+    assert m["default_model"] == "new"
+    # a field we merely HONOURED is not recorded — recording it is what would make it
+    # "ours" next run and clobber it one Start later.
+    assert seed.next_marker({"default_model": "old"}, {})["default_model"] == "old"
+    assert "default_model" in SRC.split("def next_marker")[1][:700], \
+        "next_marker must carry default_model or the fourth state cannot work"

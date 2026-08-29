@@ -586,6 +586,139 @@ def model_file_alive(mid: str) -> bool:
                         str(entry.get("format") or "gguf")) is True
 
 
+# ══ THE COHERENCE WAVE (S28) — AFTER A SWITCH, NOTHING MAY KEEP NAMING THE OLD MODEL ══
+#
+# THE INCIDENT THIS EXISTS FOR (docs/research/2026-08-29-post-switch-audit.md, measured
+# end to end on the live machine): the runner served Parable-Qwen3-4B while Odysseus's
+# default, its picker, the Goose UI chip, OpenCode's catalog and our own Chat lane's turn
+# labels all still said a 27B whose weights had been deleted. Nothing crashed. llama.cpp
+# IGNORES the request's `model` field, so every one of those surfaces got Parable's
+# tokens under the wrong name — the system did not fail, it LIED QUIETLY, which the
+# doctrine ranks as the worst class there is.
+#
+# The root cause was not the seeders: every one of them is idempotent and never-clobber
+# (v1.5.49-56, ledger U11/U12). It was that they only ever ran at component START, and a
+# runner switch is not a component start. This function is the missing TRIGGER — it
+# re-runs the seeding each dependent already has, with the model we JUST LOADED as the
+# input, and it adds no new write of any kind.
+#
+# THREE RULES, and they are the same three every seeder here obeys:
+#   1. NEVER CLOBBER. Nothing below writes a value a human chose. The Odysseus seed
+#      honours renames/keys/curated lists; the goose provider file merges OWNED_KEYS
+#      only; the one goose key we now repair is repaired ONLY when it dangles.
+#   2. LIVE OUTRANKS THE PIN. The wire we hand round is the model the runner is actually
+#      serving, not harness.yaml's — the rule the hermes arm proved in v1.5.56.
+#   3. WHAT WE CANNOT REBIND, WE SIGNAL. A running goosed carries GOOSE_MODEL in its
+#      ENVIRONMENT and no file write can change that; we refuse to restart somebody's
+#      live agent session to fix a label, so /api/deps' new `gooseui` binding raises the
+#      banner with a Restart button instead. Honest limit, not an omission.
+def _rebind_goose(wire: str) -> str:
+    """Re-seed BOTH goose lanes' provider files and repair a DANGLING model choice.
+
+    File-side only, and deliberately: the live goosed's `GOOSE_MODEL` comes from its
+    process ENV (gooseprov F6, measured), so it cannot change without a respawn — and a
+    respawn kills whatever session the user is in. The deps banner covers that half.
+    Returns a short log line, never raises."""
+    from .. import gooseprov as _p
+    said = []
+    c = cfg()
+    rc = c.get("runner", {}) or {}
+    endpoint, port = rc.get("endpoint") or "", rc.get("port") or 6767
+    reg = _registry_models()
+    offered = [m["name"] for m in _p.model_entries(reg)]
+    for lane, cfg_dir in (
+            ("Goose UI", ROOT / "data" / "goose" / "ui-home" / "goose" / "config"),
+            ("Goose CLI", ROOT / "data" / "goose" / "home" / ".config" / "goose")):
+        if not cfg_dir.is_dir():
+            continue                      # lane never installed — S23, say nothing
+        try:
+            _p.seed_provider(str(cfg_dir), endpoint, reg, port)
+        except Exception as e:                                       # noqa: BLE001
+            said.append(f"{lane}: provider re-seed failed ({str(e)[:80]})")
+            continue
+        # BOTH SLUGS. `providers.openai.model` is not goose's stock provider being
+        # helpful — it is OUR OWN pre-v1.5.49 anonymous seeding (gooseprov's
+        # LEGACY_PROVIDER, the one value provider_choice() is allowed to migrate away
+        # from), so a ghost left there is our litter, and it would be honoured the
+        # moment anyone switched back to it. Found in the live walk: the active slug
+        # rebound cleanly while the legacy one still named the deleted 27B.
+        for slug in (_p.PROVIDER_NAME, _p.LEGACY_PROVIDER):
+            old, new, changed, err = _p.repair_config_model(
+                str(cfg_dir / "config.yaml"), offered, wire, slug)
+            if err:
+                said.append(f"{lane}/{slug}: {err[:80]}")
+            elif changed:
+                said.append(f"{lane}/{slug}: repaired a dangling model choice "
+                            f"({old} → {new})")
+            elif old and old != wire:
+                said.append(f"{lane}/{slug}: honoured your model choice ({old})")
+    return "; ".join(said)
+
+
+def _rebind_odysseus_offline(wire: str) -> str:
+    """Run the Odysseus DB seed with HARNESS_WIRE_MODEL — the seam that had no callers.
+
+    ⚠️ ONLY WHEN ODYSSEUS IS NOT RUNNING. The seeder wants offline sqlite access (ledger
+    S28's own note); against a live Odysseus the correct rebind is the RESTART arm above,
+    which runs this same script through start_component.sh. Best-effort, never raises."""
+    ody = ROOT / "vendor" / "odysseus"
+    script = ROOT / "scripts" / "seed_odysseus_jan.py"
+    if not ody.is_dir() or not script.is_file():
+        return ""                     # not installed — S23, say nothing at all
+    # ⚠️ THE ODYSSEUS VENV IS data/odysseus-venv, NOT vendor/odysseus/.venv. Caught in
+    # the live walk: sys.executable (the BRIDGE's venv) reaches the script but not
+    # Odysseus's own modules, so the seed failed with `No module named 'bcrypt'` and
+    # a rebind that reported nothing wrong did nothing at all. Same source of truth as
+    # start_component.sh's odysseus branch.
+    py = ROOT / "data" / "odysseus-venv" / "bin" / "python"
+    if not py.is_file():
+        # No venv ⇒ Odysseus was never provisioned here. Refuse honestly rather than
+        # run the script under an interpreter that cannot import its modules — that is
+        # the shape this bug already took once, and a confusing traceback in the log is
+        # worse than a sentence naming the missing thing.
+        return "Odysseus venv missing (data/odysseus-venv) — nothing to rebind offline"
+    rc = cfg().get("runner", {}) or {}
+    env = dict(os.environ,
+               HARNESS_WIRE_MODEL=wire or "",
+               JAN_BASE_URL=str(rc.get("endpoint") or "http://127.0.0.1:6767/v1"),
+               JAN_API_KEY=str(rc.get("api_key") or ""))
+    try:
+        r = subprocess.run([str(py) if py.is_file() else sys.executable, str(script)],
+                           cwd=str(ody), env=env, capture_output=True, text=True,
+                           timeout=60)
+    except Exception as e:                                           # noqa: BLE001
+        return f"Odysseus seed failed: {str(e)[:80]}"
+    return "" if r.returncode == 0 else \
+        f"Odysseus seed exited {r.returncode}: {(r.stderr or r.stdout)[-160:].strip()}"
+
+
+def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> str:
+    """Fan the just-loaded model out to every dependent. '' on success, else the ONE
+    sentence _do_switch should report instead of a bare "active"."""
+    from ..core.modelid import wire_model_id
+    wire = wire_model_id(new_id, _registry_models()) or new_id
+    if restart_hermes:
+        # Already correct since v1.5.56: its Start arm curls the authenticated
+        # /v1/models and lets the runner's answer outrank harness.yaml. Included for
+        # completeness so ONE list names every dependent.
+        _switch_log("re-wiring Hermes…")
+        if _script("start_component.sh", "hermes").returncode != 0:
+            return f"active: {new_id} — but Hermes restart FAILED (see logs)"
+    _switch_log("re-wiring Odysseus…")
+    if restart_ody:
+        if _script("start_component.sh", "odysseus").returncode != 0:
+            return f"active: {new_id} — but Odysseus restart FAILED (see logs)"
+    else:
+        note = _rebind_odysseus_offline(wire)
+        if note:
+            print(f"[switch] {note}", flush=True)
+    _switch_log("re-wiring goose…")
+    gnote = _rebind_goose(wire)
+    if gnote:
+        print(f"[switch] goose: {gnote}", flush=True)
+    return ""
+
+
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
     """Fable QA hardening: check exit codes (a failed load must NOT report success),
     and roll harness.yaml back to the previous model on failure so the next Start
@@ -624,7 +757,12 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
                       f"runner is serving “{served}” — believing the probe (U16)",
                       flush=True)
                 _record_load_launch(new_id)
-                _switch_log(f"active: {new_id}", done=True)
+                # THE SAME FAN-OUT AS THE SUCCESS PATH. This arm is not a lesser
+                # success — it is the path Debi's own switch took (a false non-zero
+                # exit over a runner that had loaded in 1.3s), so a rebind that only
+                # hung off the other branch would have missed the real incident.
+                _bad = _rebind_dependents(new_id, restart_hermes, restart_ody)
+                _switch_log(_bad or f"active: {new_id}", done=not _bad)
                 return
             out = r.stdout + r.stderr
             entry = next((m for m in _registry_models() if m.get("id") == new_id), None)
@@ -648,16 +786,12 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
         # The runner is now running with whatever `load` was saved at this moment —
         # record it so the panel can say "not applied yet" only when it is TRUE.
         _record_load_launch(new_id)
-        if restart_hermes:
-            _switch_log("re-wiring Hermes…")
-            if _script("start_component.sh", "hermes").returncode != 0:
-                _switch_log(f"active: {new_id} — but Hermes restart FAILED (see logs)")
-                return
-        if restart_ody:
-            _switch_log("re-wiring Odysseus…")
-            if _script("start_component.sh", "odysseus").returncode != 0:
-                _switch_log(f"active: {new_id} — but Odysseus restart FAILED (see logs)")
-                return
+        # S28 — the coherence wave. Every dependent re-seeds off the model we just
+        # loaded, not off harness.yaml's pin. See _rebind_dependents.
+        bad = _rebind_dependents(new_id, restart_hermes, restart_ody)
+        if bad:
+            _switch_log(bad)
+            return
         _switch_log(f"active: {new_id}")
     except Exception as e:
         _switch_log(f"switch error: {str(e)[:200]}")
@@ -743,6 +877,54 @@ async def api_switch_model(req: Request) -> JSONResponse:
     _set_runner_model(new_id)
     threading.Thread(target=_do_switch, args=(new_id, old_id, hermes_up, ody_up), daemon=True).start()
     return JSONResponse({"ok": True, "log": "switch started"})
+
+
+@app.post("/api/models/pin")
+async def api_pin_model(req: Request) -> JSONResponse:
+    """PIN THE MODEL THAT IS ALREADY SERVING — the affordance Debi hit a wall on.
+
+    v1.5.57 ruled, correctly, that the harness never SILENTLY rewrites `runner.model`:
+    the pin is an INTENT RECORD, and a system that quietly edits the user's intent to
+    match reality teaches them to stop trusting it. But the audit found the other half
+    of that ruling missing (§5.5): with the pin dangling onto a deleted 27B and Parable
+    live, the ONLY advice on screen was "pick another model" — and Parable's own row
+    offers Eject, not Pin, because it is already loaded. The drift state was therefore
+    STABLE: nothing in the UI could end it except ejecting the working model and
+    reloading it, or hand-editing yaml.
+
+    This is that one missing click, and it is deliberately the smallest thing that
+    works: no load, no restart, no runner touched at all — the model is ALREADY up.
+    It writes exactly what the user asked it to write, which is the opposite of the
+    silent rewrite the ruling forbids.
+
+    Refuses anything that is not the live model: a "pin" that changed the intent record
+    to a model nobody has loaded would re-create the drift under a different name."""
+    body = await req.json()
+    if not isinstance(body, dict):
+        body = {}
+    want = (body.get("id") or "").strip()
+    rc = cfg().get("runner", {}) or {}
+    live = _live_model_id(int(rc["port"])) if rc.get("port") else None
+    if not live:
+        return JSONResponse({"ok": False,
+                             "log": "nothing is loaded — there is no served model to pin"},
+                            status_code=409)
+    if want and want != live:
+        return JSONResponse(
+            {"ok": False, "live": live,
+             "log": f"only the model the runner is actually serving can be pinned this "
+                    f"way — that is “{live}”, not “{want}”. Use Switch to load another."},
+            status_code=409)
+    if (rc.get("model") or "") == live:
+        return JSONResponse({"ok": True, "pin": live, "changed": False,
+                             "log": f"already pinned to {live}"})
+    _set_runner_model(live)
+    # The panel re-reads on this event, so the yellow clears without a reload — the
+    # "without a reload" half is the point: a fix that needs a refresh to be believed
+    # is a fix the user has to take on faith.
+    publish("model", phase=f"pinned {live}", done=True)
+    return JSONResponse({"ok": True, "pin": live, "changed": True,
+                         "log": f"pinned {live}"})
 
 
 def _eject_runner() -> None:

@@ -321,7 +321,17 @@ async def status() -> dict:
 # in ledger S24 with the exact seam each one still wants.
 NEEDS_SOFT: dict = {
     "opencode": ("runner",),
+    # S28: the Goose UI joins the signal. Its status row is SYNTHESISED in deps() from
+    # its own lane (it is a bridge-supervised child, not a harness.yaml component) and
+    # its Restart button is served by restart()'s lane branch — the two things S28b said
+    # had to exist first, so this is a sentence with a working action behind it.
+    "gooseui": ("runner",),
 }
+
+# Lane names restart() accepts even though they are not harness.yaml components. The
+# value is the lane's OWN pair of audited routes — the only way any of these processes
+# is ever stopped (identity-checked pidfile first; never a kill by name).
+_LANE_RESTART = {"gooseui": ("bridge.routers.gooseui", "gooseui_stop", "gooseui_start")}
 
 # The names the SENTENCES use. Deliberately the tab titles the user reads in the strip
 # (app/main.swift's tabRegistry), not the internal ids — a banner that says "gooseui"
@@ -516,6 +526,163 @@ def _hermes_binding(c: dict, live_model: "str | None") -> dict:
     }
 
 
+# ══ THE OTHER THREE BINDINGS (S28, the post-switch coherence audit §2 slice 2) ══
+#
+# THE COVERAGE GAP, IN ONE SENTENCE: `bindings` had exactly ONE reader (Hermes), and
+# Hermes is the one app whose Start arm already prefers the live runner over the pin —
+# so the signal built to catch a stale binding could only ever fire for the app that
+# self-heals. On 2026-08-29 the runner served Parable while Odysseus's default, the
+# Goose UI chip and OpenCode's picker all named a 27B whose file had been deleted, and
+# /api/deps answered `{"components":{}}`. All-healthy, and every word of it wrong.
+#
+# ⚠️ CHEAP READS ONLY, AND NO APP HAS TO BE RUNNING. The S24 note ("Odysseus's binding
+# lives behind its admin API") was stale: all three of these are ordinary files this
+# audit read in place — a settings.json, a config.yaml, an opencode.json. No admin API,
+# no probe, no lock. An unreadable file returns {} = NO CLAIM, never a problem: the
+# derivation only ever accuses when it can name BOTH sides.
+#
+# ⚠️ TWO STRIKES BEFORE WE ACCUSE (the health.py discipline, applied to files instead of
+# probes). Every one of these files is REWRITTEN by a seeder during a component Start —
+# the exact moment a poll is most likely to land — so a single read showing a stale
+# value can be a torn write or a file caught mid-rename. `_bind_track` requires the SAME
+# mismatch on two consecutive polls before it derives a sentence; a value that agrees
+# forgets the streak instantly. Hermes deliberately keeps its un-debounced behaviour:
+# its binding has been shipped and gate-tested that way since v1.5.55, and its patcher
+# writes through a temp file it does not rename mid-key.
+BIND_MISS_ACCUSE = 2                 # consecutive mismatched reads before we say so
+_BIND_MISS: dict = {}                # component -> (bound, live, consecutive misses)
+
+
+def bind_confirmed(prev, bound, live, at: int = BIND_MISS_ACCUSE) -> tuple:
+    """PURE (unit-tested). (next_state, say_it) for one component's binding read.
+
+    `prev` is the tuple this function last returned's first element, or None. A miss
+    only counts toward the accusation while it is the SAME pair — a binding that
+    changes between polls is a component mid-restart, not a stale binding, and its
+    streak starts over. Anything unreadable (either side falsy) forgets the streak."""
+    if not bound or not live or bound == live:
+        return None, False
+    if prev and prev[0] == bound and prev[1] == live:
+        n = prev[2] + 1
+    else:
+        n = 1
+    return (bound, live, n), n >= at
+
+
+def _bind_track(name: str, b: dict) -> dict:
+    """Apply the two-strike gate to one binding dict. Returns the binding unchanged
+    once confirmed, or with its model comparison REMOVED while it is still a first
+    strike (the endpoint half is left alone — a moved port is not a torn write)."""
+    state, say = bind_confirmed(_BIND_MISS.get(name), b.get("model"), b.get("live_model"))
+    if state is None:
+        _BIND_MISS.pop(name, None)
+    else:
+        _BIND_MISS[name] = state
+    if state is not None and not say:
+        b = dict(b)
+        b["model"] = None            # seen once — not yet something we will say aloud
+    return b
+
+
+# ⚠️ THE INVARIANT EVERY READER BELOW OBEYS, AND THE ONE THE LIVE WALK ADDED:
+# A COMPONENT ONLY GETS A `swapped` SENTENCE WHEN ITS OWN RESTART CAN CLEAR IT.
+# `swapped`'s single action is "Restart X to rebind"; if X's Start would HONOUR the
+# value we are complaining about, the banner is permanent and the button provably does
+# nothing (S20's dead-button defect, and this slice nearly shipped three of them).
+# So each reader is gated by what that component's Start actually rewrites:
+#   hermes    — its arm overwrites `model.default` from the live probe → always clears.
+#   odysseus  — its seeder repairs a DANGLING default and refreshes OUR OWN last write
+#               (marker); a value it has decided to honour is exempted, above.
+#   gooseui   — `providers.<slug>.model` is goose's own key and we repair it only when
+#               it DANGLES, so only a dangling value may be reported.
+#   opencode  — same three-state rule in its own Start arm; same gate.
+def _dangling_only(cur: str, live_wire: str) -> bool:
+    """Is `cur` a name that points at nothing real (so a rebind may repair it)?
+    ONE definition, shared with the seeders: bridge/gooseprov.dangles."""
+    from .. import gooseprov as _p
+    try:
+        offered = [m["name"] for m in _p.model_entries(_registry_models())]
+    except Exception:                                                # noqa: BLE001
+        return False
+    return _p.dangles(cur, offered, live_wire)
+
+
+def _ody_binding(live_wire: str) -> dict:
+    """Odysseus's OWN binding: vendor/odysseus/data/settings.json → `default_model`.
+
+    Compared ONLY when `default_endpoint_id` is our own `local-jan` row: a user who
+    pointed Odysseus at somebody else's endpoint is not wired to our runner at all, and
+    telling them their model disagrees with ours would be a sentence about nothing."""
+    import json as _json
+    try:
+        s = _json.loads((ROOT / "vendor" / "odysseus" / "data" / "settings.json")
+                        .read_text())
+    except Exception:                                                # noqa: BLE001
+        return {}
+    if not isinstance(s, dict):
+        return {}
+    if str(s.get("default_endpoint_id") or "").strip() != "local-jan":
+        return {}
+    cur = str(s.get("default_model") or "").strip()
+    # ⚠️ NO CLAIM ABOUT A VALUE THE SEEDER HAS DECIDED TO HONOUR. seed_odysseus_jan
+    # records, in its own marker, the default it deliberately left alone (never-clobber
+    # rule 2). Deriving `swapped` for that value would offer "Restart Odysseus to
+    # rebind" — and the restart re-runs the seeder, which honours it again. Found in
+    # the S28 live walk; it is the S20 dead-button defect wearing this slice's hat.
+    try:
+        st = _json.loads((ROOT / "data" / "ody_seed_state.json").read_text())
+        if cur and (st.get("local-jan") or {}).get("default_model_honoured") == cur:
+            return {}
+    except Exception:                                                # noqa: BLE001
+        pass
+    return {"model": cur or None, "live_model": live_wire or None}
+
+
+def _goose_binding(live_wire: str) -> dict:
+    """The Goose UI (embed lane) binding: its fenced config.yaml
+    `providers.<active_provider>.model` — the key goose itself writes when a model is
+    picked, and the one the chip renders.
+
+    Read only while the active provider IS ours: goose's own picker holding another
+    provider's model is that provider's business."""
+    from .. import gooseprov as _p
+    try:
+        text = (ROOT / "data" / "goose" / "ui-home" / "goose" / "config"
+                / "config.yaml").read_text()
+    except Exception:                                                # noqa: BLE001
+        return {}
+    active = _p.active_provider(text)
+    if active not in (_p.PROVIDER_NAME, _p.LEGACY_PROVIDER):
+        return {}
+    cur = _p.provider_model(text, active)
+    # DANGLING ONLY — see the invariant above. A stale-but-VALID pick is goose's own
+    # honoured value: its picker shows it, llama.cpp substitutes, Restart would not
+    # change it, and nagging about it forever is furniture, not a signal.
+    if not _dangling_only(cur, live_wire):
+        return {}
+    return {"model": cur or None, "live_model": live_wire or None}
+
+
+def _opencode_binding(live_wire: str) -> dict:
+    """OpenCode's binding: opencode.json `model`, which is `<provider>/<model id>`.
+    Only OUR provider block is compared — a model on somebody else's provider is not
+    a claim about our runner."""
+    import json as _json
+    try:
+        d = _json.loads((ROOT / "data" / "opencode" / "xdg" / "config" / "opencode"
+                         / "opencode.json").read_text())
+    except Exception:                                                # noqa: BLE001
+        return {}
+    m = str((d or {}).get("model") or "").strip()
+    prefix = "llama.cpp/"
+    if not m.startswith(prefix):
+        return {}
+    cur = m[len(prefix):]
+    if not _dangling_only(cur, live_wire):
+        return {}                     # DANGLING ONLY — the invariant above
+    return {"model": cur or None, "live_model": live_wire or None}
+
+
 @app.get("/api/deps")
 async def deps() -> dict:
     """The dependency signal: per-component UNMET needs, derived from /api/status.
@@ -530,14 +697,49 @@ async def deps() -> dict:
     c = cfg()
     hard = {n: (comp.get("depends_on") or [])
             for n, comp in (c.get("components") or {}).items()}
+    # ⚠️ `runner.pin` CARRIES THE LIVE ID, not the pin (audit §5.3 — the component
+    # "pin" field name is reused for the runner row and means "what it is serving").
+    # Spelled out here because reading it as the pin is a one-character mistake with a
+    # LIE at the end of it; a `served_id` alias is ledgered as S30.
     live = (st.get("components", {}).get("runner") or {}).get("pin")
     loaded = (st.get("components", {}).get("runner") or {}).get("loaded")
+    comps = dict(st.get("components", {}))
     bindings = {}
     hb = _hermes_binding(c, live if loaded else None)
     if hb:
         bindings["hermes"] = hb
-    return {"components": needs_derive(st.get("components", {}), hard,
-                                       NEEDS_SOFT, bindings)}
+    # The other three, S28. Each is a file read; each is two-strike gated; each returns
+    # {} rather than a guess when it cannot read or when the app is wired elsewhere.
+    live_wire = ""
+    if loaded and live:
+        from ..core.modelid import wire_model_id
+        try:
+            live_wire = wire_model_id(live, _registry_models())
+        except Exception:                                            # noqa: BLE001
+            live_wire = live
+    for _name, _read in (("odysseus", _ody_binding), ("gooseui", _goose_binding),
+                         ("opencode", _opencode_binding)):
+        try:
+            b = _read(live_wire)
+        except Exception:                                            # noqa: BLE001
+            b = {}
+        if b:
+            bindings[_name] = _bind_track(_name, b)
+    # THE GOOSE UI IS A BRIDGE-SUPERVISED CHILD, NOT A harness.yaml COMPONENT — it has
+    # no /api/status row, which is exactly why S28b warned that deriving a need for it
+    # would render a button with nothing behind it. Both halves are supplied here: a
+    # synthetic row (installed + alive, read from its own lane, no probe of ours) and a
+    # restart() that accepts the lane name and delegates to the lane's OWN audited
+    # stop/start routes (never a kill by name — the process-kill rule).
+    if "gooseui" not in comps:
+        try:
+            from . import gooseui as _gui
+            comps["gooseui"] = {"installed": bool(_gui._ui and
+                                                  _gui._ui.is_installed(ROOT)[0]),
+                                "running": bool(_gui._alive())}
+        except Exception:                                            # noqa: BLE001
+            pass
+    return {"components": needs_derive(comps, hard, NEEDS_SOFT, bindings)}
 
 
 @app.get("/api/logs/{name}")
@@ -958,6 +1160,34 @@ def restart(name: str) -> JSONResponse:
     Returns at once, like start(): the closure runs in start()'s background thread and
     the panel/shell watch it through /api/status's `prov` overlay exactly as they watch
     a Start pressed on the card."""
+    if name in _LANE_RESTART:
+        # A LANE, NOT A COMPONENT (S28). Same composition rule as below: its own stop
+        # route (pidfile identity, then port listener, refusals honoured) then its own
+        # start route. Nothing new kills anything.
+        import importlib
+        mod, stop_fn, start_fn = _LANE_RESTART[name]
+        if name == "gooseui":
+            # …and REPAIR BEFORE RESPAWNING, so the button clears the sentence that
+            # summoned it. goose's own seed_config deliberately never touches
+            # `providers.<slug>.model`; only the dangling-choice repair does, and the
+            # banner is only ever raised for a dangling value (see the invariant by
+            # _ody_binding). A restart that leaves the complaint standing is the dead
+            # button this slice is closing, not shipping.
+            from .models import _rebind_goose
+            from ..core.modelid import _live_model_id, wire_model_id
+            try:
+                _rc = cfg().get("runner", {}) or {}
+                _live = _live_model_id(int(_rc["port"])) if _rc.get("port") else None
+                _rebind_goose(wire_model_id(_live or "", _registry_models()) or "")
+            except Exception as e:                                   # noqa: BLE001
+                print(f"[deps] goose rebind before restart: {e}", flush=True)
+        m = importlib.import_module(mod)
+        r = getattr(m, stop_fn)()
+        if getattr(r, "status_code", 200) != 200:
+            return JSONResponse({"ok": False, "phase": "stop",
+                                 "log": (r.body or b"").decode("utf-8", "replace")[:400]},
+                                status_code=r.status_code)
+        return getattr(m, start_fn)()
     if name != "runner" and name not in (cfg().get("components") or {}):
         raise HTTPException(404, "unknown component")
     r = stop(name)

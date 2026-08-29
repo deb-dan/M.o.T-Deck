@@ -22,7 +22,35 @@ async def chat_direct(req: Request) -> StreamingResponse:
     image_name = (body.get("image_name") or "")[:200]
     rc = cfg().get("runner", {})
     base = (rc.get("endpoint") or "http://127.0.0.1:6767/v1").rstrip("/")
-    key, model = rc.get("api_key", ""), rc.get("model", "")
+    key = rc.get("api_key", "")
+    # ══ U18 CLOSED HERE. THE LINE THIS REPLACES WAS `model = rc.get("model", "")` ══
+    #
+    # That read harness.yaml's PIN — INTENT, not reality — and the post-switch coherence
+    # audit measured what it cost: on 2026-08-29 the pin named a 27B whose file had been
+    # deleted while the runner served Parable-Qwen3-4B. The composer chip above the box
+    # said Parable (it reads live); this lane wired the 27B, llama.cpp silently
+    # substituted the model it actually had, and the turn WORKED — while `model_info`,
+    # the per-turn metadata stamped into the transcript and every `log_turn("direct", …)`
+    # analytics row named a model that was not loaded. One screen, disagreeing with
+    # itself, with the wrong half written into the record.
+    #
+    # PRECEDENCE, matching the hermes arm (v1.5.56) and aider's `_live_model_id` lane:
+    # what the runner IS SERVING outranks harness.yaml; the pin is the fallback for the
+    # one case a probe cannot answer — the runner is down, where naming the model we
+    # intend to load is the most honest thing available and the turn is going to fail
+    # with a connection error anyway.
+    #
+    # ⚠️ AND IT IS NOT COSMETIC. While both ids name gguf models the wrong wire value is
+    # merely mislabelled; the moment a dangling pin names an MLX model, the wire id stops
+    # being harmless — mlx_lm.server treats the request's `model` as A MODEL TO LOAD and
+    # answers 400 for one it cannot resolve. Live-first removes that whole class.
+    live = None
+    try:
+        if rc.get("port"):
+            live = await asyncio.to_thread(_live_model_id, int(rc["port"]))
+    except Exception:
+        live = None
+    model = live or rc.get("model", "")
     # `model` stays our REGISTRY ID (labels/analytics); `wire` is what the runner
     # accepts — identical for llama.cpp (--alias), the model PATH for MLX servers
     # (which would otherwise try to resolve our id on HF → 404 → runner 400).
@@ -53,17 +81,11 @@ async def chat_direct(req: Request) -> StreamingResponse:
 
     # An attached image only rides along when the LIVE model can see it. The live id
     # (not just runner.model) is the same source the composer's VISION chip uses, so
-    # the UI's promise and the gate here can't disagree. Probed only when an image is
-    # actually attached — no extra work on ordinary turns.
-    vision = False
-    if image:
-        live = None
-        try:
-            if rc.get("port"):
-                live = await asyncio.to_thread(_live_model_id, int(rc["port"]))
-        except Exception:
-            live = None
-        vision = _vision_capable(live or model)
+    # the UI's promise and the gate here can't disagree.
+    # (The live probe now happens ONCE at the top of the turn — `model` IS the live id
+    # whenever the runner answered — so this gate reads the same fact it always did
+    # without a second probe.)
+    vision = bool(image) and _vision_capable(model)
     content, cerr = build_user_content(user_msg, image, vision)
     messages.append({"role": "user", "content": content if not cerr else user_msg})
 

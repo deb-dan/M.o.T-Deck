@@ -351,6 +351,124 @@ def provider_choice(config_text: str, name: str = PROVIDER_NAME) -> tuple:
     return "", False
 
 
+# ── THE SHARED "DANGLES" RULE (S28, the post-switch coherence audit §5.2) ────
+# The three-state rule — SEED when unset, REPLACE when the configured choice DANGLES,
+# HONOUR otherwise — existed in exactly two places (OpenCode's default-model block and
+# seed_odysseus_jan.settings_plan) and nowhere else. goose's `providers.<slug>.model`
+# honoured unconditionally, which is how a model deleted a week earlier stayed on the
+# Goose UI chip while llama.cpp quietly answered every turn with the model it actually
+# had loaded. This is the definition, spelled ONCE, so the next seeder can import it
+# instead of re-deriving it slightly differently.
+def dangles(name, offered, served: str = "") -> bool:
+    """PURE. Does `name` point at nothing real?
+
+    DANGLING = neither offered by us (not in the registry-derived list this provider
+    advertises) NOR actually served by the runner right now. The `served` half matters:
+    a user running a model we do not index is making a legitimate choice, and an
+    aggressive "not in our list ⇒ replace it" would clobber it. An EMPTY `offered` is
+    not information (an unreadable registry for one Start) and never makes anything
+    dangle — the same absence-is-not-information rule the seed's model lists obey.
+    """
+    n = str(name or "").strip()
+    if not n:
+        return False                      # unset is "seed me", not "repair me"
+    off = [str(x) for x in (offered or [])]
+    if not off:
+        return False
+    if served and n == str(served).strip():
+        return False
+    return n not in set(off)
+
+
+# ── pure: goose's OWN nested `providers.<slug>.model` key ────────────────────
+# ⚠️ A TEXT EDIT, NEVER A YAML ROUND-TRIP — same rule and same reason as
+# upsert_config: this config carries 20 extensions goose wrote itself plus whatever the
+# user added, and a dumper round-trip would silently reshape all of it. These two are
+# nested (upsert_config only reaches top-level keys), so they walk the block by indent.
+def _providers_walk(config_text: str, name: str):
+    """Yield (index, line, in_our_block) over the lines of the `providers:` mapping.
+    Also reports the sub-indent goose used, so we never hard-code two spaces."""
+    lines = (config_text or "").splitlines()
+    in_p = False
+    sub = None
+    in_ours = False
+    for i, ln in enumerate(lines):
+        if ln and not ln[0].isspace():
+            in_p = ln.rstrip() == "providers:"
+            in_ours = False
+            continue
+        if not in_p or not ln.strip():
+            continue
+        ind = len(ln) - len(ln.lstrip())
+        m = re.match(r"^\s*([A-Za-z0-9_.\-]+):\s*$", ln)
+        if m and (sub is None or ind == sub):
+            sub = ind
+            in_ours = m.group(1) == name
+            continue
+        yield i, ln, in_ours
+    return
+
+
+def provider_model(config_text: str, name: str = PROVIDER_NAME) -> str:
+    """PURE. `providers.<name>.model` as goose wrote it, '' when absent/unreadable."""
+    for _i, ln, ours in _providers_walk(config_text, name):
+        if not ours:
+            continue
+        m = re.match(r"^\s*model:\s*(.*?)\s*$", ln)
+        if m:
+            return m.group(1).strip().strip("'\"")
+    return ""
+
+
+def set_provider_model(config_text: str, value: str,
+                       name: str = PROVIDER_NAME) -> str:
+    """PURE. Rewrite `providers.<name>.model` IN PLACE, byte-preserving everything else.
+
+    ⚠️ IT NEVER CREATES THE BLOCK. If goose has no `providers:` mapping, or no entry for
+    our slug, the text comes back unchanged: this key is GOOSE'S (it writes it when the
+    user picks a model), and our licence extends to repairing a value that points at
+    nothing — not to inventing a choice the user never made.
+    """
+    lines = (config_text or "").splitlines()
+    for i, ln, ours in _providers_walk(config_text, name):
+        if ours and re.match(r"^\s*model:\s*", ln):
+            ind = ln[: len(ln) - len(ln.lstrip())]
+            lines[i] = f"{ind}model: {value}"
+            return "\n".join(lines).strip("\n") + "\n"
+    return config_text or ""
+
+
+def repair_config_model(config_path: str, offered, served: str = "",
+                        name: str = PROVIDER_NAME) -> tuple:
+    """(old, new, changed, error) — repair a DANGLING `providers.<slug>.model` on disk.
+
+    The one case "seeded, never enforced" (F6's never-clobber fix) must treat as
+    repairable, per the audit. A working choice is honoured for ever; a choice that
+    names a model neither offered nor served is not a choice any more, it is a ghost.
+    Best-effort like every other writer in this lane: an unreadable config costs the
+    repair, never the launch.
+    """
+    try:
+        with open(config_path, encoding="utf-8") as fh:
+            cur = fh.read()
+    except OSError as e:
+        return "", "", False, str(e)
+    old = provider_model(cur, name)
+    if not old or not dangles(old, offered, served) or not served:
+        return old, old, False, ""
+    new_text = set_provider_model(cur, served, name)
+    if new_text == cur:
+        return old, old, False, ""
+    try:
+        tmp = config_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new_text)
+        os.replace(tmp, config_path)
+    except OSError as e:
+        return old, old, False, str(e)
+    return old, served, True, ""
+
+
 # The config.yaml keys OUR seeding used to own and now must REMOVE when it migrates: goose
 # itself deletes them the moment the user switches provider through its UI (measured — it
 # rewrites the file as `providers:` + `active_provider:`), so leaving them behind would

@@ -236,15 +236,25 @@ def endpoint_plan(row, marker, want) -> tuple:
 
 
 def settings_plan(settings, ep_id: str, ep_enabled: bool, visible, wire: str,
-                  known_ep_ids=None) -> tuple:
+                  known_ep_ids=None, marker=None) -> tuple:
     """PURE: (changes, notes) for the GLOBAL default chat model — seeded, never enforced.
 
     Same rule as OpenCode's default-model block (start_component.sh:1059-1086): set it
     when nothing is configured, or when the configured choice DANGLES (names an endpoint
     that no longer exists, or a model this endpoint no longer offers). A working choice
     a human made inside Odysseus is never overwritten.
+
+    ⚠️ THE FOURTH STATE, ADDED BY S28: *our own previous write*. Rule 2 at the top of
+    this file already says "provably ours = the value equals what WE last wrote", and
+    every endpoint field obeys it — but `default_model` had no marker, so a value THIS
+    SCRIPT seeded two switches ago was honoured as if a human had chosen it. The
+    post-switch audit is what that costs: switch the runner twice and Odysseus's chip
+    keeps naming the model from the switch before, valid and stale, for ever. With the
+    marker, our own leftover is refreshed and a human's pick is still untouchable — the
+    distinction the honour rule was always trying to make.
     """
     ch, notes = {}, []
+    marker = marker or {}
     cur_ep = str(settings.get("default_endpoint_id") or "").strip()
     ids = set(known_ep_ids or ()) | {ep_id}
     if not cur_ep or cur_ep not in ids:
@@ -257,10 +267,15 @@ def settings_plan(settings, ep_id: str, ep_enabled: bool, visible, wire: str,
 
     on_ours = ch.get("default_endpoint_id", cur_ep) == ep_id
     cur_model = str(settings.get("default_model") or "").strip()
-    if wire and (not cur_model or (on_ours and visible and cur_model not in visible)):
-        if cur_model and on_ours:
+    ours = bool(cur_model) and cur_model == str(marker.get("default_model") or "\0")
+    dangling = bool(on_ours and visible and cur_model and cur_model not in visible)
+    if wire and cur_model != wire and (not cur_model or dangling or (on_ours and ours)):
+        if dangling:
             notes.append(f"default_model: {cur_model!r} is no longer offered by this "
                          f"endpoint — reset to the loaded model")
+        elif ours:
+            notes.append(f"default_model: {cur_model!r} was OUR OWN last seed, not your "
+                         f"choice — refreshed to the model the runner is serving")
         ch["default_model"] = wire
     elif cur_model and cur_model != wire and on_ours:
         notes.append(f"default_model: honoured your choice ({cur_model})")
@@ -275,7 +290,8 @@ def next_marker(marker, changes) -> dict:
     Start later. Fields we did not write keep whatever we last wrote for them.
     """
     out = dict(marker or {})
-    for k in ("name", "base_url", "api_key", "pinned_models", "cached_models"):
+    for k in ("name", "base_url", "api_key", "pinned_models", "cached_models",
+              "default_model"):
         if k in changes:
             v = changes[k]
             out[k] = list(v) if isinstance(v, list) else v
@@ -295,21 +311,40 @@ def _as_list(raw) -> list:
     return [str(x) for x in v] if isinstance(v, list) else []
 
 
-def _wire_model() -> str:
-    """The identifier Odysseus must SEND to the runner for the active model — the
-    same rule as bridge/app.py wire_model_id(): the registry id for llama.cpp
-    (launched with --alias <id>), the model's local PATH for MLX (mlx_lm/mlx_vlm
-    treat the request's `model` field as a model to LOAD and would resolve our id
-    on HuggingFace → 404 → runner 400).
+def live_wire(probed, registry) -> str:
+    """PURE: a /v1/models probe answer → the wire id we are willing to BELIEVE, or ''.
+
+    ⚠️ THE RULE THE HERMES ARM ESTABLISHED (v1.5.56) AND THIS SCRIPT DID NOT HAVE:
+    *the runner's own answer outranks harness.yaml*. The post-switch coherence audit
+    (docs/research/2026-08-29-post-switch-audit.md §1, root-cause class 4) measured what
+    pin-first seeding costs: harness.yaml's pin had drifted onto a 27B whose file was
+    deleted, so every Odysseus Start re-seeded that ghost as the default AND force-
+    inserted it into `pinned_models` — the stale pin did not merely persist, it
+    PROPAGATED into a third-party picker, where llama.cpp's silent substitution made
+    every turn work under the wrong name.
+
+    But a probe is only trusted when it MAPS TO SOMETHING WE SHIP: an MLX server's
+    /v1/models enumerates the whole HuggingFace cache, so `data[0]` is routinely an
+    unrelated repo id (the same trap bridge/core/modelid.py::_reconcile_live guards).
+    Anything we cannot find in the registry's own wire set is discarded and the caller
+    falls back to the pin — never trust an unmappable probe.
+    """
+    p = str(probed or "").strip()
+    if not p:
+        return ""
+    return p if p in set(registry_wire_models(registry)) else ""
+
+
+def pin_wire() -> str:
+    """The wire identifier for harness.yaml's PINNED model — INTENT, not reality.
+
+    The registry id for llama.cpp (launched with --alias <id>), the model's local PATH
+    for MLX (mlx_lm/mlx_vlm treat the request's `model` field as a model to LOAD and
+    would resolve our id on HuggingFace → 404 → runner 400).
 
     Read straight from harness.yaml + data/models.json (no yaml/pyyaml dependency —
     this runs inside the ODYSSEUS venv), so every call site (start_component.sh,
-    install_component.sh, firstrun_fat.sh, diagnose_odysseus.sh) gets it for free.
-    Env override: HARNESS_WIRE_MODEL. Empty string ⇒ caller falls back to probing
-    the live endpoint."""
-    env = os.environ.get("HARNESS_WIRE_MODEL", "").strip()
-    if env:
-        return env
+    install_component.sh, firstrun_fat.sh, diagnose_odysseus.sh) gets it for free."""
     mid = _active_model_id()
     if not mid:
         return ""
@@ -317,6 +352,45 @@ def _wire_model() -> str:
     if entry and str(entry.get("format") or "gguf").strip().lower() == "mlx":
         return str(entry.get("path") or "").strip() or mid
     return mid
+
+
+def resolve_wire() -> tuple:
+    """(wire, source) — LIVE-FIRST, pin last. source ∈ {env, live, pin, none}.
+
+      1. HARNESS_WIRE_MODEL — the explicit caller's answer (the auto-rebind trigger in
+         bridge/routers/models.py::_do_switch passes the model it just loaded). This
+         seam existed from the start and had ZERO CALLERS until S28.
+      2. the runner's own authenticated /v1/models, reconciled against our registry.
+      3. harness.yaml's pin — intent, correct whenever it has not drifted.
+    """
+    env = os.environ.get("HARNESS_WIRE_MODEL", "").strip()
+    if env:
+        return env, "env"
+    lw = live_wire(_discover_model(BASE_URL), _registry())
+    if lw:
+        return lw, "live"
+    pin = pin_wire()
+    return (pin, "pin") if pin else ("", "none")
+
+
+def _wire_model() -> str:
+    """Back-compat alias: just the identifier from resolve_wire(). Empty string ⇒ the
+    caller falls back to probing the live endpoint."""
+    return resolve_wire()[0]
+
+
+def offerable(wire: str, source: str, registry) -> bool:
+    """PURE: may this identifier go into Odysseus's picker (and be the default)?
+
+    THE DANGLES RULE, applied to the SEED rather than to the honour-check. A wire that
+    is in our registry is always offerable; one that is not is offerable only when we
+    have OBSERVED it (env override / a live probe). A PIN that names neither a
+    registered nor a served model is a GHOST — the audit's word — and force-inserting it
+    is how a deleted model kept appearing in a third-party picker for a week.
+    """
+    if not wire:
+        return False
+    return source in ("env", "live") or wire in set(registry_wire_models(registry))
 
 
 def _active_model_id() -> str:
@@ -389,12 +463,21 @@ def main() -> int:
         print(f"[seed] ERROR: cannot import Odysseus modules (run with venv active, cwd=vendor/odysseus): {e}")
         return 1
 
-    # Prefer OUR wire identifier for the active model (correct for both engines);
-    # only probe the live endpoint when the harness has no active model recorded.
-    wire = _wire_model() or _discover_model(BASE_URL)
+    # LIVE FIRST, PIN LAST (S28) — see resolve_wire(). The old line here read the pin
+    # and only fell back to a probe, which is exactly backwards and is the bug the
+    # post-switch audit traced.
+    reg = _registry()
+    wire, source = resolve_wire()
+    ghost = bool(wire) and not offerable(wire, source, reg)
+    if ghost:
+        # A pin that names neither a registered nor a served model. It is NOT written
+        # into the picker and NOT proposed as the default; harness.yaml is left exactly
+        # as it is (the pin is a legitimate intent record — v1.5.57's ruling), and the
+        # honest line below is the only thing this script does about it.
+        wire = ""
     # …and the WHOLE registry behind it, so Odysseus's own picker is populated in
     # isolation — with the runner down, with a fresh DB, with no probe.
-    models = registry_wire_models(_registry(), wire)
+    models = registry_wire_models(reg, wire)
     if wire and wire not in models:            # probed-not-registered: still offer it
         models.insert(0, wire)
 
@@ -454,12 +537,31 @@ def main() -> int:
         known_ids = [str(r.id) for r in db.query(ModelEndpoint).all()]
 
     settings = load_settings()
-    s_changes, s_notes = settings_plan(settings, endpoint_id, enabled, visible, wire, known_ids)
+    s_changes, s_notes = settings_plan(settings, endpoint_id, enabled, visible, wire,
+                                       known_ids, marker)
     if s_changes:
         settings.update(s_changes)
         save_settings(settings)
 
-    state[ENDPOINT_ID] = next_marker(marker, changes)
+    # The marker records BOTH plans' writes: the endpoint fields and (S28) the global
+    # default_model, so our own leftover is distinguishable from the human's pick on
+    # the next run. Values we HONOURED are never recorded — that is what would make
+    # them 'ours' and clobber them one Start later (see next_marker).
+    state[ENDPOINT_ID] = next_marker(next_marker(marker, changes), s_changes)
+    # ⚠️ AND THE OTHER HALF, WHICH THE SIGNAL NEEDS (S28, found in the live walk).
+    # When we HONOUR a default we have decided, deliberately and for ever, not to
+    # change it. /api/deps was then deriving "Odysseus is still wired to X — restart it
+    # to rebind" for exactly that value: a sentence whose action CANNOT work, because
+    # the restart re-runs this script, which honours it again. A banner offering a
+    # button that provably does nothing is the S20 dead-button defect.
+    # So the honoured value is recorded too, under its own key, and the deps reader
+    # makes NO CLAIM about a binding equal to it. Nothing lies either way: Odysseus's
+    # own requested→actual label still names the model that answered.
+    _cur_default = str(settings.get("default_model") or "").strip()
+    if _cur_default and "default_model" not in s_changes:
+        state[ENDPOINT_ID]["default_model_honoured"] = _cur_default
+    else:
+        state[ENDPOINT_ID].pop("default_model_honoured", None)
     _save_state(state)
 
     where = "created" if created else ("adopted YOUR" if adopted else "updated")
@@ -467,9 +569,14 @@ def main() -> int:
     print(f"[seed] {where} endpoint {endpoint_id} @ {BASE_URL}; wrote: {fields}")
     print(f"[seed] picker: {len(visible)} model(s) offered by this endpoint "
           f"({'pinned from our registry — visible with the runner down' if models else 'none pinned'})")
+    print(f"[seed] wire model: {wire or '(none)'} (source: {source})")
+    if ghost:
+        print(f"[seed] harness.yaml pins “{pin_wire()}”, which is neither in the model "
+              f"registry nor served by the runner — NOT offered in Odysseus's picker "
+              f"and not proposed as its default (the pin itself is left alone)")
     if not wire:
-        print("[seed] no active model recorded in harness.yaml and the runner is not "
-              "reachable — Odysseus will auto-discover when it comes up")
+        print("[seed] no usable active model (pin dangling or absent, runner not "
+              "reachable) — Odysseus will auto-discover when it comes up")
     for n in notes + s_notes:
         print(f"[seed] {n}")
     return 0

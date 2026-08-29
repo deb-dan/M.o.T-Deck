@@ -414,6 +414,239 @@ def test_the_card_can_tell_intent_from_fact():
        "…and deliberately draw NOTHING for 'checking' (the un-earned claim)")
 
 
+# ══ §7 THE COHERENCE WAVE (S28) ═════════════════════════════════════════════
+#
+# The post-switch coherence audit (docs/research/2026-08-29-post-switch-audit.md) is
+# the fixture for this whole section: the runner served Parable-Qwen3-4B while
+# Odysseus's default, the Goose UI chip, OpenCode's catalog and our own Chat lane's
+# turn labels all named a 27B whose weights were deleted — and /api/deps answered
+# {"components":{}}. Every test below is one of those surfaces, as a user story.
+
+def test_the_three_missing_bindings_can_be_read_from_a_file():
+    """§2 of the audit: the S24 note ('Odysseus's binding lives behind its admin API')
+    was STALE — all three are ordinary files. Each reader is exercised against a real
+    temp tree, because 'we could read it' was the claim that went untested."""
+    import json as _json
+    import tempfile
+    from bridge.routers import components as C
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "vendor" / "odysseus" / "data").mkdir(parents=True)
+        (root / "vendor" / "odysseus" / "data" / "settings.json").write_text(_json.dumps(
+            {"default_endpoint_id": "local-jan", "default_model": "ghost-27B"}))
+        gdir = root / "data" / "goose" / "ui-home" / "goose" / "config"
+        gdir.mkdir(parents=True)
+        (gdir / "config.yaml").write_text(
+            "providers:\n  custom_mot_deck__local:\n    enabled: true\n"
+            "    model: ghost-27B\n    configured: true\n"
+            "active_provider: custom_mot_deck__local\n")
+        odir = root / "data" / "opencode" / "xdg" / "config" / "opencode"
+        odir.mkdir(parents=True)
+        (odir / "opencode.json").write_text(_json.dumps({"model": "llama.cpp/ghost-27B"}))
+        old = C.ROOT
+        try:
+            C.ROOT = root
+            ody, goo, opc = (C._ody_binding("live-4B"), C._goose_binding("live-4B"),
+                             C._opencode_binding("live-4B"))
+            ok(ody.get("model") == "ghost-27B", "Odysseus's default_model is readable")
+            ok(goo.get("model") == "ghost-27B", "the Goose UI chip's binding is readable")
+            ok(opc.get("model") == "ghost-27B",
+               "OpenCode's default is readable, with OUR provider prefix stripped")
+            for name, b in (("odysseus", ody), ("gooseui", goo), ("opencode", opc)):
+                ok(b.get("live_model") == "live-4B", f"{name} carries the live id too")
+            # …and each of the three DECLINES to claim anything when the app is wired
+            # somewhere that is not us. A sentence about somebody else's endpoint is a
+            # sentence about nothing.
+            (root / "vendor" / "odysseus" / "data" / "settings.json").write_text(
+                _json.dumps({"default_endpoint_id": "someone-else",
+                             "default_model": "theirs"}))
+            (gdir / "config.yaml").write_text(
+                "providers:\n  anthropic:\n    model: claude\nactive_provider: anthropic\n")
+            (odir / "opencode.json").write_text(_json.dumps({"model": "openai/gpt-x"}))
+            ok(C._ody_binding("live-4B") == {},
+               "Odysseus pointed at another endpoint makes NO claim")
+            ok(C._goose_binding("live-4B") == {},
+               "goose on somebody else's provider makes NO claim")
+            ok(C._opencode_binding("live-4B") == {},
+               "OpenCode on another provider makes NO claim")
+            # …and NO CLAIM about a default the seeder has decided to HONOUR: the
+            # banner's only action is "Restart Odysseus", the restart re-runs the
+            # seeder, and the seeder honours it again — a button that provably cannot
+            # work is the S20 dead-button defect (found in the S28 live walk).
+            (root / "vendor" / "odysseus" / "data" / "settings.json").write_text(
+                _json.dumps({"default_endpoint_id": "local-jan",
+                             "default_model": "hers-27B"}))
+            (root / "data").mkdir(exist_ok=True)
+            (root / "data" / "ody_seed_state.json").write_text(
+                _json.dumps({"local-jan": {"default_model_honoured": "hers-27B"}}))
+            ok(C._ody_binding("live-4B") == {},
+               "a default the seeder HONOURS derives no sentence (no dead button)")
+            (root / "data" / "ody_seed_state.json").write_text(
+                _json.dumps({"local-jan": {"default_model_honoured": "something-else"}}))
+            ok(C._ody_binding("live-4B").get("model") == "hers-27B",
+               "…but a value that is NOT the honoured one is still reported")
+            # ⚠️ THE INVARIANT: a `swapped` sentence is only ever derived when the
+            # component's OWN Restart could clear it. goose and OpenCode both HONOUR a
+            # stale-but-valid pick at Start, so reporting one would paint a permanent
+            # banner over a button that provably does nothing (S20). Only a DANGLING
+            # value — which their rebind does repair — may be reported.
+            _real = [m.get("id") for m in C._registry_models()
+                     if isinstance(m, dict) and m.get("id")
+                     and m.get("kind") != "audio" and not m.get("hidden")]
+            if len(_real) >= 2:
+                _valid, _live2 = _real[0], _real[1]
+                (gdir / "config.yaml").write_text(
+                    "providers:\n  custom_mot_deck__local:\n    model: " + _valid
+                    + "\nactive_provider: custom_mot_deck__local\n")
+                (odir / "opencode.json").write_text(
+                    _json.dumps({"model": "llama.cpp/" + _valid}))
+                ok(C._goose_binding(_live2) == {},
+                   "a stale-but-VALID goose pick derives nothing (Restart honours it)")
+                ok(C._opencode_binding(_live2) == {},
+                   "…and the same for OpenCode's default")
+            # …and an absent file is silence, never an accusation.
+            C.ROOT = root / "nope"
+            ok(C._ody_binding("x") == {} and C._goose_binding("x") == {}
+               and C._opencode_binding("x") == {},
+               "an unreadable file is NO CLAIM, not a problem")
+        finally:
+            C.ROOT = old
+
+
+def test_two_strikes_before_we_accuse_an_app():
+    """The health.py discipline, moved onto files. Every one of these files is
+    REWRITTEN by a seeder during a Start — exactly when a poll is most likely to land —
+    so one stale read may be a torn write."""
+    from bridge.routers.components import bind_confirmed
+    s1, say1 = bind_confirmed(None, "old", "new")
+    ok(not say1, "one mismatched read is not yet an accusation")
+    s2, say2 = bind_confirmed(s1, "old", "new")
+    ok(say2, "…the SECOND consecutive one is")
+    s3, _ = bind_confirmed(s2, "new", "new")
+    ok(s3 is None, "agreement forgets the streak instantly")
+    # A binding that CHANGES between polls is a component mid-restart, not a stale
+    # binding: its streak starts over rather than inheriting the previous one's.
+    _s, say = bind_confirmed(s2, "other", "new")
+    ok(not say, "a DIFFERENT mismatch starts its own streak")
+    ok(bind_confirmed(None, "", "new")[1] is False
+       and bind_confirmed(None, "old", "")[1] is False,
+       "we never accuse when either half is unreadable")
+
+
+def test_the_goose_ui_gets_a_sentence_with_a_working_button():
+    """S28b warned that deriving a need for a bridge-supervised child would render a
+    button with nothing behind it. Both halves are checked here."""
+    from bridge.routers.components import NEEDS_SOFT, _LANE_RESTART, needs_derive
+    ok("gooseui" in NEEDS_SOFT, "the Goose UI is in the signal at all")
+    comps = healthy(); comps["gooseui"] = up()
+    out = needs_derive(comps, HARD, NEEDS_SOFT,
+                       {"gooseui": {"model": "ghost-27B", "live_model": "live-4B"}})
+    need = out["gooseui"]["needs"][0]
+    ok(need["state"] == "swapped", "a stale Goose UI chip derives `swapped`")
+    ok(need["action"] == "restart" and need["target"] == "gooseui",
+       "…and offers Restart Goose UI")
+    ok("Goose UI" in need["text"], "…in her words, not ours")
+    ok("gooseui" in _LANE_RESTART,
+       "…and restart() accepts the lane name, so the button is not dead")
+    src = (ROOT / "bridge" / "routers" / "components.py").read_text()
+    ok("gooseui_stop" in src and "gooseui_start" in src,
+       "…by delegating to the lane's OWN audited stop/start (never a kill by name)")
+    # And the silence gate still holds for a lane that is not running.
+    comps["gooseui"] = {"installed": True, "running": False}
+    ok("gooseui" not in needs_derive(comps, HARD, NEEDS_SOFT,
+                                     {"gooseui": {"model": "a", "live_model": "b"}}),
+       "a Goose UI that is not running says nothing")
+
+
+def test_every_stale_app_in_the_incident_now_derives_a_sentence():
+    """THE WHOLE POINT, as one assertion: replay the incident's binding map and check
+    that the banner that reported all-healthy now names all four surfaces."""
+    from bridge.routers.components import NEEDS_SOFT, needs_derive
+    comps = healthy(); comps["gooseui"] = up()
+    live = "Parable-Qwen3-4B-Claude-Fable-5-GGUF-Q4_K_M"
+    ghost = "Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-Q4_K_S"
+    out = needs_derive(comps, HARD, NEEDS_SOFT,
+                       {n: {"model": ghost, "live_model": live}
+                        for n in ("hermes", "odysseus", "gooseui", "opencode")})
+    for n in ("hermes", "odysseus", "gooseui", "opencode"):
+        ok(out.get(n, {}).get("needs", [{}])[0].get("state") == "swapped",
+           f"{n} is no longer silent while it names a model nobody is serving")
+        ok(ghost in out[n]["needs"][0]["text"] and live in out[n]["needs"][0]["text"],
+           f"…and {n}'s sentence names BOTH ids")
+
+
+def test_the_pin_affordance_exists_end_to_end():
+    """Audit §5.5, the wall Debi hit: with pin ≠ served the drift state was STABLE."""
+    src = (ROOT / "bridge" / "routers" / "models.py").read_text()
+    ok('@app.post("/api/models/pin")' in src, "there is a route that ends the drift")
+    ok("_set_runner_model(live)" in src,
+       "…and it writes the pin to the model the runner is ACTUALLY serving")
+    ok("only the model the runner is actually serving can be pinned" in src,
+       "…and refuses to pin anything else, which would just move the drift")
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    ok("pinServedModel" in panel, "the panel has ONE implementation of the click")
+    ok(panel.count("pinServedModel()") >= 2,
+       "…reachable from more than one surface (card + models/popover)")
+    ok("Pin this model" in panel, "…and it is called what it does")
+    ok("const drift = isRunner" in panel,
+       "…driven by pin ≠ served, hoisted out of the deleted-file branch")
+
+
+def test_the_chat_lane_stops_labelling_turns_with_the_pin():
+    """U18's named echo, closed. The composer chip read LIVE while the wire, the
+    model_info frame, the transcript metadata and log_turn all read the PIN."""
+    src = (ROOT / "bridge" / "routers" / "chat.py").read_text()
+    ok('model = live or rc.get("model", "")' in src,
+       "the direct lane is live-first with the pin as the runner-down fallback")
+    ok('key, model = rc.get("api_key", ""), rc.get("model", "")' not in src,
+       "…and the pin-only line is GONE, not merely shadowed")
+    ok("_live_model_id" in src and "asyncio.to_thread" in src,
+       "…probed off the event loop, once per turn")
+
+
+def test_the_seeders_agree_on_what_dangles():
+    """Audit §5.2: the three-state rule (seed when unset · replace when it DANGLES ·
+    honour otherwise) existed in two places and nowhere else. One definition now."""
+    from bridge.gooseprov import dangles, provider_model, set_provider_model
+    ok(dangles("ghost", ["a", "b"]), "a name nothing offers dangles")
+    ok(not dangles("a", ["a", "b"]), "a name we offer does not")
+    ok(not dangles("ghost", ["a"], served="ghost"),
+       "…and one the runner is SERVING never does, registry or not")
+    ok(not dangles("", ["a"]), "unset is 'seed me', not 'repair me'")
+    ok(not dangles("ghost", []),
+       "an empty offer list is ABSENCE OF INFORMATION and never makes anything dangle")
+    y = ("providers:\n  openai:\n    model: keep-me\n  custom_mot_deck__local:\n"
+         "    enabled: true\n    model: ghost\nactive_provider: custom_mot_deck__local\n")
+    ok(provider_model(y) == "ghost", "goose's own nested key is readable")
+    n = set_provider_model(y, "live")
+    ok("model: live" in n and "model: keep-me" in n,
+       "…and repairable IN PLACE without touching the neighbouring provider")
+    ok(set_provider_model("extensions:\n  todo:\n    enabled: true\n", "live")
+       == "extensions:\n  todo:\n    enabled: true\n",
+       "…and a config with no block of ours comes back BYTE-IDENTICAL (never invented)")
+
+
+def test_a_switch_re_seeds_every_dependent():
+    """S28's core: the seeders were all correct and only ever ran at component START.
+    A runner switch is not a component start — which is why four surfaces kept the old
+    name for a week."""
+    src = (ROOT / "bridge" / "routers" / "models.py").read_text()
+    ok("def _rebind_dependents(" in src, "the fan-out exists as ONE named function")
+    ok(src.count("_rebind_dependents(") >= 3,
+       "…and BOTH success paths call it — including the believe-the-probe arm, which "
+       "is the path the real incident's switch actually took")
+    for who in ("hermes", "odysseus", "goose"):
+        ok(who in src.split("def _rebind_dependents(")[1][:1400]
+           or f"_rebind_{who}" in src, f"{who} is named in the fan-out")
+    ok("HARNESS_WIRE_MODEL" in src,
+       "…and the Odysseus seed is finally CALLED through its zero-caller seam")
+    ok("repair_config_model" in src,
+       "…and goose's dangling model choice is repaired file-side")
+    ok("GOOSE_MODEL" in src and "respawn" in src,
+       "…with the honest limit stated where it lives: a live goosed's env cannot "
+       "change without a respawn, so the banner covers that half")
+
+
 for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_swapped_is_the_lie_this_catches, test_moved_endpoint,
            test_a_dep_that_is_not_the_runner, test_a_stopped_component_says_nothing,
@@ -426,7 +659,16 @@ for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_we_never_claim_what_the_os_would_not_tell_us,
            test_the_failure_sentence_is_a_sentence,
            test_the_bridge_stops_repeating_an_exit_code_it_can_check,
-           test_the_card_can_tell_intent_from_fact):
+           test_the_card_can_tell_intent_from_fact,
+           # §7 — the coherence wave (S28)
+           test_the_three_missing_bindings_can_be_read_from_a_file,
+           test_two_strikes_before_we_accuse_an_app,
+           test_the_goose_ui_gets_a_sentence_with_a_working_button,
+           test_every_stale_app_in_the_incident_now_derives_a_sentence,
+           test_the_pin_affordance_exists_end_to_end,
+           test_the_chat_lane_stops_labelling_turns_with_the_pin,
+           test_the_seeders_agree_on_what_dangles,
+           test_a_switch_re_seeds_every_dependent):
     fn()
 
 if FAILS:

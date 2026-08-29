@@ -104,6 +104,19 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   cache, read-only) — use it after deleting a model elsewhere.
 - Provenance pills: `downloaded`/`local` are app-owned and deletable here;
   `lmstudio`/`jan`/`hf cache` are managed by those apps — use **hide from list**.
+- **"Pinned" and "serving" are two different things, and the card tells you when they
+  disagree.** The *pin* records which model this app should load next time; *serving*
+  is what the runner has in memory right now. They normally match. When they don't —
+  a model was deleted from under the pin, or something restarted the runner by hand —
+  the runner card says so and names both, and a **Pin this model** button appears
+  (also on the live model's row in Models, and in the chat model picker). One click
+  points the pin at the model already serving. Nothing is loaded, nothing restarts,
+  and this app never rewrites your pin on its own: that choice is yours to make.
+- **When you switch models, everything else follows.** Hermes, Odysseus, both Goose
+  lanes and OpenCode are re-pointed at the new model as part of the switch. A choice
+  *you* made inside one of those apps is never overwritten — but if one of them is
+  still holding a model that no longer exists, a thin banner appears above that tab
+  naming both models with the one button that fixes it.
 
 ---
 
@@ -400,6 +413,12 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   — chat, models and providers, sessions, recipes, the scheduler, extensions — is the
   real thing. Each of these thirteen also says so in the browser console when the
   interface asks for it, so nothing degrades silently.
+- **Deleting a chat: it is on the Sessions page, and it only shows on hover.** The
+  sidebar's recent-chats list has no per-chat delete — that is upstream's design, not
+  something the tab took away. Open **Sessions**, hover a session card, and its actions
+  appear: open in a new window, rename, duplicate, and a red **trash** icon that deletes
+  the chat after a confirmation. The capability is all there; it is the hover that hides
+  it.
 - **It is one goose process, supervised.** Opening the tab starts it; closing the app
   stops it. It appears in **MOT Deck's memory ledger by name** ("Goose UI") for as long
   as it runs, so the RAM it holds is never quietly filed under something else. It also
