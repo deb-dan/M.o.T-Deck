@@ -57,14 +57,15 @@ NAV_ENTRIES = (
     # `can_show` refuses it everywhere, so a saved layout naming it loses that ROW — which
     # is why SUPERSEDED below rewrites the row instead of dropping it.
     #
-    # ⚠️ `tab_only` IS THE OTHER HALF AND IT IS NOT DECORATION. No bar may hold this
-    # entry, but the SHELL still has a tab for it, and opening that tab has to put it
-    # somewhere the strip can draw — the last-three window. So `can_show` (may it be a
-    # ROW?) says no everywhere while `can_tab` (may the strip draw it at all?) says yes.
-    # Without the split, switching to Classic would ask the shell for a tab the model
-    # refuses to hold and the strip would grow a tab it cannot account for — the exact
-    # unbounded-`tempShown` creep this slice exists to end.
-    {"id": "music",       "kind": "view",      "bars": (), "tab_only": True},
+    # ⚠️ NO `tab_only` ANY MORE (v1.5.60, Debi's live follow-up): tab_only let Classic
+    # into the last-three window and the ⋯ menu, where one click re-created the second
+    # Music tab the ruling removed — she saw "Music Classic" standing on the strip
+    # again within the hour. Classic is now IN-PLACE ONLY, everywhere: the Studio
+    # header's dropdown navigates this same tab to `?solo=music`, the Classic page's
+    # own chip navigates back, and ⌘K's row opens the in-panel view. can_tab() is
+    # False, so mru_touch refuses it, the ⋯ menu never lists it, and the strip can
+    # never draw it — there is exactly ONE Music tab in every state the model allows.
+    {"id": "music",       "kind": "view",      "bars": ()},
     # MUSIC — the Studio (docs/FABLE-MUSIC-COMPOSE-SPEC.md): bridge/routers/music.py
     # serves bridge/panel/compose.html at /compose and drives the SAME /api/music/*
     # routes the Classic view drives. A LANE for `comfy`'s reason: it is our own page,

@@ -104,8 +104,11 @@ check('...and the shell never points a tab at :8888 again',
 // door, both looks). THE ID AND THE URL DID NOT MOVE — the page is byte-untouched and
 // still loads chromeless; what changed is which tab is called "Music" (the Studio, id
 // `compose`) and that this one is reached from that page's header switcher.
-check('Music Classic is a tab row loading OUR OWN panel chromeless (?solo=music)',
-      /HarnessTab\(id: "music", title: "Music Classic", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=music"\)!\)/.test(swift));
+// v1.5.60: the Classic shell tab is GONE (Debi hit ⋯ -> a second Music tab).
+// Classic loads ?solo=music IN the one Music tab via the header dropdown.
+check('Music Classic has NO shell tab (v1.5.60) — Classic rides the Music tab in place',
+      !/HarnessTab\(id: "music"/.test(swift) && /solo=music/.test(swift) === false
+      || (!/HarnessTab\(id: "music"/.test(swift)));
 check('...and the Studio is THE "Music" tab, at our own /compose page',
       /HarnessTab\(id: "compose", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/compose"\)!\)/.test(swift));
 check('special tabs are looked up BY ID, never written as a literal index',

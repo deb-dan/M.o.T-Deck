@@ -2983,7 +2983,7 @@ const NAV_ENTRIES = [
   // "Music" to the user, and that is now the row below; ≋ (a waveform, worn by nothing
   // else here) moves to this one. Two entries may never share a glyph — v1.5.38's ❖
   // lesson in its general form — and the census test still checks that.
-  { id:'music',   label:'Music Classic',   ico:'≋', kind:'view', view:'music',  tab:'Music Classic', prefersTab:true },
+  { id:'music',   label:'Music Classic',   ico:'≋', kind:'view', view:'music' },
   // MUSIC — the Studio at /compose (docs/FABLE-MUSIC-COMPOSE-SPEC.md), driving the same
   // /api/music/* routes the Classic view drives. THE one Music row and THE one Music tab.
   // ⚠️ THE ID IS STILL `compose` (the route, the tab id, the row in every saved
@@ -3524,15 +3524,19 @@ function cardHTML(name, c, isBridge, prov) {
   // failure as well as the last one. A STALE error (the component is up again now) is
   // labelled as history rather than presented as the current state.
   let why = '';
+  // THE DRIFT SENTENCE — naming BOTH ids is the only version a person can act on.
+  // ⚠️ HOISTED OUT OF fileGone (S28): drift is pin ≠ served, not "deleted model", so
+  // the general case (pin names a healthy model that simply is not loaded) said
+  // nothing at all. Reasoning + states: test_dep_signal.py §7.
+  const drift = isRunner && !!(c.live_id && c.pin_intent && c.live_id !== c.pin_intent);
   if (fileGone) {
-    // THE DRIFT SENTENCE. On Debi's machine the runner was serving Parable-Qwen3-4B
-    // while harness.yaml's pin had been reverted to a 27B whose weights were deleted:
-    // two different models, one card, and nothing on screen said so. Naming BOTH is
-    // the only version of this that a person can act on.
-    const drift = (c.live_id && c.pin_intent && c.live_id !== c.pin_intent);
     why = (drift ? 'serving ' + c.live_id + ' right now, but the pin points elsewhere — '
                  : '')
-        + (c.model_note || 'the pinned model is no longer usable');
+        + (c.model_note || 'the pinned model is no longer usable')
+        + (drift ? ' · “Pin this model” makes the two agree without a reload.' : '');
+  } else if (drift) {
+    why = 'serving ' + c.live_id + ' right now, but the pin still points at '
+        + c.pin_intent + ' — “Pin this model” makes the two agree without a reload.';
   } else if (le) why = (le.stale ? 'last start attempt: ' : '') + le.text;
   const wantsModels = fileGone || !!(le && le.target === 'models');
   let dot, state, actions = '';
@@ -3601,6 +3605,12 @@ function cardHTML(name, c, isBridge, prov) {
     if (fileGone) {
       actions += ` <button onclick="rescanFromCard()">Rescan models</button>`;
     }
+    // THE CLICK THAT ENDS THE DRIFT (S28). Without it pin ≠ served is a STABLE state:
+    // the served model's row offers Eject, and "pick another model" cannot target the
+    // model already serving. No load, no restart — it is already up.
+    if (drift) {
+      actions += ` <button class="primary" onclick="pinServedModel()">Pin this model</button>`;
+    }
   }
   // The pin line. `pin` is the bridge's best-known name; the LABEL is what stops it
   // reading as a claim that the model is loaded and fine (U15 #2).
@@ -3620,6 +3630,27 @@ function cardHTML(name, c, isBridge, prov) {
 function rescanFromCard(){
   showView('models');
   if (typeof rescanModels === 'function') return rescanModels();
+}
+
+/* PIN THE SERVED MODEL — the one click that ends `pin_intent ≠ live_id` (S28).
+   POSTs /api/models/pin, which writes harness.yaml's runner.model to the model the
+   runner is ALREADY serving and touches nothing else: no load, no restart, no eject.
+   The bridge publishes a `model` event, so every surface re-reads on its own; the
+   explicit refresh below is for the case where SSE is not connected. */
+let _pinBusy = false;
+async function pinServedModel(){
+  if (_pinBusy) return; _pinBusy = true;
+  try {
+    const r = await (await fetch('/api/models/pin', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();
+    feed('model', r.ok ? ('pinned ' + (r.pin || '')) : ('pin refused — ' + (r.log || '')));
+  } catch (e) {
+    feed('model', 'pin failed — ' + e);
+  }
+  _pinBusy = false;
+  if (typeof refresh === 'function') refresh(true);
+  if (typeof initModels === 'function' && curView === 'models') initModels();
+  if (typeof loadChatModels === 'function') loadChatModels();
 }
 
 async function planInstall(name) {
@@ -7272,6 +7303,16 @@ function renderModelPop(){
     const acts = document.createElement('div');
     acts.className = 'mp-acts';
     if (isLive){
+      // S28: the live row is where the drift is visible, so it is where the fix lives
+      // too. Shown only while the pin disagrees — otherwise there is nothing to end.
+      if (modelActiveId && modelActiveId !== m.id){
+        const pn = document.createElement('button');
+        pn.className = 'mp-act'; pn.textContent = 'Pin';
+        pn.title = 'harness.yaml still points at ' + modelActiveId
+                 + ' — pin the model that is actually serving';
+        pn.onclick = (e) => { e.stopPropagation(); closeModelPop(); pinServedModel(); };
+        acts.appendChild(pn);
+      }
       const ej = document.createElement('button');
       ej.className = 'mp-act'; ej.textContent = 'Eject';
       ej.title = 'Unload this model — frees RAM';
@@ -11378,6 +11419,20 @@ function renderDetail(){
       else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
     }
     acts.appendChild(primary);
+    // PIN THIS MODEL (S28). Only on the LIVE row, and only while the pin points
+    // somewhere else — the state the audit found was otherwise UNENDABLE from the UI:
+    // this row's primary is Eject (it is loaded), and the runner card's advice ("pick
+    // another model") cannot name the model already serving. Absent, not greyed, when
+    // there is nothing to fix.
+    if (isLive && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
+      const pinB = document.createElement('button');
+      pinB.textContent = 'Pin this model';
+      pinB.title = 'harness.yaml still points at ' + (r.active || '?')
+                 + ' — pin the model that is actually serving. No reload, no restart.';
+      pinB.disabled = !!switchingId || modelsBusy;
+      pinB.onclick = async () => { pinB.disabled = true; await pinServedModel(); };
+      acts.appendChild(pinB);
+    }
     const auxBtn = document.createElement('button');
     if (isAux){ auxBtn.textContent = 'Aux ✓'; auxBtn.disabled = true; }
     else { auxBtn.textContent = 'Set aux'; auxBtn.title = 'Use for background tasks (titles, search queries)';

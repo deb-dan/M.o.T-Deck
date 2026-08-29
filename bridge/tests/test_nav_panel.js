@@ -89,14 +89,15 @@ console.log('registry');
        'the one Music row opens the Studio at our own page');
     ok(c.id === 'compose',
        '…while its ID did not churn with the label (the Goose CLI rule verbatim)');
-    ok(m.label === 'Music Classic' && m.tab === 'Music Classic' && m.id === 'music',
-       'the original view is Music Classic, id unmoved');
+    ok(m.label === 'Music Classic' && m.tab === undefined && m.id === 'music',
+       'the original view is Music Classic, id unmoved — and it owns NO tab '
+       + '(v1.5.60: Classic is in-place only)');
     ok(M.NAV_OFFBAR.join(',') === 'music'
        && !M.navCanShow('music', 'sidebar') && !M.navCanShow('music', 'topbar'),
        'ONE Music row: Classic may be a row on NEITHER bar');
-    ok(M.navCanTab('music') && M.navCanTab('compose'),
-       '…and yet the STRIP can still draw it — navCanTab is a superset of navCanShow, '
-       + 'which is how the header switcher reaches a tab that owns no row');
+    ok(!M.navCanTab('music') && M.navCanTab('compose'),
+       '…and the strip can NEVER draw it (v1.5.60: tab_only revoked — one click in ⋯ '
+       + 'was re-creating the second Music tab; Classic rides the Music tab in place)');
     ok(M.NAV_SUPERSEDED.music === 'compose',
        'a saved layout naming `music` is rewritten into the Music row, not dropped');
     ok(m.tab !== c.tab, 'they are two different native tabs');
@@ -361,12 +362,13 @@ console.log('validate');
     ok(M.navStrip(w).indexOf('voicebox') < 0,
        '…and the least recent of the three fell off the end, back into ⋯');
     ok(M.navPins(w).join(',') === pins.join(','), '…while not one pin moved');
-    // an off-bar tab (Music Classic) reaches the strip through the window and ONLY there
+    // v1.5.60: an off-bar view may NEVER reach the strip — even a hand-written window
+    // naming it is refused (the vector Debi hit: ⋯ click -> second Music tab).
     w = M.navNormalize({ mru: ['music'] });
-    ok(M.navStrip(w).indexOf('music') >= 0,
-       'Music Classic owns no row and still reaches the strip, through the window');
+    ok(M.navStrip(w).indexOf('music') < 0,
+       'Music Classic never reaches the strip — a window naming it is scrubbed');
     ok(w.sidebar.concat(w.topbar).every(r => r.id !== 'music'),
-       '…without ever becoming a row');
+       '…and it is never a row');
     // junk in the window costs the WINDOW, never the strip
     ['x', 7, null, ['logs','nope','mc','mc',{}], []].forEach(j => {
       const g = M.navNormalize({ mru: j });
@@ -876,8 +878,8 @@ console.log('routing');
   ok(!M.navEntry('chat').prefersTab && !M.navEntry('models').prefersTab
      && !M.navEntry('caps').prefersTab && !M.navEntry('mc').prefersTab,
      'pinning a VIEW as a tab does not make its sidebar row leave the panel');
-  ok(M.navEntry('music').prefersTab === true,
-     'Music keeps its established behaviour (its tab wins, with the view as fallback)');
+  ok(!M.navEntry('music').prefersTab,
+     'Music Classic prefers NOTHING (v1.5.60): ⌘K opens the in-panel view; the tab is gone');
 }
 
 console.log('');

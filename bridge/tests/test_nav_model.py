@@ -119,13 +119,16 @@ def test_registry():
     ok(offbar == ["music"],
        "exactly one entry is allowed on no bar — Music Classic, reached from the "
        f"Studio's header switcher (got {offbar})")
-    ok(nav.entry("music").get("tab_only") is True and nav.can_tab("music"),
-       "…and it earns that by having a TAB: the strip can still draw it, through the "
-       "last-three window")
+    # v1.5.60 (Debi live): tab_only REVOKED — it let Classic into the window/⋯ menu,
+    # where one click re-created the second Music tab. Classic is in-place only now.
+    ok(not nav.entry("music").get("tab_only") and not nav.can_tab("music"),
+       "…and it has NO tab either: Classic is reached in place (dropdown/⌘K), the "
+       "strip can never draw it — one Music tab in every state the model allows")
     ok(not nav.can_show("music", "sidebar") and not nav.can_show("music", "topbar"),
        "…while no bar may hold a row for it")
-    ok({e["id"] for e in nav.NAV_ENTRIES if e.get("tab_only")} == {"music"},
-       "…and `tab_only` is that same closed list (an exemption must be deliberate)")
+    ok({e["id"] for e in nav.NAV_ENTRIES if e.get("tab_only")} == set(),
+       "…and `tab_only` is now an EMPTY closed list (v1.5.60 revoked its one member; "
+       "a future exemption must re-argue itself here)")
     ok(nav.can_tab("comfy") and not nav.can_tab("logs") and not nav.can_tab("nope"),
        "can_tab is a SUPERSET of can_show(topbar): a lane yes, a dialog no, junk no")
     ok(nav.can_show("logs", "sidebar") and not nav.can_show("logs", "topbar"),
@@ -569,11 +572,12 @@ def test_wiring():
     swift_ids = re.findall(r'HarnessTab\(id: "([^"]+)"', SWIFT)
     ok(sorted(swift_ids) == sorted(e["id"] for e in nav.NAV_ENTRIES if nav.can_tab(e["id"])),
        f"the shell's tab registry == the tab-able ids ({swift_ids})")
-    ok("music" in swift_ids and "compose" in swift_ids,
-       "…and BOTH music surfaces still have a tab — one door, both looks")
-    ok('HarnessTab(id: "music", title: "Music Classic"' in SWIFT
+    ok("music" not in swift_ids and "compose" in swift_ids,
+       "…and ONE music surface has a tab (v1.5.60: the Classic shell tab is gone — "
+       "Classic rides the Music tab in place)")
+    ok('HarnessTab(id: "music"' not in SWIFT
        and 'HarnessTab(id: "compose", title: "Music"' in SWIFT,
-       "…titled as Debi named them, with neither id moved")
+       "…titled as Debi named it, id unmoved")
     mm = re.search(r'let navDefaultMru = \[([^\]]+)\]', SWIFT)
     shell_mru = re.findall(r'"([^"]+)"', mm.group(1)) if mm else []
     ok(shell_mru == list(nav.DEFAULT_MRU),
@@ -788,11 +792,11 @@ def test_the_window_swaps():
     ok(nav.validate(m) == "", "…and the model is still saveable throughout")
     # MUSIC CLASSIC is the tab no bar may hold — it still reaches the strip.
     m2 = nav.default_model()
-    ok(nav.mru_touch(m2, "music") is True and "music" in nav.strip(m2),
-       "Music Classic has no row anywhere and STILL reaches the strip, through the "
-       "window — which is the whole reason `can_tab` is not `can_show`")
+    ok(nav.mru_touch(m2, "music") is False and "music" not in nav.strip(m2),
+       "Music Classic can NEVER reach the strip (v1.5.60): mru_touch refuses it and "
+       "strip() never draws it — the in-place-only rule, mechanically")
     ok(not any(r["id"] == "music" for r in m2["topbar"] + m2["sidebar"]),
-       "…without ever becoming a row")
+       "…and it is never a row either")
     # a hand-written window full of junk cannot break the strip
     for junk in [None, "x", 7, ["nope", "logs", "help", "mc", "mc", 3, {"id": "goose"}],
                  [], {"a": 1}]:

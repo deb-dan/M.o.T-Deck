@@ -66,7 +66,10 @@ let tabRegistry: [HarnessTab] = [
     // ⚠️ IT IS ALSO THE ONE TAB THE NAV MODEL MAY NEVER PIN (nav.py gives it `bars: ()`
     // + `tab_only`). It reaches the strip only through the last-three window, which is
     // why `can_tab` exists there and why switchTab below must keep working for it.
-    HarnessTab(id: "music", title: "Music Classic", url: URL(string: "http://127.0.0.1:8700/?solo=music")!),
+    // v1.5.60: the "Music Classic" tab is GONE — Classic is reached in place (the
+    // Studio header's dropdown navigates the one Music tab to ?solo=music and back).
+    // A shell tab here let the ⋯/window path re-create the second Music tab Debi's
+    // one-door ruling removed. Saved layouts naming `music` are SUPERSEDED-mapped.
     // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
