@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose G · The Rack</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-g.html — DIRECTION G: "THE RACK".
+
+  THE PRINCIPLE: a workbench, not a shrine. Everything at once, calm, and any zone
+  click-expands in place and collapses back.
+
+  WHERE F IS A MOSAIC, G IS RAILS AND STACKS. This is the professional-tool
+  partition — Blender's regions, Figma's left/right panels, VoiceStudio's own
+  shipped layout — where the page is a fixed frame of named rails around a work
+  column, and the rails themselves collapse. Read live out of VoiceStudio's
+  bundle on :3900 (assets/ui-*.css), which is literally this shape:
+
+      .rail-right      { grid-template-columns: minmax(180px,220px) minmax(0,4fr) 48px }
+      .sidebar-collapsed { grid-template-columns: 46px minmax(0,4fr) 48px }
+      .sidebar-hidden    { grid-template-columns: minmax(0,1fr) 48px }
+
+  — a 48 px icon rail, a 180–220 px history panel, a 4fr work column, and collapse
+  states expressed as GRID TEMPLATE SWAPS rather than as elements moving. That is
+  the second expansion idiom on this page, and it is our own product's.
+
+  ZONE CHROME, also from that bundle, identical on every panel:
+    .glass-panel { border:1px solid var(--chrome-border); border-radius:0; padding:12px }
+    --chrome-bar-h:28px · --chrome-label-size:11px · --chrome-label-track:.06em
+    --chrome-pill-h:20px · --chrome-radius-pill:3px · --chrome-border:#ffffff14
+    --chrome-hover-bg:#ffffff0a · --transition-fast:.12s · --transition-smooth:.2s
+
+  THREE EXPANSION IDIOMS, all live here:
+    1. rail collapse   — grid-template-columns swap, 200 ms (VoiceStudio's own)
+    2. stack accordion — a panel in the work column takes the column's free height
+    3. zone focus      — any panel FLIPs to fill the frame; Esc / click-away returns
+
+  IA UNTOUCHED, ALL SEVEN VISIBLE AT REST: ① engines (ENGINES panel + top pill)
+  ② stage (MONITOR panel) ③ caps (STATUS rail foot + QUEUE panel) ④ recent
+  (HISTORY rail) ⑤ prompt ⑥ controls ⑦ Compose (COMPOSER panel).
+  Sentence rule intact — only .say, and only when a state demands a decision.
+  No control the backend does not have: engine, length, lyrics, steps, seed, format.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --zbar:28px; --zpad:12px; --zlabel:11px; --ztrack:.06em;
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.12);
+    --zhover:rgba(255,255,255,.04);
+    --pill-h:20px; --pill-r:3px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+
+    /* the rail widths, at VoiceStudio's own numbers */
+    --rail:48px; --hist:210px; --insp:264px;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:#08070c; color:var(--fg); font:12px/1.45 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  textarea, input { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  button { touch-action:manipulation; font:inherit; }
+
+  .caps { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .say { font-size:11.5px; line-height:1.55; color:var(--dim); margin:0; max-width:60ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  .pill { display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border-radius:var(--pill-r); border:1px solid var(--zborder);
+    background:transparent; font:10.5px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color var(--t-fast), color var(--t-fast); }
+  .pill b { color:var(--cream); font-weight:600; }
+  .pill.ok { color:var(--ok); border-color:color-mix(in oklab, var(--ok) 45%, transparent); }
+  .pill.gold { color:var(--gold); border-color:color-mix(in oklab, var(--gold) 45%, transparent); }
+  .pill.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .pill.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  /* ══ THE FRAME ══════════════════════════════════════════════════════════════ */
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr) 22px;
+         height:calc(100% - var(--noteh, 34px)); }
+  /* the topbar WRAPS and the app row is auto, not a hard --zbar: a non-wrapping
+     flex bar is how a toolbar pushes its trailing controls off the right edge at
+     narrow widths. Measured 432px of content in a 380px window on 2026-08-29 —
+     a control reachable only at desktop width is a hard failure, not a breakpoint. */
+  #topbar { display:flex; align-items:center; gap:10px; padding:3px 10px;
+            min-height:var(--zbar); flex-wrap:wrap; row-gap:4px;
+            background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  #topbar .wm { font:600 12px/1 var(--serif); color:var(--cream); }
+  #topbar .grow { flex:1 1 auto; }
+
+  #frame { position:relative; display:grid; min-height:0;
+    grid-template-columns:var(--rail) var(--hist) minmax(0,1fr) var(--insp);
+    transition:grid-template-columns var(--t-smooth); }
+  /* THE RAIL COLLAPSE — VoiceStudio's own idiom: a grid template swap, not a
+     re-parenting. Nothing moves in the DOM, so nothing can land in the wrong place. */
+  body[data-hist="off"] #frame { grid-template-columns:var(--rail) 46px minmax(0,1fr) var(--insp); }
+  body[data-insp="off"] #frame { grid-template-columns:var(--rail) var(--hist) minmax(0,1fr) 46px; }
+  body[data-hist="off"][data-insp="off"] #frame {
+    grid-template-columns:var(--rail) 46px minmax(0,1fr) 46px; }
+
+  /* ══ THE NAV RAIL — 48px, icons, always visible ═════════════════════════════ */
+  #rail { background:#07060b; border-inline-end:1px solid var(--zborder);
+          display:grid; grid-auto-rows:40px; align-content:start; gap:2px; padding:6px 0; }
+  #rail button { width:100%; height:40px; border:0; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; gap:2px;
+    font:9px var(--mono); letter-spacing:.04em; text-transform:uppercase;
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  #rail button .g { font-size:14px; line-height:1; }
+  #rail button.on { background:var(--on-wash); color:var(--gold); }
+  @media (hover:hover) and (pointer:fine) {
+    #rail button:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* ══ PANELS ═════════════════════════════════════════════════════════════════ */
+  .zone { position:relative; background:var(--bg); min-height:0;
+          display:grid; grid-template-rows:var(--zbar) minmax(0,1fr);
+          border-inline-end:1px solid var(--zborder);
+          transition:opacity 620ms cubic-bezier(0.4,0,0.2,1), filter 620ms cubic-bezier(0.4,0,0.2,1); }
+  .zbar { display:flex; align-items:center; gap:7px; padding:0 var(--zpad);
+          border-bottom:1px solid var(--zborder); background:var(--bg2); cursor:pointer; }
+  .zbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--faint); white-space:nowrap; }
+  .zbar .grow { flex:1 1 auto; }
+  .zbody { padding:var(--zpad); overflow:auto; min-height:0; }
+  .zbody.flush { padding:0; }
+  .zx, .zc { width:18px; height:18px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none;
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  @media (hover:hover) and (pointer:fine) {
+    .zx:hover, .zc:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* collapsed rail panels keep their bar and hide their body — the label stays
+     readable rotated, so a collapsed rail is still named. Content hidden with no
+     cue may as well not exist. */
+  body[data-hist="off"] #z-history .zbody,
+  body[data-insp="off"] #z-inspector .zbody { display:none; }
+  body[data-hist="off"] #z-history .zbar,
+  body[data-insp="off"] #z-inspector .zbar { padding:0 4px; justify-content:center; }
+  body[data-hist="off"] #z-history .zbar .t,
+  body[data-insp="off"] #z-inspector .zbar .t,
+  body[data-hist="off"] #z-history .zbar .grow,
+  body[data-insp="off"] #z-inspector .zbar .grow,
+  body[data-hist="off"] #z-history .zbar .cnt,
+  body[data-insp="off"] #z-inspector .zbar .cnt { display:none; }
+
+  /* ══ THE WORK COLUMN — a stack of panels ═══════════════════════════════════ */
+  /* the monitor takes the slack and the composer is sized to its content: a
+     composer given 1fr becomes a huge empty textarea, which is the dead space this
+     whole round exists to remove. Walked at 1440×1000 on 2026-08-29 and caught. */
+  #work { display:grid; grid-template-rows:minmax(0,1fr) auto auto;
+          min-height:0; transition:grid-template-rows var(--t-smooth); }
+  /* IDIOM 2: the accordion. A panel in the stack claims the column's free height
+     and its neighbours shrink to their bars. Same swap trick, on rows. */
+  body[data-stack="monitor"] #work { grid-template-rows:minmax(0,1fr) var(--zbar) auto; }
+  body[data-stack="monitor"] #z-composer .zbody { display:none; }
+  body[data-stack="composer"] #work { grid-template-rows:var(--zbar) minmax(0,1fr) auto; }
+  body[data-stack="composer"] #z-monitor .zbody { display:none; }
+  body[data-stack="composer"] #z-composer { grid-template-rows:var(--zbar) minmax(0,1fr); }
+  body[data-stack="composer"] #z-composer .zbody { grid-template-rows:minmax(0,1fr) auto auto; }
+  body[data-stack="composer"] #z-composer textarea { height:100%; }
+  #work > .zone { border-inline-end:0; border-bottom:1px solid var(--zborder); }
+
+  /* ② MONITOR */
+  #z-monitor .zbody { display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:10px; }
+  .songline { display:flex; align-items:baseline; gap:10px; }
+  .songline h2 { font:600 clamp(15px,1.5vw,20px)/1.2 var(--serif); color:var(--cream);
+    margin:0; letter-spacing:-.012em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .songline .m { font:10px var(--mono); color:var(--faint); white-space:nowrap;
+                 font-variant-numeric:tabular-nums; }
+  .wave { position:relative; min-height:56px; cursor:pointer; background:#07060b;
+          border:1px solid var(--zborder); }
+  .wave svg { display:block; width:100%; height:100%; position:absolute; inset:0; }
+  .wave .played { position:absolute; inset:0 66% 0 0; background:rgba(217,179,108,.10); }
+  .wave .ph { position:absolute; top:0; bottom:0; left:34%; width:1px; background:var(--cream); }
+  /* A grid/flex child defaults to min-width:auto, so one nowrap run (the meta
+     line) can blow the whole track past the viewport. Measured 421px of songline
+     in a 332px column at 380px wide on 2026-08-29. min-width:0 everywhere the
+     track must be allowed to shrink, and the nowrap run truncates. */
+  #work, .zone, .zbody { min-width:0; }
+  .songline { min-width:0; }
+  .songline .m { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .transport { display:flex; align-items:center; gap:10px; }
+  .tbtn { width:26px; height:26px; border:0; border-radius:3px; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); display:grid; place-items:center;
+    transition:scale var(--t-fast); }
+  .tbtn:active { scale:.94; }
+  .tbtn svg { width:11px; height:11px; fill:currentColor; }
+  .clock { font:11px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums; }
+
+  /* ⑤⑥⑦ COMPOSER */
+  #z-composer { grid-template-rows:var(--zbar) auto; }
+  #z-composer .zbody { display:grid; grid-template-rows:auto auto auto; gap:8px; }
+  #z-composer textarea { width:100%; min-height:62px;
+    border:1px solid var(--zborder); background:#07060b; color:var(--cream);
+    font:13px/1.5 var(--sans); padding:8px 9px; resize:none; outline:none;
+    transition:border-color var(--t-fast); }
+  #z-composer textarea:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  #z-composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .crow .grow { flex:1 1 auto; }
+  button.plain { height:24px; padding:0 9px; border-radius:3px; border:1px solid var(--zborder);
+    background:transparent; color:var(--dim); font:11px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast), scale var(--t-fast); }
+  button.plain:active { scale:.96; }
+  @media (hover:hover) and (pointer:fine) {
+    button.plain:hover { background:var(--zhover); color:var(--cream); } }
+  button.go { height:26px; padding:0 14px; border-radius:3px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 11.5px var(--sans);
+    display:inline-flex; align-items:center; gap:6px;
+    transition:scale var(--t-fast), filter var(--t-fast); }
+  button.go:active { scale:.96; }
+  button.go:disabled { cursor:default; filter:saturate(.4) brightness(.82); }
+  .spin { width:10px; height:10px; border-radius:50%; border:2px solid rgba(23,20,32,.3);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ③ QUEUE — the always-on strip at the stack's foot */
+  #z-queue { grid-template-rows:var(--zbar) auto; }
+  #z-queue .zbody { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+                    padding:8px var(--zpad); }
+  .bar { height:3px; background:var(--line); overflow:hidden; flex:1 1 160px;
+         min-width:120px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--gold);
+             transition:width 240ms linear; }
+  .kvi { font:10.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums;
+         white-space:nowrap; }
+  .kvi b { color:var(--cream); font-weight:500; }
+
+  /* ④ HISTORY */
+  .lrow { display:grid; grid-template-columns:18px minmax(0,1fr) auto; gap:7px;
+    align-items:center; width:100%; text-align:start; border:0; background:transparent;
+    padding:3px var(--zpad); cursor:pointer; color:var(--dim);
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .lrow .i { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lrow .t { font:11.5px var(--sans); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lrow .d { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  @media (hover:hover) and (pointer:fine) {
+    .lrow:hover { background:var(--zhover); color:var(--cream); } }
+  .lrow.on { background:var(--on-wash); color:var(--cream); }
+  .lrow.on .i { color:var(--gold); }
+  .lgroup { padding:8px var(--zpad) 3px; display:block; }
+
+  /* ⑥① INSPECTOR — settings and engines, one column, section rhythm */
+  #z-inspector { border-inline-end:0; }
+  .sec { padding:10px 0; border-top:1px solid var(--zborder); }
+  .sec:first-of-type { border-top:0; padding-top:0; }
+  .sec > .caps { display:block; margin-bottom:7px; }
+  .field { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px;
+           align-items:center; padding:3px 0; }
+  .field input { width:100%; height:22px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:11px var(--mono); padding:0 7px;
+    outline:none; font-variant-numeric:tabular-nums; transition:border-color var(--t-fast); }
+  .field input:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:3px;
+         overflow:hidden; }
+  .seg > button { border:0; background:transparent; color:var(--dim); height:20px;
+    padding:0 9px; font:10.5px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .seg > button.on { background:var(--on-wash); color:var(--cream); }
+  .erow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px;
+    align-items:center; padding:5px 0; border-top:1px solid var(--zborder); }
+  .erow:first-of-type { border-top:0; }
+  .erow .en { font:11.5px var(--sans); color:var(--cream); }
+  .erow .es { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+
+  /* ── STATUS BAR ─────────────────────────────────────────────────────────────── */
+  #status { display:flex; align-items:center; gap:12px; padding:0 10px;
+    background:var(--bg2); border-top:1px solid var(--zborder);
+    font:9.5px var(--mono); color:var(--faint); letter-spacing:.04em;
+    font-variant-numeric:tabular-nums; overflow:hidden; }
+  #status b { color:var(--dim); font-weight:500; }
+  #status .grow { flex:1 1 auto; }
+
+  /* ── IDIOM 3: FOCUS ─────────────────────────────────────────────────────────── */
+  body.focused .zone:not(.is-focus), body.focused #rail {
+    opacity:.30; filter:saturate(.6); pointer-events:none; }
+  .zone.is-focus { position:absolute; z-index:20;
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.9), 0 0 0 1px var(--zborder-strong);
+    will-change:transform; }
+  #veil { position:absolute; inset:0; z-index:10; background:rgba(8,7,12,.5);
+          opacity:0; pointer-events:none;
+          /* the scrim fades SLOWER than the zone moves — Carbon gives background
+             dimming its own slowest token (700 ms) against 400 ms for a large
+             expansion, so the dim recedes instead of competing with the focus. */
+          transition:opacity 620ms cubic-bezier(0.4,0,0.2,1); }
+  body.focused #veil { opacity:1; pointer-events:auto; }
+
+  @media (max-width:1100px) {
+    body { overflow:auto; }
+    #app { height:auto; min-height:calc(100% - var(--noteh,34px)); }
+    #frame { grid-template-columns:var(--rail) minmax(0,1fr); grid-auto-rows:min-content; }
+    #rail { grid-row:1 / span 3; }
+    #z-history { grid-column:2; max-height:240px; }
+    #work { grid-column:2; grid-template-rows:auto auto auto; min-height:520px; }
+    #z-inspector { grid-column:2; }
+    body[data-hist="off"] #frame, body[data-insp="off"] #frame,
+    body[data-hist="off"][data-insp="off"] #frame {
+      grid-template-columns:var(--rail) minmax(0,1fr); }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    /* every expansion here is a STATE, so all three survive; only the travel goes */
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:80; padding:6px 12px;
+    font:10px/1.45 var(--mono); color:var(--faint); background:rgba(8,7,12,.96);
+    border-top:1px solid var(--zborder); display:flex; gap:12px; flex-wrap:wrap;
+    align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <span class="wm">Compose</span>
+    <span class="pill ok" title="Stable Audio · MusicGen — a render is a one-shot process."><i class="dot on"></i>2 of 2 ready</span>
+    <span class="pill" id="jobpill" title="Nothing is running right now.">idle</span>
+    <span class="grow"></span>
+    <button class="plain" id="thist">History ⇤</button>
+    <button class="plain" id="tinsp">Inspector ⇥</button>
+    <span class="caps">⤢ focuses a panel · esc returns</span>
+  </div>
+
+  <div id="frame">
+    <div id="veil"></div>
+
+    <!-- the 48px nav rail -->
+    <nav id="rail">
+      <button class="on"><span class="g">♪</span>make</button>
+      <button><span class="g">≡</span>lib</button>
+      <button><span class="g">⚙</span>set</button>
+      <button><span class="g">◫</span>logs</button>
+    </nav>
+
+    <!-- ④ HISTORY -->
+    <section class="zone" id="z-history" data-zone="history">
+      <div class="zbar"><span class="t">history</span><span class="grow"></span>
+        <span class="caps cnt">14</span>
+        <button class="zx" data-x aria-label="Focus history">⤢</button></div>
+      <div class="zbody flush">
+        <span class="caps lgroup">today</span>
+        <button class="lrow on"><span class="i">▶</span><span class="t">Gravel Road at First Light</span><span class="d">1:04</span></button>
+        <button class="lrow"><span class="i">02</span><span class="t">Slow Water, Long Room</span><span class="d">0:48</span></button>
+        <button class="lrow"><span class="i">03</span><span class="t">Nine Bar Brass</span><span class="d">1:30</span></button>
+        <button class="lrow"><span class="i">04</span><span class="t">Untitled sketch</span><span class="d">0:30</span></button>
+        <span class="caps lgroup">yesterday</span>
+        <button class="lrow"><span class="i">05</span><span class="t">Kerosene Sunday</span><span class="d">1:12</span></button>
+        <button class="lrow"><span class="i">06</span><span class="t">Two Miles of Wire</span><span class="d">0:54</span></button>
+        <button class="lrow"><span class="i">07</span><span class="t">Brass and Rain</span><span class="d">2:00</span></button>
+        <button class="lrow"><span class="i">08</span><span class="t">Hollow Bell</span><span class="d">1:18</span></button>
+        <span class="caps lgroup">earlier</span>
+        <button class="lrow"><span class="i">09</span><span class="t">Paper Radio</span><span class="d">0:42</span></button>
+        <button class="lrow"><span class="i">10</span><span class="t">Long Shadow, Short Fuse</span><span class="d">1:36</span></button>
+        <button class="lrow"><span class="i">11</span><span class="t">Cold Start</span><span class="d">0:36</span></button>
+        <button class="lrow"><span class="i">12</span><span class="t">Ninth Street Waltz</span><span class="d">2:12</span></button>
+        <button class="lrow"><span class="i">13</span><span class="t">Riverbed</span><span class="d">1:05</span></button>
+        <button class="lrow"><span class="i">14</span><span class="t">Second Hand</span><span class="d">0:51</span></button>
+      </div>
+    </section>
+
+    <!-- the work stack -->
+    <div id="work">
+
+      <!-- ② -->
+      <section class="zone" id="z-monitor" data-zone="monitor">
+        <div class="zbar"><span class="t">monitor</span><span class="grow"></span>
+          <span class="caps" id="stagestate">on disk</span>
+          <button class="zc" data-stack="monitor" aria-label="Give the monitor the column">▤</button>
+          <button class="zx" data-x aria-label="Focus monitor">⤢</button></div>
+        <div class="zbody">
+          <div class="songline">
+            <h2 id="song">Gravel Road at First Light</h2>
+            <span class="m" id="songmeta">stable audio · 1:04 · 148 bpm · 2.4 MB</span>
+          </div>
+          <div class="wave" id="wave">
+            <svg viewBox="0 0 900 100" preserveAspectRatio="none" aria-hidden="true">
+              <g id="bars" fill="#d9b36c"></g></svg>
+            <div class="played" id="played"></div><div class="ph" id="ph"></div>
+          </div>
+          <div class="transport">
+            <button class="tbtn" id="play" aria-label="Play">
+              <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+            <span class="clock" id="clock">0:22 / 1:04</span>
+            <span style="flex:1"></span>
+            <button class="plain">Rename</button>
+            <button class="plain">Reveal</button>
+            <button class="plain">Detail</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ⑤⑥⑦ -->
+      <section class="zone" id="z-composer" data-zone="composer">
+        <div class="zbar"><span class="t">composer</span><span class="grow"></span>
+          <span class="caps">stable audio · 60 s</span>
+          <button class="zc" data-stack="composer" aria-label="Give the composer the column">▤</button>
+          <button class="zx" data-x aria-label="Focus composer">⤢</button></div>
+        <div class="zbody">
+          <textarea id="prompt" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+          <div class="crow">
+            <button class="plain">+ lyrics</button>
+            <button class="plain">Presets ▸</button>
+            <span class="grow"></span>
+            <button class="go" id="go">Compose</button>
+          </div>
+          <div id="advisory"></div>
+        </div>
+      </section>
+
+      <!-- ③ -->
+      <section class="zone" id="z-queue" data-zone="queue">
+        <div class="zbar"><span class="t">queue</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus queue">⤢</button></div>
+        <div class="zbody">
+          <span class="kvi">state <b id="qstate">idle</b></span>
+          <div class="bar"><i id="pf"></i></div>
+          <span class="kvi">last measured <b>41 s for 60 s</b></span>
+          <span class="kvi" title="One render at a time, on purpose — two would fight for the GPU.">concurrency <b>1</b></span>
+          <span class="kvi">queued <b>0</b></span>
+        </div>
+      </section>
+    </div>
+
+    <!-- ⑥① INSPECTOR -->
+    <section class="zone" id="z-inspector" data-zone="inspector">
+      <div class="zbar"><span class="t">inspector</span><span class="grow"></span>
+        <button class="zx" data-x aria-label="Focus inspector">⤢</button></div>
+      <div class="zbody">
+        <div class="sec">
+          <span class="caps">engine</span>
+          <div class="field"><span class="caps">use</span>
+            <div class="seg"><button class="on">Stable</button><button>MusicGen</button></div></div>
+        </div>
+        <div class="sec">
+          <span class="caps">basic</span>
+          <div class="field"><span class="caps">length</span><input value="60" aria-label="length in seconds"></div>
+          <div class="field"><span class="caps">format</span>
+            <div class="seg"><button class="on">wav</button><button>mp3</button></div></div>
+        </div>
+        <div class="sec">
+          <span class="caps">advanced</span>
+          <div class="field"><span class="caps">lyrics</span><span class="caps" style="color:var(--dim)">none</span></div>
+          <div class="field"><span class="caps">steps</span><input value="120"></div>
+          <div class="field"><span class="caps">seed</span><input placeholder="random" value=""></div>
+        </div>
+        <div class="sec">
+          <span class="caps">engines on disk</span>
+          <div class="erow"><span><span class="en">Stable Audio Open</span><br>
+            <span class="es">4.1 GB · Stability Community</span></span><span class="pill ok">ok</span></div>
+          <div class="erow"><span><span class="en">MusicGen Medium</span><br>
+            <span class="es">3.2 GB · CC-BY-NC 4.0</span></span><span class="pill ok">ok</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ③ the always-on status line -->
+  <div id="status">
+    <span>14 tracks · <b>62 MB</b></span>
+    <span>~/Music/Harness</span>
+    <span>free <b>~48 GB</b></span>
+    <span class="grow"></span>
+    <span>stable audio <b>4.1 GB</b></span>
+    <span>last <b>41 s</b> for 60 s</span>
+  </div>
+</div>
+
+<div id="note">
+  <b>G · The Rack</b>
+  <span><b style="color:var(--dim)">VoiceStudio :3900</b> its literal frame — 48px rail, 210px history, 4fr work, inspector; collapse = a grid-template swap</span>
+  <span><b style="color:var(--dim)">Blender / Figma regions</b> named panels with one shared header; the frame never re-parents, so nothing lands in the wrong place</span>
+  <span><b style="color:var(--dim)">Emil</b> three expansion idioms, all state-carried; FLIP focus is transform+opacity only, enter 260 / exit 200 ms</span>
+</div>
+
+<script>
+/* ══ FOCUS ENGINE (shared across this round) ═════════════════════════════════
+   The focused zone is promoted to an overlay and FLIPped from its own resting
+   rectangle; nothing else moves, the rest dims. Transform and opacity only —
+   never width/height/top/left. A forced reflow rather than requestAnimationFrame,
+   because rAF is throttled in a background tab and a FLIP that silently never
+   starts is worse than no FLIP. */
+(function () {
+  var frame = document.getElementById('frame'), open = null, rest = null;
+  function focus(zone) {
+    if (open) unfocus(true);
+    var b = frame.getBoundingClientRect(), r = zone.getBoundingClientRect();
+    var pad = Math.round(Math.min(b.width, b.height) * 0.045);
+    var tw = b.width - pad * 2, th = b.height - pad * 2;
+    rest = { l:r.left - b.left, t:r.top - b.top, w:r.width, h:r.height };
+    zone.classList.add('is-focus');
+    zone.style.transition = 'none';
+    zone.style.left = pad + 'px'; zone.style.top = pad + 'px';
+    zone.style.width = tw + 'px'; zone.style.height = th + 'px';
+    zone.style.transformOrigin = 'top left';
+    zone.style.transform = 'translate(' + (rest.l - pad) + 'px,' + (rest.t - pad) + 'px) ' +
+                           'scale(' + (rest.w / tw) + ',' + (rest.h / th) + ')';
+    document.body.classList.add('focused');
+    void zone.offsetWidth;
+    zone.style.transition = 'transform 260ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'none';
+    open = zone; zone.setAttribute('aria-expanded', 'true');
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤡';
+  }
+  function unfocus(instant) {
+    if (!open) return;
+    var zone = open, r = rest, pad = parseFloat(zone.style.left) || 0;
+    var tw = parseFloat(zone.style.width), th = parseFloat(zone.style.height);
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤢';
+    zone.setAttribute('aria-expanded', 'false');
+    function land(){ zone.classList.remove('is-focus'); zone.style.cssText = ''; }
+    if (instant) { land(); document.body.classList.remove('focused'); open = null; return; }
+    zone.style.transition = 'transform 200ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'translate(' + (r.l - pad) + 'px,' + (r.t - pad) + 'px) ' +
+                           'scale(' + (r.w / tw) + ',' + (r.h / th) + ')';
+    document.body.classList.remove('focused'); open = null; setTimeout(land, 210);
+  }
+  document.addEventListener('click', function (e) {
+    var x = e.target.closest('[data-x]');
+    if (x) { var z = x.closest('.zone'); e.stopPropagation();
+             (open === z) ? unfocus() : focus(z); return; }
+    if (e.target.closest('[data-stack]')) return;   /* idiom 2 owns its own click */
+    var bar = e.target.closest('.zbar');
+    if (bar && !open) { focus(bar.closest('.zone')); return; }
+    if (open && !e.target.closest('.zone.is-focus')) unfocus();
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') unfocus(); });
+  addEventListener('resize', function () { if (open) unfocus(true); });
+})();
+
+/* ══ IDIOM 1: rail collapse — a grid-template swap, VoiceStudio's own ═════════ */
+(function () {
+  function bind(btn, key) {
+    var b = document.getElementById(btn);
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var off = document.body.getAttribute('data-' + key) === 'off';
+      document.body.setAttribute('data-' + key, off ? 'on' : 'off');
+      b.setAttribute('aria-pressed', String(!off));
+    });
+  }
+  bind('thist', 'hist'); bind('tinsp', 'insp');
+})();
+
+/* ══ IDIOM 2: the stack accordion ════════════════════════════════════════════ */
+(function () {
+  document.querySelectorAll('[data-stack]').forEach(function (b) {
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var k = b.dataset.stack;
+      var cur = document.body.getAttribute('data-stack');
+      if (cur === k) document.body.removeAttribute('data-stack');
+      else document.body.setAttribute('data-stack', k);
+    });
+  });
+})();
+
+/* measure the mockup's own footer note so no zone hides behind it */
+(function () {
+  var n = document.getElementById('note');
+  function m(){ document.documentElement.style.setProperty('--noteh', n.offsetHeight + 'px'); }
+  m(); addEventListener('resize', m); setTimeout(m, 60);
+})();
+
+/* deterministic waveform */
+(function () {
+  var g = document.getElementById('bars'), h = '', seed = 9;
+  function rnd(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+  for (var i = 0; i < 240; i++) {
+    var x = i * 3.75, env = Math.pow(Math.sin(i / 240 * Math.PI), 0.5);
+    var v = env * (0.26 + rnd() * 0.74), hgt = Math.max(2, v * 92);
+    h += '<rect x="' + (x + .5) + '" y="' + ((100 - hgt) / 2) + '" width="2.4" height="' +
+         hgt.toFixed(1) + '" rx="1.2" opacity="' + (0.30 + v * 0.52).toFixed(2) + '"/>';
+  }
+  g.innerHTML = h;
+})();
+
+/* transport — a playhead, honestly fake (a mockup has no audio) */
+(function () {
+  var t = 22, dur = 64, playing = false, timer = null;
+  var play = document.getElementById('play'), ph = document.getElementById('ph'),
+      played = document.getElementById('played'), clock = document.getElementById('clock');
+  function fmt(s){ s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  function paint(){ var p = t/dur*100; ph.style.left = p.toFixed(2)+'%';
+                    played.style.right = (100-p).toFixed(2)+'%';
+                    clock.textContent = fmt(t)+' / '+fmt(dur); }
+  play.addEventListener('click', function (e) {
+    e.stopPropagation(); playing = !playing;
+    play.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>'
+      : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>';
+    clearInterval(timer);
+    if (playing) timer = setInterval(function(){ t = (t+1)%dur; paint(); }, 1000);
+  });
+  document.getElementById('wave').addEventListener('click', function (e) {
+    e.stopPropagation();
+    var r = this.getBoundingClientRect();
+    t = Math.max(0, Math.min(dur, (e.clientX-r.left)/r.width*dur)); paint();
+  });
+  paint();
+})();
+
+/* the run */
+(function () {
+  var go = document.getElementById('go'), pf = document.getElementById('pf'),
+      qstate = document.getElementById('qstate'), jobpill = document.getElementById('jobpill'),
+      stagestate = document.getElementById('stagestate'), song = document.getElementById('song'),
+      meta = document.getElementById('songmeta'), prompt = document.getElementById('prompt'),
+      advisory = document.getElementById('advisory');
+  var busy = false;
+  function titleOf(p) {
+    var head = String(p || '').trim().split(/\s+/).slice(0, 5).join(' ');
+    return head ? head.charAt(0).toUpperCase() + head.slice(1) : 'Untitled sketch';
+  }
+  go.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (busy) return; busy = true;
+    var text = prompt.value.trim() || prompt.placeholder;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Composing';
+    go.setAttribute('aria-busy', 'true');
+    qstate.textContent = 'rendering'; jobpill.textContent = 'rendering';
+    jobpill.className = 'pill gold'; stagestate.textContent = 'rendering';
+    song.textContent = titleOf(text); meta.textContent = 'stable audio · 60 s requested';
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>Stable Audio</b>. You can leave this tab; it survives.</p>';
+    var p = 0;
+    var iv = setInterval(function () {
+      p += 8 + Math.random() * 10;
+      if (p >= 100) {
+        clearInterval(iv); pf.style.width = '100%';
+        setTimeout(function () {
+          pf.style.width = '0';
+          qstate.textContent = 'idle'; jobpill.textContent = 'idle';
+          jobpill.className = 'pill'; stagestate.textContent = 'on disk';
+          meta.textContent = 'stable audio · 1:00 · 72 bpm · 2.2 MB';
+          advisory.innerHTML = '';
+          go.disabled = false; go.textContent = 'Compose';
+          go.removeAttribute('aria-busy'); busy = false;
+        }, 260);
+      } else pf.style.width = p.toFixed(1) + '%';
+    }, 240);
+  });
+
+  var rows = document.querySelectorAll('.lrow');
+  rows.forEach(function (r) {
+    r.addEventListener('click', function (e) {
+      e.stopPropagation();
+      rows.forEach(function (o, j) {
+        o.classList.remove('on');
+        var ind = o.querySelector('.i');
+        if (ind.textContent === '▶') ind.textContent = String(j + 1).padStart(2, '0');
+      });
+      r.classList.add('on'); r.querySelector('.i').textContent = '▶';
+      song.textContent = r.querySelector('.t').textContent;
+      meta.textContent = 'stable audio · ' + r.querySelector('.d').textContent + ' · on disk';
+    });
+  });
+})();
+</script>
+</body>
+</html>

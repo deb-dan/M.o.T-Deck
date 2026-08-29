@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose D · The Marquee</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-d.html — DIRECTION D: "THE MARQUEE".
+  Standalone, self-contained, fake data.
+
+  THE BRIEF: punchy, even more modern — bolder than A–C, but PUNCHY IS NOT NOISY.
+  The discipline that makes it work is impeccable's own, in reference/bolder.md:
+  "Commit, then clarify. Half-measures read as noise. Make the one decisive move
+  completely, then quiet everything around it so the move is legible. If every
+  element got louder, the section got flatter."
+
+  So there is exactly ONE loud thing on this page, and everything else is quieter
+  than in A–C, not louder.
+
+  THE ONE LOUD THING is a full-bleed accent slab carrying the song's name at
+  display scale in the Editorial serif. That is colorize.md's instruction taken
+  literally — "let the strongest color own a deliberate region or role instead of
+  scattering tiny accents" — instead of the shipped page's habit of spending gold
+  on six pill borders and nothing else.
+
+  AND THE SLAB IS ALSO THE PROGRESS BAR. On press the gold retreats to zero and
+  refills left-to-right as the render runs; the title is drawn twice, once in
+  cream on the dark ground and once in the on-accent ink inside the clipped gold
+  layer, so the letters change colour AT the wipe edge as it passes. One object
+  is the hero, the progress readout and the authored arrival — which is why the
+  page can be this loud and still only animate one thing.
+
+  Type contrast is 88px display against a 10px mono label — 8.8×, where
+  impeccable's flat-type-hierarchy detector only demands 2.0. Tracking is -0.03em;
+  the floor is -0.04em and the guidance says -0.02 to -0.03 usually reads better.
+  Display stays under the craft floor's 6rem ceiling (oversized-h1).
+
+  IA UNTOUCHED: ① engines chip ② stage (the slab + transport) ③ caps ④ recent
+  ⑤ prompt ⑥ controls ⑦ Compose. Sentence rule intact — only .say.
+  Commits to Editorial dark for presentation; every colour is still a token.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --s1:4px; --s2:8px; --s3:12px; --s4:20px; --s5:32px; --s6:56px; --s7:88px;
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);
+    --pad:clamp(20px, 4vw, 56px);
+
+    /* the wipe. 0% = fully gold (at rest / finished), 100% = fully dark (working). */
+    --wipe:0%;
+  }
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.55 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:3px solid transparent; background-clip:content-box; }
+  textarea { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  button { touch-action:manipulation; }
+
+  h1 { font:600 15px/1.2 var(--serif); color:var(--cream); margin:0; }
+  .caps { font:600 10px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+          color:var(--faint); }
+  .say { font-size:12.5px; line-height:1.7; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  /* CHIPS — deliberately the quietest they are in this whole round. The slab is
+     carrying the brand, so the pills stop trying to. */
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border:1px solid var(--line); border-radius:999px; background:transparent;
+    font:11px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color 180ms var(--ease-out), color 180ms var(--ease-out); }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); }
+  .chip.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  header { position:sticky; top:0; z-index:8; height:52px; display:flex; gap:var(--s3);
+    align-items:center; padding:0 var(--pad);
+    background:linear-gradient(180deg, rgba(11,10,16,.96), rgba(11,10,16,.7));
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); }
+  header .grow { flex:1 1 auto; }
+
+  /* ══ ② THE SLAB ═════════════════════════════════════════════════════════════
+     Full bleed, no container, no radius, no border. A card would make it an
+     element on a page; without one it IS the page. */
+  #slab { position:relative; overflow:hidden; isolation:isolate;
+          min-height:min(46vh, 420px); }
+  .layer { position:absolute; inset:0; display:flex; flex-direction:column;
+           justify-content:flex-end; padding:var(--s6) var(--pad) var(--s5); }
+  /* the dark layer sits underneath and is what a running render exposes */
+  .layer.dark { background:var(--card); color:var(--cream); }
+  /* the gold layer is clipped by --wipe: this is the hero, the progress readout
+     and the arrival, all one object. */
+  .layer.lit { background:var(--gold); color:var(--on-accent);
+               clip-path:inset(0 var(--wipe) 0 0); }
+  #slab.settling .layer.lit { transition:clip-path 560ms var(--ease-in-out); }
+  #slab.running .layer.lit { transition:clip-path 300ms linear; }
+
+  .song { font-family:var(--serif); font-weight:600;
+          font-size:clamp(38px, 6.4vw, 88px); line-height:0.98; letter-spacing:-0.03em;
+          margin:0; max-width:15ch; text-wrap:balance; }
+  .slabmeta { margin-top:var(--s4); font:10px var(--mono); letter-spacing:.16em;
+              text-transform:uppercase; opacity:.72; font-variant-numeric:tabular-nums; }
+  /* the ink on the accent carries chroma on purpose — a near-neutral grey on a
+     coloured fill is impeccable's gray-on-color rule, and it is the single most
+     common way a "bold" colour block goes cheap. */
+
+  /* ── THE TRANSPORT — full bleed under the slab, on the dark ground ─────────── */
+  #transport { display:flex; gap:var(--s4); align-items:center;
+               padding:var(--s4) var(--pad); border-bottom:1px solid var(--line); }
+  .play { width:46px; height:46px; flex:none; border-radius:50%; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); display:grid; place-items:center;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3);
+    transition:scale 150ms var(--ease-out), filter 150ms ease-out; }
+  .play:active { scale:0.95; }
+  .play svg { width:16px; height:16px; fill:currentColor; }
+  .wave { position:relative; flex:1 1 auto; height:46px; cursor:pointer; }
+  .wave svg { display:block; width:100%; height:100%; }
+  .wave .played { position:absolute; inset:0 66% 0 0; background:rgba(217,179,108,.12);
+                  pointer-events:none; }
+  .wave .ph { position:absolute; top:0; bottom:0; left:34%; width:1px; background:var(--cream); }
+  .clock { font:12px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums;
+           flex:none; }
+
+  /* ── ③ CAPS ─────────────────────────────────────────────────────────────────── */
+  #caps { display:flex; gap:var(--s2); flex-wrap:wrap; padding:var(--s4) var(--pad) 0; }
+
+  /* ── ④ RECENT — a typographic list, not a third row of pills. The pill row is
+     what makes the shipped page read as one texture from top to bottom; setting
+     the names in the serif at 20px gives the page a second scale to read at. */
+  .sect { padding:var(--s6) var(--pad) 0; }
+  .sect > .caps { display:block; margin-bottom:var(--s3); }
+  .tk { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; gap:var(--s4);
+    align-items:baseline; width:100%; text-align:start; background:transparent; border:0;
+    border-top:1px solid var(--line); padding:var(--s3) 0; cursor:pointer; color:var(--dim);
+    transition:color 120ms ease-out, padding-inline-start 180ms var(--ease-out); }
+  .tk .i { font:10px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .tk .t { font:600 clamp(17px, 1.6vw, 21px)/1.2 var(--serif); color:var(--fg);
+           letter-spacing:-.015em; overflow:hidden; text-overflow:ellipsis;
+           white-space:nowrap; transition:color 120ms ease-out; }
+  .tk .d, .tk .w { font:10.5px var(--mono); color:var(--faint);
+                   font-variant-numeric:tabular-nums; }
+  @media (hover:hover) and (pointer:fine) {
+    .tk:hover { padding-inline-start:var(--s3); }
+    .tk:hover .t { color:var(--cream); } }
+  .tk.on .t { color:var(--gold); }
+  .tk.on .i { color:var(--gold); }
+
+  /* ── ⑤⑥⑦ THE COMPOSER — quiet field, one unmissable action ─────────────────── */
+  #composer { margin:var(--s6) var(--pad) 0; border-top:1px solid var(--line2);
+              padding-top:var(--s4); }
+  #composer textarea { display:block; width:100%; border:0; background:transparent;
+    resize:none; outline:none; color:var(--cream); font:clamp(15px,1.5vw,19px)/1.5 var(--sans);
+    min-height:66px; padding:0; }
+  #composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap;
+          margin-top:var(--s4); }
+  .crow .grow { flex:1 1 auto; }
+  button.plain { height:30px; padding:0 12px; border-radius:999px; border:1px solid var(--line);
+    background:transparent; color:var(--dim); font:500 11.5px var(--sans); cursor:pointer;
+    transition:scale 150ms var(--ease-out), color 150ms ease-out, border-color 150ms ease-out; }
+  button.plain:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) {
+    button.plain:hover { color:var(--cream); border-color:var(--line2); } }
+  button.go { height:46px; padding:0 30px; border-radius:999px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent);
+    font:650 clamp(14px,1.3vw,16px) var(--sans); letter-spacing:-.01em;
+    display:inline-flex; align-items:center; gap:9px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 10px 26px -10px rgba(217,179,108,.75);
+    transition:scale 150ms var(--ease-out), filter 150ms ease-out; }
+  button.go:active { scale:0.96; }
+  button.go:disabled { cursor:default; filter:saturate(.35) brightness(.8); box-shadow:none; }
+  .spin { width:13px; height:13px; border-radius:50%; border:2px solid rgba(23,20,32,.3);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  footer { padding:var(--s7) var(--pad) 120px; color:var(--faint); font:10.5px var(--mono); }
+
+  @media (prefers-reduced-motion:reduce) {
+    /* the wipe is the state, not decoration: under reduced motion it still moves,
+       because deleting it would delete the progress readout. It just stops easing. */
+    #slab.settling .layer.lit { transition:clip-path 200ms linear; }
+    * { transition-duration:0.01ms; }
+    #slab .layer.lit { transition-duration:200ms; }
+    .tk:hover { padding-inline-start:0; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:60; padding:9px 16px;
+    font:10.5px/1.5 var(--mono); color:var(--faint); background:rgba(11,10,16,.94);
+    border-top:1px solid var(--line); -webkit-backdrop-filter:blur(12px);
+    backdrop-filter:blur(12px); display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compose</h1>
+  <span class="chip c-ok" title="Stable Audio · MusicGen — a render is a one-shot process."><i class="dot on"></i>2 of 2 engines ready</span>
+  <span class="grow"></span>
+  <span class="chip act" title="Engine detail, install state and sizes.">engines ▸</span>
+</header>
+
+<!-- ② THE SLAB. Two layers, identical geometry; the gold one is clipped. -->
+<section id="slab">
+  <div class="layer dark" aria-hidden="true">
+    <h2 class="song">Gravel Road at First Light</h2>
+    <div class="slabmeta">stable audio · 1:04 · 148 bpm · 2.4 MB</div>
+  </div>
+  <div class="layer lit">
+    <h2 class="song" id="song">Gravel Road at First Light</h2>
+    <div class="slabmeta" id="slabmeta">stable audio · 1:04 · 148 bpm · 2.4 MB</div>
+  </div>
+</section>
+
+<div id="transport">
+  <button class="play" id="play" aria-label="Play">
+    <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+  <div class="wave" id="wave">
+    <svg viewBox="0 0 900 46" preserveAspectRatio="none" aria-hidden="true">
+      <g id="bars" fill="#d9b36c"></g></svg>
+    <div class="played" id="played"></div><div class="ph" id="ph"></div>
+  </div>
+  <span class="clock" id="clock">0:22 / 1:04</span>
+</div>
+
+<!-- ③ -->
+<div id="caps">
+  <span class="chip" title="Measured on this machine, last run.">last <b>41s</b> for 60s</span>
+  <span class="chip" title="Every song this page has written, on disk.">14 tracks · <b>62 MB</b></span>
+  <span class="chip act" title="Where finished songs are written on this machine.">~/Music/Harness</span>
+</div>
+
+<!-- ④ -->
+<div class="sect">
+  <span class="caps">recent</span>
+  <div id="strip">
+    <button class="tk on"><span class="i">01</span><span class="t">Gravel Road at First Light</span><span class="w">just now</span><span class="d">1:04</span></button>
+    <button class="tk"><span class="i">02</span><span class="t">Slow Water, Long Room</span><span class="w">14:02</span><span class="d">0:48</span></button>
+    <button class="tk"><span class="i">03</span><span class="t">Nine Bar Brass</span><span class="w">13:41</span><span class="d">1:30</span></button>
+    <button class="tk"><span class="i">04</span><span class="t">Untitled sketch</span><span class="w">13:20</span><span class="d">0:30</span></button>
+    <button class="tk"><span class="i">05</span><span class="t">Kerosene Sunday</span><span class="w">yesterday</span><span class="d">1:12</span></button>
+  </div>
+</div>
+
+<!-- ⑤⑥⑦ -->
+<section id="composer">
+  <textarea id="prompt" rows="2" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+  <div class="crow">
+    <button class="plain">+ lyrics</button>
+    <button class="plain">60 s</button>
+    <button class="plain">stable audio ▾</button>
+    <button class="plain">More ▸</button>
+    <span class="grow"></span>
+    <button class="go" id="go">Compose</button>
+  </div>
+  <div id="advisory" style="margin-top:16px"></div>
+</section>
+
+<footer>compose · mockup d · fake data · nothing here reaches the bridge</footer>
+
+<div id="note">
+  <b>D · The Marquee</b>
+  <span><b style="color:var(--dim)">impeccable / bolder</b> commit then clarify — one decisive move, everything around it quieted</span>
+  <span><b style="color:var(--dim)">impeccable / colorize</b> the strongest colour owns a region, not scattered accents; ink on the fill carries chroma</span>
+  <span><b style="color:var(--dim)">Emil</b> progress is <code>linear</code> and never eases; the arrival settle is the only eased move</span>
+</div>
+
+<script>
+/* deterministic waveform */
+(function () {
+  var g = document.getElementById('bars'), h = '', seed = 9;
+  function rnd(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+  for (var i = 0; i < 220; i++) {
+    var x = i * 4.09, env = Math.pow(Math.sin(i / 220 * Math.PI), 0.5);
+    var v = env * (0.26 + rnd() * 0.74), hgt = Math.max(2, v * 42);
+    h += '<rect x="' + (x + .6) + '" y="' + ((46 - hgt) / 2) + '" width="2.6" height="' +
+         hgt.toFixed(1) + '" rx="1.3" opacity="' + (0.30 + v * 0.52).toFixed(2) + '"/>';
+  }
+  g.innerHTML = h;
+})();
+
+/* transport — a playhead, honestly fake (a mockup has no audio) */
+(function () {
+  var t = 22, dur = 64, playing = false, timer = null;
+  var play = document.getElementById('play'), ph = document.getElementById('ph'),
+      played = document.getElementById('played'), clock = document.getElementById('clock');
+  function fmt(s){ s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  function paint(){ var p = t/dur*100; ph.style.left = p.toFixed(2)+'%';
+                    played.style.right = (100-p).toFixed(2)+'%';
+                    clock.textContent = fmt(t)+' / '+fmt(dur); }
+  play.addEventListener('click', function () {
+    playing = !playing;
+    play.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>'
+      : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>';
+    clearInterval(timer);
+    if (playing) timer = setInterval(function(){ t = (t+1)%dur; paint(); }, 1000);
+  });
+  document.getElementById('wave').addEventListener('click', function (e) {
+    var r = this.getBoundingClientRect();
+    t = Math.max(0, Math.min(dur, (e.clientX-r.left)/r.width*dur)); paint();
+  });
+  paint();
+})();
+
+/* ══ THE ONE LOUD MOMENT ═════════════════════════════════════════════════════
+   The slab's gold retreats to nothing on press and refills as the render runs.
+   It is the hero, the progress and the arrival in one object, which is the only
+   reason a page this loud still animates exactly one thing. */
+(function () {
+  var go = document.getElementById('go'), slab = document.getElementById('slab'),
+      song = document.getElementById('song'), dsong = document.querySelector('.layer.dark .song'),
+      meta = document.getElementById('slabmeta'),
+      dmeta = document.querySelector('.layer.dark .slabmeta'),
+      prompt = document.getElementById('prompt'), advisory = document.getElementById('advisory');
+  var busy = false;
+
+  function titleOf(p) {
+    var head = String(p || '').trim().split(/\s+/).slice(0, 5).join(' ');
+    return head ? head.charAt(0).toUpperCase() + head.slice(1) : 'Untitled sketch';
+  }
+  function setTitle(t, m) {
+    song.textContent = dsong.textContent = t;
+    meta.textContent = dmeta.textContent = m;
+  }
+
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    var text = prompt.value.trim() || prompt.placeholder;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Composing';
+    go.setAttribute('aria-busy', 'true');
+
+    /* retreat: 220 ms, faster than the return — exit faster than entrance */
+    slab.classList.remove('running');
+    slab.classList.add('settling');
+    slab.style.setProperty('--wipe', '100%');
+    setTitle(titleOf(text), 'stable audio · rendering · 60 s requested');
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>Stable Audio</b>. ' +
+      'You can leave this tab; it survives.</p>';
+
+    setTimeout(function () {
+      slab.classList.remove('settling'); slab.classList.add('running');
+      var p = 0;
+      var iv = setInterval(function () {
+        p += 8 + Math.random() * 10;
+        if (p >= 100) {
+          clearInterval(iv);
+          slab.classList.remove('running'); slab.classList.add('settling');
+          slab.style.setProperty('--wipe', '0%');
+          setTimeout(function () {
+            setTitle(titleOf(text), 'stable audio · 1:00 · 72 bpm · 2.2 MB');
+            advisory.innerHTML = '';
+            go.disabled = false; go.textContent = 'Compose';
+            go.removeAttribute('aria-busy'); busy = false;
+          }, 580);
+        } else slab.style.setProperty('--wipe', (100 - p).toFixed(1) + '%');
+      }, 300);
+    }, 300);
+  });
+
+  /* the recent list drives the slab too — same object, same states */
+  var rows = document.querySelectorAll('.tk');
+  rows.forEach(function (r) {
+    r.addEventListener('click', function () {
+      rows.forEach(function (o) { o.classList.remove('on'); });
+      r.classList.add('on');
+      setTitle(r.querySelector('.t').textContent,
+               'stable audio · ' + r.querySelector('.d').textContent + ' · on disk');
+    });
+  });
+})();
+</script>
+</body>
+</html>

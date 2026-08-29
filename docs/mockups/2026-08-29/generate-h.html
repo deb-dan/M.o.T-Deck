@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generate H · The Ledger</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/generate-h.html — DIRECTION H: "THE LEDGER".
+
+  THE PRINCIPLE: a workbench, not a shrine — and this is its most literal reading.
+  The picture is A CITIZEN: it occupies a 78 px thumbnail cell in a table row.
+
+  THE IDEA. The page is a RUN LEDGER. Every result this machine has made is one
+  dense row — index, thumbnail, prompt, model, size, steps, seed, render time,
+  file size, state. Twenty-plus are on screen at once. The composer is the
+  ledger's TOP ROW, a new entry you are writing. The "current result" is not a
+  stage; it is whichever row is expanded.
+
+  CLICKING A ROW EXPANDS IT IN PLACE, downward, into a detail block carrying the
+  full-size picture, its full settings and its actions. Every other row stays
+  exactly where it is. Click again, click away, or press Esc and it collapses.
+  Nothing overlays and nothing navigates, so the ledger never loses your place —
+  the failure mode a modal detail view has and this does not.
+
+  WHY IT IS A THIRD IDEA AND NOT A BLEND. F composes a mosaic and G composes a
+  frame; both are spatial and both fix how many things fit. H is TABULAR — the
+  Linear/Raycast move, where the list is the product and detail is an inline
+  expansion of a row. It is the only one of the three where the number of runs
+  visible at once scales with the window.
+
+  ZONE CHROME is the same VoiceStudio language as F and G, read live from its
+  bundle on :3900 — 28 px mono label bars, 1 px hairlines, 12 px pads, radius 0,
+  20 px / 3 px pills, .12 s / .2 s — so all three read as one product.
+
+  ROW RHYTHM: 30 px rows (a thumbnail needs more than the 26 px the music ledger
+  uses), 9.5–11.5 px type, tabular figures on every numeric column.
+
+  IA UNTOUCHED, ALL SEVEN VISIBLE AT REST: ① status chips (topbar + MODELS panel)
+  ② result stage (the expanded row) ③ recent strip (the ledger) ④ prompt
+  ⑤ Image/Clip ⑥ model control ⑦ Generate (the NEW ENTRY row + SETTINGS panel).
+  No invented controls: width, height, steps, seed, negative prompt, plus frames
+  and fps in Clip mode only. The pictures are abstract colour fields.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --zbar:28px; --zpad:12px; --zlabel:11px; --ztrack:.06em;
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.12);
+    --zhover:rgba(255,255,255,.04);
+    --pill-h:20px; --pill-r:3px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --row:30px;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:#08070c; color:var(--fg); font:12px/1.45 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  textarea, input { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  button { touch-action:manipulation; font:inherit; }
+
+  .caps { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .say { font-size:11.5px; line-height:1.55; color:var(--dim); margin:0; max-width:60ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+  .pill { display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border-radius:var(--pill-r); border:1px solid var(--zborder);
+    background:transparent; font:10.5px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color var(--t-fast), color var(--t-fast); }
+  .pill b { color:var(--cream); font-weight:600; }
+  .pill.ok { color:var(--ok); border-color:color-mix(in oklab, var(--ok) 45%, transparent); }
+  .pill.gold { color:var(--gold); border-color:color-mix(in oklab, var(--gold) 45%, transparent); }
+  .pill.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .pill.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr) 22px;
+         height:calc(100% - var(--noteh, 34px)); }
+  /* the topbar WRAPS and the app row is auto, not a hard --zbar: a non-wrapping
+     flex bar is how a toolbar pushes its trailing controls off the right edge at
+     narrow widths. Measured 432px of content in a 380px window on 2026-08-29 —
+     a control reachable only at desktop width is a hard failure, not a breakpoint. */
+  #topbar { display:flex; align-items:center; gap:10px; padding:3px 10px;
+            min-height:var(--zbar); flex-wrap:wrap; row-gap:4px;
+            background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  #topbar .wm { font:600 12px/1 var(--serif); color:var(--cream); }
+  #topbar .grow { flex:1 1 auto; }
+
+  #frame { position:relative; display:grid;
+           grid-template-columns:minmax(0,1fr) 288px; min-height:0; }
+  @media (max-width:1100px) { #frame { grid-template-columns:minmax(0,1fr); }
+                              #side { display:none; } }
+
+  .zone { position:relative; background:var(--bg); min-height:0;
+    display:grid; grid-template-rows:var(--zbar) minmax(0,1fr);
+    transition:opacity 620ms cubic-bezier(0.4,0,0.2,1), filter 620ms cubic-bezier(0.4,0,0.2,1); }
+  .zbar { display:flex; align-items:center; gap:7px; padding:0 var(--zpad);
+          border-bottom:1px solid var(--zborder); background:var(--bg2); }
+  .zbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--faint); white-space:nowrap; }
+  .zbar .grow { flex:1 1 auto; }
+  .zbody { overflow:auto; min-height:0; }
+  .zbody.pad { padding:var(--zpad); }
+  .zx { width:18px; height:18px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none; transition:background-color var(--t-fast), color var(--t-fast); }
+  @media (hover:hover) and (pointer:fine) {
+    .zx:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* ══ THE LEDGER ═════════════════════════════════════════════════════════════ */
+  #ledger { border-inline-end:1px solid var(--zborder); }
+  .lgrid { display:grid;
+    grid-template-columns:30px 46px minmax(140px,2.4fr) 96px 78px 44px 62px 54px 54px 60px;
+    column-gap:12px; align-items:center; }
+  .lhead { padding:0 var(--zpad); height:22px; border-bottom:1px solid var(--zborder);
+    background:var(--bg2); position:sticky; top:0; z-index:2; }
+  .lhead > span { font:600 9px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase;
+    color:var(--faint); }
+  .lhead > span.r, .lrow > .r { text-align:end; }
+
+  .lrow { width:100%; text-align:start; border:0; background:transparent; cursor:pointer;
+    padding:0 var(--zpad); height:var(--row); color:var(--dim);
+    border-bottom:1px solid rgba(255,255,255,.035);
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .lrow > * { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lrow .i  { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lrow .t  { font:11.5px var(--sans); }
+  .lrow .e, .lrow .s, .lrow .st { font:9.5px var(--mono); color:var(--faint); }
+  .lrow .n  { font:10px var(--mono); font-variant-numeric:tabular-nums; }
+  @media (hover:hover) and (pointer:fine) {
+    .lrow:hover { background:var(--zhover); color:var(--cream); } }
+  .lrow.on { background:var(--on-wash); color:var(--cream); }
+  .lrow.on .i { color:var(--gold); }
+
+  /* the picture, at citizen size: a 40×26 cell in a table row */
+  .cell { width:40px; height:26px; position:relative; overflow:hidden;
+          outline:1px solid rgba(255,255,255,.09); outline-offset:-1px; display:block; }
+  .cell .field { position:absolute; inset:0; }
+  .field.f1 { background:
+      radial-gradient(120% 90% at 22% 18%, rgba(217,179,108,.55), transparent 58%),
+      radial-gradient(90% 80% at 78% 30%, rgba(139,147,248,.45), transparent 62%),
+      radial-gradient(140% 120% at 50% 108%, rgba(70,201,154,.30), transparent 60%),
+      linear-gradient(160deg, #1a1626, #0d0b14 62%, #16121f); }
+  .field.f2 { background:
+      radial-gradient(100% 80% at 70% 20%, rgba(224,164,88,.5), transparent 60%),
+      radial-gradient(120% 100% at 20% 80%, rgba(139,147,248,.4), transparent 62%),
+      linear-gradient(200deg, #17131f, #0b0a10 70%); }
+  .field.f3 { background:
+      radial-gradient(110% 90% at 40% 70%, rgba(70,201,154,.42), transparent 58%),
+      radial-gradient(90% 70% at 75% 15%, rgba(217,179,108,.42), transparent 60%),
+      linear-gradient(140deg, #14121d, #09080e 68%); }
+
+  /* ── ROW EXPANSION. Height animates on ONE wrapper that owns nothing else and
+     has no text baseline to jitter; everything inside moves on opacity and
+     transform only. */
+  .detail { overflow:hidden; height:0; background:var(--bg2);
+            border-bottom:1px solid var(--zborder);
+            transition:height 260ms cubic-bezier(0.23,1,0.32,1); }
+  .detail.open { border-top:1px solid var(--zborder-strong); }
+  .dinner { padding:12px var(--zpad) 14px; display:grid;
+            grid-template-columns:minmax(0,1.1fr) minmax(200px,1fr); gap:14px;
+            opacity:0; transform:translateY(-4px);
+            transition:opacity 180ms ease-out 60ms, transform 180ms ease-out 60ms; }
+  .detail.open .dinner { opacity:1; transform:none; }
+  .dpic { position:relative; aspect-ratio:3/2; width:100%; max-height:300px;
+    overflow:hidden; outline:1px solid rgba(255,255,255,.10); outline-offset:-1px;
+    background-color:#101019;
+    background-image:linear-gradient(45deg, #14121d 25%, transparent 25%, transparent 75%, #14121d 75%),
+                     linear-gradient(45deg, #14121d 25%, transparent 25%, transparent 75%, #14121d 75%);
+    background-size:14px 14px; background-position:0 0, 7px 7px; }
+  .dpic .field { position:absolute; inset:0; }
+  .dmeta { display:grid; gap:0; align-content:start; }
+  .dmeta h2 { font:600 15px/1.3 var(--serif); color:var(--cream); margin:0 0 8px;
+              letter-spacing:-.01em; }
+  .dkv { display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px;
+    padding:3px 0; border-top:1px solid var(--zborder);
+    font:10.5px var(--mono); color:var(--cream); font-variant-numeric:tabular-nums; }
+  .dkv:first-of-type { border-top:0; }
+  .dkv > span:first-child { color:var(--faint); }
+  .dacts { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+
+  /* ══ THE NEW ENTRY ROW ══════════════════════════════════════════════════════ */
+  #newrow { border-bottom:1px solid var(--zborder-strong); background:var(--bg2); }
+  #newrow .head { display:flex; align-items:center; gap:6px; padding:6px var(--zpad) 0;
+                  flex-wrap:wrap; }
+  #newrow .body { padding:6px var(--zpad) 10px; display:grid;
+                  grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
+  #newrow textarea { width:100%; min-height:38px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:12.5px/1.5 var(--sans); padding:7px 9px;
+    resize:none; outline:none; transition:border-color var(--t-fast); }
+  #newrow textarea:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  #newrow textarea::placeholder { color:var(--faint); }
+  #negwrap { padding:0 var(--zpad) 8px; display:grid; gap:4px; }
+  #negwrap[hidden] { display:none; }
+  #negwrap textarea { width:100%; min-height:28px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:11.5px/1.5 var(--sans); padding:6px 9px;
+    resize:none; outline:none; }
+
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:3px;
+         overflow:hidden; }
+  .seg > button { border:0; background:transparent; color:var(--dim); height:20px;
+    padding:0 9px; font:10.5px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .seg > button.on { background:var(--on-wash); color:var(--cream); }
+  button.plain { height:24px; padding:0 9px; border-radius:3px; border:1px solid var(--zborder);
+    background:transparent; color:var(--dim); font:11px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast), scale var(--t-fast); }
+  button.plain:active { scale:.96; }
+  @media (hover:hover) and (pointer:fine) {
+    button.plain:hover { background:var(--zhover); color:var(--cream); } }
+  button.go { height:26px; padding:0 14px; border-radius:3px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 11.5px var(--sans);
+    display:inline-flex; align-items:center; gap:6px;
+    transition:scale var(--t-fast), filter var(--t-fast); }
+  button.go:active { scale:.96; }
+  button.go:disabled { cursor:default; filter:saturate(.4) brightness(.82); }
+  .spin { width:10px; height:10px; border-radius:50%; border:2px solid rgba(23,20,32,.3);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ══ SIDE ═══════════════════════════════════════════════════════════════════ */
+  #side { display:grid; grid-template-rows:minmax(0,1.1fr) minmax(0,1fr) auto; min-height:0; }
+  #side > .zone { border-bottom:1px solid var(--zborder); }
+  .sec { padding:9px 0; border-top:1px solid var(--zborder); }
+  .sec:first-of-type { border-top:0; padding-top:0; }
+  .sec > .caps { display:block; margin-bottom:7px; }
+  .field { display:grid; grid-template-columns:66px minmax(0,1fr); gap:8px;
+           align-items:center; padding:3px 0; }
+  .field input { width:100%; height:22px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:11px var(--mono); padding:0 7px;
+    outline:none; font-variant-numeric:tabular-nums; transition:border-color var(--t-fast); }
+  .field input:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  .pair { display:grid; grid-template-columns:1fr auto 1fr; gap:5px; align-items:center; }
+  .pair .x { color:var(--faint); font:10px var(--mono); }
+  .mrow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px;
+    align-items:center; padding:5px 0; border-top:1px solid var(--zborder); }
+  .mrow:first-of-type { border-top:0; }
+  .mrow .mn { font:11.5px var(--sans); color:var(--cream); }
+  .mrow .ms { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  #z-queue { grid-template-rows:var(--zbar) auto; }
+  #z-queue .zbody { display:grid; gap:6px; padding:9px var(--zpad); }
+  #tiles { display:flex; gap:2px; flex-wrap:wrap; }
+  #tiles i { width:8px; height:8px; background:var(--line2);
+             transition:background-color 140ms ease-out; }
+  #tiles i.done { background:var(--gold); }
+  #tiles i.now { background:var(--cream); }
+  .kv { display:flex; justify-content:space-between; gap:10px; align-items:baseline;
+        font:10.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .kv b { color:var(--cream); font-weight:500; }
+
+  #status { display:flex; align-items:center; gap:12px; padding:0 10px;
+    background:var(--bg2); border-top:1px solid var(--zborder);
+    font:9.5px var(--mono); color:var(--faint); letter-spacing:.04em;
+    font-variant-numeric:tabular-nums; overflow:hidden; }
+  #status b { color:var(--dim); font-weight:500; }
+  #status .grow { flex:1 1 auto; }
+
+  body.focused .zone:not(.is-focus) { opacity:.30; filter:saturate(.6); pointer-events:none; }
+  .zone.is-focus { position:absolute; z-index:20;
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.9), 0 0 0 1px var(--zborder-strong);
+    will-change:transform; }
+  #veil { position:absolute; inset:0; z-index:10; background:rgba(8,7,12,.5);
+          opacity:0; pointer-events:none;
+          /* the scrim fades SLOWER than the zone moves — Carbon gives background
+             dimming its own slowest token (700 ms) against 400 ms for a large
+             expansion, so the dim recedes instead of competing with the focus. */
+          transition:opacity 620ms cubic-bezier(0.4,0,0.2,1); }
+  body.focused #veil { opacity:1; pointer-events:auto; }
+
+  @media (max-width:900px) { .dinner { grid-template-columns:minmax(0,1fr); } }
+  @media (prefers-reduced-motion:reduce) {
+    .detail { transition:none; }
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; } }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:80; padding:6px 12px;
+    font:10px/1.45 var(--mono); color:var(--faint); background:rgba(8,7,12,.96);
+    border-top:1px solid var(--zborder); display:flex; gap:12px; flex-wrap:wrap;
+    align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <span class="wm">Generate</span>
+    <span class="pill ok" title="ComfyUI 0.3.x · port 8188 · torch 2.4."><i class="dot on"></i>ComfyUI</span>
+    <span class="pill" id="jobpill" title="Nothing is running right now.">idle</span>
+    <span class="grow"></span>
+    <span class="caps">click a row to expand it in place · esc collapses</span>
+  </div>
+
+  <div id="frame">
+    <div id="veil"></div>
+
+    <section class="zone" id="ledger" data-zone="ledger">
+      <div class="zbar"><span class="t">ledger</span><span class="grow"></span>
+        <span class="caps">24 runs · 41 MB</span>
+        <button class="zx" data-x aria-label="Focus ledger">⤢</button></div>
+      <div class="zbody" id="lbody">
+
+        <!-- ④⑤⑥⑦ the new entry -->
+        <div id="newrow">
+          <div class="head"><span class="caps">new entry</span>
+            <div class="seg" id="mode"><button class="on">Image</button><button>Clip</button></div>
+            <span class="pill">sdxl turbo</span><span class="pill">1024 × 683</span>
+            <span class="pill">24 steps</span>
+            <button class="plain" id="tneg">Negative ▾</button></div>
+          <div id="negwrap" hidden>
+            <span class="caps">negative</span>
+            <textarea>blurry, low quality, watermark</textarea>
+          </div>
+          <div class="body">
+            <textarea id="prompt" placeholder="a red fox moving quickly through a snowy forest, morning light"></textarea>
+            <button class="go" id="go">Generate</button>
+          </div>
+          <div id="advisory" style="padding:0 12px 8px"></div>
+        </div>
+
+        <div class="lgrid lhead">
+          <span>#</span><span></span><span>prompt</span><span>model</span><span>size</span>
+          <span class="r">steps</span><span class="r">seed</span><span class="r">took</span>
+          <span class="r">file</span><span>state</span>
+        </div>
+
+        <div id="rows"></div>
+      </div>
+    </section>
+
+    <div id="side">
+
+      <!-- ⑥ -->
+      <section class="zone" id="z-settings" data-zone="settings">
+        <div class="zbar"><span class="t">settings</span><span class="grow"></span>
+          <span class="caps">image</span>
+          <button class="zx" data-x aria-label="Focus settings">⤢</button></div>
+        <div class="zbody pad">
+          <div class="sec"><span class="caps">basic</span>
+            <div class="field"><span class="caps">size</span>
+              <span class="pair"><input value="1024" aria-label="width"><span class="x">×</span><input value="683" aria-label="height"></span></div>
+            <div class="field"><span class="caps">steps</span><input value="24"></div></div>
+          <div class="sec"><span class="caps">advanced</span>
+            <div class="field"><span class="caps">seed</span><input placeholder="random" value="41883"></div>
+            <div class="field"><span class="caps">negative</span><span class="caps" style="color:var(--dim)">3 terms</span></div></div>
+          <div class="sec" id="clipsec" hidden><span class="caps">clip only</span>
+            <div class="field"><span class="caps">frames</span><input value="49" title="Frame counts snap to 4n+1."></div>
+            <div class="field"><span class="caps">fps</span><input value="16"></div></div>
+        </div>
+      </section>
+
+      <!-- ① -->
+      <section class="zone" id="z-models" data-zone="models">
+        <div class="zbar"><span class="t">models</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus models">⤢</button></div>
+        <div class="zbody pad">
+          <div class="mrow"><span><span class="mn">SDXL Turbo</span><br>
+            <span class="ms">6.9 GB · RAIL++-M</span><br>
+            <span class="ms">last run 9.4 s</span></span><span class="pill ok">in use</span></div>
+          <div class="mrow"><span><span class="mn">Wan 2.1 T2V 1.3B</span><br>
+            <span class="ms">3.1 GB · Apache-2.0 · clip</span></span><span class="pill ok">on disk</span></div>
+          <div class="mrow"><span><span class="mn">FLUX.1 schnell</span><br>
+            <span class="ms">Apache-2.0</span></span><button class="plain">Get 23.8 GB</button></div>
+          <div class="mrow"><span class="ms" title="A model counts as present only when its files are actually on disk.">state read from disk on every poll</span>
+            <button class="plain">Manage ▸</button></div>
+        </div>
+      </section>
+
+      <!-- ③ -->
+      <section class="zone" id="z-queue" data-zone="queue">
+        <div class="zbar"><span class="t">queue</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus queue">⤢</button></div>
+        <div class="zbody">
+          <div class="kv"><span>state</span><b id="qstate">idle</b></div>
+          <div id="tiles"></div>
+          <div class="kv"><span>step</span><b id="qstep">— / 24</b></div>
+          <div class="kv" title="One job at a time — a second would fight this one for the GPU."><span>concurrency</span><b>1 at a time</b></div>
+          <div class="kv"><span>engine</span><b>comfyui · 8188</b></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="status">
+    <span>24 results · <b>41 MB</b></span>
+    <span>~/Pictures/Harness</span>
+    <span>models <b>10.0 GB</b></span>
+    <span>free <b>~48 GB</b></span>
+    <span class="grow"></span>
+    <span>torch <b>2.4</b></span>
+  </div>
+</div>
+
+<div id="note">
+  <b>H · The Ledger</b>
+  <span><b style="color:var(--dim)">Linear / Raycast</b> the list IS the product — detail is an inline row expansion, never a place you navigate to</span>
+  <span><b style="color:var(--dim)">VoiceStudio :3900</b> the same shipped zone chrome as F and G, so all three read as one product</span>
+  <span><b style="color:var(--dim)">Emil</b> height animates on one wrapper that owns nothing else; its contents move on opacity+transform only</span>
+</div>
+
+<script>
+var F = ['f1','f2','f3'];
+var PROMPTS = [
+  'a red fox moving quickly through a snowy forest, morning light',
+  'a lighthouse in fog, long exposure, cold blue cast',
+  'still life with copper pot and lemons, north window light',
+  'brutalist stairwell, concrete, single skylight',
+  'a heron standing in shallow water at dusk',
+  'wet asphalt reflecting neon, shallow depth of field',
+  'paper cranes on a windowsill, soft afternoon sun',
+  'a field of rye bending in wind, overcast',
+  'close-up of frost on a car window at sunrise',
+  'an empty diner booth, 3am, fluorescent',
+  'mountain ridgeline above cloud, thin air',
+  'a cello leaning against a bare wall'
+];
+var MODELS = ['SDXL Turbo','SDXL Turbo','Wan 2.1 T2V','SDXL Turbo'];
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+/* ── the ledger's rows. Fake, deterministic, hardcoded. ─────────────────────── */
+(function () {
+  var host = document.getElementById('rows'), h = '';
+  for (var k = 0; k < 24; k++) {
+    var idx = 24 - k;
+    var isClip = (idx % 7 === 0);
+    var f = F[idx % 3];
+    var p = PROMPTS[idx % PROMPTS.length];
+    var m = isClip ? 'Wan 2.1 T2V' : 'SDXL Turbo';
+    var size = isClip ? '832 × 480' : (idx % 4 === 0 ? '768 × 768' : '1024 × 683');
+    var steps = isClip ? 30 : (idx % 4 === 0 ? 30 : 24);
+    var seed = 10000 + idx * 1327;
+    var took = isClip ? (18 + idx % 5) + '.2 s' : (8 + (idx % 4)) + '.' + (idx % 9) + ' s';
+    var file = isClip ? (2.1 + (idx % 5) * 0.3).toFixed(1) + ' MB'
+                      : (1.2 + (idx % 6) * 0.2).toFixed(1) + ' MB';
+    h += '<button class="lgrid lrow" data-i="' + k + '">' +
+      '<span class="i">' + String(idx).padStart(2, '0') + '</span>' +
+      '<span class="cell"><span class="field ' + f + '"></span></span>' +
+      '<span class="t">' + esc(p) + '</span>' +
+      '<span class="e">' + esc(m) + '</span>' +
+      '<span class="n">' + size + '</span>' +
+      '<span class="n r">' + steps + '</span>' +
+      '<span class="n r">' + seed + '</span>' +
+      '<span class="n r">' + took + '</span>' +
+      '<span class="n r">' + file + '</span>' +
+      '<span class="st">on disk</span>' +
+    '</button>' +
+    '<div class="detail" data-d="' + k + '"><div class="dinner">' +
+      '<div class="dpic"><span class="field ' + f + '"></span></div>' +
+      '<div class="dmeta">' +
+        '<h2>' + esc(p) + '</h2>' +
+        '<div class="dkv"><span>model</span><span>' + esc(m) + '</span></div>' +
+        '<div class="dkv"><span>mode</span><span>' + (isClip ? 'clip · 49 frames · 16 fps' : 'image') + '</span></div>' +
+        '<div class="dkv"><span>size</span><span>' + size + '</span></div>' +
+        '<div class="dkv"><span>steps · seed</span><span>' + steps + ' · ' + seed + '</span></div>' +
+        '<div class="dkv"><span>negative</span><span>blurry, low quality, watermark</span></div>' +
+        '<div class="dkv"><span>rendered</span><span>' + took + '</span></div>' +
+        '<div class="dkv"><span>on disk</span><span>' + file + ' · ~/Pictures/Harness</span></div>' +
+        '<div class="dacts">' +
+          '<button class="plain">Reveal</button><button class="plain">Reuse settings</button>' +
+          '<button class="plain">Open</button><button class="plain">Delete</button>' +
+        '</div>' +
+      '</div>' +
+    '</div></div>';
+  }
+  host.innerHTML = h;
+})();
+
+/* ── ROW EXPANSION IN PLACE. One row open at a time — a ledger with six open is
+   a ledger you can no longer scan, which is the whole point of this direction. */
+(function () {
+  var openIdx = null;
+  function closeRow(instant) {
+    if (openIdx == null) return;
+    var d = document.querySelector('.detail[data-d="' + openIdx + '"]');
+    var r = document.querySelector('.lrow[data-i="' + openIdx + '"]');
+    if (d) { d.style.height = instant ? '0px' : d.scrollHeight + 'px';
+             void d.offsetWidth; d.style.height = '0px'; d.classList.remove('open'); }
+    if (r) { r.classList.remove('on'); r.setAttribute('aria-expanded', 'false'); }
+    openIdx = null;
+  }
+  function openRow(i) {
+    if (openIdx === i) { closeRow(); return; }
+    closeRow();
+    var d = document.querySelector('.detail[data-d="' + i + '"]');
+    var r = document.querySelector('.lrow[data-i="' + i + '"]');
+    d.classList.add('open');
+    d.style.height = d.firstElementChild.offsetHeight + 'px';
+    r.classList.add('on'); r.setAttribute('aria-expanded', 'true');
+    openIdx = i;
+    setTimeout(function () {
+      var rect = d.getBoundingClientRect(), host = document.getElementById('lbody');
+      var hb = host.getBoundingClientRect();
+      if (rect.bottom > hb.bottom) host.scrollTop += (rect.bottom - hb.bottom) + 12;
+    }, 280);
+  }
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('.lrow');
+    if (row) { openRow(Number(row.dataset.i)); return; }
+    if (e.target.closest('.detail')) return;
+    if (e.target.closest('.zone') && !e.target.closest('#ledger')) closeRow();
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeRow(); });
+  addEventListener('resize', function () {
+    if (openIdx != null) {
+      var d = document.querySelector('.detail[data-d="' + openIdx + '"]');
+      d.style.height = d.firstElementChild.offsetHeight + 'px';
+    }
+  });
+  /* the newest run is open at rest, so the page never photographs as an empty table */
+  openRow(0);
+})();
+
+/* ── FOCUS ENGINE — the same one as F and G. ────────────────────────────────── */
+(function () {
+  var frame = document.getElementById('frame'), open = null, rest = null;
+  function focus(zone) {
+    if (open) unfocus(true);
+    var b = frame.getBoundingClientRect(), r = zone.getBoundingClientRect();
+    var pad = Math.round(Math.min(b.width, b.height) * 0.045);
+    var tw = b.width - pad * 2, th = b.height - pad * 2;
+    rest = { l:r.left - b.left, t:r.top - b.top, w:r.width, h:r.height };
+    zone.classList.add('is-focus');
+    zone.style.transition = 'none';
+    zone.style.left = pad + 'px'; zone.style.top = pad + 'px';
+    zone.style.width = tw + 'px'; zone.style.height = th + 'px';
+    zone.style.transformOrigin = 'top left';
+    zone.style.transform = 'translate(' + (rest.l - pad) + 'px,' + (rest.t - pad) + 'px) ' +
+                           'scale(' + (rest.w / tw) + ',' + (rest.h / th) + ')';
+    document.body.classList.add('focused');
+    void zone.offsetWidth;
+    zone.style.transition = 'transform 260ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'none';
+    open = zone; zone.setAttribute('aria-expanded', 'true');
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤡';
+  }
+  function unfocus(instant) {
+    if (!open) return;
+    var zone = open, r = rest, pad = parseFloat(zone.style.left) || 0;
+    var tw = parseFloat(zone.style.width), th = parseFloat(zone.style.height);
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤢';
+    zone.setAttribute('aria-expanded', 'false');
+    function land(){ zone.classList.remove('is-focus'); zone.style.cssText = ''; }
+    if (instant) { land(); document.body.classList.remove('focused'); open = null; return; }
+    zone.style.transition = 'transform 200ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'translate(' + (r.l - pad) + 'px,' + (r.t - pad) + 'px) ' +
+                           'scale(' + (r.w / tw) + ',' + (r.h / th) + ')';
+    document.body.classList.remove('focused'); open = null; setTimeout(land, 210);
+  }
+  document.addEventListener('click', function (e) {
+    var x = e.target.closest('[data-x]');
+    if (x) { var z = x.closest('.zone'); e.stopPropagation();
+             (open === z) ? unfocus() : focus(z); return; }
+    if (open && !e.target.closest('.zone.is-focus')) unfocus();
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') unfocus(); });
+  addEventListener('resize', function () { if (open) unfocus(true); });
+})();
+
+/* mode + negative disclosure, and the step tiles */
+(function () {
+  var t = document.getElementById('tiles'), s = '';
+  for (var j = 0; j < 24; j++) s += '<i></i>';
+  t.innerHTML = s;
+  var seg = document.getElementById('mode'), clip = document.getElementById('clipsec');
+  seg.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    e.stopPropagation();
+    seg.querySelectorAll('button').forEach(function (o) { o.classList.toggle('on', o === b); });
+    clip.hidden = b.textContent !== 'Clip';
+  });
+  var tn = document.getElementById('tneg'), w = document.getElementById('negwrap');
+  tn.addEventListener('click', function (e) { e.stopPropagation(); w.hidden = !w.hidden; });
+})();
+
+/* the run */
+(function () {
+  var go = document.getElementById('go'), qstate = document.getElementById('qstate'),
+      qstep = document.getElementById('qstep'), jobpill = document.getElementById('jobpill'),
+      advisory = document.getElementById('advisory'), tiles = document.getElementById('tiles');
+  var busy = false, TOTAL = 24;
+  go.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (busy) return; busy = true;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Generating';
+    go.setAttribute('aria-busy', 'true');
+    qstate.textContent = 'rendering'; jobpill.textContent = 'rendering';
+    jobpill.className = 'pill gold';
+    tiles.querySelectorAll('i').forEach(function (t) { t.className = ''; });
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>SDXL Turbo</b>. One job at a time — a second would fight this one for the GPU.</p>';
+    var s = 0;
+    var iv = setInterval(function () {
+      s += 1;
+      var all = tiles.querySelectorAll('i');
+      for (var i = 0; i < all.length; i++)
+        all[i].className = i < s - 1 ? 'done' : (i === s - 1 ? 'now' : '');
+      qstep.textContent = s + ' / ' + TOTAL;
+      if (s >= TOTAL) {
+        clearInterval(iv);
+        setTimeout(function () {
+          qstate.textContent = 'idle'; jobpill.textContent = 'idle';
+          jobpill.className = 'pill'; qstep.textContent = '— / 24';
+          advisory.innerHTML = '';
+          go.disabled = false; go.textContent = 'Generate';
+          go.removeAttribute('aria-busy'); busy = false;
+        }, 240);
+      }
+    }, 150);
+  });
+})();
+
+/* measure the mockup's own footer note */
+(function () {
+  var n = document.getElementById('note');
+  function m(){ document.documentElement.style.setProperty('--noteh', n.offsetHeight + 'px'); }
+  m(); addEventListener('resize', m); setTimeout(m, 60);
+})();
+</script>
+</body>
+</html>

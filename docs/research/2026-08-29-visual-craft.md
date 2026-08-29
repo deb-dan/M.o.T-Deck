@@ -1,6 +1,14 @@
 # VISUAL CRAFT — the research behind the six mockups (2026-08-29)
 
-**Scope.** Debi's verdict on the redesigned pages was "the compose page still feels bland",
+**Status: this document covers TWO rounds.** Round 1 (directions A–C per page) was rejected
+wholesale by Debi — "they all take so much space and don't use space well, all very give away
+to just the image/music/video… I want to be able to see everything at a glance, like Draw
+Things, yet not overconvoluted, and can click on what I want to expand on it and when left,
+goes back to normal, also like VoiceStudio." Round 2 (directions F–H per page) is built to the
+**workbench, not a shrine** principle in §2. §1 and §3 are round-1 material and are kept
+because the craft rules still bind; §3 is superseded as a recommendation by §3b.
+
+**Scope.** Debi's round-1 verdict on the redesigned pages was "the compose page still feels bland",
 with `/comfy` reading visually inert on screenshot evidence: a centred image in a fixed box,
 flat wrapping chip rows, large empty margins, no compositional interest. The IA
 (7-at-rest, the sentence rule, the chip grammar) is SETTLED and survives untouched. This
@@ -145,7 +153,9 @@ all six mockups.
 
 ---
 
-## 2. The six directions, one line each
+## 2. The directions, one line each
+
+### Round 1 — SUPERSEDED. Debi rejected all six: "they all take so much space and don't use space well, all very give away to just the image/music/video."
 
 | File | Direction | The idea |
 |---|---|---|
@@ -155,6 +165,41 @@ all six mockups.
 | `generate-a.html` | **The Plate** | Editorial-maximal: the result matted and captioned like a book plate, 8/4 against a museum label that stacks the chips as a record; the wait is a band sweep and a step counter drawn on the plate itself. |
 | `generate-b.html` | **The Light Table** | Studio-precise: a standing filmstrip rail, a fitted viewport with a checker ground and a docked reporting toolbar, a scanline over the picture during a job; density sized to the real job, which is comparing variants. |
 | `generate-c.html` | **The Aperture** | The picture is the page: full-bleed result, all seven elements as floating chrome over it, a peeking filmstrip, and chrome that dims to 35 % when you stop touching anything and returns in 200 ms — it never hides. |
+
+### Round 2 — the workbench directions
+
+**The organizing principle, and it is the spec rather than a mood: a WORKBENCH, NOT A SHRINE.** Composer, current result, history, engine/model state, settings and queue are all on screen at once in one composed dense layout that stays calm. No zone owns the page at rest; the media object is *a* citizen, not *the* monument. Any zone click-expands to focus in place and collapses back on Esc or click-away. Round 1's A–C are all shrines by this test. (`compose-d`, `generate-d` and `generate-e` are an abandoned mid-flight sketch from a superseded brief — on disk, not candidates, and deliberately not completed: `compose-e` was never written because the pivot landed first.)
+
+| File | Direction | The idea |
+|---|---|---|
+| `compose-f.html` | **The Bento** | A 12 × 12 mosaic of seven zones in exactly three tile footprints; every zone carries the same 28 px mono label bar, hairline and 12 px pad, and any tile FLIPs out to fill the bench while the rest dims. |
+| `compose-g.html` | **The Rack** | Rails and stacks — a 48 px icon rail, a history panel, a work column of stacked panels, an inspector — with *three* expansion idioms live: rail collapse (a grid-template swap), stack accordion, and zone focus. |
+| `compose-h.html` | **The Ledger** | The page is a run ledger: fourteen songs as 26 px rows carrying sparkline, engine, length, settings, render time and size; the composer is the top row, and the "current track" is simply whichever row is expanded in place. |
+| `generate-f.html` | **The Bento** | The same mosaic for images — result, prompt, a 24-cell results grid, settings, models, queue with per-step tiles, disk — the picture holding one tile rather than the page. |
+| `generate-g.html` | **The Rack** | The same rails-and-stacks frame: results rail, canvas, composer, queue strip, inspector carrying size/steps/seed/negative plus the model list, with all three expansion idioms. |
+| `generate-h.html` | **The Ledger** | Twenty-four runs as 30 px rows — thumbnail, prompt, model, size, steps, seed, time, file — expanding in place into the full picture and its full settings. |
+
+**Where the round-2 zone chrome actually comes from.** Not a moodboard: read live out of **VoiceStudio's own shipped bundle on `:3900`** (`assets/ui-*.css`), so all six speak a language this product already has —
+`.glass-panel { border:1px solid var(--chrome-border); border-radius:0; padding:12px }` ·
+`--chrome-bar-h:28px` · `--chrome-label-size:11px` · `--chrome-label-track:.06em` (mono, uppercase, on **every** panel) ·
+`--chrome-pill-h:20px` · `--chrome-radius-pill:3px` · `--chrome-border:#ffffff14` · `--chrome-border-strong:#ffffff1f` ·
+`--chrome-hover-bg:#ffffff0a` · `--transition-fast:.12s ease` · `--transition-smooth:.2s cubic-bezier(.4,0,.2,1)` ·
+and the rail geometry G copies outright: `.rail-right { grid-template-columns: minmax(180px,220px) minmax(0,4fr) 48px }` with `.sidebar-collapsed { 46px … }` — **collapse expressed as a grid-template swap rather than as elements moving.**
+
+**What the density research added on top** (Ableton/Logic · Blender/Figma · Linear/Raycast · bento systems · Resolve/TouchDesigner · Shortcuts/Mission Control/Stage Manager) — the rules that changed the build, not just the prose:
+
+- **Blender's one-scalar model.** `unit = round(18 × scale) + 2 × line_width` = **20 px at 1.0**; header `1.25u`; panel margins `0.4u` / `0.1u`. And its entire UI is **11 pt flat** — panel titles are the same size as body; hierarchy comes from weight, colour and indentation. That is why these mockups rank zones by *area and ink*, never by heading size.
+- **Blender's property rails.** `UI_ITEM_PROP_SEP_DIVIDE 0.4f` — label 40 % / field 60 %, one global constant for every row in the application, with blank spacers so the field column never jitters.
+- **The bento law, stated generally:** a mosaic reads as one system when **footprint is a closed enumeration on a shared unit grid and every other property — radius, gutter, content inset, type scale, border treatment — is held constant across footprints.** Size is then the only free variable, so size can carry meaning. Raycast ships this as an API (`columns` 1–8, seven aspect ratios, three named insets). Apple holds a **constant 16 pt content margin** on a 169 pt tile and on a 360 × 376 one — the inset does not scale with the tile. F uses three footprints and one 12 px inset everywhere.
+- **Vercel Geist: the step index *is* the role** — 400 means "default border" in every hue, so a zone goes neutral→danger by swapping hue with zero re-tuning. And its stated rule, adopted: *"Earn borders and backgrounds only when they communicate selection, interaction, or real grouping. Prefer spacing and alignment."* Hence one hairline per zone boundary, **no row dividers inside a zone** (F, G), and dividers only in the genuinely tabular case (H, at 3.5 % white).
+- **Linear: theme by generator, not by token list** — three inputs in a perceptually uniform space, and *"when a row is selected, we regenerate the entire theme with the selected background as the new base."* Their calm pass shipped **fewer separators** and a sidebar *"a few notches dimmer"* — **dimming chrome is the hierarchy mechanism, not promoting content.** That is the focus treatment in all six.
+- **Raycast's density trade, verbatim:** *"When shown, it is recommended not to show any accessories on the `List.Item` and instead show the additional information in the `List.Item.Detail` view."* Accessories and detail are **mutually exclusive budgets** — exactly what H does when a row expands.
+- **Resolve's real insight:** it does not swap workspaces, it **swaps representations inside a fixed frame** — chrome ring, slot geometry and the underlying document are page-invariant. Growth is **zero-sum against a named neighbour**, never a floating overlay: *"makes the Keyframe Editor wider, while at the same time hiding controls at the center to make room."* G's accordion is precisely this.
+- **TouchDesigner: hue = family = wiring legality; lightness = generator vs filter.** Colour as a type system rather than decoration — the reason all six use exactly one accent and let state ride on ground + ink + a glyph.
+- **Expansion physics, applied numerically.** Container expansion 240–300 ms; a large expansion 300–400 ms; **never past 400** (*"At 500 ms, animations start to feel like a real drag"*); the collapse **15–20 % shorter** than the expansion — these run **260 ms in / 200 ms out (23 % shorter)** on `cubic-bezier(0.23,1,0.32,1)`. Layout manipulation that is *not* a zoom (Blender's split/join/dock/close) runs **0.10–0.15 s** — hence 120 ms hover/press and 200 ms rail collapse. Animate **transform and opacity only**: never `width/height/top/left`, never a blur radius, never text scale.
+- **The one finding that changed the build after it was already working:** IBM Carbon gives **background dimming its own slowest token — `slow-02`, 700 ms — against `slow-01` 400 ms for a large expansion.** The scrim must fade *slower* than the thing it backs, so it recedes instead of competing. All six were re-tuned from a 200 ms dim to **620 ms**.
+- **The accessibility fence that constrains this whole round.** WebKit names *"scaling and zooming animations"* as a primary vestibular trigger — our core interaction is on that list, as are plane-shifting and animated peripheral rails. Under `prefers-reduced-motion` the zoom degrades to an **opacity crossfade** (what macOS itself does), using **`0.01 ms` rather than `0`** so `transitionend` still fires, and the feature stays usable with the motion gone.
+- **Stage Manager's failure, taken as a warning:** a fixed-capacity auto-curated rail with no user override, in permanently reserved space — *"apps cannot be 'ejected' manually."* The user pays rent for a list they cannot edit. G's rails are user-collapsible and nothing here auto-curates membership.
 
 ---
 
@@ -210,6 +255,16 @@ changing number, and the browser-surface theming. Those are cheap, invisible ind
 they are most of the difference between "clean" and "alive".
 
 ---
+
+## 3b. Round 2 — what I would argue for
+
+**Both pages: H, The Ledger — with F, The Bento, as the safe pick.**
+
+H is the only one of the three where the number of things visible at once **scales with the window** rather than being fixed by the layout, which is the literal reading of "see everything at a glance". It is also the only one that puts the media object fully in its place: a 40 × 26 cell in a row. Every run's settings are legible in a column without opening anything, so "what did I set for that good one" — the actual repeated question on both pages — is answered by reading, not by clicking. And the expand-in-place never moves anything above it, so the ledger never loses your place.
+
+Its risk is honest: a table is the least *lovable* of the three at first glance, and the two pages' rows carry different columns, so it is the direction most likely to read as "a database" to someone expecting a creative tool.
+
+F is the safe pick and would photograph best in a deck: seven named zones, one hero, three footprints, everything at once, and the least new interaction vocabulary. G is the most professional-feeling and the most work — three expansion idioms is genuinely more surface to get right, and its rails re-open the "how much space does chrome deserve" argument that Stage Manager lost.
 
 ## 4. Honest limits
 

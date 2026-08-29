@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generate E · The Workbench</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/generate-e.html — DIRECTION E: "THE WORKBENCH".
+  Standalone, self-contained, fake data.
+
+  SOURCE: docs/research/2026-08-29-generate-page-redesign.md §2.1 (Draw Things,
+  documented from wiki.drawthings.ai User_Interface / Basic_Settings /
+  Install_a_Model_or_LoRA plus two dated hands-ons). Four structural moves are
+  borrowed, and they are borrowed as STRUCTURE, not as skin — doctrine 8b: the
+  named example is the floor of the reference set and our principles govern.
+
+   1. CANVAS FIRST. "Canvas center; Positive+Negative prompt box with the Generate
+      button at its lower-right; a Settings sidebar; Version History on the right."
+      Here: sidebar · canvas · history, with Generate docked at the prompt box's
+      lower-right rather than floating in a control row.
+   2. THE VERBOSITY GATE. Draw Things' Basic / Advanced / All is "progressive
+      disclosure as a *user setting*, not a per-control scatter." That is exactly
+      what the redesign research already committed us to ("ONE disclosure gate,
+      not scattered expanders"), so More ▸ becomes a three-way switch instead of a
+      binary fold. It is the same gate, given a second and third stop.
+   3. MODEL MANAGEMENT IN-FLOW. "management lives *inside* the generate screen —
+      model dropdown → Manage opens a popup." Our models sheet moves from a
+      full-screen scrim to a popover anchored on the model control itself.
+   4. PER-STEP PROGRESS ON THE CANVAS. Draw Things shows "orange squares turn
+      blue" per step. Ours is a tile row of the REAL step count ComfyUI reports.
+
+  WHERE WE CORRECT THE REFERENCE (the research's own counterweight: reviewers call
+  the interface "kind of confusing" and the model picker's "grid layout is
+  worthless, I can't read the full file names"):
+   · the model list is ROWS with full names, sizes and licences, never a grid;
+   · every download states its size on the button before it starts;
+   · licences are shown — the research could not find licence display in Draw
+     Things at all, and ours is a standing obligation.
+
+  NO INVENTED CONTROLS. The fields here are exactly what bridge/panel/comfy.html
+  actually sends: mode, model, width, height, steps, seed, negative prompt, and
+  (video only) frames and fps. Draw Things' Guidance / Sampler / Strength sliders
+  are NOT in our backend, so they are not drawn — a mockup knob with nothing
+  behind it is the lie class, not a design flourish.
+
+  IA UNTOUCHED: ① status chips ② result stage (the canvas) ③ recent strip (the
+  history column) ④ prompt ⑤ Image/Clip ⑥ model control ⑦ Generate. The sentence
+  rule holds — only .say carries a sentence.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    --float-bg:rgba(20,18,29,.96); --float-edge:var(--line2);
+    --float-blur:blur(20px) saturate(140%);
+    --float-shadow:0 24px 60px rgba(0,0,0,.5);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ring:0 0 0 1px rgba(255,255,255,.08);
+    --ring-hi:0 0 0 1px rgba(255,255,255,.13);
+    --raise:inset 0 1px 0 rgba(255,255,255,.08);
+    --sink:inset 0 1px 3px rgba(0,0,0,.6);
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2.5px solid transparent; background-clip:content-box; }
+  textarea, input { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  button { touch-action:manipulation; }
+
+  h1 { font:600 14px/1.2 var(--serif); color:var(--cream); margin:0; }
+  .caps { font:600 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+          color:var(--faint); }
+  .say { font-size:11.5px; line-height:1.6; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+  .num { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border-radius:6px; border:0; background:var(--card2); box-shadow:var(--ring), var(--raise);
+    font:11px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:box-shadow 150ms ease-out, color 150ms ease-out, scale 150ms var(--ease-out); }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); } .chip.c-gold { color:var(--gold); }
+  .chip.act { cursor:pointer; }
+  .chip.act:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover { box-shadow:var(--ring-hi), var(--raise); color:var(--cream); } }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  /* ── THE THREE COLUMNS ──────────────────────────────────────────────────────
+     settings · canvas · history. Draw Things' at-rest shape, with our elements
+     in it. */
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr); height:100%; }
+  header { display:flex; gap:var(--s3); align-items:center; padding:var(--s2) var(--s4);
+    min-height:44px; flex-wrap:wrap; background:var(--bg2);
+    border-bottom:1px solid var(--line); }
+  header .grow { flex:1 1 auto; }
+
+  #body { display:grid; grid-template-columns:272px minmax(0,1fr) 140px; min-height:0; }
+  @media (max-width:1080px) { #body { grid-template-columns:248px minmax(0,1fr); }
+                              #history { display:none; } }
+  @media (max-width:760px) {
+    #body { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); }
+    #settings { border-inline-end:0; border-bottom:1px solid var(--line);
+                max-height:38vh; }
+  }
+
+  /* ══ THE SETTINGS SIDEBAR ═══════════════════════════════════════════════════ */
+  #settings { border-inline-end:1px solid var(--line); background:#09080e;
+              overflow-y:auto; padding:var(--s4) var(--s4) 80px;
+              display:grid; gap:var(--s4); align-content:start; }
+
+  .group { display:grid; gap:var(--s2); }
+  .group > .caps { display:block; }
+
+  /* ⑥ THE MODEL CONTROL — the only standing trace of model management, and the
+     anchor its popover opens from. */
+  .modelbtn { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--s2);
+    align-items:center; width:100%; text-align:start; border:0; cursor:pointer;
+    border-radius:9px; padding:9px 11px; background:var(--card2);
+    box-shadow:var(--ring), var(--raise); color:var(--cream);
+    transition:box-shadow 150ms ease-out, scale 150ms var(--ease-out); }
+  .modelbtn:active { scale:0.98; }
+  @media (hover:hover) and (pointer:fine) {
+    .modelbtn:hover { box-shadow:var(--ring-hi), var(--raise); } }
+  .modelbtn .mn { font:600 12.5px/1.25 var(--sans); overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+  .modelbtn .ms { font:10px var(--mono); color:var(--faint); margin-top:2px;
+                  font-variant-numeric:tabular-nums; }
+  .modelbtn .cv { color:var(--faint); font-size:10px; }
+
+  /* ── THE VERBOSITY GATE — Draw Things' Basic/Advanced/All, which is the same
+     ONE disclosure gate the redesign research already committed us to, given a
+     second and third stop instead of a binary fold. */
+  .seg { display:flex; border-radius:8px; background:#07060b; padding:2px; gap:2px;
+         box-shadow:var(--sink); }
+  .seg > button { flex:1 1 0; border:0; background:transparent; color:var(--dim);
+    height:26px; border-radius:6px; font:11.5px var(--sans); cursor:pointer;
+    transition:background-color 100ms ease-out, color 100ms ease-out; }
+  .seg > button.on { background:var(--card2); color:var(--cream);
+                     box-shadow:var(--ring), var(--raise); }
+  /* the gate marks itself when anything under a HIDDEN tier is off its default —
+     hidden edits are never silent (the shipped More ▸ dot, carried over). */
+  .seg > button.dotted { position:relative; }
+  .seg > button.dotted::after { content:""; position:absolute; top:4px; right:6px;
+    width:5px; height:5px; border-radius:50%; background:var(--gold); }
+
+  /* fields */
+  label { display:block; }
+  label .caps { display:block; margin-bottom:5px; }
+  input, textarea, select {
+    width:100%; border:0; border-radius:8px; padding:7px 10px;
+    background:#07060b; box-shadow:var(--ring), var(--sink);
+    color:var(--cream); font:12px var(--sans); outline:none;
+    transition:box-shadow 150ms ease-out; }
+  input:focus, textarea:focus {
+    box-shadow:0 0 0 1px color-mix(in oklab, var(--gold) 55%, transparent), var(--sink); }
+  input.num, .pair input { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .pair { display:grid; grid-template-columns:1fr auto 1fr; gap:6px; align-items:end; }
+  .pair .x { padding-bottom:8px; color:var(--faint); font:11px var(--mono); }
+  textarea { resize:vertical; min-height:56px; line-height:1.5; }
+  .tier { display:grid; gap:var(--s4); }
+  .tier[hidden] { display:none; }
+
+  /* ══ THE CANVAS COLUMN ══════════════════════════════════════════════════════ */
+  #canvas { display:grid; grid-template-rows:minmax(0,1fr) auto; min-height:0;
+            background:radial-gradient(120% 90% at 50% 0%, #0f0d16, var(--bg) 72%); }
+  #frame { min-height:0; display:grid; place-items:center; padding:var(--s5) var(--s5) var(--s4);
+           position:relative; }
+  .pic { position:relative; max-width:100%; max-height:100%; aspect-ratio:3/2;
+    width:min(100%, 70vh * 1.5); border-radius:6px; overflow:hidden;
+    outline:1px solid rgba(255,255,255,.10); outline-offset:-1px;
+    box-shadow:0 22px 52px -26px rgba(0,0,0,.85);
+    background-color:#101019;
+    background-image:linear-gradient(45deg, #14121d 25%, transparent 25%, transparent 75%, #14121d 75%),
+                     linear-gradient(45deg, #14121d 25%, transparent 25%, transparent 75%, #14121d 75%);
+    background-size:16px 16px; background-position:0 0, 8px 8px; }
+  .pic .field { position:absolute; inset:0; }
+  .field.f1 { background:
+      radial-gradient(120% 90% at 22% 18%, rgba(217,179,108,.55), transparent 58%),
+      radial-gradient(90% 80% at 78% 30%, rgba(139,147,248,.45), transparent 62%),
+      radial-gradient(140% 120% at 50% 108%, rgba(70,201,154,.30), transparent 60%),
+      linear-gradient(160deg, #1a1626, #0d0b14 62%, #16121f); }
+  .field.f2 { background:
+      radial-gradient(100% 80% at 70% 20%, rgba(224,164,88,.5), transparent 60%),
+      radial-gradient(120% 100% at 20% 80%, rgba(139,147,248,.4), transparent 62%),
+      linear-gradient(200deg, #17131f, #0b0a10 70%); }
+  .field.f3 { background:
+      radial-gradient(110% 90% at 40% 70%, rgba(70,201,154,.42), transparent 58%),
+      radial-gradient(90% 70% at 75% 15%, rgba(217,179,108,.42), transparent 60%),
+      linear-gradient(140deg, #14121d, #09080e 68%); }
+  .pic .veil { position:absolute; inset:0; background:rgba(11,10,16,.7); opacity:0;
+               transition:opacity 250ms var(--ease-out); pointer-events:none; }
+  .pic.working .veil { opacity:1; }
+
+  /* ── THE STEP TILES. Draw Things' per-step tiles, on the real step count the
+     backend reports. It is a truthful readout, not a loader: each tile is one
+     step that actually completed. */
+  #tiles { display:flex; gap:3px; justify-content:center; padding:0 var(--s5) var(--s2);
+           min-height:12px; }
+  #tiles[hidden] { display:none; }
+  #tiles i { width:9px; height:9px; border-radius:2px; background:var(--line2);
+             transition:background-color 140ms ease-out; }
+  #tiles i.done { background:var(--gold); }
+  #tiles i.now { background:var(--cream); }
+
+  .readout { display:flex; gap:var(--s3); align-items:center; flex-wrap:wrap;
+    padding:0 var(--s5) var(--s3); font:10.5px var(--mono); color:var(--faint);
+    font-variant-numeric:tabular-nums; }
+  .readout b { color:var(--dim); font-weight:500; }
+  .readout .grow { flex:1 1 auto; }
+
+  /* ④⑤⑦ THE PROMPT BOX — Generate docked at its lower-right, the Draw Things
+     placement. Positive above, negative below when the gate exposes it. */
+  #promptbox { margin:0 var(--s5) var(--s5); border-radius:12px; background:var(--bg2);
+    box-shadow:var(--ring), var(--sink); padding:var(--s3);
+    transition:box-shadow 150ms ease-out; }
+  #promptbox:focus-within {
+    box-shadow:0 0 0 1px color-mix(in oklab, var(--gold) 55%, transparent), var(--sink); }
+  #promptbox .pos { border:0; box-shadow:none; background:transparent; padding:0 var(--s1);
+                    min-height:52px; font-size:13.5px; }
+  #promptbox .neg { margin-top:var(--s2); }
+  #promptbox .neg .caps { display:block; margin-bottom:4px; }
+  .pfoot { display:flex; gap:var(--s2); align-items:center; margin-top:var(--s2);
+           padding-top:var(--s2); border-top:1px solid var(--line); flex-wrap:wrap; }
+  .pfoot .grow { flex:1 1 auto; }
+
+  button.plain { height:28px; padding:0 11px; border-radius:7px; border:0;
+    background:var(--card2); box-shadow:var(--ring), var(--raise); color:var(--fg);
+    font:500 11.5px var(--sans); cursor:pointer;
+    transition:scale 150ms var(--ease-out), color 150ms ease-out; }
+  button.plain:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) { button.plain:hover { color:var(--cream); } }
+  button.go { height:32px; padding:0 18px; border-radius:9px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 12.5px var(--sans);
+    display:inline-flex; align-items:center; gap:7px;
+    box-shadow:var(--raise), 0 6px 16px -8px rgba(217,179,108,.7);
+    transition:scale 150ms var(--ease-out), filter 150ms ease-out; }
+  button.go:active { scale:0.96; }
+  button.go:disabled { cursor:default; filter:saturate(.4) brightness(.82); }
+  .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(23,20,32,.3);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ══ ③ THE HISTORY COLUMN ═══════════════════════════════════════════════════ */
+  #history { border-inline-start:1px solid var(--line); background:#09080e;
+             overflow-y:auto; padding:var(--s3) var(--s3) 80px; display:grid;
+             gap:var(--s2); align-content:start; }
+  #history .caps { padding:2px 2px 4px; display:block; }
+  .hitem { display:grid; gap:3px; padding:0; border:0; background:transparent;
+           cursor:pointer; }
+  .hthumb { width:100%; aspect-ratio:3/2; border-radius:6px; overflow:hidden;
+    position:relative; background:#0f0d17;
+    outline:1px solid rgba(255,255,255,.09); outline-offset:-1px;
+    transition:outline-color 150ms ease-out, scale 150ms var(--ease-out); }
+  .hthumb .field { position:absolute; inset:0; }
+  .hitem:active .hthumb { scale:0.97; }
+  @media (hover:hover) and (pointer:fine) {
+    .hitem:hover .hthumb { outline-color:var(--gold); } }
+  .hitem.on .hthumb { outline:2px solid var(--gold); outline-offset:-2px; }
+  .hitem.on .ht { color:var(--gold); }
+  .ht { font:9.5px var(--mono); color:var(--faint); text-align:start;
+        font-variant-numeric:tabular-nums; }
+
+  /* ══ THE MODEL POPOVER — management INSIDE the screen, anchored on the control
+     it belongs to, not a full-screen scrim. Rows with full names, never a grid:
+     the reference's own reviewers could not read the file names in its grid. */
+  #pop { position:fixed; z-index:60; width:min(520px, calc(100vw - 32px));
+    max-height:min(70vh, 520px); overflow:auto; padding:var(--s3);
+    background:var(--float-bg); border:1px solid var(--float-edge); border-radius:14px;
+    box-shadow:var(--float-shadow);
+    -webkit-backdrop-filter:var(--float-blur); backdrop-filter:var(--float-blur);
+    transform-origin:top left; }
+  #pop[hidden] { display:none; }
+  /* enters from its own trigger, at 0.97 — never scale(0), nothing appears from
+     nothing — and exits faster than it enters. */
+  @keyframes pop-in { from { opacity:0; transform:scale(.97) translateY(-4px); }
+                      to   { opacity:1; transform:scale(1) translateY(0); } }
+  #pop.in { animation:pop-in 180ms var(--ease-out) both; }
+  #pop .caps { display:block; padding:var(--s2) var(--s1) var(--s1); }
+  .mrow { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:var(--s3);
+    align-items:center; padding:8px var(--s1); border-top:1px solid var(--line);
+    border-radius:8px; }
+  .mrow:first-of-type { border-top:0; }
+  .mrow .nm { font:600 12.5px/1.3 var(--sans); color:var(--cream);
+              overflow-wrap:anywhere; }
+  .mrow .sub { font:10px var(--mono); color:var(--faint); margin-top:2px;
+               font-variant-numeric:tabular-nums; }
+  .mrow.on { background:var(--on-wash); }
+  #scrim { position:fixed; inset:0; z-index:55; }
+  #scrim[hidden] { display:none; }
+
+  @media (prefers-reduced-motion:reduce) {
+    #pop.in { animation:none; }
+    * { transition-duration:0.01ms !important; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:70; padding:8px 16px;
+    font:10.5px/1.5 var(--mono); color:var(--faint); background:rgba(11,10,16,.94);
+    border-top:1px solid var(--line); display:flex; gap:14px; flex-wrap:wrap;
+    align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1>Generate</h1>
+    <span class="chip c-ok" title="ComfyUI 0.3.x · port 8188 · torch 2.4."><i class="dot on"></i>ComfyUI</span>
+    <span class="chip" title="Shown while anything is downloading or when free space gets tight.">⛁ Free ~48 GB</span>
+    <span class="grow"></span>
+    <span class="chip" title="Every result this page has written, on disk.">24 results · <b>41 MB</b></span>
+  </header>
+
+  <div id="body">
+
+    <!-- ══ SETTINGS ══ -->
+    <aside id="settings">
+
+      <!-- ⑥ model + its in-flow management -->
+      <div class="group">
+        <span class="caps">model</span>
+        <button class="modelbtn" id="modelbtn" aria-haspopup="dialog" aria-expanded="false">
+          <span>
+            <span class="mn">SDXL Turbo</span>
+            <span class="ms">6.9 GB on disk · CreativeML Open RAIL++-M</span>
+          </span>
+          <span class="cv">▾</span>
+        </button>
+      </div>
+
+      <!-- the verbosity gate -->
+      <div class="group">
+        <span class="caps">settings</span>
+        <div class="seg" id="gate" role="tablist">
+          <button class="on" data-tier="1">Basic</button>
+          <button data-tier="2">Advanced</button>
+          <button data-tier="3" class="dotted" title="Seed is set to a fixed value.">All</button>
+        </div>
+      </div>
+
+      <!-- BASIC -->
+      <div class="tier" id="t1">
+        <div class="group">
+          <label><span class="caps">size</span>
+            <span class="pair">
+              <input class="num" value="1024" aria-label="width">
+              <span class="x">×</span>
+              <input class="num" value="683" aria-label="height">
+            </span>
+          </label>
+        </div>
+        <label><span class="caps">steps</span><input class="num" value="24"></label>
+      </div>
+
+      <!-- ADVANCED -->
+      <div class="tier" id="t2" hidden>
+        <label><span class="caps">negative prompt</span>
+          <textarea rows="2">blurry, low quality, watermark</textarea></label>
+      </div>
+
+      <!-- ALL -->
+      <div class="tier" id="t3" hidden>
+        <label><span class="caps">seed</span><input class="num" value="41883" placeholder="random"></label>
+        <p class="say">Frames and fps appear here in <b>Clip</b> mode; this model is an image model, so they are not shown.</p>
+      </div>
+    </aside>
+
+    <!-- ══ CANVAS ══ -->
+    <main id="canvas">
+      <div id="frame">
+        <div class="pic" id="pic">
+          <span class="field f1" id="field"></span>
+          <span class="veil"></span>
+        </div>
+      </div>
+
+      <div id="tiles" hidden></div>
+
+      <div class="readout">
+        <span><b>1024 × 683</b> · 24 steps · seed <b>41 883</b></span>
+        <span id="live"></span>
+        <span class="grow"></span>
+        <span><b>9.4 s</b> · 1.7 MB</span>
+        <button class="plain">Reveal</button>
+        <button class="plain">Reuse settings</button>
+      </div>
+
+      <!-- ④⑤⑦ -->
+      <section id="promptbox">
+        <textarea class="pos" id="prompt" rows="2" placeholder="a red fox moving quickly through a snowy forest, morning light"></textarea>
+        <div class="neg" id="negwrap" hidden>
+          <span class="caps">negative</span>
+          <textarea rows="1">blurry, low quality, watermark</textarea>
+        </div>
+        <div class="pfoot">
+          <div class="seg" style="flex:0 0 auto">
+            <button class="on" style="padding:0 12px">Image</button>
+            <button style="padding:0 12px">Clip</button>
+          </div>
+          <span id="advisory"></span>
+          <span class="grow"></span>
+          <button class="go" id="go">Generate</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- ══ ③ HISTORY ══ -->
+    <aside id="history">
+      <span class="caps">history</span>
+      <button class="hitem on"><span class="hthumb"><span class="field f1"></span></span><span class="ht">24 · 9.4 s</span></button>
+      <button class="hitem"><span class="hthumb"><span class="field f2"></span></span><span class="ht">23 · 9.1 s</span></button>
+      <button class="hitem"><span class="hthumb"><span class="field f3"></span></span><span class="ht">22 · 9.6 s</span></button>
+      <button class="hitem"><span class="hthumb"><span class="field f2"></span></span><span class="ht">21 · 9.2 s</span></button>
+      <button class="hitem"><span class="hthumb"><span class="field f1"></span></span><span class="ht">20 · 9.5 s</span></button>
+      <button class="hitem"><span class="hthumb"><span class="field f3"></span></span><span class="ht">19 · 9.3 s</span></button>
+    </aside>
+  </div>
+</div>
+
+<!-- the model popover, anchored on its own control -->
+<div id="scrim" hidden></div>
+<div id="pop" hidden role="dialog" aria-label="Models">
+  <span class="caps">on disk</span>
+  <div class="mrow on">
+    <span><span class="nm">SDXL Turbo</span><span class="sub">sd_xl_turbo_1.0_fp16.safetensors · 6.9 GB · CreativeML Open RAIL++-M</span></span>
+    <span class="chip c-ok">In use</span>
+    <button class="plain">Reveal</button>
+  </div>
+  <div class="mrow">
+    <span><span class="nm">Wan 2.1 T2V 1.3B</span><span class="sub">wan2.1_t2v_1.3B_fp16.safetensors · 3.1 GB · Apache-2.0</span></span>
+    <span class="chip">Clip</span>
+    <button class="plain">Use</button>
+  </div>
+  <span class="caps">available</span>
+  <div class="mrow">
+    <span><span class="nm">Stable Diffusion 3.5 Medium</span><span class="sub">sd3.5_medium.safetensors · Stability Community License</span></span>
+    <span class="chip">not on disk</span>
+    <button class="plain">Get 5.1 GB</button>
+  </div>
+  <div class="mrow">
+    <span><span class="nm">FLUX.1 schnell</span><span class="sub">flux1-schnell.safetensors · Apache-2.0</span></span>
+    <span class="chip">not on disk</span>
+    <button class="plain">Get 23.8 GB</button>
+  </div>
+  <p class="say" style="padding:10px 4px 2px">Sizes are stated before anything downloads, and a model counts as present only when its files are actually on disk.</p>
+</div>
+
+<div id="note">
+  <b>E · The Workbench</b>
+  <span><b style="color:var(--dim)">Draw Things §2.1</b> canvas-first, Generate at the prompt box's lower-right, Basic/Advanced/All as one gate, management inside the screen</span>
+  <span><b style="color:var(--dim)">impeccable / layout</b> Operate mode wants predictable structure and stable density — the sidebar never reflows as the gate changes tier</span>
+  <span><b style="color:var(--dim)">Emil</b> the popover enters from its own trigger at scale(.97), 180 ms, and exits faster than it enters</span>
+</div>
+
+<script>
+/* ── THE VERBOSITY GATE. Tiers are cumulative: Advanced shows Basic + Advanced,
+   All shows everything. Progressive disclosure as one user setting, never a
+   per-control scatter. */
+(function () {
+  var gate = document.getElementById('gate');
+  var tiers = [null, document.getElementById('t1'), document.getElementById('t2'),
+               document.getElementById('t3')];
+  var neg = document.getElementById('negwrap');
+  gate.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-tier]'); if (!b) return;
+    var n = Number(b.dataset.tier);
+    gate.querySelectorAll('button').forEach(function (o) {
+      o.classList.toggle('on', o === b);
+      o.setAttribute('aria-selected', String(o === b));
+    });
+    for (var i = 1; i <= 3; i++) tiers[i].hidden = i > n;
+    /* the negative prompt is an Advanced control, so it appears in the prompt box
+       at the same moment its tier opens — one gate, two places, never two gates. */
+    neg.hidden = n < 2;
+  });
+})();
+
+/* ── THE MODEL POPOVER, anchored on its trigger. */
+(function () {
+  var btn = document.getElementById('modelbtn'), pop = document.getElementById('pop'),
+      scrim = document.getElementById('scrim');
+  function open() {
+    var r = btn.getBoundingClientRect();
+    pop.hidden = false; scrim.hidden = false;
+    var w = pop.offsetWidth;
+    pop.style.left = Math.min(r.left, innerWidth - w - 16) + 'px';
+    pop.style.top = Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 16) + 'px';
+    pop.classList.remove('in'); void pop.offsetWidth; pop.classList.add('in');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+  function close() {
+    pop.hidden = true; scrim.hidden = true; btn.setAttribute('aria-expanded', 'false');
+  }
+  btn.addEventListener('click', function () { pop.hidden ? open() : close(); });
+  scrim.addEventListener('click', close);
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+})();
+
+/* ── THE RUN. Per-step tiles on the real step count; nothing is a fake loader. */
+(function () {
+  var go = document.getElementById('go'), pic = document.getElementById('pic'),
+      field = document.getElementById('field'), tiles = document.getElementById('tiles'),
+      live = document.getElementById('live'), advisory = document.getElementById('advisory');
+  var fields = ['f1','f2','f3'], n = 0, busy = false, TOTAL = 24;
+
+  (function () { var h = ''; for (var i = 0; i < TOTAL; i++) h += '<i></i>';
+                 tiles.innerHTML = h; })();
+
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Generating';
+    go.setAttribute('aria-busy', 'true');
+    pic.classList.add('working'); tiles.hidden = false;
+    tiles.querySelectorAll('i').forEach(function (t) { t.className = ''; });
+    advisory.innerHTML = '<span class="say" role="status">One job at a time — a second would fight this one for the GPU.</span>';
+    var s = 0;
+    var iv = setInterval(function () {
+      s += 1;
+      var all = tiles.querySelectorAll('i');
+      for (var i = 0; i < all.length; i++)
+        all[i].className = i < s - 1 ? 'done' : (i === s - 1 ? 'now' : '');
+      live.textContent = '· step ' + s + ' / ' + TOTAL;
+      if (s >= TOTAL) {
+        clearInterval(iv);
+        setTimeout(function () {
+          pic.classList.remove('working'); tiles.hidden = true; live.textContent = '';
+          n = (n + 1) % fields.length; field.className = 'field ' + fields[n];
+          advisory.innerHTML = '';
+          go.disabled = false; go.textContent = 'Generate';
+          go.removeAttribute('aria-busy'); busy = false;
+        }, 240);
+      }
+    }, 150);
+  });
+
+  document.querySelectorAll('.hitem').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.hitem').forEach(function (o) { o.classList.remove('on'); });
+      t.classList.add('on');
+      field.className = t.querySelector('.field').className;
+    });
+  });
+})();
+
+/* the mockup's own footer note is scaffolding: measure it and give the layout room */
+(function () {
+  var nt = document.getElementById('note');
+  function m(){ document.getElementById('promptbox').style.marginBottom =
+                (nt.offsetHeight + 12) + 'px'; }
+  m(); addEventListener('resize', m); setTimeout(m, 60);
+})();
+</script>
+</body>
+</html>

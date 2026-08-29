@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose H · The Ledger</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-h.html — DIRECTION H: "THE LEDGER".
+
+  THE PRINCIPLE: a workbench, not a shrine — and this is the most literal reading
+  of "the media object is A CITIZEN, not THE monument".
+
+  THE IDEA. The page is a RUN LEDGER. Every song this machine has made is one
+  dense row: index, waveform sparkline, name, engine, length, settings summary,
+  render time, size, state. Twenty of them are on screen at once. The composer is
+  the ledger's TOP ROW — a new entry you are writing. The "current result" is not
+  a stage at all; it is whichever row is expanded.
+
+  CLICKING A ROW EXPANDS IT IN PLACE. The row grows downward into a detail block
+  carrying the full waveform, the transport, the prompt that made it and its
+  actions; every other row stays exactly where it is. Click it again, click away,
+  or press Esc and it collapses. Nothing overlays, nothing navigates, and the
+  ledger never loses your place — which is the failure mode a modal detail view
+  has and this does not.
+
+  WHY THIS IS THE THIRD IDEA AND NOT A BLEND. F composes a mosaic and G composes
+  a frame; both are spatial. H is TEMPORAL AND TABULAR — the Linear/Raycast move,
+  where the list is the product and detail is an inline expansion of a row rather
+  than a place you go. It is the only one of the three where the number of things
+  visible at once scales with the window instead of being fixed by the layout.
+
+  ZONE CHROME is the same VoiceStudio language as F and G, read live from its
+  bundle on :3900 — 28 px mono label bars, 1 px hairlines, 12 px pads, radius 0,
+  20 px / 3 px pills, .12 s and .2 s transitions — so all three directions are
+  recognisably one product.
+
+  ROW RHYTHM: 26 px rows, 9.5–11.5 px type, tabular figures on every number so a
+  column of durations and sizes reads as a column and not as ragged text.
+
+  IA UNTOUCHED, ALL SEVEN VISIBLE AT REST: ① engines (the ENGINES panel and the
+  header pill) ② stage (the expanded row) ③ caps (the status bar) ④ recent (the
+  ledger itself) ⑤ prompt ⑥ controls ⑦ Compose (the NEW ENTRY row).
+  Sentence rule intact. No control the backend does not have.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --zbar:28px; --zpad:12px; --zlabel:11px; --ztrack:.06em;
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.12);
+    --zhover:rgba(255,255,255,.04);
+    --pill-h:20px; --pill-r:3px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --row:26px;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:#08070c; color:var(--fg); font:12px/1.45 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+         overflow:hidden; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  textarea, input { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  button { touch-action:manipulation; font:inherit; }
+
+  .caps { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .say { font-size:11.5px; line-height:1.55; color:var(--dim); margin:0; max-width:60ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+  .pill { display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border-radius:var(--pill-r); border:1px solid var(--zborder);
+    background:transparent; font:10.5px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color var(--t-fast), color var(--t-fast); }
+  .pill b { color:var(--cream); font-weight:600; }
+  .pill.ok { color:var(--ok); border-color:color-mix(in oklab, var(--ok) 45%, transparent); }
+  .pill.gold { color:var(--gold); border-color:color-mix(in oklab, var(--gold) 45%, transparent); }
+  .pill.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .pill.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr) 22px;
+         height:calc(100% - var(--noteh, 34px)); }
+  /* the topbar WRAPS and the app row is auto, not a hard --zbar: a non-wrapping
+     flex bar is how a toolbar pushes its trailing controls off the right edge at
+     narrow widths. Measured 432px of content in a 380px window on 2026-08-29 —
+     a control reachable only at desktop width is a hard failure, not a breakpoint. */
+  #topbar { display:flex; align-items:center; gap:10px; padding:3px 10px;
+            min-height:var(--zbar); flex-wrap:wrap; row-gap:4px;
+            background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  #topbar .wm { font:600 12px/1 var(--serif); color:var(--cream); }
+  #topbar .grow { flex:1 1 auto; }
+
+  #frame { position:relative; display:grid;
+           grid-template-columns:minmax(0,1fr) 280px; min-height:0; }
+  @media (max-width:1100px) { #frame { grid-template-columns:minmax(0,1fr); }
+                              #side { display:none; } }
+
+  .zone { position:relative; background:var(--bg); min-height:0;
+    display:grid; grid-template-rows:var(--zbar) minmax(0,1fr);
+    transition:opacity 620ms cubic-bezier(0.4,0,0.2,1), filter 620ms cubic-bezier(0.4,0,0.2,1); }
+  .zbar { display:flex; align-items:center; gap:7px; padding:0 var(--zpad);
+          border-bottom:1px solid var(--zborder); background:var(--bg2); }
+  .zbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--faint); white-space:nowrap; }
+  .zbar .grow { flex:1 1 auto; }
+  .zbody { overflow:auto; min-height:0; }
+  .zx { width:18px; height:18px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none; transition:background-color var(--t-fast), color var(--t-fast); }
+  @media (hover:hover) and (pointer:fine) {
+    .zx:hover { background:var(--zhover); color:var(--cream); } }
+
+  /* ══ THE LEDGER ═════════════════════════════════════════════════════════════
+     One grid template shared by the header row, every entry row and the composer
+     row, so the columns are actually columns at every scroll position. */
+  #ledger { border-inline-end:1px solid var(--zborder); }
+  .lgrid { display:grid;
+    grid-template-columns:30px 78px minmax(120px,2.2fr) 84px 52px minmax(104px,1.1fr) 62px 58px 62px;
+    /* a real column gap, not per-cell padding: at 26 px row height two numeric
+       columns touching is the difference between a table and a wall of digits.
+       Walked at 1440×1000 on 2026-08-29 — len and settings ran together. */
+    column-gap:12px; align-items:center; }
+  .lhead { padding:0 var(--zpad); height:22px; border-bottom:1px solid var(--zborder);
+    background:var(--bg2); position:sticky; top:0; z-index:2; }
+  .lhead > span { font:600 9px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase;
+    color:var(--faint); }
+  .lhead > span.r, .lrow > .r { text-align:end; }
+
+  .lrow { width:100%; text-align:start; border:0; background:transparent; cursor:pointer;
+    padding:0 var(--zpad); height:var(--row); color:var(--dim);
+    border-bottom:1px solid rgba(255,255,255,.035);
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .lrow > * { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lrow .i  { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lrow .t  { font:11.5px var(--sans); }
+  .lrow .e, .lrow .s { font:9.5px var(--mono); color:var(--faint); }
+  .lrow .n  { font:10px var(--mono); font-variant-numeric:tabular-nums; }
+  .lrow .st { font:9.5px var(--mono); }
+  @media (hover:hover) and (pointer:fine) {
+    .lrow:hover { background:var(--zhover); color:var(--cream); } }
+  .lrow.on { background:var(--on-wash); color:var(--cream); }
+  .lrow.on .i { color:var(--gold); }
+
+  /* the sparkline cell — a citizen-sized piece of the media, right in the row */
+  .spark { height:16px; display:block; width:70px; }
+  .spark rect { fill:var(--faint); }
+  .lrow.on .spark rect, .lrow:hover .spark rect { fill:var(--gold); }
+
+  /* ── THE EXPANSION. The row's detail is a sibling block whose height animates
+     from 0. Height is animated on ONE element that owns nothing else and has no
+     text baseline to jitter, which is the one place a height transition is safe;
+     everything inside it moves on opacity and transform only. */
+  .detail { overflow:hidden; height:0; background:var(--bg2);
+            border-bottom:1px solid var(--zborder);
+            transition:height 260ms cubic-bezier(0.23,1,0.32,1); }
+  .detail.open { border-top:1px solid var(--zborder-strong); }
+  .dinner { padding:12px var(--zpad) 14px; display:grid; gap:10px;
+            opacity:0; transform:translateY(-4px);
+            transition:opacity 180ms ease-out 60ms, transform 180ms ease-out 60ms; }
+  .detail.open .dinner { opacity:1; transform:none; }
+  .dtop { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .dtop h2 { font:600 17px/1.2 var(--serif); color:var(--cream); margin:0;
+             letter-spacing:-.012em; }
+  .dtop .m { font:10px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .wave { position:relative; height:64px; cursor:pointer; background:#07060b;
+          border:1px solid var(--zborder); }
+  .wave svg { display:block; width:100%; height:100%; position:absolute; inset:0; }
+  .wave .played { position:absolute; inset:0 66% 0 0; background:rgba(217,179,108,.10); }
+  .wave .ph { position:absolute; top:0; bottom:0; left:34%; width:1px; background:var(--cream); }
+  .transport { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .tbtn { width:26px; height:26px; border:0; border-radius:3px; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); display:grid; place-items:center;
+    transition:scale var(--t-fast); }
+  .tbtn:active { scale:.94; }
+  .tbtn svg { width:11px; height:11px; fill:currentColor; }
+  .clock { font:11px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums; }
+  .utext { font:10.5px/1.6 var(--mono); color:var(--dim); background:#07060b;
+    border:1px solid var(--zborder); padding:7px 9px; white-space:pre-wrap;
+    max-height:78px; overflow:auto; }
+
+  /* ══ THE COMPOSER ROW — the ledger's top entry, the one you are writing ═════ */
+  #newrow { border-bottom:1px solid var(--zborder-strong); background:var(--bg2); }
+  #newrow .head { display:flex; align-items:center; gap:8px; padding:6px var(--zpad) 0; }
+  #newrow .body { padding:6px var(--zpad) 10px; display:grid;
+                  grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
+  #newrow textarea { width:100%; min-height:40px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:12.5px/1.5 var(--sans); padding:7px 9px;
+    resize:none; outline:none; transition:border-color var(--t-fast); }
+  #newrow textarea:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  #newrow textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+
+  button.plain { height:24px; padding:0 9px; border-radius:3px; border:1px solid var(--zborder);
+    background:transparent; color:var(--dim); font:11px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast), scale var(--t-fast); }
+  button.plain:active { scale:.96; }
+  @media (hover:hover) and (pointer:fine) {
+    button.plain:hover { background:var(--zhover); color:var(--cream); } }
+  button.go { height:26px; padding:0 14px; border-radius:3px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 11.5px var(--sans);
+    display:inline-flex; align-items:center; gap:6px;
+    transition:scale var(--t-fast), filter var(--t-fast); }
+  button.go:active { scale:.96; }
+  button.go:disabled { cursor:default; filter:saturate(.4) brightness(.82); }
+  .spin { width:10px; height:10px; border-radius:50%; border:2px solid rgba(23,20,32,.3);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ══ THE SIDE COLUMN — settings, engines, queue ═════════════════════════════ */
+  #side { display:grid; grid-template-rows:minmax(0,1.2fr) minmax(0,1fr) auto; min-height:0; }
+  #side > .zone { border-bottom:1px solid var(--zborder); }
+  .zbody.pad { padding:var(--zpad); }
+  .sec { padding:9px 0; border-top:1px solid var(--zborder); }
+  .sec:first-of-type { border-top:0; padding-top:0; }
+  .sec > .caps { display:block; margin-bottom:7px; }
+  .field { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px;
+           align-items:center; padding:3px 0; }
+  .field input { width:100%; height:22px; border:1px solid var(--zborder);
+    background:#07060b; color:var(--cream); font:11px var(--mono); padding:0 7px;
+    outline:none; font-variant-numeric:tabular-nums; transition:border-color var(--t-fast); }
+  .field input:focus { border-color:color-mix(in oklab, var(--gold) 55%, transparent); }
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:3px;
+         overflow:hidden; }
+  .seg > button { border:0; background:transparent; color:var(--dim); height:20px;
+    padding:0 9px; font:10.5px var(--sans); cursor:pointer;
+    transition:background-color var(--t-fast), color var(--t-fast); }
+  .seg > button.on { background:var(--on-wash); color:var(--cream); }
+  .erow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px;
+    align-items:center; padding:5px 0; border-top:1px solid var(--zborder); }
+  .erow:first-of-type { border-top:0; }
+  .erow .en { font:11.5px var(--sans); color:var(--cream); }
+  .erow .es { font:9.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  #z-queue { grid-template-rows:var(--zbar) auto; }
+  #z-queue .zbody { display:grid; gap:6px; padding:9px var(--zpad); }
+  .bar { height:3px; background:var(--line); overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; background:var(--gold);
+             transition:width 240ms linear; }
+  .kv { display:flex; justify-content:space-between; gap:10px; align-items:baseline;
+        font:10.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .kv b { color:var(--cream); font-weight:500; }
+
+  #status { display:flex; align-items:center; gap:12px; padding:0 10px;
+    background:var(--bg2); border-top:1px solid var(--zborder);
+    font:9.5px var(--mono); color:var(--faint); letter-spacing:.04em;
+    font-variant-numeric:tabular-nums; overflow:hidden; }
+  #status b { color:var(--dim); font-weight:500; }
+  #status .grow { flex:1 1 auto; }
+
+  /* zone focus, the same engine as F and G */
+  body.focused .zone:not(.is-focus) { opacity:.30; filter:saturate(.6); pointer-events:none; }
+  .zone.is-focus { position:absolute; z-index:20;
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.9), 0 0 0 1px var(--zborder-strong);
+    will-change:transform; }
+  #veil { position:absolute; inset:0; z-index:10; background:rgba(8,7,12,.5);
+          opacity:0; pointer-events:none;
+          /* the scrim fades SLOWER than the zone moves — Carbon gives background
+             dimming its own slowest token (700 ms) against 400 ms for a large
+             expansion, so the dim recedes instead of competing with the focus. */
+          transition:opacity 620ms cubic-bezier(0.4,0,0.2,1); }
+  body.focused #veil { opacity:1; pointer-events:auto; }
+
+  @media (prefers-reduced-motion:reduce) {
+    .detail { transition:none; }
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:80; padding:6px 12px;
+    font:10px/1.45 var(--mono); color:var(--faint); background:rgba(8,7,12,.96);
+    border-top:1px solid var(--zborder); display:flex; gap:12px; flex-wrap:wrap;
+    align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <span class="wm">Compose</span>
+    <span class="pill ok" title="Stable Audio · MusicGen — a render is a one-shot process."><i class="dot on"></i>2 of 2 ready</span>
+    <span class="pill" id="jobpill" title="Nothing is running right now.">idle</span>
+    <span class="grow"></span>
+    <span class="caps">click a row to expand it in place · esc collapses</span>
+  </div>
+
+  <div id="frame">
+    <div id="veil"></div>
+
+    <!-- ══ THE LEDGER ══ -->
+    <section class="zone" id="ledger" data-zone="ledger">
+      <div class="zbar"><span class="t">ledger</span><span class="grow"></span>
+        <span class="caps">14 runs · 62 MB</span>
+        <button class="zx" data-x aria-label="Focus ledger">⤢</button></div>
+      <div class="zbody" id="lbody">
+
+        <!-- ⑤⑥⑦ the new entry — the ledger's top row -->
+        <div id="newrow">
+          <div class="head"><span class="caps">new entry</span>
+            <span class="pill">stable audio</span><span class="pill">60 s</span>
+            <span class="pill">wav</span><span class="pill act">+ lyrics</span>
+            <span class="pill act">presets ▸</span></div>
+          <div class="body">
+            <textarea id="prompt" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+            <button class="go" id="go">Compose</button>
+          </div>
+          <div id="advisory" style="padding:0 12px 8px"></div>
+        </div>
+
+        <div class="lgrid lhead">
+          <span>#</span><span>wave</span><span>name</span><span>engine</span>
+          <span class="r">len</span><span>settings</span><span class="r">took</span>
+          <span class="r">size</span><span>state</span>
+        </div>
+
+        <div id="rows"></div>
+      </div>
+    </section>
+
+    <!-- ══ SIDE ══ -->
+    <div id="side">
+
+      <!-- ⑥ -->
+      <section class="zone" id="z-settings" data-zone="settings">
+        <div class="zbar"><span class="t">settings</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus settings">⤢</button></div>
+        <div class="zbody pad">
+          <div class="sec"><span class="caps">engine</span>
+            <div class="field"><span class="caps">use</span>
+              <div class="seg"><button class="on">Stable</button><button>MusicGen</button></div></div></div>
+          <div class="sec"><span class="caps">basic</span>
+            <div class="field"><span class="caps">length</span><input value="60" aria-label="length in seconds"></div>
+            <div class="field"><span class="caps">format</span>
+              <div class="seg"><button class="on">wav</button><button>mp3</button></div></div></div>
+          <div class="sec"><span class="caps">advanced</span>
+            <div class="field"><span class="caps">lyrics</span><span class="caps" style="color:var(--dim)">none</span></div>
+            <div class="field"><span class="caps">steps</span><input value="120"></div>
+            <div class="field"><span class="caps">seed</span><input placeholder="random" value=""></div></div>
+        </div>
+      </section>
+
+      <!-- ① -->
+      <section class="zone" id="z-engines" data-zone="engines">
+        <div class="zbar"><span class="t">engines</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus engines">⤢</button></div>
+        <div class="zbody pad">
+          <div class="erow"><span><span class="en">Stable Audio Open</span><br>
+            <span class="es">4.1 GB · Stability Community</span><br>
+            <span class="es">last 41 s for 60 s</span></span><span class="pill ok">in use</span></div>
+          <div class="erow"><span><span class="en">MusicGen Medium</span><br>
+            <span class="es">3.2 GB · CC-BY-NC 4.0</span><br>
+            <span class="es">last 1 m 12 s for 60 s</span></span><span class="pill ok">on disk</span></div>
+          <div class="erow"><span class="es" title="Read from disk on every poll, never a stored flag.">state read from disk on every poll</span>
+            <button class="plain">Manage ▸</button></div>
+        </div>
+      </section>
+
+      <!-- ③ -->
+      <section class="zone" id="z-queue" data-zone="queue">
+        <div class="zbar"><span class="t">queue</span><span class="grow"></span>
+          <button class="zx" data-x aria-label="Focus queue">⤢</button></div>
+        <div class="zbody">
+          <div class="kv"><span>state</span><b id="qstate">idle</b></div>
+          <div class="bar"><i id="pf"></i></div>
+          <div class="kv" title="One render at a time, on purpose — two would fight for the GPU."><span>concurrency</span><b>1 at a time</b></div>
+          <div class="kv"><span>queued</span><b>0</b></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="status">
+    <span>14 tracks · <b>62 MB</b></span>
+    <span>~/Music/Harness</span>
+    <span>free <b>~48 GB</b></span>
+    <span class="grow"></span>
+    <span>last <b>41 s</b> for 60 s</span>
+  </div>
+</div>
+
+<div id="note">
+  <b>H · The Ledger</b>
+  <span><b style="color:var(--dim)">Linear / Raycast</b> the list IS the product — detail is an inline row expansion, never a place you navigate to</span>
+  <span><b style="color:var(--dim)">VoiceStudio :3900</b> the same shipped zone chrome as F and G, so all three read as one product</span>
+  <span><b style="color:var(--dim)">Emil</b> height animates on one wrapper that owns nothing else; its contents move on opacity+transform only</span>
+</div>
+
+<script>
+/* ── THE LEDGER'S DATA. Fake, hardcoded, and honest about it. ────────────────── */
+var RUNS = [
+  { n:'Gravel Road at First Light', e:'stable', len:'1:04', set:'120 st · seed 41883', took:'41 s',  size:'2.4 MB', st:'on disk', s:9,
+    p:'High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM' },
+  { n:'Slow Water, Long Room',      e:'stable', len:'0:48', set:'120 st · random',     took:'33 s',  size:'1.8 MB', st:'on disk', s:3,
+    p:'Slow ambient room tone, upright bass, brushed kit, 68 BPM' },
+  { n:'Nine Bar Brass',             e:'musicgen', len:'1:30', set:'150 st · seed 771', took:'1 m 48 s', size:'3.4 MB', st:'on disk', s:5,
+    p:'Nine bar brass riff, funk horns, tight rhythm section, 104 BPM' },
+  { n:'Untitled sketch',            e:'stable', len:'0:30', set:'80 st · random',      took:'19 s',  size:'1.1 MB', st:'on disk', s:7,
+    p:'quiet piano sketch' },
+  { n:'Kerosene Sunday',            e:'stable', len:'1:12', set:'120 st · seed 2201',  took:'46 s',  size:'2.7 MB', st:'on disk', s:2,
+    p:'Kerosene sunday, slow gospel organ, brushed drums, warm tape saturation, 72 BPM' },
+  { n:'Two Miles of Wire',          e:'stable', len:'0:54', set:'120 st · random',     took:'36 s',  size:'2.0 MB', st:'on disk', s:11 },
+  { n:'Brass and Rain',             e:'musicgen', len:'2:00', set:'150 st · seed 88',  took:'2 m 22 s', size:'4.6 MB', st:'on disk', s:4 },
+  { n:'Hollow Bell',                e:'stable', len:'1:18', set:'120 st · random',     took:'50 s',  size:'2.9 MB', st:'on disk', s:6 },
+  { n:'Paper Radio',                e:'stable', len:'0:42', set:'100 st · seed 4',     took:'27 s',  size:'1.6 MB', st:'on disk', s:8 },
+  { n:'Long Shadow, Short Fuse',    e:'musicgen', len:'1:36', set:'150 st · random',   took:'1 m 55 s', size:'3.7 MB', st:'on disk', s:12 },
+  { n:'Cold Start',                 e:'stable', len:'0:36', set:'80 st · seed 9',      took:'23 s',  size:'1.3 MB', st:'on disk', s:1 },
+  { n:'Ninth Street Waltz',         e:'stable', len:'2:12', set:'120 st · random',     took:'1 m 24 s', size:'5.0 MB', st:'on disk', s:10 },
+  { n:'Riverbed',                   e:'stable', len:'1:05', set:'120 st · seed 316',   took:'42 s',  size:'2.4 MB', st:'on disk', s:13 },
+  { n:'Second Hand',                e:'musicgen', len:'0:51', set:'150 st · random',   took:'1 m 02 s', size:'1.9 MB', st:'on disk', s:14 }
+];
+
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+/* a deterministic sparkline, seeded per run so a row always looks like itself */
+function spark(seed, w, h, bars) {
+  var s = seed * 7919 + 13, out = '';
+  function rnd(){ s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; }
+  var step = w / bars;
+  for (var i = 0; i < bars; i++) {
+    var env = Math.pow(Math.sin(i / bars * Math.PI), 0.5);
+    var v = env * (0.24 + rnd() * 0.76), bh = Math.max(1, v * h);
+    out += '<rect x="' + (i * step).toFixed(2) + '" y="' + ((h - bh) / 2).toFixed(2) +
+           '" width="' + (step * 0.62).toFixed(2) + '" height="' + bh.toFixed(2) +
+           '" opacity="' + (0.35 + v * 0.5).toFixed(2) + '"/>';
+  }
+  return out;
+}
+
+/* ── RENDER THE LEDGER. Each entry is a row plus its own collapsed detail block,
+   so expanding never re-orders or re-creates anything above it. */
+(function () {
+  var host = document.getElementById('rows'), h = '';
+  RUNS.forEach(function (r, i) {
+    h += '<button class="lgrid lrow" data-i="' + i + '">' +
+      '<span class="i">' + String(i + 1).padStart(2, '0') + '</span>' +
+      '<span><svg class="spark" viewBox="0 0 70 16" preserveAspectRatio="none">' +
+        spark(r.s, 70, 16, 26) + '</svg></span>' +
+      '<span class="t">' + esc(r.n) + '</span>' +
+      '<span class="e">' + esc(r.e) + '</span>' +
+      '<span class="n r">' + esc(r.len) + '</span>' +
+      '<span class="s">' + esc(r.set) + '</span>' +
+      '<span class="n r">' + esc(r.took) + '</span>' +
+      '<span class="n r">' + esc(r.size) + '</span>' +
+      '<span class="st">' + esc(r.st) + '</span>' +
+    '</button>' +
+    '<div class="detail" data-d="' + i + '"><div class="dinner">' +
+      '<div class="dtop"><h2>' + esc(r.n) + '</h2>' +
+        '<span class="m">' + esc(r.e) + ' · ' + esc(r.len) + ' · ' + esc(r.set) +
+        ' · rendered in ' + esc(r.took) + ' · ' + esc(r.size) + '</span></div>' +
+      '<div class="wave" data-w="' + i + '">' +
+        '<svg viewBox="0 0 900 64" preserveAspectRatio="none" fill="#d9b36c">' +
+          spark(r.s, 900, 64, 220) + '</svg>' +
+        '<div class="played"></div><div class="ph"></div></div>' +
+      '<div class="transport">' +
+        '<button class="tbtn" data-p="' + i + '" aria-label="Play">' +
+          '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>' +
+        '<span class="clock">0:00 / ' + esc(r.len) + '</span>' +
+        '<span style="flex:1"></span>' +
+        '<button class="plain">Rename</button><button class="plain">Reveal</button>' +
+        '<button class="plain">Reuse settings</button><button class="plain">Delete</button>' +
+      '</div>' +
+      (r.p ? '<div><span class="caps" style="display:block;margin-bottom:5px">prompt</span>' +
+             '<div class="utext">' + esc(r.p) + '</div></div>' : '') +
+    '</div></div>';
+  });
+  host.innerHTML = h;
+})();
+
+/* ── ROW EXPANSION IN PLACE. Height animates on the wrapper only; the contents
+   fade and lift. One row open at a time — a ledger with six things open is a
+   ledger you can no longer scan, which is the whole point of this direction. */
+(function () {
+  var openIdx = null;
+  function closeRow(instant) {
+    if (openIdx == null) return;
+    var d = document.querySelector('.detail[data-d="' + openIdx + '"]');
+    var r = document.querySelector('.lrow[data-i="' + openIdx + '"]');
+    if (d) { d.style.height = instant ? '0px' : d.scrollHeight + 'px';
+             void d.offsetWidth; d.style.height = '0px'; d.classList.remove('open'); }
+    if (r) { r.classList.remove('on'); r.setAttribute('aria-expanded', 'false'); }
+    openIdx = null;
+  }
+  function openRow(i) {
+    if (openIdx === i) { closeRow(); return; }
+    closeRow();
+    var d = document.querySelector('.detail[data-d="' + i + '"]');
+    var r = document.querySelector('.lrow[data-i="' + i + '"]');
+    d.classList.add('open');
+    d.style.height = d.firstElementChild.offsetHeight + 'px';
+    r.classList.add('on'); r.setAttribute('aria-expanded', 'true');
+    openIdx = i;
+    /* the detail must be fully visible without hunting for it */
+    setTimeout(function () {
+      var rect = d.getBoundingClientRect(), host = document.getElementById('lbody');
+      var hb = host.getBoundingClientRect();
+      if (rect.bottom > hb.bottom) host.scrollTop += (rect.bottom - hb.bottom) + 12;
+    }, 280);
+  }
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('.lrow');
+    if (row) { openRow(Number(row.dataset.i)); return; }
+    if (e.target.closest('.detail')) return;      /* clicking inside stays open */
+    if (e.target.closest('.zone') && !e.target.closest('#ledger')) closeRow();
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeRow(); });
+  addEventListener('resize', function () {
+    if (openIdx != null) {
+      var d = document.querySelector('.detail[data-d="' + openIdx + '"]');
+      d.style.height = d.firstElementChild.offsetHeight + 'px';
+    }
+  });
+  /* open the newest run at rest, so the page never photographs as an empty table */
+  openRow(0);
+})();
+
+/* ── per-detail transports. Fake playheads; a mockup has no audio. ──────────── */
+(function () {
+  document.addEventListener('click', function (e) {
+    var p = e.target.closest('[data-p]'); if (!p) return;
+    e.stopPropagation();
+    var wrap = p.closest('.dinner'), wave = wrap.querySelector('.wave');
+    var playing = p.dataset.on === '1';
+    p.dataset.on = playing ? '0' : '1';
+    p.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>'
+      : '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>';
+    clearInterval(wave._t);
+    if (!playing) {
+      var pct = 0;
+      wave._t = setInterval(function () {
+        pct = (pct + 1.6) % 100;
+        wave.querySelector('.ph').style.left = pct.toFixed(1) + '%';
+        wave.querySelector('.played').style.right = (100 - pct).toFixed(1) + '%';
+      }, 200);
+    }
+  });
+  document.addEventListener('click', function (e) {
+    var w = e.target.closest('.wave'); if (!w) return;
+    e.stopPropagation();
+    var r = w.getBoundingClientRect(), pct = (e.clientX - r.left) / r.width * 100;
+    w.querySelector('.ph').style.left = pct.toFixed(1) + '%';
+    w.querySelector('.played').style.right = (100 - pct).toFixed(1) + '%';
+  });
+})();
+
+/* ── FOCUS ENGINE — the same one as F and G, for the panel zones. ───────────── */
+(function () {
+  var frame = document.getElementById('frame'), open = null, rest = null;
+  function focus(zone) {
+    if (open) unfocus(true);
+    var b = frame.getBoundingClientRect(), r = zone.getBoundingClientRect();
+    var pad = Math.round(Math.min(b.width, b.height) * 0.045);
+    var tw = b.width - pad * 2, th = b.height - pad * 2;
+    rest = { l:r.left - b.left, t:r.top - b.top, w:r.width, h:r.height };
+    zone.classList.add('is-focus');
+    zone.style.transition = 'none';
+    zone.style.left = pad + 'px'; zone.style.top = pad + 'px';
+    zone.style.width = tw + 'px'; zone.style.height = th + 'px';
+    zone.style.transformOrigin = 'top left';
+    zone.style.transform = 'translate(' + (rest.l - pad) + 'px,' + (rest.t - pad) + 'px) ' +
+                           'scale(' + (rest.w / tw) + ',' + (rest.h / th) + ')';
+    document.body.classList.add('focused');
+    void zone.offsetWidth;
+    zone.style.transition = 'transform 260ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'none';
+    open = zone; zone.setAttribute('aria-expanded', 'true');
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤡';
+  }
+  function unfocus(instant) {
+    if (!open) return;
+    var zone = open, r = rest, pad = parseFloat(zone.style.left) || 0;
+    var tw = parseFloat(zone.style.width), th = parseFloat(zone.style.height);
+    var x = zone.querySelector('[data-x]'); if (x) x.textContent = '⤢';
+    zone.setAttribute('aria-expanded', 'false');
+    function land(){ zone.classList.remove('is-focus'); zone.style.cssText = ''; }
+    if (instant) { land(); document.body.classList.remove('focused'); open = null; return; }
+    zone.style.transition = 'transform 200ms cubic-bezier(0.23,1,0.32,1)';
+    zone.style.transform = 'translate(' + (r.l - pad) + 'px,' + (r.t - pad) + 'px) ' +
+                           'scale(' + (r.w / tw) + ',' + (r.h / th) + ')';
+    document.body.classList.remove('focused'); open = null; setTimeout(land, 210);
+  }
+  document.addEventListener('click', function (e) {
+    var x = e.target.closest('[data-x]');
+    if (x) { var z = x.closest('.zone'); e.stopPropagation();
+             (open === z) ? unfocus() : focus(z); return; }
+    if (open && !e.target.closest('.zone.is-focus')) unfocus();
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') unfocus(); });
+  addEventListener('resize', function () { if (open) unfocus(true); });
+})();
+
+/* the run */
+(function () {
+  var go = document.getElementById('go'), pf = document.getElementById('pf'),
+      qstate = document.getElementById('qstate'), jobpill = document.getElementById('jobpill'),
+      prompt = document.getElementById('prompt'), advisory = document.getElementById('advisory');
+  var busy = false;
+  go.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (busy) return; busy = true;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Composing';
+    go.setAttribute('aria-busy', 'true');
+    qstate.textContent = 'rendering'; jobpill.textContent = 'rendering';
+    jobpill.className = 'pill gold';
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>Stable Audio</b>. You can leave this tab; it survives.</p>';
+    var p = 0;
+    var iv = setInterval(function () {
+      p += 8 + Math.random() * 10;
+      if (p >= 100) {
+        clearInterval(iv); pf.style.width = '100%';
+        setTimeout(function () {
+          pf.style.width = '0';
+          qstate.textContent = 'idle'; jobpill.textContent = 'idle';
+          jobpill.className = 'pill'; advisory.innerHTML = '';
+          go.disabled = false; go.textContent = 'Compose';
+          go.removeAttribute('aria-busy'); busy = false;
+        }, 260);
+      } else pf.style.width = p.toFixed(1) + '%';
+    }, 240);
+  });
+})();
+
+/* measure the mockup's own footer note so nothing hides behind it */
+(function () {
+  var n = document.getElementById('note');
+  function m(){ document.documentElement.style.setProperty('--noteh', n.offsetHeight + 'px'); }
+  m(); addEventListener('resize', m); setTimeout(m, 60);
+})();
+</script>
+</body>
+</html>

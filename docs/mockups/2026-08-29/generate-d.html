@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generate D · The Poster</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/generate-d.html — DIRECTION D: "THE POSTER".
+  Standalone, self-contained, fake data.
+
+  THE BRIEF: punchy, even more modern. The discipline is impeccable/bolder.md —
+  "Commit, then clarify… If every element got louder, the section got flatter" —
+  so exactly one thing on this page is loud and everything else is quieter than
+  it is in A–C.
+
+  THE STRUCTURE is a poster, read top to bottom in four full-bleed bands with no
+  container anywhere: BAND (the picture, edge to edge, cinemascope) · HEADLINE
+  (the prompt set as display type) · STRIP (the filmstrip, edge to edge) · SLAB
+  (the composer, with the primary action as a full-width accent bar). Nothing is
+  centred inside a box that is wider than what it holds, which is the specific
+  defect the shipped `place-items:center` stage has.
+
+  THE CONFIDENT COLOUR MOMENT is that accent bar. colorize.md: "let the strongest
+  color own a deliberate region or role instead of scattering tiny accents. Keep
+  the primary action easy to find; do not spend its color on decoration." It is
+  also the progress readout — it drains from the right as steps complete — so the
+  loudest element on the page is load-bearing rather than ornamental.
+
+  THE ONE AUTHORED MOMENT is the band's arrival: a hard centre-out clip-path wipe
+  at 520 ms on cubic-bezier(0.77,0,0.175,1). Sharper than A's soft reveal and C's
+  iris on purpose; still transform/opacity/clip-path only, still one per page.
+
+  Type contrast: 76 px display against a 10 px mono label is 7.6×, where the
+  flat-type-hierarchy detector only asks for 2.0. Display stays under the craft
+  floor's 6 rem ceiling; tracking is -0.03em against a -0.04em floor.
+
+  IA UNTOUCHED: ① status chips ② result stage ③ recent strip ④ prompt
+  ⑤ Image/Clip ⑥ model chip ⑦ Generate (+ closed More ▸).
+  The picture is an abstract colour field: a mockup that drew a convincing fox
+  would be claiming a render we did not make.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --s1:4px; --s2:8px; --s3:12px; --s4:20px; --s5:32px; --s6:56px; --s7:88px;
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);
+    --pad:clamp(20px, 4vw, 56px);
+  }
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.55 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:3px solid transparent; background-clip:content-box; }
+  textarea { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  button { touch-action:manipulation; }
+
+  h1 { font:600 15px/1.2 var(--serif); color:var(--cream); margin:0; }
+  .caps { font:600 10px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+          color:var(--faint); }
+  .say { font-size:12.5px; line-height:1.7; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  /* chips: the quietest in the round — the accent bar is carrying the brand */
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border:1px solid var(--line); border-radius:999px; background:transparent;
+    font:11px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color 180ms var(--ease-out), color 180ms var(--ease-out); }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); }
+  .chip.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  header { position:sticky; top:0; z-index:8; height:52px; display:flex; gap:var(--s3);
+    align-items:center; padding:0 var(--pad);
+    background:linear-gradient(180deg, rgba(11,10,16,.96), rgba(11,10,16,.7));
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); }
+  header .grow { flex:1 1 auto; }
+
+  /* ══ ② THE BAND — full bleed, cinemascope. No frame, no margin, no radius. ═══ */
+  #band { position:relative; height:min(48vh, 460px); overflow:hidden; background:#0f0d17; }
+  #band .field { position:absolute; inset:0; }
+  .field.f1 { background:
+      radial-gradient(120% 90% at 22% 18%, rgba(217,179,108,.62), transparent 58%),
+      radial-gradient(90% 80% at 78% 30%, rgba(139,147,248,.52), transparent 62%),
+      radial-gradient(140% 120% at 50% 108%, rgba(70,201,154,.34), transparent 60%),
+      linear-gradient(160deg, #1a1626, #0b0a11 62%, #16121f); }
+  .field.f2 { background:
+      radial-gradient(100% 80% at 70% 20%, rgba(224,164,88,.56), transparent 60%),
+      radial-gradient(120% 100% at 20% 80%, rgba(139,147,248,.46), transparent 62%),
+      linear-gradient(200deg, #17131f, #08070d 70%); }
+  .field.f3 { background:
+      radial-gradient(110% 90% at 40% 70%, rgba(70,201,154,.48), transparent 58%),
+      radial-gradient(90% 70% at 75% 15%, rgba(217,179,108,.48), transparent 60%),
+      linear-gradient(140deg, #14121d, #07060c 68%); }
+
+  /* the working state: the picture is dimmed and a HARD-EDGED bar sweeps it. Not a
+     soft glow — a hard edge is what makes this direction read sharp rather than
+     atmospheric, and it is still the truthful shape of a stepwise render. */
+  #band .veil { position:absolute; inset:0; background:rgba(11,10,16,.74); opacity:0;
+                transition:opacity 260ms var(--ease-out); pointer-events:none; }
+  body.working #band .veil { opacity:1; }
+  #band .sweep { position:absolute; left:0; right:0; height:2px; background:var(--gold);
+                 opacity:0; pointer-events:none;
+                 transition:opacity 200ms ease-out; }
+  body.working #band .sweep { opacity:1; animation:sweep 1.4s linear infinite; }
+  /* the travel is the band's measured height, fed in as --bandh, so the bar never
+     sweeps past the picture or stops short of it at any viewport. */
+  @keyframes sweep { from { transform:translateY(-4px); }
+                     to   { transform:translateY(var(--bandh, 460px)); } }
+  #band .step { position:absolute; left:var(--pad); bottom:var(--s4); opacity:0;
+    font:10px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--cream);
+    font-variant-numeric:tabular-nums; transition:opacity 200ms ease-out; }
+  body.working #band .step { opacity:1; }
+
+  /* THE ONE AUTHORED MOMENT — a hard centre-out wipe. */
+  @keyframes wipe { from { clip-path:inset(0 50% 0 50%); } to { clip-path:inset(0 0 0 0); } }
+  #band .field.arrive { animation:wipe 520ms var(--ease-in-out) both; }
+
+  /* ══ THE HEADLINE BAND ══════════════════════════════════════════════════════ */
+  #headline { padding:var(--s6) var(--pad) var(--s5); }
+  #headline h2 { font-family:var(--serif); font-weight:600;
+    font-size:clamp(32px, 5.4vw, 76px); line-height:1.0; letter-spacing:-0.03em;
+    color:var(--cream); margin:0; max-width:18ch; text-wrap:balance; }
+  #headline .meta { margin-top:var(--s4); display:flex; gap:var(--s4); flex-wrap:wrap;
+    font:10px var(--mono); letter-spacing:.16em; text-transform:uppercase;
+    color:var(--faint); font-variant-numeric:tabular-nums; }
+  #headline .meta b { color:var(--dim); font-weight:500; }
+  #headline .acts { margin-top:var(--s4); display:flex; gap:var(--s2); flex-wrap:wrap; }
+
+  /* ③ THE STRIP BAND — edge to edge, no gutters, thumbs butt-jointed with a
+     hairline between them. A row of separated pills is what makes the shipped
+     page one flat texture; a continuous strip reads as film. */
+  #strip { display:flex; overflow-x:auto; border-block:1px solid var(--line);
+           scroll-snap-type:x proximity; }
+  .thumb { width:clamp(112px, 12vw, 168px); height:clamp(76px, 8vw, 112px); flex:0 0 auto;
+    padding:0; border:0; border-inline-end:1px solid var(--line); cursor:pointer;
+    position:relative; background:#0f0d17; scroll-snap-align:start;
+    transition:filter 150ms ease-out, scale 150ms var(--ease-out); }
+  .thumb .field { position:absolute; inset:0; }
+  .thumb .n { position:absolute; left:8px; bottom:6px; font:9.5px var(--mono);
+    color:var(--cream); background:rgba(11,10,16,.7); padding:2px 6px; border-radius:4px;
+    font-variant-numeric:tabular-nums; }
+  .thumb { filter:saturate(.55) brightness(.72); }
+  .thumb:active { scale:0.98; }
+  @media (hover:hover) and (pointer:fine) { .thumb:hover { filter:none; } }
+  /* selected: full colour AND a solid accent rule along the bottom edge — state is
+     never carried by colour alone. This is a full-bleed strip cell, not a rounded
+     card, so it is not the banned side-stripe idiom. */
+  .thumb.on { filter:none; }
+  .thumb.on::after { content:""; position:absolute; inset:auto 0 0 0; height:3px;
+                     background:var(--gold); }
+
+  /* ══ ④⑤⑥⑦ THE SLAB — the composer, and the one loud colour region ══════════ */
+  #composer { padding:var(--s5) var(--pad) 0; }
+  #composer textarea { display:block; width:100%; border:0; background:transparent;
+    resize:none; outline:none; color:var(--cream); font:clamp(15px,1.5vw,20px)/1.5 var(--sans);
+    min-height:62px; padding:0; }
+  #composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap;
+          margin-top:var(--s3); padding-bottom:var(--s4); }
+  .crow .grow { flex:1 1 auto; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:999px;
+         padding:2px; gap:2px; }
+  .seg > button { border:0; background:transparent; color:var(--dim); height:26px;
+    padding:0 13px; border-radius:999px; font:11.5px var(--sans); cursor:pointer;
+    transition:background-color 100ms ease-out, color 100ms ease-out; }
+  .seg > button.on { background:var(--on-wash); color:var(--cream); }
+  button.plain { height:30px; padding:0 13px; border-radius:999px; border:1px solid var(--line);
+    background:transparent; color:var(--dim); font:500 11.5px var(--sans); cursor:pointer;
+    transition:scale 150ms var(--ease-out), color 150ms ease-out, border-color 150ms ease-out; }
+  button.plain:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) {
+    button.plain:hover { color:var(--cream); border-color:var(--line2); } }
+
+  /* THE ACCENT BAR. Full width, the page's one owned colour region, the primary
+     action, and — while a job runs — the determinate progress readout, draining
+     from the right. Loud because it is load-bearing, not because it is decorated. */
+  #go { position:relative; display:block; width:100%; height:64px; border:0; padding:0;
+    cursor:pointer; overflow:hidden; background:var(--card);
+    transition:filter 150ms ease-out; }
+  #go .fill { position:absolute; inset:0; background:var(--gold);
+              transform-origin:left center; }
+  #go.running .fill { transition:scale 300ms linear; }
+  #go.settling .fill { transition:scale 460ms var(--ease-in-out); }
+  #go .lbl { position:relative; display:flex; align-items:center; justify-content:center;
+    gap:10px; height:100%; color:var(--on-accent);
+    font:650 clamp(15px,1.5vw,18px) var(--sans); letter-spacing:-.01em;
+    /* the label rides ON the fill, so it inherits the fill's colour contract:
+       chromatic ink on a coloured surface, never a near-neutral grey. */
+    mix-blend-mode:normal; }
+  #go.working .lbl { color:var(--cream); }
+  #go:active { filter:brightness(1.06); }
+  #go:disabled { cursor:default; }
+  .spin { width:14px; height:14px; border-radius:50%; border:2px solid rgba(239,231,215,.28);
+          border-top-color:currentColor; animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  #advisory { padding:var(--s3) var(--pad) 0; }
+  footer { padding:var(--s6) var(--pad) 120px; color:var(--faint); font:10.5px var(--mono); }
+
+  @media (prefers-reduced-motion:reduce) {
+    #band .field.arrive { animation:none; }
+    body.working #band .sweep { animation:none; opacity:.6; top:50%; }
+    /* the bar's drain IS the progress value — it keeps moving, it just stops easing */
+    #go.settling .fill { transition:scale 200ms linear; }
+    * { transition-duration:0.01ms; }
+    #go .fill { transition-duration:200ms; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:60; padding:9px 16px;
+    font:10.5px/1.5 var(--mono); color:var(--faint); background:rgba(11,10,16,.94);
+    border-top:1px solid var(--line); -webkit-backdrop-filter:blur(12px);
+    backdrop-filter:blur(12px); display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Generate</h1>
+  <span class="chip c-ok" title="ComfyUI 0.3.x · port 8188 · torch 2.4."><i class="dot on"></i>ComfyUI</span>
+  <span class="chip" title="Shown while anything is downloading or when free space gets tight.">⛁ Free ~48 GB</span>
+  <span class="grow"></span>
+  <span class="chip act" title="Models on disk, their sizes and licences.">models ▸</span>
+</header>
+
+<!-- ② the band -->
+<section id="band">
+  <div class="field f1 arrive" id="field"></div>
+  <div class="veil"></div>
+  <div class="sweep"></div>
+  <div class="step" id="step">step 8 / 24</div>
+</section>
+
+<!-- the headline -->
+<section id="headline">
+  <h2 id="title">A red fox moving quickly through a snowy forest, morning light</h2>
+  <div class="meta">
+    <span>SDXL Turbo</span><span><b>1024 × 683</b></span><span>24 steps</span>
+    <span>seed <b>41 883</b></span><span><b>9.4 s</b></span><span><b>1.7 MB</b></span>
+  </div>
+  <div class="acts">
+    <button class="plain">Reveal</button>
+    <button class="plain">Reuse settings</button>
+    <button class="plain">Detail ▸</button>
+  </div>
+</section>
+
+<!-- ③ the strip -->
+<div id="strip">
+  <button class="thumb on"><span class="field f1"></span><span class="n">24</span></button>
+  <button class="thumb"><span class="field f2"></span><span class="n">23</span></button>
+  <button class="thumb"><span class="field f3"></span><span class="n">22</span></button>
+  <button class="thumb"><span class="field f2"></span><span class="n">21</span></button>
+  <button class="thumb"><span class="field f1"></span><span class="n">20</span></button>
+  <button class="thumb"><span class="field f3"></span><span class="n">19</span></button>
+  <button class="thumb"><span class="field f1"></span><span class="n">18</span></button>
+  <button class="thumb"><span class="field f2"></span><span class="n">17</span></button>
+</div>
+
+<div id="advisory"></div>
+
+<!-- ④⑤⑥⑦ -->
+<section id="composer">
+  <textarea id="prompt" rows="2" placeholder="a red fox moving quickly through a snowy forest, morning light"></textarea>
+  <div class="crow">
+    <div class="seg"><button class="on">Image</button><button>Clip</button></div>
+    <button class="plain">SDXL Turbo · ready ▾</button>
+    <button class="plain">More ▸</button>
+    <span class="grow"></span>
+    <span class="caps" id="hint">24 results on disk</span>
+  </div>
+</section>
+
+<button id="go"><span class="fill"></span><span class="lbl">Generate</span></button>
+
+<footer>generate · mockup d · fake data · the band is an abstract colour field, not a rendered picture</footer>
+
+<div id="note">
+  <b>D · The Poster</b>
+  <span><b style="color:var(--dim)">impeccable / bolder</b> commit then clarify — one decisive move, everything else quieted</span>
+  <span><b style="color:var(--dim)">impeccable / colorize</b> the strongest colour owns a region and is spent on the primary action, never on decoration</span>
+  <span><b style="color:var(--dim)">Emil</b> one authored moment (a 520 ms centre-out wipe); progress is <code>linear</code>; exit faster than entrance</span>
+</div>
+
+<script>
+(function () {
+  var go = document.getElementById('go'), fill = go.querySelector('.fill'),
+      lbl = go.querySelector('.lbl'), field = document.getElementById('field'),
+      step = document.getElementById('step'), title = document.getElementById('title'),
+      prompt = document.getElementById('prompt'), advisory = document.getElementById('advisory'),
+      band = document.getElementById('band');
+  var fields = ['f1','f2','f3'], n = 0, busy = false;
+
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    var text = prompt.value.trim() || prompt.placeholder;
+    go.disabled = true; go.classList.add('working');
+    lbl.innerHTML = '<span class="spin"></span>Generating';
+    go.setAttribute('aria-busy', 'true');
+    document.body.classList.add('working');
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>SDXL Turbo</b>. ' +
+      'One job at a time — a second would fight this one for the GPU.</p>';
+
+    /* the bar drains to empty faster than it refills — exit faster than entrance */
+    go.classList.remove('running'); go.classList.add('settling');
+    fill.style.scale = '0 1';
+
+    setTimeout(function () {
+      go.classList.remove('settling'); go.classList.add('running');
+      var s = 0, total = 24;
+      var iv = setInterval(function () {
+        s += 1 + Math.floor(Math.random() * 2);
+        if (s >= total) {
+          clearInterval(iv);
+          step.textContent = 'step ' + total + ' / ' + total;
+          go.classList.remove('running'); go.classList.add('settling');
+          fill.style.scale = '1 1';
+          setTimeout(function () {
+            document.body.classList.remove('working');
+            go.classList.remove('working');
+            n = (n + 1) % fields.length;
+            field.className = 'field ' + fields[n];
+            void field.offsetWidth; field.classList.add('arrive');
+            title.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+            advisory.innerHTML = '';
+            lbl.textContent = 'Generate';
+            go.disabled = false; go.removeAttribute('aria-busy'); busy = false;
+          }, 480);
+        } else {
+          step.textContent = 'step ' + s + ' / ' + total;
+          fill.style.scale = (s / total).toFixed(3) + ' 1';
+        }
+      }, 300);
+    }, 260);
+  });
+
+  document.querySelectorAll('.thumb').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.thumb').forEach(function (o) { o.classList.remove('on'); });
+      t.classList.add('on');
+      field.className = t.querySelector('.field').className;
+      void field.offsetWidth; field.classList.add('arrive');
+    });
+  });
+
+  /* the sweep's travel is the band's real height, read once and on resize, so it
+     never sweeps past the picture or stops short of it. */
+  function sweepH() {
+    document.documentElement.style.setProperty('--bandh', band.offsetHeight + 'px');
+  }
+  sweepH(); addEventListener('resize', sweepH);
+})();
+</script>
+</body>
+</html>
