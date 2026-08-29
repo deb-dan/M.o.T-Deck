@@ -1,6 +1,14 @@
-/* THE GENERATE PAGE (bridge/panel/comfy.html) — v2, the chip-first surface.
+/* THE GENERATE PAGE (bridge/panel/comfy.html) — v3, the Patchbay surface.
  *
  * Run: node bridge/tests/test_comfy_page.js
+ * Measure another copy:  COMFY_HTML=/path/to/comfy.html node bridge/tests/test_comfy_page.js
+ *
+ * v3 re-skinned and re-structured the page onto docs/mockups/2026-08-29/generate-j.html
+ * (spec v3): settings rail | media stage | results rail, the stage RESIZABLE and
+ * SPLITTABLE into 1/2/4 panes, and the REAL-DATA RULE — every chip, number, thumbnail
+ * and label comes from the endpoints or is absent. Groups 1–5 below are v2's and are
+ * unchanged in intent (the mechanics survived the re-skin item by item); groups 6–8 are
+ * the new layout, Debi's stage, and the real-data rule.
  *
  * WHAT THIS GUARDS, group by group:
  *
@@ -35,7 +43,11 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
-const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'comfy.html'), 'utf8');
+/* COMFY_HTML lets the same harness measure a DIFFERENT copy of the page, which is how
+   the at-rest count below is compared old-vs-new across a redesign rather than quoted
+   from a previous report. The gate itself always runs against the shipped file. */
+const PAGE = process.env.COMFY_HTML || path.join(ROOT, 'bridge', 'panel', 'comfy.html');
+const html = fs.readFileSync(PAGE, 'utf8');
 const py = fs.readFileSync(path.join(ROOT, 'bridge', 'routers', 'comfy.py'), 'utf8');
 const css = html.split('<style>')[1].split('</style>')[0];
 
@@ -61,7 +73,8 @@ function makeEnv() {
   function node(id) {
     return {
       id, _html: '', _text: '', className: '', hidden: false, title: '',
-      dataset: {}, style: {}, childNodes: [], value: '',
+      dataset: {}, style: { setProperty() {}, removeProperty() {} },
+      childNodes: [], value: '',
       offsetWidth: 100, offsetHeight: 40,
       get innerHTML() { return this._html; },
       set innerHTML(v) { this._html = String(v); written.push({ id, html: String(v) }); },
@@ -100,16 +113,27 @@ function makeEnv() {
 }
 
 const bodyScript = html.split('<script>').pop().split('</script>')[0];
-function runPage(state, gallery, mutate) {
+/* A recording localStorage, so "the view state is persisted" is EXECUTED rather than
+   grepped — and so the test can prove the page writes its own key and nothing else. */
+function makeStore(seed) {
+  const m = Object.assign({}, seed || {});
+  return { _m: m, getItem(k) { return k in m ? m[k] : null; },
+           setItem(k, v) { m[k] = String(v); }, removeItem(k) { delete m[k]; } };
+}
+function runPage(state, gallery, mutate, store) {
   const env = makeEnv();
   const fn = new Function(
     'document', 'window', 'localStorage', 'fetch', 'EventSource', 'setTimeout',
     'clearTimeout', 'addEventListener', 'location',
     bodyScript + '\n;return { S, render, gb, secs, cardAction, stateVerdict, ' +
     'licenseVerdict, healthVerdict, measuredVerdict, diskVerdict, engineVerdict, ' +
-    'modelVerdict, itemVerdict, tipHtml, tipPlain, refusalHtml };');
+    'modelVerdict, itemVerdict, tipHtml, tipPlain, refusalHtml, ' +
+    /* v3 — Debi's stage + the hue type system, all pure and all executed below */
+    'SPLITS, setSplit, clampFrac, paneItem, stageItem, assign, hueFor, aspectOf, ' +
+    'pinCurrent, resetUntouched, ' +
+    'advDirty, loadView, saveView, AT_REST_BUDGET };');
   const M = fn(
-    env.document, env.window, { getItem() { return null; }, setItem() {} },
+    env.document, env.window, store || makeStore(),
     () => new Promise(() => {}),                       // load() never resolves: inert
     function () { return { onmessage: null }; },
     () => 0, () => {}, () => {}, env.window.location);
@@ -327,6 +351,14 @@ function proseAudit(label, res, budget) {
 const dailyNodes = proseAudit('daily use', daily, 0);
 ok(dailyNodes.filter(n => words(n.text) >= 8).length === 0,
    'daily use: the page stands NO prose at all — chips and labels only');
+/* THE MEASUREMENT ITSELF, PRINTED. v1 stood 106 text elements / 27 sentences; v2's
+   chip-first surface cut that; v3 re-structures onto the Patchbay layout, which adds
+   the rail's field labels (one or two words each) and removes the composer's. The
+   number is printed rather than asserted at a magic value — the ASSERTION that matters
+   is the sentence rule above; this line is how a redesign reports what it did to the
+   standing text. Compare with:  COMFY_HTML=<other copy> node bridge/tests/test_comfy_page.js */
+console.log('  ——   at rest (daily use): ' + dailyNodes.length + ' standing text elements, '
+  + dailyNodes.filter(n => words(n.text) >= 8).length + ' sentences  [' + PAGE + ']');
 
 // (b) FIRST RUN: nothing on disk. Exactly one sentence — the invitation.
 const first = runPage(
@@ -444,9 +476,18 @@ ok(!/data-design="studio"[^{]*\bh1\b/.test(cssNC),
 // CHROME control font is a real declaration at specificity (0,0,1) and the base
 // `button { font: … }` shorthand is too, so the chrome rule only wins if it comes LATER
 // in the file. It used to come first, and studio chrome silently rendered 12px type.
-ok(cssNC.indexOf('html[data-chrome="studio"]) button') >
-   cssNC.indexOf('button {\n    height:var(--ctl-h)'),
-   'the studio-chrome control font rule sits AFTER the base button rule it must beat');
+// ⚠️ AND THE ASSERTION ITSELF MUST NOT GO VACUOUS: it used to look for a base rule
+// spelled `button { height:var(--ctl-h)`, which v3's Patchbay control block renamed —
+// indexOf returned -1 and "later than -1" passed while proving nothing. Both indexes
+// are now required to exist, and the chrome block is checked against the LATEST of the
+// base rules it has to beat (`.fbox textarea` and `button.primary` are 0,1,1 — a tie
+// with a `:where()` rule, decided by order).
+const iChrome = cssNC.indexOf(':where(html[data-chrome="studio"]) button');
+const iBase = Math.max(cssNC.indexOf('button {'), cssNC.indexOf('.fbox textarea {'),
+                       cssNC.indexOf('button.primary {'));
+ok(iChrome > 0 && iBase > 0 && iChrome > iBase,
+   'the studio-chrome control font rules sit AFTER every base control rule they must '
+   + 'beat (both anchors found: ' + (iChrome > 0) + '/' + (iBase > 0) + ')');
 
 // ── 5. the honesty ledger (§5) — every mechanic, its new home ────────────────
 console.log('\n5. the honesty ledger — nothing deleted, everything demoted');
@@ -529,6 +570,261 @@ ok(done.M.S.form.frames === 17,
 ok(done.M.S.form.steps === 20, 'so do the steps actually used');
 ok(done.M.S.form.seed === null,
    'the seed field still resets to random after a run (the deliberate v1 behaviour, kept)');
+
+// ADVERSARIAL FINDING (2026-08-29), now a gate: a run that DIED must not vanish. The
+// progress chips come off the LIVE job, so an errored job simply stopped being drawn —
+// the bar emptied, the button said Generate again, and the previous picture stayed on
+// the stage as if nothing had been asked for.
+const failed = runPage(STATE({ jobs: [{ id: 'j7', state: 'error', pick_title: 'SDXL base 1.0',
+  shape: '1024×1024', error: 'ComfyUI: OutOfMemoryError on node 3', submitted: 1 }] }), GAL);
+ok(/last run failed/.test(failed.markup), 'a failed run says so, until the next one');
+proseAudit('a failed run', failed, 0);
+const stopped = runPage(STATE({ jobs: [{ id: 'j8', state: 'cancelled',
+  pick_title: 'SDXL base 1.0', submitted: 1 }] }), GAL);
+ok(/last run stopped/.test(stopped.markup), 'a stopped run says so too, and stays quiet about why');
+const deadAndFailed = runPage(STATE({ comfy: { up: false, port: 8188, error: 'refused' },
+  jobs: [{ id: 'j7', state: 'error', error: 'x', submitted: 1 }] }), GAL);
+ok(/Engine is off/.test(deadAndFailed.markup) && !/last run failed/.test(deadAndFailed.markup),
+   '…and when the engine is DOWN the actionable line wins over the post-mortem');
+
+// ── 6. THE PATCHBAY LAYOUT (spec v3) ────────────────────────────────────────
+// docs/mockups/2026-08-29/generate-j.html is the binding design source. What is
+// pinned here is the STRUCTURE and the DENSITY UNIT — the two things the "defaults
+// look so wide" verdict was about — not the prettiness, which no test can hold.
+console.log('\n6. the Patchbay layout: three columns, 208/184 rails, 18px rows');
+const staticHtml = html.split('</style>')[1].split('<script>')[0];
+for (const id of ['id="rail"', 'id="centre"', 'id="results"', 'id="stage"',
+                  'id="grip"', 'id="thumbs"', 'id="railbody"', 'id="keyrow"',
+                  'id="splitseg"', 'id="verb"']) {
+  ok(staticHtml.includes(id), `the frame carries ${id}`);
+}
+ok(/#frame \{[^}]*grid-template-columns:var\(--railw\) minmax\(0,1fr\) var\(--resw\)/
+     .test(css.replace(/\s+/g, ' ')),
+   'the frame is settings rail | centre | results rail, by token');
+const rootBlk = css.split(':root {')[1].split('}')[0];
+ok(/--railw:208px/.test(rootBlk) && /--resw:184px/.test(rootBlk),
+   'the rails are 208 / 184 px (generate-j’s measured density, not a round guess)');
+ok(/--row:18px/.test(rootBlk) && /--ink:10\.5px/.test(rootBlk),
+   '…on an 18px row unit at 10.5px ink');
+ok(/--gut:8px/.test(rootBlk), '…with 8px gutters');
+ok(/\.srow \{[^}]*grid-template-columns:\.4fr \.6fr/.test(css.replace(/\s+/g, ' ')),
+   'every settings row is split at Blender’s UI_ITEM_PROP_SEP_DIVIDE 0.4 — one constant');
+ok(/#rail\.basic \.adv \{ display:none/.test(css.replace(/\s+/g, ' ')),
+   'the Basic/Advanced gate is a CSS gate over the same rows, not a second markup path');
+ok(/border-bottom:1px solid var\(--fam/.test(css),
+   'a panel’s label bar is UNDERLINED in its family hue (not the banned side stripe)');
+ok(/max-height:calc\(2 \* var\(--thumb/.test(css.replace(/\s+/g, ' ')),
+   'the results rail shows two rows plus a measured peek of the third');
+ok(/aspect-ratio:3\/2/.test(css),
+   'thumbnails are 3:2 — a square in a wide column is the round-1 defect');
+// Emil Kowalski's motion rules, taken exactly rather than approximated.
+ok(/--eo:cubic-bezier\(0\.23, 1, 0\.32, 1\)/.test(css),
+   'the ease-out token is Emil’s exact curve, not the familiar 0.4,0,0.2,1');
+ok(/transform:scale\(\.97\)/.test(css.replace(/\s+/g, '')) ||
+   /scale\(\.97\)/.test(css), 'press feedback is scale(.97)…');
+ok(/button:active/.test(css), '…on :active (pointer-down), not on release');
+ok(/S\.full \? 300 : 240/.test(html),
+   'the fullscreen FLIP is 300ms in / 240ms out — a collapse is shorter than its expansion');
+ok(/transition:opacity 620ms/.test(css),
+   'the fullscreen ground is on Carbon slow-02 (620ms), so it recedes rather than competes');
+ok(/prefers-reduced-motion/.test(css) && /prefers-reduced-motion/.test(html.split('<script>').pop()),
+   'the vestibular path exists in BOTH the stylesheet and the FLIP itself');
+ok(/max-width:900px/.test(css), 'the rails stack on a narrow window');
+// ALL DESIGNS, v3 tokens: the Patchbay chrome and the hue wheel are token families, so
+// a light look gets black hairlines and a low-lightness wheel instead of invisible ones.
+for (const sel of [':root', 'html[data-theme="light"]', 'html[data-theme="gold"]',
+                   'html[data-theme="cyber"]', 'html[data-design="studio"]',
+                   'html[data-design="studio"][data-dvariant="light"]']) {
+  // comments first: the studio block explains a specificity tie with a `{ … }` inside
+  // a comment, and splitting on raw text would end the block at that brace.
+  const blk = css.replace(/\/\*[\s\S]*?\*\//g, '').split(sel + ' {')[1].split('}')[0];
+  ok(/--zborder:/.test(blk) && /--img-edge:/.test(blk) && /--stage-bg:/.test(blk),
+     `${sel} defines the Patchbay chrome (hairline, image edge, stage ground)`);
+  const hs = ['--h1', '--h2', '--h3', '--h4', '--h5', '--h6', '--h7']
+    .filter(h => new RegExp(h + ':').test(blk));
+  ok(hs.length === 7, `${sel} defines the whole seven-hue wheel (${hs.length}/7)`);
+}
+
+// ── 7. DEBI'S STAGE — resizable and splittable, and both are real ───────────
+console.log('\n7. the media stage: 1/2/4 panes, resizable, persisted');
+const G4 = { ok: true, total_h: '5 MB', output_dir: '/x/output', items: [
+  Object.assign({}, GAL.items[0], { filename: 'a.png' }),
+  Object.assign({}, GAL.items[0], { filename: 'b.png', seed: 2, pick: 'wan',
+                                    pick_title: 'Wan 2.1 T2V 1.3B' }),
+  Object.assign({}, GAL.items[0], { filename: 'c.png', seed: 3 }),
+  Object.assign({}, GAL.items[0], { filename: 'd.png', seed: 4 }),
+] };
+const one = runPage(STATE(), G4);
+ok((one.markup.match(/class="pane"/g) || []).length === 1,
+   'the default stage is ONE pane');
+ok(/id="panes" class="s1"/.test(one.markup), '…and says so in the layout class');
+const two = runPage(STATE(), G4, (S) => { S.split = 2; });
+ok((two.markup.match(/class="pane"/g) || []).length === 2, 'split 2 draws two panes');
+const four = runPage(STATE(), G4, (S) => {
+  S.split = 4; S.panes = ['a.png', 'b.png', 'c.png', 'd.png']; });
+ok((four.markup.match(/class="pane"/g) || []).length === 4, 'split 4 draws four panes');
+for (const fn of ['a.png', 'b.png', 'c.png', 'd.png']) {
+  ok(new RegExp('data-fn="' + fn + '"').test(four.markup),
+     `…each holding its OWN result (${fn}) — side-by-side comparison, not four copies`);
+}
+ok((four.markup.match(/aria-current="true"/g) || []).length >= 1 &&
+   /data-i="0" aria-current="true"/.test(four.markup),
+   'exactly one pane is current, and the current one is marked for the keyboard too');
+ok(four.M.SPLITS.join(',') === '1,2,4', 'the only legal splits are 1, 2 and 4');
+// splitting fills the new panes from the gallery: four empty boxes would make the
+// user click four times to find out what the feature is for.
+const grown = runPage(STATE(), G4);
+grown.M.setSplit(4);
+const grownFns = grown.M.S.panes.slice(0, 4);
+ok(new Set(grownFns).size === 4 && grownFns.every(Boolean),
+   'splitting fills every new pane with a DIFFERENT real result from the gallery');
+const thin = runPage(STATE(), { ok: true, total_h: '2 MB', output_dir: '/x',
+  items: [G4.items[0]] });
+thin.M.setSplit(4);
+ok(thin.M.S.panes[1] === null && thin.M.S.panes[2] === null,
+   '…and leaves panes empty when the gallery genuinely has nothing more to show');
+// collapsing keeps the picture you were actually looking at
+const collapse = runPage(STATE(), G4, (S) => {
+  S.split = 4; S.panes = ['a.png', 'b.png', 'c.png', 'd.png']; S.pane = 2; S.sel = 'c.png'; });
+collapse.M.setSplit(1);
+ok(collapse.M.S.pane === 0 && collapse.M.S.panes[0] === 'c.png',
+   'collapsing to one pane keeps the result that WAS current, not whatever pane 0 held');
+ok(collapse.M.S.panes[2] === 'a.png',
+   '…and the displaced one is swapped rather than dropped, so re-splitting restores it');
+const badSplit = runPage(STATE(), G4);
+badSplit.M.setSplit(3);
+ok(badSplit.M.S.split === 1, 'an illegal split is refused rather than half-applied');
+// A pane holding a file that has since left the gallery must go EMPTY, not keep a
+// picture of a file that is no longer on disk (the LIES class, at pane rank).
+const stale = runPage(STATE(), G4, (S) => {
+  S.split = 2; S.panes = ['a.png', 'deleted-outside.png']; });
+ok(stale.M.paneItem(1) === null,
+   'a pane pointing at a file that is gone from the gallery resolves to nothing…');
+ok(/empty pane/.test(stale.markup), '…and paints as an empty pane');
+ok(!/deleted-outside\.png/.test(stale.markup), '…with no trace of the vanished file');
+// promote: clicking a pane that is not current makes it the subject of every fact
+const promoted = runPage(STATE(), G4, (S) => {
+  S.split = 4; S.panes = ['a.png', 'b.png', 'c.png', 'd.png']; S.pane = 1;
+  S.sel = 'b.png'; });
+ok(/data-i="1" aria-current="true"/.test(promoted.markup),
+   'promoting a pane moves the current mark to it');
+ok(promoted.M.stageItem().filename === 'b.png',
+   '…and the caption chips and the result facts follow the promoted pane');
+ok(/Wan 2\.1 T2V 1\.3B/.test(promoted.markup),
+   '…so the rail’s facts describe THAT result, not the first one');
+// resize
+const rz = runPage(STATE(), GAL);
+ok(rz.M.clampFrac(0.5) === 0.5, 'the stage fraction passes a legal value through');
+ok(rz.M.clampFrac(9) === 0.82 && rz.M.clampFrac(-4) === 0.22,
+   '…clamps to 22–82% so neither region can be dragged out of existence');
+ok(rz.M.clampFrac('nonsense') === 0.58,
+   '…and a corrupt persisted value falls back to the default rather than to NaN');
+ok(/height:calc\(var\(--stagef/.test(css),
+   'the stage height IS that fraction — the layout genuinely reflows, nothing overlays');
+ok(/cursor:row-resize/.test(css) && /aria-orientation="horizontal"/.test(html),
+   'the handle is a real separator control (mouse and keyboard)');
+ok(/ArrowUp/.test(html) && /ArrowDown/.test(html),
+   '…and ↑↓ nudge it, so the feature is not mouse-only');
+// persistence, executed
+const store = makeStore();
+const persisted = runPage(STATE(), G4, (S) => { S.split = 4; S.stagef = 0.34; }, store);
+persisted.M.saveView();
+ok(!!store._m['harness-comfy-view'], 'the view state persists under its OWN key');
+ok(JSON.parse(store._m['harness-comfy-view']).split === 4 &&
+   JSON.parse(store._m['harness-comfy-view']).stagef === 0.34,
+   '…carrying the split and the stage fraction');
+ok(!('harness-theme' in store._m) && !('harness-chrome' in store._m) &&
+   !('harness-design' in store._m),
+   '…and the page still writes NONE of the panel’s three appearance keys');
+const restored = runPage(STATE(), G4, null,
+  makeStore({ 'harness-comfy-view': '{"split":2,"stagef":0.7,"panes":["c.png"]}' }));
+ok(restored.M.S.split === 2 && restored.M.S.stagef === 0.7,
+   'a reload restores the stage you left');
+const junk = runPage(STATE(), G4, null,
+  makeStore({ 'harness-comfy-view': 'not json at all' }));
+ok(junk.M.S.split === 1 && junk.M.S.stagef === 0.58,
+   '…and a corrupt stored value is ignored silently rather than throwing on boot');
+ok(rz.M.aspectOf({ shape: '832×480' }).toFixed(3) === (832 / 480).toFixed(3),
+   'fullscreen fits the result’s REAL aspect ratio, read off the run record');
+ok(rz.M.aspectOf({}) === 1.5,
+   '…and falls back to 3:2 only when the record does not say');
+/* WALKED PAIR (2026-08-29), and the two halves pull against each other, so both are
+   pinned: an UNASSIGNED pane must follow the newest result (otherwise a finished run
+   leaves the old picture on the stage while the counts move — a lie at stage rank),
+   and a pane you LEAVE must keep what it was showing (otherwise promoting a neighbour
+   blanks the picture you were looking at). */
+const fresh = runPage(STATE(), G4);
+ok(fresh.M.S.panes[0] === null,
+   'a pane nobody has assigned stays unassigned — it is a follower, not a pin');
+ok(fresh.M.stageItem().filename === 'a.png',
+   '…and it shows the newest result in the gallery, so a finished run lands on it');
+fresh.M.pinCurrent();
+ok(fresh.M.S.panes[0] === 'a.png',
+   'leaving a pane (promote, or a split) pins what it was showing…');
+fresh.M.S.gallery = { ok: true, total_h: '6 MB', output_dir: '/x',
+  items: [Object.assign({}, GAL.items[0], { filename: 'newer.png' })].concat(G4.items) };
+ok(fresh.M.stageItem().filename === 'a.png',
+   '…and a pinned pane then holds its own result while newer ones arrive');
+ok(/S\.panes\[S\.pane\] = null;/.test(html),
+   'submitting a run RELEASES the current pane, so the result lands where you are looking');
+
+// ── 8. THE REAL-DATA RULE (Debi, at GO) ─────────────────────────────────────
+// The mockup carried invented depiction data. Nothing here may. Every chip, number,
+// thumbnail and label is read from the payload, or it is ABSENT — never a zero, a
+// placeholder or a plausible default.
+console.log('\n8. the real-data rule: live values or nothing');
+// checked against what the page PAINTS (every scenario's markup plus the static body),
+// not against the source, where the mockup's values legitimately appear in the comment
+// that bans them.
+const painted = allMarkup + '\n' + staticHtml;
+ok(!/2\.1 s|Flux Schnell|SDXL Turbo|418223|18\.4 MB/.test(painted),
+   'not one of the mockup’s invented values survives anywhere the user can read');
+ok(!/Concurrency/.test(painted),
+   'the mockup’s "Concurrency: 1 at a time" is gone — no endpoint reports it');
+// the hue legend is COUNTED off the gallery
+ok(/>2</.test(runPage(STATE(), { ok: true, total_h: '4 MB', output_dir: '/x',
+     items: [Object.assign({}, GAL.items[0], { filename: 'p.png' }),
+             Object.assign({}, GAL.items[0], { filename: 'q.png' })] }).markup),
+   'the "models here" legend counts the REAL gallery, so it can never over-report');
+// a record missing a field renders NO row rather than a dash
+const sparse = runPage(STATE(), { ok: true, total_h: '2 MB', output_dir: '/x/output',
+  items: [{ filename: 'z.png', subfolder: 'harness', kind: 'image', state: 'ok',
+            pick: 'sdxl', pick_title: 'SDXL base 1.0', mode: 'image',
+            prompt: 'x', shape: '1024×1024' }] });
+// the FACT rows (the results rail's key/value list), not the settings rail's fields:
+// a seed you can type is a control, a seed you are told is a claim.
+ok(!/<span>Seed<\/span>/.test(sparse.markup) && !/<span>Time<\/span>/.test(sparse.markup) &&
+   !/<span>Peak<\/span>/.test(sparse.markup),
+   'a result with no seed / time / peak shows no seed, time or peak FACT row');
+ok(/<span>Size<\/span>/.test(sparse.markup),
+   '…and the rows it can fill are still there (nothing collapses to an empty rail)');
+ok(!/—/.test(sparse.markup.replace(/<option[^>]*>[^<]*<\/option>/g, '')),
+   '…and invents no em-dash placeholder to fill the shape');
+ok(!/data-act="reuse-seed"/.test(sparse.markup),
+   '…and offers no "reuse this seed" for a seed we do not have');
+ok(/1024×1024/.test(sparse.markup),
+   '…while the fields it DOES have are surfaced verbatim');
+// A MODE OR MODEL SWITCH RE-READS THAT TEMPLATE'S OWN DEFAULTS — unless you typed.
+// Walked 2026-08-29: after an SDXL run wrote 1024×1024 back, switching to Clip kept
+// 1024×1024 on a model whose stock video shape is 832×480 — the page was offering a
+// far heavier job than the template it claims to run.
+const sw = runPage(STATE(), GAL);
+sw.M.S.form = { mode:'image', width:1024, height:1024, steps:25, frames:33, fps:16 };
+sw.M.S.typed = { width:true };
+sw.M.resetUntouched();
+ok(sw.M.S.form.width === 1024, 'a number the USER typed survives a mode switch…');
+ok(sw.M.S.form.height === null && sw.M.S.form.steps === null &&
+   sw.M.S.form.frames === null && sw.M.S.form.fps === null,
+   '…and every number the PAGE wrote goes back to the new template’s own default');
+const vid = runPage(STATE(), GAL, (S) => { S.form = { mode:'video', pick:'wan' }; });
+ok(/id="f-frames"/.test(vid.markup) && /id="f-fps"/.test(vid.markup),
+   'clip mode shows the frame and fps controls the video template actually takes');
+ok(/value="832"/.test(vid.markup) && /value="480"/.test(vid.markup) &&
+   /value="33"/.test(vid.markup),
+   '…prefilled from THAT template’s defaults, read off the payload');
+ok(!/last /.test(runPage(STATE({ curation: Object.assign({}, BASE.curation,
+     { picks: [Object.assign({}, SDXL, { measured: {} })] }) }), GAL).markup),
+   'a model that has never run here quotes no "last …" time in the rail');
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
