@@ -42,6 +42,10 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S12 | 🔵 NEXT | main.swift lacks the runJavaScriptAlertPanel/Confirm/TextInput WKUIDelegate trio — alert()/confirm() are SILENT NO-OPS shell-wide (class already burned comfy.html + is why the office delete-confirm needed custom UI) | 🟡 HIGH | 🟢 Medium | 🟢 Medium | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` needs recompile+re-sign via ship.sh |
 | S13 | 🟡 LATER | /api/comfy/graph 404s for gallery items ingested before the graph field existed — dead "graph" button on old rows; backfill or hide-on-absent | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 1 file | Trivial | `@status:open` |
 | S14 | 🔵 NEXT | Full "Goose UI" slice after the embed spike lands: tab/nav wiring for the embedded surface + rename the PTY lane's labels to "Goose CLI" (Debi's naming ruling 2026-08-29); both lanes coexist | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:blocked` on the spike (in flight) + Debi seeing it |
+| S15 | 🔵 NEXT | Copy-demotion batch (surface-audit §slicing): goose/aider paragraphs, changeset-card policy sentences, Models-detail paths, chat dual status readouts, MOT pin-sha, Customize intro, consent env-var line | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟠 Excellent | 🟡 6-15 files | Small | `@status:open` cheap, one slice |
+| S16 | 🔵 NEXT | Caps→Tools: three standing paragraphs duplicate two Help sections verbatim-in-substance (index.html:5582) — demote to chips + Help link | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
+| S17 | 🟡 LATER | Audio tab curated section: seven essay cards with dependency plumbing at rest (index.html:10494) — rows + hover per the chip grammar | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
+| S18 | 🟡 LATER | Office AI panel empty state is a six-paragraph Help article (office.html:1501) — one-sentence invitation + Help link | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
 
 ### Detail - Session spillover
 
@@ -84,6 +88,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | U7 | 🟡 LATER | Ribbon AI Text-analysis actions in the WORD editor take the same shim seam but were never clicked in a .docx (inference, not measurement) | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` walk once in a real .docx |
 | U8 | ⚪ SOMEDAY | MiniMax H3 video+audio (open weights 2026-08-03, day-0 ComfyUI) — REFUSED FOR NOW by Debi: smallest set ~39.6GB vs ~48GB free disk | ⚪ LOW | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Large | `@status:blocked` on disk space; revisit when freed |
 | U9 | 🟡 LATER | ComfyUI's ASSET SYSTEM is off at our pin, so the newest workflow templates carry no `properties.models` registry — the Generate lane's curation can only be generated from the 78 of 517 templates that still do. Bridge: curate registry-bearing templates only; drift is named on the card | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:blocked` on an upstream/config change that enables `/api/assets` |
+| U10 | 🔵 NEXT | aider.html observed saying "already running in another window" while header read NOT CONNECTED — stale-state contradiction, seen once, not root-caused | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` reproduce first |
 
 ### Detail - User-reported / observed
 
