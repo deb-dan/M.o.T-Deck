@@ -90,6 +90,16 @@ prediction). Building from the brief alone would have shipped confidently wrong 
 the LIES-TO-USER class, the worst class. The lesson is general: it applies to ANY
 technical topic (memory, formats, protocols, licensing, security), not to RAM math.
 
+### 8b. An example is not the spec (Debi, 2026-08-29)
+
+When the user NAMES an example ("like Draw Things", "like LM Studio"), that example is
+one member of the reference set and the floor of quality — never the boundary of the
+search and never the design to imitate. The research pass still sweeps the field
+broadly, the governing lens stays our own principles (impeccable, the design specs,
+the shipped grammar), and the answer is DERIVED from converging evidence, not copied
+from the named app. Anchoring on the example is the same shortcut obligation 8 bans,
+wearing a compliment.
+
 ## 9. SHAPE IS SCOPE (Debi, 2026-08-29 — general form)
 
 A "shape decision" that changes what the user SEES OR GETS — UI vs terminal, embedded
