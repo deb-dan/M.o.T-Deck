@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import math
 import os
-import struct
 import subprocess
 import threading
 import time
@@ -53,288 +52,18 @@ from .appctx import ROOT
 GIB = 1024 ** 3
 MIB = 1024 ** 2
 
-# ── GGUF header reading ──────────────────────────────────────────────────────
-# Same bounded, forward-only, seek-don't-read discipline as bridge/modeltools.py's
-# chat-template cursor (which this reuses): the tokenizer arrays are megabytes and are
-# SKIPPED, never materialised. What is new here is that we keep VALUES, not just one
-# string — and that we record the LENGTH of `tokenizer.ggml.tokens` as we skip it,
-# because n_vocab is an input to the compute-buffer estimate and most GGUFs do not
-# publish it as a scalar.
-_FIXED_FMT = {0: ("B", 1), 1: ("b", 1), 2: ("H", 2), 3: ("h", 2), 4: ("I", 4),
-              5: ("i", 4), 6: ("f", 4), 7: ("?", 1), 10: ("Q", 8), 11: ("q", 8),
-              12: ("d", 8)}
-_T_STRING = 8
-_T_ARRAY = 9
-MAX_META_BYTES = 96 * 1024 * 1024
-MAX_KV_COUNT = 100_000
-MAX_STRING_BYTES = 8 * 1024 * 1024
-MAX_KEPT_ARRAY = 4096          # per-layer kv-head arrays are ~100 entries; a tokenizer
-                               # array is millions. Keep the small ones, skip the rest.
-
-# Header keys we care about, WITHOUT the architecture prefix. Everything else is
-# skipped. (Sourced from the fit-math research §8 "Inputs we already can read".)
-_WANTED = (
-    "block_count", "context_length", "embedding_length", "feed_forward_length",
-    "vocab_size", "expert_count", "nextn_predict_layers", "shared_kv_layers",
-    "full_attention_interval", "attention.head_count", "attention.head_count_kv",
-    "attention.key_length", "attention.value_length",
-    # ⚠️ THE SWA HEAD DIMENSIONS ARE THEIR OWN KEYS AND THEY ARE NOT THE GLOBAL ONES.
-    # Gemma-4 here: key_length 512 on the global layers, key_length_swa 256 on the
-    # sliding ones. Reusing the global figure for both prices the window layers at
-    # exactly 2× and put our estimate 65% over the oracle at 8k context — measured,
-    # not theorised. (Research §8 lists the key as `key_length[,_swa]`; the first
-    # draft read the bracket as optional rather than as a second key.)
-    "attention.key_length_swa", "attention.value_length_swa",
-    "attention.sliding_window",
-    "attention.sliding_window_pattern", "attention.kv_lora_rank",
-    "rope.dimension_count", "rope.scaling.factor",
-    "ssm.conv_kernel", "ssm.state_size", "ssm.group_count", "ssm.inner_size",
-    "ssm.time_step_rank",
+# ── the GGUF header, its cache, and its shape rules ──────────────────────────
+# Lifted whole into core/ggufhdr.py (U23) when this file crossed the app layer's
+# 1500-line fence; RE-EXPORTED here because `fit.gguf_hparams` is the name every caller
+# and ~20 gate assertions already spell. Reading a header and pricing one are two
+# concerns, and this is where the seam always was.
+from .ggufhdr import (                                             # noqa: F401
+    MAX_KEPT_ARRAY, MAX_KV_COUNT, MAX_META_BYTES, MAX_STRING_BYTES, SWA_DISABLED_ARCH,
+    SWA_PATTERN_DEFAULT, _Cur, _WANTED, _as_list, _gguf_hparams_parse,
+    _gguf_hparams_read, _hp_priceable, _hp_usable, _num, _PER_LAYER_KEYS,
+    _SCALAR_KEYS, _shape_word, _swa_layer, gguf_hparams, gguf_hparams_bytes,
+    header_shape_problem,
 )
-
-
-class _Cur:
-    """Forward-only reader with a hard byte budget. ValueError on anything malformed,
-    which the caller turns into "unknown" — never a crash, never an unbounded read."""
-
-    def __init__(self, fh, budget=MAX_META_BYTES):
-        self.fh, self.left = fh, int(budget)
-        self.cur_key = ""
-        self.last_array_len, self.last_array_key = 0, ""
-
-    def take(self, n):
-        n = int(n)
-        if n < 0 or n > self.left:
-            raise ValueError("read past the metadata budget")
-        b = self.fh.read(n)
-        if len(b) != n:
-            raise ValueError("truncated file")
-        self.left -= n
-        return b
-
-    def skip(self, n):
-        n = int(n)
-        if n < 0 or n > self.left:
-            raise ValueError("skip past the metadata budget")
-        self.fh.seek(n, os.SEEK_CUR)
-        self.left -= n
-
-    def u32(self):
-        return struct.unpack("<I", self.take(4))[0]
-
-    def u64(self):
-        return struct.unpack("<Q", self.take(8))[0]
-
-    def string(self):
-        n = self.u64()
-        if n > MAX_STRING_BYTES:
-            raise ValueError("implausible string length")
-        return self.take(n).decode("utf-8", errors="replace")
-
-    def value(self, vtype, keep: bool):
-        """Read one value. `keep` False = skip it (but still report array lengths)."""
-        if vtype in _FIXED_FMT:
-            fmt, size = _FIXED_FMT[vtype]
-            if not keep:
-                self.skip(size)
-                return None
-            return struct.unpack("<" + fmt, self.take(size))[0]
-        if vtype == _T_STRING:
-            n = self.u64()
-            if n > MAX_STRING_BYTES:
-                raise ValueError("implausible string length")
-            if not keep:
-                self.skip(n)
-                return None
-            return self.take(n).decode("utf-8", errors="replace")
-        if vtype == _T_ARRAY:
-            et = self.u32()
-            n = self.u64()
-            # ⚠️ RECORDED BEFORE THE PAYLOAD IS WALKED, and that is the whole point on
-            # the S2 range-read path: `tokenizer.ggml.tokens` is where a 2 MB prefix
-            # runs out, and its COUNT — which is n_vocab, an input to the compute-buffer
-            # term — is already known here. Losing it made every remote estimate ~0.27
-            # GB light (a 32k default standing in for a 152k vocab), in the direction
-            # that says "fits".
-            self.last_array_len, self.last_array_key = n, getattr(self, "cur_key", "")
-            if et == _T_ARRAY:
-                raise ValueError("nested gguf array")
-            if et in _FIXED_FMT:
-                fmt, size = _FIXED_FMT[et]
-                if keep and n <= MAX_KEPT_ARRAY:
-                    raw = self.take(size * n)
-                    return list(struct.unpack("<" + fmt * n, raw))
-                self.skip(size * n)
-                return {"_len": n}
-            if et == _T_STRING:
-                for _ in range(n):
-                    ln = self.u64()
-                    if ln > MAX_STRING_BYTES:
-                        raise ValueError("implausible string length")
-                    self.skip(ln)
-                return {"_len": n}
-            raise ValueError("unknown gguf array element type")
-        raise ValueError("unknown gguf value type")
-
-
-_HP_CACHE: dict = {}
-_HP_CACHE_MAX = 128
-
-
-def gguf_hparams(path: str) -> "dict | None":
-    """Architecture hyper-parameters for one .gguf, or None when unreadable.
-
-    None is a first-class answer and the caller MUST treat it as "no estimate" rather
-    than as a small model: the honest chip is 'No estimate', never a silent green.
-
-    Cached by (path, mtime, size): a remedy panel re-prices the same model at four
-    context sizes while the user drags a slider, and re-walking a 17 GB file's header
-    for each one turns an instant recalculation into a stutter."""
-    try:
-        st = os.stat(path)
-        ck = (path, st.st_mtime_ns, st.st_size)
-    except OSError:
-        return None
-    hit = _HP_CACHE.get(ck)
-    if hit is not None:
-        return dict(hit) if hit else None
-    got = _gguf_hparams_read(path)
-    if len(_HP_CACHE) > _HP_CACHE_MAX:
-        _HP_CACHE.clear()
-    _HP_CACHE[ck] = dict(got) if got else {}
-    return got
-
-
-def gguf_hparams_bytes(blob: bytes) -> "dict | None":
-    """The same header read, over a byte PREFIX instead of a file (S2).
-
-    The HF browser prices quants that are not on this disk: the first megabytes of a
-    remote .gguf are fetched with one HTTP range request and parsed here. Same parser,
-    same keys, same None-means-no-estimate contract — a browser badge computed by a
-    second implementation is exactly the drift this engine exists to prevent.
-
-    A prefix that stops inside the metadata raises inside _Cur and comes back None, so
-    the caller can widen the range and try once more rather than guess."""
-    import io
-    if not blob:
-        return None
-    return _gguf_hparams_parse(io.BytesIO(blob), partial_ok=True)
-
-
-def _gguf_hparams_read(path: str) -> "dict | None":
-    try:
-        with open(path, "rb") as fh:
-            return _gguf_hparams_parse(fh)
-    except OSError:
-        return None
-
-
-# What the KV/compute arithmetic actually needs before a PARTIAL header may be used.
-# Without this guard a prefix that stopped early would return {architecture, block_count}
-# and the formula would price a model with no attention shape at all — a small, precise,
-# entirely fictional number, which is the failure mode this whole engine is against.
-_MIN_HP = ("block_count",)
-
-
-def _hp_priceable(hp: "dict | None") -> bool:
-    """⚠️ A HEADER THAT PARSED IS NOT A HEADER WE CAN PRICE. Caught by the new gate on
-    a hand-built body: `GGUF` + version 3 + a zero tensor/kv count parses PERFECTLY —
-    zero keys, no exception — and formula_estimate then prices it as weights with a
-    zero KV cache and a zero compute buffer, i.e. a cheerful "Fits" for a model whose
-    shape we never read. The honest answer to a shapeless header is No estimate.
-
-    ⚠️ AND IT IS NOT "MUST HAVE ATTENTION HEADS". A pure state-space model legitimately
-    has none, and its cache IS the recurrent state — refusing it would turn a correct
-    verdict into a blank chip. Either shape counts."""
-    if not hp or not hp.get("block_count"):
-        return False
-    has_attn = bool((hp.get("attention.head_count_kv") or hp.get("attention.head_count"))
-                    and (hp.get("attention.key_length") or hp.get("embedding_length")))
-    has_ssm = bool(hp.get("ssm.state_size") or hp.get("ssm.inner_size"))
-    return has_attn or has_ssm
-
-
-def _hp_usable(hp: dict) -> bool:
-    """⚠️ THE ORDERING INVARIANT IS THE LOAD-BEARING CHECK HERE, not the key list.
-
-    llama.cpp writes general.* → <arch>.* → tokenizer.*, so a parse that reached
-    `tokenizer.ggml.tokens` has ALREADY read every architecture key this file has. A
-    parse that stopped earlier may be missing exactly the key that matters most — this
-    engine's own headline correction is `full_attention_interval`, whose absence prices
-    33 hybrid-Mamba layers where 8 hold KV (4.1× out). Missing it does not read as
-    missing: it reads as a confident, precise, wrong verdict. So a partial header is
-    accepted ONLY past the tokens array, and anything earlier falls to the wider read.
-    Measured: this rule rejects Qwen3.5-9B's 2 MB and 8 MB prefixes (its header needs
-    ~24 MB) and accepts Qwen3-4B's 2 MB one, which is exactly the split we want."""
-    return bool(hp and hp.get("_past_tokens") and _hp_priceable(hp))
-
-
-def _gguf_hparams_parse(fh, partial_ok: bool = False) -> "dict | None":
-    """`partial_ok` exists for the S2 range read and ONLY for it.
-
-    A remote GGUF's architecture keys are written before its tokenizer arrays, and the
-    tokenizer arrays are most of the header's bytes — so a 2 MB prefix reliably carries
-    everything the arithmetic needs and then runs out of file inside a token list we
-    were skipping anyway. Reading 8 MB per repo to avoid that cost 34 seconds on this
-    connection, measured; keeping the keys we already have costs 8. The guard on the way
-    out (_hp_usable) is what makes it safe: partial is allowed to mean 'less', never
-    'guess'. n_vocab survives too — an array's element count is read from its header,
-    before the payload we could not reach."""
-    raw, arch, n_vocab = {}, None, None
-    try:
-        c = _Cur(fh)
-        if c.take(4) != b"GGUF":
-            return None
-        version = c.u32()
-        if version == 1:
-            c.u32()
-            kv = c.u32()
-        elif version in (2, 3):
-            c.u64()
-            kv = c.u64()
-        else:
-            return None
-        if kv > MAX_KV_COUNT:
-            return None
-        for _ in range(kv):
-            key = c.string()
-            c.cur_key = key
-            vtype = c.u32()
-            if key == "general.architecture":
-                arch = c.value(vtype, True)
-                continue
-            if key == "tokenizer.ggml.tokens":
-                got = c.value(vtype, False)
-                if isinstance(got, dict):
-                    n_vocab = int(got.get("_len") or 0)
-                continue
-            short = key.split(".", 1)[1] if "." in key else key
-            keep = short in _WANTED and not key.startswith("general.")
-            val = c.value(vtype, keep)
-            if keep and val is not None:
-                raw[short] = val
-    except (ValueError, OSError, struct.error):
-        if not partial_ok:
-            return None
-        past = (c.last_array_key == "tokenizer.ggml.tokens")
-        if n_vocab is None and past:
-            n_vocab = int(c.last_array_len or 0)
-        hp = dict(raw)
-        hp["architecture"] = arch or ""
-        if n_vocab and not hp.get("vocab_size"):
-            hp["vocab_size"] = n_vocab
-        hp["partial_header"] = True
-        hp["_past_tokens"] = past
-        if not _hp_usable(hp):
-            return None
-        hp.pop("_past_tokens", None)
-        return hp
-    hp = dict(raw)
-    hp["architecture"] = arch or ""
-    if n_vocab and not hp.get("vocab_size"):
-        hp["vocab_size"] = n_vocab
-    return hp if _hp_priceable(hp) else None
-
 
 # ── the KV element table (block quants carry their scale bytes) ──────────────
 # From llama.cpp's own type sizes. Ollama's "q8_0 = 1 byte" is an UNDER-count: q8_0 is
@@ -354,20 +83,6 @@ def _pad(n: int, to: int = 256) -> int:
     return int(math.ceil(n / to) * to)
 
 
-def _as_list(v, n: int):
-    """A GGUF value that may be a scalar OR a per-layer array (hybrid archs use 0 for
-    layers that hold no KV). Edge case #2 of the research table: reading a per-layer
-    array as a scalar is a 3.9× error on Kimi-class models."""
-    if isinstance(v, list):
-        out = [int(x) for x in v]
-        if len(out) < n:
-            out += [out[-1] if out else 0] * (n - len(out))
-        return out[:n]
-    if v is None:
-        return None
-    return [int(v)] * n
-
-
 def attention_layers(hp: dict) -> "tuple[int, int]":
     """(layers that hold a KV cache, layers that hold recurrent state).
 
@@ -375,10 +90,10 @@ def attention_layers(hp: dict) -> "tuple[int, int]":
     file: on Qwen3.5/3.6 only every `full_attention_interval`-th layer holds KV. Naive
     math prices 33 layers where 8 are real — a 4.1× over-estimate that would have made
     the advisor cry wolf on models that fit with room to spare."""
-    blocks = int(hp.get("block_count") or 0)
-    target = max(0, blocks - int(hp.get("nextn_predict_layers") or 0))
-    fai = int(hp.get("full_attention_interval") or 0)
-    if fai > 1 and hp.get("ssm.inner_size"):
+    blocks = int(_num(hp, "block_count"))
+    target = max(0, blocks - int(_num(hp, "nextn_predict_layers")))
+    fai = int(_num(hp, "full_attention_interval"))
+    if fai > 1 and _num(hp, "ssm.inner_size"):
         attn = target // fai
         return attn, max(0, target - attn)
     return target, 0
@@ -390,10 +105,10 @@ def recurrent_state_bytes(hp: dict, n_parallel: int = 1) -> int:
 
     Validated exactly against the runner's own `RS buffer size` line: 50.25 MiB on the
     9B (24 recurrent layers) and 149 MiB on the 27B (48 layers)."""
-    inner = int(hp.get("ssm.inner_size") or 0)
-    state = int(hp.get("ssm.state_size") or 0)
-    conv = int(hp.get("ssm.conv_kernel") or 0)
-    groups = int(hp.get("ssm.group_count") or 0)
+    inner = int(_num(hp, "ssm.inner_size"))
+    state = int(_num(hp, "ssm.state_size"))
+    conv = int(_num(hp, "ssm.conv_kernel"))
+    groups = int(_num(hp, "ssm.group_count"))
     _, rec_layers = attention_layers(hp)
     if not (inner and state and conv and rec_layers):
         return 0
@@ -409,14 +124,17 @@ def kv_cache_bytes(hp: dict, n_ctx: int, kv_k: str = KV_DEFAULT, kv_v: str = KV_
     Paths, in the order they are tested: MLA (one compressed latent, no separate V) →
     SWA (window-capped cells on the sliding layers) → hybrid/GQA per-layer (the common
     case here) → legacy embd/heads fallback."""
-    blocks = int(hp.get("block_count") or 0)
+    blocks = int(_num(hp, "block_count"))
     if not blocks:
         return 0
     attn, _ = attention_layers(hp)
     if attn <= 0:
         return 0
-    n_embd = int(hp.get("embedding_length") or 0)
-    n_head = int(hp.get("attention.head_count") or 0)
+    n_embd = int(_num(hp, "embedding_length"))
+    # head_count IS A PER-LAYER SHAPE, exactly like head_count_kv (U23, measured on
+    # Laguna-XS-2.1-APEX-I-Compact: 40 entries of {48,64}). llama.cpp reads it with
+    # get_key_or_arr into n_head_arr, so a scalar is the common case, not the contract.
+    heads_q = _as_list(hp.get("attention.head_count"), blocks)
     heads_kv = _as_list(hp.get("attention.head_count_kv"), blocks)
     bk, bv = kv_elem_bytes(kv_k), kv_elem_bytes(kv_v)
     if not flash_attn:
@@ -428,18 +146,26 @@ def kv_cache_bytes(hp: dict, n_ctx: int, kv_k: str = KV_DEFAULT, kv_v: str = KV_
     streams = 1 if unified else max(1, int(n_parallel))
     cells = _pad(int(n_ctx) if unified else int(n_ctx))
 
-    lora = int(hp.get("attention.kv_lora_rank") or 0)
+    lora = int(_num(hp, "attention.kv_lora_rank"))
     if lora:                                                     # ── MLA
-        rope = int(hp.get("rope.dimension_count") or 0)
+        rope = int(_num(hp, "rope.dimension_count"))
         per_tok = (lora + rope) * bk
         return int(per_tok * cells * streams * attn)
 
-    k_len = int(hp.get("attention.key_length") or 0) or (
-        n_embd // n_head if (n_embd and n_head) else 0)
-    v_len = int(hp.get("attention.value_length") or 0) or k_len
-    if not k_len:
+    # The head DIMENSION falls back to embd/heads only when the file omits it — and
+    # that division is now per-layer too, because the divisor can be per-layer. A
+    # single "first head count wins" would price 40 layers at one layer's shape.
+    k_pub = int(_num(hp, "attention.key_length"))
+    v_pub = int(_num(hp, "attention.value_length"))
+    k_by_layer = ([k_pub] * blocks if k_pub else
+                  ([(n_embd // h) if (n_embd and h) else 0 for h in heads_q]
+                   if heads_q else None))
+    if not k_by_layer or not any(k_by_layer):
         return 0
-    kv_heads = heads_kv or [n_head] * blocks
+    v_by_layer = [v_pub] * blocks if v_pub else list(k_by_layer)
+    kv_heads = heads_kv if heads_kv is not None else heads_q
+    if kv_heads is None:
+        return 0
 
     # ── PER-LAYER, NOT PER-MODEL, AND THAT IS THE WHOLE POINT ────────────────
     # Gemma-4 (measured here) publishes BOTH shapes as arrays: 16 kv-heads on its
@@ -450,29 +176,43 @@ def kv_cache_bytes(hp: dict, n_ctx: int, kv_k: str = KV_DEFAULT, kv_v: str = KV_
     # real cache. (It also CRASHED reading the boolean array as a scalar, which the
     # router turned into an honest "No estimate" rather than a wrong number — the
     # right failure direction, but a defect either way. Found in the adversarial pass.)
-    swa = int(hp.get("attention.sliding_window") or 0)
+    arch = str(hp.get("architecture") or "").strip().lower()
+    swa = 0 if arch in SWA_DISABLED_ARCH else int(_num(hp, "attention.sliding_window"))
     pat = hp.get("attention.sliding_window_pattern")
+    # An explicit per-layer boolean array wins; a scalar key gives the PERIOD; with
+    # neither, the architecture's own default period applies (see SWA_PATTERN_DEFAULT).
+    # The dense_first convention is the arch's in every case — it is not encoded in the
+    # header at all, which is why reading a scalar period without it put every global
+    # layer in the wrong place on the dense-first architectures.
+    arch_period, dense_first = SWA_PATTERN_DEFAULT.get(arch, (0, False))
+    period = arch_period
+    if isinstance(pat, (int, float)) and not isinstance(pat, bool):
+        period = int(pat)
     swa_cells = _pad(min(cells, swa * streams + n_ubatch)) if swa else cells
-    fai = int(hp.get("full_attention_interval") or 0)
-    hybrid = bool(fai > 1 and hp.get("ssm.inner_size"))
-    shared = int(hp.get("shared_kv_layers") or 0)
+    k_swa = int(_num(hp, "attention.key_length_swa"))
+    v_swa = int(_num(hp, "attention.value_length_swa"))
+    fai = int(_num(hp, "full_attention_interval"))
+    hybrid = bool(fai > 1 and _num(hp, "ssm.inner_size"))
+    shared = int(_num(hp, "shared_kv_layers"))
     total = 0
-    target = blocks - int(hp.get("nextn_predict_layers") or 0)
+    target = blocks - int(_num(hp, "nextn_predict_layers"))
     for i in range(max(0, target - max(0, shared))):
         heads = int(kv_heads[i]) if i < len(kv_heads) else 0
         if heads <= 0:
             continue                      # this layer holds no KV at all
         if hybrid and ((i + 1) % fai) != 0:
             continue                      # recurrent layer: state, not cache
+        k_len = k_by_layer[i] if i < len(k_by_layer) else 0
+        v_len = v_by_layer[i] if i < len(v_by_layer) else k_len
+        if not k_len:
+            continue
         if isinstance(pat, list) and i < len(pat):
             is_swa = bool(pat[i])
-        elif swa and isinstance(pat, int) and pat > 1:
-            is_swa = ((i + 1) % pat) != 0
         else:
-            is_swa = bool(swa)
+            is_swa = bool(swa) and _swa_layer(i, period, dense_first)
         if is_swa:
-            lk = int(hp.get("attention.key_length_swa") or 0) or k_len
-            lv = int(hp.get("attention.value_length_swa") or 0) or v_len
+            lk = k_swa or k_len
+            lv = v_swa or v_len
             layer_cells = swa_cells
         else:
             lk, lv, layer_cells = k_len, v_len, cells
@@ -490,8 +230,8 @@ def compute_buffer_bytes(hp: dict, n_ctx: int, n_ubatch: int = 512,
     is the one that matters for a fit decision — it is what turns a comfortable 65k into
     a 262k that no longer fits (measured +836 MiB). The ORACLE carries this term for
     GGUF; this exists for MLX and for instant recalculation."""
-    n_vocab = int(hp.get("vocab_size") or 0) or 32000
-    n_embd = int(hp.get("embedding_length") or 0) or 4096
+    n_vocab = int(_num(hp, "vocab_size")) or 32000
+    n_embd = int(_num(hp, "embedding_length")) or 4096
     flat = (n_vocab * n_ubatch * 4 + 4 * n_embd * n_ubatch * 4) * 1.1
     if kv_quantised:
         per_tok = 2.25 * n_embd * (n_ubatch / 512.0)
@@ -699,7 +439,11 @@ def mlx_estimate(path: str, settings: dict) -> "dict | None":
         kvq = str(settings.get("kv_quant") or "").lower()
         elem = 1.0625 if kvq in ("q8_0", "q4_0") else 2.0
         kv = int(layers * kvh * hd * 2 * elem * ctx)
-    except (OSError, ValueError, _json.JSONDecodeError):
+    except (OSError, TypeError, ValueError, _json.JSONDecodeError):
+        # TypeError is the U23 class arriving on the MLX side: config.json is written
+        # by somebody else too, and `num_key_value_heads` is a per-layer list in more
+        # than one published repo. A KV of 0 is honest here — the weights term still
+        # carries the number, and mlx_estimate is already labelled a formula.
         kv = 0
     head = int(weights * 0.10)
     return {"weights_bytes": weights, "kv_bytes": kv, "compute_bytes": head,
@@ -790,14 +534,24 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
     cap = 0
     try:
         hp = gguf_hparams(str(e.get("path") or "")) or {}
-        cap = int(hp.get("context_length") or 0)
+        cap = int(_num(hp, "context_length"))
     except Exception:                                            # noqa: BLE001
         cap = 0
     asked = _clean_ctx(over.get("ctx"), cap)
     saved = _clean_ctx(load.get("ctx"), cap)
     ctx = asked or saved or _clean_ctx(e.get("ctx"), cap) or DEFAULT_CTX
-    clamped = bool(cap and (int(over.get("ctx") or 0) > cap
-                            or int(load.get("ctx") or 0) > cap))
+    # ⚠️ THE SAME CLASS AS U23, ONE FUNCTION LATER, and the adversarial pass caught it:
+    # `?ctx=abc` on the live route raised ValueError here. `_clean_ctx` above already
+    # answers junk with None — this line then re-read the RAW value with a bare int()
+    # and crashed on exactly the input the docstring says is handled. A number that
+    # came from a query string or a saved JSON blob is never known to be a number.
+    def _asked(v) -> int:
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+    clamped = bool(cap and (_asked(over.get("ctx")) > cap
+                            or _asked(load.get("ctx")) > cap))
     # A cache type we do not have a byte size for is NOT passed through: the oracle
     # rejects it and we would silently fall back to a formula estimate wearing the
     # oracle's confidence. Unknown → the saved value, or off.
@@ -805,7 +559,7 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
     kvq = raw_kv if (raw_kv in KV_BYTES or raw_kv == "off") else "off"
     return {"ctx": int(ctx), "kv_quant": kvq,
             "flash_attn": load.get("flash_attn", "auto"),
-            "parallel": int(load.get("parallel") or 1),
+            "parallel": max(1, _asked(load.get("parallel"))) or 1,
             "ctx_capped_at": cap if clamped else 0,
             "hand_set_ctx": bool(saved or asked),
             "ctx_source": ("you set it" if saved else
@@ -857,6 +611,14 @@ def estimate(entry: dict, settings: dict, cached_oracle: bool = False) -> dict:
         return got
 
     hp = gguf_hparams(path)
+    # ⚠️ A SHAPE WE CANNOT PRICE IS A SENTENCE, NOT A ZERO. If some field the
+    # arithmetic reads arrives in a shape this engine does not know, the answer is an
+    # honest "No estimate" that NAMES the field — never a coerced 0 folded into a
+    # total, which would look exactly like a real number and always err toward "fits".
+    bad = header_shape_problem(hp)
+    if bad:
+        return {"known": False,
+                "reason": f"unsupported header shape: {bad}"}
     file_bytes = 0
     try:
         file_bytes = os.path.getsize(path)
@@ -934,12 +696,18 @@ def fit(entry: dict, override: "dict | None" = None,
     est = estimate(entry, s, cached_oracle=cached_oracle)
     bud = budget(freeing_bytes)
     if not est.get("known"):
+        why = str(est.get("reason") or "no estimate")
+        # Name the shape when we know it. "We could not read this model's shape" is
+        # true but unactionable; "unsupported header shape: attention.head_count is a
+        # per-layer array of 40 entries" is a line the user can report and we can fix.
+        line = (f"No estimate: this model's header uses a shape we cannot price yet "
+                f"({why.split(': ', 1)[1]})." if why.startswith("unsupported header ")
+                else "We could not read this model's shape, so there is no honest "
+                     "number to show.")
         return {"verdict": "unknown", "settings": s, "budget": bud,
-                "reason": est.get("reason") or "no estimate",
+                "reason": why,
                 "need_bytes": None, "remedies": [], "refuse": None,
-                "copy": {"chip": "No estimate",
-                         "line": "We could not read this model's shape, so there is no "
-                                 "honest number to show."}}
+                "copy": {"chip": "No estimate", "line": line}}
     need = int(est["total_bytes"])
     verdict = band(need, bud["budget_bytes"])
     gap = need - bud["budget_bytes"]
@@ -1152,11 +920,16 @@ def remote_fit(hp: "dict | None", file_bytes: int, bud: dict,
                          "line": "We could not read this file's header from the hub, so "
                                  "there is no honest number to show — the download is "
                                  "unaffected."}}
-    cap = 0
-    try:
-        cap = int(hp.get("context_length") or 0)
-    except (TypeError, ValueError):
-        cap = 0
+    bad = header_shape_problem(hp)
+    if bad:
+        return {"verdict": "unknown", "need_bytes": None, "gap_bytes": None,
+                "oracle": False, "estimate": True, "remedies": [],
+                "reason": f"unsupported header shape: {bad}",
+                "copy": {"chip": "No estimate",
+                         "line": (f"No estimate: this file's header uses a shape we "
+                                  f"cannot price yet ({bad}). The download is "
+                                  f"unaffected.")}}
+    cap = int(_num(hp, "context_length"))
     want = int(ctx or DEFAULT_CTX)
     use = min(want, cap) if cap else want
     s = {"ctx": int(use), "kv_quant": "off", "flash_attn": "auto", "parallel": 1,

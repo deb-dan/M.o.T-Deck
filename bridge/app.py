@@ -241,6 +241,11 @@ _LANES = (
     # a seventh time: new, it separates no pair of neighbours, and it costs only where
     # /gooseui and /api/gooseui/* appear.
     "routers.gooseui",
+    # …and the FIT ENGINE'S GGUF HEADER READER (the U23 extraction, when core/fit.py
+    # crossed the 1500-line fence). Route-less, like core.comfycur, and in this list for
+    # the same two reasons: `_Facade.__setattr__` only reaches the modules built from
+    # THIS tuple, and the facade must answer for its top-level names.
+    "core.ggufhdr",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

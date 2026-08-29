@@ -79,7 +79,13 @@ print("\n── 1. validation: our formula vs llama.cpp's own fitter ──")
 
 # (registry id fragment, architecture) — every family we can currently reach.
 TABLE_MODELS = ("Qwen3.5-9B", "Fable-Fus-711", "Muse-Glimmer", "Parable-Qwen3-4B",
-                "Hermes3.6-35B", "DECKARD")
+                "Hermes3.6-35B", "DECKARD",
+                # U23 (v1.5.3x): laguna — a PER-LAYER `attention.head_count` array
+                # (40 entries of {48,64}) plus an arch-default sliding-window pattern
+                # the header never spells. Both were wrong before this row existed:
+                # the array CRASHED the engine, and the missing pattern priced all 40
+                # layers as windowed — 160 MiB against the oracle's 2680.
+                "Laguna-XS-2.1-APEX")
 TABLE_CTX = (8192, 16384, 32768, 65536)
 TOLERANCE_PCT = 15.0          # the spec's gate; measured worst case today is 0.37%
 
@@ -221,6 +227,137 @@ check("without flash attention a quantised V cache is priced at f16 — the engi
       > F.kv_cache_bytes(GQA, 1024, "q8_0", "q8_0", flash_attn=True))
 check("a header we cannot understand returns 0, never a guess",
       F.kv_cache_bytes({}, 4096) == 0)
+
+
+# ── U23: `attention.head_count` IS A PER-LAYER SHAPE TOO ─────────────────────
+# The crash Debi's own registry produced: Laguna-XS-2.1-APEX-I-Compact publishes
+# `attention.head_count` as 40 entries of {48, 64}. `int()` on it raised TypeError,
+# the router swallowed that into a silent "No estimate", and this FILE died at the
+# partial-header sweep so ~150 later checks never ran. llama.cpp reads the key with
+# `get_key_or_arr` — the array is the LEGAL shape, and the bare int() was the bug.
+print("\n── 2b. U23: per-layer header arrays, and shapes we refuse honestly ──")
+
+QARR = dict(GQA, **{"attention.head_count": [32, 32, 32, 32]})
+check("a per-layer `attention.head_count` array does not crash — and prices exactly as "
+      "the scalar does when head_count_kv carries the cache",
+      F.kv_cache_bytes(QARR, 1024) == F.kv_cache_bytes(GQA, 1024))
+check("…and neither does a MIXED one (Laguna's real {48,64} shape)",
+      F.kv_cache_bytes(dict(GQA, **{"attention.head_count": [48, 64, 64, 64]}), 1024)
+      == F.kv_cache_bytes(GQA, 1024))
+
+# MHA: no head_count_kv at all, so the per-layer QUERY heads ARE the cache heads, and
+# the head dimension falls back to embd/heads — per layer, because the divisor is.
+MHA = {"block_count": 2, "embedding_length": 4096,
+       "attention.head_count": [32, 16]}
+check("with no head_count_kv, a per-layer head_count sets BOTH the cache heads and the "
+      "per-layer head dimension (a single 'first head count wins' prices layer 1 at "
+      "layer 0's shape)",
+      F.kv_cache_bytes(MHA, 1024)
+      == (32 * ((4096 // 32) * 2 + (4096 // 32) * 2)
+          + 16 * ((4096 // 16) * 2 + (4096 // 16) * 2)) * 1024)
+
+# THE ARCH-DEFAULT SLIDING-WINDOW PATTERN. llama.cpp resolves is_swa(il) from a
+# per-layer array if the file has one and otherwise from a PER-ARCH default period +
+# dense_first flag (llama_hparams::set_swa_pattern). Laguna publishes neither, so the
+# old "sliding_window set ⇒ every layer windowed" fallback was 94% light.
+LAG = {"block_count": 8, "architecture": "laguna", "attention.head_count_kv": 8,
+       "attention.key_length": 128, "attention.value_length": 128,
+       "attention.sliding_window": 512, "embedding_length": 2048}
+_lag_swa = F._pad(512 + 512)
+check("laguna: full attention at every 4th layer from 0 (dense-first), windowed between",
+      F.kv_cache_bytes(LAG, 65536)
+      == 2 * 8 * (128 * 2 + 128 * 2) * 65536 + 6 * 8 * (128 * 2 + 128 * 2) * _lag_swa)
+check("…and a dense-LAST arch (gemma3, period 6) puts the global layer at the END of "
+      "each run instead — the flag is the arch's, not the header's",
+      F.kv_cache_bytes(dict(LAG, architecture="gemma3"), 65536)
+      != F.kv_cache_bytes(LAG, 65536))
+check("an architecture with no default pattern keeps the old conservative fallback: "
+      "every layer windowed",
+      F.kv_cache_bytes(dict(LAG, architecture="brand-new-arch"), 65536)
+      == 8 * 8 * (128 * 2 + 128 * 2) * _lag_swa)
+check("an explicit per-layer pattern array still wins over the arch default",
+      F.kv_cache_bytes(dict(LAG, **{"attention.sliding_window_pattern":
+                                    [True] * 8}), 65536)
+      == 8 * 8 * (128 * 2 + 128 * 2) * _lag_swa)
+check("phi3's sliding window is DISABLED by llama.cpp (#13676), so we do not price a "
+      "window it will not use",
+      F.kv_cache_bytes(dict(LAG, architecture="phi3"), 65536)
+      == 8 * 8 * (128 * 2 + 128 * 2) * 65536)
+
+# ── the honest refusal, and the no-crash floor under it (doctrine 6b) ────────
+_GOOD = {"block_count": 32, "embedding_length": 4096, "attention.head_count": 32,
+         "attention.head_count_kv": 8, "attention.key_length": 128,
+         "attention.value_length": 128, "vocab_size": 32000, "architecture": "llama",
+         "context_length": 8192}
+check("a header whose shapes we CAN price reports no problem",
+      F.header_shape_problem(_GOOD) == ""
+      and F.header_shape_problem(dict(_GOOD, **{"attention.head_count": [32] * 32})) == ""
+      and F.header_shape_problem(None) == "")
+_bad = F.header_shape_problem(dict(_GOOD, **{"attention.key_length": [128] * 32}))
+check(f"a SCALAR-ONLY key arriving as an array is named, not guessed at — got: {_bad!r}",
+      "attention.key_length" in _bad and "array" in _bad)
+_bad2 = F.header_shape_problem(dict(_GOOD, block_count="thirty-two"))
+check(f"…and so is a numeric key arriving as text — got: {_bad2!r}",
+      "block_count" in _bad2 and "text" in _bad2)
+_bad3 = F.header_shape_problem(dict(_GOOD, **{"attention.head_count":
+                                              {"_len": 100000}}))
+check("…and an array our parser had to SKIP for length is a refusal, not a 0 (the "
+      "coerced zero is the lie: it looks like a number and always says 'fits')",
+      "too long to keep" in _bad3)
+
+# THE NO-CRASH FLOOR. Every value in a GGUF header was written by somebody else, so
+# the arithmetic must survive ANY shape — the honest refusal is the product answer,
+# but a raise is never one. This is the class, swept: every key the engine reads,
+# against every wrong-shaped value we can think of.
+_shapes = ([1, 2, 3], {"_len": 999999}, "text", True, -1, 0.5, [], [None, "x"], None)
+_crashers = []
+for _k in set(F._PER_LAYER_KEYS + F._SCALAR_KEYS + ("architecture",)):
+    for _v in _shapes:
+        _h = dict(_GOOD); _h[_k] = _v
+        try:
+            F.kv_cache_bytes(_h, 8192)
+            F.recurrent_state_bytes(_h)
+            F.compute_buffer_bytes(_h, 8192)
+            F.attention_layers(_h)
+            F.header_shape_problem(_h)
+            F.formula_estimate(_h, 5 * F.GIB,
+                               {"ctx": 8192, "kv_quant": "off", "parallel": 1})
+            F.remote_fit(_h, 5 * F.GIB, {"budget_bytes": 60 * F.GIB})
+        except Exception as _e:                                    # noqa: BLE001
+            _crashers.append(f"{_k}={_v!r}: {type(_e).__name__}")
+check(f"NO header field shape can raise out of the engine — "
+      f"{len(set(F._PER_LAYER_KEYS + F._SCALAR_KEYS)) + 1} keys × {len(_shapes)} "
+      f"hostile shapes", not _crashers)
+for _c in _crashers[:8]:
+    print("     crashed:", _c)
+# THE SAME CLASS ON THE MLX SIDE. config.json is written by somebody else too, and
+# `num_key_value_heads` is a per-layer list in more than one published repo — the
+# mlx reader's except tuple did not carry TypeError.
+_mlxcrash = []
+for _v in ([8, 8, 4], "eight", {"a": 1}, None):
+    for _k in ("num_hidden_layers", "num_key_value_heads", "num_attention_heads",
+               "head_dim", "hidden_size", "max_position_embeddings"):
+        _c = {"num_hidden_layers": 32, "num_key_value_heads": 8,
+              "num_attention_heads": 32, "head_dim": 128, "hidden_size": 4096}
+        _c[_k] = _v
+        try:
+            F.remote_mlx_fit(_c, 5 * F.GIB, {"budget_bytes": 60 * F.GIB})
+        except Exception as _e:                                    # noqa: BLE001
+            _mlxcrash.append(f"{_k}={_v!r}: {type(_e).__name__}")
+check(f"…and the MLX config reader survives the same shapes (its except tuple was "
+      f"missing TypeError) — {len(_mlxcrash)} crashers", not _mlxcrash)
+_MLXSRC = (ROOT / "bridge" / "core" / "fit.py").read_text()
+check("mlx_estimate catches TypeError too, so a list in config.json is a KV of 0 and "
+      "not a 500 on the models page",
+      "except (OSError, TypeError, ValueError, _json.JSONDecodeError)" in _MLXSRC)
+
+_unp = F.remote_fit(dict(_GOOD, **{"attention.key_length": [128] * 32}), 5 * F.GIB,
+                    {"budget_bytes": 60 * F.GIB})
+check("…and a shape we refuse lands on 'No estimate' that NAMES the field, never on a "
+      "cheerful number",
+      _unp["verdict"] == "unknown" and _unp["need_bytes"] is None
+      and "unsupported header shape" in _unp["reason"]
+      and "attention.key_length" in _unp["copy"]["line"])
 
 
 # ══ 3. the bands, and the one hard stop ══════════════════════════════════════

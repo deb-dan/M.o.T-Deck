@@ -101,6 +101,11 @@ FILES: tuple[str, ...] = (
     "routers/goose.py",
     # The goose EMBED lane (goose Desktop's UI served by us), appended by the same rule.
     "routers/gooseui.py",
+    # The fit engine's GGUF HEADER READER (U23 extraction), appended by the same rule.
+    # Route-less, like core/comfycur.py, and here for the same reason: the contract seam
+    # test requires FILES to equal the app layer on disk both ways, and a module missing
+    # from this view makes every `X not in APP_SOURCE` assertion about it pass VACUOUSLY.
+    "core/ggufhdr.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the
