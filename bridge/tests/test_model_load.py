@@ -438,7 +438,10 @@ ok("...but the registry/yaml/65536 chain is still behind it",
 ok("every load flag is gated on the binary supporting it",
    sc.count("data/llama-server.help.txt") >= 6)
 # MLX side
-mlx = sc[sc.index("MLX_FLOOR=()"):sc.index("# Cleanup: kill both MLX servers")]
+# end-anchor: the MLX arm's cleanup comment. It used to read "# Cleanup: kill both MLX
+# servers AND any llama-server on this port" — U19 replaced that kill-by-engine-name
+# with pidfile-scoped reaping, so the anchor moved with it.
+mlx = sc[sc.index("MLX_FLOOR=()"):sc.index("# Cleanup: our own previous runner")]
 ok("MLX floors are gated on the installed server SOURCE, not a guess",
    'grep -q -- "\\"$1\\"" "$MLX_ARGSRC"' in mlx)
 ok("only mlx-lm gets the four samplers",

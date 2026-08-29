@@ -15,6 +15,13 @@ ROOT_ABS="$(pwd)"
 #            (c) it matches a narrow per-component signature (only where our own
 #                launch legitimately runs a binary from outside the tree).
 # NOT owned → refuse loudly and exit non-zero rather than kill a stranger.
+# ⛔ THERE IS NO KILL BY NAME IN THIS FILE (CLAUDE.md PROCESS-KILL RULE; U19). Stopping
+# a previous instance goes through _reap_pidfile (the pid WE wrote, identity re-verified
+# before the signal); clearing a port goes through _clear_port (ownership-checked, and a
+# port held by a stranger REFUSES the start instead of being cleared). `pkill`/`killall`
+# and `hermes dashboard --stop` (which scans for every `hermes dashboard|serve` on the
+# machine and kills them) are banned here and fenced by
+# bridge/contract_tests/test_no_name_kills_contract.py.
 # HARNESS_PORT_TAKEOVER=1 restores the old unconditional behaviour.
 _proc_cmd() { ps -o command= -p "$1" 2>/dev/null | tr '\n' ' '; }
 
@@ -28,13 +35,20 @@ _cmd_looks_like_ours() {   # <component> <command line>
   esac
   case "$comp" in
     # runner.binary may legitimately point at a backend OUTSIDE the tree (the
-    # LM Studio fallback), so the engine name is the honest signature here. These
-    # are exactly the processes the pkill lines below already target by pattern.
+    # LM Studio fallback), so the engine name is the honest signature here. It is
+    # narrowed by the port: this only decides who may hold runner.port. Ledger U19c
+    # tracks tightening it to "the binary harness.yaml actually configured".
     runner|aux)
       case "$cmd" in *llama-server*|*mlx_lm.server*|*mlx_vlm.server*) return 0 ;; esac ;;
-    # hermes may already be running from a DIFFERENT root (repo vs snapshot).
+    # hermes may already be running from a DIFFERENT harness root (repo vs snapshot),
+    # which ROOT_ABS alone would not match — so widen the evidence, but keep it a
+    # PATH: our Hermes is always the one installed into a harness's data/hermes-venv.
+    # ⛔ NO NAME SIGNATURE (U19, 2026-08-29). "hermes dashboard" in a command line is
+    # exactly the process this guard exists to PROTECT: Debi runs a standalone Hermes
+    # out of ~/.hermes/hermes-agent/venv, and matching it by name is how our Start
+    # would have closed her work — the Unsloth/goose-Desktop class, third strike.
     hermes)
-      case "$cmd" in *"hermes dashboard"*|*"hermes serve"*) return 0 ;; esac ;;
+      case "$cmd" in *"/data/hermes-venv/"*) return 0 ;; esac ;;
     # Deliberately NO name signature for unsloth/comfyui/voicebox/voicestudio: a
     # standalone install of any of them would match its own name, which is the very
     # process this guard exists to protect. Our launches all run
@@ -47,6 +61,34 @@ if [[ "$NAME" == "--owner-check" ]]; then
   shift
   _cmd_looks_like_ours "${1:-}" "${2:-}"; exit $?
 fi
+
+# The ONLY sanctioned way to stop a PREVIOUS instance of one of our components: the
+# pid WE recorded, whose identity is re-verified before any signal. Pids are recycled,
+# so a stale pidfile must never become a stranger's death warrant — a pid that is not
+# provably ours gets NO signal, just a printed line and a discarded pidfile. This is
+# what replaced the `pkill -f "<product name>"` lines (U19): a name match is not
+# identity, and Debi runs standalone copies of the very apps we embed.
+_reap_pidfile() {   # <component> [force]
+  # ⚠️ pf is assigned on its OWN line: bash's `local` declares every name in the
+  # statement BEFORE assigning, so `local comp="$1" pf="…${comp}…"` reads comp while it
+  # is still unset and dies under `set -u` ("comp: unbound variable"). Found by walking
+  # the restart, not by reading — it aborted the whole hermes arm. _clear_port below
+  # already had it right; this is the same shape, kept the same way.
+  local comp="$1" force="${2:-}" pid cmd pf sig="-TERM"
+  pf="data/${comp}.pid"
+  [[ "$force" == "force" ]] && sig="-KILL"
+  [[ -f "$pf" ]] || return 0
+  pid="$(tr -cd '0-9' < "$pf" 2>/dev/null || true)"
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$pf"; return 0; fi
+  cmd="$(_proc_cmd "$pid")"
+  if _cmd_looks_like_ours "$comp" "$cmd"; then
+    kill "$sig" "$pid" 2>/dev/null || true
+  else
+    echo "[harness] ${pf} names pid ${pid} (${cmd}) — that is NOT our ${comp} (recycled pid?);"
+    echo "[harness]   leaving it alone and discarding the stale pidfile."
+  fi
+  rm -f "$pf"
+}
 
 _clear_port() {   # <port> <component> [force]
   local port="$1" comp="$2" force="${3:-}" pid cmd pf sig="-TERM"
@@ -361,9 +403,11 @@ PYRESOLVE
       fi
     fi
     # Cleanup any stale server on the port — including MLX servers (format switch).
-    pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
-    pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
-    pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
+    # Two steps, both identity-bound: OUR last runner by its pidfile (catches one that
+    # is hung mid-load and therefore not listening yet), then the port itself, which
+    # refuses rather than kills when a stranger holds it. (Was three `pkill -f
+    # "<engine>.*--port"` lines: a pattern match, not identity — U19.)
+    _reap_pidfile runner force
     _clear_port "$R_PORT" runner force
     sleep 1
     # Launch + wait for readiness. Factored so a bad speculative-decoding guess can
@@ -374,7 +418,14 @@ PYRESOLVE
       echo $! > data/runner.pid
       local i
       for i in $(seq 1 90); do
-        if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then return 0; fi
+        # ⚠️ THE HEADER IS LOAD-BEARING (ledger U21, fixed 2026-08-29). We launch with
+        # `--api-key "$R_KEY"` (:292) and llama.cpp b10662 made /v1/models REQUIRE it —
+        # the same regression this file already documents at :247/:267. Polling without
+        # it 401s forever: a runner that was serving in ~1.3s still burned the whole
+        # 90×2s budget and then EXITED NON-ZERO, i.e. "the runner did not come up" about
+        # a runner that was up. -f treats 401 as failure, which is what hid it.
+        if curl -sf -m 2 -H "Authorization: Bearer ${R_KEY}" \
+             "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then return 0; fi
         sleep 2
       done
       return 1
@@ -386,7 +437,7 @@ PYRESOLVE
       echo "[harness] WARN: runner did not start WITH speculative-decoding flags —"
       echo "[harness]   this model likely has no usable MTP heads. Retrying without them."
       echo "--- runner.log tail (failed spec attempt) ---"; tail -12 data/logs/runner.log 2>/dev/null
-      pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
+      _reap_pidfile runner force
       _clear_port "$R_PORT" runner force
       sleep 1
       SPEC_ARGS=()
@@ -441,10 +492,9 @@ PYRESOLVE
     # the Agent/Hermes lanes cannot send it. A saved value therefore rides the launch
     # line for BOTH MLX engines. Still explicit-only: nothing saved ⇒ nothing emitted.
     _mfloor --max-tokens "$(_sv max_tokens)"
-    # Cleanup: kill both MLX servers AND any llama-server on this port (format switch).
-    pkill -f "mlx_lm.server.*--port ${R_PORT}" 2>/dev/null || true
-    pkill -f "mlx_vlm.server.*--port ${R_PORT}" 2>/dev/null || true
-    pkill -f "llama-server.*--port ${R_PORT}" 2>/dev/null || true
+    # Cleanup: our own previous runner (whatever engine it was — the format switch
+    # case) by pidfile, then the port, ownership-checked. Identity, never a name (U19).
+    _reap_pidfile runner force
     _clear_port "$R_PORT" runner force
     sleep 1
     nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
@@ -453,7 +503,11 @@ PYRESOLVE
     up=0
     TRIES=150
     for _ in $(seq 1 "$TRIES"); do
-      if curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
+      # The MLX servers take no api-key (loopback only), so this header is inert here —
+      # carried anyway so EVERY readiness poll in this file looks the same and the next
+      # engine that starts requiring auth cannot re-open U21's 3-minute false "down".
+      if curl -sf -m 2 -H "Authorization: Bearer ${R_KEY}" \
+           "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then up=1; break; fi
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
@@ -1522,8 +1576,19 @@ PYLOFFICE
     # the Harness tab, not a browser. --skip-build: serve the prebuilt web_dist from
     # install (no npm at start time). If web_dist is missing it degrades to headless
     # (API only), so a missing build never blocks startup.
-    hermes dashboard --stop >/dev/null 2>&1 || true      # clean stop of any web server
-    pkill -f "hermes (dashboard|serve)" 2>/dev/null || true
+    # ⛔ STOPPING THE PREVIOUS DASHBOARD — pidfile-scoped ONLY (U19, closed 2026-08-29).
+    # What used to be here killed by NAME, twice over:
+    #   · `hermes dashboard --stop` → hermes_cli/dashboard_procs.py::
+    #     _kill_stale_dashboard_processes, which scans the WHOLE machine for any
+    #     `hermes dashboard|serve` process and SIGTERM/SIGKILLs it;
+    #   · `pkill -f "hermes (dashboard|serve)"` → the same blast radius, ours to own.
+    # Debi runs a STANDALONE Hermes out of ~/.hermes/hermes-agent/venv. Both lines
+    # would have closed it every time she pressed Start — the exact class that already
+    # closed her standalone Unsloth (2026-08-28) and goose Desktop (2026-08-29).
+    # Now: our own last dashboard, by the pid we wrote, identity re-verified; then the
+    # port, which REFUSES the start (with the reason) if a stranger holds :9119 rather
+    # than clearing it. A standalone Hermes on 9119 therefore survives — and says so.
+    _reap_pidfile hermes force
     _clear_port "$PORT" hermes force
     sleep 1
     : > data/logs/hermes.log

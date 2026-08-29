@@ -252,9 +252,41 @@ PY
 fi
 
 echo "[ship] restarting app + bridge (components stay up)"
-pkill -x Harness 2>/dev/null || true
-sleep 2
-lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+# ⛔ PROCESS-KILL RULE (CLAUDE.md; U19 echo sweep 2026-08-29). This used to be
+#   pkill -x Harness                   → a kill BY NAME (any process called "Harness")
+#   lsof -ti tcp:8700 | xargs kill -9  → a port clear with NO ownership check at all
+# Both are the class that closed Debi's standalone Unsloth and goose Desktop. Now:
+#   1. ask OUR app to quit (an Apple Event to the app, not a signal by name);
+#   2. any survivor is identified by its EXECUTABLE PATH being this bundle;
+#   3. the :8700 listener is reaped only if its command line names this snapshot or
+#      this repo — a stranger on :8700 stops the ship with the honest reason instead.
+_ship_app_pids() {   # pids whose executable path IS "$APP" (path evidence, not a name)
+  ps -Ao pid=,command= 2>/dev/null | awk -v p="$APP/Contents/MacOS/" \
+    '{ pid=$1; $1=""; sub(/^[[:space:]]+/,""); if (index($0, p) == 1) print pid }'
+}
+osascript -e 'quit app "Harness"' >/dev/null 2>&1 || true
+for _ in $(seq 1 10); do
+  [[ -z "$(_ship_app_pids)" ]] && break
+  sleep 1
+done
+for _pid in $(_ship_app_pids); do
+  echo "[ship] app pid $_pid did not quit on request — SIGTERM (ours: bundle path verified)"
+  kill "$_pid" 2>/dev/null || true
+done
+sleep 1
+for _pid in $(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null); do
+  _cmd="$(ps -o command= -p "$_pid" 2>/dev/null | tr '\n' ' ')"
+  [[ -z "$_cmd" ]] && continue            # vanished between the probe and the check
+  # our bridge is "<root>/data/bridge-venv/bin/python -m uvicorn bridge.app:app"
+  if [[ "$_cmd" == *"$DST"* || "$_cmd" == *"$ROOT"* ]]; then
+    kill -9 "$_pid" 2>/dev/null || true
+  else
+    echo "[ship] REFUSING to ship: :8700 is held by pid $_pid, which is not this harness:"
+    echo "[ship]   $_cmd"
+    echo "[ship]   Stop that process yourself, then re-run ./scripts/ship.sh."
+    exit 1
+  fi
+done
 sleep 1
 open "$APP"
 

@@ -522,8 +522,20 @@ check("shell: an MLX runner outside the tree is OURS (engine signature)",
 check("shell: an mlx-vlm runner is OURS", owns("runner", "python -m mlx_vlm.server --port 6767"))
 check("shell: the aux slot uses the same engine signatures",
       owns("aux", "/opt/x/llama-server --port 6768"))
-check("shell: a hermes from ANOTHER root is OURS (the pkill above already targets it)",
-      owns("hermes", "/usr/local/bin/hermes dashboard --port 9119"))
+# U19 (2026-08-29): hermes lost its NAME signature. It used to answer "ours" to any
+# command line containing "hermes dashboard"/"hermes serve" — which is precisely Debi's
+# STANDALONE Hermes (~/.hermes/hermes-agent/venv). The evidence is a PATH now, widened
+# to any harness's data/hermes-venv so the repo↔snapshot case still works.
+check("shell: a hermes from ANOTHER HARNESS root is OURS (path, not name)",
+      owns("hermes", "/Users/x/Library/Application Support/Harness/data/hermes-venv/"
+                     "bin/python -m hermes dashboard --port 9119"))
+check("shell: Debi's STANDALONE hermes is FOREIGN (U19 — the whole point)",
+      not owns("hermes", "/Users/debik/.hermes/hermes-agent/venv/bin/hermes "
+                         "dashboard --port 9119"))
+check("shell: any non-harness hermes is FOREIGN",
+      not owns("hermes", "/usr/local/bin/hermes dashboard --port 9119"))
+check("shell: 'hermes dashboard' is never a signature by itself",
+      not owns("hermes", "hermes dashboard") and not owns("hermes", "hermes serve"))
 check("shell: a process that already vanished is not treated as foreign",
       owns("unsloth", ""))
 # the refusals — the whole point of the slice
@@ -571,6 +583,29 @@ check("the pid file is an ownership proof in its own right",
       'pf="data/${comp}.pid"' in START)
 check("no component name is used as a signature for the standalone-app components",
       "*unsloth*" not in START and "*comfyui*" not in START)
+# --- 4b-bis. U19: no kill by name survives, and the replacement is pidfile-scoped.
+# (The full sweep across scripts/ + guards/ lives in
+#  bridge/contract_tests/test_no_name_kills_contract.py — this is the local echo.)
+# CODE = executable lines only. The banned commands are NAMED in the comments on
+# purpose (a fix nobody can read is a fix that gets re-introduced), so the fences
+# read the code, never the prose.
+START_CODE = "\n".join(ln for ln in START.splitlines()
+                       if not ln.lstrip().startswith("#"))
+check("start_component.sh contains NO pkill/killall (U19)",
+      "pkill" not in START_CODE and "killall" not in START_CODE)
+check("`hermes dashboard --stop` is gone (it kills every hermes on the machine)",
+      "dashboard --stop" not in START_CODE)
+check("_reap_pidfile exists and re-verifies identity before signalling",
+      "_reap_pidfile() {" in START
+      and START.split("_reap_pidfile() {")[1].index("_cmd_looks_like_ours")
+          < START.split("_reap_pidfile() {")[1].index("kill \"$sig\""))
+check("the hermes arm reaps by pidfile, force, before clearing the port",
+      "_reap_pidfile hermes force" in START
+      and START.index("_reap_pidfile hermes force") < START.index('_clear_port "$PORT" hermes force'))
+check("the runner arms reap by pidfile (3 sites: llamacpp, spec-retry, mlx)",
+      START.count("_reap_pidfile runner force") == 3)
+check("a pidfile pid that is NOT ours gets no signal, just a line",
+      "leaving it alone and discarding the stale pidfile." in START)
 
 # --- 4c. the bridge half
 check("bridge: our own tree is OURS",
