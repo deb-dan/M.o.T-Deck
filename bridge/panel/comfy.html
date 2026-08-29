@@ -226,6 +226,14 @@
   .warnbox { border:1px solid var(--bad); border-radius:var(--r); padding:8px 10px; color:var(--bad); font-size:12px; background:var(--bg2); }
   .warnbox b { color:var(--bad); }
   .okbox { border:1px solid var(--line2); border-radius:var(--r); padding:8px 10px; font-size:12px; background:var(--bg2); color:var(--dim); }
+  /* Inline toast — alert() is a SILENT NO-OP inside the app shell's WKWebView (no
+     runJavaScriptAlertPanel delegate), so any feedback routed through alert() simply
+     never appears there. Same silent-no-op class as runOpenPanelWith in main.swift. */
+  #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+    max-width:min(560px, 92vw); z-index:60;
+    border:1px solid var(--gold); border-radius:var(--r-lg);
+    background:var(--card2); color:var(--fg); padding:10px 14px; font-size:12.5px; }
+  #toast.bad { border-color:var(--bad); color:var(--bad); }
 
   .gal { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
   .item { border:1px solid var(--line2); border-radius:var(--r-lg); background:var(--card2); overflow:hidden; display:grid; }
@@ -731,6 +739,18 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.id === 'f-pick') { readForm(); S.form.pick = e.target.value; S.validation = null; render(); }
 });
+/* NOT alert(): the app shell's WKWebView has no runJavaScriptAlertPanel delegate, so
+   alert() shows nothing there — "Open template in ComfyUI" looked dead in the app while
+   the template was in fact written. This toast renders in every host. */
+let toastTimer = null;
+function toast(msg, bad) {
+  let t = document.getElementById('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.className = bad ? 'bad' : '';
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 9000);
+}
 document.addEventListener('click', async (e) => {
   const modeBtn = e.target.closest('#f-mode button');
   if (modeBtn) { readForm(); S.form.mode = modeBtn.dataset.mode; S.validation = null; render(); return; }
@@ -754,14 +774,16 @@ document.addEventListener('click', async (e) => {
     } else if (act === 'template') {
       const r = await api('/api/comfy/open-template', { method:'POST',
         body: JSON.stringify({ pick: b.dataset.pick }) });
-      alert(r.ok ? r.note : ('Could not write the template: ' + r.error));
+      toast(r.ok ? r.note : ('Could not write the template: ' + r.error), !r.ok);
     } else if (act === 'graph') {
       const r = await api('/api/comfy/graph/' + b.dataset.job);
       if (r.ok) {
         const w = window.open('', '_blank');
         if (w) { w.document.title = 'graph'; const pre = w.document.createElement('pre');
                  pre.textContent = JSON.stringify(r.graph, null, 2); w.document.body.appendChild(pre); }
-      } else alert(r.error);
+        else toast('This window cannot open a viewer tab — open ' + location.origin +
+                   '/comfy in a browser to read the graph.', true);
+      } else toast(r.error, true);
     }
     return;
   }
