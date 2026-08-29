@@ -94,6 +94,8 @@ FILES: tuple[str, ...] = (
     "routers/comfy.py",
     # The goose agent lane, appended by the same rule.
     "routers/goose.py",
+    # The goose EMBED lane (goose Desktop's UI served by us), appended by the same rule.
+    "routers/gooseui.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

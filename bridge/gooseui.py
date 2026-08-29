@@ -1,0 +1,814 @@
+"""goose EMBED lane — the decisions behind serving goose Desktop's own UI in a tab.
+
+SPIKE, 2026-08-29. Built to docs/research/2026-08-29-goose-desktop-ui.md §2a/§3/§5, which
+is the BINDING source for every claim below. Read that first; this file is the executed
+half of it.
+
+⚠️ WHAT THIS LANE IS, IN ONE PARAGRAPH. goose Desktop's renderer is an ordinary Vite/React
+static bundle that talks to `goosed` over a PLAIN BROWSER WEBSOCKET (ACP). goosed serves
+no UI of its own and there is no `goose web`. So the embed is: (1) we serve the pinned,
+UNMODIFIED renderer bundle (data/goose/ui, extracted from the v1.48.0 app.asar by
+scripts/install_goose_ui.sh, from a sha-pinned upstream release artifact — NEVER from
+a Goose.app installed on this Mac); (2) we supervise our own `goose serve --platform desktop`
+and hand the page its ws:// URL; (3) we supply the ONE thing a browser does not have —
+Electron's `window.electron` / `window.appConfig` preload objects — from a script of OUR
+OWN, served alongside. Nothing in the vendored bundle is edited, ever.
+
+⚠️ THIS LANE IS NOT THE PTY LANE AND MUST NEVER SHARE ITS STATE. bridge/pty_goose.py runs
+`goose session` in a terminal under HOME=data/goose/home. This one runs `goose serve`
+under GOOSE_PATH_ROOT=data/goose/ui-home/goose. Two homes, two session stores, two
+pidfiles, two claims — so a terminal session and an embedded session can be open at the
+same time without either seeing or clobbering the other's sessions. That separation is
+walked by bridge/tests/test_gooseui_lane.py, not merely intended.
+
+⚠️ THE ONE CONNECTION-CRITICAL SHIM IS `getAcpUrl()`. acpConnection.ts has NO fallback:
+without it the renderer throws "ACP URL is not available" and nothing else in the app
+runs. Everything else on the seam either shims to a browser primitive or degrades. The
+three catalogues below (SHIMMED / STUBBED / DEGRADED) are the full 57-method census of
+what the v1.48.0 renderer actually calls, and bridge/contract_tests/test_gooseui_contract.py
+pins them: a goose bump that adds a method the renderer calls and we do not define is a
+red gate rather than a `TypeError` in somebody's tab.
+
+⚠️ SECRETS: the ACP token is a per-process secret we generate. It is handed to the page
+over the SAME loopback origin the page came from, on a route the origin gate protects —
+the same line the PTY lane draws, for the same reason (a WebSocket is not subject to CORS,
+so loopback binding alone is not a boundary).
+"""
+from __future__ import annotations
+
+import json
+import os
+import secrets
+
+# ── constants ────────────────────────────────────────────────────────────────
+UI_REL = "data/goose/ui"                    # the vendored renderer bundle
+MANIFEST_REL = "data/goose/ui.sha256"       # its sha manifest (BUNDLE line + per file)
+SOURCES_REL = "data/goose/UI-SOURCES.txt"   # provenance stamp
+STAMP_REL = "data/goose/UI-INSTALLED"       # machine-readable install stamp
+INSTALLER = "install_goose_ui.sh"           # OUR self-provisioning installer
+BIN_INSTALLER = "install_goose.sh"          # the goose binary's, reused unchanged
+HOME_REL = "data/goose/ui-home"             # ⚠️ NOT data/goose/home — see the header
+PATH_ROOT_SUB = "goose"                     # GOOSE_PATH_ROOT = <HOME_REL>/goose
+PIDFILE_REL = "data/goose-ui.pid"           # → the memory ledger's own row
+WORKSPACE_DIR = "data/goose-workspace"      # SHARED with the PTY lane, deliberately:
+#   the workspace is the user's project dir, not lane state. Two lanes editing one
+#   directory is the same situation as two terminals, and pretending otherwise would
+#   give the user two different "my files" for one product.
+
+ENTRY_HTML = "index.html"                   # the vendored entry document
+PRELOAD_NAME = "harness-preload.js"         # OUR shim — never a file in the bundle
+ROUTE_PREFIX = "/gooseui"
+
+# The pin, mirrored from scripts/install_goose_ui.sh so the status route can SAY what is
+# vendored without shelling out. A drift between the two is a red contract test.
+PIN_APP_VERSION = "1.48.0"
+PIN_ASAR_SHA256 = "9f9f9db4a0d47a1774c86a109f19a2fd0257401726eabc0237dcb0e9b2ad9903"
+# The UPSTREAM ARTIFACT the bundle is provisioned from — `Goose.zip`, the whole signed
+# .app, which is the only macOS desktop asset goose publishes at this tag (there is no
+# separate renderer artifact and no latest-mac.yml: both checked, 404). We keep ONE
+# member of it. The size is quoted to the user BEFORE they press Install, because "this
+# will download 209MB to keep 6.6MB" is a fact they are entitled to before it happens.
+PIN_ASSET = "Goose.zip"
+PIN_ASSET_SIZE = 219010697
+PIN_ASSET_SHA256 = "98d7b09c9e57949e0dc2c8889fc05934bffb3159ae1a0c26ae0d78f397db5041"
+PIN_BUNDLE_SHA256 = "342d291ddc8c41d923e15760e56164ef8e331a2dcde0769b0c476e6907d8acd0"
+
+# `goose serve`'s own default port is 3284 and Desktop picks a free one per window. We
+# pick a fixed one OUTSIDE every port harness.yaml already claims, because a fixed port
+# is what makes "is it up?" answerable from a shell.
+DEFAULT_ACP_PORT = 3287
+
+NO_CACHE = "no-store, no-cache, must-revalidate"
+# The bundle's asset names are content-hashed by Vite (assets/App-DERRs_Zf.js), so they
+# are safe to cache hard. index.html is not served from disk at all (see page_html).
+IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
+FORCE_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+    ".txt": "text/plain; charset=utf-8",
+    ".wasm": "application/wasm",
+}
+
+
+# ══ THE PRELOAD CENSUS ═══════════════════════════════════════════════════════
+# Measured, not guessed: every `window.electron.<name>` in the v1.48.0 renderer bundle
+# (57 distinct methods) plus the `window.appConfig` keys it reads. Each name lands in
+# exactly ONE of the three buckets, and PRELOAD_METHODS below is their union — which is
+# the property the contract test checks against the shipped shim source.
+
+# REAL: a browser primitive does the same job. The user notices nothing.
+SHIMMED = (
+    "getAcpUrl",            # ⚠️ THE ONE WITH NO FALLBACK. Our supervised ws:// URL.
+    "getSecretKey",         # the same token, for the code paths that want it raw
+    "getSetting",           # → localStorage (the preload ALREADY does this for 5 keys)
+    "setSetting",           # → localStorage
+    "getConfig",            # → the appConfig blob we inject
+    "platform", "arch",     # → "darwin"/"arm64" from the server, not navigator sniffing
+    "getVersion",           # → the vendored app version
+    "openExternal",         # → window.open(url, "_blank")
+    "openInChrome",         # → window.open
+    "logInfo",              # → console.info, prefixed
+    "showMessageBox",       # → confirm() (returns {response: 0|1}, goose's own shape)
+    "on", "off", "emit",    # → a real in-page event bus (main→renderer pushes only)
+    "onMouseBackButtonClicked", "offMouseBackButtonClicked",
+    "reloadApp",            # → location.reload()
+    "getIsFullScreen", "isAnyWindowFocused",   # → document.fullscreenElement/hasFocus
+    "broadcastThemeChange",                    # → our own bus, same tab
+    "reactReady",                              # → no-op ack (main used it for the splash)
+)
+
+# STUBS: the capability is genuinely absent in a browser, but its ABSENCE is harmless —
+# every one of these returns the "nothing happened / not available" value the renderer
+# already handles, because the same code runs on Linux/Windows builds where several of
+# them are no-ops anyway.
+STUBBED = (
+    "setMenuBarIcon", "getMenuBarIconState",   # macOS menu-bar item: no such thing here
+    "setDockIcon", "getDockIconState",
+    "setWakelock", "getWakelockState",
+    "setSpellcheck", "getSpellcheckState",
+    "openNotificationsSettings", "showNotification",
+    "hideWindow", "closeWindow",
+    "checkForOllama",
+    "checkForUpdates", "downloadUpdate", "installUpdate", "restartApp",
+    "onUpdaterEvent", "getUpdateState", "isUsingGitHubFallback",
+    "getAutoDownloadDisabled",                 # → true: WE disable auto-download
+    "getBinaryPath",
+    "hasAcceptedRecipeBefore", "recordRecipeHash",
+    "launchApp", "refreshApp", "closeApp",     # MCP-"apps" window control
+    "addRecentDir", "listRecentDirs",
+    "listGitWorktreeDirs", "getGitBranchInfo", "listGitBranches", "switchGitBranch",
+    "getAllowedExtensions",
+)
+
+# ⚠️ LOSSY — these are the honest degradations, and each one is a SENTENCE the report
+# owes Debi, not a silent stub. Mapping: method → what the user loses.
+DEGRADED = {
+    "createChatWindow": "opens in THIS tab instead of a second window (no multi-window)",
+    "directoryChooser": "no native folder picker — the working dir is fixed to the "
+                        "harness goose workspace",
+    "selectFileOrDirectory": "no native file picker (attach-by-path); drag-and-drop of "
+                             "text still works",
+    "selectRecipeFile": "no native picker for recipe files",
+    "selectImportSessionFile": "no native picker for session import",
+    "showSaveDialog": "no native save dialog",
+    "getPathForFile": "a dropped file has no filesystem path in a browser — returns ''",
+    "readGoosehints": "the .goosehints editor reads nothing (no direct FS access)",
+    "writeGoosehints": "the .goosehints editor cannot save",
+    "writeFile": "no direct filesystem write from the renderer",
+    "ensureDirectory": "no direct filesystem mkdir from the renderer",
+    "listFiles": "no direct filesystem listing (file-mention autocomplete degrades)",
+    "openDirectoryInExplorer": "no Reveal in Finder",
+}
+
+PRELOAD_METHODS = tuple(sorted(set(SHIMMED) | set(STUBBED) | set(DEGRADED)))
+
+# The `window.appConfig` keys the renderer actually reads (census, same method).
+APPCONFIG_KEYS = ("GOOSE_VERSION", "GOOSE_LOCALE", "GOOSE_WORKING_DIR",
+                  "GOOSE_DEFAULT_PROVIDER", "GOOSE_DEFAULT_MODEL",
+                  "GOOSE_PREDEFINED_MODELS", "REQUEST_DIR")
+
+# ⚠️ DELIBERATELY ABSENT, NOT FORGOTTEN — and the distinction is the whole point of
+# naming them. The renderer reads these, and the CORRECT value for us is "no value":
+#   GOOSE_PREDEFINED_MODELS  read as `if (e && typeof e === 'string') JSON.parse(e)`,
+#       falling back to []. An enterprise deployment sets it to pin a model menu; we
+#       have one runner and one loaded model. Supplying "" or "[]" would be a value the
+#       code then parses — absent is the branch upstream actually wrote for us.
+# Anything ADDED to the renderer's census that is neither supplied nor listed here fails
+# the contract test, so "we never noticed" stops being a possible answer.
+APPCONFIG_DELIBERATELY_ABSENT = ("GOOSE_PREDEFINED_MODELS",)
+
+
+# ── pure: paths ──────────────────────────────────────────────────────────────
+def ui_dir(root) -> str:
+    return os.path.join(str(root), UI_REL)
+
+
+def ui_home(root) -> str:
+    return os.path.join(str(root), HOME_REL)
+
+
+def path_root(root) -> str:
+    """GOOSE_PATH_ROOT — where config/data/state land. VERIFIED on the real binary:
+    `goose info` under this env reports config <root>/config/config.yaml, sessions
+    <root>/data/sessions/sessions.db, logs <root>/state/logs. (Note: config.yaml sits
+    directly under config/, NOT config/goose/ — the HOME-fenced XDG layout the PTY lane
+    uses is a DIFFERENT layout, which is a second reason the two cannot collide.)"""
+    return os.path.join(ui_home(root), PATH_ROOT_SUB)
+
+
+def config_path(root) -> str:
+    return os.path.join(path_root(root), "config", "config.yaml")
+
+
+def workspace_path(root) -> str:
+    return os.path.join(str(root), WORKSPACE_DIR)
+
+
+def pidfile_path(root) -> str:
+    return os.path.join(str(root), PIDFILE_REL)
+
+
+def goose_bin(root) -> str:
+    """THE SAME BINARY THE PTY LANE RUNS. One pin, one sha, one install script — the
+    embed adds a UI, not a second copy of goose."""
+    return os.path.join(str(root), "data", "goose", "bin", "goose")
+
+
+def has_binary(root) -> bool:
+    p = goose_bin(root)
+    return os.path.isfile(p) and os.access(p, os.X_OK)
+
+
+def has_bundle(root) -> bool:
+    return os.path.isfile(os.path.join(ui_dir(root), ENTRY_HTML))
+
+
+def is_installed(root) -> tuple:
+    """(ok, reason). Read from disk every time — never a stored flag, so a deleted
+    bundle or binary reads as not-installed immediately instead of offering a page that
+    cannot work (the music lane's rule)."""
+    if not has_binary(root):
+        return False, ("the goose binary is not installed yet "
+                       f"(./scripts/{BIN_INSTALLER})")
+    if not has_bundle(root):
+        return False, ("the goose UI bundle is not installed yet "
+                       f"(./scripts/{INSTALLER})")
+    return True, ""
+
+
+def install_state(root) -> dict:
+    """Everything the EMPTY STATE needs to render an honest Install button.
+
+    ⚠️ TWO SEPARATE ARTIFACTS, NAMED SEPARATELY. The binary (270MB extracted, pinned by
+    install_goose.sh and SHARED with the terminal lane) and the renderer bundle (6.6MB
+    kept from a 209MB download, pinned by install_goose_ui.sh). A user who already ran
+    the terminal lane's install must not be told to download the binary again, and a
+    single "install everything" button would do exactly that.
+    """
+    binary, bundle = has_binary(root), has_bundle(root)
+    return {
+        "binary": binary,
+        "bundle": bundle,
+        "ready": binary and bundle,
+        "app_version": PIN_APP_VERSION,
+        "asset": PIN_ASSET,
+        "asset_size": PIN_ASSET_SIZE,
+        "asset_sha256": PIN_ASSET_SHA256,
+        "asset_mb": round(PIN_ASSET_SIZE / (1024 * 1024)),
+        "kept_mb": 7,
+        "bundle_sha256": bundle_sha(root),
+        "pin_bundle_sha256": PIN_BUNDLE_SHA256,
+        "installer": f"scripts/{INSTALLER}",
+        "bin_installer": f"scripts/{BIN_INSTALLER}",
+    }
+
+
+def bundle_sha(root) -> str:
+    """The one number that identifies the vendored bundle. '' when unreadable — an
+    UNKNOWN provenance is its own answer and never a fabricated one."""
+    try:
+        with open(os.path.join(str(root), MANIFEST_REL), encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("BUNDLE "):
+                    return line.split(None, 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def bundle_target(root, rel):
+    """(abs_path, None) or (None, reason) for a /gooseui/<rel> request.
+
+    Identical rule to oo.bundle_target and office.doc_target, for its reason: the path
+    comes off the wire, so realpath containment strictly under data/goose/ui is what
+    makes `..` and a planted symlink both unreachable. Directories are refused; there is
+    no index and no listing.
+    """
+    if not isinstance(rel, str) or not rel.strip():
+        return None, "no file requested"
+    if "\x00" in rel:
+        return None, "refused: that is not a file name"
+    base = os.path.realpath(ui_dir(root))
+    target = os.path.realpath(os.path.join(base, rel.lstrip("/")))
+    if target != base and not target.startswith(base + os.sep):
+        return None, "refused: that path is outside the goose UI bundle"
+    if not os.path.isfile(target):
+        return None, "no such file in the goose UI bundle"
+    return target, None
+
+
+def media_type_for(path) -> str:
+    return FORCE_TYPES.get(os.path.splitext(str(path))[1].lower(),
+                           "application/octet-stream")
+
+
+# ── pure: the ACP endpoint ───────────────────────────────────────────────────
+def acp_url(port, token) -> str:
+    """ws://127.0.0.1:<port>/acp?token=<secret>.
+
+    ⚠️ NOT INVENTED — this is main.js's own builder, read out of the pinned app.asar:
+    `he(port, secret, scheme)` composes `${scheme}://127.0.0.1:${port}`, flips the
+    protocol to ws:/wss:, sets pathname `/acp` and searchParams `token`. We serve the
+    non-TLS loopback shape on purpose: `--tls` uses a self-signed cert whose fingerprint
+    Electron pins at the app level, which a WKWebView tab has no way to accept.
+    """
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        p = DEFAULT_ACP_PORT
+    return f"ws://127.0.0.1:{p}/acp?token={token or ''}"
+
+
+def status_url(port) -> str:
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        p = DEFAULT_ACP_PORT
+    return f"http://127.0.0.1:{p}/status"
+
+
+def new_token() -> str:
+    """A fresh GOOSE_SERVER__SECRET_KEY per supervised process. `goose serve` REFUSES to
+    start without one unless `--dangerously-unauthenticated` is passed, and that flag is
+    exactly the thing not to pass on a machine where any local page can open a socket."""
+    return secrets.token_urlsafe(32)
+
+
+# ── pure: the launch line and the fence ──────────────────────────────────────
+def serve_argv(root, port) -> list:
+    """`goose serve --platform desktop --enable-scheduler --host 127.0.0.1 --port N`
+    plus `--allowed-origin <our bridge origin>`.
+
+    ⚠️ `--platform desktop` IS LOAD-BEARING, not decoration: it is what the Desktop's own
+    main process passes (main.js, verbatim), and the renderer is built against that
+    platform's ACP surface. `cli` would answer a different shape.
+    """
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        p = DEFAULT_ACP_PORT
+    return [goose_bin(root), "serve", "--platform", "desktop", "--enable-scheduler",
+            "--host", "127.0.0.1", "--port", str(p)]
+
+
+def allowed_origins(bridge_port=8700) -> list:
+    """The exact Origin values our page can arrive with.
+
+    ⚠️ `--allowed-origin` REPLACES the default loopback set (AcpOriginPolicy::exact), so
+    if we pass ANY we must pass ALL of ours — including the WKWebView tab's, which is the
+    same bridge origin, and both spellings of loopback, because 127.0.0.1 and localhost
+    are different Origins to a browser and a user typing either must not get a socket
+    that silently refuses.
+    """
+    try:
+        b = int(bridge_port)
+    except (TypeError, ValueError):
+        b = 8700
+    return [f"http://127.0.0.1:{b}", f"http://localhost:{b}"]
+
+
+def serve_env(base_env: dict, root, token: str, endpoint: str = "",
+              api_key: str = "", wire_model: str = "", runner_port=6767) -> dict:
+    """The supervised goosed's environment: the fence, the kill switches, the runner.
+
+    ⚠️ THE FENCE IS GOOSE_PATH_ROOT *AND* HOME *AND* THE FOUR XDG DIRS — belt and braces
+    on purpose, and the reason is not symmetry. GOOSE_PATH_ROOT redirects goose's own
+    config/data/state (verified with `goose info` on the pinned binary). It does NOT
+    redirect what the SUBPROCESSES goose spawns read: an MCP extension shelling out
+    inherits HOME, and the HuggingFace cache is HF_HOME's business. So HOME is fenced
+    too, and HF_HOME with it, which is the one leak §5 of the research names.
+
+    ⚠️ AND IT IS A DIFFERENT HOME FROM THE PTY LANE'S. data/goose/ui-home vs
+    data/goose/home. That is the whole no-collision guarantee, stated as a fence rather
+    than as a hope.
+    """
+    home = ui_home(root)
+    env = dict(base_env or {})
+    env["GOOSE_PATH_ROOT"] = path_root(root)
+    env["HOME"] = home
+    env["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
+    env["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
+    env["XDG_STATE_HOME"] = os.path.join(home, ".local", "state")
+    env["XDG_CACHE_HOME"] = os.path.join(home, ".cache")
+    env["HF_HOME"] = os.path.join(home, ".cache", "huggingface")
+    # ── the kill switches, both mechanisms, exactly as the PTY lane does them ──
+    env["GOOSE_TELEMETRY_OFF"] = "1"
+    env["GOOSE_TELEMETRY_ENABLED"] = "false"
+    env["GOOSE_DISABLE_KEYRING"] = "true"
+    env["GOOSE_DISABLE_SESSION_NAMING"] = "true"
+    # ⚠️ NOT a preference: the Desktop app auto-updates itself against
+    # github:aaif-goose/goose. A supervised copy that replaces its own binary under us
+    # would silently un-pin the sha we ship a contract test for.
+    env["GOOSE_DISABLE_AUTO_DOWNLOAD"] = "1"
+    # ⚠️ THE APPROVAL PROMPT — SET, NOT LEFT ALONE, AND THE SPIKE MEASURED WHY.
+    #
+    # THE FINDING (walked 2026-08-29, in WKWebView, on the real stack): with GOOSE_MODE
+    # unset the embedded agent was asked to "create a file named GOOSEUI-WROTE-THIS.txt"
+    # and DID — no card, no prompt, no trace in the UI beyond a tool result. At this pin
+    # `GooseMode` DEFAULTS TO `auto`, so an embedded agent that can also run shell
+    # commands acts on the user's disk with no consent step at all. bridge/pty_goose.py
+    # recorded exactly this for the terminal lane; inheriting the same default here
+    # would have shipped the same defect twice, which is what "the lesson is recorded in
+    # its GENERAL form" exists to prevent.
+    #
+    # `smart_approve` is upstream's own middle ground. ⚠️ AND IT WORKS HERE FOR A
+    # DIFFERENT REASON THAN IN THE PTY LANE: there it needs an interactive terminal
+    # (headless `goose run` refuses outright under it). On the DESKTOP platform the
+    # approval travels over ACP as `session/request_permission` and the renderer draws
+    # the card — `request_permission` and `alwaysAllow` are both in the vendored bundle.
+    # So the embed gets a real, clickable consent step; PROVEN by re-walking the same
+    # write and getting a permission card instead of a file.
+    env["GOOSE_MODE"] = GOOSE_MODE
+    # ── the ACP secret `goose serve` refuses to start without ──
+    env["GOOSE_SERVER__SECRET_KEY"] = token or ""
+    # ── the runner (same wiring as the PTY lane; see pty_goose.openai_host) ──
+    if wire_model:
+        env["GOOSE_PROVIDER"] = "openai"
+        env["GOOSE_MODEL"] = wire_model
+    env["OPENAI_HOST"] = _openai_host(endpoint, runner_port)
+    env["OPENAI_BASE_PATH"] = "v1/chat/completions"
+    env["OPENAI_API_KEY"] = (api_key or "").strip() or "harness-local"
+    # …and the SAME key under the custom provider's env name, so a provider created
+    # through goose's own "Add custom provider" form finds its key without the user
+    # ever being asked for one. See CUSTOM_PROVIDER_KEY_ENV.
+    env[CUSTOM_PROVIDER_KEY_ENV] = env["OPENAI_API_KEY"]
+    for k in ("COLUMNS", "LINES", "GOOSE_TOOLSHIM"):
+        env.pop(k, None)
+    return env
+
+
+# The env var name a custom `openai_compatible` provider created in goose's own UI is
+# told to read its key from. Ours is pre-set in the child's env, so the "API key" field
+# in that form can be filled with anything (or the provider marked no-auth) and the real
+# key still reaches our runner.
+CUSTOM_PROVIDER_KEY_ENV = "HARNESS_RUNNER_API_KEY"
+
+# The consent mode, shared by the env and the seeded config so neither can be the only
+# place it is set. See the block in serve_env for the measured finding behind it.
+GOOSE_MODE = "smart_approve"
+# …and the value that must NEVER be on the line, in either direction — inherited from
+# the operator's shell or set by us. `auto` is what produced the finding.
+FORBIDDEN_MODE = "auto"
+
+
+def _openai_host(endpoint, port=6767) -> str:
+    """PURE. Same rule as pty_goose.openai_host and the same trap: goose composes
+    OPENAI_HOST + '/' + OPENAI_BASE_PATH, so handing it the runner's `…/v1` base
+    produces /v1/v1/chat/completions — a 404 that reads as "the model is broken"."""
+    s = (endpoint if isinstance(endpoint, str) else "").strip().rstrip("/")
+    if s.endswith("/v1"):
+        s = s[: -len("/v1")]
+    if not s.startswith("http://") and not s.startswith("https://"):
+        try:
+            return f"http://127.0.0.1:{int(port)}"
+        except (TypeError, ValueError):
+            return "http://127.0.0.1:6767"
+    return s
+
+
+# ── pure: the seeded config ──────────────────────────────────────────────────
+def config_pairs(endpoint: str, wire_model: str, port=6767) -> tuple:
+    """The keys we own in the EMBED lane's config.yaml, in a stable order.
+
+    Seeding these is what makes the DoD's "arrives pre-configured" true: goose's
+    onboarding screen appears only while `GOOSE_PROVIDER` has no value it can use, so a
+    seeded provider+model means the user lands in a chat box, not in a provider picker
+    asking for an OpenAI key they do not have.
+    """
+    return (("GOOSE_DISABLE_KEYRING", "true"),
+            ("GOOSE_TELEMETRY_ENABLED", "false"),
+            ("GOOSE_MODE", GOOSE_MODE),
+            ("GOOSE_PROVIDER", "openai"),
+            ("GOOSE_MODEL", wire_model or ""),
+            ("OPENAI_HOST", _openai_host(endpoint, port)),
+            ("OPENAI_BASE_PATH", "v1/chat/completions"))
+
+
+def upsert_config(text: str, pairs) -> str:
+    """PURE. Set each top-level `key: value`, preserving every other line byte-for-byte.
+    A TEXT EDIT, NEVER A YAML ROUND-TRIP — the same rule (and reason) as
+    pty_goose.upsert_config: a round-trip through a dumper eats comments and would
+    silently drop the extensions the user added from inside the UI."""
+    out = (text or "").splitlines()
+    for key, value in pairs:
+        want = f"{key}: {value}"
+        for i, line in enumerate(out):
+            if line.startswith(f"{key}:"):
+                out[i] = want
+                break
+        else:
+            out.append(want)
+    return "\n".join(out).strip("\n") + "\n"
+
+
+def seed_config(root, endpoint: str, wire_model: str, port=6767) -> str:
+    """Write our keys into the FENCED config.yaml, keeping whatever else is there.
+    Best-effort by design: the env carries the same settings, so a read-only config dir
+    degrades to "the env wins" rather than to a dead lane."""
+    p = config_path(root)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        try:
+            with open(p, encoding="utf-8") as fh:
+                cur = fh.read()
+        except OSError:
+            cur = ""
+        new = upsert_config(cur, config_pairs(endpoint, wire_model, port))
+        if new != cur:
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(new)
+            os.replace(tmp, p)
+    except OSError:                                                  # noqa: BLE001
+        pass
+    return p
+
+
+# ── pure: the page and the shim ──────────────────────────────────────────────
+INJECT_MARK = "<!-- harness: goose preload shim -->"
+
+# ⚠️ THE NAME OF *OUR* SURFACE, NOT OF GOOSE (Debi's ruling, 2026-08-29). The embedded
+# surface is "Goose UI"; the PTY terminal lane becomes "Goose CLI" in the full slice
+# (renaming its nav/index/main.swift labels is NOT this spike's scope). This retitles
+# only the document WE generate, so the two harness tabs are tellable apart in a tab
+# strip and in a window title. Everything INSIDE the bundle — goose's own wordmark, the
+# Block lockups, every self-reference in the UI — stays exactly as shipped: that is the
+# nominative-use line the trademark note in data/goose/UI-SOURCES.txt draws.
+SURFACE_NAME = "Goose UI"
+
+
+def retitle(index_html: str, name: str = SURFACE_NAME) -> str:
+    """PURE. Replace the vendored document's <title> with OUR surface name.
+
+    Total: a bundle whose entry document has no <title> is returned untouched rather
+    than guessed at — an absent title is a cosmetic loss, and a regex that "fixes" it by
+    inserting markup into a document it did not parse is how a page stops loading.
+    """
+    lo, hi = index_html.find("<title>"), index_html.find("</title>")
+    if lo < 0 or hi < lo:
+        return index_html
+    return index_html[:lo] + f"<title>{name}</title>" + index_html[hi + len("</title>"):]
+
+
+def page_html(index_html: str, preload_src: str) -> str:
+    """OUR entry document, generated from the vendored one by adding ONE tag.
+
+    ⚠️ THE TAG MUST LAND BEFORE THE MODULE SCRIPT AND BE NON-MODULE. The bundle's entry
+    is `<script type="module" crossorigin src="./assets/index-*.js">`; a classic script
+    tag placed above it is guaranteed to execute first (module scripts are deferred by
+    definition), and `window.electron` must exist before ANY renderer code runs. Using
+    `type="module"` for the shim would defer it too, into the same queue, and the order
+    would then depend on fetch timing — the kind of race that works on localhost and
+    fails once.
+
+    ⚠️ AND THE VENDORED FILE IS NOT EDITED. This is a transform applied to the bytes on
+    the way out, so data/goose/ui stays byte-identical to the asar and its sha manifest
+    keeps meaning something.
+
+    Total: if the entry tag is not found (an upstream bundle reshuffle), the shim is put
+    at the end of <head>, and if there is no <head> either, at the very top. A page that
+    loads with the shim in a slightly odd place is recoverable; a page served without it
+    is a blank screen and an "ACP URL is not available" in a console nobody opened.
+    """
+    index_html = retitle(index_html)
+    tag = f'{INJECT_MARK}\n    <script src="{preload_src}"></script>\n'
+    needle = '<script type="module"'
+    i = index_html.find(needle)
+    if i >= 0:
+        return index_html[:i] + tag + "    " + index_html[i:]
+    i = index_html.find("</head>")
+    if i >= 0:
+        return index_html[:i] + tag + index_html[i:]
+    return tag + index_html
+
+
+def preload_js(cfg: dict) -> str:
+    """OUR `window.electron` + `window.appConfig`, as one classic script.
+
+    `cfg` carries what only the server knows: {acp_url, secret, app_config, degraded}.
+    Everything else is browser primitives. The three catalogues at the top of this module
+    are the spec; this function is their implementation, and the contract test asserts
+    that every name in PRELOAD_METHODS is actually defined in the string this returns.
+    """
+    blob = json.dumps({
+        "acpUrl": cfg.get("acp_url") or "",
+        "secret": cfg.get("secret") or "",
+        "appConfig": cfg.get("app_config") or {},
+        "degraded": dict(DEGRADED),
+    }, ensure_ascii=False)
+    return _PRELOAD_TEMPLATE.replace("__HARNESS_CFG__", blob)
+
+
+# ⚠️ ONE STRING, NOT A FILE ON DISK, AND THAT IS DELIBERATE. The shim has to carry the
+# ACP URL and the per-process token, which change every time we start goosed — a static
+# asset would either be stale or need a second fetch before `window.electron` exists,
+# and "before any renderer code runs" is the whole requirement. Generating it means the
+# page and its seam are always one consistent pair.
+_PRELOAD_TEMPLATE = r"""// MOT Deck — the browser stand-in for goose Desktop's Electron preload.
+// Generated by bridge/gooseui.py. The goose renderer bundle itself is UNMODIFIED.
+(function () {
+  'use strict';
+  var CFG = __HARNESS_CFG__;
+
+  // ── the event bus ────────────────────────────────────────────────────────
+  // Every channel the renderer subscribes to is a MAIN→RENDERER push (add-extension,
+  // theme-changed, find-command, new-chat, set-view, fatal-error, …). With no main
+  // process there is nobody to push, so a correct, empty bus is the honest shim: the
+  // listeners register and simply never fire. `emit` is wired to the same bus so the
+  // renderer's own internal emits still reach its own listeners.
+  var bus = Object.create(null);
+  function on(ch, fn) { (bus[ch] = bus[ch] || []).push(fn); }
+  function off(ch, fn) {
+    var a = bus[ch]; if (!a) return;
+    var i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+  }
+  function emit(ch) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    (bus[ch] || []).slice().forEach(function (fn) {
+      // Electron hands listeners an IpcRendererEvent first. The renderer's handlers are
+      // written `(_event, payload) => …`, so dropping it would shift every argument.
+      try { fn.apply(null, [{ sender: null }].concat(args)); } catch (e) { console.error(e); }
+    });
+  }
+
+  // ── settings ─────────────────────────────────────────────────────────────
+  // goose's OWN preload already reads five of these from localStorage before falling
+  // back to IPC; we make localStorage the whole store. Keys and coercions are copied
+  // from the preload so a value written by the real app is read identically here.
+  var DEFAULTS = {
+    showMenuBarIcon: true, disableAutoDownload: true, showDockIcon: true,
+    enableWakelock: false, enableNotifications: false, spellcheckEnabled: true,
+    keyboardShortcuts: {}, externalGoosed: { enabled: false, url: '', secret: '' },
+    theme: 'light', useSystemTheme: true, language: 'system',
+    responseStyle: 'concise', showPricing: true, seenAnnouncementIds: [], recentModels: []
+  };
+  var LS_KEY = 'harness.goose.settings';
+  function readAll() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; }
+    catch (e) { return {}; }
+  }
+  function writeAll(o) { try { localStorage.setItem(LS_KEY, JSON.stringify(o)); } catch (e) {} }
+  function getSetting(k) {
+    var all = readAll();
+    return Promise.resolve(k in all ? all[k] : DEFAULTS[k]);
+  }
+  function setSetting(k, v) { var a = readAll(); a[k] = v; writeAll(a); return Promise.resolve(true); }
+
+  function nope(v) { return function () { return Promise.resolve(v); }; }
+  function loud(name) {
+    // A DEGRADED call is NOT silent. It says, once per name, what the user just lost —
+    // in the console and (for the ones a user can actually trigger) as the return value
+    // the renderer already knows how to handle: empty / null / false.
+    var said = false;
+    return function () {
+      if (!said) { said = true; console.warn('[goose-embed] ' + name + ': ' + (CFG.degraded[name] || 'not available in a browser tab')); }
+      return null;
+    };
+  }
+
+  var electron = {
+    // ── connection-critical ────────────────────────────────────────────────
+    getAcpUrl: function () { return Promise.resolve(CFG.acpUrl); },
+    getSecretKey: function () { return Promise.resolve(CFG.secret); },
+
+    // ── identity / config ──────────────────────────────────────────────────
+    platform: 'darwin',
+    arch: 'arm64',
+    getConfig: function () { return CFG.appConfig; },
+    getVersion: function () { return CFG.appConfig.GOOSE_VERSION || ''; },
+    reactReady: function () {},
+
+    // ── settings ───────────────────────────────────────────────────────────
+    getSetting: getSetting,
+    setSetting: setSetting,
+
+    // ── events ─────────────────────────────────────────────────────────────
+    on: on, off: off, emit: emit,
+    onMouseBackButtonClicked: function (fn) { on('mouse-back-button-clicked', fn); return fn; },
+    offMouseBackButtonClicked: function (fn) { off('mouse-back-button-clicked', fn); },
+    broadcastThemeChange: function (t) { emit('theme-changed', t); },
+
+    // ── browser primitives ─────────────────────────────────────────────────
+    logInfo: function (m) { console.info('[goose]', m); },
+    openExternal: function (u) { try { window.open(u, '_blank', 'noopener'); } catch (e) {} return Promise.resolve('opened'); },
+    openInChrome: function (u) { try { window.open(u, '_blank', 'noopener'); } catch (e) {} },
+    showMessageBox: function (opts) {
+      // Electron resolves {response: <button index>}. goose's callers treat index 1 as
+      // the affirmative (its dialogs are built [cancel, confirm]), so a confirm() maps
+      // cleanly — and a cancelled confirm must be 0, never undefined.
+      var msg = [(opts && opts.message) || '', (opts && opts.detail) || ''].filter(Boolean).join('\n\n');
+      var yes = false;
+      try { yes = window.confirm(msg || 'Continue?'); } catch (e) { yes = false; }
+      return Promise.resolve({ response: yes ? 1 : 0, checkboxChecked: false });
+    },
+    reloadApp: function () { try { location.reload(); } catch (e) {} },
+    getIsFullScreen: function () { return Promise.resolve(!!document.fullscreenElement); },
+    isAnyWindowFocused: function () { return Promise.resolve(document.hasFocus()); },
+
+    // ── stubs: capability absent, absence harmless ─────────────────────────
+    setMenuBarIcon: nope(false), getMenuBarIconState: nope(false),
+    setDockIcon: nope(false), getDockIconState: nope(false),
+    setWakelock: nope(false), getWakelockState: nope(false),
+    setSpellcheck: nope(true), getSpellcheckState: nope(true),
+    openNotificationsSettings: nope(false),
+    showNotification: function (o) {
+      // Best effort, never a prompt: an unsolicited permission dialog raised behind a
+      // WKWebView tab is the same hang the keyring fence exists to prevent.
+      try {
+        if (window.Notification && Notification.permission === 'granted') {
+          new Notification((o && o.title) || 'Goose', { body: (o && o.body) || '' });
+        }
+      } catch (e) {}
+    },
+    hideWindow: function () {}, closeWindow: function () {},
+    checkForOllama: nope(false),
+    checkForUpdates: nope({ updateAvailable: false }),
+    downloadUpdate: nope(false), installUpdate: function () {}, restartApp: function () {},
+    onUpdaterEvent: function () {}, getUpdateState: nope({ available: false }),
+    isUsingGitHubFallback: nope(false),
+    getAutoDownloadDisabled: nope(true),
+    getBinaryPath: nope(''),
+    hasAcceptedRecipeBefore: nope(false), recordRecipeHash: nope(true),
+    launchApp: nope(false), refreshApp: nope(false), closeApp: nope(false),
+    addRecentDir: nope(true), listRecentDirs: nope([]),
+    listGitWorktreeDirs: nope([]), getGitBranchInfo: nope(null), listGitBranches: nope([]),
+    switchGitBranch: nope(false),
+    getAllowedExtensions: nope([]),
+
+    // ── degraded: says what was lost, returns the "nothing" the caller handles ──
+    createChatWindow: function () { console.warn('[goose-embed] createChatWindow: ' + CFG.degraded.createChatWindow); },
+    directoryChooser: function () { loud('directoryChooser')(); return Promise.resolve(null); },
+    selectFileOrDirectory: function () { loud('selectFileOrDirectory')(); return Promise.resolve(null); },
+    selectRecipeFile: function () { loud('selectRecipeFile')(); return Promise.resolve(null); },
+    selectImportSessionFile: function () { loud('selectImportSessionFile')(); return Promise.resolve(null); },
+    showSaveDialog: function () { loud('showSaveDialog')(); return Promise.resolve({ canceled: true, filePath: '' }); },
+    getPathForFile: function () { loud('getPathForFile')(); return ''; },
+    readGoosehints: function () { loud('readGoosehints')(); return Promise.resolve(''); },
+    writeGoosehints: function () { loud('writeGoosehints')(); return Promise.resolve(false); },
+    writeFile: function () { loud('writeFile')(); return Promise.resolve(false); },
+    ensureDirectory: function () { loud('ensureDirectory')(); return Promise.resolve(false); },
+    listFiles: function () { loud('listFiles')(); return Promise.resolve([]); },
+    openDirectoryInExplorer: function () { loud('openDirectoryInExplorer')(); return Promise.resolve(false); }
+  };
+
+  Object.defineProperty(window, 'electron', { value: electron, writable: false, configurable: false });
+  Object.defineProperty(window, 'appConfig', {
+    value: {
+      get: function (k) { return CFG.appConfig[k]; },
+      getAll: function () { var o = {}; for (var k in CFG.appConfig) o[k] = CFG.appConfig[k]; return o; }
+    },
+    writable: false, configurable: false
+  });
+
+  // ⚠️ A MISSING METHOD MUST NOT BE A SILENT `undefined is not a function` IN A TAB.
+  // goose bumps add preload methods; this names the gap in the console with the version
+  // that opened it, which is the difference between a diagnosable report and "it broke".
+  window.__harnessGooseSeam = { version: CFG.appConfig.GOOSE_VERSION || '', acp: !!CFG.acpUrl };
+  console.info('[goose-embed] preload shim installed for goose ' +
+               (CFG.appConfig.GOOSE_VERSION || '?') + ' — ' +
+               Object.keys(electron).length + ' methods');
+})();
+"""
+
+
+def app_config(version: str, workspace: str, wire_model: str = "",
+               provider: str = "openai") -> dict:
+    """The `window.appConfig` blob, i.e. what Electron's main process injects through
+    `additionalArguments`. Only the keys the renderer actually reads are set; a key we
+    do not know is ABSENT rather than guessed, because `undefined` is what the renderer's
+    `??` fallbacks are written against and a fabricated value would win over them."""
+    return {
+        "GOOSE_VERSION": version or PIN_APP_VERSION,
+        # ⚠️ "en", NOT "en-US". Electron's main hands the renderer `app.getLocale()`,
+        # which on this Mac is "en-US" — and the bundle ships its catalogue as `en`, so
+        # the renderer logged `Locale "en-US" has no translations; falling back to "en"`
+        # on every load. Harmless, but a warning that is always printed is a warning
+        # nobody reads, and the honest value here is the one the bundle actually has.
+        "GOOSE_LOCALE": "en",
+        "GOOSE_WORKING_DIR": workspace or "",
+        "REQUEST_DIR": workspace or "",
+        "GOOSE_DEFAULT_PROVIDER": provider or "",
+        "GOOSE_DEFAULT_MODEL": wire_model or "",
+        # ⚠️ EXTERNAL BACKEND IS OFF. The renderer has a whole "point me at somebody
+        # else's goosed" path; ours is supervised and its URL comes from getAcpUrl, so
+        # leaving this true would give the user a second, conflicting connection story.
+        "GOOSE_EXTERNAL_BACKEND": False,
+        "GOOSE_EXTERNAL_BACKEND_URL": "",
+        "GOOSE_EXTERNAL_BACKEND_SOURCE": "",
+    }

@@ -229,6 +229,10 @@ _LANES = (
     # …and the GOOSE agent lane by the SAME rule, a sixth time: new, it separates no
     # pair of neighbours, and it costs only where /goose and /api/goose/* appear.
     "routers.goose",
+    # …and the GOOSE EMBED lane (goose Desktop's own UI, served by us) by the SAME rule,
+    # a seventh time: new, it separates no pair of neighbours, and it costs only where
+    # /gooseui and /api/gooseui/* appear.
+    "routers.gooseui",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
