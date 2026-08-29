@@ -3376,13 +3376,19 @@ function openComponent(name) {
    so this is reached from the Studio's header dropdown and from ⌘K, never from the
    sidebar — and it must therefore never depend on a row existing. */
 /* OPEN THE STUDIO — the one Music door, and the reverse of the Classic header's chip.
-   It is `navOpen('compose')` and nothing else on purpose: that is the SAME code path
-   the sidebar row runs, so the tab-vs-browser rule, the stale-shell note and the
-   last-three window all behave identically however you got here. */
-function openMusicStudio() { navOpen('compose'); }
+   REVISED per Debi's live feedback (2026-08-29): when THIS document is the solo
+   Classic load (?solo=music) — i.e. we are sitting INSIDE the one Music tab wearing
+   the Classic look — the switch back is an IN-PLACE navigation, mirroring the
+   Studio dropdown's in-place navigation the other way. A switchTab here would ask
+   the shell for a second tab and re-create the two-Music-tabs pollution the ruling
+   exists to prevent. In the full panel (Music reached as an in-panel view), the
+   sidebar's own code path still applies. */
+function openMusicStudio() {
+  if (/[?&]solo=music\b/.test(location.search)) { location.href = '/compose'; return; }
+  navOpen('compose');
+}
 function openMusicClassic() {
-  const e = navEntry('music');
-  if (e && shellKnowsTab('music') !== false && switchTab(e.tab, 'music')) { navTouch('music'); return; }
+  // In-panel only (⌘K): the solo tab never runs this. showView keeps it one document.
   showView('music');
 }
 /* ONE click handler for every sidebar row. A component keeps its own rule (running →

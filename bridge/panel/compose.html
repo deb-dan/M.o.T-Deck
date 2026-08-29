@@ -342,9 +342,14 @@
          min-height:var(--zbar); flex-wrap:wrap;
          background:var(--bg2); border-bottom:1px solid var(--zborder); }
   /* the ONE-door switcher: the page's own tokens, so it is not browser chrome. */
+  /* width:auto is LOAD-BEARING: the base `input,select{width:100%}` rule at the form
+     block otherwise stretches this select across the whole header row (Debi's live
+     feedback 2026-08-29: "so long, should be as the width or smaller than the engines
+     chip, same line next to it"). max-content keeps it exactly as wide as its label. */
   #look { height:var(--pill-h); padding:0 4px; border:1px solid var(--zborder);
           border-radius:var(--pill-r); background:var(--bg); color:var(--cream);
-          font:11px var(--sans); cursor:pointer; }
+          font:11px var(--sans); cursor:pointer; width:auto; max-width:max-content;
+          flex:0 0 auto; }
   #look:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
   #bench { display:grid; grid-template-columns:var(--sw) minmax(0,1fr);
            gap:var(--grp); padding:var(--grp) var(--grp) 0; min-height:0;
@@ -792,35 +797,28 @@ const S = {
 };
 const $ = (id) => document.getElementById(id);
 
-/* ══ THE ONE MUSIC DOOR — the switcher's other half (Debi 2026-08-29) ═══════════
-   Inside Harness.app the answer is a TAB SWITCH, not a navigation: the shell owns the
-   window, `Music Classic` is its own tab (the chromeless ?solo=music load), and
-   replacing this document's URL would leave the Music tab showing the Classic page for
-   the rest of the session. The id is sent as well as the title, because the shell
-   resolves the STABLE id first and a title is only the fallback for an older build.
-   In a plain browser there is no shell, and the URL is the honest answer.
-   ⚠️ TOTAL: every failure path lands on the URL rather than doing nothing — a switcher
-   that silently does not switch is the dead-control class. */
+/* ══ THE ONE MUSIC DOOR — the switcher's other half (Debi 2026-08-29, REVISED on her
+   live feedback the same day): IN-PLACE NAVIGATION, never a tab switch. The first
+   build asked the shell for a separate `music` tab — which meant one dropdown visit
+   to Classic parked "Music Classic" in a strip window slot for the rest of the
+   session: TWO Music tabs on a strip whose whole ruling is one door. Both surfaces
+   now swap INSIDE the one Music tab: this page navigates to the Classic URL, and
+   Classic's own "♫ Music Studio →" chip navigates back (openMusicStudio in
+   index.html detects the solo document and mirrors this). The tab title stays
+   "Music" in the shell — correct, because the tab IS Music, whichever look it wears.
+   The old `switchTab` path is deliberately gone; do not resurrect it — it is the
+   MRU-pollution class, pinned in test_compose_page.js. */
 function musicClassic() {
-  const h = (window.webkit && window.webkit.messageHandlers
-             && window.webkit.messageHandlers.harness) || null;
-  if (h) {
-    try {
-      h.postMessage({ cmd:'switchTab', title:'Music Classic', id:'music' });
-      return true;
-    } catch (e) { /* fall through to the URL */ }
-  }
   location.href = '/?solo=music';
-  return false;
+  return true;
 }
 addEventListener('DOMContentLoaded', () => {
   const sel = $('look');
   if (!sel) return;
   sel.addEventListener('change', () => {
     if (sel.value === 'classic') musicClassic();
-    // Re-assert the truth about THIS page whatever happened: in the app we are still
-    // the Studio, sitting in our own tab, and in a browser the navigation is already
-    // under way and this costs nothing.
+    // Navigation is under way; re-asserting costs nothing and keeps the select
+    // truthful if the navigation is somehow prevented (never a standing lie).
     sel.value = 'studio';
   });
 });

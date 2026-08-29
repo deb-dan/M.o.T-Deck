@@ -113,10 +113,11 @@ ok(/#view-music/.test(indexHtml), '…while the Music view itself is still in th
 ok(/<select id="look"/.test(html) && /value="classic"/.test(html)
    && /<option value="studio" selected>Music Studio<\/option>/.test(html),
    'the Studio page carries the header switcher, defaulting to Studio');
-ok(/function musicClassic\(\)/.test(html) && /cmd:'switchTab', title:'Music Classic', id:'music'/.test(html)
+ok(/function musicClassic\(\)/.test(html) && !/cmd:'switchTab'/.test(html)
    && /location\.href = '\/\?solo=music'/.test(html),
-   '…which switches the TAB inside the app and falls back to the URL in a browser — '
-   + 'never a dead control');
+   '…which navigates IN PLACE in app and browser alike — the switchTab path is BANNED '
+   + '(Debi live feedback 2026-08-29: it parked a second Music tab in a strip window '
+   + 'slot; both looks live inside the ONE Music tab)');
 ok(/sel\.value = 'studio';/.test(html),
    '…and re-asserts its own value afterwards: in the app this document stays loaded in '
    + 'its tab, so a select left reading "Music Classic" would be a standing lie');
