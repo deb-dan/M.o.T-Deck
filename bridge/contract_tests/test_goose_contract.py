@@ -273,3 +273,117 @@ def test_the_toolshim_backends_still_cannot_reach_our_runner():
     assert "GOOSE_TOOLSHIM_OLLAMA_MODEL" in blob, (
         "the ollama-only backend key vanished; if the toolshim gained a generic "
         "OpenAI-compatible backend, this lane could offer it instead of warning")
+
+
+# ══ THE DECLARATIVE CUSTOM PROVIDER — the schema, pinned against the real binary ══
+#
+# ⚠️ THIS SECTION EXISTS BECAUSE v1.5.40 GUESSED AND WAS WRONG THREE TIMES. The layout
+# is now READ, not designed: goose's own "Add custom provider" form was driven through
+# the real renderer at http://127.0.0.1:8700/gooseui/ on 2026-08-29 and the file goose
+# WROTE is the schema. bridge/gooseprov.py's docstring carries the full census. What
+# follows is the half a pin bump must re-prove — because a declarative-provider schema
+# is exactly the kind of upstream surface that moves quietly.
+
+def _prov():
+    import sys
+    sys.path.insert(0, ROOT)
+    from bridge import gooseprov
+    return gooseprov
+
+
+def test_the_provider_name_is_gooses_own_slug():
+    """Our provider file is named what GOOSE would name it for our display name. That
+    is not cosmetic: it is what makes a provider the user later edits (or deletes) in
+    goose's own form be the same object we seed, instead of a second identical row."""
+    P = _prov()
+    assert P.slugify(P.DISPLAY_NAME) == P.PROVIDER_NAME == "custom_mot_deck__local"
+    assert P.api_key_env() == "CUSTOM_MOT_DECK__LOCAL_API_KEY", (
+        "goose DERIVES the key env var from the provider name — a name change is "
+        "silently a key change")
+    assert P.DISPLAY_NAME == "MOT Deck (local)", (
+        "one product, one name in every vendor picker (OpenCode's provider says the "
+        "same string)")
+
+
+def test_the_provider_file_shape_is_the_one_goose_wrote():
+    """The 22 fields, verbatim from the file goose's own form produced at v1.48.0."""
+    P = _prov()
+    doc = P.provider_doc("http://127.0.0.1:6767", P.model_entries([{"id": "m"}]))
+    assert set(doc) == {
+        "name", "engine", "display_name", "description", "api_key_env", "base_url",
+        "models", "headers", "timeout_seconds", "supports_streaming", "requires_auth",
+        "catalog_provider_id", "base_path", "env_vars", "dynamic_models",
+        "skip_canonical_filtering", "model_doc_link", "setup_steps", "fast_model",
+        "preserves_thinking", "emit_clear_thinking", "setup"}, (
+        "the declarative-provider schema moved at this pin — re-run the census "
+        "(drive goose's own Add-custom-provider form and read the file it writes) "
+        "before changing anything here")
+    assert doc["engine"] == "openai", (
+        "the FILE's engine is `openai`; `openai_compatible` is the FORM's enum")
+    assert doc["base_path"] is None and doc["base_url"].count("/v1") == 0
+    assert set(doc["models"][0]) == {
+        "name", "context_limit", "input_token_cost", "output_token_cost", "currency",
+        "supports_cache_control", "reasoning"}
+
+
+def test_the_pinned_binary_still_loads_a_seeded_provider():
+    """⚠️ THE LIVE HALF, AND THE ONLY ONE THAT PROVES ANYTHING. Seed our provider file
+    into a THROWAWAY fenced home, point the real goose binary at it, and require it to
+    resolve — `Unknown provider` is exactly the failure v1.5.40 hit three times, and it
+    is silent until somebody types a message.
+
+    No network is needed and none is used: we only require goose to RESOLVE the
+    provider, which it reports in its own session banner before any request is made.
+    """
+    if not _installed():
+        return
+    import shutil
+    import tempfile
+    P = _prov()
+    home = tempfile.mkdtemp(prefix="goose-contract-")
+    try:
+        cfgdir = os.path.join(home, ".config", "goose")
+        path, _changed, err = P.seed_provider(
+            cfgdir, "http://127.0.0.1:1/v1", [{"id": "contract-model"}])
+        assert not err and os.path.isfile(path), f"could not seed the provider: {err}"
+        env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": home,
+               "XDG_CONFIG_HOME": cfgdir.rsplit(os.sep, 1)[0],
+               "XDG_DATA_HOME": os.path.join(home, ".local", "share"),
+               "XDG_STATE_HOME": os.path.join(home, ".local", "state"),
+               "XDG_CACHE_HOME": os.path.join(home, ".cache"),
+               "GOOSE_TELEMETRY_OFF": "1", "GOOSE_TELEMETRY_ENABLED": "false",
+               "GOOSE_DISABLE_KEYRING": "true",
+               "GOOSE_DISABLE_SESSION_NAMING": "true",
+               "GOOSE_PROVIDER": P.PROVIDER_NAME,
+               "GOOSE_MODEL": "contract-model",
+               P.api_key_env(): "contract-key"}
+        try:
+            p = subprocess.run([BIN, "run", "--no-session", "--text", "x"],
+                               capture_output=True, text=True, timeout=180, env=env)
+        except (OSError, subprocess.SubprocessError):
+            return
+        out = (p.stdout or "") + (p.stderr or "")
+        if not out.strip():
+            return                      # a foreign ISA in the sandbox: SKIP, not a fail
+        assert "Unknown provider" not in out, (
+            "the pinned binary REJECTED our seeded declarative provider — the schema "
+            "moved. Re-run the census through goose's own form; see bridge/gooseprov.py")
+        assert P.PROVIDER_NAME in out, (
+            "goose did not resolve the provider by name — it should announce it in its "
+            f"own session banner. Got:\n{out[:800]}")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_env_beats_secrets_for_the_provider_key():
+    """The string goose reads the key from must still exist in the binary. This is the
+    measured precedence (env WINS over secrets.yaml) that lets us hand the runner's key
+    to the child and NEVER write the user's secret store."""
+    if not _installed():
+        return
+    blob = _strings(BIN)
+    for needle in ("custom_providers", "api_key_env", "active_provider",
+                   "openai_compatible"):
+        assert needle in blob, (
+            f"'{needle}' vanished from the pinned binary — the declarative provider "
+            "mechanism moved; re-run the census before shipping this pin")

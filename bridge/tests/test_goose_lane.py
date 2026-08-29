@@ -50,6 +50,7 @@ sys.path.insert(0, str(ROOT))
 # assertions read bridge/appsrc.py's assembled view, not app.py's facade.
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge import pty_goose as G                              # noqa: E402
+from bridge import gooseprov as PR                             # noqa: E402
 
 CHECKS = 0
 INSTALLER = (ROOT / "scripts" / "install_goose.sh")
@@ -137,8 +138,14 @@ def test_env_fence():
     for k in G.FORBIDDEN_ENV:
         ok(k not in env, f"{k} is never on this lane's launch (and is stripped if inherited)")
 
-    # the provider
-    ok(env["GOOSE_PROVIDER"] == "openai", "provider is the OpenAI-compatible one")
+    # the provider — NAMED as of v1.5.49, and SEEDED rather than enforced
+    ok(env["GOOSE_PROVIDER"] == PR.PROVIDER_NAME,
+       "provider is OUR NAMED one (custom_mot_deck__local), not the anonymous stock "
+       "`openai` — that is the whole isolation-mode slice")
+    ok(env[PR.api_key_env()] == "harness-local",
+       "…and the key rides the env var goose DERIVES from the provider name "
+       "(CUSTOM_MOT_DECK__LOCAL_API_KEY), which is what it actually reads — measured, "
+       "and it BEATS secrets.yaml, which is why we never write that file")
     ok(env["OPENAI_HOST"] == "http://127.0.0.1:6767", "host is the ORIGIN, not the base")
     ok(env["OPENAI_BASE_PATH"] == "v1/chat/completions", "…and the path is written out")
     ok(env["OPENAI_API_KEY"] == "harness-local", "the runner's REAL key, not a dummy")
@@ -638,8 +645,61 @@ def test_memory_label():
        "…and the two rows can never read as the same process")
 
 
+# ── the NAMED provider, in THIS lane's own fenced layout (v1.5.49) ───────────
+def test_the_cli_lane_gets_the_named_provider_too():
+    """J7, WALKED LIVE (2026-08-29): the provider file goose's own UI form wrote was
+    placed in THIS lane's XDG-fenced home and the real binary was run headlessly under
+    `GOOSE_PROVIDER=custom_mot_deck__local` with the key in the env — it resolved the
+    provider by name and answered ("CLI-LANE-OK"). This is that, pinned.
+
+    ⚠️ THE TWO LANES FENCE DIFFERENTLY and the provider file follows the fence: XDG here
+    (<home>/.config/goose/custom_providers), GOOSE_PATH_ROOT in the embed. Assuming one
+    layout for both is how a lane silently ends up with no provider at all.
+    """
+    import json
+    import tempfile
+    ok(G.config_dir("/r").endswith(os.path.join(".config", "goose")),
+       "this lane's config dir is the XDG-fenced one")
+    with tempfile.TemporaryDirectory() as td:
+        p = G.seed_config(td, "http://127.0.0.1:6767/v1", 6767,
+                          [{"id": "a"}, {"id": "b", "kind": "audio"}])
+        prov = G.provider_path(td)
+        ok(os.path.isfile(prov), "a launch seeds the provider file, not only config.yaml")
+        doc = json.load(open(prov))
+        ok(doc["display_name"] == PR.DISPLAY_NAME and doc["engine"] == "openai",
+           "…named MOT Deck (local), in goose's own file shape")
+        ok([m["name"] for m in doc["models"]] == ["a"],
+           "…listing the REGISTRY (audio excluded), written not probed — so the picker "
+           "stays populated with the runner down")
+        ok(f"active_provider: {PR.PROVIDER_NAME}" in open(p).read(),
+           "…and it becomes the main provider on a config with no choice of the user's")
+
+        # NEVER-CLOBBER, this lane's copy of the walk.
+        doc["display_name"] = "Debi's runner"
+        json.dump(doc, open(prov, "w"), indent=2)
+        G.seed_config(td, "http://127.0.0.1:6767/v1", 6767, [{"id": "a"}, {"id": "c"}])
+        after = json.load(open(prov))
+        ok(after["display_name"] == "Debi's runner",
+           "a hand-edited display name SURVIVES the next launch's re-seed")
+        ok(len(after["models"]) == 2, "…while the model list is still refreshed")
+
+        # A provider the USER chose is not overridden — the pre-existing violation.
+        open(p, "a").write("active_provider: anthropic\n")
+        env = G.goose_env({}, td, "", "", "wire", 6767, config_text=open(p).read())
+        ok("GOOSE_PROVIDER" not in env and "GOOSE_MODEL" not in env,
+           "…and their provider choice is not silently undone at the next session "
+           "(env GOOSE_PROVIDER BEATS config active_provider — measured)")
+        G.seed_config(td, "http://127.0.0.1:6767/v1", 6767, [{"id": "a"}])
+        ok("active_provider: anthropic" in open(p).read(),
+           "…nor rewritten in their config")
+        ok(os.path.isfile(prov),
+           "…while OUR provider is still SEEDED as an option: not being the default is "
+           "not a reason to be absent from their picker")
+
+
 def main():
     for fn in (test_origin_gate, test_resize, test_env_fence,
+               test_the_cli_lane_gets_the_named_provider_too,
                test_endpoint_composition, test_config_seed, test_tools_verdict,
                test_argv, test_the_surface_does_not_promise_an_approval_it_does_not_get,
                test_installed_reads_disk, test_session_roundtrip,

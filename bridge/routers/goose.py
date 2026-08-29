@@ -105,12 +105,19 @@ def goose_spawn_spec() -> tuple:
     except OSError as e:
         return None, None, None, f"cannot create the goose workspace/home: {e}"
     endpoint = rc.get("endpoint") or ""
+    # ⚠️ READ THE USER'S CONFIG *BEFORE* WE SEED IT, and hand the SAME text to the env
+    # builder. Both halves of the migration decision (does `active_provider` already
+    # carry a choice of theirs?) must come from ONE snapshot: seeding first and reading
+    # after would read our own write back and conclude the choice was always ours.
+    before = _goose.read_config(ROOT)
     # Re-seeded on EVERY launch, not once at install: the runner's port or endpoint can
     # change between sessions, and a config that was right in July is a 404 in August.
-    _goose.seed_config(ROOT, endpoint, port)
+    # The registry goes with it so "MOT Deck (local)" lists EVERY model rather than the
+    # loaded one — the picker then holds facts and stays populated with the runner down.
+    _goose.seed_config(ROOT, endpoint, port, _registry_models())
     argv = _goose.goose_argv(ROOT)
     env = _goose.goose_env(os.environ, ROOT, endpoint, rc.get("api_key") or "",
-                           wire, port)
+                           wire, port, config_text=before)
     return argv, env, cwd, ""
 
 

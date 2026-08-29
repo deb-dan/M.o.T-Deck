@@ -40,6 +40,12 @@ import json
 import os
 import secrets
 
+# The NAMED PROVIDER, shared with the PTY lane. Its module docstring carries the whole
+# empirical census — the file goose's OWN "Add custom provider" form wrote in THIS very
+# fenced home, driven through this very page. Read it before changing anything
+# provider-shaped here; every one of its facts was measured, none guessed.
+from . import gooseprov as _prov
+
 # ── constants ────────────────────────────────────────────────────────────────
 UI_REL = "data/goose/ui"                    # the vendored renderer bundle
 MANIFEST_REL = "data/goose/ui.sha256"       # its sha manifest (BUNDLE line + per file)
@@ -212,8 +218,21 @@ def path_root(root) -> str:
     return os.path.join(ui_home(root), PATH_ROOT_SUB)
 
 
+def config_dir(root) -> str:
+    """THE EMBED LANE'S CONFIG DIR — `<ui-home>/goose/config`, the GOOSE_PATH_ROOT
+    layout. ⚠️ A DIFFERENT SHAPE FROM THE CLI LANE'S XDG one
+    (`data/goose/home/.config/goose`) — see path_root()'s note. Both were walked live
+    with a real provider file before the seeder was written, because assuming one layout
+    for both is exactly how one lane silently ends up with no provider at all."""
+    return os.path.join(path_root(root), "config")
+
+
 def config_path(root) -> str:
-    return os.path.join(path_root(root), "config", "config.yaml")
+    return os.path.join(config_dir(root), "config.yaml")
+
+
+def provider_path(root) -> str:
+    return _prov.provider_path(config_dir(root))
 
 
 def workspace_path(root) -> str:
@@ -384,7 +403,8 @@ def allowed_origins(bridge_port=8700) -> list:
 
 
 def serve_env(base_env: dict, root, token: str, endpoint: str = "",
-              api_key: str = "", wire_model: str = "", runner_port=6767) -> dict:
+              api_key: str = "", wire_model: str = "", runner_port=6767,
+              config_text: str = "") -> dict:
     """The supervised goosed's environment: the fence, the kill switches, the runner.
 
     ⚠️ THE FENCE IS GOOSE_PATH_ROOT *AND* HOME *AND* THE FOUR XDG DIRS — belt and braces
@@ -438,25 +458,53 @@ def serve_env(base_env: dict, root, token: str, endpoint: str = "",
     # ── the ACP secret `goose serve` refuses to start without ──
     env["GOOSE_SERVER__SECRET_KEY"] = token or ""
     # ── the runner (same wiring as the PTY lane; see pty_goose.openai_host) ──
-    if wire_model:
-        env["GOOSE_PROVIDER"] = "openai"
-        env["GOOSE_MODEL"] = wire_model
+    #
+    # ⚠️ THE NAMED PROVIDER, AND THE OVERRIDE WE STOPPED DOING (v1.5.49). goose's own
+    # provider picker now carries a row called "MOT Deck (local)" with every registry
+    # model under it, because gooseprov.seed_provider() writes the declarative file
+    # goose's own form writes. WALKED IN THIS UI: the row appears, the models list,
+    # switching to it says "using … from MOT Deck (local)", and the turn answers.
+    #
+    # ⚠️ SEEDED, NOT ENFORCED. Measured on the pinned binary: env `GOOSE_PROVIDER`
+    # OVERRIDES the config's `active_provider`. The old unconditional `= "openai"`
+    # therefore undid, at every spawn, whatever provider the user had picked inside the
+    # UI — after the UI had told them "Successfully switched models". provider_choice()
+    # returns "" when the choice is theirs, and the MODEL travels with the provider.
+    key = (api_key or "").strip() or "harness-local"
+    chosen, _migrate = _prov.provider_choice(config_text)
+    if chosen:
+        env["GOOSE_PROVIDER"] = chosen
+        if wire_model:
+            env["GOOSE_MODEL"] = wire_model
+    else:
+        for k in ("GOOSE_PROVIDER", "GOOSE_MODEL"):
+            env.pop(k, None)
+    # ⚠️ THE STOCK openai WIRING STAYS — it is not redundancy. A session recorded before
+    # this slice carries `provider_name: openai` and goose resolves it at replay time;
+    # dropping these three would break exactly the histories the migration promises not
+    # to touch.
     env["OPENAI_HOST"] = _openai_host(endpoint, runner_port)
     env["OPENAI_BASE_PATH"] = "v1/chat/completions"
-    env["OPENAI_API_KEY"] = (api_key or "").strip() or "harness-local"
-    # …and the SAME key under the custom provider's env name, so a provider created
-    # through goose's own "Add custom provider" form finds its key without the user
-    # ever being asked for one. See CUSTOM_PROVIDER_KEY_ENV.
-    env[CUSTOM_PROVIDER_KEY_ENV] = env["OPENAI_API_KEY"]
+    env["OPENAI_API_KEY"] = key
+    # The env var the NAMED provider's `api_key_env` actually points at. MEASURED: the
+    # process environment BEATS `secrets.yaml` (a right key in the file and a wrong one
+    # here produced 401 Invalid API Key), which is precisely why we can supply the key
+    # this way and never write the user's secret store.
+    env[_prov.api_key_env()] = key
+    # …and the older, honestly-wrong guess at that name, kept because it costs one line
+    # and because a provider a user hand-made against it before this slice still works.
+    env[CUSTOM_PROVIDER_KEY_ENV] = key
     for k in ("COLUMNS", "LINES", "GOOSE_TOOLSHIM"):
         env.pop(k, None)
     return env
 
 
-# The env var name a custom `openai_compatible` provider created in goose's own UI is
-# told to read its key from. Ours is pre-set in the child's env, so the "API key" field
-# in that form can be filled with anything (or the provider marked no-auth) and the real
-# key still reaches our runner.
+# ⚠️ THE OLD GUESS, KEPT AND LABELLED AS ONE. v1.5.40 assumed a custom provider created
+# in goose's own UI could be told to read its key from a name WE chose. The empirical
+# pass (gooseprov.py, F3) found that goose DERIVES the name from the provider's own:
+# `CUSTOM_MOT_DECK__LOCAL_API_KEY`. That is what gooseprov.api_key_env() returns and what
+# the child's env now carries. This one stays set beside it — one line, and it keeps a
+# provider a user hand-made against it before this slice working.
 CUSTOM_PROVIDER_KEY_ENV = "HARNESS_RUNNER_API_KEY"
 
 # The consent mode, shared by the env and the seeded config so neither can be the only
@@ -483,29 +531,46 @@ def _openai_host(endpoint, port=6767) -> str:
 
 
 # ── pure: the seeded config ──────────────────────────────────────────────────
-def config_pairs(endpoint: str, wire_model: str, port=6767) -> tuple:
+def config_pairs(endpoint: str, wire_model: str, port=6767,
+                 active: str = "") -> tuple:
     """The keys we own in the EMBED lane's config.yaml, in a stable order.
 
     Seeding these is what makes the DoD's "arrives pre-configured" true: goose's
-    onboarding screen appears only while `GOOSE_PROVIDER` has no value it can use, so a
-    seeded provider+model means the user lands in a chat box, not in a provider picker
-    asking for an OpenAI key they do not have.
+    onboarding screen appears only while it has no provider it can use, so a seeded
+    provider+model means the user lands in a chat box, not in a provider picker asking
+    for an OpenAI key they do not have.
+
+    ⚠️ `active_provider` REPLACED THE TOP-LEVEL `GOOSE_PROVIDER`/`GOOSE_MODEL` PAIR, and
+    that is goose's own doing, not a preference: the moment a user switches provider in
+    the UI, goose rewrites this file as `providers:` + `active_provider:` and DELETES
+    those two keys (measured). Re-adding them would leave two sources of truth for one
+    setting, one of them ours and stale — so seed_config drops them when it migrates.
+    `active` is '' when the user has a choice of their own, and then this tuple carries
+    no opinion about the main model at all.
     """
-    return (("GOOSE_DISABLE_KEYRING", "true"),
-            ("GOOSE_TELEMETRY_ENABLED", "false"),
-            ("GOOSE_MODE", GOOSE_MODE),
-            ("GOOSE_PROVIDER", "openai"),
-            ("GOOSE_MODEL", wire_model or ""),
-            ("OPENAI_HOST", _openai_host(endpoint, port)),
-            ("OPENAI_BASE_PATH", "v1/chat/completions"))
+    pairs = [("GOOSE_DISABLE_KEYRING", "true"),
+             ("GOOSE_TELEMETRY_ENABLED", "false"),
+             ("GOOSE_MODE", GOOSE_MODE),
+             ("OPENAI_HOST", _openai_host(endpoint, port)),
+             ("OPENAI_BASE_PATH", "v1/chat/completions")]
+    if active:
+        pairs.append(("active_provider", active))
+    return tuple(pairs)
 
 
-def upsert_config(text: str, pairs) -> str:
+def upsert_config(text: str, pairs, drop=()) -> str:
     """PURE. Set each top-level `key: value`, preserving every other line byte-for-byte.
     A TEXT EDIT, NEVER A YAML ROUND-TRIP — the same rule (and reason) as
     pty_goose.upsert_config: a round-trip through a dumper eats comments and would
-    silently drop the extensions the user added from inside the UI."""
+    silently drop the extensions the user added from inside the UI (this lane's config
+    carries all 20 of them, written by goose itself).
+
+    `drop` removes top-level keys outright, for exactly one job: the legacy
+    GOOSE_PROVIDER/GOOSE_MODEL lines our own older seeding wrote."""
     out = (text or "").splitlines()
+    if drop:
+        want_gone = tuple(f"{k}:" for k in drop)
+        out = [ln for ln in out if not ln.startswith(want_gone)]
     for key, value in pairs:
         want = f"{key}: {value}"
         for i, line in enumerate(out):
@@ -517,19 +582,41 @@ def upsert_config(text: str, pairs) -> str:
     return "\n".join(out).strip("\n") + "\n"
 
 
-def seed_config(root, endpoint: str, wire_model: str, port=6767) -> str:
-    """Write our keys into the FENCED config.yaml, keeping whatever else is there.
+def read_config(root) -> str:
+    """The fenced config.yaml as text, '' when absent/unreadable. '' means NO OPINION,
+    which provider_choice() reads as "nothing of the user's to preserve" — the correct
+    first-run answer, and the safe one for a file we cannot see."""
+    try:
+        with open(config_path(root), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def seed_config(root, endpoint: str, wire_model: str, port=6767, registry=None) -> str:
+    """Write our keys into the FENCED config.yaml AND our declarative provider file,
+    keeping whatever else is there.
+
+    ⚠️ TWO WRITES, ONE CALL, AND NEITHER MAY CLOBBER:
+      * `config/custom_providers/custom_mot_deck__local.json` — OUR file, by name,
+        MERGED so a display name the user edited in goose's own form survives untouched
+        (gooseprov.OWNED_KEYS is the whole list of what we take back).
+      * `active_provider:` — set ONLY when there is no choice of theirs to overwrite.
+
     Best-effort by design: the env carries the same settings, so a read-only config dir
     degrades to "the env wins" rather than to a dead lane."""
     p = config_path(root)
+    cur = read_config(root)
+    chosen, migrate = _prov.provider_choice(cur)
+    # ⚠️ THE PROVIDER FILE IS WRITTEN EVEN WHEN WE DO NOT MIGRATE. A user who picked a
+    # different provider still gets "MOT Deck (local)" as an OPTION in their picker with
+    # a current model list — not being their default is not a reason to be absent.
+    _prov.seed_provider(config_dir(root), endpoint, registry or [], port)
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        try:
-            with open(p, encoding="utf-8") as fh:
-                cur = fh.read()
-        except OSError:
-            cur = ""
-        new = upsert_config(cur, config_pairs(endpoint, wire_model, port))
+        new = upsert_config(cur, config_pairs(endpoint, wire_model, port,
+                                              chosen if migrate else ""),
+                            _prov.LEGACY_CONFIG_KEYS if migrate else ())
         if new != cur:
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:

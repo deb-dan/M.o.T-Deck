@@ -175,8 +175,13 @@ def _clear_pidfile() -> None:
         pass
 
 
-def _reap_orphan() -> None:
-    """A goosed WE started that outlived the bridge that started it.
+def _reap_orphan() -> bool:
+    """True when we actually signalled an orphan of ours. A goosed WE started that
+    outlived the bridge that started it.
+
+    ⚠️ THE RETURN VALUE IS NOT DECORATION. _stop_locked answers the user with it, and
+    "gone" when a process was in fact terminated is a small lie in the same family as
+    every other silently-wrong answer this project ranks worst.
 
     The bridge restarts far more often than a supervised child needs to, and without
     this the old one keeps its port and its sqlite session store while the new one opens
@@ -188,17 +193,20 @@ def _reap_orphan() -> None:
         with open(_ui.pidfile_path(ROOT)) as fh:
             pid = int((fh.read() or "0").strip() or 0)
     except (OSError, ValueError):
-        return
+        return False
     if not is_ours(pid):
         _log(f"stale pidfile for pid {pid} (not provably ours) — cleared, not signalled")
         _clear_pidfile()
-        return
+        return False
+    done = False
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
         _log(f"reaped our orphaned goosed pid={pid}")
+        done = True
     except (OSError, ProcessLookupError):
         pass
     _clear_pidfile()
+    return done
 
 
 def _ensure() -> tuple:
@@ -242,16 +250,26 @@ def _ensure() -> tuple:
         except OSError as e:
             _START_ERR = f"cannot create the goose UI workspace/home: {e}"
             return "", _START_ERR
+        # ⚠️ READ THE USER'S CONFIG *BEFORE* SEEDING IT, and hand the SAME text to the
+        # env builder. Both halves of the migration decision (has the user already
+        # chosen a provider inside goose?) must come from ONE snapshot: seeding first
+        # and reading after would read our own write back and conclude the choice was
+        # always ours.
+        before = _ui.read_config(ROOT)
         # Re-seeded on EVERY start, not once: the runner's port, key or loaded model can
-        # change between sessions, and a config that was right in July is a 404 now.
-        _ui.seed_config(ROOT, endpoint, wire, rport)
+        # change between sessions, and a config that was right in July is a 404 now. The
+        # registry goes with it so "MOT Deck (local)" lists EVERY model rather than the
+        # loaded one — the picker then holds facts and stays populated with the runner
+        # down, which is OpenCode's property and the whole point of isolation mode.
+        _ui.seed_config(ROOT, endpoint, wire, rport, _registry_models())
 
         _TOKEN = _ui.new_token()
         _PORT = _free_port(_ui.DEFAULT_ACP_PORT)
         argv = _ui.serve_argv(ROOT, _PORT)
         for origin in _ui.allowed_origins(_bridge_port()):
             argv += ["--allowed-origin", origin]
-        env = _ui.serve_env(os.environ, ROOT, _TOKEN, endpoint, api_key, wire, rport)
+        env = _ui.serve_env(os.environ, ROOT, _TOKEN, endpoint, api_key, wire, rport,
+                            config_text=before)
         logp = ROOT / "data" / "logs" / "gooseui-serve.log"
         try:
             logp.parent.mkdir(parents=True, exist_ok=True)
@@ -337,9 +355,17 @@ def _stop_locked(why: str) -> str:
     global _PROC
     p = _PROC
     _PROC = None
-    _clear_pidfile()
     if p is None or p.poll() is not None:
-        return "gone"
+        # ⚠️ A5 — WALKED, NOT IMAGINED (2026-08-29). The bridge restarted between a
+        # /start and a /stop; the new process had no Popen handle, this branch cleared
+        # the pidfile and answered "gone" — and a LIVE, fenced goosed of ours kept its
+        # port and its sqlite session store with the ONLY handle to it just deleted.
+        # (Two of our goosed were then listening at once, which is the two-writers-on-
+        # one-DB story _reap_orphan exists to prevent.) The pidfile IS the cross-restart
+        # handle, so "no handle in memory" must consult it BEFORE erasing it — and
+        # _reap_orphan is already the identity-verified way to do exactly that.
+        return "reaped" if _reap_orphan() else "gone"
+    _clear_pidfile()
     if not is_ours(p.pid):
         _log(f"REFUSED to signal pid {p.pid}: it is not provably our goosed "
              f"(no {_ui.path_root(ROOT) if _ui else '?'} in its env). Left running.")
@@ -564,6 +590,35 @@ def gooseui_asset(rel: str, request: Request) -> Response:
                         headers={"Cache-Control": _ui.IMMUTABLE_CACHE})
 
 
+def _provider_status() -> dict:
+    """The named provider, as facts read off disk — never a stored flag.
+
+    ⚠️ `provider_models` counts what is IN THE FILE, not what a probe returned. That is
+    the number the picker will actually show, including with the runner down, and
+    reporting anything else here would be this project's worst class of bug in its
+    smallest possible form.
+    """
+    try:
+        from .. import gooseprov as _p
+    except Exception:                                                # noqa: BLE001
+        return {}
+    doc = _p.read_provider(_ui.config_dir(ROOT))
+    cfg_text = _ui.read_config(ROOT)
+    chosen, migrate = _p.provider_choice(cfg_text)
+    return {
+        "provider_name": _p.PROVIDER_NAME,
+        "provider_display": (doc or {}).get("display_name") or _p.DISPLAY_NAME,
+        "provider_file": _ui.provider_path(ROOT),
+        "provider_seeded": bool(doc),
+        "provider_models": len((doc or {}).get("models") or []),
+        "provider_key_env": _p.api_key_env(),
+        # '' when the user has picked something of their own — which is the case in
+        # which we deliberately set no GOOSE_PROVIDER at all.
+        "active_provider": _p.active_provider(cfg_text),
+        "provider_is_ours": bool(migrate and chosen),
+    }
+
+
 @app.get("/api/gooseui/status")
 def gooseui_status() -> JSONResponse:
     """Everything the tab (and a human in a terminal) needs to know in ONE body."""
@@ -600,6 +655,10 @@ def gooseui_status() -> JSONResponse:
         "runner_port": rport,
         "path_root": _ui.path_root(ROOT),
         "workspace": _ui.workspace_path(ROOT),
+        # THE NAMED PROVIDER, answerable from the API rather than only from a report:
+        # what it is called, where its file is, whether it is on disk, how many models
+        # it lists, and whose choice the main provider currently is.
+        **_provider_status(),
         # Named out loud so "do the two lanes collide?" is answerable from the API and
         # not only from a builder's report.
         "pty_lane_home": os.path.join(str(ROOT), "data", "goose", "home"),

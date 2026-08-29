@@ -27,7 +27,46 @@ THE JOURNEYS THAT WERE ACTUALLY WALKED ON THE REAL STACK (2026-08-29, this Mac):
   J5  THE ERROR PATH — bundle absent → the Install empty state, never a blank tab and
       never the goose UI with a dead socket behind it.
 
+  ── v1.5.49, THE NAMED PROVIDER (S-ISO-4). Journeys walked 2026-08-29 ──
+  J6  ⚠️ THE CENSUS ITSELF WAS A JOURNEY. goose's own Settings → Models → Configure
+      providers → Configure manually form was DRIVEN in this very UI (Provider Type =
+      OpenAI Compatible, "MOT Deck (local)", http://127.0.0.1:6767, two real registry
+      ids) and the file GOOSE wrote was read off disk. That file is the schema; nothing
+      about it is guessed. See bridge/gooseprov.py. It closes v1.5.40's honest limit
+      ("three on-disk custom layouts all 'Unknown provider'").
+  J7  THE MIGRATION, FROM THE REAL PRE-SLICE STATE. The fenced config was restored to
+      its pre-slice bytes (GOOSE_PROVIDER/GOOSE_MODEL top-level, active_provider:
+      openai), the lane restarted, and: the provider file appeared with ALL 16 registry
+      chat models, the two legacy keys were removed, active_provider became ours, and
+      NO secrets.yaml was written.
+  J8  THE PICKER, AND A REAL TURN. goose's own provider dropdown lists "MOT Deck
+      (local)"; its model dropdown under it lists 16 rows (6 of them MLX paths);
+      switching says "using … from MOT Deck (local)"; the turn answered
+      "NAMED-PROVIDER-UI-OK". ⚠️ The picker showed SIXTEEN models while llama-server
+      serves exactly ONE — which is the proof that the list is CONFIG-RESIDENT, not
+      probed, i.e. that it survives the runner being down.
+  J9  THE CLI LANE, SAME PROVIDER. /goose → Start → the session banner reads
+      "new session · custom_mot_deck__local …" and the turn answered "CLI-NAMED-OK"
+      in 2.57s. Its provider file lives in the XDG-fenced home; two homes, two files.
+  J10 NEVER-CLOBBER, LIVE. `display_name` hand-edited to "Debi hand-edited this" plus a
+      custom header, lane restarted → BOTH survived while the model list refreshed.
+  J11 THE USER'S CHOICE, LIVE. active_provider set to `anthropic` by hand, lane
+      restarted → the child got NO GOOSE_PROVIDER and NO GOOSE_MODEL, the config was
+      untouched, and our provider stayed SEEDED as an option (16 models).
+
 THE ADVERSARIAL FINDINGS THIS FILE FENCES (all fixed):
+
+  A5  ⚠️ THE PIDFILE WAS ERASED BEFORE IT WAS READ. The bridge restarted between a
+      /start and a /stop; the new process had no Popen handle, _stop_locked cleared the
+      pidfile and answered "gone", and a live fenced goosed of ours kept its port and
+      its session DB with its only cross-restart handle deleted — two of ours listening
+      at once. The no-handle path now reaps THROUGH the pidfile first. Found by walking,
+      not by reading.
+  A6  ⚠️ THE PROVIDER OVERRIDE (pre-existing, both lanes, LIE-TO-USER class by outcome).
+      env GOOSE_PROVIDER BEATS config active_provider — measured both ways on the pinned
+      binary. So `GOOSE_PROVIDER=openai` on every launch silently undid any provider the
+      user had picked inside goose, right after goose's own toast said "Successfully
+      switched models". Now seeded-not-enforced (gooseprov.provider_choice).
 
   A1  ⚠️ THE TRAILING SLASH. Served at `/gooseui`, the vendored document's RELATIVE
       `./assets/index-*.js` resolved to `/assets/…` — a real, OCCUPIED mount in this
@@ -63,6 +102,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bridge import gooseui as G                                      # noqa: E402
+from bridge import gooseprov as PR                                   # noqa: E402
 from bridge import pty_goose as P                                    # noqa: E402
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE                  # noqa: E402
 
@@ -219,12 +259,209 @@ def test_config_seed_preserves_what_the_user_added():
         ok("  developer:" in got, "the user's extensions survive a re-seed")
         ok("OPENAI_HOST: http://127.0.0.1:6767" in got, "our key is UPDATED in place")
         ok("stale" not in got, "…not appended alongside the stale one")
-        ok("GOOSE_PROVIDER: openai" in got and "GOOSE_MODEL: my-model" in got,
-           "provider+model seeded, which is what makes onboarding never appear")
+        ok(f"active_provider: {PR.PROVIDER_NAME}" in got,
+           "the MAIN PROVIDER is seeded — which is what makes onboarding never appear — "
+           "and it is our NAMED one, not the anonymous stock `openai` (v1.5.49)")
+        ok("GOOSE_PROVIDER:" not in got and "GOOSE_MODEL:" not in got,
+           "…through goose's OWN key, not the legacy top-level pair: goose deletes those "
+           "two the moment a user switches provider in its UI (measured), so writing "
+           "them back would leave two sources of truth for one setting")
         # Idempotent: a second seed must not grow the file.
         before = p.read_text()
         G.seed_config(td, "http://127.0.0.1:6767/v1", "my-model", 6767)
         ok(p.read_text() == before, "re-seeding is idempotent")
+
+
+# ── THE NAMED PROVIDER, AND THE NEVER-CLOBBER MATRIX ─────────────────────────
+def test_named_provider_file_matches_what_goose_itself_wrote():
+    """J6 (walked live in this very UI): goose's own Add-custom-provider form created
+    the provider; we read the file IT wrote; this is that file's shape, pinned.
+
+    Every field below was copied off disk, not designed. See bridge/gooseprov.py for the
+    method and for the four facts that killed v1.5.40's three guessed layouts.
+    """
+    ok(PR.slugify(PR.DISPLAY_NAME) == PR.PROVIDER_NAME,
+       "our provider NAME is goose's own slug for our display name — which is what makes "
+       "a provider the user later edits in goose's form still be ours")
+    ok(PR.PROVIDER_NAME == "custom_mot_deck__local",
+       "…and the DOUBLE underscore is real: goose maps each non-alphanumeric character "
+       "to one '_', so the space AND the '(' each contribute (a collapsing slugifier "
+       "would write a file goose's form could never match)")
+    ok(PR.api_key_env() == "CUSTOM_MOT_DECK__LOCAL_API_KEY",
+       "the key env var is DERIVED from the provider name by goose, not chosen by us")
+    doc = PR.provider_doc("http://127.0.0.1:6767",
+                          PR.model_entries([{"id": "m1"}]))
+    ok(doc["engine"] == "openai",
+       "the FILE's engine is `openai` — the form's `openai_compatible` is a UI enum "
+       "goose maps down on the way to disk")
+    ok(doc["base_url"] == "http://127.0.0.1:6767" and doc["base_path"] is None,
+       "base_url is the ORIGIN and base_path stays null: goose appends its own "
+       "v1/chat/completions, so a `…/v1` base would produce /v1/v1/… (the 404 that "
+       "reads as 'the model is broken')")
+    for k in ("name", "engine", "display_name", "description", "api_key_env",
+              "base_url", "models", "headers", "timeout_seconds", "supports_streaming",
+              "requires_auth", "catalog_provider_id", "base_path", "env_vars",
+              "dynamic_models", "skip_canonical_filtering", "model_doc_link",
+              "setup_steps", "fast_model", "preserves_thinking", "emit_clear_thinking",
+              "setup"):
+        ok(k in doc, f"the file carries goose's own field `{k}` — we write the FULL "
+                     "document its editor round-trips, so a user pressing Update in "
+                     "goose's form does not silently lose fields")
+    m = PR.model_entries([{"id": "g", "format": "gguf"},
+                          {"id": "x", "format": "mlx", "path": "/abs/mlx"},
+                          {"id": "a", "kind": "audio"},
+                          {"id": "h", "hidden": True},
+                          {"id": "g", "format": "gguf"}])
+    ok([e["name"] for e in m] == ["g", "/abs/mlx"],
+       "chat models only, WIRE identifiers (an MLX row is its path, because goose's "
+       "model object has ONE identifier slot and a pretty label that 400s is a lie), "
+       "audio/hidden excluded, duplicates collapsed")
+    ok(all(e["context_limit"] > 0 for e in m),
+       "…and every row carries a context limit — goose's own form always writes one")
+
+
+def test_never_clobber_matrix():
+    """THE WALKED JOURNEY: rename the provider by hand in the fenced config, re-seed,
+    the rename is still there. Plus the rest of the merge table."""
+    import json as _json
+    with tempfile.TemporaryDirectory() as td:
+        cd = G.config_dir(td)
+        reg = [{"id": "m1"}, {"id": "m2"}]
+        p, changed, err = PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg)
+        ok(changed and not err, "first seed writes the file")
+        ok(p == G.provider_path(td) == PR.provider_path(cd),
+           "…at ONE path, agreed on by the lane module and the provider module")
+        ok(PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg)[1] is False,
+           "a second seed with nothing changed rewrites NOTHING (idempotent)")
+
+        doc = _json.load(open(p))
+        doc["display_name"] = "Debi's runner"
+        doc["headers"] = {"X-Mine": "1"}
+        doc["requires_auth"] = False
+        doc["supports_streaming"] = False
+        doc["some_future_goose_key"] = 42
+        _json.dump(doc, open(p, "w"), indent=2)
+        PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg + [{"id": "m3"}])
+        after = _json.load(open(p))
+        ok(after["display_name"] == "Debi's runner",
+           "NEVER-CLOBBER: the hand-edited display name SURVIVES a re-seed")
+        ok(after["headers"] == {"X-Mine": "1"}, "…so do the user's headers")
+        ok(after["requires_auth"] is False and after["supports_streaming"] is False,
+           "…and their auth/streaming choices")
+        ok(after["some_future_goose_key"] == 42,
+           "…and a key a FUTURE goose adds that we have never heard of")
+        ok(len(after["models"]) == 3 and after["base_url"] == "http://127.0.0.1:6767",
+           "while the keys we own — the model list and where it points — ARE refreshed, "
+           "because a provider naming a dead endpoint is a lie, not a preference")
+        ok(sorted(PR.OWNED_KEYS) == ["api_key_env", "base_url", "engine", "models"],
+           "…and the owned set is exactly those four, stated rather than implied")
+
+        # A corrupt file is treated as absent, never as a reason to refuse.
+        open(p, "w").write("{not json")
+        PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg)
+        ok(_json.load(open(p))["name"] == PR.PROVIDER_NAME,
+           "an unreadable provider file is REPLACED rather than left broken — the lane "
+           "lands on something usable")
+
+
+def test_the_main_model_setting_is_seeded_not_enforced():
+    """⚠️ THE PRE-EXISTING OVERRIDE THIS SLICE FIXES. Measured on the pinned binary:
+    env GOOSE_PROVIDER BEATS config active_provider. So the old unconditional
+    `GOOSE_PROVIDER=openai` silently undid, at every spawn, a provider the user had
+    chosen in goose's own UI — right after the UI said "Successfully switched models"."""
+    ok(PR.provider_choice("") == (PR.PROVIDER_NAME, True),
+       "a fresh config: seed ours (there is nothing of theirs to preserve)")
+    ok(PR.provider_choice("active_provider: openai\n") == (PR.PROVIDER_NAME, True),
+       "`openai` is OUR OWN older anonymous seeding — migrating it is the deliberate "
+       "one-time change (same endpoint, same key, same wire model, better label)")
+    ok(PR.provider_choice(f"active_provider: {PR.PROVIDER_NAME}\n")
+       == (PR.PROVIDER_NAME, True), "already ours: unchanged")
+    for theirs in ("anthropic", "custom_something_else", "'ollama'", '"xai"'):
+        ok(PR.provider_choice(f"active_provider: {theirs}\n") == ("", False),
+           f"{theirs} is the USER'S choice — we set NEITHER env var and touch nothing")
+    env = G.serve_env({}, "/r", "tok", "", "k", "wire",
+                      config_text="active_provider: anthropic\n")
+    ok("GOOSE_PROVIDER" not in env and "GOOSE_MODEL" not in env,
+       "…proven on the real env builder: neither key is set when the choice is theirs "
+       "(the MODEL travels with the provider — forcing it onto somebody else's provider "
+       "is the same override wearing a different name)")
+    ok(G.serve_env({"GOOSE_PROVIDER": "sneaky"}, "/r", "t", "", "k", "w",
+                   config_text="active_provider: anthropic\n").get("GOOSE_PROVIDER")
+       is None,
+       "…and an INHERITED GOOSE_PROVIDER is stripped too, or the operator's shell would "
+       "do the overriding we just stopped doing")
+    env2 = G.serve_env({}, "/r", "tok", "", "k", "wire")
+    ok(env2["GOOSE_PROVIDER"] == PR.PROVIDER_NAME and env2["GOOSE_MODEL"] == "wire",
+       "with no choice of theirs, ours is set — the lane still arrives pre-configured")
+    ok(env2["OPENAI_HOST"] and env2["OPENAI_API_KEY"] and env2["OPENAI_BASE_PATH"],
+       "and the STOCK openai wiring stays beside it, so a session recorded before this "
+       "slice (provider_name: openai) still resolves at replay time")
+
+
+def test_a_provider_with_no_models_is_still_a_working_provider():
+    """ADVERSARIAL, walked on the real binary: a MOT Deck with nothing in the registry
+    yet (first boot, no models downloaded). We write `models: []`.
+
+    ⚠️ AND GOOSE DOES NOT DELETE IT — measured: `goose run` under a provider whose file
+    lists NO models resolved it and answered. That is the opposite of OpenCode, where an
+    empty models map makes the provider VANISH from Settings and the picker
+    (provider.ts:1686), which is why the OpenCode seeder ships a placeholder row. Copying
+    that workaround here would have been cargo cult; the measurement says it is not
+    needed, and this test is what would tell us if that ever changed."""
+    ok(PR.model_entries([]) == [], "an empty registry yields an empty model list")
+    doc = PR.provider_doc("http://127.0.0.1:6767", PR.model_entries([]))
+    ok(doc["models"] == [] and doc["name"] == PR.PROVIDER_NAME,
+       "…and the provider is still a complete, nameable document, so the tab shows a "
+       "row that explains itself rather than nothing at all")
+
+
+def test_the_pidfile_is_consulted_before_it_is_cleared():
+    """⚠️ A5 — WALKED, NOT IMAGINED. The bridge restarted between /start and /stop; the
+    new process had no Popen handle, _stop_locked cleared the pidfile and answered
+    "gone", and a LIVE fenced goosed of ours kept its port and its sqlite session store
+    with its only cross-restart handle deleted. Two of ours were then listening at once —
+    the two-writers-on-one-DB story _reap_orphan exists to prevent.
+
+    The pidfile IS the cross-restart handle, so the no-handle branch must consult it
+    (through the identity-verified reaper) BEFORE anything erases it."""
+    import ast
+    src = (ROOT / "bridge" / "routers" / "gooseui.py").read_text()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_stop_locked")
+    seg = ast.get_source_segment(src, fn) or ""
+    head = seg.split("_clear_pidfile()")[0]
+    ok("_reap_orphan()" in head,
+       "A5: the no-handle path reaps through the pidfile BEFORE the pidfile is cleared")
+    ok(seg.index("_reap_orphan()") < seg.index("_clear_pidfile()"),
+       "…in that order, which is the whole fix")
+    ok('"reaped"' in seg,
+       "…and the caller is TOLD a process was terminated: answering \"gone\" while one "
+       "was in fact reaped is a small lie in the family this project ranks worst")
+    import inspect
+    from bridge.routers import gooseui as R
+    # `from __future__ import annotations` keeps annotations as strings — compare text.
+    ok(str(inspect.signature(R._reap_orphan).return_annotation) in ("bool", "<class 'bool'>"),
+       "the reaper reports whether it signalled, rather than leaving the caller to guess")
+
+
+def test_both_lanes_seed_their_OWN_config_layout():
+    """⚠️ TWO FENCES, TWO LAYOUTS. The embed is GOOSE_PATH_ROOT-fenced
+    (<ui-home>/goose/config) and the CLI is XDG-fenced (<home>/.config/goose). Both were
+    walked live with a real provider file and a real `goose run` turn before the seeder
+    was written; assuming one layout for both is how a lane silently gets no provider."""
+    ui, cli = G.config_dir("/r"), P.config_dir("/r")
+    ok(ui.endswith(os.path.join("goose", "ui-home", "goose", "config")),
+       "the embed lane's config dir is the GOOSE_PATH_ROOT one")
+    ok(cli.endswith(os.path.join("goose", "home", ".config", "goose")),
+       "the CLI lane's is the XDG one")
+    ok(ui != cli and PR.provider_path(ui) != PR.provider_path(cli),
+       "…so the two provider files are two files: one runner, two fenced homes, no "
+       "shared state (the whole no-collision guarantee of this lane)")
+    for d in (ui, cli):
+        ok(PR.providers_dir(d).endswith("custom_providers"),
+           "…each under goose's own custom_providers/ directory (ONE JSON PER PROVIDER — "
+           "never a custom_providers: key inside config.yaml, which is one of the three "
+           "layouts v1.5.40 guessed and got 'Unknown provider' for)")
 
 
 # ── the ACP endpoint ─────────────────────────────────────────────────────────
@@ -396,6 +633,12 @@ def main():
                test_no_kill_by_port_or_pattern, test_the_two_lanes_cannot_collide,
                test_env_fence_survives_a_hostile_environment,
                test_endpoint_composition, test_config_seed_preserves_what_the_user_added,
+               test_named_provider_file_matches_what_goose_itself_wrote,
+               test_never_clobber_matrix,
+               test_the_main_model_setting_is_seeded_not_enforced,
+               test_a_provider_with_no_models_is_still_a_working_provider,
+               test_the_pidfile_is_consulted_before_it_is_cleared,
+               test_both_lanes_seed_their_OWN_config_layout,
                test_acp_url_and_argv, test_bundle_containment,
                test_media_types_are_forced,
                test_absent_dependency_lands_on_something_usable,
