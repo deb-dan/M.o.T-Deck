@@ -15,6 +15,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | P3 | 🔵 NEXT | Voice Chat M3 — push-to-talk/turn-based lane, VoiceChat-11B (measured 17.45GB peak), additive per ruling | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` Fable spec next, then build |
 | P4 | 🔵 NEXT | goose lane build — BUILD-READY (pins + kill switches verified); waiting on index.html owner to land | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:blocked` on UI-polish builder freeing index.html |
 | P5 | 🔵 NEXT | ComfyUI Video/Audio first-party surface — research in flight; then Fable spec, then S1 build | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` research DONE (docs/research/2026-08-29-comfyui-tab.md); Fable spec next, gated on Debi's 6 answers |
+| P6 | ⚪ SOMEDAY | Music tools dock (Debi's vision 2026-08-29): Compose's reserved bottom space accepts draggable tool blocks — stem separation (research modern OSS: UVR/demucs class; stemroller too old), a small DAW (waveform-playlist / openDAW / Ardour / soundtrap-class), Nightingale as a tab that can dock into Compose; LATER: a DAW simple enough for the AI to operate itself (mix/make music) | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🔴 >15 files | Large | `@status:open` architecture note: Compose blocks must be a pluggable grid from day one |
 
 ### Detail - Paused plans
 
@@ -23,6 +24,8 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 - **P3** - Measurement done (docs/research/2026-08-28-s2s-m2-voicechat.md): RTF 0.95 turn / 1.29 duplex, sha dffd203f, mlx-vlm 0.6.17 ships nemotron_voicechat runtime + /v1/realtime WS. Shape: push-to-talk first. 17.45GB figure surfaces ADVISORILY via the fit engine (advisory-gates ruling).
 - **P4** - docs/research/2026-08-28-goose-source-verify.md: v1.48.0 sha 25021517…, asset sha256 d502945f…, GOOSE_TELEMETRY kill switches, GOOSE_DISABLE_KEYRING, seed real API key. Needs nav.py + index.html + main.swift.
 - **P5** - Debi facts for the spec: NO ComfyUI models downloaded yet; models determine nodes — acquisition surface is first-class in S1. Research lands as docs/research/2026-08-29-comfyui-tab.md.
+
+- **P6** - Named candidates from Debi: github.com/stemrollerapp/stemroller (too old, reference only), beatstorapon.com stem-splitter roundup (research seed), github.com/naomiaro/waveform-playlist, github.com/andremichelle/openDAW, github.com/Ardour/ardour, github.com/rzru/nightingale; Soundtrap/Soundverse as the visual bar (engaging, not monotone, not loud). The dock is WHY Compose keeps space at the bottom and why blocks are draggable.
 
 ## 2. Session spillover
 
