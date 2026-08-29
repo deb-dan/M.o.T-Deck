@@ -2965,7 +2965,14 @@ const NAV_ENTRIES = [
   // toggle, and a sidebar row wearing a chrome control's glyph reads as that control.
   { id:'comfy',   label:'Generate',        ico:'❖', kind:'lane', view:null,     tab:'Generate', url:'/comfy', prefersTab:true },
   { id:'aider',   label:'Aider',           ico:'⌨', kind:'lane', view:null,     tab:'Aider',   url:'/aider',  prefersTab:true },
-  { id:'goose',   label:'Goose',           ico:'⌁', kind:'lane', view:null,     tab:'Goose',   url:'/goose',  prefersTab:true },
+  // THE GOOSE PAIR (nav.py carries the argument; both lanes stay, Debi's S14 ruling).
+  // ⚠️ ONLY THE LABELS MOVED: `goose` is still the id, the route and the pidfile.
+  // ⚠️ /gooseui/ KEEPS ITS TRAILING SLASH — the vendored bundle resolves its assets
+  // relatively, and without it they hit the panel's own /assets/ mount and the tab paints
+  // black with no error (v1.5.40 A1). ⚠️ ⎔ IS NOT ⌁: two rows in one glyph read as one
+  // surface (v1.5.38's ❖ lesson, general form). Nothing else in this document wears ⎔.
+  { id:'goose',   label:'Goose CLI',       ico:'⌁', kind:'lane', view:null,     tab:'Goose CLI', url:'/goose', prefersTab:true },
+  { id:'gooseui', label:'Goose UI',        ico:'⎔', kind:'lane', view:null,     tab:'Goose UI', url:'/gooseui/', prefersTab:true },
   { id:'loffice', label:'LOffice',         ico:'▦', kind:'lane', view:null,     tab:'LOffice', url:'/office', prefersTab:true },
   { id:'caps',    label:'Capabilities',    ico:'⚙', kind:'view', view:'caps',   tab:'Capabilities' },
   // Logs is a DIALOG, so it has no view and can never be a tab — sidebar only, and the
@@ -2994,7 +3001,7 @@ const NAV_SIDEBAR_ONLY = ['logs','help'];
 const NAV_ALWAYS = ['logs','help'];
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
-const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','compose','comfy','aider','goose','loffice','caps','logs',
+const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','compose','comfy','aider','goose','gooseui','loffice','caps','logs',
                              'help',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
@@ -3013,8 +3020,10 @@ const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox'
    overflow rather than the last slot. `compose` joins them at the Compose slice with one
    more argument of its own — it is an ALTERNATIVE to `music`, which IS pinned, and
    pinning both by default would put two surfaces for one job on the strip without
-   anyone choosing that. Mirrors nav.py's DEFAULT_TOPBAR tail. */
-const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose','comfy','compose'];
+   anyone choosing that — and `gooseui` at the Goose UI slice, where the same objection
+   is sharper still: pinning the embedded lane while `goose` waits behind ⋯ would pick a
+   winner between two coexisting lanes. Mirrors nav.py's DEFAULT_TOPBAR tail. */
+const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose','comfy','compose','gooseui'];
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar

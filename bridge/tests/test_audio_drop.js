@@ -492,9 +492,16 @@ check('the handler is registered on the panel configuration',
 // `compose` is the fifth (loffice, aider, goose, comfy, compose): our own /compose page,
 // served by the bridge from the panel's origin. A sixth id may only be added here by
 // someone who can say, at main.swift's arm, why that page is ours.
-check('...and on our own LOffice/Aider/Goose/Generate/Compose pages, on nothing else',
+// ⚠️ WIDENED AGAIN AT THE GOOSE UI SLICE, and STILL the same closed gate — the count of
+// registration sites is unchanged (two) and the arm still names every id explicitly.
+// `gooseui` is the sixth, and it is the one whose argument is NOT "we wrote it": the
+// bundle in that tab is goose Desktop's own renderer, vendored unmodified. What makes it
+// ours is the ORIGIN (:8700, digest-pinned on disk, re-verified by the contract suite)
+// and the one preload script we inject into it. A seventh id may only be added here by
+// someone who can say, at main.swift's arm, why that page is ours.
+check('...and on our own LOffice/Aider/Goose CLI/Generate/Compose/Goose UI pages, on nothing else',
       (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
-      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose"\s*\n?\s*\|\| t\.id == "comfy" \|\| t\.id == "compose" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose"\s*\n?\s*\|\| t\.id == "comfy" \|\| t\.id == "compose" \|\| t\.id == "gooseui" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift)
       // the generic arm — every third-party component page — gets a BARE configuration.

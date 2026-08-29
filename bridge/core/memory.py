@@ -371,7 +371,22 @@ def _label(name: str) -> str:
             # exactly the lifetime of a session, so the row exists while the process does
             # and vanishes with it. A tab holding a 27B-driven agent is a real tenant of
             # this machine's RAM and the ledger would be lying by omission without it.
-            "goose": "Goose",
+            #
+            # ⚠️ THE LABEL IS "Goose CLI", NOT "Goose", AND THE KEY IS STILL `goose`.
+            # There are two goose lanes since v1.5.40 and each writes its own pidfile, so
+            # a row labelled plainly "Goose" beside one labelled "Goose UI" would leave
+            # the user guessing which process a number belongs to. The KEY is the pidfile
+            # STEM (data/goose.pid) and does not churn with a display name.
+            "goose": "Goose CLI",
+            # …and the EMBEDDED lane, whose pidfile is data/goose-ui.pid (the stem is the
+            # key, hyphen and all — bridge/gooseui.py PIDFILE_REL). That pid is the goosed
+            # WE supervise for /gooseui/: our own child, started by that page and stopped
+            # with it. It is claimed here for goose's exact reason, and it is kept OUT of
+            # the Bridge row by the own-pidfile exclusion below — which is what makes this
+            # line matter. Without it the row still appears, labelled with the bare stem
+            # `goose-ui`: a filename, not a name for the thing holding gigabytes of the
+            # user's RAM. v1.5.40 shipped the pidfile and named this as its honest limit.
+            "goose-ui": "Goose UI",
             "bridge": "Bridge", "app": "App UI"}.get(name, name)
 
 

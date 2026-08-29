@@ -254,8 +254,10 @@ async def goose_pty(ws: WebSocket) -> None:
         return
 
     # THE MEMORY-LEDGER HANDLE. Written after the spawn succeeded and removed in the
-    # finally below, so /api/memory shows a "Goose" row for exactly as long as goose is
-    # alive — and never a ghost row for a process that is gone.
+    # finally below, so /api/memory shows a "Goose CLI" row for exactly as long as this
+    # lane's goose is alive — and never a ghost row for a process that is gone. (The
+    # embedded lane writes data/goose-ui.pid and earns its own "Goose UI" row the same
+    # way; core/memory.py's _label maps both pidfile stems to their display names.)
     _goose.write_pidfile(ROOT, sess.proc.pid)
     _goose_log(f"session start pid={sess.proc.pid} cwd={cwd} "
                f"model={env.get('GOOSE_MODEL')} host={env.get('OPENAI_HOST')} "

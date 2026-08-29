@@ -45,7 +45,7 @@ console.log('registry');
   // Debi's amendment: the two newest LANES are registry entries — that is precisely how
   // they become reachable from the sidebar (they are lanes, not services, so they have
   // no Mission Control card and were previously reachable only from the tab strip).
-  for (const id of ['aider', 'loffice', 'goose', 'comfy', 'compose']) {
+  for (const id of ['aider', 'loffice', 'goose', 'comfy', 'compose', 'gooseui']) {
     const e = M.navEntry(id);
     ok(e && e.kind === 'lane', id + ' is a registry LANE');
     ok(e && e.prefersTab === true, '...and a click on it asks the shell for its tab');
@@ -96,6 +96,36 @@ console.log('registry');
     const nids = M.NAV_ENTRIES.map(e => e.id);
     ok(nids.indexOf('compose') === nids.indexOf('music') + 1,
        'Compose is registered DIRECTLY after Music (the spec\u2019s placement)');
+  }
+  // THE GOOSE PAIR (Goose UI slice, ledger S14) \u2014 the same argument a third time, and
+  // here it is Debi's explicit ruling that both lanes coexist. `goose` is the PTY
+  // terminal at /goose; `gooseui` is goose Desktop's own renderer served by us at
+  // /gooseui/. Separate homes, separate sessions, both alive at once.
+  {
+    const t = M.navEntry('goose'), u = M.navEntry('gooseui');
+    ok(t && u, 'both goose entries exist');
+    ok(t.kind === 'lane' && u.kind === 'lane', 'both are LANES \u2014 neither has a MC card');
+    // THE RENAME. The display name says WHICH goose; the id, the route and the pty path
+    // do not churn with a wordmark (LOffice's rule).
+    ok(t.label === 'Goose CLI' && t.tab === 'Goose CLI',
+       'the terminal lane is named Goose CLI now that there are two goose surfaces');
+    ok(t.id === 'goose' && t.url === '/goose',
+       '\u2026while its id and its route are UNCHANGED \u2014 only the display name moved');
+    ok(u.label === 'Goose UI' && u.tab === 'Goose UI',
+       'the embedded lane is named Goose UI');
+    // \u26a0\ufe0f THE TRAILING SLASH IS LOAD-BEARING: /gooseui 308s to /gooseui/, and the bundle
+    // resolves its assets RELATIVELY \u2014 without the slash they hit the panel's own
+    // /assets/ mount and the page paints black with no error (v1.5.40 A1).
+    ok(u.url === '/gooseui/', '\u2026and its URL carries the trailing slash the bundle needs');
+    ok(t.tab !== u.tab, 'they are two different native tabs');
+    // The v1.5.38 lesson in its general form, a third time.
+    ok(u.ico !== t.ico && u.ico !== '\u2726' && u.ico !== '\u25a3' && u.ico !== '\u25d0',
+       'the Goose UI icon is neither the CLI row\u2019s mark nor a chrome control\u2019s');
+    ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === u.ico).length === 1,
+       '\u2026and no other nav row wears it either');
+    const gids = M.NAV_ENTRIES.map(e => e.id);
+    ok(gids.indexOf('gooseui') === gids.indexOf('goose') + 1,
+       'Goose UI is registered DIRECTLY after Goose CLI (one product, two surfaces)');
   }
   // every `tab` the panel names must be a title the shell actually has, or the
   // switchTab bridge silently does nothing.
@@ -154,8 +184,11 @@ console.log('defaults');
   // …and the Compose slice adds a FIFTH, `compose`, DIRECTLY after Music — the two
   // music surfaces read as the pair they are. Still an ADDITION only: no existing row
   // changed position relative to its neighbours.
-  ok(ws.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,loffice,caps,logs,help',
-     'the workspace rail is today\'s order + the five lanes + Help under Logs: ' + ws.join(','));
+  // …and the Goose UI slice adds a SIXTH, `gooseui`, DIRECTLY after Goose CLI — the two
+  // goose surfaces read as the pair they are. Still an ADDITION only: no existing row
+  // changed position relative to its neighbours.
+  ok(ws.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+     'the workspace rail is today\'s order + the six lanes + Help under Logs: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -176,8 +209,12 @@ console.log('defaults');
   // for the same reason plus one of its own — it is an alternative to the PINNED
   // `music`, and pinning both by default would choose for the user. Closed literal
   // list; the order mirrors nav.py's tail.
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy,compose',
-     'the pinnable VIEWS + goose + comfy + compose start hidden (one sidebar click away)');
+  // ⚠️ WIDENED A FOURTH TIME, STILL NOT WEAKENED, at the Goose UI slice: `gooseui` joins
+  // with the strongest form of the argument — it is an alternative SURFACE onto the same
+  // product as `goose`, which is itself still behind ⋯ waiting for the one free pin, so
+  // pinning the embedded lane would declare a winner between two coexisting lanes.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy,compose,gooseui',
+     'the pinnable VIEWS + goose + comfy + compose + gooseui start hidden (one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
 }
 
@@ -340,8 +377,8 @@ console.log('render (executed)');
   // ⚠️ WIDENED (not weakened) at the comfy-nav slice, in step with the defaults fence
   // above: this one proves the rail actually RENDERS what the model declares, so the
   // two literals must move together or the Generate row is declared but never drawn.
-  ok(rows.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,loffice,caps,logs,help',
-     'with NO saved layout the workspace rail renders today\'s rows + the five lanes + Help');
+  ok(rows.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders today\'s rows + the six lanes + Help');
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),
@@ -349,6 +386,30 @@ console.log('render (executed)');
   ok((out.ws.match(/onclick="navOpen\(/g) || []).length === rows.length,
      'every workspace row is clickable through navOpen');
   ok(/<span class="ico">♫<\/span> Music/.test(out.ws), 'the icons and labels come from the registry');
+  // ══ ALL-DESIGNS, STRUCTURALLY (Goose UI slice) ═══════════════════════════════════
+  // The ALL-DESIGNS rule asks whether a new row is correct in Editorial, the three theme
+  // packs and Studio, light and dark. The answer for a NAV ROW is settled here rather
+  // than by twenty-four screenshots: every design's rules select on `nav a`, `.ico` and
+  // the `.on` state, so a row whose markup is IDENTICAL to a shipped row's — same
+  // element, same classes, same child shape, differing only in id, glyph and label —
+  // cannot render differently in any of them. (This is the v1.5.38 argument, mechanised:
+  // that slice compared the new row to Aider's in 24 look-combos and found them byte-
+  // identical. A row that ever needs its OWN class fails here, which is the point: it
+  // then owes the twenty-four looks a real verification.)
+  const shape = (id) => {
+    const e = M.navEntry(id);
+    const m = out.ws.match(new RegExp('<a[^>]*id="nav-' + id + '"[\\s\\S]*?</a>'));
+    return m ? m[0].split(id).join('ID').split(e.label).join('LABEL')
+                   .split(e.ico).join('I')
+             : null;
+  };
+  for (const id of ['gooseui', 'goose']) {
+    ok(shape(id) && shape(id) === shape('aider'),
+       'the ' + id + ' row is structurally identical to the shipped Aider row — same '
+       + 'element, classes and children, so every design paints it the same way');
+  }
+  ok(!/class="[^"]*goose/.test(out.ws),
+     '…and neither goose row carries a class of its own (nothing for a design to miss)');
   // ⧉ = open as an overlay (2026-08-21). It rides the eligible workspace rows only.
   const peeks = [...out.ws.matchAll(/peekOpen\('([a-z]+)'/g)].map(m => m[1]).sort();
   ok(peeks.join(',') === 'caps,help,models,music',

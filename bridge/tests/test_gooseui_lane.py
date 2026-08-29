@@ -310,8 +310,89 @@ def test_the_shim_is_complete_and_honest():
        "A3: the locale is the one the bundle actually ships a catalogue for")
 
 
+def test_the_lane_is_REACHABLE():
+    """S14 — THE WIRING. v1.5.40 shipped a surface with NO WAY TO GET TO IT: the page
+    existed at /gooseui/ and nothing in the product pointed at it, so it was reachable
+    only by typing a URL. This is the fence for every party that has to agree about that
+    row — nav.py (the authority), the panel (the mirror the sidebar renders) and the
+    shell (the tab the row asks for). A disagreement between any two of them is a dead
+    sidebar click, which is exactly the failure the Generate slice caught live.
+    """
+    from bridge import nav
+    e = nav.entry("gooseui")
+    ok(e is not None and e["kind"] == "lane",
+       "nav.py knows `gooseui` as a lane (no port, no card — the page owns its goosed)")
+    ok(e and set(e["bars"]) == {"sidebar", "topbar"}, "…allowed on either bar")
+    ok(("gooseui", True) in nav.DEFAULT_SIDEBAR, "pinned on the sidebar by default")
+    ok(("gooseui", False) in nav.DEFAULT_TOPBAR,
+       "declared but UNPINNED on the strip: 11 of 12 pins are spent, and pinning the "
+       "embedded lane while the terminal one waits behind ⋯ would pick a winner between "
+       "two lanes Debi's ruling says coexist")
+    ok("gooseui" not in [i for i, _p in nav.DEFAULT_TOPBAR_V1],
+       "the FROZEN pre-v1.5.26 order is never edited")
+    ok(nav.validate(nav.default_model()) == "",
+       "the default layout with gooseui in it is still valid")
+    nids = list(nav.NAV_IDS)
+    ok(nids.index("gooseui") == nids.index("goose") + 1,
+       "…and it sits DIRECTLY after the terminal lane: one product, two surfaces")
+
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    ok("{ id:'gooseui'," in panel, "the panel mirrors the registry entry")
+    ok("tab:'Goose UI'" in panel, "…naming the shell tab exactly")
+    ok("label:'Goose UI'" in panel, "…and labelling the row")
+    # ⚠️ A1 AGAIN, ONE LAYER UP. The route fix was a 308; a nav row pointing at the
+    # slashless form takes that redirect on every browser-fallback open, and any future
+    # caller that skips the redirect is back to the black rectangle.
+    ok("url:'/gooseui/'" in panel,
+       "…and its URL carries the trailing slash the vendored bundle needs (A1)")
+
+    sw = (ROOT / "app" / "main.swift").read_text()
+    ok('HarnessTab(id: "gooseui", title: "Goose UI"' in sw, "the shell has the tab row")
+    ok("http://127.0.0.1:8700/gooseui/" in sw,
+       "…pointing at the bridge page, trailing slash included (A1)")
+    ok('t.id == "gooseui"' in sw,
+       "…and it is served from OUR origin with OUR preload, so it gets the `harness` "
+       "script handler and the sidebar row can switch to it")
+    m = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', sw)
+    ok(m and "gooseui" not in m.group(1),
+       "gooseui is NOT in the shell's pinned default strip (declared unpinned in nav.py, "
+       "and test_nav_model asserts the three-way agreement)")
+
+    # THE RENAME (Debi's naming ruling 2026-08-29): every place the PTY lane's label is
+    # DISPLAYED now says "Goose CLI", and no route, id or pty path moved with it.
+    goose_page = (ROOT / "bridge" / "panel" / "goose.html").read_text()
+    ok("<title>Goose CLI" in goose_page and ">Goose CLI<" in goose_page,
+       "the terminal lane's own page wears the new name in its title and its header")
+    ok("document.title = 'Goose CLI" in goose_page,
+       "…including the title its boot script sets once the scripts have run")
+    ok('HarnessTab(id: "goose", title: "Goose CLI"' in sw
+       and "http://127.0.0.1:8700/goose\"" in sw,
+       "the shell titles it Goose CLI while its ROUTE is untouched")
+    ok("/api/pty/goose" in goose_page,
+       "…and the pty path did not churn with the wordmark either")
+
+    # THE MEMORY LEDGER (v1.5.40's own named honest limit, closed here). The pidfile
+    # already existed; what was missing was a NAME for the row it produces.
+    from bridge.core import memory as M
+    ok(os.path.basename(G.PIDFILE_REL) == "goose-ui.pid",
+       "the embed's pidfile is data/goose-ui.pid — the ledger keys on the STEM")
+    ok(M._label("goose-ui") == "Goose UI",
+       "…and core/memory.py gives that stem its own name, so the row is not a filename")
+    ok(M._label("goose") == "Goose CLI" and M._label("goose") != M._label("goose-ui"),
+       "…while the terminal lane's row says which goose IT is: two lanes, two names")
+    # The own-pidfile exclusion is what stops this row being swallowed by "Bridge" — the
+    # measured v1.5.37 bug, which silently attributed a whole agent's footprint to the
+    # bridge. The exclusion must keep running BEFORE the bridge row is built.
+    src = (ROOT / "bridge" / "core" / "memory.py").read_text()
+    ok(re.search(r"owned = \{p for p in pf\.values\(\)\}[\s\S]{0,400}"
+                 r"p not in owned[\s\S]{0,200}add\(\"bridge\"", src),
+       "the bridge row still EXCLUDES every pid that has a pidfile of its own — the more "
+       "specific claimant first, or this row comes out empty and is dropped")
+
+
 def main():
     for fn in (test_entry_document, test_route_shapes_are_registered,
+               test_the_lane_is_REACHABLE,
                test_no_kill_by_port_or_pattern, test_the_two_lanes_cannot_collide,
                test_env_fence_survives_a_hostile_environment,
                test_endpoint_composition, test_config_seed_preserves_what_the_user_added,

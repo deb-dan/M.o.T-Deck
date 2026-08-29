@@ -373,7 +373,13 @@ def test_routes_live():
                 ok("goose" in names,
                    f"/api/memory names goose while it runs (got {names})")
                 row = next(c for c in m.json()["components"] if c["name"] == "goose")
-                ok(row.get("label") == "Goose", "…with a human label, not a bare id")
+                # ⚠️ WIDENED, NOT WEAKENED, AT THE GOOSE UI SLICE: the label reads "Goose
+                # CLI" now that a SECOND goose lane (data/goose-ui.pid → "Goose UI") can
+                # hold RAM at the same moment. The KEY is still `goose` — a pidfile stem
+                # never churns with a display name — and the assertion's point is
+                # unchanged: a human label, not a bare id.
+                ok(row.get("label") == "Goose CLI",
+                   "…with a human label that says WHICH goose, not a bare id")
 
             # A resize message must be CONSUMED: /bin/cat echoes everything it is given,
             # so if the escape reached the pty it would come straight back at us.
@@ -588,12 +594,19 @@ def test_wiring():
 
     panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
     ok("{ id:'goose'," in panel, "the panel mirrors the registry entry")
-    ok("tab:'Goose'" in panel, "…naming the shell tab exactly")
-    ok("url:'/goose'" in panel, "…and the bridge route")
+    # ⚠️ THE DISPLAY NAME IS "Goose CLI" SINCE THE GOOSE UI SLICE (Debi's naming ruling
+    # 2026-08-29) and this fence moved WITH it rather than being relaxed: it still pins
+    # the panel's tab title to a literal, character for character, because a drifted
+    # title is a sidebar row that silently opens nothing.
+    ok("tab:'Goose CLI'" in panel, "…naming the shell tab exactly")
+    ok("label:'Goose CLI'" in panel, "…and labelling the row for the surface it opens")
+    ok("url:'/goose'" in panel, "…and the bridge route, which the rename did NOT touch")
     ok("{n:'goose', label:'goose'}" in panel, "the log dialog lists the lane's log")
 
     sw = (ROOT / "app" / "main.swift").read_text()
-    ok('HarnessTab(id: "goose", title: "Goose"' in sw, "the shell has the tab row")
+    ok('HarnessTab(id: "goose", title: "Goose CLI"' in sw,
+       "the shell has the tab row, titled Goose CLI — the ID did not churn with the "
+       "wordmark (it is also the route, the pidfile and every saved nav.json's row)")
     ok("http://127.0.0.1:8700/goose" in sw, "…pointing at the bridge page")
     ok('t.id == "goose"' in sw,
        "…and it is a FIRST-PARTY page: it gets the `harness` script handler, so the "
@@ -614,8 +627,15 @@ def test_wiring():
 
 def test_memory_label():
     from bridge.core import memory as M
-    ok(M._label("goose") == "Goose",
-       "the ledger labels the row Goose, not the bare id")
+    # ⚠️ WIDENED WITH THE RENAME, NOT WEAKENED. Two goose lanes can hold RAM at once, so
+    # the ledger has to say WHICH one a number belongs to; the KEYS are pidfile stems and
+    # did not move.
+    ok(M._label("goose") == "Goose CLI",
+       "the ledger labels the terminal lane Goose CLI, not the bare id")
+    ok(M._label("goose-ui") == "Goose UI",
+       "…and the embedded lane's pidfile stem gets its own name, not `goose-ui`")
+    ok(M._label("goose") != M._label("goose-ui"),
+       "…and the two rows can never read as the same process")
 
 
 def main():

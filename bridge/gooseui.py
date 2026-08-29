@@ -544,8 +544,9 @@ def seed_config(root, endpoint: str, wire_model: str, port=6767) -> str:
 INJECT_MARK = "<!-- harness: goose preload shim -->"
 
 # ⚠️ THE NAME OF *OUR* SURFACE, NOT OF GOOSE (Debi's ruling, 2026-08-29). The embedded
-# surface is "Goose UI"; the PTY terminal lane becomes "Goose CLI" in the full slice
-# (renaming its nav/index/main.swift labels is NOT this spike's scope). This retitles
+# surface is "Goose UI"; the PTY terminal lane BECAME "Goose CLI" at the full slice
+# (ledger S14 — its nav/index.html/main.swift/goose.html labels all say so now, while its
+# id, its route /goose and its pty path never moved). This retitles
 # only the document WE generate, so the two harness tabs are tellable apart in a tab
 # strip and in a window title. Everything INSIDE the bundle — goose's own wordmark, the
 # Block lockups, every self-reference in the UI — stays exactly as shipped: that is the

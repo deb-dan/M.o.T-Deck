@@ -62,7 +62,7 @@ def test_registry():
     # Debi's amendment: the two newest lanes ARE in the registry — that is how they
     # become reachable from the sidebar at all (they are lanes, not services, so they
     # never appear on Mission Control).
-    for lane in ("aider", "loffice", "goose", "comfy", "compose"):
+    for lane in ("aider", "loffice", "goose", "comfy", "compose", "gooseui"):
         e = nav.entry(lane)
         ok(e is not None and e["kind"] == "lane", f"{lane} is a registry lane")
         ok(e and set(e["bars"]) == {"sidebar", "topbar"}, f"{lane} may live on either bar")
@@ -81,6 +81,16 @@ def test_registry():
     ids = list(nav.NAV_IDS)
     ok(ids.index("compose") == ids.index("music") + 1,
        "compose is registered DIRECTLY after music (the spec's placement, not a tail append)")
+    # ⚠️ THE GOOSE PAIR, for the comfy pair's and the music pair's exact reason (Goose UI
+    # slice, ledger S14). `goose` is the PTY terminal lane at /goose and `gooseui` is the
+    # embedded surface at /gooseui/ driving a goosed we supervise. Debi's ruling is that
+    # BOTH lanes coexist — they hold separate homes and separate session stores — so
+    # collapsing either into the other silently removes a surface the user has.
+    ok(nav.entry("goose")["kind"] == "lane" and nav.entry("gooseui")["kind"] == "lane",
+       "goose (terminal) and gooseui (embedded) are BOTH registry lanes, and distinct")
+    ok(ids.index("gooseui") == ids.index("goose") + 1,
+       "gooseui is registered DIRECTLY after goose (one product, two surfaces — not a "
+       "tail append)")
     # Logs and Help are the sidebar-only entries, and the ones that may be hidden
     # everywhere (⌘K reaches both) — all of it is load-bearing for `validate`.
     #
@@ -137,11 +147,22 @@ def test_normalize():
     # 12) plus one of its own — it is an ALTERNATIVE to `music`, which IS pinned, and
     # pinning both by default would put two surfaces for one job on the strip without
     # anyone choosing that. The list remains closed and ordered.
-    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose", "comfy", "compose"],
-       "the three pinnable views + goose + comfy + compose start hidden "
+    #
+    # ⚠️ WIDENED A FOURTH TIME AT THE GOOSE UI SLICE, AND AGAIN NOT WEAKENED: `gooseui`
+    # joins with the strongest version of the argument yet — the pinned prefix is STILL
+    # 11 of 12, AND this lane is an alternative SURFACE onto the same product as `goose`,
+    # which is itself still waiting behind ⋯ for that one free pin. Pinning the embedded
+    # lane by default would silently declare a winner between two lanes Debi's ruling
+    # says coexist. The list remains closed and ordered.
+    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose", "comfy", "compose",
+                                   "gooseui"],
+       "the three pinnable views + goose + comfy + compose + gooseui start hidden "
        "(one sidebar click away)")
     ok([i for i, _p in nav.DEFAULT_TOPBAR if _p].count("music") == 1,
        "…while music itself stays pinned exactly as it was — this slice moved no row")
+    ok("goose" not in [i for i, p in nav.DEFAULT_TOPBAR if p]
+       and "gooseui" not in [i for i, p in nav.DEFAULT_TOPBAR if p],
+       "…and NEITHER goose lane is pinned: the strip does not pick one of the two")
 
     # junk totality: none of these may raise, and each must return a full model
     for junk in [None, 0, "x", [], {"sidebar": "x"}, {"topbar": 7},

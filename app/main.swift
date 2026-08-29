@@ -63,11 +63,18 @@ let tabRegistry: [HarnessTab] = [
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
     HarnessTab(id: "aider", title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
-    // Goose — the third agent lane, and a pty for the same verified reason Aider is:
-    // goose has NO browser UI at all (no `web`, no `ui` subcommand; `goose serve` is an
-    // ACP client API that serves no page — docs/research/2026-08-28-goose-source-
-    // verify.md item 4). Ours, bridge origin, its own document (/goose): xterm.js plus
-    // ws://…/api/pty/goose, so it must not carry the panel's poll loops.
+    // Goose CLI — the third agent lane, and a pty for the same verified reason Aider is:
+    // goose's own CLI has NO browser UI at all (no `web`, no `ui` subcommand; `goose
+    // serve` is an ACP client API that serves no page — docs/research/2026-08-28-goose-
+    // source-verify.md item 4). Ours, bridge origin, its own document (/goose): xterm.js
+    // plus ws://…/api/pty/goose, so it must not carry the panel's poll loops.
+    //
+    // ⚠️ THE TITLE GAINED "CLI" AT THE GOOSE UI SLICE (Debi's naming ruling 2026-08-29)
+    // AND THE ID DID NOT MOVE. There are two goose tabs now, and "Goose" alone stopped
+    // saying which one; `goose` stays the id because it is also the route, the pidfile
+    // and the row in every saved nav.json. LOffice's rule: internal names do not churn
+    // with a wordmark. The panel's mirror carries the same title, spelled identically —
+    // the switchTab bridge resolves by id first, but a drifted title is still a bug.
     //
     // ⚠️ IT IS IN THE REGISTRY BUT NOT IN navDefaultTopbar, AND BOTH ARE REQUIRED. The
     // registry is "does this build know that tab at all" — switchTab shows a hidden tab
@@ -75,7 +82,29 @@ let tabRegistry: [HarnessTab] = [
     // PINNED prefix, and test_nav_model.py asserts it equals nav.py's pinned defaults;
     // goose is declared unpinned there (the strip is at 11 of 12), so it must NOT appear
     // in the list below or the three-way agreement breaks.
-    HarnessTab(id: "goose", title: "Goose", url: URL(string: "http://127.0.0.1:8700/goose")!),
+    HarnessTab(id: "goose", title: "Goose CLI", url: URL(string: "http://127.0.0.1:8700/goose")!),
+    // Goose UI — goose Desktop's OWN renderer (vendored, unmodified, v1.5.40), served by
+    // the bridge at /gooseui/ and talking WebSocket ACP to a goosed WE supervise. Ours by
+    // ORIGIN and by supervision even though the bundle is upstream's: it is served from
+    // :8700 with our preload shim injected, which is why it earns the first-party handler
+    // below. Its own document for Generate's reason — it is a whole React app.
+    //
+    // ⚠️ THE TRAILING SLASH IS LOAD-BEARING. /gooseui 308-redirects here; the bundle
+    // references its assets RELATIVELY, so without the slash they resolve against
+    // /assets/ — a real, occupied mount on this origin — and the tab paints a black
+    // rectangle with no error (v1.5.40 A1, measured). Pointing the tab straight at the
+    // slash form also spares every launch a redirect.
+    //
+    // ⚠️ IT IS A SECOND, SEPARATE TAB FROM "Goose CLI" ABOVE, ON PURPOSE, AND NEITHER MAY
+    // BE "CLEANED UP" INTO THE OTHER. Debi's ruling (ledger S14) is that both lanes
+    // coexist; they hold separate goose homes and separate session stores and were proven
+    // alive simultaneously. Removing either takes a real surface away from the user.
+    //
+    // ⚠️ IN THE REGISTRY BUT NOT IN navDefaultTopbar — goose's, comfy's and compose's
+    // note applies verbatim: `gooseui` is declared unpinned in nav.py, so it must NOT
+    // appear in that list or the three-way agreement breaks.
+    HarnessTab(id: "gooseui", title: "Goose UI",
+               url: URL(string: "http://127.0.0.1:8700/gooseui/")!),
     // LOffice — spreadsheets over vendored Univer, served from OUR bridge (/office).
     // Ours, bridge origin, its own document for the same reason Aider is: it loads
     // ~10MB of Univer UMD and must not carry the panel's poll loops. Debi suggested
@@ -670,7 +699,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         //
         // OUR OWN PAGES — and only ours — get the "harness" script-message handler, so
         // that a sidebar row (or LOffice's File menu) can ask the shell to switch tabs.
-        // That is the panel here, plus LOffice, Aider, Goose, Generate and Compose below;
+        // That is the panel here, plus LOffice, Aider, Goose CLI, Goose UI, Generate and
+        // Compose in the loop below;
         // registering it on any other webview would let a THIRD-PARTY component page
         // drive our tab strip, so those configurations are deliberately bare.
         //
@@ -712,14 +742,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if t.id == panelId { wvById[t.id] = panelWV! }
             else if t.id == odysseusId { wvById[t.id] = odyWV! }
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
-            // LOffice + Aider + Goose + Generate + Compose are OUR OWN pages served by
-            // the bridge (first-party, same origin as the panel) — they get the "harness"
-            // handler too, so their own menus can ask the shell to switch tabs.
-            // Third-party pages never do. The list is EXPLICIT rather than "anything on
-            // :8700": a page earns the handler by being one we wrote, and that has to be
-            // stated once per page.
+            // LOffice + Aider + Goose CLI + Generate + Compose + Goose UI are OUR OWN
+            // pages served by the bridge (first-party, same origin as the panel) — they
+            // get the "harness" handler too, so their own menus can ask the shell to
+            // switch tabs. Third-party pages never do. The list is EXPLICIT rather than
+            // "anything on :8700": a page earns the handler by being one we wrote, and
+            // that has to be stated once per page.
+            //
+            // ⚠️ `gooseui` EARNS IT ON A NARROWER ARGUMENT THAN THE OTHERS, AND THE
+            // ARGUMENT IS THE ORIGIN, NOT THE AUTHORSHIP. The bundle inside that tab is
+            // goose Desktop's own renderer, vendored unmodified — we did not write it.
+            // What we own is the ORIGIN it is served from (:8700, ours, digest-pinned on
+            // disk and re-verified by the contract suite) and the ONE script injected
+            // into it (bridge/gooseui.py's preload). A page reaching `window.webkit`
+            // here is a page we provisioned byte-for-byte; a third-party page fetched
+            // over the network still never gets this handler.
             else if t.id == "loffice" || t.id == "aider" || t.id == "goose"
-                    || t.id == "comfy" || t.id == "compose" {
+                    || t.id == "comfy" || t.id == "compose" || t.id == "gooseui" {
                 let c = WKWebViewConfiguration()
                 c.userContentController.add(self, name: "harness")
                 c.userContentController.addUserScript(shellScript)

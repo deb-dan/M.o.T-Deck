@@ -69,10 +69,31 @@ NAV_ENTRIES = (
     # the page does for the user.
     {"id": "comfy",       "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "aider",       "kind": "lane",      "bars": ("sidebar", "topbar")},
-    # GOOSE (docs/research/2026-08-28-goose-source-verify.md) — a LANE, not a component,
-    # for aider's exact reason: it has no port, no daemon and no browser UI of its own,
-    # so it never appears on Mission Control. It runs in a pty inside its own tab.
+    # GOOSE CLI (docs/research/2026-08-28-goose-source-verify.md) — a LANE, not a
+    # component, for aider's exact reason: it has no port, no daemon and no browser UI of
+    # its own, so it never appears on Mission Control. It runs in a pty inside its own
+    # tab.
+    #
+    # ⚠️ THE ID IS `goose` AND IT DOES NOT CHURN. The DISPLAY name became "Goose CLI" at
+    # the Goose UI slice (Debi's naming ruling 2026-08-29) because there are now two
+    # goose surfaces and "Goose" alone stopped saying which one is meant. Renaming the id
+    # would invalidate every saved nav.json, the pty route /api/pty/goose, data/goose.pid
+    # and the memory ledger's handle on it — all for a wordmark. LOffice's rule verbatim:
+    # internal names do not churn with a display name.
     {"id": "goose",       "kind": "lane",      "bars": ("sidebar", "topbar")},
+    # GOOSE UI (v1.5.40's embed — bridge/routers/gooseui.py serves goose Desktop's own
+    # renderer at /gooseui/ against a goosed WE supervise). A LANE for `goose`'s reason
+    # AND one of its own: the goosed it drives is started by the page itself and lives
+    # only while the tab does, so there is nothing for a Mission Control card to start.
+    #
+    # ⚠️ IT DOES NOT REPLACE `goose`, AND BOTH ARE REQUIRED — the comfy/comfyui and
+    # music/compose pairs' argument a third time, and here it is Debi's explicit ruling
+    # (ledger S14): the terminal lane STAYS. They are two surfaces onto one product with
+    # SEPARATE homes and SEPARATE sessions (data/goose/home vs data/goose/ui-home),
+    # proven in v1.5.40 to run simultaneously. Dropping `goose` takes the terminal away;
+    # dropping `gooseui` leaves the embedded surface reachable only by typing a URL. It
+    # sits DIRECTLY AFTER Goose CLI because they are one product done two ways.
+    {"id": "gooseui",     "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "loffice",     "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "caps",        "kind": "view",      "bars": ("sidebar", "topbar")},
     # Logs is a DIALOG. It has no view id, so it can never be a solo tab — and it is
@@ -121,7 +142,8 @@ NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 DEFAULT_SIDEBAR = (
     ("mc", True), ("chat", True), ("models", True), ("music", True), ("compose", True),
     ("comfy", True),
-    ("aider", True), ("goose", True), ("loffice", True), ("caps", True), ("logs", True),
+    ("aider", True), ("goose", True), ("gooseui", True),
+    ("loffice", True), ("caps", True), ("logs", True),
     ("help", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
@@ -166,6 +188,14 @@ DEFAULT_TOPBAR = (
     # would put two surfaces for one job on the strip without anyone choosing that. One
     # sidebar click or one ⋯ away, and the Appearance editor can pin it by choice.
     ("compose", False),
+    # ⚠️ AND `gooseui` (Goose UI) IS DECLARED-BUT-NOT-PINNED, A FOURTH TIME, AND THE
+    # ARGUMENT HAS ONLY GOT STRONGER. The pinned prefix is STILL 11 of NAV_TOPBAR_MAX=12
+    # — the one free pin stays free — and this lane is an ALTERNATIVE SURFACE onto the
+    # same product as `goose`, which is itself already waiting behind ⋯ for that pin.
+    # Pinning the embedded surface while the terminal one is unpinned would silently
+    # declare a winner between two lanes Debi's ruling says coexist. One sidebar click
+    # or one ⋯ away, and the Appearance editor can pin it by choice.
+    ("gooseui", False),
 )
 # THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
 # it is the ONLY way to tell "this user never customised their strip" from "this user

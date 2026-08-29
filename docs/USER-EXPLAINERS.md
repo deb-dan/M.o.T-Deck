@@ -277,9 +277,24 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 ---
 
 
-## Goose — the agent lane in a terminal
+## Goose — two lanes: Goose CLI and Goose UI
 
-- **Goose** is a coding/ops agent that runs *in a terminal inside its own tab*. It is
+- **There are two Goose tabs and they are both real.** **Goose CLI** is the agent in a
+  terminal. **Goose UI** is the same agent behind goose's own graphical app, embedded in
+  a tab here. Same program, same models, two surfaces — use whichever suits the job.
+- **They do not share a conversation.** Each keeps its own home and its own session
+  history (`data/goose/` for the CLI, `data/goose/ui-home/` for the UI), so a session
+  started in one does not appear in the other. Both can be open and working at the same
+  time.
+- **They do share your files.** Both are pointed at the same `data/goose-workspace`
+  folder, deliberately: that is your project directory, not lane state, and two of them
+  would give you two different "my files" for one product.
+- Everything below about installing, the model, approvals, the workspace and telemetry
+  applies to **both lanes** unless a bullet says otherwise.
+
+### Goose CLI — the agent in a terminal
+
+- **Goose CLI** is a coding/ops agent that runs *in a terminal inside its own tab*. It is
   not a service: there is no card on MOT Deck to start or stop, because it exists only
   while that tab holds it. Close the tab and the session ends; press **Start** and you
   get a new one.
@@ -309,12 +324,42 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 - The terminal keeps a **dark background in every theme**. The colours in it are
   goose's own — its banner, its diffs, its prompts — and they were drawn for a dark
   terminal. The frame around it follows whatever theme you picked.
-- Goose is on the **sidebar** by default, not on the tab strip: the strip is nearly
-  full. Clicking the sidebar row opens its tab; you can pin it in **Capabilities →
-  Appearance** if you want it there permanently.
+- Both goose rows are on the **sidebar** by default, not on the tab strip: the strip is
+  nearly full. Clicking a sidebar row opens its tab; you can pin either one in
+  **Capabilities → Appearance** if you want it there permanently.
 - Sessions are named by time, not by a generated title, and that is deliberate: asking
   the model for a title costs a whole second request, and on a thinking model that
   request can outlive the answer you were waiting for.
+
+### Goose UI — the same agent, graphical
+
+- **Goose UI** is goose's own desktop app interface, running inside a tab here. The
+  interface is upstream's, unmodified; what this app supplies is the page it is served
+  from and the goose process behind it, which it starts for you when you open the tab.
+- **It installs itself, once, and tells you the cost first.** The tab's first screen is
+  an **Install** button that names the download — about 209 MB, of which roughly 7 MB is
+  kept — because a button that quietly starts a quarter-gigabyte download is not a thing
+  this app ships. Every piece is checked against a pinned digest before it is used; if a
+  check fails, nothing is installed and the page says which one.
+- **If it cannot start, it says so in words.** A tab that loaded the interface with a
+  dead connection behind it would read as "goose is broken"; instead you get a page
+  naming what failed, the command that fixes it, the log to look at, and a link to the
+  terminal lane, which is unaffected.
+- **What is missing in a tab, and why.** The interface is built for a desktop app with
+  native windows and file dialogs; a tab has neither. So: **"open in a new window" opens
+  in this same tab**; there is **no native file, folder, recipe or session-import
+  picker** and **no save dialog** — the working directory is fixed to the goose
+  workspace; a **file you drag in has no path attached**, though dropped text still
+  works; the **`.goosehints` editor cannot read or save**; and **"reveal in Finder"** and
+  the file-mention autocomplete that lists your folders **do nothing**. Everything else
+  — chat, models and providers, sessions, recipes, the scheduler, extensions — is the
+  real thing. Each of these thirteen also says so in the browser console when the
+  interface asks for it, so nothing degrades silently.
+- **It is one goose process, supervised.** Opening the tab starts it; closing the app
+  stops it. It appears in **MOT Deck's memory ledger by name** ("Goose UI") for as long
+  as it runs, so the RAM it holds is never quietly filed under something else. It also
+  refuses to touch any goose process it cannot prove it started — if you run goose
+  Desktop yourself, this app will not close it.
 
 ---
 
