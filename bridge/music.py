@@ -45,6 +45,7 @@ import random
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -1421,6 +1422,292 @@ def delete_track(root, name) -> tuple:
         except OSError:
             pass                   # the audio is gone; a stale sidecar is harmless
     return True, ""
+
+
+# ══ WAVEFORM ANALYSIS (Compose v2, 2026-08-29) ═══════════════════════════════
+# WHY THIS EXISTS AND WHAT IT IS ALLOWED TO CLAIM.
+#
+# Compose's identity is a waveform whose HUE carries information about the song's
+# shape. The honest problem: NOTHING in this lane knows a song's musical structure.
+# Neither engine reports sections, and a sidecar holds a prompt, a seed and a wall
+# time — no arrangement at all. Painting "intro / verse / chorus" over a strip would
+# be the LIES-TO-USER class: a confident label for something we never measured.
+#
+# So the colour is driven by the one thing we CAN measure from the file itself: the
+# short-term energy envelope. The segmentation below groups the song into runs of
+# similar loudness and names them by what was measured — "quiet", "steady", "loud" —
+# never by a musical role. The surfaces label the result as DERIVED, and when the
+# audio does not segment (a flat ambient bed, a track too short to have runs) the
+# analysis says so and the page falls back to a single-hue amplitude ramp rather than
+# drawing boundaries that are not there.
+ANALYSIS_V = 2                    # bump = every cached analysis is recomputed
+ANALYSIS_SR = 4000                # decode rate: an envelope needs no more than this
+ANALYSIS_PEAKS = 480              # bars stored; the page downsamples to its width
+ANALYSIS_FRAME_S = 0.25           # envelope frame
+ANALYSIS_SMOOTH_S = 2.0           # moving average before segmentation
+ANALYSIS_MIN_SECTION_S = 6.0      # shorter runs are merged away, never drawn
+ANALYSIS_LEVELS = 3               # quiet / steady / loud
+ANALYSIS_LEVEL_NAMES = ("quiet", "steady", "loud")
+ANALYSIS_METHOD = "energy envelope (RMS over 0.25 s frames), derived from the audio"
+ANALYSIS_TIMEOUT_S = 120
+ANALYSIS_MAX_BYTES = 600_000_000  # a file bigger than this is not analysed on demand
+
+
+def _pcm_from_wave(path: str) -> tuple:
+    """(samples, sr) from a PCM-16 wav with the standard library alone — the path that
+    still works on a machine with no ffmpeg. Anything else (24-bit, float) returns
+    (None, 0) and the caller says the analysis is unavailable rather than guessing."""
+    try:
+        import wave                                              # noqa: PLC0415
+        with wave.open(path, "rb") as fh:
+            if fh.getsampwidth() != 2:
+                return None, 0
+            sr, ch = fh.getframerate(), fh.getnchannels()
+            n = fh.getnframes()
+            if not sr or not n:
+                return None, 0
+            raw = fh.readframes(n)
+    except Exception:                                            # noqa: BLE001
+        return None, 0
+    import array                                                 # noqa: PLC0415
+    a = array.array("h")
+    a.frombytes(raw[: (len(raw) // 2) * 2])
+    if sys.byteorder == "big":
+        a.byteswap()
+    if ch > 1:                                    # mono by taking the first channel
+        a = a[::ch]
+    step = max(1, int(round(sr / ANALYSIS_SR)))
+    return a[::step], sr / step
+
+
+def _pcm_from_ffmpeg(path: str, ffmpeg=None, run=None) -> tuple:
+    """(samples, sr) by decoding through the ffmpeg the voice lane already resolves.
+    One child, s16le mono at ANALYSIS_SR — cheap, and it reads every container the
+    library can hold (wav 24-bit and 32-bit float, mp3, m4a)."""
+    exe = ffmpeg or _ffmpeg()
+    if not exe:
+        return None, 0
+    argv = [exe, "-v", "error", "-nostdin", "-i", path, "-map", "a:0",
+            "-f", "s16le", "-ac", "1", "-ar", str(ANALYSIS_SR), "-"]
+    runner = run or (lambda a: subprocess.run(
+        a, capture_output=True, timeout=ANALYSIS_TIMEOUT_S, check=False))
+    try:
+        r = runner(argv)
+    except Exception:                                            # noqa: BLE001
+        return None, 0
+    raw = getattr(r, "stdout", b"") or b""
+    if getattr(r, "returncode", 1) != 0 or len(raw) < 4:
+        return None, 0
+    import array                                                 # noqa: PLC0415
+    a = array.array("h")
+    a.frombytes(raw[: (len(raw) // 2) * 2])
+    if sys.byteorder == "big":
+        a.byteswap()
+    return a, ANALYSIS_SR
+
+
+def envelope(samples, sr, frame_s=ANALYSIS_FRAME_S) -> list:
+    """PURE. Per-frame RMS of a mono sample sequence, as a fraction of full scale."""
+    if samples is None or not len(samples) or not sr:
+        return []
+    step = max(1, int(round(sr * frame_s)))
+    out = []
+    for i in range(0, len(samples), step):
+        chunk = samples[i:i + step]
+        if not len(chunk):
+            break
+        acc = 0
+        for v in chunk:
+            acc += v * v
+        out.append(math.sqrt(acc / len(chunk)) / 32768.0)
+    return out
+
+
+def peak_bars(env, n=ANALYSIS_PEAKS) -> list:
+    """PURE. The envelope resampled to at most n bars, normalised so the loudest bar
+    is 1.0. Normalisation is per TRACK, which is honest: the bars describe this song's
+    own dynamics, and the page's hover says exactly that."""
+    if not env:
+        return []
+    n = max(8, min(int(n), max(8, len(env))))
+    out = []
+    for i in range(n):
+        a = int(i * len(env) / n)
+        b = max(a + 1, int((i + 1) * len(env) / n))
+        window = env[a:b]
+        out.append(max(window) if window else 0.0)
+    top = max(out) or 1.0
+    return [round(v / top, 4) for v in out]
+
+
+def _smooth(seq, win) -> list:
+    """PURE. Centred moving average; `win` is a frame count."""
+    if win <= 1 or not seq:
+        return list(seq)
+    out, half = [], win // 2
+    for i in range(len(seq)):
+        a, b = max(0, i - half), min(len(seq), i + half + 1)
+        out.append(sum(seq[a:b]) / (b - a))
+    return out
+
+
+def _levels(values, k=ANALYSIS_LEVELS, rounds=14) -> list:
+    """PURE. 1-D Lloyd/k-means over log-energy, seeded on quantiles so the result is
+    DETERMINISTIC — a colour that changed between two identical runs would be its own
+    small lie. Returns one level index per value, ordered quiet → loud."""
+    if not values:
+        return []
+    k = max(2, min(int(k), len(set(values)) or 2))
+    srt = sorted(values)
+    cs = [srt[min(len(srt) - 1, int((j + 0.5) * len(srt) / k))] for j in range(k)]
+    assign = [0] * len(values)
+    for _ in range(rounds):
+        moved = False
+        for i, v in enumerate(values):
+            best = min(range(k), key=lambda j: abs(v - cs[j]))
+            if best != assign[i]:
+                assign[i] = best
+                moved = True
+        for j in range(k):
+            mine = [values[i] for i in range(len(values)) if assign[i] == j]
+            if mine:
+                cs[j] = sum(mine) / len(mine)
+        if not moved:
+            break
+    order = sorted(range(k), key=lambda j: cs[j])
+    rank = {j: r for r, j in enumerate(order)}
+    return [rank[a] for a in assign]
+
+
+def segment(env, frame_s=ANALYSIS_FRAME_S, min_s=ANALYSIS_MIN_SECTION_S) -> list:
+    """PURE. The energy envelope → runs of similar loudness.
+
+    Returns [{start, end, level, label, energy}], or [] when the audio does not
+    honestly segment (one level across the whole song, or fewer than two runs left
+    once short ones are merged). [] is a REAL ANSWER: the caller then paints a
+    single-hue amplitude ramp instead of inventing boundaries.
+    """
+    if len(env) < 8:
+        return []
+    eps = 1e-6
+    logs = [math.log10(v + eps) for v in env]
+    win = max(1, int(round(ANALYSIS_SMOOTH_S / frame_s)))
+    lv = _levels(_smooth(logs, win))
+    if len(set(lv)) < 2:
+        return []
+    runs = []                                       # [level, first, last_exclusive]
+    for i, l in enumerate(lv):
+        if runs and runs[-1][0] == l:
+            runs[-1][2] = i + 1
+        else:
+            runs.append([l, i, i + 1])
+    min_f = max(2, int(round(min_s / frame_s)))
+    changed = True
+    while changed and len(runs) > 1:
+        changed = False
+        for i, r in enumerate(runs):
+            if r[2] - r[1] >= min_f:
+                continue
+            # A too-short run is merged into the LONGER neighbour, so a two-second dip
+            # never becomes a section of its own.
+            left = runs[i - 1] if i > 0 else None
+            right = runs[i + 1] if i + 1 < len(runs) else None
+            pick = left if (right is None or
+                            (left is not None
+                             and (left[2] - left[1]) >= (right[2] - right[1]))) else right
+            pick[1], pick[2] = min(pick[1], r[1]), max(pick[2], r[2])
+            runs.pop(i)
+            j = 0                       # neighbours of one level now touch: fuse them
+            while j + 1 < len(runs):
+                if runs[j][0] == runs[j + 1][0]:
+                    runs[j][2] = runs[j + 1][2]
+                    runs.pop(j + 1)
+                else:
+                    j += 1
+            changed = True
+            break
+    if len(runs) < 2 or len({r[0] for r in runs}) < 2:
+        return []
+    top = max(env) or 1.0
+    out = []
+    for lvl, a, b in runs:
+        window = env[a:b] or [0.0]
+        out.append({"start": round(a * frame_s, 2), "end": round(b * frame_s, 2),
+                    "level": int(lvl),
+                    "label": ANALYSIS_LEVEL_NAMES[min(lvl, len(ANALYSIS_LEVEL_NAMES) - 1)],
+                    "energy": round((sum(window) / len(window)) / top, 3)})
+    return out
+
+
+def analysis_fingerprint(path: str) -> str:
+    """The identity of the BYTES analysed. A cached analysis whose fingerprint no
+    longer matches is recomputed — a waveform drawn from a file that has since been
+    replaced would be a picture of a different song."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return f"{ANALYSIS_V}:{st.st_size}:{int(st.st_mtime)}"
+
+
+def _read_sidecar(p: str) -> dict:
+    try:
+        with open(p, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:                                            # noqa: BLE001
+        return {}
+
+
+def track_analysis(root, name, decode=None) -> tuple:
+    """(analysis, reason). The waveform data for ONE track: computed once, then cached
+    in that track's own sidecar under "analysis".
+
+    Containment is `library_target`'s — the same single boundary /file and /delete
+    use. `mode` is the contract the page draws against:
+        "sections" — runs of MEASURED loudness; hue may carry them
+        "ramp"     — the bars are real, the segmentation was not honest; ONE hue
+    There is no third mode in which sections are invented.
+    """
+    target, reason = library_target(root, name)
+    if not target:
+        return None, reason
+    fp = analysis_fingerprint(target)
+    sc = sidecar_path(target)
+    meta = _read_sidecar(sc)
+    cached = meta.get("analysis")
+    if isinstance(cached, dict) and cached.get("fingerprint") == fp and cached.get("peaks"):
+        return cached, ""
+    try:
+        if os.path.getsize(target) > ANALYSIS_MAX_BYTES:
+            return None, "that track is too large to analyse here"
+    except OSError as e:
+        return None, f"could not read that track: {e}"
+    if decode is not None:
+        samples, sr = decode(target)
+    else:
+        samples, sr = _pcm_from_ffmpeg(target)
+        if (samples is None or not len(samples)) and target.lower().endswith(".wav"):
+            samples, sr = _pcm_from_wave(target)
+    if samples is None or not len(samples) or not sr:
+        return None, "this track could not be decoded for analysis"
+    env = envelope(samples, sr)
+    bars = peak_bars(env)
+    if not bars:
+        return None, "this track could not be decoded for analysis"
+    secs = segment(env)
+    out = {"v": ANALYSIS_V, "fingerprint": fp, "duration": round(len(samples) / sr, 2),
+           "peaks": bars, "sections": secs,
+           "mode": "sections" if secs else "ramp",
+           "method": ANALYSIS_METHOD, "derived": True,
+           "levels": ANALYSIS_LEVELS, "computed": time.time()}
+    meta["analysis"] = out
+    try:
+        with open(sc, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+    except OSError:
+        pass          # an uncacheable analysis is still a correct one; recompute later
+    return out, ""
 
 
 # ── convert (ffmpeg, resolved by the voice lane's ONE ladder) ────────────────

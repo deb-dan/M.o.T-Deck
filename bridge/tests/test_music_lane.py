@@ -1096,6 +1096,117 @@ check("the Policies nav stub is gone (its alert was a silent no-op in WKWebView)
 check("every music activity-feed line passes a TAG and a MESSAGE (the `undefined` bug)",
       "feed('music'," in PANEL and "feed(`music:" not in PANEL)
 
+# ══ WAVEFORM ANALYSIS (Compose v2) ═══════════════════════════════════════════
+# THE RULE THIS SECTION EXISTS FOR: the Compose waveform's colour is the page's one
+# saturated object, and nothing in this lane knows a song's musical structure. So the
+# analysis may report ONLY what it measured, and it must return "no sections" rather
+# than split audio that has no runs. Every function below is pure and table-tested.
+print()
+print("── waveform analysis (Compose v2) ──")
+
+import array as _array                                            # noqa: E402
+import math as _math                                              # noqa: E402
+
+
+def _tone(sr, secs, amp):
+    """A mono s16 buffer whose amplitude follows `amp(t)` — the only fixture needed."""
+    out = _array.array("h")
+    for i in range(int(sr * secs)):
+        t = i / sr
+        out.append(int(max(-1.0, min(1.0, amp(t) * _math.sin(2 * _math.pi * 220 * t)))
+                       * 32000))
+    return out
+
+
+SR = music.ANALYSIS_SR
+flat = _tone(SR, 30, lambda t: 0.5)
+env_flat = music.envelope(flat, SR)
+check("the envelope is one value per 0.25 s frame",
+      abs(len(env_flat) - 30 / music.ANALYSIS_FRAME_S) <= 1)
+check("a constant tone measures a constant envelope",
+      max(env_flat) - min(env_flat) < 0.02)
+check("NO SECTIONS ARE INVENTED: flat audio segments into nothing",
+      music.segment(env_flat) == [])
+
+# quiet 20 s → loud 40 s: a real change of level, and the only one there is.
+two = _tone(SR, 20, lambda t: 0.12) + _tone(SR, 40, lambda t: 0.9)
+secs2 = music.segment(music.envelope(two, SR))
+check("audio that DOES change level segments into runs", len(secs2) == 2)
+check("…the boundary lands where the audio actually changes",
+      18 <= secs2[0]["end"] <= 22)
+check("…the quieter run is ranked below the louder one",
+      secs2[0]["level"] < secs2[1]["level"])
+check("…and both are labelled by what was MEASURED, never by a musical role",
+      all(s["label"] in music.ANALYSIS_LEVEL_NAMES for s in secs2))
+check("no musical role can ever be produced by this lane",
+      set(music.ANALYSIS_LEVEL_NAMES) == {"quiet", "steady", "loud"})
+
+# A one-second dip inside a long loud passage is NOT a section.
+blip = (_tone(SR, 20, lambda t: 0.9) + _tone(SR, 1, lambda t: 0.05)
+        + _tone(SR, 20, lambda t: 0.9))
+check("a one-second dip is merged away rather than drawn as its own section",
+      all((s["end"] - s["start"]) >= music.ANALYSIS_MIN_SECTION_S - 0.3
+          for s in music.segment(music.envelope(blip, SR))))
+check("audio too short to have runs returns nothing", music.segment([0.4, 0.4, 0.4]) == [])
+
+bars = music.peak_bars(music.envelope(two, SR))
+check("the bars are normalised to this track's own loudest moment",
+      abs(max(bars) - 1.0) < 1e-6 and min(bars) >= 0)
+check("…and there are never more bars than the page can draw",
+      len(bars) <= music.ANALYSIS_PEAKS)
+check("the level clustering is DETERMINISTIC (the same audio is the same colour twice)",
+      music.segment(music.envelope(two, SR)) == secs2)
+
+with tempfile.TemporaryDirectory() as _d:
+    _root = Path(_d)
+    _mus = _root / "data" / "music"
+    _mus.mkdir(parents=True)
+    _wav = _mus / "acestep-20260101-000000.wav"
+    import wave as _wave                                          # noqa: E402
+    with _wave.open(str(_wav), "wb") as _fh:
+        _fh.setnchannels(1); _fh.setsampwidth(2); _fh.setframerate(SR)
+        _fh.writeframes(two.tobytes())
+    a, reason = music.track_analysis(_root, _wav.name)
+    check("track_analysis answers for a real file on disk", bool(a) and not reason)
+    check("…with mode 'sections' only when the audio segmented",
+          a["mode"] == "sections" and len(a["sections"]) == 2)
+    check("…and marks itself DERIVED, with the method that produced it",
+          a.get("derived") is True and "energy envelope" in a.get("method", ""))
+    side = json.loads((_mus / "acestep-20260101-000000.json").read_text())
+    check("…and caches into the track's own sidecar",
+          isinstance(side.get("analysis"), dict))
+    check("…keyed on the FILE's own identity, so a replaced file is re-measured",
+          side["analysis"]["fingerprint"] == music.analysis_fingerprint(str(_wav)))
+    a2, _ = music.track_analysis(_root, _wav.name, decode=lambda p: (None, 0))
+    check("a cached analysis is served without decoding again", a2["peaks"] == a["peaks"])
+    # A title written afterwards must not destroy the cached analysis (one sidecar,
+    # two writers — the classic way a cache and a name quietly delete each other).
+    music.set_track_title(_root, _wav.name, "Night Bus")
+    side2 = json.loads((_mus / "acestep-20260101-000000.json").read_text())
+    check("naming a track keeps its cached analysis (one sidecar, two writers)",
+          side2.get("title") == "Night Bus" and isinstance(side2.get("analysis"), dict))
+    # Flat audio: real bars, honest 'ramp', and an empty section list.
+    _wav2 = _mus / "acestep-20260101-000001.wav"
+    with _wave.open(str(_wav2), "wb") as _fh:
+        _fh.setnchannels(1); _fh.setsampwidth(2); _fh.setframerate(SR)
+        _fh.writeframes(flat.tobytes())
+    b, _ = music.track_analysis(_root, _wav2.name)
+    check("flat audio comes back as mode 'ramp' with NO sections",
+          b["mode"] == "ramp" and b["sections"] == [])
+    check("…and still carries real bars, so the page draws the amplitude it measured",
+          len(b["peaks"]) > 8)
+    # Containment is library_target's, and undecodable audio is a refusal, not a guess.
+    none, why = music.track_analysis(_root, "../../etc/passwd")
+    check("analysis refuses a path instead of a name", none is None and "refused" in why)
+    none2, why2 = music.track_analysis(_root, "missing.wav")
+    check("…and an absent track is 'no such track', never an empty waveform",
+          none2 is None and why2 == "no such track")
+    junk = _mus / "acestep-20260101-000002.wav"
+    junk.write_bytes(b"not audio at all")
+    none3, why3 = music.track_analysis(_root, junk.name, decode=lambda p: (None, 0))
+    check("audio that cannot be decoded says so rather than drawing something",
+          none3 is None and "could not be decoded" in why3)
+
 print()
 print(f"{'FAIL' if FAILS else 'OK'} — {len(FAILS)} failure(s)")
 if FAILS:

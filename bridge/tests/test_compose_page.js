@@ -73,6 +73,32 @@ for (const route of ['/api/music/status', '/api/music/library', '/api/music/gene
                      '/api/music/file/']) {
   ok(html.includes(route), 'the page drives the EXISTING route ' + route);
 }
+// THE SECOND ROUTE, added by the v2 visual rebuild because the gap is real: nothing in
+// this lane knows a song's structure, so the waveform's colour had to be MEASURED.
+ok(/@app\.get\("\/api\/music\/analysis\/\{name\}"\)/.test(py),
+   'the analysis route exists in the SAME router (no second music backend)');
+ok(/library_target/.test(musicPy.split('def track_analysis')[1].split('\n\n\n')[0]),
+   '…and it is contained by library_target, exactly like /file and /delete');
+{
+  const fn = musicPy.split('def track_analysis')[1].split('\n\n\n')[0];
+  ok(/"sections" if secs else "ramp"/.test(fn),
+     'LIE GUARD: the mode is a FUNCTION of whether the audio segmented — there is no '
+     + 'branch in which sections are invented');
+  ok(/"derived": True/.test(fn) && /ANALYSIS_METHOD/.test(fn),
+     '…and every payload carries its own provenance (derived + the method)');
+  const seg = musicPy.split('def segment(')[1].split('\ndef ')[0];
+  ok(/return \[\]/.test(seg) && /len\(set\(lv\)\) < 2/.test(seg),
+     '…and the segmenter RETURNS NOTHING rather than splitting audio that has no runs');
+  ok(!/verse|chorus|bridge|intro|outro/i.test(seg + fn),
+     'NO MUSICAL ROLE IS EVER NAMED: the labels are the measured ones (quiet/steady/loud), '
+     + 'because a verse is a claim we cannot make');
+  ok(/ANALYSIS_LEVEL_NAMES = \("quiet", "steady", "loud"\)/.test(musicPy),
+     '…and those are the only three labels the lane can produce');
+  ok(/fingerprint/.test(fn) && /st\.st_size/.test(musicPy.split('def analysis_fingerprint')[1]),
+     'a cached analysis is keyed on the FILE\u2019s own size+mtime, so a replaced file is '
+     + 're-measured instead of drawn from a picture of a different song');
+}
+ok(html.includes('/api/music/analysis/'), 'the page drives that route');
 ok(/id:'compose', label:'Compose'/.test(indexHtml) && /id:'music',\s+label:'Music'/.test(indexHtml),
    'both nav rows exist — Compose does not replace Music');
 ok(/#view-music/.test(indexHtml), '…and the Music view itself is still in the panel');
@@ -136,10 +162,12 @@ function runPage(st, lib, mutate) {
   const fn = new Function(
     'document', 'window', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
     'addEventListener', 'location',
-    bodyScript + '\n;return { S, render, bytes, clock, ago, titleOf, enginesVerdict, ' +
+    bodyScript + '\n;return { S, render, bytes, clock, mmss, ago, titleOf, enginesVerdict, ' +
     'engineStateVerdict, licenseVerdict, ramVerdict, speedVerdict, measuredVerdict, ' +
     'engineChipVerdict, lengthVerdict, seedVerdict, totalVerdict, jobVerdict, ' +
-    'trackChips, tipHtml, tipPlain, advisoryHtml, heroTrack, fileSrc, writeBack };');
+    'trackChips, tipHtml, tipPlain, advisoryHtml, heroTrack, fileSrc, writeBack, ' +
+    'waveVerdict, promptHead, LEVEL_TOKEN, LAYOUT_KEY, CONTAINERS, readLayout, ' +
+    'saveLayout, applyLayout, heroDuration };');
   const M = fn(
     env.document, env.window, { getItem() { return null; }, setItem() {} },
     () => new Promise(() => {}),                       // load() never resolves: inert
@@ -263,8 +291,10 @@ ok(ev.chip === '2 of 2 engines ready' && ev.up === true, 'the header states what
 ok(/one-shot process/.test(M.tipPlain(ev)),
    'the "one-shot subprocess" architecture sentence: demoted from the page SUBTITLE to '
    + 'this chip’s hover');
-ok(!/subprocess|port|server/.test(daily.markup),
-   '…and the words subprocess/port/server appear nowhere the user can read them at rest');
+ok(!/subprocess|port|server/.test(
+     textNodes(daily.markup).map(n => n.text).join(' ')),
+   '…and the words subprocess/port/server appear nowhere the user can READ them at rest '
+   + '(measured over text nodes: the CSS class `transport` is not a word on the page)');
 
 ok(M.engineStateVerdict(MINIMAX).chip === 'On disk ✓',
    'an installed engine says so, in a chip');
@@ -350,8 +380,14 @@ ok(!/\.wav|\.mp3/.test(dailyText),
    'daily use: no raw filename is standing either — a filename is not an identity');
 // The at-rest element count, MEASURED the same way the audit counted the Music view.
 const standing = dailyNodes.length;
-ok(standing <= 30, 'daily use: ' + standing + ' standing text elements '
-   + '(the Music view measured ~55 in the same at-rest situation)');
+// THE BUDGET MOVED, DELIBERATELY AND WITH A REASON. v1 was a single column and stood 30
+// text elements. Spec v2 is a WORKBENCH — Debi's own structure: a settings pane plus a
+// 3-per-row block grid whose whole point is that everything is visible at a glance. So
+// the ELEMENT budget is set by measurement of that structure, while the rule that
+// actually protects the reader — no sentence outside .say / .utext, and none at all on
+// a normal day — is unchanged and asserted above.
+ok(standing <= 95, 'daily use: ' + standing + ' standing text elements across the whole '
+   + 'workbench (settings pane + 8 blocks + the ledger), and ZERO of them prose');
 
 // (b) FIRST RUN: no engine on disk. Exactly one sentence — the invitation.
 const first = runPage(ST({ engines: [absent(MINIMAX), absent(ACESTEP)] }), []);
@@ -363,8 +399,8 @@ ok(/Describe a song and hear it here/.test(first.markup),
    '…under one invitation heading, and nothing else');
 ok(!/licence|license/i.test(first.markup),
    '…with no licence link standing beside them (it rides on the buttons’ hover)');
-ok(first.markup.split('data-act="go"')[1].indexOf('disabled') > -1,
-   '…and Generate is disabled rather than failing on click');
+ok(first.env.nodes.go && first.env.nodes.go.disabled === true,
+   '…and Compose is disabled rather than failing on click');
 
 // (c) INSTALLING, nothing else on disk: the stage says so instead of reading empty.
 const inst = runPage(ST({ engines: [Object.assign({}, absent(MINIMAX), { installing: true }),
@@ -411,7 +447,7 @@ const warned = runPage(ST(), LIB, (S) => {
   S.warn = 'a minimax render wants about 14 GB and 6.0 GB of models are already loaded — '
          + 'that is over the 20 GB model-RAM budget and may push the machine into swap.'; });
 proseAudit('RAM advisory', warned, 1);
-ok(/Generate anyway/.test(warned.markup) && /data-act="dismiss-warn"/.test(warned.markup),
+ok(/Compose anyway/.test(warned.markup) && /data-act="dismiss-warn"/.test(warned.markup),
    'ADVISORY, NOT A WALL: the numbers, a way through, and a way out — never a refusal');
 
 // (g) THE ENGINES SHEET, one tap. Rows, not the essay cards the Music view opens with.
@@ -462,6 +498,19 @@ ok(!/data-act="convert" data-name="[^"]*" data-fmt="mp3"/.test(converted.markup)
   ok(res.env.written.filter(w => w.id === 'sheet').length > 0,
      '…and the very next poll after the field is left redraws it normally');
 }
+// …AND A POLL MAY NOT DISARM A TWO-STEP CONFIRMATION. Walked live on the delete path:
+// the 20s poll redrew the sheet inside the 3-second "sure?" window and put the plain
+// label back under the pointer.
+{
+  const res = runPage(ST(), LIB, (S) => { S.sheet = 'track'; S.detail = TRACK.name; });
+  const armed = { querySelector: (sel) => (sel === '.arm' ? {} : null) };
+  res.env.nodes.sheet.querySelector = armed.querySelector;
+  res.env.written.length = 0;
+  res.M.render();
+  ok(res.env.written.filter(w => w.id === 'sheet').length === 0,
+     'a re-render while a confirmation is armed does NOT redraw the sheet (the "sure?" '
+     + 'state survives the poll)');
+}
 // The tracks-folder editor is STATE, so a redraw cannot close it under the user.
 {
   const res = runPage(ST(), LIB, (S) => { S.sheet = 'engines'; S.dirEdit = true;
@@ -485,7 +534,7 @@ ok(!/Neo-soul/.test(daily.markup), '…and none of them is standing on the compo
 // (j) THE STRIP and the in-place expansion.
 const many = runPage(ST(), Array.from({ length: 9 }, (_, i) =>
   Object.assign({}, TRACK2, { name: 'acestep-' + i + '.wav', title: 'Song ' + i })));
-ok(/All tracks ▸/.test(many.markup), 'with more tracks than fit, "All tracks ▸" appears');
+ok(/data-act="all"/.test(html), 'the run ledger carries the All-tracks control');
 const expanded = runPage(ST(), Array.from({ length: 9 }, (_, i) =>
   Object.assign({}, TRACK2, { name: 'acestep-' + i + '.wav', title: 'Song ' + i })),
   (S) => { S.all = true; });
@@ -512,6 +561,29 @@ for (const sel of ['html[data-theme="light"]', 'html[data-theme="gold"]',
   const blk = css.split(sel + ' {')[1].split('}')[0];
   ok(/--float-bg:/.test(blk) && /--scrim:/.test(blk),
      `${sel} defines --float-bg and --scrim (the sheet + tooltip ground)`);
+}
+// THE WHEEL IS A TOKEN SET, AND THE LIGHT LOOKS RE-BAND IT. The research finding is
+// that loud is a LIGHTNESS problem: seven hues stay calm inside one band on a ground
+// that stays the darkest thing on screen. Two of the six looks are LIGHT, where the
+// same band would be invisible rather than calm — so they declare their own.
+const WHEEL = ['--h1', '--h2', '--h3', '--h4', '--h5', '--h6', '--h7'];
+{
+  const rootBlk = css.split(':root {')[1].split('}')[0];
+  for (const t of WHEEL) ok(rootBlk.includes(t + ':'), 'Editorial declares ' + t);
+  const band = WHEEL.map(t => Number(/hsl\([\d.]+ [\d.]+% ([\d.]+)%/.exec(
+    rootBlk.split(t + ':')[1])[1]));
+  ok(Math.min(...band) >= 60 && Math.max(...band) <= 82,
+     'and every one of them sits in ONE lightness band on dark (' +
+     Math.min(...band) + '–' + Math.max(...band) + '%)');
+  for (const sel of ['html[data-theme="light"]', 'html[data-design="studio"][data-dvariant="light"]']) {
+    const blk = css.split(sel + ' {')[1].split('}')[0];
+    const lb = WHEEL.map(t => Number(/hsl\([\d.]+ [\d.]+% ([\d.]+)%/.exec(
+      blk.split(t + ':')[1])[1]));
+    ok(Math.max(...lb) <= 52,
+       sel + ' re-bands the wheel DOWN for a light ground (max ' + Math.max(...lb) + '%)');
+    ok(/--ring:/.test(blk) && /--zborder:/.test(blk),
+       sel + ' also restates the ring/hairline tokens (a white ring is nothing on paper)');
+  }
 }
 const cssBody = css.split('* { box-sizing')[1] || '';
 const hexes = (cssBody.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
@@ -559,8 +631,9 @@ ok(/data-act="save-preset"/.test(presets.markup) && /data-act="forget-preset"/.t
    '7. save-as-template and forget-template: both in that sheet');
 ok(/id="f-prompt"/.test(html) && /id="f-lyrics"/.test(html.replace(/\n/g, '')),
    '8. prompt + lyrics: at rest, lyrics as the ONE promoted field');
-ok(/\+ lyrics/.test(daily.markup),
-   '…collapsed to an affordance while empty, and the [Verse]/[Chorus] teaching is its hover');
+ok(/id="f-lyrics"/.test(html) && /id="lyrlabel"/.test(html),
+   '…and in v2 lyrics STANDS on the line beside the prompt (a stronger promotion than '
+   + 'v1\u2019s collapsed chip), with the [Verse]/[Chorus] teaching still on its label\u2019s hover');
 ok(/\[Verse\] \/ \[Chorus\]/.test(html), '…which still carries the tag grammar');
 ok(/id="f-secs"/.test(daily.markup), '9. length: a control at rest, with its range on the hover');
 ok(/id="f-steps"/.test(runPage(ST(), LIB, (S) => { S.more = true; }).markup),
@@ -569,12 +642,12 @@ ok(/id="f-steps"/.test(runPage(ST(), LIB, (S) => { S.more = true; }).markup),
 // live: the write-back put the steps a run actually used (which WERE the default) into
 // the field, and the dot claimed a hidden edit that did not exist.
 const atDefault = runPage(ST(), LIB, (S) => { S.form.engine = 'minimax'; S.form.steps = '30'; });
-ok(!/class="ghost dotted"/.test(atDefault.markup),
+ok(!/class="btn dotted"/.test(atDefault.markup),
    '10b. a written-back value that EQUALS the engine default does not dot More ▸');
 const edited = runPage(ST(), LIB, (S) => { S.form.engine = 'minimax'; S.form.steps = '12'; });
-ok(/class="ghost dotted"/.test(edited.markup),
+ok(/class="btn dotted"/.test(edited.markup),
    '10c. …and a real difference still does (a hidden edit is never silent)');
-ok(!/class="ghost dotted"/.test(runPage(ST({ engines: [absent(MINIMAX), absent(ACESTEP)] }),
+ok(!/class="btn dotted"/.test(runPage(ST({ engines: [absent(MINIMAX), absent(ACESTEP)] }),
      [], (S) => { S.form.steps = '8'; }).markup),
    '10d. …and with NO engine on disk there is no default to differ from, so it says '
    + 'nothing rather than guessing');
@@ -582,8 +655,9 @@ ok(/id="f-seed"/.test(runPage(ST(), LIB, (S) => { S.more = true; }).markup),
    '11. seed: More ▸, with the determinism essay on its hover');
 ok(/id="f-fmt"/.test(runPage(ST(), LIB, (S) => { S.more = true; S.form.engine = 'acestep'; }).markup),
    '12. format: More ▸, and only when the engine can write more than one');
-ok(/data-act="go"/.test(daily.markup) && /data-act="go-anyway"/.test(warned.markup),
-   '13. generate + the RAM override: kept exactly, as an advisory');
+ok(/id="go" class="press" data-act="go"/.test(html) && /data-act="go-anyway"/.test(warned.markup),
+   '13. compose + the RAM override: kept exactly, as an advisory (Compose now rides the '
+   + 'prompt/lyrics line, so it is static markup whose disabled state is a property)');
 ok(/class="bar"/.test(running.markup), '14. phase-aware progress bar: the stage, while it runs');
 ok(/elapsed|·/.test(running.markup), '15. the elapsed clock: on the running chip');
 ok(/data-act="stop"/.test(running.markup) && /armed\(b, 'Stop'\)/.test(html),
@@ -653,9 +727,14 @@ ok(/getAttribute\('src'\) !== src/.test(html),
 // WALKED DEFECT, PINNED: the player measured 0px wide in the live page because <audio>
 // is inline and its host was a shrink-to-fit grid item — the width has to sit on the
 // HOST, with the element filling it. Present-correct-and-invisible is still broken.
-ok(/#hero-player \{ width:min\(/.test(css) && /audio \{ display:block; width:100%/.test(css),
-   'the player’s width is on its host and the element fills it (it rendered 0px wide '
-   + 'when the percentage was on the inline <audio> itself)');
+ok(/#player-host audio \{ display:block; width:100%/.test(css) &&
+   /<div id="player-host"><\/div>/.test(html),
+   'the player lives in its OWN host outside every innerHTML\u2019d region, and the element '
+   + 'fills that host (v1 measured 0px wide when the percentage sat on the inline <audio>)');
+ok(html.indexOf('<div id="player-host">') < html.indexOf('<div id="hints">'),
+   '\u2026and that host is static markup, so no renderer can take the player with it');
+ok(/canvas\.wf \{ display:block; width:100%/.test(css),
+   'the waveform canvas has the same discipline: the box sizes it, the canvas fills the box');
 
 // Write-back, executed.
 const done = runPage(ST({ job: { id: 'j9', state: 'done', engine: 'acestep', seconds: 90,
@@ -670,6 +749,142 @@ ok(done.M.S.sel === null, '…and the stage moves to the song that was just made
 const ghost = runPage(ST(), LIB, (S) => { S.sheet = 'track'; S.detail = 'gone.wav'; });
 ok(/no longer in the library/.test(ghost.markup),
    'a track deleted under an open sheet says so instead of drawing a ghost');
+
+
+// ── 7. THE WAVEFORM: the identity, and the one place this page could lie ─────
+// Debi's constraint at GO: never paint fake sections. The waveform is the only
+// saturated object on the page, so if its colour claimed a structure the audio does
+// not have, the page's most attractive element would be its biggest lie.
+console.log('\n7. the waveform — colour that is measured, or no colour at all');
+const AN_SECTIONS = { v: 2, duration: 60, mode: 'sections', derived: true,
+  method: 'energy envelope (RMS over 0.25 s frames), derived from the audio',
+  peaks: Array.from({ length: 240 }, (_, i) => (i % 7) / 7 + 0.2),
+  sections: [{ start: 0, end: 13.25, level: 1, label: 'steady', energy: 0.53 },
+             { start: 13.25, end: 60, level: 2, label: 'loud', energy: 0.49 }] };
+const AN_RAMP = Object.assign({}, AN_SECTIONS, { mode: 'ramp', sections: [] });
+const withWave = (an, err) => (S) => {
+  S.wave[TRACK2.name] = err ? { error: err } : { analysis: an };
+};
+{
+  const M2 = daily.M;
+  const pend = M2.waveVerdict({ pending: true });
+  ok(pend.state === 'pending' && /Measuring/i.test(M2.tipPlain(pend)),
+     'while the analysis is being computed the chip says so — it never shows a shape early');
+  const none = M2.waveVerdict({ error: 'this track could not be decoded for analysis' });
+  ok(none.state === 'none' && none.chip === 'no waveform',
+     'a track that cannot be decoded gets NO waveform, and the chip says exactly that');
+  ok(/still plays/.test(M2.tipPlain(none)),
+     '…while the song itself still plays (graceful absence, not a dead block)');
+  const sec = M2.waveVerdict({ analysis: AN_SECTIONS });
+  ok(sec.state === 'sections' && /2 sections · derived/.test(sec.chip),
+     'a measured segmentation is labelled DERIVED on the chip itself');
+  ok(/not verses and choruses/.test(M2.tipPlain(sec)) &&
+     /Neither engine reports musical structure/.test(M2.tipPlain(sec)),
+     'LIE GUARD: the hover states what the colour is and what it is NOT');
+  ok(/energy envelope/.test(M2.tipPlain(sec)),
+     '…and carries the method that produced it (provenance, off the same object)');
+  const ramp = M2.waveVerdict({ analysis: AN_RAMP });
+  ok(ramp.state === 'ramp' && /one hue/.test(ramp.chip),
+     'audio that did not segment falls back to ONE hue, and says so');
+  ok(/inventing them/.test(M2.tipPlain(ramp)),
+     '…with the reason in the hover rather than a drawn boundary');
+  for (const v of [pend, none, sec, ramp]) {
+    ok(words(v.chip) <= 6, 'the waveform chip stays chip-length ("' + v.chip + '")');
+    ok(/t-line/.test(M2.tipHtml(v)), '…and its hover comes off the same object');
+  }
+}
+{
+  // THE LEGEND AND THE STRUCTURE BLOCK ARE THE SAME NUMBERS AS THE COLOUR.
+  const res = runPage(ST(), LIB, withWave(AN_SECTIONS));
+  const struct = (res.env.written.filter(w => w.id === 'secbody').pop() || {}).html || '';
+  ok(/steady/.test(struct) && /loud/.test(struct),
+     'the STRUCTURE block prints the measured runs, so the hue is never mere decoration');
+  ok(/0:00 – 0:13/.test(struct) && /53%/.test(struct),
+     '…with each run\u2019s own times and measured energy');
+  ok(!/verse|chorus/i.test(struct), '…and never a musical role');
+  const rampRes = runPage(ST(), LIB, withWave(AN_RAMP));
+  const rampBody = (rampRes.env.written.filter(w => w.id === 'secbody').pop() || {}).html || '';
+  ok(!/class="erow"/.test(rampBody) && /one hue/.test(rampBody),
+     'in ramp mode the STRUCTURE block lists NOTHING and says why — no invented rows');
+  const errRes = runPage(ST(), LIB, withWave(null, 'this track could not be decoded'));
+  const errBody = (errRes.env.written.filter(w => w.id === 'secbody').pop() || {}).html || '';
+  ok(/no waveform/.test(errBody), 'a failed analysis is stated, in a chip, where it happened');
+  ok(res.M.LEVEL_TOKEN.length === 3 && res.M.LEVEL_TOKEN.every(t => /^--h\d$/.test(t)),
+     'the three level hues are TOKENS (so every one of the six looks re-bands them)');
+}
+ok(/const secs = \(an\.mode === 'sections' && an\.sections\) \? an\.sections : null;/.test(html),
+   'the painter reads sections ONLY in sections mode — the fallback is structural, not a '
+   + 'convention someone has to remember');
+ok(/S\.wave\[t\.name\] = \{ pending:true \}/.test(html) && /if \(S\.wave\[t\.name\]\) return;/.test(html),
+   'the analysis is fetched ONCE per track, and a failure is remembered rather than '
+   + 'respawning a decode on every 20-second poll');
+
+// ── 8. THE WORKBENCH: the grid, the drag, and the arrangement that must survive ─
+// The adversarial worst case here is not a crash: it is a layout the user arranged by
+// hand that silently resets, which is the same class as a lost edit.
+console.log('\n8. the block grid, the docks, and the arrangement that is remembered');
+const BLOCKS = ['wave', 'engines', 'ledger', 'queue', 'structure', 'reuse', 'library', 'disk'];
+for (const b of BLOCKS) ok(html.includes('data-block="' + b + '"'),
+  'the ' + b + ' block is a real, draggable block');
+ok((html.match(/class="panel block/g) || []).length === BLOCKS.length,
+   'every block carries the one block chrome (' + BLOCKS.length + ' of them)');
+ok(/#blocks \{ display:grid; grid-template-columns:repeat\(3, minmax\(0,1fr\)\)/.test(css),
+   'the grid is three per row (Debi\u2019s spec), two per row under 1180px');
+ok(/e\.target\.closest\('\.block > \.pbar\.grab'\)/.test(html),
+   'the LABEL BAR is the drag handle, and only the label bar');
+ok(/closest\('button,input,textarea,select,a'\)/.test(html),
+   '…so a control inside a block is never stolen by a drag');
+ok(/const LAYOUT_KEY = 'compose-layout-v1'/.test(html),
+   'the arrangement is persisted (localStorage, a per-machine VIEW preference — the same '
+   + 'grammar as the panel\u2019s appearance keys, and it cannot fail a render)');
+ok(/const CONTAINERS = \['blocks', 'spill'\]/.test(html) && /the dock strip is reserved/.test(html),
+   'the reserved tool dock is NOT a drop target — a block cannot be lost into P6 space');
+ok(/document\.body\.classList\.toggle\('shrunk', !!L\.shrunk \|\| parked > 0\)/.test(html),
+   'RESTORE GUARD: a block parked in the spill slot forces the pane back into its shrunk '
+   + 'state, or restoring it into a hidden container would make the block vanish');
+ok(/Moved that block back to the grid/.test(html),
+   'COLLAPSE GUARD: un-shrinking with blocks parked moves them back to the grid, with a '
+   + 'toast — a control may never hide the user\u2019s own content');
+ok(/saveLayout\(\);/.test(html.split('pointerup')[2] || ''),
+   'a drop writes the arrangement immediately (no save-on-unload to lose)');
+{
+  // The reader is TOTAL about surprises: junk, unknown ids and a missing key all land
+  // on a working page rather than an exception.
+  const cases = [null, 'not json', '{"v":1}', '{"v":1,"blocks":["nope","wave"],"side":"right"}',
+                 '[]', '{"v":1,"spill":["ledger"],"shrunk":false}'];
+  for (const raw of cases) {
+    let threw = false;
+    try {
+      const env = makeEnv();
+      const fn = new Function('document', 'window', 'localStorage', 'fetch', 'setTimeout',
+        'clearTimeout', 'addEventListener', 'location',
+        bodyScript + '\n;return { readLayout, applyLayout };');
+      const m = fn(env.document, env.window,
+        { getItem() { return raw; }, setItem() {} },
+        () => new Promise(() => {}), () => 0, () => {}, () => {}, env.window.location);
+      m.applyLayout();
+    } catch (e) { threw = true; }
+    ok(!threw, 'a saved layout of ' + JSON.stringify(raw).slice(0, 34) +
+       ' loads without throwing');
+  }
+}
+
+// ── 9. the settings pane, the one line, and the dock strip ───────────────────
+console.log('\n9. the pane, the line and the reserved dock');
+ok(/body\.dock-right #bench \{ grid-template-columns:minmax\(0,1fr\) var\(--sw\)/.test(css),
+   'docking is a grid-template swap (Blender\u2019s 140ms class of move), not a re-layout');
+ok(/body\.shrunk #scol \{ grid-template-rows:minmax\(0,1fr\) minmax\(0,1fr\)/.test(css) &&
+   /body\.shrunk #spill \{ display:grid/.test(css),
+   'shrinking the pane to half height is what REVEALS the spill slot');
+ok(/#line \{ display:grid; grid-template-columns:minmax\(0,1\.15fr\) minmax\(0,1fr\) auto/.test(css),
+   'prompt | lyrics | Compose share ONE line');
+ok(/\.fbox textarea \{[^}]*resize:none/.test(css) &&
+   /t\.style\.height = Math\.min\(t\.scrollHeight \|\| 34, 168\) \+ 'px'/.test(html),
+   '…and both fields grow DOWNWARD only, never wider');
+ok(/id="dockslots"/.test(html) && (html.match(/class="ghost/g) || []).length === 3,
+   'the dock strip stands one live ghost slot and two reserved ones');
+ok(/stem separation \(demucs \/ UVR class\)/.test(html) && !/data-act="stem/.test(html),
+   'P6 is NAMED as the first future occupant and NOTHING is built for it — no fake tool');
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

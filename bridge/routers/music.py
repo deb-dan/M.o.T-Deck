@@ -363,6 +363,31 @@ def music_file(name: str) -> Response:
     return FileResponse(target, media_type=mime)
 
 
+@app.get("/api/music/analysis/{name}")
+async def music_analysis(name: str) -> JSONResponse:
+    """The waveform data for ONE track — bars, and the runs of loudness they fall into.
+
+    THE SECOND ROUTE THIS LANE'S REDESIGN ADDED, and the gap that forced it is real:
+    Compose's waveform is coloured by the song's SHAPE, and nothing in this lane knows
+    a shape. Neither engine reports musical structure and a sidecar carries a prompt, a
+    seed and a wall time — so the alternative to measuring the audio was painting
+    invented sections, which is the lie class this project ranks worst.
+
+    It is therefore a DERIVED answer and says so in its own payload: `derived: true`
+    and `method` travel with the numbers, the labels are the measured ones ("quiet",
+    "steady", "loud") and never musical roles, and a track whose audio does not
+    segment comes back as mode "ramp" so the page paints one hue instead of drawing
+    boundaries that are not there. Computed once per track and cached in its sidecar,
+    keyed on the file's own size+mtime; ffmpeg does the decode in a worker thread.
+    """
+    if _music is None:
+        return _music_unavailable()
+    data, reason = await asyncio.to_thread(_music.track_analysis, ROOT, name)
+    if not data:
+        return JSONResponse({"ok": False, "error": reason}, status_code=404)
+    return JSONResponse({"ok": True, "name": name, "analysis": data})
+
+
 @app.post("/api/music/delete")
 async def music_delete(req: Request) -> JSONResponse:
     if _music is None:
