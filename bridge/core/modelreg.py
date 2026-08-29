@@ -108,9 +108,14 @@ def wire_id(m: dict) -> str:
 
     llama.cpp is launched with `--alias <registry id>`, so its wire name IS the id; the
     MLX servers treat the request's `model` field as a model to LOAD and need the
-    registry PATH (an id would be resolved on HuggingFace → 404 → runner 400). Same rule
-    as bridge/core/modelid.py::wire_model_id, kept here too because three of the five
-    consumers cannot import that module.
+    registry PATH (an id would be resolved on HuggingFace → 404 → runner 400).
+
+    ★ THIS IS THE ONLY COPY OF THAT RULE (S33/F5, 2026-08-29). It lives HERE rather
+    than in core/modelid.py because three of the five consumers are standalone
+    scripts that load this file BY PATH and cannot import bridge.core.*;
+    modelid.wire_model_id (the id → row lookup) now calls into this function instead
+    of restating the branch, and bridge/contract_tests/test_wire_id_contract.py
+    fails the gate if the two ever disagree again.
     """
     if not isinstance(m, dict):
         return ""

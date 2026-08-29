@@ -65,8 +65,14 @@ function ok(cond, msg) {
 // ── extract the SHIPPED script ──────────────────────────────────────────────
 // Both anchors are asserted before the slice is taken: an indexOf that returned -1
 // would hand the runner the wrong text and every assertion below would be vacuous.
-const A = swift.indexOf('let src = """');
-ok(A > 0, 'main.swift carries the user script');
+// The slice is anchored to the FUNCTION, not the first `let src = """` in the file —
+// v1.5.66's gooseSidebarDeleteScript added an earlier one and this suite silently
+// tested the wrong script for two versions. Never anchor to a literal that another
+// WKUserScript can also use.
+const FN = swift.indexOf('func openCodeDraftScript');
+ok(FN > 0, 'main.swift carries openCodeDraftScript');
+const A = swift.indexOf('let src = """', FN);
+ok(A > FN, 'main.swift carries the user script');
 const B = swift.indexOf('"""', A + 13);
 ok(B > A, '…and it is a closed multiline literal');
 let RAW = swift.slice(A + 13, B).replace(/\\\\/g, '\\');

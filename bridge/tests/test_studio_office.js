@@ -570,12 +570,16 @@ function grab(name) {
   eval(grab('delClick'));
   eval(grab('homeDel'));
   eval(grab('delArmedRow'));
+  // v1.5.65 routed the delete guard through busyBlock (the silent-guard ban).
+  // Execute the SHIPPED busyBlock, not a stub — a stub would keep passing after
+  // the real one broke.
+  eval(grab('busyBlock'));
   const DEL_ARM_MIN_MS = parseInt(/const DEL_ARM_MIN_MS = (\d+)/.exec(html)[1], 10);
   eq('the arm guard is 400 ms — the same number, and the same reason, as '
      + 'DISCARD_MIN_MS', DEL_ARM_MIN_MS, 400);
 
   // the world
-  let armed = null, armedAt = 0, busy = false;
+  let armed = null, armedAt = 0, busy = false, busyWhat = '', busyAt = 0;
   let renders = 0, scrolls = 0, asked = [], said = [], beacons = [];
   const scrolled = { scrollIntoView: function () { scrolls++; } };
   function renderFiles() { renders++; }
@@ -590,6 +594,14 @@ function grab(name) {
   global.Date = { now: function () { return now; } };
 
   try {
+    // A BUSY CLICK SPEAKS — the silent-guard ban (v1.5.65, Debi's five dead clicks).
+    busy = true; busyWhat = 'saving Budget.xlsx'; busyAt = Date.now();
+    delClick('A.xlsx');
+    eq('a click while busy arms nothing', armed, null);
+    ok('…but it SAYS SO instead of dying silently',
+       said.length === 1 && /Still working on saving Budget\.xlsx/.test(said[0].t));
+    busy = false; said = [];
+
     // FIRST CLICK: arms, says the sentence with a Cancel action, scrolls it into view
     delClick('A.xlsx');
     eq('first click arms the row', armed, 'A.xlsx');

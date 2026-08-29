@@ -434,7 +434,13 @@ def handle(root, message):
                 "and Debi applies it with a button in LOffice, which also keeps a "
                 "checkpoint she can undo from. You cannot apply it, and you must never "
                 "report a change as made unless a system line says the changeset was "
-                "applied."),
+                "applied. "
+                # U47 / S33-F2: the standing trust rule, stated once at the server
+                # level as well as on every result that carries file content. A model
+                # that reads the instructions and then a hostile cell has been told
+                # twice; one of the two channels can be trimmed by a client, and the
+                # result-level `content_trust` key is the one that always travels.
+                + office_ops.UNTRUSTED_CONTENT_NOTE),
         })
     if method == "ping":
         return _res(rid, {})

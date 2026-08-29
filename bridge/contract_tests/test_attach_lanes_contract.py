@@ -112,6 +112,44 @@ def test_odysseus_vision_cache_is_the_precaption_seam():
         "the bridge's evidence-gated auto-wire writes exactly that key")
 
 
+def test_odysseus_folds_our_caption_in_verbatim_so_the_trust_fence_survives():
+    """U47 / S33-F2 — THE VENDOR SEAM, PINNED.
+
+    The trust fence around transcribed image text cannot live in Odysseus's code
+    (zero vendored bytes), so it lives INSIDE the caption string we write into its
+    vision cache (bridge/routers/ody.py::ody_vision_provenance). That only works
+    while upstream folds the cached text into the prompt WHOLE — no truncation, no
+    first-line-only, no re-summarisation. Both branches are pinned:
+
+      • text-only main model: `enhanced_message = f"…[Image: {name}]\n{vl_desc}"`
+      • NAME-RECOGNISED vision model: the cached text is folded in under
+        "[User-corrected caption / OCR for this image — treat as authoritative]".
+        That authority stamp is upstream's and we cannot remove it — which is
+        exactly why our own string carries the sentence that answers it. If upstream
+        ever stops interpolating the cached text verbatim, the fence is gone and the
+        U47 row must reopen.
+    """
+    if not ODY.exists():
+        return
+    ch = _read(ODY / "src" / "chat_handler.py")
+    assert '"\n{vl_desc}"' in ch or "{vl_desc}" in ch, (
+        "chat_handler no longer interpolates the cached/VL description into the "
+        "prompt verbatim — the U47 trust fence travels INSIDE that string, so a "
+        "truncating or reformatting upstream silently strips it")
+    assert "treat as authoritative]" in ch and "{_vtext}" in ch, (
+        "the 'User-corrected caption … treat as authoritative' fold is gone or "
+        "reshaped. Our fence sentence is written to answer that exact stamp "
+        "(ody.py's ODY_VISION_TRUST); re-read it if upstream changed the wording")
+    # And OUR half of the seam, in the same test, so the pair cannot drift apart.
+    ours = _read(ROOT / "bridge" / "routers" / "ody.py")
+    assert "ODY_VISION_FENCE" in ours and "ODY_VISION_TRUST" in ours, (
+        "the trust fence constants are gone from ody.py — U47's closure depends on "
+        "them being part of the cached caption itself")
+    assert "authoritative" in ours, (
+        "ody.py's trust sentence no longer mentions the upstream authority stamp it "
+        "exists to answer")
+
+
 def test_odysseus_name_keyword_vision_test_still_exists():
     """We MIRROR Odysseus's name test (ody_name_looks_vision) so we only step in
     where it misses. If upstream starts reading real capability, stop mirroring."""

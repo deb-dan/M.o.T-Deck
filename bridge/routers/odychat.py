@@ -135,7 +135,13 @@ async def ody_chat(req: Request) -> StreamingResponse:
                     yield chunk
                     tail = (tail + chunk.decode("utf-8", "ignore"))[-16000:]
         except Exception as e:
-            yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
+            # SERIALIZED, NOT INTERPOLATED — same fix as chat.py's sibling frame
+            # (S33/F1): a quote or backslash inside the exception text used to emit
+            # an unparseable SSE frame precisely while reporting a failure.
+            yield ("data: " + _json.dumps({
+                "type": "proxy_error",
+                "error": f"the agent lane lost its connection to Odysseus: "
+                         f"{str(e)[:200]}"}) + "\n\n")
             yield "data: [DONE]\n\n"
         finally:
             _log_ody_metrics(tail, fields.get("mode", "agent"))

@@ -66,6 +66,42 @@ Because the VL call blocks Odysseus's event loop, a request FROM the shim BACK t
 would turn a 6s caption into Odysseus's own 120s timeout. Everything the shim needs
 to know about Odysseus's settings is therefore snapshotted by `ody_vision_shim_ensure`
 (which runs OUTSIDE any VL call) into `_SHIM_STATE` and read from memory here.
+
+── THE CONTRACT THIS ROUTE ANSWERS UNDER (S33/F3, written down because the next
+   consumer should not have to do archaeology) ────────────────────────────────
+It is OpenAI /chat/completions, with three deliberate departures. All three exist
+because the ONE known consumer is Odysseus, and all three are stated here rather
+than discovered:
+
+  1. SUCCESS IS ALWAYS 200 AND ALWAYS ONE CHOICE. `usage` is present ONLY when the
+     runner actually reported counts — it used to be a hardcoded set of ZEROS,
+     which is a compatible-looking field carrying false data (the LIE class applied
+     to metadata; audit rank 4). An absent field is honest; a fabricated zero is
+     not. `object`, `created`, `model` and `finish_reason` are spec-shaped.
+  2. A FAILURE HAS TWO SHAPES, AND WHICH ONE YOU GET DEPENDS ON THE CONSUMER'S OWN
+     SETTINGS — not on the failure. With Odysseus's Settings → Vision → Fallbacks
+     configured, a failure answers an HTTP ERROR so that fallback chain gets its
+     turn; with no fallbacks it answers 200 with a MARKER, whose leading "[" is
+     upstream's own idiom for "not a real description" and is exactly what
+     chat_handler.py:262 refuses to cache (so the next attempt retries from
+     scratch). Swallowing a failure would deprive a user of the fallback model they
+     chose; erroring with no fallback configured would lose the sentence entirely.
+     ⚠️ The switch reads `_SHIM_STATE["fallbacks"]`, a SNAPSHOT — see
+     `ody_shim_failure` and `_ody_settings` in routers/ody.py for how fresh it is.
+     A consumer that is not Odysseus should treat BOTH shapes as "no description",
+     and read the sentence, which is the same sentence either way.
+  3. THE ERROR STATUS DISCRIMINATES (it used to be a monotone 502 — audit rank 3):
+     400 = this request cannot be described (empty/oversize/undecodable image);
+     503 = nothing on our side can describe anything right now (no vision-capable
+     model is loaded); 502 = the runner was asked and failed. `ody_shim_error_status`
+     is the single classifier and it is pure.
+
+AND THE IN-BAND MARKER, stated once: on the 200-marker branch the consumer must
+STRING-INSPECT the content — a leading "[" means "this is not a description". That
+is upstream's protocol, not ours (its own VL failures read "[VL model unavailable -
+image not analyzed]"), and honouring it is what makes the marker land correctly in
+Odysseus. There is no out-of-band field for it, so any other consumer needs the same
+one-character test.
 """
 from __future__ import annotations
 
@@ -125,7 +161,8 @@ ODY_VLSHIM_MAX_BYTES = 24 * 1024 * 1024      # decoded image ceiling (~32MB base
 
 # What `ody_vision_shim_ensure` last learned about Odysseus, read by the shim
 # WITHOUT touching the network (see the deadlock note in the module docstring).
-_SHIM_STATE: dict = {"fallbacks": False, "ensured_at": 0.0, "spec": "", "endpoint_id": ""}
+_SHIM_STATE: dict = {"fallbacks": False, "ensured_at": 0.0, "spec": "",
+                     "endpoint_id": "", "fallbacks_at": 0.0}
 
 
 # ── PURE HELPERS (ast-extracted by bridge/tests/test_ody_vlshim.py) ──────────
@@ -256,6 +293,30 @@ def ody_shim_failure(reason: str, fallbacks: bool) -> tuple:
     return ("marker", f"[Harness could not describe this image: {why}]")
 
 
+def ody_shim_error_status(reason: str) -> int:
+    """PURE: which HTTP status a failure deserves, on the branch that answers with an
+    error at all (see the module docstring's contract §3).
+
+    ⚠️ IT USED TO BE 502 FOR EVERYTHING (adherence audit rank 3): an oversized image,
+    undecodable base64, no model loaded and a wedged runner were indistinguishable to
+    any client that routes on status — a client could retry forever against an input
+    that will never work. The three classes here are the three DIFFERENT things a
+    caller can do about it:
+      400 — the request itself cannot be served (send a different/smaller image);
+      503 — our side has nothing loaded to serve it with (load a model, then retry);
+      502 — the runner was asked and failed (retry is reasonable; look at the runner).
+    Matched on OUR OWN generated phrases (ody_shim_failure and _ody_vision_describe
+    are the only producers); anything unrecognised keeps the historical 502, which is
+    the honest default for "something behind us went wrong"."""
+    why = (reason or "").lower()
+    if ("larger than" in why or "could not be decoded" in why
+            or "was empty" in why or "not an image" in why):
+        return 400
+    if "vision evidence" in why or "no vision-capable model is loaded" in why:
+        return 503
+    return 502
+
+
 def ody_shim_no_image_text() -> str:
     """PURE: what the shim says when asked to CHAT (no picture in the request).
 
@@ -267,19 +328,33 @@ def ody_shim_no_image_text() -> str:
             "actually chatting with. Pick your own model in the model selector.")
 
 
-def ody_shim_envelope(model: str, content: str) -> dict:
+def ody_shim_envelope(model: str, content: str, usage=None) -> dict:
     """PURE: a minimal, spec-shaped OpenAI chat completion. Odysseus reads
     data['choices'][0]['message']['content'] (llm_core.py:2051) and nothing else,
-    but the envelope stays honest for any other OpenAI-compatible reader."""
-    return {
+    but the envelope stays honest for any other OpenAI-compatible reader.
+
+    ⚠️ `usage` IS PRESENT ONLY WHEN IT IS TRUE (S33/F3, audit rank 4). It used to be
+    hardcoded `{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}` on
+    every single answer — a field that LOOKS like OpenAI's and silently corrupts any
+    consumer doing token accounting, because there is no way to tell a real zero from
+    an invented one. The runner's own counts are passed through when it sent them
+    (`_ody_vision_describe`'s 4th element); when it did not, the key is ABSENT. An
+    absent optional field is a thing a client can handle; a fabricated one is not."""
+    env = {
         "id": "chatcmpl-harness-vision",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model or ODY_VLSHIM_MODEL,
         "choices": [{"index": 0, "finish_reason": "stop",
                      "message": {"role": "assistant", "content": content or ""}}],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+    if isinstance(usage, dict):
+        real = {k: v for k, v in usage.items()
+                if k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                and isinstance(v, int) and not isinstance(v, bool)}
+        if real:
+            env["usage"] = real
+    return env
 
 
 def ody_shim_sse(model: str, content: str) -> str:
@@ -312,13 +387,66 @@ async def ody_vlshim_models() -> JSONResponse:
          "owned_by": "harness"}]})
 
 
-@app.post(ODY_VLSHIM_PATH + "/chat/completions")
+# ── THE TYPED REQUEST (S33/F3, audit rank 4's other half) ────────────────────
+# ⚠️ WHY A MODEL AND NOT A SIGNATURE ANNOTATION. Declaring `body: VisionChatRequest`
+# would make FastAPI answer 422 for a body that does not validate — and the ONE
+# consumer of this route is Odysseus, mid-turn, with a user's picture in hand: a 422
+# there is a dead end whose sentence nobody reads, where "I could not read that
+# request, here is why, in words" is recoverable. So the model is the SCHEMA (it is
+# what /openapi.json now serves, via openapi_extra below) and the parse stays
+# hand-rolled and total. The model is still load-bearing: the handler validates
+# through it and refuses with a sentence, so schema and behaviour cannot drift.
+try:                                                         # pragma: no cover
+    from pydantic import BaseModel, Field
+
+    class VisionChatMessage(BaseModel):
+        """One OpenAI chat message. `content` is a string OR the multimodal parts
+        array — this route only ever reads an `image_url` part carrying a data: URL
+        (never a remote one: fetching a URL a model asked us to fetch is SSRF)."""
+        role: "str | None" = Field(default="user",
+                                   description="user | system | assistant")
+        content: object = Field(default="", description=
+                                "text, or a list of {type, text|image_url} parts")
+
+    # `extra="allow"` as a CLASS KEYWORD rather than a `model_config` assignment:
+    # the facade audit (bridge/tests/test_app_facade.py) walks every assignment in
+    # the app layer and demands each name be reachable through bridge.app, and a
+    # pydantic config dict is a class attribute, not a lane symbol.
+    class VisionChatRequest(BaseModel, extra="allow"):
+        """POST /odyvision/v1/chat/completions. Extra keys are ACCEPTED and ignored —
+        an OpenAI client sends a dozen sampling fields this describer has no use for,
+        and refusing them would break callers for nothing."""
+        # ⚠️ EVERY FIELD IS OPTIONAL AND NULLABLE, DELIBERATELY. This model exists to
+        # DESCRIBE the request in /openapi.json and to catch a body that is not a chat
+        # completion at all — not to police an OpenAI client's habits. A `"stream":
+        # null` or a missing `model` from a real caller must not cost a user their
+        # picture. The measured caller (Odysseus llm_core.py:2024-2035) sends model +
+        # messages + temperature + max_tokens and no `stream` at all.
+        model: "str | None" = Field(default=ODY_VLSHIM_MODEL,
+                                    description="ignored except as an echo; there is "
+                                                "exactly one model behind this route")
+        messages: "list[VisionChatMessage] | None" = Field(
+            default_factory=list,
+            description="the last inline data: image among these is the one described")
+        stream: "bool | None" = Field(
+            default=False, description="true answers one SSE chunk, then [DONE]")
+
+    _REQUEST_SCHEMA = {"requestBody": {"required": False, "content": {
+        "application/json": {"schema": VisionChatRequest.model_json_schema()}}}}
+except Exception:                                            # pragma: no cover
+    VisionChatRequest = None                                 # type: ignore
+    _REQUEST_SCHEMA = None
+
+
+@app.post(ODY_VLSHIM_PATH + "/chat/completions", openapi_extra=_REQUEST_SCHEMA)
 async def ody_vlshim_chat(req: Request):
     """Describe the attached picture — fast, honestly labelled, never blocking.
 
     ⚠️ NOT ONE NETWORK CALL TO ODYSSEUS HAPPENS IN HERE. Odysseus's event loop is
     blocked for the whole duration of the call it is making TO US (see the module
-    docstring), so asking it anything now would deadlock until its own timeout."""
+    docstring), so asking it anything now would deadlock until its own timeout.
+
+    The failure contract (two shapes, three statuses) is in the module docstring."""
     from .ody import _ody_vision_describe, ody_vision_provenance
     try:
         body = await req.json()
@@ -329,41 +457,69 @@ async def ody_vlshim_chat(req: Request):
     stream = bool(body.get("stream"))
     model = str(body.get("model") or ODY_VLSHIM_MODEL)
 
-    def _answer(text: str, status: int = 200):
+    def _answer(text: str, status: int = 200, usage=None):
         if status != 200:
-            return JSONResponse({"error": {"message": text, "type": "harness_vision"}},
+            # The `type` DISCRIMINATES now (it was the constant "harness_vision" on
+            # every error, which is no signal at all). `code` keeps the old constant
+            # so a consumer keying on it still recognises us.
+            kind = ("invalid_request_error" if status == 400
+                    else "service_unavailable" if status == 503
+                    else "upstream_error")
+            return JSONResponse({"error": {"message": text, "type": kind,
+                                           "code": "harness_vision"}},
                                 status_code=status)
         if stream:
             return StreamingResponse(_one(ody_shim_sse(model, text)),
                                      media_type="text/event-stream")
-        return JSONResponse(ody_shim_envelope(model, text))
+        return JSONResponse(ody_shim_envelope(model, text, usage))
 
     async def _one(s: str):
         yield s
 
+    def _fail(reason: str, fallbacks: bool):
+        """One failure, both shapes, the right status. See the module docstring."""
+        kind, text = ody_shim_failure(reason, fallbacks)
+        return _answer(text, 200 if kind == "marker"
+                       else ody_shim_error_status(reason))
+
+    fallbacks = bool(_SHIM_STATE.get("fallbacks"))
+    if VisionChatRequest is not None:
+        # The schema, enforced — so /openapi.json cannot describe a request this
+        # route would not actually accept. A refusal here is an INPUT class: 400
+        # with a sentence, never a bare 422 from the framework.
+        try:
+            VisionChatRequest.model_validate(body)
+        except Exception as e:                               # noqa: BLE001
+            return _answer(
+                "that request is not an OpenAI chat completion this describer can "
+                "read (send {\"messages\": [{\"role\": \"user\", \"content\": "
+                "[{\"type\": \"image_url\", \"image_url\": {\"url\": "
+                "\"data:image/png;base64,…\"}}]}]}): "
+                + str(e).split("\n")[0][:160], 400)
     b64, mime = ody_shim_extract_image(body)
     if not b64:
         return _answer(ody_shim_no_image_text())
-    fallbacks = bool(_SHIM_STATE.get("fallbacks"))
     try:
         raw = base64.b64decode(b64, validate=False)
     except Exception:                                        # noqa: BLE001
         raw = b""
     if not raw or len(raw) > ODY_VLSHIM_MAX_BYTES:
-        kind, text = ody_shim_failure(
-            "the image was empty or larger than 24 MB" if raw else
-            "the image data could not be decoded", fallbacks)
-        return _answer(text, 200 if kind == "marker" else 502)
+        return _fail("the image was empty or larger than 24 MB" if raw else
+                     "the image data could not be decoded", fallbacks)
     t0 = time.time()
+    usage = {}
     try:
-        desc, mid, err = await _ody_vision_describe(raw, mime, timeout=ODY_VLSHIM_TIMEOUT)
+        # Defensive unpack: the 4th element (the runner's REAL token counts) arrived
+        # in S33/F3; a 3-tuple from an older caller/stub must not raise.
+        _res = await _ody_vision_describe(raw, mime, timeout=ODY_VLSHIM_TIMEOUT)
+        desc, mid, err = _res[0], _res[1], _res[2]
+        usage = _res[3] if len(_res) > 3 and isinstance(_res[3], dict) else {}
     except Exception as e:                                   # noqa: BLE001
         desc, mid, err = ("", "", f"the vision pass raised: {str(e)[:140]}")
     if not desc:
-        kind, text = ody_shim_failure(err or "the vision pass returned nothing", fallbacks)
         print(f"[ody-vlshim] no description ({err or 'empty'}) after "
-              f"{time.time() - t0:.1f}s → {kind}", flush=True)
-        return _answer(text, 200 if kind == "marker" else 502)
+              f"{time.time() - t0:.1f}s", flush=True)
+        return _fail(err or "the vision pass returned nothing", fallbacks)
     print(f"[ody-vlshim] described an image with {mid} in {time.time() - t0:.1f}s",
           flush=True)
     # The SAME provenance text the Agent lane stores — one rule, one function: it
@@ -372,7 +528,7 @@ async def ody_vlshim_chat(req: Request):
     # present it as sight. The file name is not on the wire here (Odysseus sends
     # only the data URL), and ody_vision_provenance degrades to "the attached
     # image" rather than inventing one.
-    return _answer(ody_vision_provenance("", mid, desc))
+    return _answer(ody_vision_provenance("", mid, desc), 200, usage)
 
 
 # ── REGISTRATION: teach Odysseus about the shim, without clobbering anything ──

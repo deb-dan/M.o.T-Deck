@@ -13,6 +13,52 @@ from .sampling import IMAGE_MAX_CHARS, _RUNNER, _vision_capable, build_user_cont
 from .sidecars import log_attachment, log_thinking, parse_data_url, user_key
 
 
+def _runner_error_sentence(status, model: str = "") -> str:
+    """PURE: what the panel (and the transcript) is told when the runner refuses a
+    direct-lane turn. A SENTENCE with the cause and the next step in it — never a
+    bare code.
+
+    S33/F1, adherence audit rank 2: this lane streamed `"runner 502"` — no cause, no
+    fix, on the most-used surface in the app, in the one house whose standing rule is
+    that an error names what to DO. The classes below are the ones a local runner
+    actually produces; anything else still gets the code AND a place to look, because
+    "I do not know why" is allowed and silence is not.
+    """
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        code = 0
+    who = f" for {model}" if model else ""
+    tail = ("Open MOT Deck → Components to see whether the model runner is up, and "
+            "its log for the refusal itself.")
+    if code in (502, 503, 504):
+        return (f"the model runner answered {code}{who} — it is most likely still "
+                f"loading the model, restarting, or has just been stopped. Wait for "
+                f"it to finish loading and send the message again. {tail}")
+    if code == 400:
+        return (f"the model runner refused this request as malformed (400){who} — "
+                f"usually the model name on the wire is one it cannot resolve "
+                f"(an MLX server is given the model's PATH, not its registry id). "
+                f"Re-pick the model in the composer. {tail}")
+    if code in (401, 403):
+        return (f"the model runner rejected our credentials ({code}) — its api_key "
+                f"in harness.yaml no longer matches the one it was started with. "
+                f"{tail}")
+    if code == 404:
+        return (f"the model runner has no such model loaded (404){who} — pick a "
+                f"model that is actually loaded in the composer, or load it from the "
+                f"Models pane. {tail}")
+    if code == 413 or code == 422:
+        return (f"the model runner refused this turn as too large or unusable "
+                f"({code}) — usually a very long history or an attachment it cannot "
+                f"read. Start a new session or remove the attachment. {tail}")
+    if code == 429:
+        return (f"the model runner is at its request limit (429) — it is busy with "
+                f"another turn. Send this again in a moment. {tail}")
+    return (f"the model runner answered {code or 'an unreadable status'}{who} and "
+            f"the turn could not start. {tail}")
+
+
 @app.post("/api/chat/direct")
 async def chat_direct(req: Request) -> StreamingResponse:
     body = await req.json()
@@ -108,7 +154,15 @@ async def chat_direct(req: Request) -> StreamingResponse:
                       **sampling},
             ) as r:
                 if r.status_code != 200:
-                    yield f'data: {{"type":"proxy_error","error":"runner {r.status_code}"}}\n\n'
+                    # ⚠️ NOT A BARE CODE (S33/F1, adherence audit rank 2). This line
+                    # used to stream `"runner {code}"` — the exact dead-end the house
+                    # error doctrine bans, on the most-used lane in the app: no cause,
+                    # no next step, and nothing a model or a human could act on. The
+                    # sentence names the actor (OUR runner, not the app), the code,
+                    # what it usually means, and the one place to look.
+                    yield ("data: " + _json.dumps({
+                        "type": "proxy_error",
+                        "error": _runner_error_sentence(r.status_code, model)}) + "\n\n")
                     yield "data: [DONE]\n\n"
                     return
                 yield f'data: {_json.dumps({"type": "model_info", "model": model})}\n\n'
@@ -167,7 +221,15 @@ async def chat_direct(req: Request) -> StreamingResponse:
                                 chunk = chunk[start + 7:]
                                 think_open = True
         except Exception as e:
-            yield f'data: {{"type":"proxy_error","error":"{str(e)[:200]}"}}\n\n'
+            # ⚠️ SERIALIZED, NOT INTERPOLATED (S33/F1, adherence audit rank 7). This
+            # was an f-string JSON literal with raw str(e) inside it, so an exception
+            # message carrying a quote or a backslash — a path, a JSON snippet, a
+            # Windows-shaped name — emitted an SSE frame the panel could not parse,
+            # at the worst possible moment (during an error). Its siblings above
+            # already do it this way.
+            yield ("data: " + _json.dumps({
+                "type": "proxy_error",
+                "error": f"the direct lane failed mid-stream: {str(e)[:200]}"}) + "\n\n")
         finally:
             # Persist the exchange into the Odysseus session (best-effort).
             stats["elapsed"] = _t.monotonic() - t0     # per-reply stats stamp

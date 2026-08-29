@@ -47,16 +47,26 @@ def wire_model_id(model_id: "str | None", models: list) -> str:
     """PURE. Registry id → the identifier to put on the wire for the runner.
     gguf/unknown format → the id unchanged; mlx → the registry path (falls back to
     the id when the entry has no path). Empty id → "". Unknown id → unchanged
-    (safe fallback = previous behavior)."""
+    (safe fallback = previous behavior).
+
+    ⚠️ THE RULE ITSELF LIVES IN ONE PLACE ONLY (S33/F5, adherence audit rank 6).
+    Until 2026-08-29 the format→identifier branch was written out HERE and AGAIN in
+    core/modelreg.py::wire_id — hand-synced, with nothing pinning them equal, which
+    is the drift that re-opens the "runner 400 / answered under the wrong model
+    name" class both docstrings were written to kill. modelreg is the home of the
+    rule because three of its five consumers are standalone scripts that load it BY
+    PATH and cannot import this module; this function keeps its own name and its
+    row-lookup half (id → row), and DELEGATES the branch.
+    bridge/contract_tests/test_wire_id_contract.py fails if the two ever disagree
+    or if this delegation is written out by hand again."""
     mid = (model_id or "").strip()
     if not mid:
         return ""
     m = next((x for x in (models or []) if x.get("id") == mid), None)
     if not m:
         return mid
-    if str(m.get("format") or "gguf").strip().lower() == "mlx":
-        return str(m.get("path") or "").strip() or mid
-    return mid
+    from .modelreg import wire_id
+    return wire_id(m) or mid
 
 
 def display_model_id(wire: "str | None", models: list) -> str:
