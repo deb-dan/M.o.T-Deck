@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose B · The Desk</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-b.html — DIRECTION B: "THE DESK".
+  Standalone, self-contained, fake data.
+
+  THE THESIS. A is a magazine; this is an instrument. The song is still the biggest
+  thing on the page, but the page is a WORKBENCH: two columns, the library standing
+  permanently on the left rail, the bench on the right. Density is the point —
+  impeccable/layout.md's "density matches use frequency": someone composing writes
+  ten songs in a sitting, and a page that shows them one at a time behind a chip
+  strip is making them navigate to remember.
+
+  Depth is TACTILE, not editorial: raised controls with a real inner top light and a
+  press that moves 0.96, recessed wells for the things you put something INTO, and
+  a live meter that only exists while a render is live. Motion is entirely feedback —
+  100–200 ms, no authored entrance at all (Emil's frequency gate: this is a surface
+  you touch dozens of times a session, and "sometimes the best animation is none").
+
+  IA UNTOUCHED: ① engines chip ② stage ③ caps ④ recent ⑤ prompt ⑥ controls ⑦ Compose.
+  Commits to Editorial dark for presentation; every colour is still a token.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    /* 4-unit base. The bench is dense, so the useful steps are the small ones. */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px;
+
+    /* Emil's tokens, exact. */
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);
+
+    /* ── DEPTH, DECLARED ONCE (jakub/better-ui/surfaces + impeccable's ghost-card
+       ban). On a dark ground the layered light-mode shadow stack is invisible, so
+       dark mode collapses to ONE white ring, and the *lift* is carried by an inner
+       top highlight instead of a drop shadow. Two recipes on this whole page. */
+    --ring:0 0 0 1px rgba(255,255,255,.08);
+    --ring-hi:0 0 0 1px rgba(255,255,255,.13);
+    --raise:inset 0 1px 0 rgba(255,255,255,.09);
+    --sink:inset 0 1px 3px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.02);
+    --pop:0 10px 28px -10px rgba(0,0,0,.7);
+  }
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:13px/1.5 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+  /* browser surfaces — themed, not defaulted (impeccable craft-floor) */
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2.5px solid transparent; background-clip:content-box; }
+  input, textarea { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  button, .tk, .seg > button { touch-action:manipulation; }
+
+  h1 { font:600 14px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.2px; }
+  .caps { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+          color:var(--faint); }
+  .num { font-variant-numeric:tabular-nums; font-family:var(--mono); }
+  .say { font-size:12px; line-height:1.65; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  /* ── CHIPS: same grammar, bench-weight ─────────────────────────────────────── */
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border-radius:6px; background:var(--card2); box-shadow:var(--ring), var(--raise);
+    font:11px var(--sans); color:var(--dim); white-space:nowrap; border:0;
+    transition:box-shadow 150ms ease-out, color 150ms ease-out, scale 150ms var(--ease-out); }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); } .chip.c-gold { color:var(--gold); }
+  .chip.act { cursor:pointer; }
+  .chip.act:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover { box-shadow:var(--ring-hi), var(--raise); color:var(--cream); } }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  /* ── HEADER: a real tool bar, hairline under it ─────────────────────────────── */
+  header { position:sticky; top:0; z-index:6; height:44px; display:flex; gap:var(--s3);
+    align-items:center; padding:0 var(--s4); background:var(--bg2);
+    border-bottom:1px solid var(--line); }
+  header .grow { flex:1 1 auto; }
+
+  /* ══ THE BENCH — two columns. The library is furniture, not a chip strip. ═════ */
+  #bench { display:grid; grid-template-columns:248px minmax(0,1fr); min-height:calc(100vh - 44px); }
+  @media (max-width:900px) { #bench { grid-template-columns:1fr; }
+                             #rail { border-inline-end:0; border-bottom:1px solid var(--line); } }
+
+  /* ── ④ THE RAIL. Separator lines are jakub's LAST resort and are permitted in
+     exactly this case: "dense data only — tables, long settings lists". A track
+     list is one. Hairline, low contrast, and NOT combined with a big gap. */
+  #rail { border-inline-end:1px solid var(--line); background:#0a0910;
+          padding:var(--s4) 0; }
+  #rail .caps { padding:0 var(--s4) var(--s2); display:block; }
+  .tk { display:grid; grid-template-columns:26px minmax(0,1fr) auto; gap:var(--s2);
+    align-items:center; width:100%; text-align:start; border:0; background:transparent;
+    padding:7px var(--s4); cursor:pointer; color:var(--dim);
+    border-top:1px solid var(--line);
+    transition:background-color 100ms ease-out, color 100ms ease-out; }
+  .tk:first-of-type { border-top:0; }
+  .tk .n { font:600 10px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  .tk .t { font:12.5px var(--sans); overflow:hidden; text-overflow:ellipsis;
+           white-space:nowrap; }
+  .tk .d { font:10.5px var(--mono); color:var(--faint); font-variant-numeric:tabular-nums; }
+  @media (hover:hover) and (pointer:fine) { .tk:hover { background:rgba(255,255,255,.035);
+                                                        color:var(--cream); } }
+  /* selected state is GROUND + INK, never a 2px side stripe (impeccable side-tab /
+     border-accent-on-rounded). And it is not colour alone: the index turns into a
+     playing glyph, so the state survives greyscale. */
+  .tk.on { background:var(--on-wash); color:var(--cream); }
+  .tk.on .n { color:var(--gold); }
+
+  /* ── THE WORK AREA ──────────────────────────────────────────────────────────── */
+  #work { padding:var(--s5) var(--s5) 96px; display:grid; gap:var(--s5);
+          align-content:start; max-width:940px; }
+
+  /* ② THE MONITOR. Not a centred box: a real audio monitor. The waveform is the
+     scrubber — one object doing one job, with the playhead ON it. */
+  #monitor { border-radius:12px; background:var(--card);
+             box-shadow:var(--ring), var(--raise); padding:var(--s4); }
+  .mhead { display:flex; gap:var(--s3); align-items:baseline; margin-bottom:var(--s4); }
+  .mtitle { font:600 17px/1.25 var(--serif); color:var(--cream); letter-spacing:-.01em;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mmeta { font:10.5px var(--mono); color:var(--faint); white-space:nowrap;
+           font-variant-numeric:tabular-nums; }
+
+  /* the wave well: RECESSED, because it is a readout. Concentric radius —
+     outer 12 with 16 padding would want 12-16 <= 0, so past 24px jakub says stop
+     doing the math and pick; at 16px padding the honest inner value is 8. */
+  .wave { position:relative; height:104px; border-radius:8px; background:#08070d;
+          box-shadow:var(--sink); overflow:hidden; cursor:pointer; }
+  .wave svg { display:block; width:100%; height:100%; }
+  .wave .play-head { position:absolute; top:0; bottom:0; width:1px; background:var(--cream);
+                     left:34%; box-shadow:0 0 0 0 transparent; }
+  .wave .played { position:absolute; inset:0 66% 0 0; background:rgba(217,179,108,.10);
+                  pointer-events:none; }
+
+  .transport { display:flex; gap:var(--s3); align-items:center; margin-top:var(--s3); }
+  .tbtn { width:30px; height:30px; border-radius:7px; border:0; cursor:pointer;
+    background:var(--card2); box-shadow:var(--ring), var(--raise); color:var(--fg);
+    display:grid; place-items:center;
+    transition:scale 150ms var(--ease-out), box-shadow 150ms ease-out, color 150ms ease-out; }
+  .tbtn:active { scale:0.96; }
+  @media (hover:hover) and (pointer:fine) {
+    .tbtn:hover { color:var(--cream); box-shadow:var(--ring-hi), var(--raise); } }
+  .tbtn svg { width:13px; height:13px; fill:currentColor; }
+  .tbtn.main { width:36px; height:36px; background:var(--gold); color:var(--on-accent); }
+  .clock { font:11.5px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums;
+           letter-spacing:.02em; }
+
+  /* ── THE LEVEL METER. Exists only while a render is live: it is not decoration,
+     it is the truthful "something is happening right now" channel that a bar alone
+     does not carry. impeccable/delight.md: "show truthful progress… never fake work". */
+  .meter { display:none; gap:2px; align-items:flex-end; height:18px; margin-inline-start:auto; }
+  .meter.live { display:flex; }
+  .meter i { width:3px; border-radius:1px; background:var(--gold); opacity:.75;
+             height:20%; transition:height 120ms linear; }
+
+  /* ③ CAPS — one dense row of verdicts */
+  #caps { display:flex; gap:var(--s2); flex-wrap:wrap; align-items:center; }
+
+  /* ⑤⑥⑦ THE COMPOSER — a recessed well with a raised button ─────────────────── */
+  #composer { border-radius:12px; background:var(--bg2); box-shadow:var(--ring), var(--sink);
+              padding:var(--s3); display:grid; gap:var(--s3);
+              transition:box-shadow 150ms ease-out; }
+  #composer:focus-within { box-shadow:0 0 0 1px color-mix(in oklab, var(--gold) 55%, transparent),
+                                       var(--sink); }
+  #composer textarea { border:0; background:transparent; resize:none; outline:none;
+    color:var(--cream); font:13.5px/1.55 var(--sans); min-height:58px; width:100%;
+    padding:var(--s2) var(--s2) 0; }
+  #composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap; }
+  .crow .grow { flex:1 1 auto; }
+
+  /* the segmented control — a real tactile control, not a row of loose buttons */
+  .seg { display:inline-flex; border-radius:7px; background:#0a0910; box-shadow:var(--sink);
+         padding:2px; gap:2px; }
+  .seg > button { border:0; background:transparent; color:var(--dim); height:24px;
+    padding:0 10px; border-radius:5px; font:11.5px var(--sans); cursor:pointer;
+    transition:background-color 100ms ease-out, color 100ms ease-out; }
+  .seg > button.on { background:var(--card2); color:var(--cream); box-shadow:var(--ring), var(--raise); }
+
+  /* the stepper — length is a number you nudge, not a slider you guess at */
+  .stepper { display:inline-flex; align-items:center; border-radius:7px;
+             background:var(--card2); box-shadow:var(--ring), var(--raise); height:28px; }
+  .stepper button { border:0; background:transparent; color:var(--dim); width:24px;
+    height:100%; cursor:pointer; font:14px var(--sans); line-height:1;
+    transition:color 100ms ease-out; }
+  .stepper button:active { color:var(--gold); }
+  .stepper .v { font:11.5px var(--mono); color:var(--cream); min-width:44px;
+                text-align:center; font-variant-numeric:tabular-nums; }
+
+  button.plain { height:28px; padding:0 11px; border-radius:7px; border:0; cursor:pointer;
+    background:var(--card2); box-shadow:var(--ring), var(--raise); color:var(--fg);
+    font:500 11.5px var(--sans);
+    transition:scale 150ms var(--ease-out), color 150ms ease-out; }
+  button.plain:active { scale:0.96; }
+  button.go {
+    height:32px; padding:0 18px; border-radius:8px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 12.5px var(--sans);
+    box-shadow:var(--raise), 0 6px 16px -8px rgba(217,179,108,.7);
+    display:inline-flex; align-items:center; gap:7px;
+    transition:scale 150ms var(--ease-out), filter 150ms ease-out; }
+  button.go:active { scale:0.96; }
+  button.go:disabled { cursor:default; filter:saturate(.5) brightness(.8); }
+  /* the loading state keeps the LABEL next to the spinner — jakub/better-writing:
+     a bare spinner tells assistive tech nothing about which button is busy. */
+  .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(23,20,32,.35);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* progress: linear, and it lives ON the monitor's bottom edge, so the thing that
+     is being made and the thing reporting on it are the same object. */
+  .prog { height:2px; background:var(--line); border-radius:2px; overflow:hidden;
+          margin-top:var(--s3); display:none; }
+  .prog.live { display:block; }
+  .prog > i { display:block; height:100%; width:0; background:var(--gold);
+              transition:width 240ms linear; }
+
+  footer { grid-column:1/-1; padding:var(--s4) var(--s5) 90px; color:var(--faint);
+           font:10.5px var(--mono); }
+
+  @media (prefers-reduced-motion:reduce) {
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important;
+        animation-iteration-count:1 !important; }
+    .meter i { transition:none; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:50; padding:9px 16px;
+    font:10.5px/1.5 var(--mono); color:var(--faint); background:rgba(11,10,16,.92);
+    border-top:1px solid var(--line); -webkit-backdrop-filter:blur(12px);
+    backdrop-filter:blur(12px); display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compose</h1>
+  <span class="chip c-ok" title="Stable Audio · MusicGen — a render is a one-shot process."><i class="dot on"></i>2 of 2 engines ready</span>
+  <span class="grow"></span>
+  <span class="chip c-gold act" title="Engine detail, install state and sizes.">engines ▸</span>
+</header>
+
+<div id="bench">
+
+  <!-- ④ THE RAIL — the library, standing. -->
+  <nav id="rail">
+    <span class="caps">tracks · 14</span>
+    <button class="tk on"><span class="n">▶</span><span class="t">Gravel Road at First Light</span><span class="d">1:04</span></button>
+    <button class="tk"><span class="n">02</span><span class="t">Slow Water, Long Room</span><span class="d">0:48</span></button>
+    <button class="tk"><span class="n">03</span><span class="t">Nine Bar Brass</span><span class="d">1:30</span></button>
+    <button class="tk"><span class="n">04</span><span class="t">Untitled sketch</span><span class="d">0:30</span></button>
+    <button class="tk"><span class="n">05</span><span class="t">Kerosene Sunday</span><span class="d">1:12</span></button>
+    <button class="tk"><span class="n">06</span><span class="t">Two Miles of Wire</span><span class="d">0:54</span></button>
+    <button class="tk"><span class="n">07</span><span class="t">Brass and Rain</span><span class="d">2:00</span></button>
+  </nav>
+
+  <main id="work">
+
+    <!-- ② THE MONITOR -->
+    <section id="monitor">
+      <div class="mhead">
+        <span class="mtitle" id="mtitle">Gravel Road at First Light</span>
+        <span class="mmeta" id="mmeta">stable audio · 148 bpm · 44.1 kHz · 2.4 MB</span>
+        <span class="grow" style="flex:1"></span>
+        <div class="meter" id="meter"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+
+      <div class="wave" id="wave">
+        <svg viewBox="0 0 800 104" preserveAspectRatio="none" aria-hidden="true">
+          <g id="bars" fill="#d9b36c"></g>
+        </svg>
+        <div class="played" id="played"></div>
+        <div class="play-head" id="playhead"></div>
+      </div>
+
+      <div class="transport">
+        <button class="tbtn main" id="play" aria-label="Play">
+          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>
+        </button>
+        <button class="tbtn" aria-label="Restart"><svg viewBox="0 0 16 16"><path d="M4 3h2v10H4zM13 3v10l-7-5z"/></svg></button>
+        <span class="clock" id="clock">0:22 / 1:04</span>
+        <span class="grow" style="flex:1"></span>
+        <button class="plain">Rename</button>
+        <button class="plain">Reveal</button>
+        <button class="plain">Detail ▸</button>
+      </div>
+
+      <div class="prog" id="prog"><i id="pf"></i></div>
+    </section>
+
+    <!-- ③ CAPS -->
+    <div id="caps">
+      <span class="chip" title="Measured on this machine, last run.">last <b>41s</b> for 60s</span>
+      <span class="chip" title="Every song this page has written, on disk.">14 tracks · <b>62 MB</b></span>
+      <span class="chip" title="Where finished songs are written on this machine.">~/Music/Harness</span>
+    </div>
+
+    <!-- ⑤⑥⑦ COMPOSER -->
+    <section id="composer">
+      <textarea rows="2" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+      <div class="crow">
+        <div class="seg">
+          <button class="on">Instrumental</button><button>With lyrics</button>
+        </div>
+        <div class="stepper">
+          <button aria-label="Shorter">−</button><span class="v">60 s</span><button aria-label="Longer">+</button>
+        </div>
+        <span class="chip act" title="Stable Audio is on disk and selected.">stable audio ▾</span>
+        <button class="plain">More ▸</button>
+        <span class="grow"></span>
+        <button class="go" id="go">Compose</button>
+      </div>
+    </section>
+
+    <div id="advisory"></div>
+  </main>
+
+  <footer>compose · mockup b · fake data · nothing here reaches the bridge</footer>
+</div>
+
+<div id="note">
+  <b>B · The Desk</b>
+  <span><b style="color:var(--dim)">Emil</b> the frequency gate — feedback only, no staged entrance anywhere</span>
+  <span><b style="color:var(--dim)">Jakub</b> dark depth = one white ring + inner top light; two recipes total</span>
+  <span><b style="color:var(--dim)">impeccable</b> density matches use frequency; selected = ground+ink, never a side stripe</span>
+</div>
+
+<script>
+/* deterministic waveform */
+(function () {
+  var g = document.getElementById('bars'), h = '', seed = 11;
+  function rnd(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+  for (var i = 0; i < 200; i++) {
+    var x = i * 4, env = Math.pow(Math.sin(i / 200 * Math.PI), 0.55);
+    var v = env * (0.30 + rnd() * 0.70), hgt = Math.max(2, v * 96);
+    h += '<rect x="' + (x + 0.6) + '" y="' + ((104 - hgt) / 2) + '" width="2.6" height="' +
+         hgt.toFixed(1) + '" rx="1.3" opacity="' + (0.34 + v * 0.5).toFixed(2) + '"/>';
+  }
+  g.innerHTML = h;
+})();
+
+/* transport — a playhead, honestly fake (a mockup has no audio) */
+(function () {
+  var t = 22, dur = 64, playing = false, timer = null;
+  var play = document.getElementById('play'), head = document.getElementById('playhead'),
+      played = document.getElementById('played'), clock = document.getElementById('clock');
+  function fmt(s){ s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  function paint(){
+    var p = t / dur * 100;
+    head.style.left = p.toFixed(2) + '%';
+    played.style.right = (100 - p).toFixed(2) + '%';
+    clock.textContent = fmt(t) + ' / ' + fmt(dur);
+  }
+  play.addEventListener('click', function () {
+    playing = !playing;
+    play.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>'
+      : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>';
+    clearInterval(timer);
+    if (playing) timer = setInterval(function(){ t = (t + 1) % dur; paint(); }, 1000);
+  });
+  document.getElementById('wave').addEventListener('click', function (e) {
+    var r = this.getBoundingClientRect();
+    t = Math.max(0, Math.min(dur, (e.clientX - r.left) / r.width * dur)); paint();
+  });
+  paint();
+})();
+
+/* the run. Press acknowledges on pointer-down (CSS :active). The button keeps its
+   LABEL beside the spinner. The meter is live only while work is live. */
+(function () {
+  var go = document.getElementById('go'), prog = document.getElementById('prog'),
+      pf = document.getElementById('pf'), meter = document.getElementById('meter'),
+      mtitle = document.getElementById('mtitle'), advisory = document.getElementById('advisory');
+  var bars = meter.querySelectorAll('i');
+  var names = ['Long Shadow, Short Fuse', 'Kerosene Sunday', 'Two Miles of Wire'];
+  var n = 0, busy = false, mv = null;
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    go.disabled = true;
+    go.innerHTML = '<span class="spin"></span>Composing';
+    go.setAttribute('aria-busy', 'true');
+    prog.classList.add('live'); meter.classList.add('live');
+    advisory.innerHTML = '<p class="say" role="status">Rendering on <b>Stable Audio</b>. ' +
+      'One render at a time, on purpose — two would fight for the GPU.</p>';
+    mv = setInterval(function () {
+      for (var i = 0; i < bars.length; i++)
+        bars[i].style.height = (18 + Math.random() * 78).toFixed(0) + '%';
+    }, 120);
+    var p = 0;
+    var iv = setInterval(function () {
+      p += 8 + Math.random() * 10;
+      if (p >= 100) {
+        clearInterval(iv); clearInterval(mv); pf.style.width = '100%';
+        setTimeout(function () {
+          prog.classList.remove('live'); meter.classList.remove('live');
+          pf.style.width = '0';
+          mtitle.textContent = names[n++ % names.length];
+          advisory.innerHTML = '';
+          go.disabled = false; go.textContent = 'Compose'; go.removeAttribute('aria-busy');
+          busy = false;
+        }, 280);
+      } else pf.style.width = p.toFixed(1) + '%';
+    }, 240);
+  });
+})();
+
+/* rail selection — state is ground + ink AND a glyph, never colour alone */
+(function () {
+  var rows = document.querySelectorAll('#rail .tk');
+  rows.forEach(function (r, i) {
+    r.addEventListener('click', function () {
+      rows.forEach(function (o, j) {
+        o.classList.remove('on');
+        o.querySelector('.n').textContent = String(j + 1).padStart(2, '0');
+      });
+      r.classList.add('on'); r.querySelector('.n').textContent = '▶';
+      document.getElementById('mtitle').textContent = r.querySelector('.t').textContent;
+    });
+  });
+})();
+</script>
+</body>
+</html>

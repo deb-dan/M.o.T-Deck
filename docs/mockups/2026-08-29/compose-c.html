@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose C · The Spine</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-c.html — DIRECTION C: "THE SPINE".
+  Standalone, self-contained, fake data.
+
+  THE THESIS, and why it is a third idea rather than a blend of A and B.
+  A composes the page around a stage; B composes it around a bench. C composes it
+  around TIME. One vertical spine runs the length of the page. The composer is the
+  live end of it. Every song you make is a node threaded onto it, newest first, and
+  the newest node IS the stage — expanded, playing, the biggest thing on the page.
+  The others are collapsed rows on the same thread. The stage and the recent strip
+  are not two components that happen to sit near each other; they are one component
+  at two sizes.
+
+  THE MOTION THESIS earns the structure (impeccable/animate.md: "the focal moment
+  must come from this product and surface concept. A generic fade-and-rise, hover
+  lift, parallax layer, or scroll reveal is not a thesis"). Here it is CONTINUITY:
+  when you press Compose, the words you typed do not vanish and get replaced by a
+  spinner somewhere else on the page — the composer's own prompt line detaches,
+  travels down onto the spine, and becomes the node that is being rendered. The
+  cause and the effect are physically the same object. Emil's vocabulary calls this
+  a shared-element / continuity transition; it is the one thing on this page that is
+  authored, and everything else is 100–200 ms feedback.
+
+  IA UNTOUCHED: ① engines chip ② stage (= the head node) ③ caps ④ recent (= the
+  tail nodes) ⑤ prompt ⑥ controls ⑦ Compose. Sentence rule intact — only .say.
+  Commits to Editorial dark for presentation.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22); --on-accent:#171420;
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    --s1:4px; --s2:8px; --s3:12px; --s4:20px; --s5:32px; --s6:56px;
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);
+    --ring:0 0 0 1px rgba(255,255,255,.07);
+    --raise:inset 0 1px 0 rgba(255,255,255,.07);
+
+    --spine:26px;   /* the thread's x position inside the column */
+  }
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.55 var(--sans);
+         -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:3px solid transparent; background-clip:content-box; }
+  textarea { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  button { touch-action:manipulation; }
+
+  h1 { font:600 15px/1.2 var(--serif); color:var(--cream); margin:0; }
+  .caps { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+          color:var(--faint); }
+  .say { font-size:12px; line-height:1.7; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border:1px solid var(--line2); border-radius:999px; background:var(--card);
+    font:11px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color 180ms var(--ease-out), color 180ms var(--ease-out); }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); border-color:color-mix(in oklab, var(--ok) 50%, var(--line2)); }
+  .chip.c-gold { color:var(--gold); border-color:color-mix(in oklab, var(--gold) 50%, var(--line2)); }
+  .chip.act { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover { border-color:var(--gold); color:var(--cream); } }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  header { position:sticky; top:0; z-index:8; height:46px; display:flex; gap:var(--s3);
+    align-items:center; padding:0 var(--s4);
+    background:linear-gradient(180deg, rgba(11,10,16,.95), rgba(11,10,16,.78));
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+    box-shadow:0 1px 0 rgba(255,255,255,.04); }
+  header .grow { flex:1 1 auto; }
+
+  /* ══ THE COLUMN ═════════════════════════════════════════════════════════════ */
+  #col { max-width:760px; margin:0 auto; padding:var(--s5) var(--s4) 120px;
+         position:relative; }
+
+  /* THE THREAD. A single hairline running the whole column, with a soft fade at
+     both ends so it never reads as a border that stopped. Decoration on top of
+     interactive content must not eat clicks (jakub): pointer-events:none. */
+  #thread { position:absolute; left:calc(var(--s4) + var(--spine)); top:0; bottom:0;
+            width:1px; pointer-events:none;
+            background:linear-gradient(180deg, transparent, var(--line2) 60px,
+                                       var(--line2) calc(100% - 120px), transparent); }
+
+  .node { position:relative; padding-inline-start:calc(var(--spine) + 26px); }
+  /* the bead on the thread. Its SIZE encodes rank — the head node's bead is the
+     only filled one, so the hierarchy is legible with the type blurred out. */
+  .node::before {
+    content:""; position:absolute; left:var(--spine); top:16px; width:7px; height:7px;
+    margin-left:-3px; border-radius:50%; background:var(--bg);
+    box-shadow:0 0 0 1px var(--line2); }
+  .node.head::before { width:11px; height:11px; margin-left:-5px; top:22px;
+                       background:var(--gold); box-shadow:0 0 0 4px var(--bg); }
+  .node.working::before { background:var(--gold); animation:beat 1.6s ease-in-out infinite; }
+  @keyframes beat { 0%,100% { box-shadow:0 0 0 4px var(--bg); }
+                    50%     { box-shadow:0 0 0 4px var(--bg), 0 0 0 6px rgba(217,179,108,.18); } }
+
+  .when { position:absolute; left:0; top:14px; width:var(--spine); text-align:end;
+          padding-inline-end:12px; font:9.5px var(--mono); color:var(--faint);
+          font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+
+  /* ── ⑤⑥⑦ THE COMPOSER — the live end of the thread ─────────────────────────── */
+  #composer { position:relative; border-radius:14px; background:var(--bg2);
+    box-shadow:var(--ring), inset 0 1px 3px rgba(0,0,0,.5);
+    padding:var(--s3) var(--s3) var(--s2); margin-bottom:var(--s5);
+    transition:box-shadow 200ms ease-out; }
+  #composer:focus-within {
+    box-shadow:0 0 0 1px color-mix(in oklab, var(--gold) 55%, transparent),
+               inset 0 1px 3px rgba(0,0,0,.5); }
+  #composer textarea { border:0; background:transparent; resize:none; outline:none;
+    color:var(--cream); font:14px/1.6 var(--sans); width:100%; min-height:56px;
+    padding:var(--s2) var(--s2) 0; }
+  #composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap;
+          padding:var(--s2) var(--s1) var(--s1); }
+  .crow .grow { flex:1 1 auto; }
+  button.plain { height:28px; padding:0 11px; border-radius:8px; border:1px solid var(--line2);
+    background:var(--card2); color:var(--fg); font:500 11.5px var(--sans); cursor:pointer;
+    transition:scale 150ms var(--ease-out), color 150ms ease-out; }
+  button.plain:active { scale:0.96; }
+  button.go { height:32px; padding:0 18px; border-radius:9px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); font:650 12.5px var(--sans);
+    box-shadow:var(--raise), 0 6px 16px -8px rgba(217,179,108,.7);
+    display:inline-flex; align-items:center; gap:7px;
+    transition:scale 150ms var(--ease-out), filter 150ms ease-out; }
+  button.go:active { scale:0.96; }
+  button.go:disabled { cursor:default; filter:saturate(.4) brightness(.8); }
+
+  /* ── ② THE HEAD NODE = the stage ────────────────────────────────────────────── */
+  .head .card { border-radius:14px; background:var(--card); box-shadow:var(--ring), var(--raise);
+                padding:var(--s4); }
+  .head h2 { font:600 clamp(22px, 3.2vw, 30px)/1.1 var(--serif); color:var(--cream);
+             margin:0 0 var(--s2); letter-spacing:-.018em; text-wrap:balance; }
+  .head .sub { font:10.5px var(--mono); color:var(--faint); letter-spacing:.02em;
+               font-variant-numeric:tabular-nums; }
+  .wave { position:relative; height:78px; margin-top:var(--s4); border-radius:8px;
+          background:#08070d; box-shadow:inset 0 1px 3px rgba(0,0,0,.55);
+          overflow:hidden; cursor:pointer; }
+  .wave svg { display:block; width:100%; height:100%; }
+  .wave .played { position:absolute; inset:0 66% 0 0; background:rgba(217,179,108,.10);
+                  pointer-events:none; }
+  .wave .ph { position:absolute; top:0; bottom:0; left:34%; width:1px; background:var(--cream); }
+  .transport { display:flex; gap:var(--s3); align-items:center; margin-top:var(--s3); }
+  .tbtn { width:34px; height:34px; border-radius:9px; border:0; cursor:pointer;
+    background:var(--gold); color:var(--on-accent); display:grid; place-items:center;
+    box-shadow:var(--raise); transition:scale 150ms var(--ease-out); }
+  .tbtn:active { scale:0.96; }
+  .tbtn svg { width:13px; height:13px; fill:currentColor; }
+  .clock { font:11px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums; }
+
+  /* ── ④ TAIL NODES = the recent strip, on the same thread ────────────────────── */
+  .node.tail { padding-block:var(--s2); }
+  .node.tail .row { display:flex; gap:var(--s3); align-items:center; width:100%;
+    text-align:start; background:transparent; border:0; padding:var(--s2) var(--s3);
+    border-radius:10px; cursor:pointer; color:var(--dim);
+    transition:background-color 120ms ease-out, color 120ms ease-out; }
+  @media (hover:hover) and (pointer:fine) {
+    .node.tail .row:hover { background:rgba(255,255,255,.035); color:var(--cream); } }
+  .node.tail .t { font:13.5px/1.3 var(--serif); overflow:hidden; text-overflow:ellipsis;
+                  white-space:nowrap; flex:1 1 auto; }
+  .node.tail .d { font:10.5px var(--mono); color:var(--faint);
+                  font-variant-numeric:tabular-nums; }
+  /* a 3-bar mini spectrum instead of a thumbnail: the tail row still says
+     "this is audio" without pretending to be a picture. */
+  .mini { display:flex; gap:2px; align-items:center; height:14px; flex:none; }
+  .mini i { width:2px; border-radius:1px; background:var(--line2); }
+
+  /* ── ③ CAPS + separation. More space above a heading than below it. ─────────── */
+  .sect { margin-top:var(--s6); }
+  .sect > .caps { display:block; margin-bottom:var(--s3); padding-inline-start:calc(var(--spine) + 26px); }
+  #caps { display:flex; gap:var(--s2); flex-wrap:wrap; margin-top:var(--s4);
+          padding-inline-start:calc(var(--spine) + 26px); }
+
+  /* ── THE CONTINUITY TRANSITION ──────────────────────────────────────────────
+     A ghost of the prompt line is cloned at the composer's exact rect, then
+     transformed to the head node's rect. transform + opacity only; the real head
+     node is hidden underneath until the ghost lands, so nothing teleports. */
+  #ghost { position:fixed; z-index:60; pointer-events:none; border-radius:14px;
+    background:var(--card); box-shadow:var(--ring), var(--raise);
+    padding:var(--s4); color:var(--cream); font:600 20px/1.2 var(--serif);
+    transform-origin:top left; will-change:transform, opacity;
+    overflow:hidden; }
+  #ghost[hidden] { display:none; }
+
+  .node.working .card { position:relative; }
+  .prog { height:2px; margin-top:var(--s4); border-radius:2px; background:var(--line);
+          overflow:hidden; }
+  .prog > i { display:block; height:100%; width:0; background:var(--gold);
+              transition:width 240ms linear; }
+  .spin { width:12px; height:12px; border-radius:50%; border:2px solid rgba(23,20,32,.35);
+          border-top-color:var(--on-accent); animation:spin 700ms linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  @media (prefers-reduced-motion:reduce) {
+    /* the continuity move is spatial, so under reduced motion it becomes a
+       crossfade — the RELATIONSHIP is still shown, the travel is not. */
+    #ghost { transition:opacity 200ms ease !important; }
+    .node.working::before { animation:none; }
+    * { transition-duration:0.01ms !important; }
+  }
+
+  #note { position:fixed; left:0; right:0; bottom:0; z-index:70; padding:9px 16px;
+    font:10.5px/1.5 var(--mono); color:var(--faint); background:rgba(11,10,16,.92);
+    border-top:1px solid var(--line); -webkit-backdrop-filter:blur(12px);
+    backdrop-filter:blur(12px); display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+  #note > b { color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compose</h1>
+  <span class="chip c-ok" title="Stable Audio · MusicGen — a render is a one-shot process."><i class="dot on"></i>2 of 2 engines ready</span>
+  <span class="grow"></span>
+  <span class="chip c-gold act" title="Engine detail, install state and sizes.">engines ▸</span>
+</header>
+
+<div id="col">
+  <div id="thread"></div>
+
+  <!-- ⑤⑥⑦ the live end of the thread -->
+  <section id="composer">
+    <textarea id="prompt" rows="2" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM">Kerosene sunday, slow gospel organ, brushed drums, warm tape saturation, 72 BPM</textarea>
+    <div class="crow">
+      <span class="chip act" title="Optional — leave it empty for an instrumental.">+ lyrics</span>
+      <span class="chip" title="How long the song will be: 10 to 300 seconds.">60 s</span>
+      <span class="chip act" title="Stable Audio is on disk and selected.">stable audio ▾</span>
+      <button class="plain">More ▸</button>
+      <span class="grow"></span>
+      <button class="go" id="go">Compose</button>
+    </div>
+  </section>
+
+  <div id="stream">
+    <!-- ② the head node -->
+    <article class="node head" id="head">
+      <span class="when">now</span>
+      <div class="card">
+        <h2 id="htitle">Gravel Road at First Light</h2>
+        <span class="sub" id="hsub">stable audio · 1:04 · 148 bpm · 2.4 MB</span>
+        <div class="wave" id="wave">
+          <svg viewBox="0 0 800 78" preserveAspectRatio="none" aria-hidden="true">
+            <g id="bars" fill="#d9b36c"></g>
+          </svg>
+          <div class="played" id="played"></div><div class="ph" id="ph"></div>
+        </div>
+        <div class="transport">
+          <button class="tbtn" id="play" aria-label="Play">
+            <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+          <span class="clock" id="clock">0:22 / 1:04</span>
+          <span class="grow" style="flex:1"></span>
+          <button class="plain">Rename</button>
+          <button class="plain">Detail ▸</button>
+        </div>
+        <div id="hprog"></div>
+      </div>
+    </article>
+
+    <!-- ④ tail nodes -->
+    <div class="sect"><span class="caps">earlier today</span></div>
+    <article class="node tail"><span class="when">14:02</span>
+      <button class="row"><span class="mini"></span><span class="t">Slow Water, Long Room</span><span class="d">0:48</span></button></article>
+    <article class="node tail"><span class="when">13:41</span>
+      <button class="row"><span class="mini"></span><span class="t">Nine Bar Brass</span><span class="d">1:30</span></button></article>
+    <article class="node tail"><span class="when">13:20</span>
+      <button class="row"><span class="mini"></span><span class="t">Untitled sketch</span><span class="d">0:30</span></button></article>
+    <div class="sect"><span class="caps">yesterday</span></div>
+    <article class="node tail"><span class="when">21:07</span>
+      <button class="row"><span class="mini"></span><span class="t">Two Miles of Wire</span><span class="d">0:54</span></button></article>
+    <article class="node tail"><span class="when">20:55</span>
+      <button class="row"><span class="mini"></span><span class="t">Brass and Rain</span><span class="d">2:00</span></button></article>
+  </div>
+
+  <!-- ③ caps -->
+  <div id="caps">
+    <span class="chip" title="Measured on this machine, last run.">last <b>41s</b> for 60s</span>
+    <span class="chip" title="Every song this page has written, on disk.">14 tracks · <b>62 MB</b></span>
+    <span class="chip act" title="Where finished songs are written on this machine.">~/Music/Harness</span>
+  </div>
+
+  <div id="advisory" style="margin-top:20px;padding-inline-start:52px"></div>
+</div>
+
+<div id="ghost" hidden></div>
+
+<div id="note">
+  <b>C · The Spine</b>
+  <span><b style="color:var(--dim)">impeccable</b> the motion thesis must come from the product — here, continuity</span>
+  <span><b style="color:var(--dim)">Emil</b> shared-element / FLIP; transform+opacity only; reduced motion keeps the relationship</span>
+  <span><b style="color:var(--dim)">Jakub</b> negative space before containers; one alignment spine per level</span>
+</div>
+
+<script>
+/* waveform + minis */
+(function () {
+  var g = document.getElementById('bars'), h = '', seed = 5;
+  function rnd(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+  for (var i = 0; i < 190; i++) {
+    var x = i * 4.21, env = Math.pow(Math.sin(i / 190 * Math.PI), 0.5);
+    var v = env * (0.28 + rnd() * 0.72), hgt = Math.max(2, v * 72);
+    h += '<rect x="' + (x + .7) + '" y="' + ((78 - hgt) / 2) + '" width="2.7" height="' +
+         hgt.toFixed(1) + '" rx="1.35" opacity="' + (0.32 + v * 0.5).toFixed(2) + '"/>';
+  }
+  g.innerHTML = h;
+  document.querySelectorAll('.mini').forEach(function (m, k) {
+    var s = '';
+    for (var i = 0; i < 5; i++) s += '<i style="height:' + (4 + ((i * 7 + k * 5) % 11)) + 'px"></i>';
+    m.innerHTML = s;
+  });
+})();
+
+/* transport */
+(function () {
+  var t = 22, dur = 64, playing = false, timer = null;
+  var play = document.getElementById('play'), ph = document.getElementById('ph'),
+      played = document.getElementById('played'), clock = document.getElementById('clock');
+  function fmt(s){ s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  function paint(){ var p = t/dur*100; ph.style.left = p.toFixed(2)+'%';
+                    played.style.right = (100-p).toFixed(2)+'%';
+                    clock.textContent = fmt(t)+' / '+fmt(dur); }
+  play.addEventListener('click', function () {
+    playing = !playing;
+    play.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>'
+      : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>';
+    clearInterval(timer);
+    if (playing) timer = setInterval(function(){ t = (t+1)%dur; paint(); }, 1000);
+  });
+  document.getElementById('wave').addEventListener('click', function (e) {
+    var r = this.getBoundingClientRect();
+    t = Math.max(0, Math.min(dur, (e.clientX-r.left)/r.width*dur)); paint();
+  });
+  paint();
+})();
+
+/* ══ THE CONTINUITY TRANSITION ═══════════════════════════════════════════════ */
+(function () {
+  var go = document.getElementById('go'), composer = document.getElementById('composer'),
+      headEl = document.getElementById('head'), ghost = document.getElementById('ghost'),
+      prompt = document.getElementById('prompt'), htitle = document.getElementById('htitle'),
+      hsub = document.getElementById('hsub'), hprog = document.getElementById('hprog'),
+      advisory = document.getElementById('advisory');
+  var busy = false;
+
+  function titleOf(p) {
+    var head = String(p || '').trim().split(/\s+/).slice(0, 5).join(' ');
+    return head ? head.charAt(0).toUpperCase() + head.slice(1) : 'Untitled sketch';
+  }
+
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    var text = prompt.value.trim() || prompt.placeholder;
+    go.disabled = true; go.innerHTML = '<span class="spin"></span>Composing';
+    go.setAttribute('aria-busy', 'true');
+
+    var from = composer.getBoundingClientRect(), to = headEl.querySelector('.card').getBoundingClientRect();
+    ghost.textContent = titleOf(text);
+    ghost.hidden = false;
+    ghost.style.transition = 'none';
+    ghost.style.width = from.width + 'px';
+    ghost.style.height = from.height + 'px';
+    ghost.style.left = from.left + 'px';
+    ghost.style.top = from.top + 'px';
+    ghost.style.opacity = '1';
+    ghost.style.transform = 'none';
+    headEl.style.visibility = 'hidden';
+
+    /* FLIP: measure, force one reflow, then transform. Never animate
+       width/height/top/left. The reflow is deliberate rather than a
+       requestAnimationFrame: rAF is throttled in a background or non-compositing
+       tab, and a FLIP that silently never starts is worse than no FLIP. Walked
+       and caught on 2026-08-29 in exactly that state. */
+    void ghost.offsetWidth;
+    ghost.style.transition =
+      'transform 520ms cubic-bezier(0.77,0,0.175,1), opacity 200ms 320ms ease-out';
+    ghost.style.transform =
+      'translate(' + (to.left - from.left) + 'px,' + (to.top - from.top) + 'px) ' +
+      /* UNIFORM scale. A non-uniform x/y scale squashes the ghost's own type on
+         the way down, which is the tell that it is a screenshot being stretched
+         rather than an object moving. The height difference is absorbed by the
+         opacity fade that lands before the ghost reaches the node. */
+      'scale(' + (to.width / from.width) + ')';
+    ghost.style.opacity = '0';
+
+    setTimeout(function () {
+      ghost.hidden = true;
+      headEl.style.visibility = '';
+      headEl.classList.add('working');
+      htitle.textContent = titleOf(text);
+      hsub.textContent = 'stable audio · rendering · 60 s requested';
+      hprog.innerHTML = '<div class="prog"><i id="pf"></i></div>';
+      advisory.innerHTML = '<p class="say" role="status">Rendering on <b>Stable Audio</b>. ' +
+        'You can leave this tab; it survives.</p>';
+      prompt.value = '';
+      var pf = document.getElementById('pf'), p = 0;
+      var iv = setInterval(function () {
+        p += 9 + Math.random() * 10;
+        if (p >= 100) {
+          clearInterval(iv); pf.style.width = '100%';
+          setTimeout(function () {
+            headEl.classList.remove('working');
+            hprog.innerHTML = '';
+            hsub.textContent = 'stable audio · 1:00 · 72 bpm · 2.2 MB';
+            advisory.innerHTML = '';
+            go.disabled = false; go.textContent = 'Compose';
+            go.removeAttribute('aria-busy'); busy = false;
+          }, 260);
+        } else pf.style.width = p.toFixed(1) + '%';
+      }, 240);
+    }, 540);
+  });
+})();
+</script>
+</body>
+</html>

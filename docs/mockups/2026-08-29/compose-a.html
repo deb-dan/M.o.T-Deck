@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose A · The Sleeve</title>
+<!--
+  ══ MOCKUP · NOT SHIPPED CODE ═════════════════════════════════════════════════
+  docs/mockups/2026-08-29/compose-a.html — DIRECTION A: "THE SLEEVE".
+  Standalone, self-contained, fake data. Nothing here talks to the bridge.
+
+  THE IA IS UNTOUCHED. The same seven at-rest elements as bridge/panel/compose.html
+  ① engines chip · ② hero stage (the song, playing) · ③ caps chips · ④ recent strip
+  ⑤ prompt · ⑥ control row (engine · length · More ▸) · ⑦ Compose.
+  Same sentence rule (only .say carries a sentence), same one-verdict-object-per-chip
+  grammar, same sheet concept. This file changes COMPOSITION, DEPTH, RHYTHM, MOTION.
+
+  ALL-DESIGNS SPIRIT: a shipped page must be correct in six looks. A mockup is
+  allowed to commit to ONE for presentation — this one commits to Editorial dark.
+  Every colour still resolves through the same token names, so the commitment is a
+  choice of values, not a fork of rules.
+  ═════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  /* ══ EDITORIAL TOKENS — verbatim from bridge/panel/compose.html :root ═════════ */
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22);
+    --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    --float-bg:rgba(20,18,29,.94); --float-edge:var(--line2);
+    --float-blur:blur(20px) saturate(140%);
+    --float-shadow:0 24px 60px rgba(0,0,0,.5);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+    --r:6px; --r-lg:10px; --ctl-h:28px;
+
+    /* ── THE SPACING SCALE. impeccable/layout.md: "a 4-unit base usually provides
+       the useful middle steps that an 8-only scale misses", and "create rhythm
+       through deliberate contrast between tight and generous intervals". The
+       shipped page uses gap:12px everywhere — that is the monotonous-spacing
+       anti-pattern and it is the single biggest reason the page reads inert. */
+    --s1:4px; --s2:8px; --s3:12px; --s4:20px; --s5:32px; --s6:56px; --s7:88px;
+
+    /* ── MOTION. Emil Kowalski's three tokens, taken exactly, never approximated. */
+    --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);
+    --t-press:140ms; --t-state:200ms; --t-view:400ms; --t-focal:640ms;
+  }
+
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body {
+    margin:0; color:var(--fg);
+    font:13px/1.55 var(--sans); -webkit-font-smoothing:antialiased;
+    /* the ground is a GROUND, not a flat fill: a single very low-contrast vertical
+       shift so the stage has something to sit ON. No radial halo (impeccable
+       radial-halo / dark-glow), no glass. */
+    background:
+      linear-gradient(180deg, #0d0b13 0%, var(--bg) 46%, #08070c 100%);
+    background-attachment:fixed;
+    min-height:100vh;
+  }
+
+  /* ── BROWSER SURFACES. impeccable craft-floor: "the parts you did not draw still
+     carry the design… the cheapest signal that a page was built rather than
+     assembled, and the one models skip most reliably." The shipped page ships all
+     of these at browser default. */
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+                              border:3px solid transparent; background-clip:content-box; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  textarea, input { caret-color:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
+
+  /* ── TYPE. Editorial's serif is the signature; the shipped page spends it on a
+     17px h1 and a 20px hero title and never at display scale. Here the song's NAME
+     is the display moment — the one place the serif earns its keep. Tracking floor
+     is -0.04em (impeccable); -0.02em reads better, so that is what this uses. */
+  h1 { font:600 15px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.2px; }
+  .caps { font:600 10.5px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+          color:var(--faint); }
+  .mono { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .dim { color:var(--dim); } .faint { color:var(--faint); }
+  .say { font-size:12.5px; line-height:1.7; color:var(--dim); margin:0; max-width:62ch; }
+  .say b { color:var(--cream); font-weight:600; }
+
+  /* ── CHIPS — the shipped grammar, kept exactly, given a body ─────────────────
+     Same shape, same ≤5-word label, same tooltip-carries-the-sentence rule. What
+     changes: a 1px inner top highlight so the pill reads as a raised object rather
+     than an outline, and hover feedback that moves (gated behind a fine pointer,
+     per Emil). Depth is declared ONCE — border, not border + wide shadow (the
+     gpt-thin-border-wide-shadow / ghost-card rule). */
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 10px;
+    border:1px solid var(--line2); border-radius:999px;
+    background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,0)) var(--card);
+    font:11px var(--sans); color:var(--dim); white-space:nowrap;
+    transition:border-color var(--t-state) var(--ease-out),
+               color var(--t-state) var(--ease-out),
+               transform var(--t-press) var(--ease-out);
+  }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok { color:var(--ok); border-color:color-mix(in oklab, var(--ok) 55%, var(--line2)); }
+  .chip.c-gold { color:var(--gold); border-color:color-mix(in oklab, var(--gold) 55%, var(--line2)); }
+  .chip.c-dim { color:var(--faint); }
+  .chip.act, .chip.tipped { cursor:pointer; }
+  @media (hover:hover) and (pointer:fine) {
+    .chip.act:hover, .chip.tipped:hover { border-color:var(--gold); color:var(--cream);
+                                          transform:translateY(-1px); }
+  }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); }
+
+  /* ── HEADER ─────────────────────────────────────────────────────────────────── */
+  header {
+    position:sticky; top:0; z-index:5;
+    padding:var(--s3) var(--s5);
+    display:flex; gap:var(--s3); align-items:center;
+    background:linear-gradient(180deg, rgba(11,10,16,.92), rgba(11,10,16,.72));
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+    /* a scroll edge instead of a 1px divider — the chrome meets the content with a
+       gradient rather than a rule (Apple/Emil's scroll-edge effect). */
+    border-bottom:1px solid transparent;
+    box-shadow:0 1px 0 rgba(255,255,255,.03);
+  }
+
+  .wrap { max-width:1080px; margin:0 auto; padding:0 var(--s5); }
+
+  /* ══ ② THE STAGE — asymmetric, off the centre line ═══════════════════════════
+     The shipped stage is `display:grid; place-items:center` — everything on one
+     axis, equal margins, nothing to read across. Here it is a 7/5 split: the song's
+     identity on the left rail, the sleeve plate on the right. The squint test now
+     has an answer (impeccable/layout.md): the plate is primary, the title secondary,
+     the transport tertiary. */
+  #stage {
+    margin-top:var(--s5);
+    display:grid; grid-template-columns:minmax(0,7fr) minmax(0,5fr);
+    gap:var(--s6); align-items:center;
+  }
+  @media (max-width:860px) { #stage { grid-template-columns:1fr; gap:var(--s5); }
+                             #stage .plate { order:-1; } }
+
+  .eyeline { display:flex; gap:var(--s2); align-items:center; margin-bottom:var(--s4); }
+
+  /* the display moment. clamp so it responds to space without landing between
+     legible steps; line-height 1.02 because display type needs less leading than
+     the 1.55 body. */
+  #song {
+    font-family:var(--serif); font-weight:600;
+    font-size:clamp(30px, 4.4vw, 46px); line-height:1.04; letter-spacing:-0.02em;
+    color:var(--cream); margin:0; max-width:16ch; text-wrap:balance;
+  }
+  #meta { margin-top:var(--s3); display:flex; gap:var(--s3); align-items:center;
+          flex-wrap:wrap; }
+
+  /* ── THE PLATE. A square sleeve. Depth is declared once (a real offset shadow
+     with blur, not a zero-offset coloured halo — impeccable's "a zero-offset
+     coloured halo is decoration"), plus a 1px inner top light so it reads as a
+     physical object catching the page's light. */
+  .plate {
+    /* capped and pushed to the trailing edge: an uncapped 5fr square drives the
+       stage's height and re-creates exactly the void this direction is fixing. */
+    max-width:400px; margin-inline-start:auto; width:100%;
+    position:relative; aspect-ratio:1; border-radius:14px; overflow:hidden;
+    border:1px solid var(--line2);
+    box-shadow:0 26px 54px -18px rgba(0,0,0,.72);
+    background:#0f0d17;
+  }
+  .plate::after {  /* the inner top highlight */
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.03);
+  }
+  /* the artwork itself: geometry, not a fake photograph. impeccable bans SVG that
+     imitates a picture; it explicitly keeps "crisp vector shapes, diagrams,
+     animated linework" first-class. This is a spectrum, which is what the product
+     actually produces. */
+  .plate svg { display:block; width:100%; height:100%; }
+
+  /* ── THE TRANSPORT. The shipped page uses a raw <audio> element — a browser
+     default sitting inside a designed page, the exact craft-floor complaint. This
+     is the same three controls (play, position, time) drawn in the system. */
+  .transport { margin-top:var(--s4); display:flex; gap:var(--s3); align-items:center; }
+  .play {
+    width:44px; height:44px; flex:none; border-radius:50%; border:1px solid var(--line2);
+    background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0)) var(--card2);
+    color:var(--cream); cursor:pointer; display:grid; place-items:center;
+    transition:transform var(--t-press) var(--ease-out),
+               border-color var(--t-state) var(--ease-out);
+  }
+  .play:active { transform:scale(0.94); }
+  @media (hover:hover) and (pointer:fine) { .play:hover { border-color:var(--gold); } }
+  .play svg { width:15px; height:15px; fill:currentColor; }
+  .scrub { flex:1 1 auto; height:22px; position:relative; cursor:pointer; }
+  .scrub .track { position:absolute; inset:auto 0 auto 0; top:50%; height:3px;
+                  transform:translateY(-50%); border-radius:2px; background:var(--line); }
+  .scrub .fill { position:absolute; left:0; top:50%; height:3px; transform:translateY(-50%);
+                 border-radius:2px; background:var(--gold); width:34%; }
+  .scrub .head { position:absolute; top:50%; left:34%; width:9px; height:9px;
+                 margin-left:-4.5px; transform:translateY(-50%); border-radius:50%;
+                 background:var(--cream);
+                 transition:transform var(--t-state) var(--ease-out); }
+  @media (hover:hover) and (pointer:fine) {
+    .scrub:hover .head { transform:translateY(-50%) scale(1.35); } }
+  /* tabular numerals — a timer that reflows on every tick is the tell. */
+  .time { font-family:var(--mono); font-size:11px; color:var(--faint);
+          font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+
+  /* ── ③ CAPS ROW ─────────────────────────────────────────────────────────────── */
+  #caps { margin-top:var(--s5); display:flex; gap:var(--s2); flex-wrap:wrap;
+          align-items:center; }
+
+  /* ── ④ THE STRIP. Given a header rule and a name, so it stops reading as a
+     second undifferentiated chip row. More space ABOVE the label than below it. */
+  .sect { margin-top:var(--s6); }
+  .sect > .caps { display:block; margin-bottom:var(--s3); }
+  #strip { display:flex; gap:var(--s2); flex-wrap:wrap; }
+  .tk { display:flex; gap:var(--s2); align-items:center; max-width:260px; height:30px;
+        padding:0 12px; border:1px solid var(--line); border-radius:999px;
+        background:var(--card); color:var(--dim); font:11.5px var(--sans);
+        cursor:pointer; overflow:hidden;
+        transition:transform var(--t-press) var(--ease-out),
+                   border-color var(--t-state) var(--ease-out),
+                   color var(--t-state) var(--ease-out); }
+  .tk .tkn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+             font-family:var(--serif); font-size:12.5px; }
+  .tk .tkd { color:var(--faint); flex:none; font-family:var(--mono); font-size:10.5px;
+             font-variant-numeric:tabular-nums; }
+  .tk:active { transform:scale(0.98); }
+  @media (hover:hover) and (pointer:fine) {
+    .tk:hover { border-color:var(--gold); color:var(--cream); transform:translateY(-1px); } }
+  .tk.on { border-color:var(--gold); color:var(--cream); background:var(--card2); }
+
+  /* ── ⑤⑥⑦ THE COMPOSER. A single recessed field with the controls docked INSIDE
+     it, so the prompt and the act of pressing Compose are one object rather than a
+     textarea with a loose row of chips underneath. impeccable/layout.md: "use
+     proximity before adding containers". */
+  #composer {
+    margin-top:var(--s5); border:1px solid var(--line2); border-radius:16px;
+    background:var(--bg2);
+    /* recessed, not raised: this is where you put something IN. */
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.5), inset 0 -1px 0 rgba(255,255,255,.03);
+    transition:border-color var(--t-state) var(--ease-out);
+  }
+  #composer:focus-within { border-color:color-mix(in oklab, var(--gold) 60%, var(--line2)); }
+  #composer textarea {
+    display:block; width:100%; border:0; background:transparent; resize:none;
+    color:var(--cream); font:14.5px/1.6 var(--sans);
+    padding:var(--s4) var(--s4) var(--s3);
+    min-height:76px; outline:none;
+  }
+  #composer textarea::placeholder { color:var(--faint); }
+  .crow { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap;
+          padding:0 var(--s3) var(--s3) var(--s4); }
+  .crow .grow { flex:1 1 auto; }
+
+  button {
+    height:30px; padding:0 12px; border-radius:8px;
+    border:1px solid var(--line2);
+    background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,0)) var(--card2);
+    color:var(--fg); font:500 12px var(--sans); cursor:pointer;
+    transition:transform var(--t-press) var(--ease-out),
+               background-color var(--t-state) var(--ease-out),
+               color var(--t-state) var(--ease-out);
+  }
+  button:active { transform:scale(0.97); }
+  @media (hover:hover) and (pointer:fine) { button:hover { color:var(--cream); } }
+  button.primary {
+    background:var(--gold); border-color:var(--gold); color:var(--on-accent);
+    font-weight:650; padding:0 18px; height:34px; border-radius:10px;
+    box-shadow:0 6px 16px -6px rgba(217,179,108,.55);
+  }
+  button.primary:disabled { opacity:.5; cursor:default; box-shadow:none; }
+  button.ghost { background:transparent; }
+
+  /* ── PROGRESS. Emil: "progress shouldn't ease" — the fill is linear. The stage
+     does not swap to a different surface; the plate stays and DIMS, so the page
+     never teleports between states. */
+  .bar { height:3px; border-radius:2px; background:var(--line); overflow:hidden; width:100%; }
+  .bar > i { display:block; height:100%; background:var(--gold); width:0;
+             transition:width 260ms linear; }
+  .plate.working { filter:saturate(.35) brightness(.72); }
+  .plate { transition:filter var(--t-view) var(--ease-out); }
+
+  footer { margin-top:var(--s7); padding:var(--s4) 0 120px; color:var(--faint);
+           font-size:10.5px; font-family:var(--mono); }
+
+  /* ══ THE FOCAL MOMENT — one authored entrance, not one per section ═══════════
+     impeccable/animate.md and craft-floor both say the same thing: ONE authored
+     moment. It is the arrival of a finished song. Everything else on this page is
+     feedback (press, hover) at 140–200ms. The reveal is a clip-path wipe plus a
+     0.97 scale settle — never scale(0), never a bare fade. */
+  @keyframes plate-in {
+    from { clip-path:inset(0 0 100% 0); transform:scale(.97); }
+    to   { clip-path:inset(0 0 0 0);    transform:scale(1); }
+  }
+  @keyframes line-in {
+    from { opacity:0; transform:translateY(8px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  .anim-plate { animation:plate-in var(--t-focal) var(--ease-in-out) both; }
+  .anim-line  { animation:line-in 300ms var(--ease-out) both; }
+  .d1 { animation-delay:60ms; } .d2 { animation-delay:120ms; } .d3 { animation-delay:180ms; }
+
+  @media (prefers-reduced-motion:reduce) {
+    /* "fewer and gentler animations, not zero" — the movement goes, the opacity
+       and the state changes stay, so an arriving song is still legible as arriving. */
+    .anim-plate, .anim-line { animation:line-in 200ms ease both; }
+    * { transition-duration:120ms !important; }
+    .chip.act:hover, .tk:hover { transform:none; }
+  }
+
+  /* ── the footer note every mockup in this round carries ─────────────────────── */
+  #note {
+    position:fixed; left:0; right:0; bottom:0; z-index:50;
+    padding:9px 16px; font:10.5px/1.5 var(--mono); color:var(--faint);
+    background:rgba(11,10,16,.9); border-top:1px solid var(--line);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+    display:flex; gap:14px; flex-wrap:wrap; align-items:baseline;
+  }
+  #note b { color:var(--gold); font-weight:600; letter-spacing:.06em;
+            text-transform:uppercase; }
+  #note span { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compose</h1>
+  <!-- ① the engines verdict chip — same object, same ≤5 words -->
+  <span class="chip c-ok tipped" title="Stable Audio · MusicGen — a render is a one-shot process, nothing held in memory afterwards."><i class="dot on"></i><span>2 of 2 engines ready</span></span>
+  <span class="grow" style="flex:1"></span>
+  <span class="chip c-dim tipped" title="Where finished songs are written on this machine.">~/Music/Harness</span>
+</header>
+
+<div class="wrap">
+
+  <!-- ══ ② THE STAGE ══════════════════════════════════════════════════════════ -->
+  <section id="stage">
+    <div>
+      <div class="eyeline">
+        <span class="caps">latest</span>
+        <span class="chip c-dim" style="height:20px;font-size:10px">just now</span>
+      </div>
+      <h2 id="song" class="anim-line d1">Gravel Road at First Light</h2>
+      <div id="meta">
+        <span class="mono anim-line d2">stable audio · 1m 04s · 148 bpm</span>
+      </div>
+
+      <div class="transport anim-line d3">
+        <button class="play" id="play" aria-label="Play">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+        </button>
+        <div class="scrub" id="scrub">
+          <div class="track"></div><div class="fill" id="fill"></div><div class="head" id="head"></div>
+        </div>
+        <span class="time" id="time">0:22 / 1:04</span>
+      </div>
+    </div>
+
+    <div class="plate anim-plate" id="plate">
+      <!-- geometry, not a pretend photograph: a spectrum of the track. -->
+      <svg viewBox="0 0 400 400" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#241f33"/><stop offset="1" stop-color="#0f0d17"/>
+          </linearGradient>
+          <linearGradient id="g2" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#d9b36c" stop-opacity=".95"/>
+            <stop offset="1" stop-color="#8b93f8" stop-opacity=".75"/>
+          </linearGradient>
+        </defs>
+        <rect width="400" height="400" fill="url(#g1)"/>
+        <g id="bars" fill="url(#g2)"></g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ③ caps chips — verdicts, not sentences -->
+  <div id="caps">
+    <span class="chip c-dim tipped" title="Measured on this machine, last run.">last 41s for 60s</span>
+    <span class="chip c-dim tipped" title="Every song this page has written, on disk.">14 tracks · 62 MB</span>
+    <span class="chip c-gold act tipped" title="Engine detail, install state and sizes.">engines ▸</span>
+  </div>
+
+  <!-- ④ the strip -->
+  <div class="sect">
+    <span class="caps">recent</span>
+    <div id="strip">
+      <button class="tk on"><span class="tkn">Gravel Road at First Light</span><span class="tkd">1:04</span></button>
+      <button class="tk"><span class="tkn">Slow Water, Long Room</span><span class="tkd">0:48</span></button>
+      <button class="tk"><span class="tkn">Nine Bar Brass</span><span class="tkd">1:30</span></button>
+      <button class="tk"><span class="tkn">Untitled sketch</span><span class="tkd">0:30</span></button>
+      <button class="tk"><span class="tkn">All tracks ▸</span></button>
+    </div>
+  </div>
+
+  <!-- ⑤⑥⑦ the composer -->
+  <section id="composer">
+    <textarea id="prompt" rows="2" placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+    <div class="crow">
+      <span class="chip act tipped" title="Optional — leave it empty for an instrumental.">+ lyrics</span>
+      <span class="chip c-dim tipped" title="How long the song will be: 10 to 300 seconds.">60s</span>
+      <span class="chip c-dim act tipped" title="Stable Audio is on disk and selected.">stable audio ▾</span>
+      <button class="ghost">More ▸</button>
+      <span class="grow"></span>
+      <button class="primary" id="go">Compose</button>
+    </div>
+  </section>
+
+  <div id="advisory" style="margin-top:var(--s3)"></div>
+
+  <footer>compose · mockup a · fake data · nothing here reaches the bridge</footer>
+</div>
+
+<div id="note">
+  <b>A · The Sleeve</b>
+  <span><b style="color:var(--dim)">Jakub</b> the 2× grouping rule (shipped page is gap:12px everywhere)</span>
+  <span><b style="color:var(--dim)">impeccable</b> browser surfaces carry the design — selection, caret, scrollbar, focus</span>
+  <span><b style="color:var(--dim)">Emil</b> one authored moment; <code>cubic-bezier(.23,1,.32,1)</code>; enter at scale(.97), never scale(0)</span>
+</div>
+
+<script>
+/* ── the plate's spectrum. Deterministic, so the mockup looks the same every open. */
+(function () {
+  var g = document.getElementById('bars'), h = '';
+  var seed = 7;
+  function rnd(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+  for (var i = 0; i < 64; i++) {
+    var x = i * 6.25, v = Math.pow(Math.sin(i / 5.5) * .5 + .5, 1.6) * .74 + rnd() * .26;
+    var hgt = 30 + v * 320;
+    h += '<rect x="' + (x + 1.2) + '" y="' + (400 - hgt) + '" width="3.8" height="' + hgt + '" rx="1.9" opacity="' + (0.30 + v * 0.55).toFixed(2) + '"/>';
+  }
+  g.innerHTML = h;
+})();
+
+/* ── the transport. Fake, local, and honest about it: it moves a playhead, it does
+   not play audio, because there is no audio in a mockup. */
+(function () {
+  var playing = false, t = 22, dur = 64, timer = null;
+  var play = document.getElementById('play'), fill = document.getElementById('fill'),
+      head = document.getElementById('head'), time = document.getElementById('time');
+  function fmt(s){ s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  function paint(){
+    var p = (t / dur * 100).toFixed(2) + '%';
+    fill.style.width = p; head.style.left = p; time.textContent = fmt(t) + ' / ' + fmt(dur);
+  }
+  play.addEventListener('click', function () {
+    playing = !playing;
+    play.innerHTML = playing
+      ? '<svg viewBox="0 0 16 16"><rect x="4" y="2.5" width="3" height="11" rx="1"/><rect x="9" y="2.5" width="3" height="11" rx="1"/></svg>'
+      : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>';
+    clearInterval(timer);
+    if (playing) timer = setInterval(function(){ t = (t + 1) % dur; paint(); }, 1000);
+  });
+  document.getElementById('scrub').addEventListener('click', function (e) {
+    var r = this.getBoundingClientRect();
+    t = Math.max(0, Math.min(dur, (e.clientX - r.left) / r.width * dur)); paint();
+  });
+  paint();
+})();
+
+/* ── THE FOCAL MOMENT, demonstrable. Press Compose: the button acknowledges on
+   pointer-down (CSS :active), the plate dims rather than being replaced, a linear
+   progress bar fills, and the finished song ARRIVES with the one authored
+   entrance. Nothing here claims a capability the product does not have — this is
+   the shipped state machine (idle → running → result) with its motion drawn in. */
+(function () {
+  var go = document.getElementById('go'), plate = document.getElementById('plate'),
+      song = document.getElementById('song'), advisory = document.getElementById('advisory');
+  var names = ['Long Shadow, Short Fuse', 'Kerosene Sunday', 'Two Miles of Wire', 'Brass and Rain'];
+  var n = 0, busy = false;
+  go.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    go.disabled = true; go.textContent = 'Composing…';
+    plate.classList.add('working');
+    advisory.innerHTML = '<div class="bar"><i id="pf"></i></div>' +
+      '<p class="say" style="margin-top:8px">Rendering on <b>Stable Audio</b>. You can leave this tab; it survives.</p>';
+    var pf = document.getElementById('pf'), p = 0;
+    requestAnimationFrame(function(){ pf.style.width = '4%'; });
+    var iv = setInterval(function () {
+      p += 8 + Math.random() * 9;
+      if (p >= 100) {
+        clearInterval(iv); pf.style.width = '100%';
+        setTimeout(function () {
+          advisory.innerHTML = '';
+          plate.classList.remove('working');
+          song.textContent = names[n++ % names.length];
+          /* retrigger the authored entrance */
+          plate.classList.remove('anim-plate'); song.classList.remove('anim-line','d1');
+          void plate.offsetWidth;
+          plate.classList.add('anim-plate'); song.classList.add('anim-line');
+          go.disabled = false; go.textContent = 'Compose'; busy = false;
+        }, 320);
+      } else pf.style.width = p.toFixed(1) + '%';
+    }, 260);
+  });
+})();
+</script>
+</body>
+</html>
