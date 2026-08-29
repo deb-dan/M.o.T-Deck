@@ -73,6 +73,12 @@
 > ledger at QA time.
 
 
+> **⛔ PROCESS-KILL RULE (bitten twice: Unsloth 2026-08-28, goose Desktop 2026-08-29):**
+> agents/builders may terminate ONLY processes they themselves spawned, tracked by their own
+> pidfile/child handle, identity-verified (full command line + env) before the kill. NEVER
+> pkill/killall by name or pattern; never kill whatever holds a port (pick another port).
+> Debi runs standalone copies of the same apps we embed — a name-match kill closes her work.
+
 > **🧭 THE FULL PROACTIVE BUILD DOCTRINE (Debi standing order, 2026-08-28) — BINDING ON
 > EVERY SLICE, EVERY TOPIC: read docs/DOCTRINE-PROACTIVE-BUILD.md and bind it by
 > reference into every builder dispatch and every QA pass.** Short form: build the
