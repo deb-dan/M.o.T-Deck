@@ -298,6 +298,45 @@
              padding:6px 12px; }
   .cap-btn:hover { color:var(--cream); border-color:var(--gold); }
   .cap-btn.arm { color:var(--bad); border-color:var(--bad); }
+  /* ---------- API (ledger S32) ----------
+     TOKENS ONLY, no literal colour anywhere in this block — the ALL-DESIGNS rule is
+     mechanical here, so Editorial, the three packs and studio light/dark all reach
+     every surface below through the same swap. Nothing here redefines a palette token.
+
+     `.say` is THE SENTENCE CLASS, and it is the whole discipline of this page: a text
+     node of eight words or more may live in `.say` and nowhere else, which is what the
+     gate measures (bridge/tests/test_api_view.js §3, the v1.5.34 standard the Generate
+     and Compose pages already carry). It is declared here rather than scoped to
+     #view-api because the rule is the product's, not this page's. */
+  .say { font-size:12px; color:var(--dim); line-height:1.55; max-width:66ch; margin:6px 0 0; }
+  .api-code { font:12px var(--mono); color:var(--cream); background:var(--card2);
+              border:1px solid var(--line2); border-radius:8px; padding:6px 10px;
+              display:inline-block; max-width:100%; overflow-x:auto; white-space:nowrap;
+              vertical-align:middle; }
+  .api-line { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:2px 0 6px; }
+  /* The one-time key reveal. --gold border because this is the only thing on the page
+     the user MUST act on before leaving it; it is not an alarm, so not --bad. */
+  .api-reveal { border:1px solid var(--gold); border-radius:10px; padding:12px 14px;
+                margin:0 0 14px; background:var(--card); }
+  .api-tbl { width:100%; border-collapse:collapse; font:11px var(--mono); }
+  .api-tbl th { text-align:left; font:10px var(--mono); letter-spacing:.14em;
+                text-transform:uppercase; color:var(--faint); padding:0 10px 6px 0;
+                border-bottom:1px solid var(--line); white-space:nowrap; }
+  .api-tbl td { padding:6px 10px 6px 0; color:var(--dim);
+                border-bottom:1px solid var(--line); vertical-align:top; }
+  .api-tbl td.api-model { color:var(--fg); word-break:break-all; max-width:34ch; }
+  .api-tbl td.api-num { text-align:right; white-space:nowrap; }
+  .api-wrap { overflow-x:auto; }
+  /* The route catalogue's disclosure — the panel's established <details> grammar
+     (chat sources, the artifact console), tokens only like everything above it.
+     `list-style:none` drops the native triangle so the summary reads as the chip row
+     it is; the cursor is what says it opens. */
+  .api-routes { margin:2px 0 4px; }
+  .api-routes > summary { cursor:pointer; list-style:none; display:flex; gap:8px;
+                          flex-wrap:wrap; align-items:center; padding:2px 0; }
+  .api-routes > summary::-webkit-details-marker { display:none; }
+  .api-routes > summary:hover .chip { color:var(--cream); border-color:var(--gold); }
+  .api-routes .cap-desc { max-width:66ch; }
   .cap-btn.go { color:var(--gold); border-color:var(--gold); }
 
   /* ---------- cards ---------- */
@@ -2585,6 +2624,38 @@
       <div id="help-doc"><div class="cs-empty">Loading…</div></div>
     </div>
   </div>
+
+  <!-- API (ledger S32) — the local API ACCESS surface. Sidebar-only, like Help.
+       EVERY BODY BELOW IS EMPTY MARKUP: the three sections are rendered by renderApi()
+       from /api/apikeys and /api/apilog, so the REAL-DATA RULE is structural rather
+       than a habit — there is no row, chip or number in this document to go stale, and
+       a state with nothing to show renders its own empty line instead of a fake one.
+       The grammar is the Capabilities pane's (.caps-group / .cap-h / .cap-row) plus
+       chips, so the type ramp and every theme pack's overrides are inherited. -->
+  <div id="view-api" hidden>
+    <div class="kicker"><span class="num">VII.</span><span class="rule"></span>
+      <span class="lbl">API</span></div>
+    <div class="models-head">
+      <div>
+        <h1>API</h1>
+        <div class="sub">The local endpoint other apps talk to, the keys they use, and
+          what has been served.</div>
+      </div>
+    </div>
+    <div class="stamp" id="api-stamp">—</div>
+    <div class="caps-group">
+      <div class="cap-h">Endpoint</div>
+      <div id="api-endpoint"><div class="cs-empty">Loading…</div></div>
+    </div>
+    <div class="caps-group">
+      <div class="cap-h">Keys</div>
+      <div id="api-keys"><div class="cs-empty">Loading…</div></div>
+    </div>
+    <div class="caps-group">
+      <div class="cap-h">Requests</div>
+      <div id="api-log"><div class="cs-empty">Loading…</div></div>
+    </div>
+  </div>
 </main>
 
 <dialog id="dlg" class="float-surface">
@@ -3016,6 +3087,14 @@ const NAV_ENTRIES = [
   // bridge/nav.py's entry for the argument, and SOLO_VIEWS below for the one place
   // that exclusion has to be written down a second time.
   { id:'help',    label:'Help',            ico:'?', kind:'view', view:'help',   tab:null },
+  // API (ledger S32) — the local API ACCESS surface. Sidebar-only and tab-less for
+  // Help's reason (a reference surface you consult and leave), and explicitly NOT
+  // `tab_only`: v1.5.60's Music lesson says a tab-only entry still reaches the ⋯ menu
+  // and the last-three window, which is how a removed tab came back. bridge/nav.py
+  // carries the full argument.
+  // ⚠️ ⌗ IS WORN BY NOTHING ELSE in this document or in the shell — the v1.5.38 glyph
+  // lesson in its general form, checked by the census in test_nav_panel.js.
+  { id:'api',     label:'API',             ico:'⌗', kind:'view', view:'api',    tab:null },
   { id:'odysseus',    label:'Odysseus',    ico:null, kind:'component', view:null, tab:'Odysseus',    prefersTab:true },
   { id:'hermes',      label:'Hermes',      ico:null, kind:'component', view:null, tab:'Hermes',      prefersTab:true },
   { id:'voicestudio', label:'Voicestudio', ico:null, kind:'component', view:null, tab:'VoiceStudio', prefersTab:true },
@@ -3027,11 +3106,11 @@ const NAV_ENTRIES = [
 // Which bars an entry may appear on — the capability half, mirroring nav.py's `bars`.
 // Logs has no solo surface, so it is sidebar-only; Help has a view but deliberately no
 // tab home (nav.py carries the argument); everything else can be either.
-const NAV_SIDEBAR_ONLY = ['logs','help'];
+const NAV_SIDEBAR_ONLY = ['logs','help','api'];
 // …and the entries `validate` may NOT force back onto a bar, mirroring nav.py's
 // `always`. Both are reachable from ⌘K whatever the sidebar says, which is the only
 // reason hiding them is allowed to be a real choice.
-const NAV_ALWAYS = ['logs','help'];
+const NAV_ALWAYS = ['logs','help','api'];
 /* …and the entries the model may put on NO bar (nav.py's `bars: ()`). `music` is the
    Classic look, reached from the Studio page's header switcher rather than from a row
    of its own — Debi's ONE-Music-door ruling. It is not "sidebar-only" and it is not
@@ -3047,7 +3126,7 @@ const NAV_TOPBAR_PINS = 9;
 const NAV_TOPBAR_MRU = 3;
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
 const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','compose','comfy','aider','goose','gooseui','loffice','caps','logs',
-                             'help',
+                             'help','api',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
 /* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
@@ -4315,6 +4394,416 @@ function helpJump(id, el) {
   if (t && t.scrollIntoView) t.scrollIntoView(true);
 }
 
+/* ---------- API (ledger S32) — the local API ACCESS surface ----------
+   THE SHAPE OF THIS BLOCK IS THE POINT. Every section is rendered by a PURE function
+   (state in, markup out, no DOM, no fetch), and renderApi() only ever writes what those
+   three return. That is what lets bridge/tests/test_api_view.js EXECUTE the page in a
+   stub environment, render every state — first run, daily, pending restart, runner off,
+   key just minted, log empty — and audit the emitted markup against the sentence rule
+   and the chip grammar, instead of asserting on strings a redesign would silently
+   invalidate. It is also the REAL-DATA RULE made structural: these functions have no
+   sample row to fall back to, so an absent fact renders an empty state or nothing.
+
+   THE SENTENCE RULE (the v1.5.34 standard): a text node of eight words or more may
+   appear only inside `.say`, and the number of `.say` elements standing at once is
+   budgeted per state — ONE on the ordinary day, and that one is the honest split note
+   under the log, which is the last thing on this page that may be hidden behind a
+   hover. Chips stay at seven words or fewer. */
+const API_POLL_MS = 5000;
+/* `minted` is the ONE-TIME REVEAL and it lives only here, in memory: the server returns
+   a key exactly once (bridge/routers/apikeys.py has no route that reads one back), and
+   the panel matches that — no localStorage, no re-render from cache, gone on navigation.
+   `arm` is the id whose Revoke is armed; two-step, and only ever one at a time. */
+let apiState = { keys:null, log:null, endpoints:null, err:'', note:'', minted:null,
+                 arm:'', busy:false, ts:0 };
+let apiTimer = null;
+
+// ── pure formatters ─────────────────────────────────────────────────────────
+function apiTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return '—';
+  const p = n => String(n).padStart(2, '0');
+  const hm = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  const now = new Date();
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+               && d.getDate() === now.getDate();
+  return sameDay ? hm : (p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hm);
+}
+/* NO INVENTED NUMBER. A turn with no measured tokens-per-second has no honest duration
+   (we store ttft + tps, not a wall clock), and 0.0s would read as "instant" — the
+   LIE-TO-USER class over a cosmetic gap. It prints an em dash. */
+function apiDur(secs) {
+  if (secs === null || secs === undefined || !isFinite(secs)) return '—';
+  return secs < 10 ? (Math.round(secs * 10) / 10) + 's' : Math.round(secs) + 's';
+}
+function apiTok(n) {
+  n = Number(n || 0);
+  return n >= 10000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
+}
+function apiDate(iso) { return String(iso || '').slice(0, 10) || '—'; }
+/* A STRING ARGUMENT, SAFE INSIDE A DOUBLE-QUOTED `onclick=""` ATTRIBUTE.
+   ⚠️ LIVE FINDING L3, AND IT IS WHY THIS IS A NAMED FUNCTION RATHER THAN AN INLINE
+   `JSON.stringify(id)` AT EACH SITE. The first draft wrote `onclick="apiArm(' +
+   JSON.stringify(id) + ')"`, which emits onclick="apiArm("k_abc")" — the attribute
+   ENDS at the second quote, and the button is silently inert. Nothing throws, nothing
+   logs, and a source-text test asserting `/apiArm\("k_abc"\)/` passes while the only
+   revoke control in the product does nothing. Caught by clicking it. */
+function apiArg(s) { return JSON.stringify(String(s == null ? '' : s)).replace(/"/g, '&quot;'); }
+
+// ── section 1: the endpoint ─────────────────────────────────────────────────
+/* `runner` is the row the panel's own /api/status poll already holds — the same object
+   Mission Control's runner card renders. Reusing it (rather than adding a probe) is why
+   this page can never disagree with the card about whether the runner is serving. */
+function apiEndpointHtml(keys, runner) {
+  if (!keys || !keys.base_url)
+    return '<div class="cs-empty">No runner endpoint is configured in harness.yaml.</div>';
+  const url = keys.base_url;
+  let h = '<div class="api-line"><code class="api-code">' + esc(url) + '</code>'
+        + '<button class="chip" onclick="apiCopy(' + apiArg(url) + ', this)">Copy</button></div>';
+  const loaded = !!(runner && runner.loaded);
+  const portUp = !!(runner && runner.port_up);
+  h += '<div class="api-line">';
+  h += '<span class="chip">' + (loaded ? 'Serving' : portUp ? 'Loading' : 'Runner off') + '</span>';
+  const model = (runner && (runner.live_id || runner.pin_intent)) || '';
+  if (model) h += '<span class="chip">' + esc(model) + '</span>';
+  h += '</div>';
+  if (!loaded) {
+    h += '<div class="say">' + (portUp
+      ? 'The runner is up but no model is loaded yet — apps will get errors until it is.'
+      : 'The runner is off, so nothing answers on this address. Start it in Mission Control.')
+      + '</div>';
+  }
+  return h;
+}
+
+/* ── section 1b: WHAT THIS ADDRESS SERVES ────────────────────────────────────
+   The checklist's semantic-documentation clause as a SURFACE rather than a README
+   (docs/research/2026-08-29-ai-friendly-api-principles.md): one sentence per route
+   saying what it is FOR, which is what a person filling in another app's provider
+   form actually has to decide. Not a spec — the app's own docs have that.
+
+   ⚠️ THE TWO 501 ROUTES ARE LISTED, NOT HIDDEN, and this is the whole reason the
+   section exists. `/v1/embeddings` and `/v1/rerank` are REAL PATHS at our pin that
+   answer 501 because this launch enables neither — so an app pointed here for
+   embeddings fails in a way its error message will blame on the address. Omitting
+   them would leave that person with no way to find out; listing them "off" is the
+   difference between a catalogue and a sales sheet. The state is a chip, the reason
+   is the row's own sentence, and nothing here is invented: bridge/routers/
+   apikeys.py::ENDPOINTS carries the measurement that produced every line.
+
+   ⚠️ AND IT IS CLOSED BY DEFAULT, which is the sentence rule and the house taste
+   agreeing for once. Six routes with a sentence each is six standing paragraphs on a
+   page whose ordinary-day budget is ONE — so this is a click-to-expand zone (the
+   panel's own <details> grammar, the same one chat sources and the artifact console
+   use): glanceable summary always, prose only when asked for. A closed <details> is
+   also why the page audit in bridge/tests/test_api_view.js does not count these
+   against the budget — prose behind a disclosure is not prose standing on the page. */
+function apiEndpointsHtml(ep) {
+  if (!ep || !ep.endpoints || !ep.endpoints.length) return '';
+  const served = ep.endpoints.filter(e => e.served).length;
+  const off = ep.endpoints.length - served;
+  let h = '<details class="api-routes"><summary>'
+        + '<span class="chip">' + served + ' routes served</span>'
+        + (off ? '<span class="chip">' + off + ' need a launch flag</span>' : '')
+        + '</summary>';
+  ep.endpoints.forEach(e => {
+    h += '<div class="cap-row"><div class="cap-txt">'
+       + '<div class="cap-name"><code>' + esc(e.method) + ' ' + esc(e.path) + '</code></div>'
+       + '<div class="cap-desc say">' + esc(e.means) + '</div>'
+       + '</div><div class="cap-ctl">'
+       + (e.served ? '<span class="cap-pill on">served</span>'
+                   : '<span class="cap-pill off">needs ' + esc(e.enabled_by || 'a flag') + '</span>')
+       + '</div></div>';
+  });
+  return h + '</details>';
+}
+
+// ── section 2: the keys ─────────────────────────────────────────────────────
+function apiKeysHtml(keys, minted, arm, note) {
+  if (!keys) return '<div class="cs-empty">Loading…</div>';
+  let h = note ? '<div class="say">' + esc(note) + '</div>' : '';
+  /* THE ONE-TIME REVEAL, and it says WHY it is one-time rather than leaving the user to
+     find out by coming back for it. Its own sentence is sanctioned by the budget for
+     exactly this state — it is the only moment on this page where not reading costs
+     something. */
+  if (minted && minted.key) {
+    h += '<div class="api-reveal">'
+       + '<div class="cap-h">New key — copy it now</div>'
+       + '<div class="api-line"><code class="api-code">' + esc(minted.key) + '</code>'
+       + '<button class="chip" onclick="apiCopy(' + apiArg(minted.key) + ', this)">Copy</button>'
+       + '<button class="chip" onclick="apiDismissKey()">Done</button></div>'
+       + '<div class="say">Paste this into the app\'s provider form. It is not stored in '
+       + 'readable form and is never shown again.</div></div>';
+  }
+  h += '<div class="cap-addform" style="margin-bottom:10px">'
+     + '<input class="cap-inp" id="api-name" type="text" autocomplete="off" maxlength="48" '
+     + 'placeholder="Name this key (Goose UI)" aria-label="Name for the new API key" '
+     + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();apiMint();}">'
+     + '<button class="cap-btn" onclick="apiMint()">Create key</button></div>';
+  /* PENDING IS A MEASURED FACT, NOT A FLAG WE SET. bridge/routers/apikeys.py compares
+     the digest of the key set on disk with the digest the RUNNING runner was launched
+     with (scripts/start_component.sh writes it at launch). llama.cpp b10662 reads
+     --api-key-file exactly once, with no hot-reload in either direction — measured — so
+     this sentence is the difference between a keys page and a keys page that lies. */
+  if (keys.pending) {
+    h += '<div class="api-line"><span class="cap-pill on">Restart to apply</span>'
+       + '<button class="cap-btn" onclick="apiRestartRunner(this)">Restart runner</button></div>'
+       + '<div class="say">The running runner reads its key file only at startup, so new '
+       + 'and revoked keys take effect when it restarts.</div>';
+  }
+  const rows = keys.keys || [];
+  if (!rows.length) {
+    h += '<div class="say">No named keys yet. Create one above, then paste it into an '
+       + 'app\'s own provider form — goose, OpenCode and Odysseus all ask for one.</div>';
+  }
+  rows.forEach(r => {
+    const armed = arm === r.id;
+    h += '<div class="cap-row"><div class="cap-txt">'
+       + '<div class="cap-name">' + esc(r.name) + '</div>'
+       + '<div class="cap-desc"><code>' + esc(r.prefix) + '</code> · created ' + esc(apiDate(r.created))
+       + '</div></div><div class="cap-ctl">'
+       + '<button class="cap-btn' + (armed ? ' arm' : '') + '" '
+       + 'onclick="' + (armed ? 'apiRevoke(' + apiArg(r.id) + ')'
+                              : 'apiArm(' + apiArg(r.id) + ')') + '">'
+       + (armed ? 'Confirm' : 'Revoke') + '</button></div></div>';
+  });
+  /* THE BUILT-IN IS LISTED BUT NEVER REVEALED — not its value and not a prefix of it.
+     Debi's brief keeps it as the built-in and keeps every existing route working, so
+     hiding it here would make the page describe a system with fewer keys than it has;
+     showing four characters of a thirteen-character secret would be the other mistake.
+     It is a row with a name, a source and no button. */
+  if (keys.builtin) {
+    h += '<div class="cap-row"><div class="cap-txt">'
+       + '<div class="cap-name">Harness built-in</div>'
+       + '<div class="cap-desc">harness.yaml · used by MOT Deck itself</div>'
+       + '</div><div class="cap-ctl"><span class="cap-pill off">built-in</span></div></div>';
+  }
+  return h;
+}
+
+// ── section 3: the request log ──────────────────────────────────────────────
+const API_METRIC_CHIPS = [
+  ['prompt_tokens', 'prompt'], ['tokens_predicted', 'generated'],
+  ['decodes', 'decodes'], ['processing', 'in flight'],
+];
+function apiLogHtml(log) {
+  if (!log) return '<div class="cs-empty">Loading…</div>';
+  let h = '<div class="api-line">';
+  /* THE TOTALS, AND WHY THEY MAY BE ABSENT — each state gets a chip that names the fix
+     rather than a blank. `off` is the real one on an existing machine: --metrics is
+     disabled by default at our pin (GET /metrics returns 501 — measured) and the flag
+     is added by this slice, so a runner started before it has no counters until it is
+     restarted. */
+  const st = log.metrics_state, m = log.metrics || {};
+  if (st === 'ok') {
+    API_METRIC_CHIPS.forEach(([k, label]) => {
+      if (m[k] === undefined) return;
+      h += '<span class="chip">' + esc(label) + ' ' + esc(apiTok(m[k])) + '</span>';
+    });
+    if (m.tps) h += '<span class="chip">' + esc(String(m.tps)) + ' tok/s</span>';
+  } else if (st === 'off') {
+    h += '<span class="cap-pill">Totals need a runner restart</span>';
+  } else if (st === 'auth') {
+    h += '<span class="cap-pill">Totals refused the built-in key</span>';
+  } else if (st === 'unreadable') {
+    h += '<span class="cap-pill">Totals unreadable</span>';
+  } else {
+    h += '<span class="cap-pill">Runner off</span>';
+  }
+  h += '</div>';
+  /* THE HONEST SPLIT, STANDING AND UNHIDEABLE. llama-server exposes no per-request
+     history at our pin — /slots is the live slot table, /metrics is aggregate, and the
+     one per-request facility writes users' prompts to disk. So the rows below are our
+     own lanes and the totals above are everything, and the page says so rather than
+     letting a short table imply the runner has been idle. */
+  h += '<div class="say">Per-request rows cover MOT Deck\'s own lanes; apps that call '
+     + 'this address directly appear only in the totals above.</div>';
+  const rows = log.rows || [];
+  if (!rows.length) {
+    h += '<div class="cs-empty">No turns recorded yet.</div>';
+    return h;
+  }
+  /* THE COUNTING LINE, and it is a chip rather than a sentence so the budget above
+     stays at one. `total_count` is the route's counting hint; it is NULL when the
+     table could not be counted, and then this says how many rows are shown and stops
+     — "40 of ?" is worse than "40 shown", and "40 of 40" would be a guess. */
+  const shown = rows.length, total = log.total_count;
+  h += '<div class="api-line"><span class="chip">'
+     + (typeof total === 'number' && total > shown
+        ? shown + ' of ' + apiTok(total) + ' turns'
+        : shown + (shown === 1 ? ' turn' : ' turns'))
+     + '</span></div>';
+  h += '<div class="api-wrap"><table class="api-tbl"><thead><tr>'
+     + '<th>Time</th><th>Lane</th><th>Model</th><th>In</th><th>Out</th><th>Duration</th>'
+     + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    h += '<tr><td>' + esc(apiTime(r.started_at_epoch)) + '</td>'
+       + '<td>' + esc(r.lane_label || '—') + '</td>'
+       + '<td class="api-model">' + esc(r.model || '—') + '</td>'
+       + '<td class="api-num">' + esc(apiTok(r.prompt_tokens)) + '</td>'
+       + '<td class="api-num">' + esc(apiTok(r.completion_tokens)) + '</td>'
+       + '<td class="api-num">' + esc(apiDur(r.duration_seconds)) + '</td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
+// ── render + lifecycle ──────────────────────────────────────────────────────
+function renderApi() {
+  const ep = document.getElementById('api-endpoint');
+  const kb = document.getElementById('api-keys');
+  const lg = document.getElementById('api-log');
+  const stamp = document.getElementById('api-stamp');
+  if (!ep || !kb || !lg) return;
+  /* `err` is ONLY the bridge-is-not-answering case, and it lands on a sentence rather
+     than a blank — the standing empty-state rule. An ACTION that fails (a mint refused,
+     a revoke lost) sets `note` instead and leaves the page standing, because wiping a
+     working keys list to report a failed button is a worse answer than the failure. */
+  if (apiState.err) {
+    ep.innerHTML = '<div class="say">' + esc(apiState.err) + '</div>';
+    kb.innerHTML = ''; lg.innerHTML = '';
+    if (stamp) stamp.textContent = 'unavailable';
+    return;
+  }
+  const runner = (lastStatus && lastStatus.components && lastStatus.components.runner) || null;
+  /* THE ROUTES BLOCK IS RE-RENDERED ONLY WHEN IT HAS TO BE. It is a <details> the user
+     may have opened, and blowing it away on a five-second poll would snap it shut under
+     their hand — the same class of bug as the focus rule below, and the reason that
+     rule exists. The catalogue is static, so once it is drawn there is nothing to
+     refresh; it is re-rendered only if the endpoint block was rebuilt for another
+     reason, which is why it is composed in one innerHTML with the endpoint. */
+  const routes = document.querySelector('#api-endpoint details.api-routes');
+  const routesOpen = !!(routes && routes.open);
+  ep.innerHTML = apiEndpointHtml(apiState.keys, runner) + apiEndpointsHtml(apiState.endpoints);
+  if (routesOpen) {
+    const again = document.querySelector('#api-endpoint details.api-routes');
+    if (again) again.open = true;
+  }
+  // THE FOCUS RULE: a poll must never yank the caret out of the name box mid-typing.
+  // The keys section is re-rendered only when nothing inside it is focused.
+  const inp = document.getElementById('api-name');
+  const typing = inp && document.activeElement === inp;
+  if (!typing) kb.innerHTML = apiKeysHtml(apiState.keys, apiState.minted, apiState.arm,
+                                          apiState.note);
+  lg.innerHTML = apiLogHtml(apiState.log);
+  if (stamp) {
+    const n = (apiState.keys && (apiState.keys.keys || []).length) || 0;
+    stamp.textContent = n + (n === 1 ? ' named key' : ' named keys')
+      + (apiState.keys && apiState.keys.pending ? ' · restart pending' : '');
+  }
+}
+
+async function apiFetch() {
+  try {
+    /* THE ROUTE CATALOGUE IS FETCHED ONCE, NOT ON THE POLL. It is a static, pin-measured
+       table (bridge/routers/apikeys.py::ENDPOINTS) — re-asking for it every five seconds
+       would be a request per tick for an answer that cannot change without a restart. */
+    const want = [
+      fetch('/api/apikeys', { cache:'no-store' }).then(r => r.json()),
+      fetch('/api/apilog?limit=40', { cache:'no-store' }).then(r => r.json()),
+    ];
+    if (!apiState.endpoints) want.push(fetch('/api/apiendpoints').then(r => r.json()));
+    const [k, l, e] = await Promise.all(want);
+    apiState.keys = k; apiState.log = l; apiState.err = ''; apiState.ts = Date.now();
+    if (e) apiState.endpoints = e;
+  } catch (e) {
+    // The bridge serves this page, so "it did not answer" has exactly one meaning.
+    if (!apiState.keys) apiState.err = 'The bridge did not answer — this page is served by it.';
+  }
+  renderApi();
+}
+function initApi() {
+  renderApi();                 // paint whatever we already hold, then refresh
+  apiFetch();
+  if (!apiTimer) apiTimer = setInterval(() => {
+    // Only while the view (or its peek) is actually on screen — the Music poll's rule.
+    if (curView === 'api' || (peekState && peekState.view === 'api')) apiFetch();
+  }, API_POLL_MS);
+}
+function stopApiPoll() { if (apiTimer) { clearInterval(apiTimer); apiTimer = null; } }
+
+// ── actions ─────────────────────────────────────────────────────────────────
+async function apiCopy(text, btn) {
+  const done = () => { if (btn) { const t = btn.textContent; btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = t; }, 1200); } };
+  try { await navigator.clipboard.writeText(text); done(); return; } catch (e) {}
+  // Clipboard API can be denied in a webview — the same fallback copyLog() uses.
+  try {
+    const ta = document.createElement('textarea'); ta.value = text;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    done();
+  } catch (e) {}
+}
+function apiDismissKey() { apiState.minted = null; renderApi(); }
+function apiArm(id) { apiState.arm = id; renderApi(); }
+
+async function apiMint() {
+  if (apiState.busy) return;
+  const inp = document.getElementById('api-name');
+  const name = inp ? inp.value : '';
+  apiState.busy = true; apiState.note = '';
+  try {
+    const r = await fetch('/api/apikeys', { method:'POST',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ name }) });
+    const j = await r.json();
+    if (r.ok && j && j.key) {
+      apiState.minted = j;
+      if (inp) inp.value = '';
+      // AN EMPTY NAME IS NEVER A QUESTION (the autocorrect standard): the bridge names
+      // it after the date and the row below shows what it chose.
+      feed('api', 'API key created: ' + (j.name || ''));
+    } else {
+      apiState.note = (j && j.detail) || 'The key could not be created.';
+    }
+  } catch (e) {
+    apiState.note = 'The key could not be created — the bridge did not answer.';
+  }
+  apiState.busy = false;
+  await apiFetch();
+}
+
+async function apiRevoke(id) {
+  if (apiState.busy) return;
+  apiState.busy = true; apiState.arm = ''; apiState.note = '';
+  try {
+    const r = await fetch('/api/apikeys/' + encodeURIComponent(id) + '/revoke', { method:'POST' });
+    const j = await r.json();
+    if (r.ok && j && j.ok) feed('api', 'API key revoked: ' + (j.name || ''));
+    else apiState.note = (j && j.detail) || 'That key could not be revoked.';
+  } catch (e) {
+    apiState.note = 'The key could not be revoked — the bridge did not answer.';
+  }
+  apiState.busy = false;
+  await apiFetch();
+}
+
+/* THE RESTART IS THE AUDITED ROUTE, NOT A SECOND COPY OF ONE. /api/components/runner/
+   restart is stop() then start(), pidfile-identity first and refusals honoured — the
+   PROCESS-KILL RULE lives in that one place and this button is only allowed to call it. */
+/* ⚠️ AND IT RECOVERS FROM THAT ROUTE'S OWN STOP/START RACE — live finding L4, ledgered
+   as its own U-row. `restart` is stop() then start(), and start()'s background thread
+   asks `_running_sync` FIRST: when the old process has not yet released the port it
+   reads "already running", skips the launch, and the component is left DOWN. Watched
+   happen here — PROV said `runner: on / already running` while :6767 was dead.
+   The FIX belongs in the shared route and is ledgered there, because every component's
+   Restart rides it and that is not this slice's blast radius to take. What IS this
+   slice's job is not stranding the person who pressed a button labelled "Restart
+   runner": after a grace period this asks the AUDITED START route once more. That is
+   not a second copy of the kill logic — start() is idempotent and carries its own
+   guard — so the PROCESS-KILL RULE still lives in exactly one place. */
+async function apiRestartRunner(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try { await fetch('/api/components/runner/restart', { method:'POST' }); } catch (e) {}
+  for (let i = 0; i < 12; i++) {
+    await new Promise(r => setTimeout(r, 2500));
+    if (typeof refresh === 'function') refresh(true);
+    await apiFetch();
+    const r = (lastStatus && lastStatus.components && lastStatus.components.runner) || {};
+    if (r.loaded || r.port_up) return;          // it came back — nothing more to do
+    if (i === 2) { try { await fetch('/api/components/runner/start', { method:'POST' }); } catch (e) {} }
+  }
+}
+
 /* ---------- THEME PACKS (2026-08-28) ----------
    §C shipped a two-state dark↔light flip. This is the same axis with four curated
    COMPLETE LOOKS on it, in the SAME localStorage key, so nothing that follows the
@@ -4597,6 +5086,7 @@ function showView(v) {
   document.getElementById('view-caps').hidden = (v !== 'caps');
   document.getElementById('view-music').hidden = (v !== 'music');
   document.getElementById('view-help').hidden = (v !== 'help');
+  document.getElementById('view-api').hidden = (v !== 'api');
   // The rows are rendered from the nav model now, so a row the user hid is simply
   // ABSENT — every lookup here has to tolerate that (a missing row is not an error,
   // and the view itself still opens from ⌘K, a tab, or another row).
@@ -4627,6 +5117,11 @@ function showView(v) {
   if (v === 'models') initModels();
   if (v === 'caps') initCaps();
   if (v === 'help') initHelp();
+  // API: armed on entry and RETIRED on exit, exactly like Music's poll — the request
+  // log refreshes while you are looking at it and never behind another view. The one
+  // exception is an API PEEK, which is on screen over whatever you navigated to.
+  if (v === 'api') initApi();
+  else if (!(peekState && peekState.view === 'api')) stopApiPoll();
   // MUSIC: the status poll is armed on entry and RETIRED on exit — it must never
   // keep polling behind another view (and it only ticks while a render runs). The one
   // exception is a music PEEK: that view is on screen, so its poll must survive a
@@ -4656,7 +5151,11 @@ function showView(v) {
    answer it is exactly the loss of place this overlay exists to prevent. It is
    read-only prose with no live state, so it is also the cheapest thing here to
    borrow — initHelp() is idempotent and its fetch is cached after the first open. */
-const PEEK_VIEWS = ['models', 'music', 'caps', 'help'];
+/* API IS IN for Help's exact reason, sharpened: "what is the base URL again" and "I
+   need a key for this app's provider form" are questions you ask WHILE standing in
+   another surface, and the answer is two chips and a copy button. It borrows cleanly —
+   initApi() is idempotent and its poll is retired on close, like Music's. */
+const PEEK_VIEWS = ['models', 'music', 'caps', 'help', 'api'];
 let peekState = null;          // { id, view, node, anchor } — at most ONE at a time
 
 function peekViewFor(id) { const e = navEntry(id); return (e && e.view) || null; }
@@ -4717,6 +5216,7 @@ function peekOpen(id, ev, el) {
   else if (view === 'caps') initCaps();
   else if (view === 'music') initMusic();
   else if (view === 'help') initHelp();
+  else if (view === 'api') initApi();
   return true;
 }
 
@@ -4726,6 +5226,10 @@ function closePeek() {
   peekState = null;                       // FIRST — so anything this triggers is inert
   if (st.view === 'music' && curView !== 'music' && typeof stopMusicPoll === 'function')
     stopMusicPoll();
+  // …and the API log's poll, by the SAME rule Music's follows: a borrowed view that is
+  // handed back must not keep ticking behind the page the user returned to.
+  if (st.view === 'api' && curView !== 'api' && typeof stopApiPoll === 'function')
+    stopApiPoll();
   if (st.anchor && st.anchor.parentNode) {
     st.anchor.parentNode.insertBefore(st.node, st.anchor);
     st.anchor.parentNode.removeChild(st.anchor);
@@ -5228,7 +5732,7 @@ function renderNavDlg(err) {
        <b>⋯</b> menu at the right of the app's tab strip. The strip holds ${NAV_TOPBAR_MAX}: the
        ${NAV_TOPBAR_PINS} you pin here, then ${NAV_TOPBAR_MRU} slots that hold whatever you opened
        last — open one from <b>⋯</b> and it takes a slot; the oldest of the three goes back to <b>⋯</b>. Nothing can be hidden on both bars at
-       once — except Logs and Help, which stay reachable from ⌘K even with their rows off.
+       once — except Logs, Help and API, which stay reachable from ⌘K even with their rows off.
        The tab strip only exists in the app window, and
        it follows within a few seconds.</div>
      <div id="nav-err" ${err ? '' : 'hidden'} style="color:var(--bad); font:10.5px var(--mono); margin:8px 6px 0">${esc(err || '')}</div>`
@@ -15155,6 +15659,10 @@ const commands = () => {
     // is the reachability that makes hiding it a safe choice (the same argument Logs
     // has carried since the model shipped).
     {t:'Help', k:'?', f:()=>showView('help')},
+    // API KEYS is here for Help's load-bearing reason, and one sharper: `always` lets a
+    // user hide the API row, and this is the reachability that keeps the REVOKE button
+    // reachable when they have. A key you cannot take back is worse than no key page.
+    {t:'API keys', k:'⌗', f:()=>showView('api')},
     {t:'Show bridge logs', k:'≣', f:()=>showLogs('bridge')},
     {t:'Customize navigation', k:'⠿', f:openNavDlg},   // STUDIO PHASE 2 §A v2
     {t:'Show path-guard log', k:'🛡', f:()=>showLogs('guard')},

@@ -254,7 +254,7 @@ console.log('\n5. the wiring — view, route, ⌘K, first-run hand-off');
   ok(/document\.getElementById\('view-help'\)\.hidden = \(v !== 'help'\);/.test(script),
      'showView hides/shows it like every other view');
   ok(/if \(v === 'help'\) initHelp\(\);/.test(script), '…and arms it on entry');
-  ok(/PEEK_VIEWS = \['models', 'music', 'caps', 'help'\]/.test(script),
+  ok(/PEEK_VIEWS = \['models', 'music', 'caps', 'help', 'api'\]/.test(script),
      'Help is peekable (⧉) — the question you ask WHILE doing the thing');
   ok(/else if \(view === 'help'\) initHelp\(\);/.test(script),
      '…and a peek arms it the same way a navigation does');
@@ -266,7 +266,7 @@ console.log('\n5. the wiring — view, route, ⌘K, first-run hand-off');
   const solo = new Function(`const NAV_ENTRIES = ${JSON.stringify(
       [{ id:'mc', view:'mc' }, { id:'chat', view:'chat' }, { id:'help', view:'help' },
        { id:'logs', view:null }])};
-    const NAV_SIDEBAR_ONLY = ['logs','help'];
+    const NAV_SIDEBAR_ONLY = ['logs','help','api'];
     ${/const SOLO_VIEWS[\s\S]*?\.map\(e => e\.view\);/.exec(script)[0]}
     ${/function soloView\(search\)[\s\S]*?\n}/.exec(script)[0]}
     return { SOLO_VIEWS, soloView };`)();
@@ -282,8 +282,11 @@ console.log('\n5. the wiring — view, route, ⌘K, first-run hand-off');
   // FOUND BY DRIVING: the Appearance editor's own prose said "Logs stays reachable
   // from ⌘K", which stopped being the whole truth the moment Help joined `always`.
   // Shipped copy that is quietly incomplete is the same defect class as stale help.
-  ok(/except Logs and Help, which stay reachable from ⌘K/.test(script),
-     'the Customize dialog names BOTH always-reachable rows, not just Logs');
+  // …and WIDENED again at S32, when `api` became the third `always` entry. The defect
+  // class is the point: shipped copy that is quietly incomplete rots the same way
+  // whether it names one row too few or two.
+  ok(/except Logs, Help and API, which stay reachable from ⌘K/.test(script),
+     'the Customize dialog names ALL the always-reachable rows, not just Logs');
 
   // FIRST-RUN (roadmap §2.4): one line on the existing tour, not a rebuilt tour.
   const tour = /const TOUR = \[[\s\S]*?\n\];/.exec(script)[0];

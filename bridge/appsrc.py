@@ -112,6 +112,12 @@ FILES: tuple[str, ...] = (
     # test requires FILES to equal the app layer on disk both ways, and a module missing
     # from this view makes every `X not in APP_SOURCE` assertion about it pass VACUOUSLY.
     "core/ggufhdr.py",
+    # The LOCAL API ACCESS lane (ledger S32), appended by the same rule. Registered
+    # here the moment it was created: a module on disk and missing from this tuple is
+    # invisible to every source-text assertion in the gate, and this lane's NEGATIVE
+    # assertions are the ones that matter most (no key value in /api/status, no key
+    # value in any log line) — exactly the ones that would pass vacuously.
+    "routers/apikeys.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

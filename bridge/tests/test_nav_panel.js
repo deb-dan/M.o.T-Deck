@@ -165,8 +165,8 @@ console.log('registry');
   });
   ok(M.navEntry('logs') && !M.navEntry('logs').view && !M.navEntry('logs').tab,
      'Logs is a dialog: no view, no tab');
-  ok(M.NAV_SIDEBAR_ONLY.join() === 'logs,help',
-     '…and the sidebar-only set is Logs + Help (v1.5.27)');
+  ok(M.NAV_SIDEBAR_ONLY.join() === 'logs,help,api',
+     '…and the sidebar-only set is Logs + Help + API (S32)');
   // HELP (roadmap §2.4). The entry that broke the old shape of these assertions: it is
   // the first registry entry that is a REAL VIEW and still sidebar-only, so "no tab"
   // can no longer be inferred from "no view".
@@ -177,7 +177,7 @@ console.log('registry');
     ok(!!h && !h.prefersTab, '…so a click can never be handed to the shell');
     ok(M.navCanShow('help', 'sidebar') && !M.navCanShow('help', 'topbar'),
        '…and the model refuses to put it on the strip');
-    ok(M.NAV_ALWAYS.join() === 'logs,help',
+    ok(M.NAV_ALWAYS.join() === 'logs,help,api',
        'the `always` set is a NAMED list, mirroring nav.py (it was an inline id test)');
   }
   ok(!M.navCanShow('logs', 'topbar') && M.navCanShow('logs', 'sidebar'),
@@ -213,7 +213,9 @@ console.log('defaults');
   // history and is Debi's own ruling: `music` and `compose` were two rows for one job,
   // and the surviving row (id `compose`, labelled Music) sits where Music sat. Classic
   // is not lost — it is behind that page's header switcher.
-  ok(ws.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+  // …and the S32 slice adds `api` at the tail, directly after Help, by Help's own
+  // upgrade rule. Still an ADDITION only: no existing row changed position.
+  ok(ws.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help,api',
      'the workspace rail is today\'s order with ONE Music row: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
@@ -462,8 +464,10 @@ console.log('render (executed)');
   // ⚠️ WIDENED (not weakened) at the comfy-nav slice, in step with the defaults fence
   // above: this one proves the rail actually RENDERS what the model declares, so the
   // two literals must move together or the Generate row is declared but never drawn.
-  ok(rows.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help',
+  ok(rows.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help,api',
      'with NO saved layout the workspace rail renders ONE Music row: ' + rows.join(','));
+  ok(rows.indexOf('api') === rows.indexOf('help') + 1,
+     '…and API is DIRECTLY under Help (S32: appended in place, nothing arranged moves)');
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),
@@ -502,8 +506,11 @@ console.log('render (executed)');
   // one. The Music row is now a LANE (its own page in its own tab), and no lane has ever
   // been peekable: there is no in-panel view to borrow. Stated rather than left to be
   // discovered, because "the overlay lost an entry" looks like a regression otherwise.
-  ok(peeks.join(',') === 'caps,help,models',
-     'the ⧉ overlay trigger is on Models / Capabilities / Help: ' + peeks.join(',')
+  // ⚠️ `api` JOINS AT S32 for Help's exact reason, sharpened: "what is the base URL
+  // again" and "I need a key for this app's provider form" are asked WHILE standing in
+  // another surface, and the answer is two chips and a copy button.
+  ok(peeks.join(',') === 'api,caps,help,models',
+     'the ⧉ overlay trigger is on Models / Capabilities / Help / API: ' + peeks.join(',')
      + ' — Help is in because "how does conv mode work" is a question you ask WHILE '
      + 'doing the thing, and it is read-only prose with no live state to borrow');
   for (const no of ['chat', 'mc', 'logs', 'aider', 'loffice']) {

@@ -101,13 +101,18 @@ def test_registry():
     #
     # ⚠️ THIS ASSERTION WAS `logs` ALONE UNTIL v1.5.27, AND IT IS WIDENED, NOT WEAKENED.
     # The point of it is that an exemption must be DELIBERATE, so the check is still a
-    # closed list — it just names two entries now, and each one's argument is written
-    # at its registry line. A third `always` still fails here until somebody comes and
+    # closed list — it just names three entries now, and each one's argument is written
+    # at its registry line. A FOURTH `always` still fails here until somebody comes and
     # makes the case for it in this comment.
-    for eid in ("logs", "help"):
+    #
+    # `api` joined at ledger S32. Its case, in one line: the API page is a REFERENCE
+    # surface (base URL, keys, log) that you consult and leave, so it has no tab home —
+    # and ⌘K "API keys" is what makes hiding its row a safe choice rather than a way to
+    # lose the only place a leaked key can be revoked.
+    for eid in ("logs", "help", "api"):
         ok(nav.entry(eid)["bars"] == ("sidebar",), f"{eid} is sidebar-only")
         ok(nav.entry(eid).get("always") is True, f"{eid} is declared always-reachable")
-    ok({e["id"] for e in nav.NAV_ENTRIES if e.get("always")} == {"logs", "help"},
+    ok({e["id"] for e in nav.NAV_ENTRIES if e.get("always")} == {"logs", "help", "api"},
        "…and those two are the ONLY ones (an exemption must be deliberate)")
     # ⚠️ WIDENED AT THE MUSIC-CONSOLIDATION SLICE, NOT WEAKENED: `bars` may now be
     # EMPTY, which says "this build knows the entry and NO bar may hold a row for it".
@@ -598,15 +603,15 @@ def test_wiring():
        f"the panel's NAV_ENTRIES ids == bridge/nav.py's NAV_IDS ({sorted(set(pids))})")
     ok(f"const NAV_TOPBAR_MAX = {nav.NAV_TOPBAR_MAX};" in PANEL,
        "the panel mirrors the same pin cap")
-    ok("const NAV_SIDEBAR_ONLY = ['logs','help'];" in PANEL,
-       "…and the same sidebar-only set (logs + help)")
+    ok("const NAV_SIDEBAR_ONLY = ['logs','help','api'];" in PANEL,
+       "…and the same sidebar-only set (logs + help + api)")
     # THE `always` SET, mirrored. Until Help arrived the panel's validate carried a
     # hardcoded `e.id === 'logs'`, which is precisely how a second exception gets added
     # on one side only — so both sides now NAME the list and this compares them.
-    ok("const NAV_ALWAYS = ['logs','help'];" in PANEL,
+    ok("const NAV_ALWAYS = ['logs','help','api'];" in PANEL,
        "…and the same `always` set, as a NAMED list rather than an inline id test")
-    ok(sorted(e["id"] for e in nav.NAV_ENTRIES if e.get("always")) == ["help", "logs"],
-       "nav.py's `always` entries are exactly logs + help")
+    ok(sorted(e["id"] for e in nav.NAV_ENTRIES if e.get("always")) == ["api", "help", "logs"],
+       "nav.py's `always` entries are exactly logs + help + api")
     ok("if (NAV_ALWAYS.indexOf(e.id) >= 0) continue;" in PANEL,
        "…and the panel's validate reads that list instead of naming one id")
     for bar, const in (("sidebar", "NAV_DEFAULT_SIDEBAR"), ("topbar", "NAV_DEFAULT_TOPBAR")):

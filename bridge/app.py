@@ -226,7 +226,11 @@ _LANES = (
     "routers.memory",
     # …and the Odysseus VISION SHIM (v1.5.33) by the SAME rule, a fourth time: it is
     # new, it separates no pair of neighbours, and it costs only where
-    # /api/ody/vlshim/* appears in /openapi.json.
+    # /odyvision/v1/* appears in /openapi.json. (⚠️ THE PATH IN THIS COMMENT WAS
+    # WRONG until S33/F1: it read /api/ody/vlshim/*, the namespace this slice
+    # ABANDONED — a base under /api makes Odysseus classify the endpoint as native
+    # Ollama and the wiring dies silently. bridge/routers/odyvision.py:84-102 is the
+    # whole story, and it is the exact wrong turn a reader was being aimed at.)
     "routers.odyvision",
     # …and the ComfyUI GENERATE SURFACE (S1) by the SAME rule, a fifth time: new, it
     # separates no pair of neighbours, and it costs only where /comfy and /api/comfy/*
@@ -252,6 +256,10 @@ _LANES = (
     # the same two reasons: `_Facade.__setattr__` only reaches the modules built from
     # THIS tuple, and the facade must answer for its top-level names.
     "core.ggufhdr",
+    # …and the LOCAL API ACCESS lane (ledger S32) by the SAME rule, an eighth time:
+    # new, it separates no pair of neighbours, and it costs only where /api/apikeys*
+    # and /api/apilog appear.
+    "routers.apikeys",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

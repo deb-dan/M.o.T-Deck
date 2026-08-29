@@ -454,6 +454,54 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
+## API — letting other apps use your model
+
+MOT Deck's model runs an OpenAI-compatible server on your own machine, and the **API**
+row in the sidebar is where you point other apps at it. Four things live there.
+
+- **The address.** One line, with a Copy button next to it — usually
+  `http://127.0.0.1:6767/v1`. That is what an app's *Add provider* form calls the base
+  URL, the API URL or the host. The `/v1` on the end is deliberate: most apps append
+  `/chat/completions` themselves. Beside it, two chips say whether the runner is
+  **Serving**, still **Loading**, or off, and which model it is serving.
+- **What it serves.** Under the address sits a line like *4 routes served · 2 need a
+  launch flag*. Click it and it opens into the list of what an app can actually call,
+  each with a sentence saying what it is FOR — `/v1/chat/completions` is the one almost
+  every app uses, `/v1/models` fills their model dropdown, and so on. Two entries —
+  `/v1/embeddings` and `/v1/rerank` — are listed even though they do **not** work: they
+  are real addresses that answer with an error, because this model is loaded for chat
+  and those two need their own switch at startup. They are shown rather than hidden on
+  purpose: an app pointed here for embeddings fails with a message that blames the
+  address, and this is the only place you could find out why.
+- **Keys.** Give a key a name — *Goose UI*, *OpenCode*, *the laptop* — and press
+  **Create key**. The key is shown **once**, with a Copy button; paste it straight into
+  that app's provider form. It is never shown again, and the list afterwards shows only
+  the name, four characters and the date, which is enough to tell one row from another.
+  **Revoke** takes two clicks: the first arms it, the second does it.
+- **Requests.** The chips at the top are the runner's own totals since it started —
+  every request it has served, whoever made it. The table under them is one row per
+  turn for MOT Deck's own lanes: time, lane, model, tokens in and out, and how long it
+  took. A turn with no measured speed shows **—** rather than a made-up zero.
+
+**One thing to know, and the page says it too: a new or revoked key takes effect when
+the runner restarts.** The engine reads its key file once, at startup, and there is no
+way to tell it to re-read — so until you restart, a fresh key does not work yet and a
+revoked one still does. The page shows *Restart to apply* with a **Restart runner**
+button next to it whenever that is true; the runner reloads in a few seconds.
+
+- **Why the table does not show everything.** Apps like Goose and OpenCode talk to the
+  runner directly rather than through MOT Deck, so there is nothing for us to log
+  per request — the engine keeps no request history. Their traffic is real and it is
+  counted, in the totals chips; it just has no row of its own. The page states that
+  rather than letting a short table imply a quiet afternoon.
+- **The key already in `harness.yaml` still works, and nothing changed for it.** It is
+  listed as *Harness built-in*: it is what MOT Deck itself uses, it is never shown here,
+  and it cannot be revoked from this page — edit `harness.yaml` if you want it changed.
+- **Keys are stored on your machine only**, in `data/api_keys.json` and
+  `data/api_keys.keys`, both readable only by you. Nothing here ever leaves the machine.
+
+---
+
 ## Window and layout
 
 - **The tab strip holds twelve tabs: nine you pin, then three that follow you.** The

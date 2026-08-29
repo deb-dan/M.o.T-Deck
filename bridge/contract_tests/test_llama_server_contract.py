@@ -148,3 +148,161 @@ def test_start_component_ungated_block_has_not_grown_silently():
         "scripts/start_component.sh now passes these UNGATED runner flags that this "
         f"contract does not check: {sorted(unknown)}. Add them to UNGATED so a pin "
         "bump that removes one still trips here.")
+
+
+# ══ 3. NAMED API KEYS — the --api-key-file contract (ledger S32) ══════════════════
+# MEASURED at b10662 on 2026-08-29 with a scratch llama-server on :6799 (the tester
+# launched and reaped it), not read from upstream docs. The full record lives in
+# bridge/routers/apikeys.py's header; these are the facts start_component.sh's runner
+# arm and the API page are BUILT on, so each one is pinned at the seam it can break:
+#
+#   F1  --api-key-file exists; one key per line; `#` lines are comments.
+#   F2  it COMBINES with --api-key (the accepted set is the union) — which is the only
+#       reason the harness-local built-in key survives this feature untouched.
+#   F3  there is NO hot-reload: the file is read once, at argument-parse time. Adding a
+#       key to a running server does not admit it; removing one does not revoke it.
+#       Mint AND revoke therefore bind at the next runner start, and the panel says so.
+#   F4  --metrics is off by default (GET /metrics → 501 without it).
+#   F5  a --api-key-file that CANNOT BE OPENED is a FATAL ARGV ERROR — llama-server
+#       prints `error while handling argument "--api-key-file"` and exits before
+#       loading anything. So the launch arm must never pass the flag for a file that
+#       is not there, or a missing key file takes the whole model lane down.
+#
+# F2 and F3 are behavioural and need a loaded model to re-measure, which a gate run
+# cannot afford; what IS re-checked here every run is the surface they ride on (the
+# flags, their documented format, F5's fatality) plus the seam in our own tree. If the
+# --help wording for --api-key-file ever changes, RE-MEASURE F2 and F3 before shipping.
+KEYFILE_DOC = "one per line"
+
+
+def test_api_key_file_flag_and_its_documented_format():
+    """F1. The format claim is not ours — it is the binary's own --help sentence, and
+    bridge/routers/apikeys.py generates a file in exactly that shape."""
+    txt = _help()
+    if txt is None:
+        return
+    assert "--api-key-file" in txt, (
+        "llama-server dropped --api-key-file. Named API keys (MOT Deck -> API) are "
+        "delivered to the runner through it and there is no other way in at this pin: "
+        "every minted key would silently stop working. Do not move the pin until "
+        "start_component.sh has another route.")
+    assert "--metrics" in txt, (
+        "llama-server dropped --metrics; the API page's totals — the ONLY visibility "
+        "we have into traffic from apps that call the runner directly — come from "
+        "GET /metrics, which is 501 without that flag.")
+    seg = txt.split("--api-key-file", 1)[1][:400]
+    assert KEYFILE_DOC in seg and "comment" in seg, (
+        "--api-key-file no longer documents 'one per line' with hash comments. "
+        "bridge/routers/apikeys.py WRITES that format (a two-line `#` header plus one "
+        "key per line) — re-measure the parser before moving the pin, and re-measure "
+        "F2 (union with --api-key) and F3 (no hot-reload) while you are there.")
+
+
+def test_a_missing_key_file_is_fatal_so_the_launch_arm_must_guard_it():
+    """F5, MEASURED HERE rather than asserted from memory: it costs one exec and no
+    model. `--api-key-file <absent>` must be rejected at argument-parse time — that is
+    precisely why scripts/start_component.sh tests the file before passing the flag."""
+    if not BIN.is_file():
+        return
+    try:
+        r = subprocess.run([str(BIN), "--api-key-file",
+                            "/harness-no-such-key-file.txt", "--model",
+                            "/harness-no-such-model.gguf"],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return
+    out = (r.stdout or "") + (r.stderr or "")
+    assert "--api-key-file" in out and "failed to open" in out, (
+        "llama-server no longer refuses an unreadable --api-key-file. That is a "
+        "RELAXATION, not a break — but start_component.sh's guard was written for the "
+        "strict behaviour, so re-read the arm before relying on the new one.")
+
+
+def test_start_component_arms_the_key_file_and_the_metrics_flag():
+    """The seam in OUR tree, which is the half a pin bump cannot fix for us."""
+    if not START.is_file():
+        return
+    src = START.read_text(errors="replace")
+    assert 'KEYFILE="$ROOT_ABS/data/api_keys.keys"' in src, (
+        "the runner arm no longer points at data/api_keys.keys — that is the file "
+        "bridge/routers/apikeys.py generates, and nothing else delivers minted keys. "
+        "⚠️ It must be $ROOT_ABS (file scope, :7) and NOT $ROOT, which this script sets "
+        "PER-ARM and the runner arm never sets: under `set -u` that aborts the launch "
+        "before the model is touched and takes the whole model lane down (finding L2).")
+    assert '"$ROOT/data/api_keys' not in src, (
+        "the runner arm reads $ROOT again — see L2 above; it is unset in this arm")
+    assert '--api-key-file' in src and 'grep -q -- "--api-key-file"' in src, (
+        "the --api-key-file flag is no longer EVIDENCE-GATED against the binary's own "
+        "--help, so a pin that drops it would kill the launch instead of degrading")
+    assert '[[ -s "$KEYFILE" ]]' in src, (
+        "the runner arm passes --api-key-file without checking the file exists. F5: "
+        "an unreadable key file is a fatal argv error, so this takes the whole model "
+        "lane down the first time somebody deletes data/api_keys.keys.")
+    assert 'grep -q -- "--metrics"' in src, (
+        "--metrics is no longer gated/passed; the API page's totals go blank")
+    assert "data/api_keys.applied" in src, (
+        "the launch no longer stamps the applied key-set digest. F3: there is no "
+        "hot-reload, so WITHOUT that stamp the panel cannot tell a key that is live "
+        "from one that needs a restart — and would imply every minted key works "
+        "immediately, which is the LIE-TO-USER class this stamp exists to prevent.")
+    assert 'ARGS+=(--api-key "$R_KEY")' in src, (
+        "the harness-local built-in key is no longer passed as --api-key. F2 says the "
+        "two flags UNION, which is the whole reason named keys were additive; dropping "
+        "the built-in breaks the readiness poll and every internal caller.")
+
+
+def test_the_route_catalogue_matches_what_this_launch_actually_enables():
+    """THE API PAGE'S "not enabled" ROWS ARE A CLAIM ABOUT **OUR LAUNCH**, not upstream.
+
+    bridge/routers/apikeys.py::ENDPOINTS tells the user /v1/embeddings and /v1/rerank
+    answer 501 "because this launch does not enable them" — measured, 2026-08-29, by
+    POSTing `{}` at each path on the live runner and reading 501 apart from 400 (served)
+    and 404 (absent). That sentence stops being true the day somebody adds --embeddings
+    to the runner arm, and it would go on being SHOWN: a page telling a user a working
+    route is off is the LIE-TO-USER class, just pointing the other way.
+
+    The catalogue cannot be re-probed on a gate run — probing needs a loaded model and
+    writes one `got exception:` line into runner.log per path, which is log vomit aimed
+    at the log a user reads when the model misbehaves. So what is fenced here is the
+    half that lives in our tree and decides the answer."""
+    ep = ROOT / "bridge" / "routers" / "apikeys.py"
+    if not (ep.is_file() and START.is_file()):
+        return
+    src = START.read_text(errors="replace")
+    cat = ep.read_text(errors="replace")
+    for flag, path in (("--embeddings", "/v1/embeddings"), ("--reranking", "/v1/rerank")):
+        listed_off = f'"enabled_by": "{flag}"' in cat
+        passed = f"ARGS+=({flag})" in src or f'ARGS+=({flag} ' in src
+        assert not (listed_off and passed), (
+            f"scripts/start_component.sh now passes {flag}, so {path} IS served — but "
+            f"bridge/routers/apikeys.py::ENDPOINTS still lists it as needing that flag, "
+            f"and the API page still shows it off. Set `served: True` and drop "
+            f"`enabled_by`, or the page lies about a route that works.")
+    assert '"path": "/v1/chat/completions"' in cat, (
+        "the route catalogue no longer lists /v1/chat/completions. It is the route every "
+        "provider form actually calls, and the API page's Endpoints section is the only "
+        "place a user is told what this address serves.")
+
+
+def test_the_applied_digest_recipe_matches_on_both_sides():
+    """The shell computes the stamp; the bridge compares against it. Two languages,
+    one number — so it is EXECUTED here rather than eyeballed. A drift means the panel
+    says 'restart the runner' forever, or (worse) stops saying it when it should."""
+    import hashlib
+    import subprocess as sp
+    import tempfile
+    keys = ["mot-bbb", "mot-aaa"]
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "k"
+        p.write_text("# header\n\n" + "\n".join(keys) + "\n")
+        shell = sp.run(["sh", "-c",
+                        "grep -v '^[[:space:]]*\\(#\\|$\\)' \"$1\" | LC_ALL=C sort "
+                        "| shasum -a 256 | cut -d' ' -f1", "sh", str(p)],
+                       capture_output=True, text=True).stdout.strip()
+    h = hashlib.sha256()
+    for k in sorted(keys):
+        h.update(k.encode()); h.update(b"\n")
+    assert shell == h.hexdigest(), (
+        "scripts/start_component.sh's applied-digest recipe and "
+        "bridge/routers/apikeys.py::digest() no longer agree "
+        f"({shell} vs {h.hexdigest()})")

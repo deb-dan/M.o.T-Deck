@@ -137,6 +137,28 @@ NAV_ENTRIES = (
     # `always` for exactly Logs' reason: ⌘K ("Help") reaches it whatever the sidebar
     # says, so hiding the row has to be allowed to be a real choice.
     {"id": "help",        "kind": "view",      "bars": ("sidebar",), "always": True},
+    # API (ledger S32) — the local API ACCESS surface: the base URL an app's own
+    # Add-Provider form wants, the named keys it consumes, and the request log.
+    #
+    # ⚠️ SIDEBAR-ONLY, AND NOT `tab_only` EITHER — v1.5.60's Music lesson, applied
+    # BEFORE the mistake rather than after it. `tab_only` let Music Classic into the
+    # last-three window and the ⋯ menu, where one click re-created the tab the ruling
+    # had just removed; Debi saw it standing on her strip within the hour. This entry
+    # is therefore declared with `bars: ("sidebar",)` and NOTHING else: `can_tab` is
+    # False, `mru_touch` refuses it, the ⋯ menu never lists it and the strip can never
+    # draw it. Debi asked for "an Unsloth-style API page, like Capabilities, only on
+    # the side panel" — the shape she named is Help's, not Capabilities' (`caps` is
+    # tab-eligible), so the fence is written against the shape and not the example
+    # (doctrine 8b: an example is the floor, not the boundary).
+    #
+    # It is a REFERENCE surface for the same reason Help is: you come here to copy a
+    # base URL or mint a key, paste it into another app, and leave. It is not a
+    # workspace you keep a tab on, and the strip is at 11 of 12 pins besides.
+    #
+    # `always` for exactly Logs' and Help's reason, and it is load-bearing here too:
+    # ⌘K ("API keys") reaches it whatever the sidebar says, which is what makes hiding
+    # the row a safe choice rather than a way to lose the only revoke button.
+    {"id": "api",         "kind": "view",      "bars": ("sidebar",), "always": True},
     {"id": "odysseus",    "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "hermes",      "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "voicestudio", "kind": "component", "bars": ("sidebar", "topbar")},
@@ -168,6 +190,13 @@ DEFAULT_SIDEBAR = (
     ("aider", True), ("goose", True), ("gooseui", True),
     ("loffice", True), ("caps", True), ("logs", True),
     ("help", True),
+    # API (S32) — appended directly after Help by Help's OWN upgrade rule, and for the
+    # same reason it worked there: `normalize` appends a known id the caller omitted, so
+    # an EXISTING nav.json gains this row at the tail of its sidebar list, which renders
+    # in the Workspace group directly under Help (everything between `logs` and the tail
+    # of a saved layout is a COMPONENT, and renderSidebar draws components into their
+    # own group). No `v` bump, no migration, nothing anybody arranged moves.
+    ("api", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
 )

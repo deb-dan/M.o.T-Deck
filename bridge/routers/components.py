@@ -14,7 +14,7 @@ from ..core.events import publish
 from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
 from ..core.modelid import _live_model_id, _runner_engine
-from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg
+from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg
 from .models import opencode_tools_warning
 from .nav import nav_gen
 from .sampling import _record_load_launch
@@ -1099,7 +1099,48 @@ def stop(name: str) -> JSONResponse:
         (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
         if refused:
             return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)
-        return JSONResponse({"ok": True})
+        # ⚠️ WAIT FOR THE PORT TO ACTUALLY RELEASE BEFORE SAYING THE STOP IS DONE.
+        # THE BUG THIS CLOSES (found by walking the S32 API page's own Restart button,
+        # 2026-08-29, reproduced on the live stack): restart() is stop()-then-start(),
+        # and start()'s background thread asks `_running_sync` FIRST. `_running_sync`
+        # for the runner is "is anything LISTENING on :6767". SIGKILL returns the
+        # instant the signal is delivered, not when the kernel has torn the socket
+        # down — so start() read the dying listener as "already running", set PROV to
+        # `on / already running`, skipped the launch, and left the runner DOWN while
+        # /api/status reported it up. That is the LIE-TO-USER class: :6767 dead, the
+        # card green. Every component's Restart rides this route, so it was never only
+        # the API page's button.
+        #
+        # THE FIX IS THIS FUNCTION'S OWN EXISTING PATTERN — the non-runner branch below
+        # has waited for the listener to release since the hermes stale-pid incident
+        # (~1.5s in 0.25s ticks). The runner branch was the one arm that skipped it.
+        #
+        # ⚠️ BUT IT WAITS ON `_port_alive_sync`, **NOT** ON `_port_listener_pids`, AND
+        # THAT DIFFERENCE IS THE WHOLE BUG. Draft one of this fix used the lsof-based
+        # `_port_listener_pids` the branch below uses, shipped, and the runner STILL
+        # came back down — measured, with a 100ms port sampler running across a live
+        # restart. Two liveness oracles disagree for a few milliseconds after a
+        # SIGKILL: lsof stops listing the process as soon as it is reaped, while a TCP
+        # connect to the port can still succeed while the kernel finishes tearing the
+        # socket down. stop() was waiting on the first and start() was asking the
+        # second, so stop() returned "released" into a window where `_running_sync`
+        # still answered "alive". A wait is only a wait if it consults the ORACLE THE
+        # NEXT STEP WILL USE; anything else is a race with extra steps. Hence
+        # `_port_alive_sync` here, which is literally what `_running_sync(runner)`
+        # calls.
+        #
+        # If the port is STILL answering after the budget we report it rather than
+        # returning a serene ok: a stop that did not stop must not read as success,
+        # and a second runner launched on top of a live one is the worse failure.
+        for _ in range(12):
+            if not _port_alive_sync(int(port)):
+                return JSONResponse({"ok": True})
+            time.sleep(0.25)
+        return JSONResponse(
+            {"ok": False,
+             "log": f"port :{port} still answers 3s after the listener was killed — "
+                    f"refusing to start a second runner on top of it"},
+            status_code=409)
     notes = []
     pidf = ROOT / "data" / f"{name}.pid"
     if pidf.exists():

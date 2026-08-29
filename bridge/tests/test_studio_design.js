@@ -433,7 +433,73 @@ console.log('2. Editorial does not pay for the second design');
                bridge/tests/test_dep_signal.py §7 walks the affordance and EXECUTES the
                renderer's inputs, and routers/models.py::api_pin_model carries the
                v1.5.57 "never silently rewrite the intent record" reasoning in full. */
-  const CEILING = 843000;
+  /*     871000  THE LOCAL API ACCESS SURFACE (S32, 2026-08-29) — +24.7KB, and per the
+               protocol, what it bought.
+               ⚠️ FIRST, AN HONEST CORRECTION TO THIS LOG: index.html was ALREADY 845578
+               bytes when this slice opened, i.e. 2.5KB past the 843000 above, so this
+               fence had been red before this change and the previous entry's number was
+               never true of the file that shipped with it. Recorded here and ledgered as
+               its own row rather than quietly absorbed into this raise.
+               NEW BEHAVIOUR, all of it, and none of it reachable before: a whole VIEW
+               (#view-api) with three sections — the base URL with a copy affordance, the
+               named-key mint/revoke surface, and a live request log — plus the one-time
+               mint reveal, the armed two-step revoke, the pending-restart affordance and
+               the poll lifecycle. Before this slice the ONLY key in the product was a
+               line in harness.yaml that had to be copied by hand into every app's
+               provider form, revocable only by editing that file and restarting.
+               THE CSS HALF is nine rules under one heading — `.say`, `.api-code`,
+               `.api-line`, `.api-reveal`, `.api-tbl` (+2 cell rules) and `.api-wrap` —
+               TOKENS ONLY, no hex and no rgba literal anywhere in the block (the
+               --on-wash lesson), so the four theme packs and Studio's two palettes reach
+               every one of them by swap. `.say` is declared unscoped on purpose: the
+               sentence rule is the product's, not this page's.
+               THE PROSE HALF is where this ceiling's own note says the argument belongs —
+               NOT here. bridge/routers/apikeys.py carries the measured llama.cpp contract
+               (five facts, run against our own binary), bridge/tests/test_api_view.js
+               (124 checks) EXECUTES every state of the three renderers against the
+               sentence rule and the chip grammar, and bridge/tests/test_api_keys.py
+               (59 checks) owns the store and the negative secret proofs. What is left in
+               the page is the per-decision minimum: why a duration can be absent, why the
+               reveal is one-time, why `pending` is a measured fact rather than a flag we
+               set, the focus rule that stops the poll eating a keystroke, and — the one
+               paragraph that had to be here — live finding L3: `onclick="f("x")"` ENDS
+               the attribute at the second quote and leaves the control silently inert,
+               which is why `apiArg()` is a named function and not an inline stringify;
+               and live finding L4, the shared restart route's stop/start race, whose
+               recovery loop lives here while the fix itself is ledgered against the
+               route every component's Restart shares.
+         876000  THE ROUTE CATALOGUE (S32, second sitting) — +5.3KB, and what it bought.
+               The binding AI-friendly-API checklist (docs/research/2026-08-29-ai-
+               friendly-api-principles.md) asks an API surface for SEMANTIC
+               DOCUMENTATION — meaning and intended use, not a spec — so the API page
+               gained an Endpoints zone: one sentence per route saying what it is FOR,
+               with the two that EXIST AND ANSWER 501 listed rather than hidden, chipped
+               with the launch flag that would enable them. That row is the whole reason
+               the zone earns its bytes: an app pointed at this address for embeddings
+               fails with an error that blames the address, and before this there was
+               nowhere to find out why.
+               NEW BEHAVIOUR: apiEndpointsHtml() (a fourth pure renderer), a one-time
+               fetch of /api/apiendpoints kept off the five-second poll, the open-state
+               preservation that stops a poll snapping the disclosure shut under the
+               user's hand, and the log's counting line ("n of N turns", and honestly
+               just "n turns" when N could not be counted).
+               ⚠️ IT IS A CLOSED <details>, WHICH IS THE POINT AND NOT A DETAIL. Six
+               route sentences cannot stand on a page whose ordinary-day budget is ONE,
+               so this is a click-to-expand zone in the panel's own disclosure grammar —
+               glanceable summary always, prose only when asked for. The page audit in
+               test_api_view.js learned the matching rule (a CLOSED details does not
+               count; an `open` one does, so the hatch cannot smuggle prose past the
+               budget), and the daily-state assertion still measures exactly one standing
+               sentence.
+               THE CSS HALF is five rules, tokens only, no hex and no rgba literal — the
+               --on-wash lesson held. THE PROSE HALF stayed out of the page as this
+               ceiling's protocol requires: the measurement that produced every catalogue
+               row (400 = served · 501 = not enabled · 404 = absent, probed live) and the
+               reason it is a TABLE rather than a live probe (probing writes one
+               `got exception:` line into runner.log per path per call) live in
+               bridge/routers/apikeys.py; the fences live in test_api_keys.py (77) and
+               test_api_view.js (166). */
+  const CEILING = 876000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.
