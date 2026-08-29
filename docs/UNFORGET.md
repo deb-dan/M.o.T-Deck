@@ -41,6 +41,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S11 | ⚪ SOMEDAY | opencode_tools_warning should take a lane label so goose+OpenCode share one decision table | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 1 file | Trivial | `@status:open` |
 | S12 | 🔵 NEXT | main.swift lacks the runJavaScriptAlertPanel/Confirm/TextInput WKUIDelegate trio — alert()/confirm() are SILENT NO-OPS shell-wide (class already burned comfy.html + is why the office delete-confirm needed custom UI) | 🟡 HIGH | 🟢 Medium | 🟢 Medium | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` needs recompile+re-sign via ship.sh |
 | S13 | 🟡 LATER | /api/comfy/graph 404s for gallery items ingested before the graph field existed — dead "graph" button on old rows; backfill or hide-on-absent | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 1 file | Trivial | `@status:open` |
+| S14 | 🔵 NEXT | Full "Goose UI" slice after the embed spike lands: tab/nav wiring for the embedded surface + rename the PTY lane's labels to "Goose CLI" (Debi's naming ruling 2026-08-29); both lanes coexist | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:blocked` on the spike (in flight) + Debi seeing it |
 
 ### Detail - Session spillover
 
