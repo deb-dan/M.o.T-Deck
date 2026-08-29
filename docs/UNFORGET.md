@@ -208,14 +208,100 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | U12 | ✅ CLOSED | Hermes Start arm re-asserted the managed `model.*` keys on EVERY Start (a model picked INSIDE Hermes was reset by the next restart) and rewrote `mcp_servers.loffice` unconditionally | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:closed` v1.5.52 — see Detail |
 | U13 | 🟡 LATER | Odysseus's picker now offers all 16 registry models while the runner has ONE loaded, and llama.cpp IGNORES the request's `model` field (MEASURED: a bogus id got a normal completion from the resident model). Odysseus itself labels the substitution (`requested -> actual` on the message header), so nothing lies — but nothing OFFERS to load the picked model either. Destination: a loaded/not-loaded hint, or a load-on-select hand-off to MOT Deck's runner | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` OpenCode's picker has had the same property since its own slice |
 | U14 | 🟡 LATER | goose's NAMED provider (v1.5.49) inherits U13's class and adds one of its own: (a) SAME AS U13 — its picker now offers all 16 registry models while the runner has ONE loaded, and nothing offers to load the picked one; (b) goose's declarative model object has exactly ONE identifier slot (`name`), which is both the picker LABEL and the wire value, so our 6 MLX models read in goose's picker as their absolute filesystem paths. Correct on the wire, ugly on screen. Destination: upstream has no alias field — either a short label upstream (an issue/PR) or the load-on-select hand-off from U13, which makes the whole list honest at once | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` same root as U13 — fix them together |
-| U15 | 🔵 NEXT | Runner Failed card is a dead end when the pinned model's FILE is gone (LM Studio deleted the 27B; retry loops on 'not in registry' visible only in a terminal) — surface the start script's own stderr on the card ('model file missing at <path>'), offer Models + rescan; registry rescan should prune/flag dead paths proactively (fit advisor already renders No estimate for them) | 🟡 HIGH | ⚪ Low | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Small | `@status:open` found live 2026-08-29 when Debi's retry failed silently |
-| U16 | 🔴 THIS | LIVE 2026-08-29: a bridge-side prober hits the runner every ~2s with a wrong/missing API key (b10662 auth contract violated at SOME site while modelid.py's is correct) -> the switch watcher believed the 401s, declared FAILED, claimed 'reverted' to a model whose FILE IS DELETED (a revert that cannot be true), and the Failed card is STICKY while ps+curl prove the process healthy and serving | 🔴 CRITICAL | 🟢 Medium | 🔴 Critical | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:in-progress` routed to the status-honesty builder with repro; echo = sweep EVERY :6767/:6768 probe site for key handling |
-| U17 | 🔵 NEXT | Failed card renders RAW LOG LINES verbatim ('2.49.854.040 W srv operator()…') — reasons must be rendered, never log vomit (chip-first grammar applies to error surfaces too) | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:in-progress` same builder, fix 1 |
-| U16 | 🟡 LATER | SAME CLASS AS U13/U14 (Odysseus, goose), now on Hermes and WORSE THERE: its picker offers all 16 registry models while the runner has ONE loaded, llama.cpp ignores the request `model` (re-MEASURED on :6767 — a bogus id got a normal completion from the resident model), and unlike Odysseus, Hermes has NO requested→actual label: its usage line reports the model it ASKED for, so a mismatch is invisible in the UI. Our Start prints the honest line ("MOT Deck has X loaded — this turn is answered by THAT model"), which only a person reading the Start log sees. Destination is U13's: a loaded/not-loaded hint or load-on-select | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:open` fix U13 and U14 together — one runner fact, four pickers (Hermes, Odysseus, OpenCode, goose) |
+| U15 | ✅ CLOSED | Runner Failed card is a dead end when the pinned model's FILE is gone (LM Studio deleted the 27B; retry loops on 'not in registry' visible only in a terminal) — surface the reason on the card, offer Models + rescan, and flag dead paths before the next start fails | 🟡 HIGH | ⚪ Low | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Small | `@status:done-verified` 2026-08-29 — shipped with U16+U17 in one slice; walked live on the machine the incident happened on; closure pointer in the detail below |
+| U16 | ✅ CLOSED | LIVE 2026-08-29: a 2s wall of 401s in runner.log; the switch watcher believed them, declared FAILED, claimed 'reverted' to a model whose FILE IS DELETED, and the Failed card was STICKY while ps+curl proved the runner healthy and serving | 🔴 CRITICAL | 🟢 Medium | 🔴 Critical | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:done-verified` 2026-08-29 — ROOT-CAUSED (it is not a bridge poller: it is start_component.sh's own readiness `curl`, which sends no Authorization header — see U21) and all three user-visible lies fixed at the bridge; echo sweep of every :6767/:6768 probe site in the detail below |
+| U17 | ✅ CLOSED | Failed card renders RAW LOG LINES verbatim ('2.49.854.040 W srv operator()…') — reasons must be rendered, never log vomit (chip-first grammar applies to error surfaces too) | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:done-verified` 2026-08-29 — `components.start_failure_reason()` is the one humanizer; the raw tail stays behind View log |
+| U20 | 🟡 LATER | SAME CLASS AS U13/U14 (Odysseus, goose), now on Hermes and WORSE THERE: its picker offers all 16 registry models while the runner has ONE loaded, llama.cpp ignores the request `model` (re-MEASURED on :6767 — a bogus id got a normal completion from the resident model), and unlike Odysseus, Hermes has NO requested→actual label: its usage line reports the model it ASKED for, so a mismatch is invisible in the UI. Our Start prints the honest line ("MOT Deck has X loaded — this turn is answered by THAT model"), which only a person reading the Start log sees. Destination is U13's: a loaded/not-loaded hint or load-on-select | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:open` fix U13, U14 and U20 together — one runner fact, four pickers (Hermes, Odysseus, OpenCode, goose). ⚠️ RENUMBERED from U16 on 2026-08-29: the ledger briefly carried two U16 rows |
 | U19 | 🔵 NEXT | `scripts/start_component.sh` hermes arm still runs `pkill -f "hermes (dashboard|serve)"` before launching (line ~1508) — a KILL BY NAME, the process-kill rule Debi has been bitten by twice: it would close a standalone Hermes she is running herself. Pre-existing, deliberately NOT changed inside the S-ISO-3 slice (changing stop semantics mid-slice is its own risk); the cure is the pidfile + `_clear_port` ownership check both already present two lines below | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` echo-sweep the other arms in the same pass |
-| U18 | 🔵 NEXT | `harness.yaml runner.model` can DISAGREE with what the runner is actually serving (MEASURED 2026-08-29: the pin said a 27B whose file Debi had deleted — U15 — while llama-server was up with `--alias Parable-Qwen3-4B…`). Anything that treats the pin as "the loaded model" then states something untrue. FIXED IN ONE PLACE ONLY (the hermes arm now prefers the runner's own `/v1/models` answer and prints a note when they differ); the ECHOES are still open: `start_component.sh` opencode (:908) and voicestudio (:561) arms and `bridge/core/modelid.py` (:92, :192) all read the pin | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Small | `@status:open` root cause of the drift itself not found — the writer that should update the pin at load time is unproven |
+| U18 | 🔵 NEXT | `harness.yaml runner.model` can DISAGREE with what the runner is actually serving (MEASURED 2026-08-29: the pin said a 27B whose file Debi had deleted — U15 — while llama-server was up with `--alias Parable-Qwen3-4B…`). Anything that treats the pin as "the loaded model" then states something untrue. FIXED IN ONE PLACE ONLY (the hermes arm now prefers the runner's own `/v1/models` answer and prints a note when they differ); the ECHOES are still open: `start_component.sh` opencode (:908) and voicestudio (:561) arms and `bridge/core/modelid.py` (:92, :192) all read the pin | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Small | `@status:open` root cause of the drift itself not found — the writer that should update the pin at load time is unproven. **PARTIALLY ANSWERED by U15/U16 (2026-08-29):** one writer that caused it IS now known — `_do_switch`'s rollback, which reverted the pin onto a deleted model after a FALSE failure (fixed: it now verifies, and never reverts onto a model whose file is gone); and the drift is no longer INVISIBLE — `/api/status` publishes `pin_intent` beside `live_id` and the MOT Deck runner card says "serving X right now, but the pin points elsewhere". The remaining echoes (start_component.sh opencode :908 / voicestudio :561, modelid.py :92 :192) are untouched |
 
+| U21 | 🔴 THIS | **ROOT CAUSE OF U16, ONE LINE, NOT FIXED IN-SLICE.** `scripts/start_component.sh`'s llama.cpp readiness poll is `curl -sf -m 2 "http://127.0.0.1:${R_PORT}/v1/models"` (:377, and the same shape at :456 for MLX) with **no Authorization header** — while :256 launches llama-server WITH `--api-key "$R_KEY"`. Since b10662 made /v1/models require the key, that poll 401s for its ENTIRE budget: 90 tries × 2s = the 3-minute wall of `unauthorized: Invalid API Key` in runner.log and a non-zero exit for a runner that came up in 1.3s. The file's OWN comment at :211 documents exactly this regression — the fix never echoed into its own probe. NOT EDITED: another builder's WIP was mid-flight in that file (dispatch constraint). Fix: `-H "Authorization: Bearer $R_KEY"` on :377 (harmless on :456 too — MLX servers ignore a bearer they do not require) | 🔴 CRITICAL | ⚪ Low | 🔴 Critical | 🟠 Excellent | ⚪ 1 file | Trivial | `@status:open` **Verify-still-open:** `grep -n 'v1/models" >/dev/null' scripts/start_component.sh` — expect: still no `-H "Authorization`. The bridge now overrules the wrong exit code, so this is no longer USER-VISIBLE — it is still 3 wasted minutes and a log full of noise on every llama.cpp start |
+| U22 | 🔵 NEXT | The dependency banner's `open` action ALWAYS lands on MOT Deck, whatever `target` the bridge names (app/main.swift depAction: `tabs.firstIndex(where: { $0.id == panelId })`). So a need whose real fix is in the Models pane can only offer "Open MOT Deck", and the honest "Open Models" button exists on the panel card alone. Fix = one shell→panel deep link (evaluateJavaScript `showView(target)` after routeTab, or a `?view=` on the panel URL) so `target` means what it says | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` needs main.swift (recompile+re-sign) — deliberately NOT taken inside the U15 slice, which was bridge+panel only |
+| U23 | 🔵 NEXT | The fit advisor CRASHES on a GGUF whose `attention.head_count` is a PER-LAYER ARRAY instead of a scalar: `core/fit.py:419` does `int(hp.get("attention.head_count") or 0)` → `TypeError: int() argument must be … not 'list'`. MEASURED on Debi's own registry: `Laguna-XS-2.1-APEX-I-Compact` publishes 40 entries, values {48, 64}. `_fit_advice` swallows the exception, so the USER sees a silent "No estimate" rather than a lie — but the model gets no verdict at all, and `bridge/tests/test_fit_advisor.py` DIES at line 490, so ~150 later checks in that file never run. The sibling key two lines down already uses the `_as_list(...)` helper this needs | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` pre-existing, found by the U15 slice's suite run; NOT fixed there because it changes numeric verdicts in another builder's engine. **Verify-still-open:** `data/bridge-venv/bin/python bridge/tests/test_fit_advisor.py` — expect: TypeError at fit.py:419 |
 ### Detail - User-reported / observed
+- **U15 / U16 / U17** - ✅ CLOSED 2026-08-29 (v1.5.55 tree, one slice: RUNNER STATUS HONESTY).
+  *Was, in Debi's own words and in one afternoon:* she deleted the resident 27B's weights in LM
+  Studio; MOT Deck **stayed green** for a long time, the runner later **said Failed while still
+  printing that model's name** as though it existed, and **five Retry clicks failed silently** —
+  the honest sentence (`model … not in registry`, which start_component.sh also emits when the
+  FILE at a *registered* path is gone) lived only in a subprocess's stderr. Then she switched to
+  Parable-Qwen3-4B: llama-server loaded it in 1.3s and served it, the switch watcher declared
+  **FAILED and "reverted to" the deleted 27B** (a revert that could not be true), the card's
+  Failed **stuck** while `ps` and an authenticated `curl` both showed the process healthy, and
+  what reached the screen was `2.49.854.040 W srv operator(): unauthorized: Invalid API Key`.
+  **The root cause of the second half is ONE MISSING HEADER** — `scripts/start_component.sh`'s
+  own readiness poll (:377) has no `Authorization`, so on llama.cpp b10662+ it 401s for 90×2s and
+  reports failure for a runner that is up. That line was NOT edited (another builder's WIP was
+  mid-flight in the file); it is **U21**, and it is the last open piece.
+  **Closed by (bridge + panel only):**
+  1. `core/health.py` gains the app's second debounced verdict — `path_present()` (one `stat`,
+     `True|False|None`, mirroring start_component.sh's own dir-for-mlx / file-for-gguf rule) and
+     `file_state_track()` (**two strikes** before any claim, streaks reset by a recovery, a path
+     change or an `unknown`). Two strikes is the adversarial finding, not a nicety: `os.stat` on
+     a sleeping network mount answers ENOENT rather than raising, and accusing a user of deleting
+     a model they still have is the same lie class, one direction over.
+  2. `routers/components.py` — `start_failure_reason()` turns a start's output into ONE sentence
+     with ONE action (the raw tail still travels, and View log still shows it verbatim);
+     `LAST_START_FAIL` outlives the Retry that replaced it, so the reason no longer vanishes with
+     the attempt; `runner_model_view()` publishes `pin_intent` / `live_id` / `model_path` /
+     `model_file` / `model_note` on `/api/status`; `_provision` **verifies before believing** — a
+     non-zero exit for the runner is overruled only when the authenticated probe answers with
+     *the model that was pinned* (a bare truthiness check would have called a stale runner a
+     successful start — caught in the adversarial pass); a hung start is recorded rather than
+     freezing the card on "Starting…"; and `status()` **drops a `failed` overlay the moment the
+     component is observably running**, moving the sentence to `last_error` marked `stale`. Two
+     new dependency-banner states, `model-gone` and `model-unregistered`, replace the Start
+     button that could not work.
+  3. `routers/models.py` — `_do_switch`'s failure arm, rewritten under three rules: verify before
+     believing; **never roll the pin back onto a model whose file is gone** (say so and keep the
+     new pin instead); and lead with the sentence, not the log. Every `installed` row now carries
+     a debounced `file` state.
+  4. `panel/index.html` — the runner card labels the name as INTENT (`pinned X`) unless the runner
+     answers with it (`serving X`), carries a `.why` reason line, gains the amber
+     **"Online — model file gone"** state for a runner still serving an mmap'd file that no longer
+     exists, and offers **Open Models** + **Rescan models** (a trampoline into the Models pane's
+     EXISTING rescan — no second implementation). Models rows draw a `file missing` chip on the
+     bridge's debounced `gone`, and deliberately draw NOTHING for `checking`.
+  **THE ECHO SWEEP** (doctrine 6b — every site that probes :6767/:6768, for key handling against
+  the b10662 auth contract): `core/modelid.py::_runner_loaded_id` ✅ correct (sends the key, chosen
+  BY PORT so aux is covered) · `routers/chat.py:82` ✅ · `routers/ody.py:528` ✅ · `bridge/ooai.py`
+  ✅ (delegates to the probe) · `pty_aider.py` / `pty_goose.py` / `gooseui.py` ✅ (pass the key into
+  the child's env) · `core/procs.py::_port_alive` ✅ N/A (raw TCP, never HTTP, cannot 401) ·
+  `start_component.sh:1256` (hermes model probe) ✅ sends the bearer · **`start_component.sh:377`
+  ❌ THE ONLY OFFENDER → U21** · `start_component.sh:456` (MLX arm) ✅ correct today (those servers
+  have no auth) but should take the header too, for uniformity — noted in U21.
+  **WALKED LIVE**, on the machine the incident happened on, against real payloads: (J1) the
+  current state — `/api/status` now reports `pin_intent: Qwen3.6-27B…` beside
+  `live_id: Parable-Qwen3-4B…` and `model_file: unregistered`, and the card reads
+  *"Online — pinned model missing · serving Parable-Qwen3-4B-Claude-Fable-5-GGUF-Q4_K_M right now,
+  but the pin points elsewhere — …"* with Open Models + Rescan models; (J2) a real
+  `POST /api/components/runner/start` in a separate process against the real snapshot config and
+  registry, fed the incident's own stderr — the probe correctly REFUSED to swallow it (`serving
+  Parable… but the pin asks for Qwen3.6-27B… — this start really did fail`), `last_error` carried
+  the sentence, and no `failed` overlay reached the card because the runner is up; (J3) the
+  file-gone state on a SCRATCH registry entry (her real rows read-only, and re-checked: **zero**
+  of her 18 rows are claimed gone on one sample) — deletion → sample 1 `checking` (renders
+  nothing) → sample 2 `gone` → card sentence *"model file missing at … — pick another model"*,
+  banner *"Hermes needs the Runner, and the model the Runner is pinned to has no file left on
+  disk (…)"*, Models chip drawn. Card HTML rendered from each real payload through the shipped
+  `cardHTML` (including the regression case: a healthy runner is still plain "Online", pin label
+  and all).
+  **Gates:** `bridge/tests/test_dep_signal.py` §6 (125 checks — the two-strikes debounce, the
+  never-accuse-on-unknown rule, the sentence totality over junk input, the "a plain stopped runner
+  still offers Start" regression guard, and the renderer's contract) and
+  `bridge/tests/test_load_switch.py` (the three switch-watcher journeys, executed).
+  **Fences widened, with arguments:** `test_studio_design.js` CEILING 834000 → 840000 (the
+  argument is written into that file: ~3.5KB of code that removes four lies, two token-only CSS
+  rules, eight lines of prose, everything else moved to the test file) and
+  `test_model_settings.py`'s api_models source window 4000 → 6000 (the `file` field pushed two
+  key assertions past a crude window; the assertions still name their exact keys).
+  **Honest limits:** the runner was NEVER stopped during the walk — Debi's pin is currently a
+  deleted model, so a stop would have left her with no way back; the down-and-file-gone banner and
+  the Failed-card path were therefore proven on the REAL payload with `port_up` flipped, and by
+  executing `_provision`'s failure arm in a separate process, not by killing her runner. The
+  panel was rendered through node, not clicked in the app's WebKit (the Browser pane refused a new
+  tab in this session). Her `harness.yaml` pin is LEFT as the incident left it (the deleted 27B)
+  — the new card now says exactly that, in one sentence, with the button that fixes it.
 
 - **U12** - ✅ CLOSED 2026-08-29 (v1.5.52, the S-ISO-3 Hermes slice). *Was:* the hermes arm of
   start_component.sh text-patched `model.default/provider/base_url/api_key/context_length` on every

@@ -11,13 +11,172 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
 from ..core.events import publish
-from ..core.health import _health_track, _probe_timeout
+from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
 from ..core.modelid import _live_model_id, _runner_engine
 from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg
 from .models import opencode_tools_warning
 from .nav import nav_gen
 from .sampling import _record_load_launch
+
+
+# ══ RUNNER STATUS HONESTY (U15) ═════════════════════════════════════════════
+#
+# THE INCIDENT, IN FULL (Debi, live, 2026-08-29 — two halves, one root):
+#
+#   HALF 1. She deleted the resident 27B's weights in LM Studio. MOT Deck stayed GREEN
+#   (llama.cpp had it mmap'd and kept serving — true, but not the whole truth); the
+#   runner later stopped; the FAILED card still printed the model's name as if it
+#   existed; and five Retry clicks failed with the only honest sentence — "model … not
+#   in registry", which start_component.sh ALSO emits when the FILE at a registered
+#   path is gone — buried in a subprocess's stderr where no surface showed it.
+#
+#   HALF 2 (found while fixing half 1, and it is the same lie wearing a different hat):
+#   she switched to Parable-Qwen3-4B. llama-server loaded it in 1.3s and served it
+#   happily. The START SCRIPT nonetheless reported failure, because its readiness poll
+#   (start_component.sh's `curl -sf .../v1/models`, no Authorization header) has been
+#   401ing against every b10662 runner since that build made /v1/models require the key
+#   — 90 tries × 2s = a three-minute wall of "unauthorized: Invalid API Key" in
+#   runner.log and a non-zero exit for a runner that was up. On that false failure the
+#   switch watcher REVERTED harness.yaml's pin to the 27B whose file she had deleted —
+#   a revert that could not possibly work — and the card sat on a sticky Failed while
+#   `ps` and an authenticated curl both proved the process healthy.
+#
+# The general lesson, recorded in its general form: AN EXIT CODE IS A REPORT, NOT A
+# FACT. Where the app can observe the thing itself — a stat() for a file, an
+# authenticated probe for a server — the observation outranks the report, and any
+# claim we make to the user must be the observation. Everything below is that rule
+# applied three times: to the failure sentence, to the pin, and to the model's file.
+
+
+LAST_START_FAIL: dict = {}
+"""component -> {"at", "rc", "reason", "detail", "model", "path"} for the LAST start
+attempt that reported failure. Separate from PROV on purpose: PROV is an overlay that
+_provision().clear()s at the top of every run, and the reason a Retry failed must
+outlive the Retry that replaced it — that is precisely what Debi never got to see."""
+
+
+def _fail_note(name: str) -> "dict | None":
+    """The last recorded start failure for `name`, or None. Cheap dict copy."""
+    r = LAST_START_FAIL.get(name)
+    return dict(r) if isinstance(r, dict) else None
+
+
+def start_failure_reason(output: str, model: str = "", path: str = "",
+                         file_state: str = "") -> dict:
+    """PURE (unit-tested). A failed start's script output → the ONE sentence the card
+    shows, plus the one action that fixes it.
+
+    ⚠️ THIS EXISTS BECAUSE THE ALTERNATIVE SHIPPED AND WAS AWFUL. The switch modal used
+    to paste the raw tail, so what Debi actually read on screen was
+    `2.49.854.040 W srv    operator(): unauthorized: Invalid API Key` — log vomit that
+    names no cause, no file and no fix. The raw text is still carried (as `detail`, one
+    click away behind View log); what the CARD gets is a sentence.
+
+    `file_state` is health.file_state_track()'s debounced verdict for the pinned model's
+    path, and it is what lets the same "not in registry" stderr become two different,
+    both-true sentences: the entry is missing from data/models.json, or the entry is
+    fine and the FILE it points at is gone. Those want different fixes.
+
+    Returns {"text", "detail", "action", "target", "action_label"}; `target` is a PANEL
+    view id, and `action: "open"` never asks the bridge for anything."""
+    raw = (output or "").strip()
+    tail = raw[-1500:]
+    models_action = {"action": "open", "target": "models",
+                     "action_label": "Open Models"}
+
+    def out(text, **kw):
+        d = {"text": text, "detail": tail}
+        d.update(models_action)
+        d.update(kw)
+        return d
+
+    low = raw.lower()
+    who = model or "the pinned model"
+    if "not in registry" in low:
+        # start_component.sh emits ONE sentence for two different states — see its
+        # PYRESOLVE block: `ok = bool(m and path) and isfile/isdir(path)`. So a
+        # registered model whose file was deleted lands here too, and saying "not in
+        # your registry" about it would send the user to fix the wrong thing.
+        if file_state == "gone" and path:
+            return out(f"model file missing at {path} — pick another model")
+        if file_state == "unknown" and path:
+            return out(f"the runner could not read {path} — check the disk it is on, "
+                       f"or pick another model")
+        if path:
+            return out(f"“{who}” did not resolve on disk ({path}) — pick another model")
+        return out(f"“{who}” is not in your model registry — rescan, or pick another model")
+    if "runner.model not set" in low:
+        return out("no model is pinned — pick one in Models")
+    if "did not become ready" in low:
+        return out("the runner started but never answered its readiness probe — "
+                   "see the log for what it said",
+                   action="open", target="mc", action_label="Open MOT Deck")
+    if "no llama-server binary" in low or "not executable" in low:
+        return out("the runner binary is missing — run scripts/install_llamacpp.sh",
+                   action="open", target="mc", action_label="Open MOT Deck")
+    if "refusing to start the runner on" in low:
+        return out("the only llama-server on this machine belongs to another app and "
+                   "its build is not the one we are pinned to — run "
+                   "scripts/install_llamacpp.sh",
+                   action="open", target="mc", action_label="Open MOT Deck")
+    # Unknown failure: say the most specific TRUE line we have rather than invent one.
+    # An "ERROR:" line is the script's own summary; otherwise the last non-empty line.
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    err = next((ln for ln in lines if ln.startswith("ERROR:")), "")
+    pick = err[6:].strip() if err else (lines[-1] if lines else "")
+    return out(pick[:240] or "it failed without saying why — see the log",
+               action="open", target="mc", action_label="Open MOT Deck")
+
+
+def runner_model_view(c: "dict | None" = None) -> dict:
+    """What harness.yaml PINS, what the registry says its file is, and whether that
+    file is still there — the whole answer in one cheap dict.
+
+    ONE stat() per call, debounced two-strikes by health.file_state_track (a sleeping
+    network mount answers ENOENT rather than raising, so a single sample is not
+    evidence and must never flip a claim).
+
+    Keys: pin · path · format · file ("ok"|"checking"|"gone"|"unknown"|"unregistered")
+          · note (the user-facing sentence, or "")."""
+    c = c if isinstance(c, dict) else cfg()
+    rc = (c.get("runner") or {}) if isinstance(c.get("runner"), dict) else {}
+    pin = str(rc.get("model") or "")
+    if not pin:
+        return {"pin": "", "path": "", "format": "", "file": "unknown", "note": ""}
+    try:
+        entry = next((m for m in _registry_models() if m.get("id") == pin), None)
+    except Exception:                                                # noqa: BLE001
+        entry = None
+    if entry is None:
+        return {"pin": pin, "path": "", "format": "", "file": "unregistered",
+                "note": f"“{pin}” is no longer in your model registry — "
+                        f"rescan in Models, or pick another model"}
+    path = str(entry.get("path") or "")
+    fmt = str(entry.get("format") or "gguf")
+    st = file_state_track(f"runner:{pin}", path, fmt)
+    note = ""
+    if st["state"] == "gone":
+        note = (f"model file gone (deleted outside MOT Deck — LM Studio?) — {path}. "
+                f"The runner will not start again until you pick another model.")
+    return {"pin": pin, "path": path, "format": fmt, "file": st["state"], "note": note}
+
+
+def runner_serving(c: "dict | None" = None) -> "str | None":
+    """The AUTHENTICATED answer to "what is this runner serving right now", or None.
+
+    Wraps core.modelid._live_model_id, which sends runner.api_key — the one probe in
+    this app that has been correct since b10662 made /v1/models require it. Used to
+    OVERRULE a start script's exit code: a process that answers with a model loaded is
+    up, whatever the script that launched it decided to report."""
+    c = c if isinstance(c, dict) else cfg()
+    port = ((c.get("runner") or {}) if isinstance(c.get("runner"), dict) else {}).get("port")
+    if not port:
+        return None
+    try:
+        return _live_model_id(int(port))
+    except Exception:                                                # noqa: BLE001
+        return None
 
 
 @app.get("/api/status")
@@ -56,6 +215,11 @@ async def status() -> dict:
             "health": verdict,
             "misses": misses,
             "port": port,
+            # U15: the reason the LAST start attempt failed, as a sentence. None in
+            # the ordinary case. It is published even when the component is now up,
+            # flagged `stale`, so "it failed, I clicked Retry, it worked" leaves a
+            # readable trail instead of a card that silently forgets.
+            "last_error": _fail_note(name),
         }
     # M1 runner slot: a managed component (engine per model format since the llamacpp/mlx shift).
     rc = c.get("runner")
@@ -73,9 +237,20 @@ async def status() -> dict:
         # than painting a permanent "health lost" line in the feed.
         r_verdict, r_misses = _health_track(
             "runner", _expected_path("runner").exists(), port_up)
+        # U15 — THE PIN IS AN INTENT, THE LIVE ID IS A FACT, AND THE CARD MUST BE ABLE
+        # TO TELL THEM APART. `pin` keeps its historical meaning (best-known name) so
+        # no existing reader changes behaviour; the two new keys are what let the panel
+        # write "serving X" when something is loaded and "pinned: X" when nothing is.
+        mv = await asyncio.to_thread(runner_model_view, c)
         out["components"]["runner"] = {
             "installed": True,
             "pin": str(live_id or rc.get("model") or rc.get("adapter") or "auto"),
+            "pin_intent": mv["pin"],       # harness.yaml runner.model — INTENT, always
+            "live_id": live_id or "",      # what the runner answers — FACT, or ""
+            "model_path": mv["path"],
+            "model_file": mv["file"],      # ok | checking | gone | unknown | unregistered
+            "model_note": mv["note"],
+            "last_error": _fail_note("runner"),
             "running": loaded,
             "loaded": loaded,
             "port_up": port_up,          # process holds the port but may still be loading
@@ -92,6 +267,22 @@ async def status() -> dict:
         out["prov"] = {k: dict(v) for k, v in list(PROV.items())}
     except RuntimeError:
         out["prov"] = {}
+    # ⚠️ A `failed` OVERLAY IS A REPORT ABOUT A PAST INSTANT. THE PROBE IS NOW (U15).
+    # Debi's card sat on "Failed" while `ps` and an authenticated curl both showed the
+    # runner serving Parable-Qwen3-4B at that very moment — because a start attempt
+    # three minutes earlier had (wrongly, see the header block) exited non-zero and
+    # nothing ever retracted it. The panel renders `prov.state === 'failed'` ahead of
+    # every health signal, so the overlay wins forever.
+    #
+    # The rule, and it belongs HERE rather than in the panel so every reader gets it:
+    # a failure overlay is dropped the moment the component is observably RUNNING.
+    # Nothing is lost — the sentence and the raw log move to `last_error`, which the
+    # card still shows, marked stale.
+    for n, row in out["components"].items():
+        if (out["prov"].get(n) or {}).get("state") == "failed" and row.get("running"):
+            out["prov"].pop(n, None)
+            if isinstance(row.get("last_error"), dict):
+                row["last_error"]["stale"] = True
     return out
 
 
@@ -166,6 +357,27 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
                         f"Start {what}, then restart {who} to rebind.",
                 "action": "start", "target": dep,
                 "action_label": f"Start {what}"}
+    if state == "model-gone":
+        # U15. The runner is down AND the model it is pinned to has no file on disk, so
+        # "Start the Runner" — the sentence this state replaces — is an offer that
+        # cannot work. Five clicks proved it. The action is therefore the panel, where
+        # a different model can be picked; the shell's `open` lands on MOT Deck, whose
+        # runner card carries the Open Models button (see U22 for the deep link).
+        where = detail.get("path") or ""
+        return {"dep": dep, "state": state,
+                "text": (f"{who} needs {what}, and the model {what} is pinned to has no "
+                         f"file left on disk"
+                         + (f" ({where})" if where else "")
+                         + " — pick another model in MOT Deck → Models."),
+                "action": "open", "target": "mc",
+                "action_label": "Open MOT Deck"}
+    if state == "model-unregistered":
+        return {"dep": dep, "state": state,
+                "text": (f"{who} needs {what}, and the model {what} is pinned to "
+                         f"(“{detail.get('bound') or '?'}”) is no longer in the model "
+                         f"registry — rescan or pick another model in MOT Deck → Models."),
+                "action": "open", "target": "mc",
+                "action_label": "Open MOT Deck"}
     if state == "no-model":
         return {"dep": dep, "state": state,
                 "text": f"{who} needs a model — {what} is up but nothing is loaded. "
@@ -232,7 +444,21 @@ def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
                 continue                      # a dep this build does not know about
             if dep == "runner":
                 if not d.get("port_up"):
-                    needs.append(needs_message(name, dep, "down", {}))
+                    # U15: WHY it is down changes what we may offer. A runner whose
+                    # pinned model has no file cannot be started, so offering Start is
+                    # a dead end — the exact dead end Debi clicked five times.
+                    mf = d.get("model_file")
+                    if mf == "gone":
+                        needs.append(needs_message(
+                            name, dep, "model-gone",
+                            {"path": d.get("model_path") or "",
+                             "bound": d.get("pin_intent") or ""}))
+                    elif mf == "unregistered":
+                        needs.append(needs_message(
+                            name, dep, "model-unregistered",
+                            {"bound": d.get("pin_intent") or ""}))
+                    else:
+                        needs.append(needs_message(name, dep, "down", {}))
                     continue
                 if not d.get("loaded"):
                     needs.append(needs_message(name, dep, "no-model", {}))
@@ -787,14 +1013,62 @@ def _provision(target: str) -> None:
             _mark_expected(n)
             continue
         _prov_set(n, "starting", _NOTES.get(n, "starting…"))
-        r = _script("start_component.sh", n)
-        if r.returncode == 0:
+        # ⚠️ A HANG IS A FAILURE TOO (U15). _script raises TimeoutExpired out of this
+        # daemon thread; before this try/except that killed the thread with the card
+        # frozen on "Starting…" forever — a third way to say nothing while being wrong.
+        try:
+            r = _script("start_component.sh", n)
+            rc_code, output = r.returncode, (r.stdout + r.stderr)
+        except subprocess.TimeoutExpired:
+            rc_code, output = 124, (f"ERROR: start_component.sh {n} did not finish in "
+                                    f"time and was given up on")
+        except Exception as e:                                       # noqa: BLE001
+            rc_code, output = 1, f"ERROR: could not run start_component.sh: {str(e)[:200]}"
+        if rc_code != 0 and n == "runner":
+            # THE EXIT CODE IS A REPORT; THE AUTHENTICATED PROBE IS THE FACT. The start
+            # script's own readiness poll sends no Authorization header, so on llama.cpp
+            # b10662+ (where /v1/models requires the key) it 401s for its whole ~3-minute
+            # budget and reports failure for a runner that came up in one second. That
+            # is the live incident of 2026-08-29; the script is another builder's WIP so
+            # the fix there is ledgered (U16), and this is the bridge refusing to repeat
+            # a claim it can check for itself.
+            #
+            # ⚠️ AND IT MUST BE SERVING THE MODEL WE ASKED FOR. "The runner is up" is
+            # NOT the claim a Start makes; "the model you pinned is loaded" is. Caught
+            # in the adversarial pass on the live machine, where the runner was happily
+            # serving Parable-Qwen3-4B while the pin had been reverted to a 27B whose
+            # file is deleted: a bare truthiness check would have reported that Start a
+            # success and put the deleted model's name on a green card. That is the
+            # incident's own lie, re-created by its fix.
+            want = ((c.get("runner") or {}) if isinstance(c.get("runner"), dict)
+                    else {}).get("model") or ""
+            served = runner_serving(c)
+            if served and want and served == want:
+                print(f"[components] start_component.sh {n} exited {rc_code} but the "
+                      f"runner is serving “{served}” — believing the probe, not the "
+                      f"exit code (see U16)", flush=True)
+                rc_code, output = 0, ""
+            elif served:
+                print(f"[components] start_component.sh {n} exited {rc_code}; the "
+                      f"runner is serving “{served}” but the pin asks for “{want}” — "
+                      f"this start really did fail", flush=True)
+        if rc_code == 0:
+            LAST_START_FAIL.pop(n, None)
             if n == "runner":
                 _record_load_launch((c.get("runner", {}) or {}).get("model") or "")
             _prov_set(n, "on", "started")
             _mark_expected(n)   # expected-up now; if it later dies → degraded
         else:
-            _prov_set(n, "failed", (r.stdout + r.stderr)[-1500:])
+            mv = runner_model_view(c) if n == "runner" else {}
+            why = start_failure_reason(output, model=mv.get("pin", ""),
+                                       path=mv.get("path", ""),
+                                       file_state=mv.get("file", ""))
+            LAST_START_FAIL[n] = {"at": time.time(), "rc": rc_code,
+                                  "model": mv.get("pin", ""), "path": mv.get("path", ""),
+                                  "stale": False, **why}
+            # PROV's detail stays the RAW tail (View log has always shown it verbatim
+            # and people diagnose from it); the sentence travels in last_error.
+            _prov_set(n, "failed", output[-1500:])
             for m in order[i + 1:]:
                 _prov_set(m, "blocked", f"blocked by {n} failure")
             return

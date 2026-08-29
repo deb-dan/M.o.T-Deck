@@ -387,7 +387,30 @@ console.log('2. Editorial does not pay for the second design');
                own a tab. The reasoning that could leave did: test_nav_model.py (345),
                test_nav_panel.js (322) and test_compose_page.js (316) carry the
                journeys. */
-  const CEILING = 834000;
+  /*     840000  RUNNER STATUS HONESTY (U15, 2026-08-29) — ~5.5KB, and the argument is
+               that every byte of it removes a LIE the user was shown on this page.
+               The incident: Debi deleted the resident 27B's weights in LM Studio; the
+               card stayed green, then said Failed while still printing the model's
+               name as if it existed, and five Retry clicks failed with the reason
+               ("model … not in registry") visible only in a subprocess's stderr. A
+               fourth lie surfaced the same day — a Failed that stuck while `ps` and an
+               authenticated curl both showed the runner serving.
+               THE CODE HALF (~3.5KB) is the whole of what changed here: three derived
+               values at the top of cardHTML (fileGone · last_error · the drift
+               sentence), one new card state ("Online — model file gone", amber, for a
+               runner that is genuinely serving an mmap'd file that no longer exists),
+               the intent/fact pin label, the Open Models + Rescan actions, the
+               rescanFromCard trampoline into the Models pane's EXISTING rescan (no
+               second implementation), and the Models row's `file missing` chip.
+               THE CSS HALF is TWO rules — `.card .why` and `.mpill.gone` — tokens only
+               (--dim, --warn, --bad), all three defined on bare :root, so the four
+               theme packs and Studio's light and dark palettes reach them by swap.
+               Studio's own voice for .why lives in studio-design.css, not here.
+               THE PROSE HALF is deliberately eight lines: the three rules a future
+               editor would otherwise "simplify" away. Everything else went where this
+               ceiling's own note says it belongs — bridge/tests/test_dep_signal.py §6
+               (125 checks) walks the states and EXECUTES the renderer's inputs. */
+  const CEILING = 840000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

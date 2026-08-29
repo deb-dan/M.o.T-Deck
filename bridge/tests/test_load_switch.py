@@ -113,8 +113,22 @@ def _ok_script(name, *a):
 
 
 orig_script, orig_set = app._script, app._set_runner_model
+orig_live, orig_reg = app._live_model_id, app._registry_models
 app._script = _ok_script
 app._set_runner_model = lambda *_: None
+
+# ── U15 fixtures: the switch watcher's two new inputs ─────────────────────────
+# `_live_model_id` — what the runner ANSWERS (authenticated). Since 2026-08-29 this
+# outranks the start script's exit code, because the script's own readiness poll sends
+# no Authorization header and 401s against every llama.cpp b10662+ runner (U16).
+# `_registry_models` — used to ask whether a rollback target's FILE still exists.
+_TMP = Path(__file__).resolve().parent.parent.parent / "data" / "models.json"   # a file that exists
+_REG_U15 = [{"id": "old", "format": "gguf", "path": str(_TMP)},
+            {"id": "new", "format": "gguf", "path": str(_TMP)},
+            {"id": "deleted-27b", "format": "gguf", "path": "/nowhere/at/all/model.gguf"}]
+app._registry_models = lambda: _REG_U15
+app._live_model_id = lambda *_a, **_k: None      # default: the runner answers nothing
+
 try:
     app._SWITCH.update(busy=True, log="starting…")
     app._do_switch("new", "old", False, False)          # no hermes/ody restart
@@ -131,6 +145,60 @@ try:
     check("failure path rolls model back to old", rolled.get("to") == "old")
     check("failure path log surfaces FAILED", "FAILED" in app._SWITCH["log"])
 
+    # ══ U15 — THE LIVE INCIDENT OF 2026-08-29, AS THREE JOURNEYS ═══════════════
+    #
+    # JOURNEY 1 — "it said FAILED while the model was answering." Debi switched to
+    # Parable-Qwen3-4B; llama-server loaded it in 1.3 seconds and served it. The start
+    # script exited non-zero anyway (unauthenticated readiness poll → 401 → 90 tries ×
+    # 2s → give up), so the watcher declared failure for a runner that was up. The exit
+    # code is a REPORT; the authenticated probe is a FACT, and the fact wins.
+    rolled.clear()
+    app._live_model_id = lambda *_a, **_k: "new"
+    app._SWITCH.update(busy=True, log="starting…")
+    app._do_switch("new", "old", False, False)
+    check("U15 J1: a non-zero exit is NOT believed when the runner is serving the model",
+          "active: new" in app._SWITCH["log"])
+    check("U15 J1: …and no bogus FAILED reaches the user",
+          "FAILED" not in app._SWITCH["log"])
+    check("U15 J1: …and nothing is rolled back on a load that actually worked",
+          rolled.get("to") is None)
+
+    # JOURNEY 2 — "reverted to a model I deleted." On that false failure the watcher
+    # rolled the pin back to the 27B whose weights she had deleted in LM Studio: a
+    # revert that could not possibly load, announced as a recovery. A rollback target
+    # whose file is gone is not a known-good model, so the pin STAYS and says so.
+    rolled.clear()
+    app._live_model_id = lambda *_a, **_k: None       # genuinely down this time
+    app._SWITCH.update(busy=True, log="starting…")
+    app._do_switch("new", "deleted-27b", False, False)
+    check("U15 J2: never reverts onto a model whose file is gone",
+          rolled.get("to") is None)
+    check("U15 J2: …and says what it did instead, naming the dead model",
+          "deleted-27b" in app._SWITCH["log"]
+          and "gone from disk" in app._SWITCH["log"])
+    check("U15 J2: …while a LIVE rollback target is still honoured (J-above)",
+          True)
+
+    # JOURNEY 3 — "what I read on screen was a log line." The modal used to paste the
+    # raw tail, so the failure Debi saw was
+    #   2.49.854.040 W srv    operator(): unauthorized: Invalid API Key
+    # — no cause, no file, no fix. The sentence now leads; the raw tail follows it,
+    # labelled, for whoever is diagnosing.
+    app._script = lambda name, *a: types.SimpleNamespace(
+        returncode=1, stdout="",
+        stderr="ERROR: model 'new' not in registry — run scripts/seed_registry.py "
+               "or pick another model\n2.49.854.040 W srv operator(): unauthorized\n")
+    app._registry_models = lambda: [
+        {"id": "new", "format": "gguf", "path": "/nowhere/at/all/model.gguf"}]
+    app._SWITCH.update(busy=True, log="starting…")
+    app._do_switch("new", "", False, False)
+    check("U15 J3: the failure line is a SENTENCE, not log vomit",
+          "model file missing at /nowhere/at/all/model.gguf" in app._SWITCH["log"])
+    check("U15 J3: …and it appears BEFORE the raw detail",
+          app._SWITCH["log"].index("model file missing")
+          < app._SWITCH["log"].index("Details:"))
+    app._registry_models = lambda: _REG_U15
+
     # ── busy cleared in finally on EXCEPTION ───────────────────────────────────
     def _boom(*a, **k):
         raise RuntimeError("subprocess exploded")
@@ -141,6 +209,7 @@ try:
     check("exception path log surfaces error", "switch error" in app._SWITCH["log"])
 finally:
     app._script, app._set_runner_model = orig_script, orig_set
+    app._live_model_id, app._registry_models = orig_live, orig_reg
     app._SWITCH.update(busy=False, log="")
 
 print()

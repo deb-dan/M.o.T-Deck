@@ -491,6 +491,13 @@ html[data-design="studio"] .card .state {
   font-size:15px; font-weight:600; color:var(--cream); margin:0 0 3px; }
 html[data-design="studio"] .card .meta {
   font:11px var(--mono); letter-spacing:normal; color:var(--faint); }
+/* U15's reason line, in Studio's voice. It carries a filesystem path, so it stays
+   WRAPPING and measured; only the face and the tracking change. The colours are the
+   same two tokens Editorial uses (--dim, --warn), and Studio redefines both for its
+   light AND dark palettes — so this rule needs no palette of its own. */
+html[data-design="studio"] .card .why {
+  font:11.5px var(--sd-sans); letter-spacing:normal; line-height:1.55;
+  color:var(--dim); border-left-color:var(--warn); }
 html[data-design="studio"] .card .actions {
   margin-top:11px; gap:6px; opacity:.72;
   transition:opacity var(--sd-t) var(--sd-ease); }

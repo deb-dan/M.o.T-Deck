@@ -34,7 +34,9 @@ sys.path.insert(0, str(ROOT))
 
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 from bridge.routers.components import (                         # noqa: E402
-    NEEDS_SOFT, needs_derive, needs_message)
+    NEEDS_SOFT, needs_derive, needs_message, start_failure_reason)
+from bridge.core.health import (                                # noqa: E402
+    MODEL_FILE_MISS_GONE, file_state_forget, file_state_track, path_present)
 
 SWIFT = (ROOT / "app" / "main.swift").read_text()
 
@@ -233,12 +235,198 @@ def test_the_shell_renders_it():
            f"the banner never becomes a {banned} (it is advisory, always)")
 
 
+# ══ 6. U15 — RUNNER STATUS HONESTY ═══════════════════════════════════════════
+#
+# THE INCIDENT (Debi, live, 2026-08-29): she deleted the resident 27B's weights in LM
+# Studio. MOT Deck stayed GREEN for a long time; the runner then stopped and the FAILED
+# card still printed the model's name as if it existed; and FIVE Retry clicks failed
+# with the only honest sentence ("model … not in registry", which the start script also
+# emits when the FILE at a registered path is gone) visible only in a subprocess's
+# stderr. Three lies at once, the worst class.
+#
+# A fourth arrived the same day and shares the root: the start script's readiness poll
+# sends no Authorization header, so on llama.cpp b10662+ it 401s for its whole budget
+# and reports failure for a runner that came up in a second (ledger U16). Everything
+# below is the app refusing to repeat a claim it can check for itself.
+
+def test_a_dead_model_file_never_offers_a_dead_button():
+    c = healthy()
+    c["runner"] = {"installed": True, "running": False, "port_up": False,
+                   "loaded": False, "model_file": "gone",
+                   "model_path": "/Users/d/.lmstudio/models/x/y.gguf",
+                   "pin_intent": "the-27b"}
+    out = derive(c, bound())
+    n = out["hermes"]["needs"][0]
+    ok(n["state"] == "model-gone",
+       "a runner that is down BECAUSE its model file is gone says so")
+    ok(n["action"] != "start",
+       "…and never offers Start — that is the button she pressed five times")
+    ok("/Users/d/.lmstudio/models/x/y.gguf" in n["text"],
+       "…and the sentence names the path, so she can check it herself")
+    ok("pick another model" in n["text"], "…and names the fix")
+    # The registry-row-missing variant is a DIFFERENT fix (rescan), so a different
+    # sentence. Saying "not in your registry" about a deleted file sends her to the
+    # wrong place, and saying "file missing" about a pruned row names a path we do
+    # not have.
+    c["runner"]["model_file"] = "unregistered"
+    n2 = derive(c, bound())["hermes"]["needs"][0]
+    ok(n2["state"] == "model-unregistered" and "registry" in n2["text"],
+       "a pruned registry row gets its own sentence and its own fix")
+    ok("the-27b" in n2["text"], "…which names the model that vanished")
+
+
+def test_a_runner_that_is_merely_down_is_unchanged():
+    # THE REGRESSION GUARD. The overwhelmingly common case — a runner that is simply
+    # not started — must keep its old sentence and its old Start button. A new state
+    # that swallowed the ordinary one would be a worse bug than the one it fixed.
+    c = healthy()
+    for mf in (None, "ok", "checking", "unknown"):
+        c["runner"] = {"installed": True, "running": False, "port_up": False,
+                       "loaded": False, "model_file": mf}
+        n = derive(c, bound())["hermes"]["needs"][0]
+        ok(n["state"] == "down" and n["action"] == "start",
+           f"[model_file={mf}] a plain stopped runner still offers Start")
+    ok(True, "…including 'checking', which is the FIRST missed stat (see the debounce)")
+
+
+def test_two_strikes_before_we_accuse_a_disk():
+    """THE ADVERSARIAL FINDING, PINNED. os.stat() on a sleeping network mount or a
+    spun-down external disk answers ENOENT rather than raising, so ONE sample is not
+    evidence. Telling Debi her model file is gone when it is merely slow is the same
+    class of lie this slice removes, one direction over."""
+    file_state_forget()
+    p = "/definitely/not/here/model.gguf"
+    first = file_state_track("t", p)
+    ok(first["state"] == "checking" and first["misses"] == 1,
+       "one missed stat is 'checking' — a state that renders as NOTHING")
+    second = file_state_track("t", p)
+    ok(second["state"] == "gone" and second["misses"] == 2,
+       "the SECOND consecutive miss is what earns the claim")
+    ok(MODEL_FILE_MISS_GONE == 2, "…and the threshold is a named constant")
+    # A single good sample forgets the whole streak: a mount that comes back must not
+    # stay accused, and a file that blips twice a day must never accumulate.
+    ok(file_state_track("t", str(ROOT / "harness.yaml"))["state"] == "ok",
+       "a file that IS there reads ok")
+    file_state_forget("t")
+    ok(file_state_track("t", p)["state"] == "checking",
+       "…and the next miss starts the streak over from one")
+    # A path CHANGE (a re-pin, or a rescan that rewrote the entry) also resets: the
+    # misses belonged to the old path and say nothing about the new one.
+    file_state_track("t", p)
+    ok(file_state_track("t", "/some/other/path.gguf")["state"] == "checking",
+       "a streak never transfers from one path to another")
+    file_state_forget()
+
+
+def test_we_never_claim_what_the_os_would_not_tell_us():
+    ok(path_present("") is None, "no path at all is 'unknown', never 'missing'")
+    ok(path_present(None) is None, "…and so is a null path")
+    ok(path_present(str(ROOT / "harness.yaml")) is True, "a real file reads present")
+    ok(path_present(str(ROOT)) is False,
+       "a DIRECTORY where a gguf should be is not a present gguf")
+    ok(path_present(str(ROOT), fmt="mlx") is True,
+       "…while an mlx entry wants exactly that directory (start_component.sh's rule)")
+    ok(file_state_track("u", "")["state"] == "unknown",
+       "an unknown never becomes an accusation, however many times it is sampled")
+    ok(file_state_track("u", "")["state"] == "unknown", "…twice")
+    file_state_forget()
+
+
+def test_the_failure_sentence_is_a_sentence():
+    """FIX 1. The reason lived in a subprocess's stderr; what reached the screen was
+    either nothing or a raw llama.cpp log line. Both are the same defect."""
+    reg_err = ("ERROR: model 'Q27B' not in registry — run scripts/seed_registry.py "
+               "or pick another model")
+    gone = start_failure_reason(reg_err, model="Q27B", path="/m/q.gguf",
+                                file_state="gone")
+    ok(gone["text"] == "model file missing at /m/q.gguf — pick another model",
+       "a registered model whose FILE is gone says exactly that, with the path")
+    ok(gone["action_label"] == "Open Models",
+       "…and offers the place where a different model can be picked")
+    pruned = start_failure_reason(reg_err, model="Q27B")
+    ok("not in your model registry" in pruned["text"],
+       "the SAME stderr means something different when we have no path — and says so")
+    ok(pruned["text"] != gone["text"],
+       "…so one script sentence cannot flatten two different fixes into one")
+    unknown = start_failure_reason(reg_err, model="Q27B", path="/m/q.gguf",
+                                   file_state="unknown")
+    ok("could not read" in unknown["text"],
+       "an unreadable path is reported as unreadable, never as deleted")
+    nomodel = start_failure_reason("ERROR: runner.model not set in harness.yaml")
+    ok("no model is pinned" in nomodel["text"], "the un-pinned case has its own line")
+    # TOTALITY: whatever the script says, the card gets a non-empty sentence, and it is
+    # never the raw multi-line vomit.
+    for junk in ("", "   ", "\n\n", "boom", "ERROR: something we never anticipated",
+                 "2.49.854.040 W srv    operator(): unauthorized: Invalid API Key"):
+        r = start_failure_reason(junk)
+        ok(bool(r["text"]) and "\n" not in r["text"],
+           f"[{junk[:24]!r}] always ONE readable line, never a log dump")
+        ok(r["detail"] == junk.strip()[-1500:],
+           f"[{junk[:24]!r}] …with the raw text still carried for View log")
+
+
+def test_the_bridge_stops_repeating_an_exit_code_it_can_check():
+    """FIX 1b / the sticky-Failed half of the incident: `ps` and an authenticated curl
+    both showed the runner serving Parable-Qwen3-4B while the card said Failed."""
+    src = _APP_SOURCE
+    ok("def runner_serving(" in src,
+       "the bridge has an AUTHENTICATED way to ask what the runner is serving")
+    prov = src[src.index("def _provision("):]
+    ok("served = runner_serving(c)" in prov,
+       "…and _provision asks it before believing a non-zero exit for the runner")
+    ok("served and want and served == want" in prov,
+       "…and only believes it when the runner serves the model that was PINNED — "
+       "'something is up' is not the claim a Start makes")
+    ok("rc_code, output = 0, \"\"" in prov,
+       "…and treats a serving runner as the success it observably is")
+    ok("except subprocess.TimeoutExpired" in prov,
+       "a start that HANGS is recorded as a failure, not left frozen on Starting…")
+    st = src[src.index("async def status() -> dict:"):]
+    st = st[:st.index("# ══ THE DEPENDENCY SIGNAL")]
+    ok('out["prov"].pop(n, None)' in st and 'row.get("running")' in st,
+       "a `failed` overlay is dropped the moment the component is observably running")
+    ok('row["last_error"]["stale"] = True' in st,
+       "…and nothing is lost: the sentence survives, marked stale")
+
+
+def test_the_card_can_tell_intent_from_fact():
+    """FIX 2 + FIX 3, on the wire. The panel cannot write "pinned X" instead of
+    "serving X" unless /api/status hands it both."""
+    src = _APP_SOURCE
+    st = src[src.index('out["components"]["runner"] = {'):]
+    st = st[:st.index("try:")]
+    for key in ('"pin_intent"', '"live_id"', '"model_path"', '"model_file"',
+                '"model_note"', '"last_error"'):
+        ok(key in st, f"the runner row publishes {key}")
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    ok("c.loaded ? 'serving' : 'pinned'" in panel,
+       "the card labels the name as an INTENT whenever nothing is loaded")
+    ok("Online — model file gone" in panel,
+       "…and has a state for 'up, serving a file that no longer exists'")
+    ok('class="why"' in panel, "…and a place on the card for the reason")
+    ok("showView('models')" in panel and "Open Models" in panel,
+       "…and an Open Models action wherever the reason points at the library")
+    ok("rescanFromCard" in panel and "rescanModels" in panel,
+       "…and reuses the Models pane's EXISTING rescan rather than a second one")
+    ok("m.file === 'gone'" in panel and "file missing" in panel,
+       "the Models rows carry a 'file missing' chip on the bridge's debounced verdict")
+    ok("m.file === 'checking'" not in panel,
+       "…and deliberately draw NOTHING for 'checking' (the un-earned claim)")
+
+
 for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_swapped_is_the_lie_this_catches, test_moved_endpoint,
            test_a_dep_that_is_not_the_runner, test_a_stopped_component_says_nothing,
            test_an_uninstalled_dep_says_nothing, test_a_dep_this_build_does_not_know,
            test_every_sentence_is_written_for_her, test_routes_exist,
-           test_the_shell_renders_it):
+           test_the_shell_renders_it,
+           test_a_dead_model_file_never_offers_a_dead_button,
+           test_a_runner_that_is_merely_down_is_unchanged,
+           test_two_strikes_before_we_accuse_a_disk,
+           test_we_never_claim_what_the_os_would_not_tell_us,
+           test_the_failure_sentence_is_a_sentence,
+           test_the_bridge_stops_repeating_an_exit_code_it_can_check,
+           test_the_card_can_tell_intent_from_fact):
     fn()
 
 if FAILS:

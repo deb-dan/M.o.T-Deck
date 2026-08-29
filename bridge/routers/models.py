@@ -9,6 +9,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
+from ..core.health import file_state_track
 from ..core.modelid import _live_model_id
 from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, cfg
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
@@ -476,6 +477,14 @@ def api_models() -> JSONResponse:
                 "tools": (m.get("tools") if isinstance(m.get("tools"), bool) else None),
                 "format": m.get("format", "gguf"),
                 "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path"),
+                # U15 — IS THE FILE STILL THERE? One stat(), debounced two-strikes
+                # (health.file_state_track), so a sleeping network mount cannot make
+                # the pane accuse the user of deleting a model they still have. Values:
+                # ok | checking | gone | unknown. Only "gone" draws a chip; "checking"
+                # is deliberately invisible, which is the whole point of the debounce.
+                "file": file_state_track(f"models:{m.get('id')}",
+                                         str(m.get("path") or ""),
+                                         str(m.get("format") or "gguf"))["state"],
                 # Per-model sampling: the READ side of /api/models/settings lives
                 # here (one key on a payload the panel already polls) rather than in
                 # a second route. `sampling` is the rendered view (engine-filtered
@@ -532,6 +541,11 @@ def api_models_rescan() -> JSONResponse:
                 status_code=500)
         reg = ROOT / "data" / "models.json"
         count = len(_json.loads(reg.read_text()).get("models", []))
+        # U15: the registry just changed under every path claim we were tracking —
+        # drop the streaks so a re-pointed entry starts from a clean sample rather
+        # than inheriting the old path's misses.
+        from ..core.health import file_state_forget
+        file_state_forget()
         return JSONResponse({"ok": True, "count": count})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
@@ -556,18 +570,80 @@ def _switch_log(msg: str, done: bool = False) -> None:
     publish("model", phase=msg[:160], done=bool(done))
 
 
+def model_file_alive(mid: str) -> bool:
+    """Is `mid` a registry entry whose artifact is STILL ON DISK? (U15)
+
+    Undebounced on purpose — this is asked once, at a decision point, and the safe
+    direction is inverted from the status card's: here an unreadable path must count as
+    NOT a safe rollback target, whereas on the card it must not become an accusation."""
+    if not mid:
+        return False
+    entry = next((m for m in _registry_models() if m.get("id") == mid), None)
+    if entry is None:
+        return False
+    from ..core.health import path_present
+    return path_present(str(entry.get("path") or ""),
+                        str(entry.get("format") or "gguf")) is True
+
+
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
     """Fable QA hardening: check exit codes (a failed load must NOT report success),
     and roll harness.yaml back to the previous model on failure so the next Start
-    uses a known-good model instead of retrying a broken one."""
+    uses a known-good model instead of retrying a broken one.
+
+    ⚠️ U15 REWROTE THE FAILURE ARM, AND THE LIVE INCIDENT IS WHY. On 2026-08-29 Debi
+    switched to Parable-Qwen3-4B; llama-server loaded it in 1.3s and served it. The
+    start script still exited non-zero (its readiness poll sends no Authorization
+    header and has 401'd against every b10662 runner since — ledger U16), so this
+    function declared "FAILED to load Parable… — reverted to Qwen3.6-27B…" and rolled
+    the pin back to a model whose FILE SHE HAD DELETED. Every clause of that sentence
+    was false, and the rollback armed the next failure.
+
+    Three rules now, in order:
+      1. VERIFY BEFORE BELIEVING. An authenticated /v1/models probe outranks the exit
+         code, because it observes the thing the exit code only reports on.
+      2. NEVER ROLL BACK ONTO A MODEL THAT CANNOT LOAD. A rollback target whose file is
+         gone (or that left the registry) is not a "known-good model" — keeping the new
+         pin and saying so is strictly more honest and strictly more recoverable.
+      3. THE USER GETS A SENTENCE, NOT A LOG TAIL. `2.49.854.040 W srv operator():
+         unauthorized: Invalid API Key` is what she actually read on screen."""
+    from .components import start_failure_reason
     try:
         _switch_log(f"downloading + loading {new_id} — large downloads take minutes…"
                     if "/" in new_id else f"loading {new_id}…")
         r = _script("start_component.sh", "runner")
         if r.returncode != 0:
-            _set_runner_model(old_id)   # rollback pin; runner is down but recoverable
-            tail = (r.stdout + r.stderr)[-400:]
-            _switch_log(f"FAILED to load {new_id} — reverted to {old_id}. {tail}")
+            # RULE 1 — ask the runner itself before repeating the script's verdict.
+            port = (cfg().get("runner", {}) or {}).get("port")
+            served = _live_model_id(int(port)) if port else None
+            # …and it must be serving THIS switch's model. A runner still holding the
+            # PREVIOUS model is the definition of a switch that did not happen; a bare
+            # truthiness check here would have reported exactly that as success.
+            if served and served == new_id:
+                print(f"[switch] start_component.sh exited {r.returncode} but the "
+                      f"runner is serving “{served}” — believing the probe (U16)",
+                      flush=True)
+                _record_load_launch(new_id)
+                _switch_log(f"active: {new_id}", done=True)
+                return
+            out = r.stdout + r.stderr
+            entry = next((m for m in _registry_models() if m.get("id") == new_id), None)
+            why = start_failure_reason(
+                out, model=new_id, path=str((entry or {}).get("path") or ""),
+                file_state=("ok" if model_file_alive(new_id) else "gone")
+                           if entry else "")
+            # RULE 2 — only revert onto a model that could actually load.
+            if old_id and old_id != new_id and model_file_alive(old_id):
+                _set_runner_model(old_id)
+                where = f" — reverted the pin to {old_id}"
+            elif old_id and old_id != new_id:
+                where = (f" — the previous model ({old_id}) is gone from disk too, so "
+                         f"the pin was left on {new_id}")
+            else:
+                where = ""
+            # RULE 3 — the sentence, then the raw tail, clearly separated.
+            _switch_log(f"FAILED to load {new_id}: {why['text']}{where}. "
+                        f"Details: {(out or '').strip()[-300:]}")
             return
         # The runner is now running with whatever `load` was saved at this moment —
         # record it so the panel can say "not applied yet" only when it is TRUE.

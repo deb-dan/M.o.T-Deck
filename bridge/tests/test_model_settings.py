@@ -330,7 +330,11 @@ ok("the fragment is built from the REGISTRY entry",
 ok("no GET /api/models/settings route", '@app.get("/api/models/settings' not in src)
 ok("POST /api/models/settings exists", '@app.post("/api/models/settings")' in src)
 i_models = src.index('@app.get("/api/models")')
-models_h = src[i_models:i_models + 4000]
+# 6000, widened from 4000 when U15 added the per-row `file` liveness field and its
+# comment to api_models (2026-08-29). The window is a crude 'inside this function'
+# proxy; the two assertions below still name the exact keys they care about, so a
+# wider window loses no precision — a narrow one only produces false reds.
+models_h = src[i_models:i_models + 6000]
 ok("/api/models carries the rendered view", '"sampling": sampling_view(m)' in models_h)
 ok("/api/models carries the raw pin", '"settings":' in models_h)
 ep = src[src.index('@app.post("/api/models/settings")'):]

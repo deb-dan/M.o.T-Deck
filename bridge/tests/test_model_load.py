@@ -502,10 +502,27 @@ ok("/api/models carries the rendered view", '"loadview": load_view(' in models_h
 ok("/api/models carries the shared launch claim", '"launch": launch_view(' in models_h)
 ok("/api/models carries the raw pin", '"load": (m.get("load")' in models_h)
 ok("the launch record is written where WE launch the runner",
-   src.count("_record_load_launch(") == 3)   # def + switch + start closure
+   # def + switch (×2 since U15: the clean exit AND the probe-believed success, where
+   # the start script's exit code was wrong and the runner is demonstrably serving)
+   # + the start closure.
+   src.count("_record_load_launch(") == 4)
 _sw = src[src.index("def _do_switch"):src.index('@app.post("/api/models/switch")')]
-ok("...on the SWITCH path only after a successful load",
-   _sw.index("_record_load_launch(new_id)") > _sw.index("reverted to"))
+# The CODE line that reports the failure (the docstring quotes the old, wrong
+# sentence verbatim, so a bare "FAILED to load" match would land in prose).
+_FAILARM = '_switch_log(f"FAILED to load'
+ok("...on the SWITCH path only after a load we have CONFIRMED",
+   # Both call sites sit on a confirmed-success branch; neither is reachable from the
+   # arm that tells the user it failed.
+   _sw.count("_record_load_launch(new_id)") == 2
+   # one guarded by the authenticated probe, ABOVE the failure sentence…
+   and _sw.index("_record_load_launch(new_id)") < _sw.index(_FAILARM)
+   and "if served and served == new_id:" in _sw
+   # …one after the ordinary clean exit, BELOW it…
+   and _sw.rindex("_record_load_launch(new_id)") > _sw.index(_FAILARM)
+   # …and none between the failure sentence and the return that follows it.
+   and "_record_load_launch" not in
+       _sw[_sw.index(_FAILARM):
+           _sw.index("return", _sw.index(_FAILARM))])
 ok("...and never claims anything it did not launch",
    "if isinstance(launched, dict)" in src and "applied = None" in src)
 ok("the launch record stores the UNIFIED snapshot, not just the load half",

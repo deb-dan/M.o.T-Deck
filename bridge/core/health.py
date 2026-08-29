@@ -1,5 +1,14 @@
-"""CORE — the component health verdict: one probe budget, one debounced answer."""
+"""CORE — the component health verdict: one probe budget, one debounced answer.
+
+Since U15 this file also owns the OTHER debounced verdict in the app: whether a
+model's FILE is still on disk. Same shape, same reason (a single sample is not
+evidence), and deliberately the same module so there is one place to read when
+asking "how does this app decide something is gone".
+"""
 from __future__ import annotations
+
+import os
+import stat as _stat
 
 from .events import publish
 
@@ -117,3 +126,103 @@ def _health_track(name: str, expected: bool, running: bool) -> tuple:
         _HEALTH_SAID[name] = verdict
         publish("health", name=name, verdict=verdict, misses=misses)
     return (verdict, misses)
+
+
+# ══ MODEL FILE LIVENESS (U15) — the same debounce, applied to a PATH ═════════
+#
+# THE INCIDENT (Debi, live, 2026-08-29). She deleted the resident 27B's weights in LM
+# Studio. MOT Deck stayed green for a long time (correct in one sense — llama.cpp had
+# the file mmap'd and kept serving), then the runner stopped, the Failed card still
+# printed the model's name as if it existed, and five Retry clicks failed with the only
+# honest sentence ("model … not in registry", which is ALSO what the start script says
+# when the FILE at a registered path is gone) buried in a subprocess's stderr. Three
+# lies of the worst class, and every one of them was an absence of a cheap stat().
+#
+# So: stat the pinned/live model's path at the cadence /api/status already runs at, and
+# say the true thing BEFORE the next start fails.
+#
+# ⚠️ TWO STRIKES, AND THAT IS THE ADVERSARIAL FINDING, NOT A NICETY. os.stat() on a
+# sleeping SMB/NFS mount or an external disk that has spun down answers ENOENT rather
+# than raising — a single sample is not evidence. Announcing "your model file is gone"
+# about a file that is merely slow would be exactly the class of lie this slice exists
+# to remove, one direction over. A claim therefore costs TWO consecutive misses; the
+# first one produces "checking", which the UI renders as nothing at all.
+MODEL_FILE_MISS_GONE = 2        # consecutive stat misses before we CLAIM "gone"
+_FILE_MISS: dict = {}           # key -> {"path": str, "misses": int}
+
+
+def _wants_dir(fmt: str) -> bool:
+    """Which registry formats are DIRECTORIES on disk rather than single files.
+
+    Byte-for-byte the rule scripts/start_component.sh resolves with (`os.path.isdir
+    if fmt == "mlx" else os.path.isfile`), widened only to the audio kinds, whose
+    entries are checkpoint directories too. Anything unrecognised is treated as a
+    file, which is what `gguf` — the overwhelming majority — is."""
+    f = str(fmt or "gguf").lower()
+    return f == "mlx" or f.startswith(("stt-", "tts-"))
+
+
+def path_present(path: str, fmt: str = "gguf") -> "bool | None":
+    """RAW, undebounced: is this model's artifact on disk right now?
+
+    True  — it is there, and it is the right KIND (a dir for mlx, a file for gguf)
+    False — the OS answered, and the answer was "no"
+    None  — we could not tell, so we say nothing: no path at all, or the stat failed
+            for a reason that is not absence (EACCES, ETIMEDOUT on a stalled mount,
+            ELOOP …). None is never rendered as a problem anywhere.
+
+    One stat() per call. Nothing here reads, opens or sizes the file — a 20GB GGUF
+    on a spinning disk must cost the same as a 2KB one."""
+    if not path or not isinstance(path, str):
+        return None
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return False
+    except NotADirectoryError:
+        return False
+    except OSError:
+        return None                       # permission / timeout / loop — NOT a claim
+    except Exception:                                            # noqa: BLE001
+        return None
+    return bool(_stat.S_ISDIR(st.st_mode) if _wants_dir(fmt)
+                else _stat.S_ISREG(st.st_mode))
+
+
+def file_state_track(key: str, path: str, fmt: str = "gguf",
+                     gone_at: int = MODEL_FILE_MISS_GONE) -> dict:
+    """DEBOUNCED verdict for one model artifact. Returns
+        {"path": …, "fmt": …, "state": ok|checking|gone|unknown, "misses": int}
+
+    `key` is the caller's identity for this claim (the model id, or "runner:<id>") —
+    two callers watching the same file keep independent streaks on purpose, so the
+    Models pane's slow poll cannot arm the runner card's claim or vice versa.
+
+    A recovery, a path CHANGE (a re-pin, a rescan that rewrote the entry) or an
+    `unknown` answer all forget the streak: only consecutive, same-path, definite
+    misses accumulate. `gone_at` below 1 falls back to the default rather than being
+    clamped into the most alarming behaviour — the same total-function rule
+    health_verdict() above follows."""
+    if not isinstance(gone_at, int) or isinstance(gone_at, bool) or gone_at < 1:
+        gone_at = MODEL_FILE_MISS_GONE
+    present = path_present(path, fmt)
+    if present is None:
+        _FILE_MISS.pop(key, None)
+        return {"path": path or "", "fmt": fmt, "state": "unknown", "misses": 0}
+    if present:
+        _FILE_MISS.pop(key, None)
+        return {"path": path, "fmt": fmt, "state": "ok", "misses": 0}
+    prev = _FILE_MISS.get(key)
+    n = (prev["misses"] + 1) if (prev and prev.get("path") == path) else 1
+    _FILE_MISS[key] = {"path": path, "misses": n}
+    return {"path": path, "fmt": fmt,
+            "state": ("gone" if n >= gone_at else "checking"), "misses": n}
+
+
+def file_state_forget(key: "str | None" = None) -> None:
+    """Drop a streak (or all of them). Called when a model is re-pinned or the
+    registry is rescanned, and by the suite between cases."""
+    if key is None:
+        _FILE_MISS.clear()
+    else:
+        _FILE_MISS.pop(key, None)

@@ -345,7 +345,16 @@
      and the measure is added, so the value the renderer had is the value it still has,
      plus a cap. 58ch of the mono '0' advance at 11px ≈ 384px ≈ 70 estimator-characters. */
   .card .meta.wrap { white-space:normal; overflow:visible; margin-top:5px; max-width:58ch; }
-  .card .actions { margin-top:16px; display:flex; gap:8px; }
+  /* U15 — THE REASON LINE. It exists because the alternative was Debi reading a raw
+     llama.cpp log line on a card, or nothing at all. WRAPS (a filesystem path is the
+     point of the sentence, so truncating it removes the actionable half) and is capped
+     at the same 58ch measure as .meta.wrap. Token-only colours: --warn for the rule,
+     --dim for the ink, both defined on bare :root, so every theme pack and Studio's
+     light mode reach it through the swap rather than through an override. */
+  .card .why { font:11.5px var(--mono); color:var(--dim); line-height:1.5;
+               margin-top:7px; max-width:58ch; white-space:normal;
+               border-left:2px solid var(--warn); padding-left:9px; }
+  .card .actions { margin-top:16px; display:flex; gap:8px; flex-wrap:wrap; }
 
   button { font:12.5px -apple-system, sans-serif; border-radius:9px; padding:7px 15px;
            cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--fg); }
@@ -892,6 +901,10 @@
   .mpill.live { color:var(--on-accent); background:var(--gold); border-color:var(--gold); }
   .mpill.aux { color:var(--gold); }
   /* app-owned vs read-only import provenance — plain-language "who owns the files" */
+  /* U15 — the only ALARM-coloured pill in the row grammar, and it earns it: every other
+     pill describes what a model IS, this one says the model is not there. --bad is a
+     bare-:root token, so the theme packs and Studio light swap it like every other. */
+  .mpill.gone { color:var(--bad); border-color:var(--bad); }
   .mpill.owned { color:var(--gold); border-color:var(--gold); }
   .mpill.imported { color:var(--faint); border-color:var(--line2); }
   .mrow .msize { color:var(--dim); }
@@ -3489,10 +3502,39 @@ function healthOf(c) {
   return (c && c.health) || (c && c.degraded ? 'lost' : 'ok');
 }
 
+/* ── U15: THE THREE THINGS A CARD MAY NOT DO (incident 2026-08-29; the reasoning and
+   the walked journeys are in bridge/tests/test_dep_signal.py §6) ──────────────
+     1. A FAILURE ALWAYS SHOWS ITS REASON, here on the card. `c.last_error.text` is a
+        SENTENCE from the bridge (components.start_failure_reason), never the raw log —
+        the raw log stays one click away under View log. What Debi's screen had shown
+        was `2.49.854.040 W srv operator(): unauthorized: Invalid API Key`.
+     2. A NAME ON A CARD THAT IS NOT SERVING IS AN INTENT, AND SAYS SO: "serving X"
+        only when the runner answers with X, "pinned X" otherwise.
+     3. A DEAD MODEL FILE IS SAID BEFORE THE NEXT START FAILS, even while everything
+        else is green — debounced two strikes in the bridge, so a slow disk cannot
+        produce the accusation. */
 function cardHTML(name, c, isBridge, prov) {
   const ps = prov && prov.state;
   const h = healthOf(c);
   const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
+  const isRunner = (name === 'runner');
+  const fileGone = isRunner && (c.model_file === 'gone' || c.model_file === 'unregistered');
+  const le = (c.last_error && c.last_error.text) ? c.last_error : null;
+  // Priority: a dead file outranks a past start error, because it explains the NEXT
+  // failure as well as the last one. A STALE error (the component is up again now) is
+  // labelled as history rather than presented as the current state.
+  let why = '';
+  if (fileGone) {
+    // THE DRIFT SENTENCE. On Debi's machine the runner was serving Parable-Qwen3-4B
+    // while harness.yaml's pin had been reverted to a 27B whose weights were deleted:
+    // two different models, one card, and nothing on screen said so. Naming BOTH is
+    // the only version of this that a person can act on.
+    const drift = (c.live_id && c.pin_intent && c.live_id !== c.pin_intent);
+    why = (drift ? 'serving ' + c.live_id + ' right now, but the pin points elsewhere — '
+                 : '')
+        + (c.model_note || 'the pinned model is no longer usable');
+  } else if (le) why = (le.stale ? 'last start attempt: ' : '') + le.text;
+  const wantsModels = fileGone || !!(le && le.target === 'models');
   let dot, state, actions = '';
   const provisioning = (ps === 'starting' || ps === 'pending' || ps === 'blocked');
   if (provisioning) {
@@ -3500,6 +3542,14 @@ function cardHTML(name, c, isBridge, prov) {
     state = ps === 'starting' ? 'Starting…' : ps === 'pending' ? 'Pending…' : 'Blocked';
   } else if (ps === 'failed') {
     dot = 'bad'; state = 'Failed';
+  } else if (isRunner && c.loaded && fileGone) {
+    // GREEN IS NOT THE WHOLE TRUTH HERE, AND THIS IS THE BRANCH THAT SAYS SO. llama.cpp
+    // mmaps the weights, so it keeps serving a file that has been deleted underneath it
+    // — genuinely working, and doomed at the next start. Amber, not red: nothing is
+    // broken yet, and the runner must not be described as down while it answers.
+    dot = 'warn';
+    state = (c.model_file === 'gone') ? 'Online — model file gone'
+                                      : 'Online — pinned model missing';
   } else if (h === 'lost') {
     dot = 'bad'; state = 'Degraded';   // was started, health now failing (crashed)
   } else if (h === 'transient') {
@@ -3527,7 +3577,7 @@ function cardHTML(name, c, isBridge, prov) {
       // button away from someone looking at a component that really did die.
       actions = `<button class="primary" onclick="startAny('${name}')">Restart</button>
                  <button onclick="act('${name}','stop')">Stop</button>`;
-    } else if (name === 'runner') {
+    } else if (isRunner) {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
         : c.port_up
@@ -3541,12 +3591,35 @@ function cardHTML(name, c, isBridge, prov) {
              <button onclick="planInstall('${name}')">Reinstall</button>`
           : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
     }
+    // THE ACTION THAT ACTUALLY FIXES IT. Retry on a runner whose model file is gone is
+    // the dead end Debi clicked five times, so wherever the reason points at the model
+    // library, the library is one click away — and the Retry beside it is no longer the
+    // only thing to press.
+    if (wantsModels) {
+      actions += ` <button class="primary" onclick="showView('models')">Open Models</button>`;
+    }
+    if (fileGone) {
+      actions += ` <button onclick="rescanFromCard()">Rescan models</button>`;
+    }
   }
+  // The pin line. `pin` is the bridge's best-known name; the LABEL is what stops it
+  // reading as a claim that the model is loaded and fine (U15 #2).
+  const pinLabel = isRunner ? (c.loaded ? 'serving' : 'pinned') : 'pin';
   return `<div class="card" id="card-${name}">
     <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
     <div class="state">${state}</div>
-    <div class="meta">pin ${pin} · port ${c.port ?? '—'}${c.engine ? (' · ' + esc(c.engine)) : ''}</div>
+    <div class="meta">${pinLabel} ${pin} · port ${c.port ?? '—'}${c.engine ? (' · ' + esc(c.engine)) : ''}</div>
+    ${why ? `<div class="why">${esc(why)}</div>` : ''}
     <div class="actions">${actions}</div></div>`;
+}
+
+/* The Models pane's own RESCAN, reachable from a runner card whose pinned model has no
+   file left — re-running seed_registry.py is what prunes an entry LM Studio deleted.
+   It routes through the pane (rather than POSTing on its own) so there is exactly one
+   rescan implementation and the user lands where the result is visible. */
+function rescanFromCard(){
+  showView('models');
+  if (typeof rescanModels === 'function') return rescanModels();
 }
 
 async function planInstall(name) {
@@ -9621,6 +9694,16 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
   const q = quantOf(m.id); if (q) badges.push('<span class="mpill quant">' + esc(q) + '</span>');
   badges.push('<span class="mpill fmt">' + esc(m.format || m.engine || '') + '</span>');
   const sb = srcBadge(m.source); if (sb) badges.push(sb);
+  // U15 — FILE MISSING. The registry row survives a deletion made in LM Studio (or the
+  // Finder); the weights do not. Until v1.5.56 the only visible trace was the fit
+  // advisor's "No estimate" (v1.5.30), which reads as "we couldn't price it", not as
+  // "it isn't there". Drawn ONLY on the bridge's debounced `gone` — "checking" (one
+  // missed stat, which a sleeping network volume produces) deliberately draws nothing.
+  if (m.file === 'gone') {
+    badges.push('<span class="mpill gone" title="The file this entry points at is not '
+      + 'on disk (deleted outside MOT Deck — LM Studio?). RESCAN prunes entries like '
+      + 'this.">file missing</span>');
+  }
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
   if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
   if (isAux) badges.push('<span class="mpill aux">aux</span>');
