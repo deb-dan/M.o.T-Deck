@@ -121,8 +121,18 @@ console.log('\n2. the renderer, executed over the real document');
   const wrong = DOC.sections.find(s => s.title === 'When something looks wrong');
   ok(/<ol><li>/.test(wrong.html), 'a numbered list renders as <ol>, not as four paragraphs');
   ok(/<code>hermes\.max_turn_s<\/code>/.test(wrong.html), 'inline `code` renders as <code>');
-  ok((wrong.html.match(/<li>/g) || []).length === 4,
-     '…and a bullet that wraps onto an indented line stays ONE item (4 items, not 7)');
+  // ⚠️ THE COUNT IS DERIVED, NOT WRITTEN DOWN (widened by the S22 slice, which added a
+  // fifth entry to this list and turned a real property into a stale magic number). The
+  // property being guarded was never "there are four items" — it is "a wrapped
+  // continuation line does not become its own item", i.e. the rendered count equals the
+  // number of `N. ` starts in the SOURCE, whatever that number is. Derived, the fence
+  // now catches the wrapping bug on every future edit instead of only failing on them.
+  const wrongMd = md.split('## When something looks wrong')[1] || '';
+  const wrongStarts = (wrongMd.split('\n## ')[0].match(/^\d+\. /gm) || []).length;
+  ok(wrongStarts >= 4, 'the numbered list is still a numbered list in the source');
+  ok((wrong.html.match(/<li>/g) || []).length === wrongStarts,
+     `…and a bullet that wraps onto an indented line stays ONE item (${wrongStarts} items,`
+     + ' not one per line)');
   const hermes = DOC.sections.find(s => /^Hermes tools/.test(s.title));
   ok(hermes.subs.length === 2, 'the `### ` subsections are collected for the contents rail');
   for (const u of hermes.subs) {

@@ -184,6 +184,48 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   wants a decision — the engine is off, a file is missing, or you have not downloaded
   a model yet.
 
+### The model / workflow picker — every model on this Mac, and what each one can do
+
+- **Between the prompt and Generate there are two menus: a MODEL and a TYPE.** The model
+  list is not a list anyone typed into MOT Deck. It is read, every time you open the
+  page, from ComfyUI's own vendored workflow templates crossed against what is actually
+  in your models folder. **Download a model and it appears with its workflows; delete
+  one and it drops off.** Nothing needs to be told, refreshed or reinstalled.
+- **A model carries several types**, because one set of weights usually drives more than
+  one workflow — text-to-video, image-to-video, video-to-video, a still. Each TYPE is a
+  separate row with **its own required files, its own controls and its own graph**. Two
+  types of the same model can therefore disagree about whether they are ready, and they
+  are allowed to: the one that needs an extra 1.26 GB companion says so and the other
+  one runs.
+- **The chip after the two menus is the whole answer.** `ready` means every file that
+  workflow loads is on disk and pressing Generate runs it. Otherwise it reads
+  `Get 4.39 GB` — press it and only *that workflow's* missing files are fetched, not the
+  whole family. Its hover names each missing file. A size we have not confirmed with the
+  server is shown as unknown rather than guessed.
+- **The controls on the left follow the type you picked.** A workflow with no negative
+  prompt shows no negative-prompt box; one that makes stills shows no frame count. They
+  are read off the graph that will actually run, so what you see is what it takes.
+- **A type that starts from a picture shows a SOURCE menu**, listing your own results
+  (anything in the results rail) and anything already in ComfyUI's input folder. Make a
+  still with an image model, then feed it to an image-to-video workflow — that is the
+  whole loop, and neither step leaves the tab.
+- **Some workflows say `not runnable here`.** That is honest rather than broken: the
+  newest templates are built out of *subgraphs*, which this page does not expand. Their
+  files are fine, and the ⋯ menu's **Open template in ComfyUI** puts them in the ComfyUI
+  tab, where they run exactly as their authors wrote them.
+- **The two curated models still go through their own pinned path.** SDXL and Wan 2.1
+  were sha256-pinned, licence-read and measured on this Mac; picking one of their
+  templates runs that verified builder rather than the generic converter, which is why
+  their measured times and the Wan colour warning still apply.
+- **Downloads from the catalogue get a weaker check, and say so.** A curated model is
+  verified against a pinned sha256. A model discovered from the registry has no
+  published hash, so it is verified against the size the server declares — the chip's
+  hover states which of the two checks the file got.
+- **Both side panes drag.** The 8px gutters either side of the picture are the handles
+  (← → nudges them from the keyboard); the results rail's thumbnails grow as you widen
+  it, and the picture's own handle, dragged upward, hands the height to the prompt.
+  Widths, the split, and the model you were working with come back next time.
+
 ### Models — the sheet behind the model chip
 
 - **Click the model chip** (next to Image/Clip) to open the models sheet. One row per
@@ -366,6 +408,28 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
+## OpenCode — the tabs called "runner auto session"
+
+- **Every launch of the app adds one empty draft tab to OpenCode, and that is normal.**
+  The OpenCode tab opens straight onto a new-session composer for your workspace, and
+  OpenCode's own interface remembers each composer you land on as a **draft tab** in its
+  strip. Open the app tomorrow and there is one more. It is a quirk of how OpenCode
+  restores its strip, not something you did.
+- **They are labelled "runner auto session" so you can tell them apart from your work.**
+  OpenCode calls them "New session"; MOT Deck renames them on screen so a tab you never
+  opened does not read like a conversation you started and abandoned. Only the *label*
+  is changed — nothing inside OpenCode is edited, and if OpenCode is ever updated past
+  the version this app pins, the rename quietly stops and you see its own wording again.
+- **Nothing is stored in them and nothing is lost by closing them.** They are empty
+  composers: no message was ever sent, and there is no session on the server behind them
+  (OpenCode's own session list is empty). Close each one with its **✕** in OpenCode's own
+  tab strip whenever the strip gets long — that is the honest way to prune them.
+- **A tab you have actually used is safe.** Sending a message turns that draft into a
+  real session on the spot, with its own title. Real sessions are never relabelled and
+  are never created for you.
+
+---
+
 ## Window and layout
 
 - **The tab strip holds twelve tabs: nine you pin, then three that follow you.** The
@@ -405,8 +469,17 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 1. **A component card is red/degraded** → Stop, then Start it on MOT Deck.
 2. **A tab shows "Not reachable yet"** → that component isn't running; start it, then
    re-select the tab (or ⌘R).
-3. **A turn seems stuck** → press Stop; it force-ends within ~3s and names the stage it
+3. **A thin gold strip appears above a tab** → that app is running but something it
+   depends on isn't, so its own page looks fine while everything inside it fails. The
+   strip says exactly what is missing and offers the one button that fixes it — *Start
+   the Runner*, *Restart Hermes*, *Open MOT Deck* to load a model. It is only ever
+   advice: it never blocks the tab, it sits **above** the page rather than over it, and
+   it disappears by itself once the problem is gone. **✕** hides that particular
+   sentence; a different one still speaks up. The commonest case is a model swap —
+   an app is wired to whichever model was loaded when it started, and restarting it is
+   what re-points it at the current one.
+4. **A turn seems stuck** → press Stop; it force-ends within ~3s and names the stage it
    died in. Hermes turns that generate for a very long time with no tool call are
    stopped automatically (`hermes.max_turn_s`, default 600s, `0` disables).
-4. **Logs** in the sidebar shows every component's log, including `voice worker` and
+5. **Logs** in the sidebar shows every component's log, including `voice worker` and
    `guard`.

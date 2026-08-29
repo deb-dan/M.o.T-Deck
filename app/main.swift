@@ -286,6 +286,125 @@ final class DropOverlay: NSView {
     }
 }
 
+// ── THE DEPENDENCY BANNER (S22) ─────────────────────────────────────────────
+// docs/research/2026-08-29-isolation-mode.md §6: every Start already re-derives a
+// component's wiring to the runner, so "restart rebinds" has always been true. What
+// never existed is the SIGNAL — a Hermes dashboard is perfectly healthy on :9119 while
+// every chat inside it fails against a runner that is gone or serving a different
+// model, and nothing anywhere says so. This strip is that sentence.
+//
+// ⚠️ IT IS ADVISORY AND IT NEVER BLOCKS THE TAB — Debi's advisory-gates ruling. Three
+// properties enforce that, and a future edit must keep all three:
+//   1. it SHORTENS the page rather than covering it (attach() pins the webview's top to
+//      this view's bottom), so no pixel of the component's own UI is ever hidden;
+//   2. it is dismissable, and a dismissal sticks until the SITUATION changes (the
+//      dismissal is keyed on the sentence, not on the tab);
+//   3. it offers exactly ONE action, and that action is a request the bridge already
+//      serves. It is never modal, never a sheet, and never gates a click.
+// It also removes itself with no interaction at all the moment the need is met.
+let depsBannerHeight: CGFloat = 30
+
+final class DepsBanner: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let action = NSButton(title: "", target: nil, action: nil)
+    private let dismiss = PaneCloseButton(title: "✕", target: nil, action: nil)
+    // What is currently on screen, so applyDepsBanners can skip an identical repaint
+    // (this view sits above a live web page — a needless relayout there is visible).
+    var shownKey: String = ""
+    var onAction: (() -> Void)?
+    var onDismiss: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        // Gold-on-ink, the panel's own attention colour, at a strip's weight: this must
+        // read as the app talking, not as an OS alert.
+        layer?.backgroundColor = NSColor(red: 0.145, green: 0.125, blue: 0.078, alpha: 1).cgColor
+        let rule = NSView()
+        rule.translatesAutoresizingMaskIntoConstraints = false
+        rule.wantsLayer = true
+        rule.layer?.backgroundColor = paneGold.withAlphaComponent(0.55).cgColor
+        addSubview(rule)
+
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.textColor = paneCream
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        addSubview(label)
+
+        action.font = NSFont.systemFont(ofSize: 11)
+        action.bezelStyle = .texturedRounded
+        action.target = self
+        action.action = #selector(fire(_:))
+        action.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(action)
+
+        dismiss.isBordered = false
+        dismiss.toolTip = "Dismiss until this changes"
+        dismiss.tint(paneFaint)
+        dismiss.target = self
+        dismiss.action = #selector(close(_:))
+        dismiss.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dismiss)
+
+        // ⚠️ NO INTRINSIC HEIGHT HERE, DELIBERATELY (adversarial pass, caught before
+        // ship). The first draft carried a REQUIRED 30pt height constraint on this view
+        // and let the host drive a second one to 0 at priority 999. Autolayout resolves
+        // that by satisfying the required one and relaxing ours — i.e. the banner would
+        // have been 30pt tall FOREVER, silently eating 30 points off every tab whether
+        // it had anything to say or not. The height is owned by exactly one constraint,
+        // and it lives in buildPane where the value is driven.
+        NSLayoutConstraint.activate([
+            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rule.bottomAnchor.constraint(equalTo: bottomAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -10),
+            action.trailingAnchor.constraint(equalTo: dismiss.leadingAnchor, constant: -8),
+            action.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dismiss.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            dismiss.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dismiss.widthAnchor.constraint(equalToConstant: 16),
+            dismiss.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { return nil }
+
+    func show(key: String, text: String, actionLabel: String) {
+        if shownKey == key && !isHidden { return }
+        shownKey = key
+        label.stringValue = "⚠︎  " + text
+        label.toolTip = text                       // the full sentence when it truncates
+        action.title = actionLabel
+        action.isHidden = actionLabel.isEmpty
+        isHidden = false
+    }
+    func hide() {
+        if isHidden && shownKey.isEmpty { return }
+        shownKey = ""
+        isHidden = true
+    }
+    @objc private func fire(_ s: Any?) { onAction?() }
+    @objc private func close(_ s: Any?) { onDismiss?() }
+}
+
+// One unmet need, as the shell needs it. Every string in here is written by the bridge
+// (bridge/routers/components.py needs_message) — the shell deliberately composes no
+// user-facing sentence of its own, so a wording change never needs this binary rebuilt.
+struct DepNeed {
+    let comp: String        // the component/tab id the banner belongs to
+    let text: String
+    let actionLabel: String
+    let action: String      // "start" | "restart" | "open"
+    let target: String      // a component name, or "mc"
+    var key: String { return "\(comp)|\(action)|\(target)|\(text)" }
+}
+
 // Mission Control's webview: WKWebView does not forward Finder file-drags to the DOM
 // (page handlers never fire — verified: same page accepts drops in a real browser).
 // So the SHELL is the drop target: catch the drag natively, read the image, and hand
@@ -644,6 +763,149 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //
     // Pinned by bridge/tests/test_sse_hybrid.js §5, which fails if either number moves
     // without this note moving with it.
+    // ── OPENCODE: "New session" → "runner auto session" (ledger S21) ────────────
+    //
+    // WHAT THIS FIXES, AND WHAT IT DELIBERATELY DOES NOT.
+    // docs/research/2026-08-29-opencode-phantom-sessions.md root-caused the tabs Debi
+    // kept finding in OpenCode: they are not sessions. Our /opencode landing route
+    // deep-links `/:dir/session` with no draftId, and OpenCode 1.18.23's SPA mints and
+    // PERSISTS one draft TAB per boot of that route. Zero server sessions were ever
+    // created (sqlite: 0 rows, GET /session: []). Debi's ruling (S21): LEAVE the landing
+    // behaviour alone — the drafts are harmless and prunable with their own ✕ — but stop
+    // them calling themselves "New session", because that is what made them look like
+    // work she had started and abandoned. They are OURS: one per app launch.
+    //
+    // WHY A DOM RELABEL AND NOT A STORE EDIT — proven at the pin, not preferred.
+    // A draft tab has NO title in the persisted store. Its entry is exactly
+    // {type,server,draftID,directory,worktree} (the parser rejects any other shape), and
+    // the strip renders it with `title = t("command.session.new")` — a hardcoded i18n
+    // lookup at RENDER time (bundle index-DonkoK44.js, component `U6e`). There is no
+    // field in their store that could carry a label, so writing to the store could not
+    // work even if we were willing to. Renaming the rendered text is therefore not the
+    // least invasive mechanism that works — it is the ONLY one, and it leaves the store
+    // byte-untouched, which is what keeps their ✕ cleanup working exactly as before.
+    //
+    // FOUR FENCES. Any one of them failing means the script does NOTHING AT ALL — never
+    // a partial effect, never an error in their console, never a changed UI:
+    //   1. VERSION. The pin is read from harness.yaml here and compared, inside the
+    //      page, against OpenCode's own GET /global/health. A different build → return.
+    //      (No pin readable → the script is not injected at all.)
+    //   2. THE STORE. A key matching `opencode.window.*.dat:tabs` must exist and parse
+    //      as an array — that is the persisted tab strip this whole slice is about.
+    //   3. THE ENTRY. A node is relabelled only when the store says its id is a
+    //      `type:"draft"` entry. `data-tab-key` is literally `draft:<draftID>` (their
+    //      own `Kn`), so this is the store's own answer, not a guess from the DOM.
+    //   4. THE TEXT. Only the exact string "New session" is replaced. A renamed tab, a
+    //      localised build, or an upstream wording change is left alone.
+    // ZERO VENDORED BYTES: this runs in our webview, in our shell, and writes nothing
+    // anywhere. Removing it restores upstream's label on the next launch.
+    func opencodePin() -> String? {
+        // ⚠️ THE WEBVIEWS ARE BUILT BEFORE `resolvedRoot` IS SETTLED (the provisioning
+        // resolve runs later in applicationDidFinishLaunching), so this reads the baked
+        // root FIRST and the fat snapshot SECOND rather than trusting one of them. Both
+        // carry the same harness.yaml; whichever answers first is the pin.
+        var yaml: String? = nil
+        for r in [resolvedRoot, harnessRoot,
+                  NSString(string: "~/Library/Application Support/Harness").expandingTildeInPath] {
+            if let s = try? String(contentsOfFile: "\(r)/harness.yaml", encoding: .utf8) {
+                yaml = s; break
+            }
+        }
+        guard let y = yaml else { return nil }
+        // `opencode_pin: "1.18.23"` in build:. A regex, not a YAML parser: one value,
+        // and an unreadable/renamed key must mean "do not inject", not "guess".
+        guard let m = y.range(of: #"opencode_pin:\s*"([0-9][0-9A-Za-z.\-]*)""#,
+                              options: .regularExpression) else { return nil }
+        guard let q = y[m].range(of: #""([0-9][0-9A-Za-z.\-]*)""#,
+                                 options: .regularExpression) else { return nil }
+        return String(y[q].dropFirst().dropLast())
+    }
+
+    func openCodeDraftScript() -> WKUserScript? {
+        guard let pin = opencodePin() else {
+            NSLog("%@", "[opencode] no readable pin — draft relabel NOT injected" as NSString)
+            return nil
+        }
+        let src = """
+        (function(){
+          var PIN = "\(pin)", LABEL = "runner auto session", FROM = "New session";
+          function tabsKey(){
+            try {
+              for (var i=0;i<localStorage.length;i++){
+                var k = localStorage.key(i);
+                if (k && /^opencode\\.window\\..*\\.dat:tabs$/.test(k)) return k;
+              }
+            } catch(e){}
+            return null;
+          }
+          function draftIds(){
+            var k = tabsKey(); if (!k) return null;
+            try {
+              var v = JSON.parse(localStorage.getItem(k));
+              if (!Array.isArray(v)) return null;
+              var out = {};
+              for (var i=0;i<v.length;i++){
+                var e = v[i];
+                if (e && e.type === "draft" && typeof e.draftID === "string") out[e.draftID] = 1;
+              }
+              return out;
+            } catch(e){ return null; }
+          }
+          function paint(){
+            var ids = draftIds(); if (!ids) return;
+            var slots = document.querySelectorAll('[data-tab-key^="draft:"]');
+            for (var i=0;i<slots.length;i++){
+              var id = slots[i].getAttribute("data-tab-key").slice(6);
+              if (!ids[id]) continue;
+              var t = slots[i].querySelector("[data-titlebar-tab-title]");
+              if (!t) continue;
+              if (t.textContent === FROM) t.textContent = LABEL;
+            }
+          }
+          function arm(){
+            paint();
+            try {
+              new MutationObserver(function(){ paint(); })
+                .observe(document.body, {childList:true, subtree:true, characterData:true});
+            } catch(e){}
+          }
+          try {
+            fetch("/global/health").then(function(r){ return r.json(); }).then(function(j){
+              if (!j || j.version !== PIN) return;
+              if (document.body) arm();
+              else document.addEventListener("DOMContentLoaded", arm);
+            }).catch(function(){});
+          } catch(e){}
+        })();
+        """
+        return WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
+
+    // ── the dependency signal (S22) ──
+    // The two strips (one per pane) and the height constraint each one is driven by.
+    var bannerL: DepsBanner!
+    var bannerR: DepsBanner!
+    var bannerHeights: [ObjectIdentifier: NSLayoutConstraint] = [:]
+    // The latest answer from GET /api/deps, keyed by component/tab id. EMPTY IS THE
+    // HEALTHY STATE and also the state we fail into: a bridge that is down, an older
+    // bridge with no such route, a timeout or an unparseable body all leave this empty,
+    // which draws no banner. The signal can therefore never be the thing that breaks a
+    // tab — the same fail-safe shape as syncHermesGen and syncNav.
+    var depNeeds: [String: DepNeed] = [:]
+    // Sentences the user has waved away. Keyed by the SENTENCE (DepNeed.key), not by the
+    // tab: dismissing "Hermes is wired to model A" must not also silence "…model B" or
+    // "the runner is down". A dismissal therefore expires by itself the moment the
+    // situation actually changes, and nothing has to remember to clear it.
+    var depDismissed: Set<String> = []
+    var depsTimer: Timer?
+    // ⚠️ BUILDER NUMBER, AND IT IS DELIBERATELY SLOWER THAN THE PANEL'S 6s. /api/deps
+    // re-runs /api/status's derivation, so this is a SECOND poller of the same loopback
+    // probes rather than a free ride on the first — and the facts it watches move on a
+    // human timescale (a model swap, a component dying, a restart finishing). 10s reads
+    // as immediate for all three while keeping the added probe traffic below the panel's
+    // own. The timer only exists while a tab that can carry a banner is on screen, and
+    // it asks once IMMEDIATELY on arming so a tab switch never waits out a tick.
+    let depsPoll: TimeInterval = 10
     var bridgeProcess: Process?
     var spawnedBridge = false
     // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
@@ -791,6 +1053,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             // into it (bridge/gooseui.py's preload). A page reaching `window.webkit`
             // here is a page we provisioned byte-for-byte; a third-party page fetched
             // over the network still never gets this handler.
+            // OPENCODE gets NO handler and NO shellScript — it is a third-party page.
+            // What it gets is ONE cosmetic user script that renames its auto-minted
+            // draft tabs, and nothing else. See openCodeDraftScript().
+            else if t.id == "opencode" {
+                let c = WKWebViewConfiguration()
+                if let s = openCodeDraftScript() { c.userContentController.addUserScript(s) }
+                wvById[t.id] = WKWebView(frame: .zero, configuration: c)
+            }
             else if t.id == "loffice" || t.id == "aider" || t.id == "goose"
                     || t.id == "comfy" || t.id == "compose" || t.id == "gooseui" {
                 let c = WKWebViewConfiguration()
@@ -840,8 +1110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         focusStripL = NSView()
         leftHost = NSView()
         closeL = PaneCloseButton(title: "✕", target: self, action: #selector(closeLeft(_:)))
+        bannerL = DepsBanner()
         buildPane(leftPane, strip: focusStripL, host: leftHost, close: closeL,
-                  tip: "Close this pane")
+                  tip: "Close this pane", banner: bannerL)
+        bannerL.onAction = { [weak self] in self?.depAction(pane: 0) }
+        bannerL.onDismiss = { [weak self] in self?.depDismiss(pane: 0) }
         splitView.addArrangedSubview(leftPane)   // the right pane is added only when split is ON
         // Holding priority: the subview with the LOWER value is the first to absorb a
         // change, so a WINDOW resize moves the left pane's edge and leaves the pane you
@@ -854,8 +1127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         focusStripR = NSView()
         rightHost = NSView()
         closeR = PaneCloseButton(title: "✕", target: self, action: #selector(closeRight(_:)))
+        bannerR = DepsBanner()
         buildPane(rightPane, strip: focusStripR, host: rightHost, close: closeR,
-                  tip: "Close this pane")
+                  tip: "Close this pane", banner: bannerR)
+        bannerR.onAction = { [weak self] in self?.depAction(pane: 1) }
+        bannerR.onDismiss = { [weak self] in self?.depDismiss(pane: 1) }
 
         rightPlaceholder = makeRightPlaceholder()
 
@@ -1150,7 +1426,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // One builder for both panes: focus strip on top, content host below it, ✕ floating
     // over the host's top-right. Z-ORDER MATTERS — the host is added before the ✕, so a
     // webview reparented INTO the host can never cover the button.
-    func buildPane(_ pane: NSView, strip: NSView, host: NSView, close: PaneCloseButton, tip: String) {
+    func buildPane(_ pane: NSView, strip: NSView, host: NSView, close: PaneCloseButton, tip: String,
+                   banner: DepsBanner) {
         strip.translatesAutoresizingMaskIntoConstraints = false
         strip.wantsLayer = true
         strip.layer?.backgroundColor = NSColor.clear.cgColor
@@ -1158,6 +1435,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         host.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(host)
+
+        // The dependency strip lives INSIDE the host, at its top, and everything
+        // attach() puts in this host starts BELOW it (see attach). A hidden NSView with
+        // a height constraint still occupies its space, so the height is driven to 0
+        // when there is nothing to say — that is what makes an absent banner cost
+        // literally zero pixels rather than a 30pt gap.
+        host.addSubview(banner)
+        let bh = banner.heightAnchor.constraint(equalToConstant: 0)
+        bh.priority = NSLayoutConstraint.Priority(999)   // beats the class's own 30pt
+        bannerHeights[ObjectIdentifier(banner)] = bh
+        NSLayoutConstraint.activate([
+            banner.topAnchor.constraint(equalTo: host.topAnchor),
+            banner.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            bh,
+        ])
 
         // No bezelStyle: the NSBezelStyle case names were renamed in the macOS 14 SDK,
         // and a borderless button does not use one anyway.
@@ -1177,7 +1470,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             host.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             host.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
             close.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
-            close.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+            // …BELOW the dependency strip, not on top of it: the pane ✕ and the
+            // banner's own ✕ must never be able to stack on the same 16 points.
+            close.topAnchor.constraint(equalTo: banner.bottomAnchor, constant: 8),
             close.widthAnchor.constraint(equalToConstant: 16),
             close.heightAnchor.constraint(equalToConstant: 16),
         ])
@@ -1253,6 +1548,148 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func syncStrip() {
         let t = focusedTab()
         if seg.selectedSegment != t { seg.selectedSegment = t }
+    }
+
+    // ── THE DEPENDENCY SIGNAL: poll, paint, act (S22) ───────────────────────────
+    //
+    // The whole client is these four functions, and every one of them fails toward
+    // TODAY'S BEHAVIOUR: no answer, a stale answer, an old bridge or a malformed body
+    // all mean "no banner". Nothing here can prevent a tab from loading, reloading or
+    // being used, which is the point — the signal is advisory, always.
+
+    // Which tabs can carry one. It is derived, not listed: a banner belongs to a tab
+    // whose id is a COMPONENT the bridge answers for, so adding a component to
+    // harness.yaml (and NEEDS_SOFT) gives its tab a banner with no edit here — the
+    // standing "nothing hardcodes the tab list" rule. `mc` is excluded by construction:
+    // it is where the user goes to FIX these, so it must never carry one.
+    func bannerCapable(_ idx: Int) -> Bool {
+        guard idx >= 0 && idx < tabs.count else { return false }
+        return tabs[idx].id != panelId
+    }
+
+    // Arm the poll iff a tab that could carry a banner is on screen; retire it otherwise.
+    // Called from applyPanes for updateHermesGenTimer's reason: that is the ONE place
+    // that knows what is visible, so there is no second rule to keep in step.
+    func updateDepsTimer() {
+        let live = bannerCapable(currentTab) || (splitOn && bannerCapable(rightTab))
+        if live {
+            if depsTimer != nil { return }
+            fetchDeps()                       // ask NOW, not in six seconds
+            depsTimer = Timer.scheduledTimer(withTimeInterval: depsPoll,
+                                             repeats: true) { [weak self] _ in
+                guard let s = self else { return }
+                if !s.bannerCapable(s.currentTab)
+                    && !(s.splitOn && s.bannerCapable(s.rightTab)) {
+                    s.updateDepsTimer(); return          // belt and braces
+                }
+                if !NSApp.isActive { return }            // nothing to learn in the background
+                s.fetchDeps()
+            }
+            slog("deps poll -> on (every \(Int(depsPoll))s)")
+        } else if let t = depsTimer {
+            t.invalidate()
+            depsTimer = nil
+            slog("deps poll -> off")
+        }
+    }
+
+    func fetchDeps() {
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/deps"))
+        req.timeoutInterval = 2.0
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            guard err == nil,
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let d = data,
+                  let raw = try? JSONSerialization.jsonObject(with: d),
+                  let obj = raw as? [String: Any],
+                  let comps = obj["components"] as? [String: Any] else { return }
+            var out: [String: DepNeed] = [:]
+            for (name, v) in comps {
+                guard let row = v as? [String: Any],
+                      let needs = row["needs"] as? [[String: Any]],
+                      // ONE banner per tab, and it is the FIRST need the bridge listed:
+                      // the bridge orders them by depends_on, so the first is the one
+                      // furthest down the chain — fixing it is what unblocks the rest.
+                      let n = needs.first,
+                      let text = n["text"] as? String, !text.isEmpty else { continue }
+                out[name] = DepNeed(comp: name, text: text,
+                                    actionLabel: (n["action_label"] as? String) ?? "",
+                                    action: (n["action"] as? String) ?? "open",
+                                    target: (n["target"] as? String) ?? "mc")
+            }
+            DispatchQueue.main.async {
+                self.depNeeds = out
+                self.applyDepsBanners()
+            }
+        }.resume()
+    }
+
+    // The need currently belonging to a pane, or nil. A dismissed sentence is nil too —
+    // which is why dismissal is keyed on the sentence: the moment the bridge derives a
+    // DIFFERENT one, this returns it again.
+    func depNeed(pane: Int) -> DepNeed? {
+        let idx = pane == 1 ? rightTab : currentTab
+        guard bannerCapable(idx), idx >= 0 && idx < tabs.count else { return nil }
+        guard let n = depNeeds[tabs[idx].id], !depDismissed.contains(n.key) else { return nil }
+        return n
+    }
+
+    // Paint both strips from `depNeeds`. Idempotent — an unchanged sentence repaints
+    // nothing at all, because this view sits directly above a live web page.
+    func applyDepsBanners() {
+        for (pane, banner) in [(0, bannerL), (1, bannerR)] {
+            guard let b = banner else { continue }
+            // The right strip only exists while the split does.
+            let n = (pane == 1 && !splitOn) ? nil : depNeed(pane: pane)
+            if let need = n {
+                b.show(key: need.key, text: need.text, actionLabel: need.actionLabel)
+            } else {
+                b.hide()
+            }
+            if let h = bannerHeights[ObjectIdentifier(b)] {
+                let want: CGFloat = (n == nil) ? 0 : depsBannerHeight
+                if h.constant != want { h.constant = want }
+            }
+        }
+    }
+
+    // The ONE action. `open` never leaves the app and never asks the bridge for
+    // anything; `start` and `restart` are the same POSTs the panel's own component card
+    // makes. Either way the banner is left alone: it disappears when the next poll finds
+    // the need MET, which is the only honest moment to remove it — a banner that hides
+    // itself on click would be claiming a success it cannot know about yet.
+    func depAction(pane: Int) {
+        guard let need = depNeed(pane: pane) else { return }
+        if need.action == "open" {
+            guard let idx = tabs.firstIndex(where: { $0.id == panelId }) else { return }
+            routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
+            syncStrip()
+            slog("deps -> open MOT Deck")
+            return
+        }
+        let verb = need.action == "restart" ? "restart" : "start"
+        var req = URLRequest(url: bridgeURL
+            .appendingPathComponent("api/components")
+            .appendingPathComponent(need.target)
+            .appendingPathComponent(verb))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10.0
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            NSLog("%@", "[deps] \(verb) \(need.target) -> \(code)" as NSString)
+            // Ask again promptly rather than waiting out the tick: a start closure takes
+            // a while, but the FIRST thing it does is make the component unhealthy, and
+            // the user should see the sentence change rather than sit unchanged.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.fetchDeps() }
+        }.resume()
+    }
+
+    func depDismiss(pane: Int) {
+        guard let need = depNeed(pane: pane) else { return }
+        depDismissed.insert(need.key)
+        slog("deps dismissed: \(need.comp)")
+        applyDepsBanners()
     }
 
     func updateFocusStrips() {
@@ -2230,13 +2667,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Reparent a view into a pane. Constraints against the OLD superview die with the
     // removal, so this is the only place pane membership is expressed.
+    // The banner a host carries, if any. `park` and any other container has none, so
+    // everything parked keeps its full-height geometry and a re-borrow needs no relayout.
+    func bannerFor(_ host: NSView) -> DepsBanner? {
+        if host === leftHost { return bannerL }
+        if host === rightHost { return bannerR }
+        return nil
+    }
+
     func attach(_ v: NSView, to host: NSView) {
         if v.superview === host { return }
         v.removeFromSuperview()
         v.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(v)
+        // ⚠️ THE DEPENDENCY STRIP IS ABOVE THE CONTENT, NOT OVER IT. Pinning to the
+        // banner's bottom (which sits at the host's top and is 0pt tall when there is
+        // nothing to say) is what makes the banner advisory by CONSTRUCTION rather than
+        // by good intentions: it cannot cover a control, so it cannot block one.
+        let contentTop = bannerFor(host)?.bottomAnchor ?? host.topAnchor
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: host.topAnchor),
+            v.topAnchor.constraint(equalTo: contentTop),
             v.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: host.bottomAnchor),
@@ -2308,6 +2758,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // ensureLoaded — which sets hermesLoaded — always runs BEFORE it), so this one
         // call site covers tab routing, ⫽, a pane ✕, a drag-drop and a second instance.
         updateHermesGenTimer()
+        // …and the dependency signal, for exactly the same reason and from exactly the
+        // same call site: this function is the only place that knows what is on screen.
+        updateDepsTimer()
+        applyDepsBanners()
     }
 
     func makeRightPlaceholder() -> NSView {

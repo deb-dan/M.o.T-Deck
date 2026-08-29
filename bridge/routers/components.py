@@ -95,6 +95,225 @@ async def status() -> dict:
     return out
 
 
+# ══ THE DEPENDENCY SIGNAL (S22 — docs/research/2026-08-29-isolation-mode.md §6) ══
+#
+# The research's finding was that "restart rebinds" is ALREADY TRUE everywhere: every
+# Start re-derives a component's wiring to the runner (Hermes config patch, Odysseus
+# seed, OpenCode provider rewrite, goose env+config per spawn). What was missing is the
+# SIGNAL — nothing in the app ever said "this tab is pointed at a runner that is gone,
+# or at a model that is no longer loaded", so the tab looked alive while every turn in
+# it failed. That is the LIE-TO-USER class, and this block is the answer to it.
+#
+# EVERYTHING HERE IS DERIVED. It reads what status() above already computed plus
+# harness.yaml's own `depends_on` and (for Hermes) the binding the component itself has
+# on disk. It starts nothing, writes nothing, and issues no probe status() did not
+# already issue.
+#
+# ⚠️ ADVISORY, ALWAYS — Debi's advisory-gates ruling (CLAUDE.md) applies verbatim.
+# Everything here produces a sentence and ONE suggested action. No caller may use it to
+# block, refuse or gate a lane; the shell renders it as a thin dismissable banner ABOVE
+# the page (it shortens the webview by 30pt, it never covers it), and the banner
+# disappears on its own the moment the need is met.
+
+# HARD deps = harness.yaml `depends_on`, which is the START CLOSURE ("bring these up
+# first"). SOFT deps are the other half of the truth: a component whose closure is
+# deliberately EMPTY can still be useless without the runner. OpenCode is the recorded
+# case — harness.yaml says `depends_on: []` on purpose ("usable against any provider it
+# has configured"), which is right for Start and wrong for a user staring at a picker
+# full of local models that cannot answer. Kept as a SEPARATE table on purpose: nothing
+# in this file may change what a Start brings up.
+#
+# ⚠️ ONLY COMPONENTS status() ANSWERS FOR MAY APPEAR HERE. The two goose lanes and
+# aider are bridge-supervised CHILDREN, not harness.yaml components: they have no row
+# in /api/status and their own lifecycle routes are /api/gooseui/* and the PTY sockets,
+# so a soft dep on them would derive `needs` that nothing could act on. They are named
+# in ledger S24 with the exact seam each one still wants.
+NEEDS_SOFT: dict = {
+    "opencode": ("runner",),
+}
+
+# The names the SENTENCES use. Deliberately the tab titles the user reads in the strip
+# (app/main.swift's tabRegistry), not the internal ids — a banner that says "gooseui"
+# is a banner written for us rather than for her.
+_NEEDS_TITLES = {
+    "hermes": "Hermes", "odysseus": "Odysseus", "opencode": "OpenCode",
+    "gooseui": "Goose UI", "goose": "Goose CLI", "aider": "Aider",
+    "runner": "the Runner", "searxng": "SearXNG", "unsloth": "Unsloth",
+}
+
+
+def _needs_title(name: str) -> str:
+    return _NEEDS_TITLES.get(name, name)
+
+
+def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
+    """PURE. One unmet dependency → the sentence and the ONE action offered for it.
+
+    The copy lives here rather than in the Swift shell for the reason every other
+    user-facing string in this app does: it is testable, it is in one place, and the
+    shell that renders it stays dumb enough that a wording fix never needs a rebuild
+    of the binary.
+
+    `action` is what the shell does when the button is pressed:
+       start   -> POST /api/components/<target>/start
+       restart -> POST /api/components/<target>/restart
+       open    -> switch to the MOT Deck tab (no request at all)
+    """
+    who, what = _needs_title(comp), _needs_title(dep)
+    if state == "down":
+        return {"dep": dep, "state": state,
+                "text": f"{who} needs {what} — it isn't running. "
+                        f"Start {what}, then restart {who} to rebind.",
+                "action": "start", "target": dep,
+                "action_label": f"Start {what}"}
+    if state == "no-model":
+        return {"dep": dep, "state": state,
+                "text": f"{who} needs a model — {what} is up but nothing is loaded. "
+                        f"Load one in MOT Deck, then restart {who} to rebind.",
+                "action": "open", "target": "mc",
+                "action_label": "Open MOT Deck"}
+    if state == "swapped":
+        return {"dep": dep, "state": state,
+                "text": f"{who} is still wired to “{detail.get('bound') or '?'}” — "
+                        f"{what} is now serving “{detail.get('live') or '?'}”. "
+                        f"Restart {who} to rebind.",
+                "action": "restart", "target": comp,
+                "action_label": f"Restart {who}"}
+    if state == "moved":
+        return {"dep": dep, "state": state,
+                "text": f"{who} is still wired to {detail.get('bound') or '?'} — "
+                        f"{what} now answers on {detail.get('live') or '?'}. "
+                        f"Restart {who} to rebind.",
+                "action": "restart", "target": comp,
+                "action_label": f"Restart {who}"}
+    # Unknown state: say the true, minimal thing rather than invent a sentence.
+    return {"dep": dep, "state": state,
+            "text": f"{who} needs {what}.",
+            "action": "open", "target": "mc", "action_label": "Open MOT Deck"}
+
+
+def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
+    """PURE. The whole derivation, over plain dicts, so it is unit-testable against
+    every state without a runner, a component or a network.
+
+      comps    — status()["components"]: name -> {installed, running, port_up, loaded, …}
+      hard     — name -> list of harness.yaml depends_on
+      soft     — name -> tuple of usefulness deps (NEEDS_SOFT)
+      bindings — name -> {"model": <wire id the app is wired to>,
+                          "endpoint": <base_url the app is wired to>,
+                          "live_model": …, "live_endpoint": …} when we can read the
+                 component's OWN config; absent when we cannot (never guessed).
+
+    Returns {name: {"needs": [...]}} for components that HAVE an unmet need, and
+    nothing at all for the rest — an empty map is the healthy state and the shell
+    draws nothing for it.
+
+    TWO GATES, both deliberate:
+      * a component that is NOT RUNNING gets no needs. Its tab already shows the
+        shell's own "Not reachable yet" page; a second sentence about its runner is
+        noise stacked on a state the user can already see.
+      * a dependency that is NOT INSTALLED is skipped. Debi's partial-install
+        principle (ledger S23): "not everyone will install everything", and nagging
+        about a component someone deliberately never installed is the same defect as
+        a lie, one notch quieter.
+    """
+    out: dict = {}
+    names = set(hard) | set(soft)
+    for name in sorted(names):
+        me = comps.get(name) or {}
+        if not me.get("running"):
+            continue
+        needs = []
+        deps = list(hard.get(name) or ()) + [d for d in (soft.get(name) or ())
+                                             if d not in (hard.get(name) or ())]
+        for dep in deps:
+            d = comps.get(dep)
+            if d is None:
+                continue                      # a dep this build does not know about
+            if dep == "runner":
+                if not d.get("port_up"):
+                    needs.append(needs_message(name, dep, "down", {}))
+                    continue
+                if not d.get("loaded"):
+                    needs.append(needs_message(name, dep, "no-model", {}))
+                    continue
+                b = bindings.get(name) or {}
+                bound, live = b.get("model"), b.get("live_model")
+                if bound and live and bound != live:
+                    needs.append(needs_message(name, dep, "swapped",
+                                               {"bound": bound, "live": live}))
+                    continue
+                ep, live_ep = b.get("endpoint"), b.get("live_endpoint")
+                if ep and live_ep and ep.rstrip("/") != live_ep.rstrip("/"):
+                    needs.append(needs_message(name, dep, "moved",
+                                               {"bound": ep, "live": live_ep}))
+                continue
+            if not d.get("installed"):
+                continue                      # partial-install honesty (S23)
+            if not d.get("running"):
+                needs.append(needs_message(name, dep, "down", {}))
+        if needs:
+            out[name] = {"needs": needs}
+    return out
+
+
+def _hermes_binding(c: dict, live_model: "str | None") -> dict:
+    """What Hermes's OWN config says it is wired to, read-only, never guessed.
+
+    This is the one component whose binding we can read cheaply and exactly: Start
+    patches `model.default` / `model.base_url` in ~/.hermes/config.yaml and Hermes
+    reads them at use-time, so a mismatch against the live runner is not a heuristic —
+    it is the reason every new Hermes chat would fail. Anything unreadable returns {},
+    which the derivation treats as "no claim" rather than as a problem.
+
+    Odysseus's equivalent binding lives inside its sqlite DB behind its admin API and
+    is NOT read here — see ledger S24."""
+    from ..core.hermescfg import _hermes_config_path
+    from ..core.modelid import wire_model_id
+    try:
+        import yaml
+        raw = yaml.safe_load(Path(_hermes_config_path()).read_text()) or {}
+        m = raw.get("model") or {}
+    except Exception:                                                # noqa: BLE001
+        return {}
+    rc = c.get("runner") or {}
+    try:
+        live_wire = wire_model_id(live_model or "", _registry_models())
+    except Exception:                                                # noqa: BLE001
+        live_wire = live_model or ""
+    return {
+        "model": str(m.get("default") or "") or None,
+        "live_model": live_wire or None,
+        "endpoint": str(m.get("base_url") or "") or None,
+        "live_endpoint": (f"http://127.0.0.1:{rc.get('port')}/v1"
+                          if rc.get("port") else None),
+    }
+
+
+@app.get("/api/deps")
+async def deps() -> dict:
+    """The dependency signal: per-component UNMET needs, derived from /api/status.
+
+    One request, no new probing: it calls status() and reads its answer. The Swift
+    shell polls this only while a tab that CAN carry a banner is on screen, at the
+    same slow cadence as its other polls (app/main.swift's depsPoll).
+
+    `components` is empty in the healthy state — that is the whole contract the shell
+    needs, and an older shell that has never heard of this route is unaffected."""
+    st = await status()
+    c = cfg()
+    hard = {n: (comp.get("depends_on") or [])
+            for n, comp in (c.get("components") or {}).items()}
+    live = (st.get("components", {}).get("runner") or {}).get("pin")
+    loaded = (st.get("components", {}).get("runner") or {}).get("loaded")
+    bindings = {}
+    hb = _hermes_binding(c, live if loaded else None)
+    if hb:
+        bindings["hermes"] = hb
+    return {"components": needs_derive(st.get("components", {}), hard,
+                                       NEEDS_SOFT, bindings)}
+
+
 @app.get("/api/logs/{name}")
 def logs(name: str, lines: int = 40) -> dict:
     # "guard" = the path-guard audit trail (one JSON line per out-of-allowlist write).
@@ -494,6 +713,35 @@ def stop(name: str) -> JSONResponse:
     if port:
         return JSONResponse({"ok": True, "log": f"nothing running on :{port}"})
     return JSONResponse({"ok": False, "log": "no pid file and no port to kill by"})
+
+
+@app.post("/api/components/{name}/restart")
+def restart(name: str) -> JSONResponse:
+    """Stop, then start — the ONE action the dependency banner offers for "restart to
+    rebind", because that is exactly what rebinds a component (every Start re-derives
+    its wiring: the Hermes config patch, the Odysseus seed, the OpenCode provider
+    rewrite — docs/research/2026-08-29-isolation-mode.md §6).
+
+    ⚠️ IT IS A COMPOSITION, NOT NEW MACHINERY. It calls the stop() and start() route
+    functions above verbatim — no second copy of the kill logic, no second copy of the
+    provisioning thread — so a component can only ever be stopped the one audited way
+    (pidfile identity first, port listener second, refusals honoured). If stop() refuses
+    (409), NOTHING is started: a half-restart that leaves the old process holding the
+    port is worse than the state we were asked to fix, and the caller is told why.
+
+    Returns at once, like start(): the closure runs in start()'s background thread and
+    the panel/shell watch it through /api/status's `prov` overlay exactly as they watch
+    a Start pressed on the card."""
+    if name != "runner" and name not in (cfg().get("components") or {}):
+        raise HTTPException(404, "unknown component")
+    r = stop(name)
+    if r.status_code != 200:
+        return JSONResponse(
+            {"ok": False, "phase": "stop",
+             "log": (r.body or b"").decode("utf-8", "replace")[:400]},
+            status_code=r.status_code)
+    start(name)
+    return JSONResponse({"ok": True, "log": f"restarting {name}"})
 
 
 @app.post("/api/components/{name}/update")
