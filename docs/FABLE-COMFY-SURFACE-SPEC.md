@@ -18,3 +18,43 @@
 
 ## Sequencing
 index.html is contended (UI-polish → goose queued). S1 builder owns NEW files (bridge/panel/comfy.html or equivalent + bridge/routers/comfy.py, registered in _LANES/appsrc.FILES) — the sidebar/tab entry line in index.html is added by whoever owns index.html when S1 lands (one line, Fable coordinates). S2 (more video/upscalers incl. the H3 revisit) and S3 (audio: ACE-Step/Stable Audio) follow as their own slices with the same rules.
+
+---
+
+# SPEC v2 — the Generate page REDESIGN (Fable, 2026-08-29, after Debi's verdict on S1)
+
+Debi's verdict on the shipped page: disaster-class ("worse than comfyui... essay for every
+button"). The BINDING design source is docs/research/2026-08-29-generate-page-redesign.md —
+§4's IA is the wireframe (its §4.0 traceability table is the argument), §5's honesty ledger
+is the conservation law (all 17 mechanics survive, demoted never deleted), §1 is the sin
+list that may not recur. Doctrine 8b applies: the design derives from our principles
+(impeccable + Studio spec + the v1.5.34 chip grammar), corroborated by the 11-product survey.
+
+## Debi's four fork answers (final)
+1. Gallery = RECENT STRIP under the result stage + "All results ▸" expanding in place.
+2. Disk chip = ALWAYS in the header (amends the contextual-only proposal; still ≤7 budget
+   with it — the researcher counted it in).
+3. Graph + Open-template = behind each item's ⋯ overflow. Kept, invisible at rest.
+4. First run = the composer, with the two curated Get buttons (sizes shown) in the empty
+   result stage. The product's face stays the product.
+
+## Non-negotiables
+- AT REST ≤7 elements per §4 (status chips · result stage · recent strip · prompt ·
+  Image/Clip toggle · model chip · Generate) + the always-on disk chip per answer 2.
+- The sentence rule: prose ships at rest ONLY as an action label, a live decision, or the
+  first-run invitation. Everything else = chip + hover/tooltip (the v1.5.34 tipBind grammar,
+  one verdict object) or Help. USER-EXPLAINERS carries the essays — the page never duplicates it.
+- Models = a SHEET in the v1.5.34 row/chip grammar (state chips carry the exact cardAction
+  states; license = a chip whose hover holds the link; file manifests/sha prose = hover;
+  Wan colour-defect = one amber chip, same object echoed on the composer's model chip).
+- Pixelmator write-back: a finished run's actual values land in the ordinary controls/caption
+  chips (seed-reset behavior preserved).
+- Toast pattern from v1.5.39 stays (alert() is banned — silent no-op in the shell).
+- ALL-DESIGNS (six looks by computed values); copy-provenance; the honesty ledger §5 verified
+  item-by-item in the report (a table: mechanic → new home → proven where).
+- bridge/routers/comfy.py sits AT the 1500-line facade ceiling (ledger S8): if the redesign
+  needs ANY router growth, first extract curation+graph builders to bridge/core/comfycur.py
+  (registration rules per the facade manifest) — never squeeze under the ceiling by deleting
+  comments.
+- The Generate page redesign REPLACES the current comfy.html surface in place (same /comfy
+  URL, same ❖ Generate entry) — Debi's scrap-or-keep fork applies to MUSIC, not here.
