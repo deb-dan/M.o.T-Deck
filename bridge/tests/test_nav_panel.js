@@ -103,8 +103,10 @@ console.log('defaults');
   // Logs — plus the components group. PHASE 2 adds exactly the two lanes Debi asked
   // for, in the workspace group, and moves nothing else.
   const ws = ids(d, 'sidebar').filter(i => M.navEntry(i).kind !== 'component');
-  ok(ws.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs,help',
-     'the workspace rail is today\'s order + the two lanes + Help under Logs: ' + ws.join(','));
+  // …and the goose slice adds a THIRD lane, next to aider (its sibling: both are pty
+  // lanes in their own tab). Everything else still moves nothing.
+  ok(ws.join(',') === 'mc,chat,models,music,aider,goose,loffice,caps,logs,help',
+     'the workspace rail is today\'s order + the three lanes + Help under Logs: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -115,8 +117,11 @@ console.log('defaults');
   // ORDER itself is the requirement, so it may not drift silently.
   ok(top.join(',') === 'mc,hermes,unsloth,opencode,odysseus,voicestudio,comfyui,aider,loffice,music,voicebox',
      'the default strip is exactly the eleven default tabs, in Debi\'s order');
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps',
-     'the three pinnable VIEWS start hidden (they are one sidebar click away)');
+  // ⚠️ WIDENED, NOT WEAKENED, at the goose slice: still a closed literal list, and
+  // goose is on it because the strip is at 11 of 12 pins and a new lane must not spend
+  // the last one silently. It is one sidebar click (or one ⋯) away.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose',
+     'the three pinnable VIEWS + goose start hidden (they are one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
 }
 
@@ -276,8 +281,8 @@ console.log('render (executed)');
              comp: document.getElementById('sidecomponents').innerHTML };`);
   const out = run(...Object.values(env));
   const rows = [...out.ws.matchAll(/id="nav-([a-z]+)"/g)].map(m => m[1]);
-  ok(rows.join(',') === 'mc,chat,models,music,aider,loffice,caps,logs,help',
-     'with NO saved layout the workspace rail renders today\'s rows + the two lanes + Help');
+  ok(rows.join(',') === 'mc,chat,models,music,aider,goose,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders today\'s rows + the three lanes + Help');
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),

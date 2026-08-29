@@ -42,6 +42,10 @@ NAV_ENTRIES = (
     {"id": "models",      "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "music",       "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "aider",       "kind": "lane",      "bars": ("sidebar", "topbar")},
+    # GOOSE (docs/research/2026-08-28-goose-source-verify.md) — a LANE, not a component,
+    # for aider's exact reason: it has no port, no daemon and no browser UI of its own,
+    # so it never appears on Mission Control. It runs in a pty inside its own tab.
+    {"id": "goose",       "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "loffice",     "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "caps",        "kind": "view",      "bars": ("sidebar", "topbar")},
     # Logs is a DIALOG. It has no view id, so it can never be a solo tab — and it is
@@ -89,7 +93,7 @@ NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 # That is the whole upgrade path: no `v` bump, no one-time migration.
 DEFAULT_SIDEBAR = (
     ("mc", True), ("chat", True), ("models", True), ("music", True),
-    ("aider", True), ("loffice", True), ("caps", True), ("logs", True),
+    ("aider", True), ("goose", True), ("loffice", True), ("caps", True), ("logs", True),
     ("help", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
@@ -111,6 +115,14 @@ DEFAULT_TOPBAR = (
     ("odysseus", True), ("voicestudio", True), ("comfyui", True), ("aider", True),
     ("loffice", True), ("music", True), ("voicebox", True),
     ("chat", False), ("models", False), ("caps", False),
+    # ⚠️ GOOSE IS DECLARED HERE BUT NOT PINNED, AND THAT IS THE DELIBERATE CHOICE.
+    # The strip is at 11 of NAV_TOPBAR_MAX=12 pins in Debi's arranged order; a twelfth
+    # would fill the last slot on a FRESH machine while doing nothing at all on Debi's
+    # (her nav.json is already stamped v2, so `migrate` returns early and `normalize`
+    # appends a new id UNPINNED regardless). Declaring it unpinned means both machines
+    # agree: Goose is one sidebar click or one ⋯ away, and pinning it is a choice the
+    # Appearance editor can make — rather than a default that quietly spends the last pin.
+    ("goose", False),
 )
 # THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
 # it is the ONLY way to tell "this user never customised their strip" from "this user

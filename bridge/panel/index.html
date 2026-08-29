@@ -2936,6 +2936,7 @@ const NAV_ENTRIES = [
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
   { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
   { id:'aider',   label:'Aider',           ico:'⌨', kind:'lane', view:null,     tab:'Aider',   url:'/aider',  prefersTab:true },
+  { id:'goose',   label:'Goose',           ico:'⌁', kind:'lane', view:null,     tab:'Goose',   url:'/goose',  prefersTab:true },
   { id:'loffice', label:'LOffice',         ico:'▦', kind:'lane', view:null,     tab:'LOffice', url:'/office', prefersTab:true },
   { id:'caps',    label:'Capabilities',    ico:'⚙', kind:'view', view:'caps',   tab:'Capabilities' },
   // Logs is a DIALOG, so it has no view and can never be a tab — sidebar only, and the
@@ -2964,7 +2965,7 @@ const NAV_SIDEBAR_ONLY = ['logs','help'];
 const NAV_ALWAYS = ['logs','help'];
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
-const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','loffice','caps','logs',
+const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','goose','loffice','caps','logs',
                              'help',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
@@ -2977,7 +2978,10 @@ const NAV_DEFAULT_TOPBAR = ['mc','hermes','unsloth','opencode','odysseus','voice
    "customised into something short". Mirrors nav.py's DEFAULT_TOPBAR_V1. */
 const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
                                'unsloth','music','aider','loffice','opencode'];
-const NAV_TOPBAR_UNPINNED = ['chat','models','caps'];
+/* …and the entries the strip DECLARES but does not pin by default. `goose` joined the
+   three views at the goose slice: the strip is at 11 of 12 pins, so a new lane takes the
+   ⋯ overflow rather than the last slot. Mirrors nav.py's DEFAULT_TOPBAR tail. */
+const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose'];
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
@@ -3463,6 +3467,7 @@ const LOG_SOURCES = [
   {n:'comfyui', label:'comfyui'}, {n:'comfyui-install', label:'comfyui install'},
   {n:'unsloth', label:'unsloth'}, {n:'unsloth-install', label:'unsloth install'},
   {n:'aider', label:'aider'}, {n:'aider-install', label:'aider install'},
+  {n:'goose', label:'goose'}, {n:'goose-install', label:'goose install'},
   {n:'opencode', label:'opencode'}, {n:'opencode-install', label:'opencode install'},
   // LOffice's boot beacon — the page phones home at every step of its own boot, and
   // that trace must be readable in-panel because the tab it describes may be blank.

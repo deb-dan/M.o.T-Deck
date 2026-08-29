@@ -105,8 +105,13 @@ def test_normalize():
        "the default strip is exactly the pinned defaults, in order")
     ok(len(nav.visible(d, "topbar")) == 11,
        "eleven default tabs (ten shipped + OpenCode) — a change here must be deliberate")
-    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps"],
-       "the three pinnable views start hidden (one sidebar click away)")
+    # ⚠️ WIDENED AT THE GOOSE SLICE, NOT WEAKENED. It is still a CLOSED list and the
+    # point is unchanged: an entry declared on the strip but not pinned must be a
+    # deliberate choice with its argument written at its registry line. Goose joins the
+    # three views because the strip is at 11 of NAV_TOPBAR_MAX=12 pins and a new lane
+    # must not silently spend the last one — see nav.py's DEFAULT_TOPBAR tail.
+    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose"],
+       "the three pinnable views + goose start hidden (one sidebar click away)")
 
     # junk totality: none of these may raise, and each must return a full model
     for junk in [None, 0, "x", [], {"sidebar": "x"}, {"topbar": 7},

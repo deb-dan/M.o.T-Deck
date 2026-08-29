@@ -63,6 +63,19 @@ let tabRegistry: [HarnessTab] = [
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
     HarnessTab(id: "aider", title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
+    // Goose — the third agent lane, and a pty for the same verified reason Aider is:
+    // goose has NO browser UI at all (no `web`, no `ui` subcommand; `goose serve` is an
+    // ACP client API that serves no page — docs/research/2026-08-28-goose-source-
+    // verify.md item 4). Ours, bridge origin, its own document (/goose): xterm.js plus
+    // ws://…/api/pty/goose, so it must not carry the panel's poll loops.
+    //
+    // ⚠️ IT IS IN THE REGISTRY BUT NOT IN navDefaultTopbar, AND BOTH ARE REQUIRED. The
+    // registry is "does this build know that tab at all" — switchTab shows a hidden tab
+    // for the session, which is how the sidebar row opens it. navDefaultTopbar is the
+    // PINNED prefix, and test_nav_model.py asserts it equals nav.py's pinned defaults;
+    // goose is declared unpinned there (the strip is at 11 of 12), so it must NOT appear
+    // in the list below or the three-way agreement breaks.
+    HarnessTab(id: "goose", title: "Goose", url: URL(string: "http://127.0.0.1:8700/goose")!),
     // LOffice — spreadsheets over vendored Univer, served from OUR bridge (/office).
     // Ours, bridge origin, its own document for the same reason Aider is: it loads
     // ~10MB of Univer UMD and must not carry the panel's poll loops. Debi suggested
@@ -625,7 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         //
         // OUR OWN PAGES — and only ours — get the "harness" script-message handler, so
         // that a sidebar row (or LOffice's File menu) can ask the shell to switch tabs.
-        // That is the panel here, plus LOffice and Aider in the registry loop below;
+        // That is the panel here, plus LOffice, Aider and Goose in the loop below;
         // registering it on any other webview would let a THIRD-PARTY component page
         // drive our tab strip, so those configurations are deliberately bare.
         //
@@ -667,10 +680,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if t.id == panelId { wvById[t.id] = panelWV! }
             else if t.id == odysseusId { wvById[t.id] = odyWV! }
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
-            // LOffice + Aider are OUR OWN pages served by the bridge (first-party, same
-            // origin as the panel) — they get the "harness" handler too, so their File
-            // menus can ask the shell to switch tabs. Third-party pages never do.
-            else if t.id == "loffice" || t.id == "aider" {
+            // LOffice + Aider + Goose are OUR OWN pages served by the bridge
+            // (first-party, same origin as the panel) — they get the "harness" handler
+            // too, so their File menus can ask the shell to switch tabs. Third-party
+            // pages never do.
+            else if t.id == "loffice" || t.id == "aider" || t.id == "goose" {
                 let c = WKWebViewConfiguration()
                 c.userContentController.add(self, name: "harness")
                 c.userContentController.addUserScript(shellScript)

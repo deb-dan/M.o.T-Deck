@@ -478,9 +478,13 @@ check('the shell conforms to WKScriptMessageHandler',
 // a third-party component page must never be able to drive our tab strip.
 check('the handler is registered on the panel configuration',
       /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,300}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
-check('...and on our own LOffice/Aider pages, on nothing else',
+// ⚠️ WIDENED AT THE GOOSE SLICE, and it is still the same closed gate: the arm names
+// an EXPLICIT list of our own first-party bridge pages, and every other webview gets a
+// bare configuration. Goose is the third (loffice, aider, goose) — a pty terminal in
+// our own document, whose page must be able to ask the shell to switch tabs.
+check('...and on our own LOffice/Aider/Goose pages, on nothing else',
       (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
-      && /else if t\.id == "loffice" \|\| t\.id == "aider" \{[\s\S]{0,300}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose" \{[\s\S]{0,300}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift)
       // the generic arm — every third-party component page — gets a BARE configuration.
@@ -494,7 +498,7 @@ check('the shell injects its own capability record into its first-party pages',
       && /injectionTime: \.atDocumentStart, forMainFrameOnly: true/.test(swift));
 check('...the tab list it publishes is the REGISTRY, not the visible strip',
       /shellIds = tabRegistry\.map/.test(swift) && !/shellIds = tabs\.map/.test(swift));
-check('...and it is added to the panel and to LOffice/Aider, nowhere else',
+check('...and it is added to the panel and to LOffice/Aider/Goose, nowhere else',
       (swift.match(/addUserScript\(shellScript\)/g) || []).length === 2);
 check('it accepts only the "harness" message name',
       /message\.name == "harness"/.test(handlerBody));

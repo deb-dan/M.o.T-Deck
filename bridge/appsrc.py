@@ -92,6 +92,8 @@ FILES: tuple[str, ...] = (
     "routers/odyvision.py",
     # The ComfyUI generate surface (S1), appended by the same rule.
     "routers/comfy.py",
+    # The goose agent lane, appended by the same rule.
+    "routers/goose.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

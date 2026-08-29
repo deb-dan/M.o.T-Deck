@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The boot beacon: the title starts in the booting state and the inline script below
+     changes it, so "the scripts never ran" is answerable from the shell (webView.title)
+     as well as from the static banner in the body. -->
+<title>Goose · booting…</title>
+<meta name="harness-build" content="goose-2026-08-29a">
+<!-- The Goose tab is its OWN document, deliberately not the panel: it is a terminal, it
+     loads xterm.js, and it must not carry the panel's poll loops. -->
+<script>
+  // ══ THEME COHERENCE — office.html's syncSkin(), and the ALL-DESIGNS RULE ══════
+  // This page is served from the SAME ORIGIN as the panel, so the theme choices the
+  // panel persists are simply readable here. There is no second setting and no toggle
+  // on this page ON PURPOSE: a tab that could disagree with the app it lives in is
+  // exactly the complaint that produced this pattern.
+  //
+  //   harness-theme  ∈ {light, gold, cyber}  → data-theme="…"  (Editorial = no attribute)
+  //   harness-chrome === 'studio'            → data-chrome="studio"
+  //
+  // ⚠️ THE WHITELIST IS THE POINT. An unknown or corrupt value falls through to
+  // Editorial (no attribute) rather than stamping an attribute no stylesheet answers —
+  // the panel's own pre-paint block is written exactly this way.
+  //
+  // ⚠️ IT RUNS HERE, IN THE HEAD, BEFORE THE STYLESHEET IS PARSED, for the same reason
+  // the panel does it: applying it later would paint the page dark and then flip it, on
+  // every single load.
+  //
+  // ⚠️ IT NEVER WRITES. Leaving a theme in the panel restores this tab with it.
+  //
+  // ⚠️ WHY THIS PAGE DOES *NOT* READ `harness-design`. That third axis is not a palette
+  // — it is a whole layout/type/shape sheet, and it is per-surface: the panel has
+  // /assets/studio-design.css, LOffice has /assets/studio-office.css, and there is no
+  // goose sheet to load. Reading the key and stamping data-design without one would
+  // paint a HALF-designed page, which the office implementation's own second property
+  // ("nothing is half-painted") forbids. Editorial layout in every design is the honest
+  // state, and it is recorded as an honest limit rather than left to be discovered.
+  (function () {
+    window.syncSkin = function () {
+      var theme = null, chrome = null;
+      try {
+        theme = localStorage.getItem('harness-theme');
+        chrome = localStorage.getItem('harness-chrome');
+      } catch (e) { return; }        // private mode: the defaults stand, silently
+      var d = document.documentElement;
+      if (theme === 'light' || theme === 'gold' || theme === 'cyber')
+        d.setAttribute('data-theme', theme);
+      else d.removeAttribute('data-theme');
+      if (chrome === 'studio') d.setAttribute('data-chrome', 'studio');
+      else d.removeAttribute('data-chrome');
+    };
+    window.syncSkin();
+  })();
+</script>
+<link rel="stylesheet" href="/assets/vendor/xterm.css">
+<style>
+  /* ══ THE PALETTE — the panel's tokens, copied (a separate document cannot inherit
+     :root). Four packs, and a pack is ONE rule containing NOTHING BUT custom
+     properties — the theme-pack guardrail, which is what lets this page carry all four
+     for the price of four rules. Values are byte-identical to bridge/panel/index.html;
+     keep them in step by eye if the panel's palette moves. */
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+    --term-bg:#0b0910; --term-fg:#efe9dc; --term-cursor:#c9a44d; --term-sel:#2f2946;
+  }
+  html[data-theme="light"]{
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --bad:#b13d3d;
+    /* ⚠️ THE TERMINAL IS A DARK SURFACE IN EVERY THEME, DELIBERATELY, and this is the
+       same judgement office.html records for the spreadsheet grid ("the sheet itself is
+       not themed"). goose paints its own ANSI colours — its banner, its diff colouring,
+       its approval prompts — and every one of them was chosen by somebody looking at a
+       dark terminal. Rendering those on warm paper is not a light theme, it is an
+       unreadable one. The CHROME around the terminal follows the theme; the terminal
+       keeps its own ground, and says so in the footer. */
+  }
+  html[data-theme="light"] button.primary{color:var(--bg)}
+  html[data-theme="gold"]{
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
+    --gold:#e8bf76; --ok:#4fc79b; --bad:#e77070;
+  }
+  html[data-theme="cyber"]{
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
+    --gold:#7dd3fc; --ok:#4ade80; --bad:#fb7185;
+  }
+  /* STUDIO CHROME — the second axis: control SHAPE, not colour. Only the four
+     properties that make a control read as one shape rather than another.
+     ⚠️ THE TOKENS LIVE HERE; THE RULES THAT USE THEM LIVE AT THE BOTTOM OF THIS SHEET.
+     That split is not style — see the note down there. */
+  html[data-chrome="studio"]{
+    --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83}
+  html[data-chrome="studio"][data-theme="light"]{
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878}
+
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream)}
+  .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
+        border-radius:6px;color:var(--dim);white-space:nowrap}
+  .pill.on{color:var(--gold);border-color:var(--gold)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  button{font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2);border-radius:8px;
+         padding:6px 13px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  /* ⚠️ THE INK ON A CREAM-FILLED CONTROL IS var(--bg), NEVER A HARDCODED NEAR-BLACK.
+     In the light pack --cream is DARK ink, so a near-black label on a cream fill is
+     black-on-black; var(--bg) is the ground the fill is drawn against and is therefore
+     correct in every palette by construction. (bug-echo W-06, four sightings.) */
+  button.primary{background:var(--cream);color:var(--bg);border-color:var(--cream)}
+  .grow{flex:1 1 auto}
+  /* ⚠️ THE TERMINAL WINS EVERY SQUEEZE, AND THAT IS A MEASURED FIX. Measured in a
+     narrow split pane (350×373): header 111 + note 138 + foot 96 left the terminal
+     TWENTY-EIGHT pixels — one row. The prose explaining the lane had eaten the lane.
+     A surface whose whole content is a terminal must give the terminal a FLOOR and
+     make everything else yield, because a one-row terminal is not a degraded view, it
+     is an unusable one (the graceful-absence rule, applied to a small window rather
+     than to a missing dependency).
+       · #note shrinks and scrolls, capped at a fraction of the height;
+       · #wrap has a real min-height, so flex cannot take the last of it;
+       · #foot is a FOOTNOTE and is the first thing dropped when the window is short. */
+  #note{flex:0 1 auto;overflow:auto;max-height:26vh;
+        padding:8px 16px;color:var(--faint);font-size:11.5px;
+        border-bottom:1px solid var(--line);background:var(--bg2)}
+  #note b{color:var(--dim);font-weight:600}
+  #wrap{flex:1 1 auto;min-height:160px;padding:8px 10px 10px;background:var(--bg)}
+  #term{width:100%;height:100%}
+  /* ⚠️ THE STATUS LINE IS TOGGLED BY CLASS, NEVER BY style.display — v1 of the aider
+     page hid it with `display:none` here and re-showed it with `style.display=''`,
+     which removes the inline declaration and falls straight back to this rule, so every
+     message was structurally invisible. A class cannot be defeated that way. */
+  #boot{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);
+        color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
+  #boot b{color:var(--cream);font-weight:600}
+  #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
+  #msg{flex:none;padding:10px 16px;font-size:12px;white-space:pre-wrap;display:none}
+  #msg.show{display:block}
+  #msg.warn{color:var(--bad)}
+  #msg.info{color:var(--faint)}
+  #logwrap{flex:none;display:none;padding:0 16px 10px}
+  #logwrap.show{display:block}
+  #logbox{margin:0;max-height:170px;overflow:auto;background:var(--card);
+          border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+          font:10.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+          color:var(--dim);white-space:pre-wrap}
+  .link{background:none;border:0;padding:0;color:var(--dim);font:11.5px/1 -apple-system,
+        BlinkMacSystemFont,sans-serif;text-decoration:underline;cursor:pointer}
+  .link:hover{color:var(--gold);border-color:transparent}
+  #foot{flex:0 1 auto;overflow:hidden;padding:7px 16px 9px;color:var(--faint);
+        font-size:10.5px;border-top:1px solid var(--line);background:var(--bg2)}
+  /* A short window (a split pane, a laptop with the strip and a half-height split) is
+     a NORMAL state here, not an edge case. The footnote goes first, then the note
+     scrolls; the terminal keeps its floor either way. */
+  @media (max-height:620px){ #foot{display:none} }
+  @media (max-height:520px){ #note{max-height:20vh} }
+
+  /* ══ STUDIO CHROME, THE RULES — AND THEY ARE AT THE BOTTOM ON PURPOSE ═════════
+     ⚠️ MEASURED BUG, CAUGHT IN THE LIVE DESIGN PASS. These sat with the token block
+     at the TOP of this sheet, where `:where(html[data-chrome="studio"]) .pill` (0,1,0)
+     and the base `.pill` (0,1,0) tie on specificity — and a tie is decided by SOURCE
+     ORDER, so the base rule won and the ▣ Studio axis was a silent no-op on this page.
+     Zero-specificity `:where()` selectors REFINE; a refinement that is not last refines
+     nothing. office.html's sheet says this in one line ("they sit at the very bottom of
+     this sheet") and it is the reason.
+     The general rule: a `:where()`-scoped override must come after everything it
+     overrides — verify a theme/chrome axis by READING A COMPUTED VALUE, never by the
+     rule's existence. */
+  :where(html[data-chrome="studio"]) button{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+  :where(html[data-chrome="studio"]) button:hover{
+    background:var(--st-hi);border-color:var(--gold)}
+  /* …except the ONE cream-filled primary, which keeps its accent fill in both chromes
+     (the panel and office.html both fork it the same way) — but it still takes the
+     studio EDGE, so it reads as part of the same control set. */
+  :where(html[data-chrome="studio"]) button.primary{
+    background:var(--cream);color:var(--bg);border-color:var(--st-edge)}
+  :where(html[data-chrome="studio"]) .pill{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+</style>
+</head>
+<body>
+<div id="boot"><b>If you can read this, this page's scripts did not run.</b>
+  That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
+  this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
+  Build <code>goose-2026-08-29a</code>.</div>
+<header>
+  <span class="name">Goose</span>
+  <span class="pill" id="p-install">checking…</span>
+  <span class="pill" id="p-model">model —</span>
+  <span class="pill" id="p-ws">not connected</span>
+  <span class="grow"></span>
+  <button class="link" id="lnk-log" style="display:none">view log</button>
+  <button id="btn-install" style="display:none">Install goose</button>
+  <button id="btn-start" class="primary" style="display:none">Start</button>
+  <button id="btn-stop" style="display:none">End session</button>
+</header>
+<div id="note">
+  goose edits files in <b id="ws-dir">data/goose-workspace</b> — it asks in the
+  terminal below before it writes or runs anything, and <b>Enter</b> is the answer.
+  It is pointed at
+  <b id="ep">this machine's runner</b>; nothing leaves this Mac. A dropped connection
+  ends the session; <b>/exit</b> then Start resumes a fresh one.
+</div>
+<div id="msg"></div>
+<div id="logwrap"><pre id="logbox"></pre></div>
+<div id="wrap"><div id="term"></div></div>
+<div id="foot">goose is a lane, not a component — it has no MOT Deck card to start or
+  stop, because it lives in this tab and runs only while the tab is open. Its home and
+  its history stay under <code>data/goose/</code>. The terminal keeps a dark ground in
+  every theme: the colours in it are goose's own.</div>
+
+<script src="/assets/vendor/xterm.js"></script>
+<script src="/assets/vendor/xterm-addon-fit.js"></script>
+<script>
+// First thing: take the static fallback banner down. From here on its presence on
+// screen means exactly one thing — this line never ran.
+(function () {
+  const b = document.getElementById('boot');
+  if (b) b.remove();
+  document.title = 'Goose — MOT Deck';
+})();
+'use strict';
+// The two UMD bundles expose either the class directly or a module namespace holding
+// it, depending on the build. Ask for both rather than betting on one.
+const TermCtor = (window.Terminal && window.Terminal.Terminal) || window.Terminal;
+const FitCtor  = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+
+const el = id => document.getElementById(id);
+let term = null, fit = null, sock = null, state = null;
+let logOpen = false, pollTimer = 0, lastErr = null;
+
+// The theme can change while this tab is open (the panel's ◐ writes the key). `storage`
+// fires in THIS document when another document of the same origin writes it; focus and
+// visibilitychange cover the case where the two are not both alive at that moment.
+// Idempotent and two localStorage reads, so calling it often costs nothing.
+window.addEventListener('storage', ev => {
+  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome')
+    syncSkin();
+});
+window.addEventListener('focus', () => syncSkin());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSkin(); });
+
+// kind: 'info' for an ordinary progress note, anything else (default) for a failure.
+function say(text, kind) {
+  const m = el('msg');
+  m.textContent = text || '';
+  m.className = text ? ('show ' + (kind === 'info' ? 'info' : 'warn')) : '';
+}
+
+// EVERY request on this page goes through here, so a non-2xx or a dead bridge can never
+// be swallowed: a bare `await fetch(...)` with no status check makes a 409/503 look
+// exactly like success — i.e. like nothing happening at all.
+async function jfetch(url, opts) {
+  let r;
+  try {
+    r = await fetch(url, Object.assign({ cache: 'no-store' }, opts || {}));
+  } catch (e) {
+    throw new Error('the bridge is not answering (' + e + ')');
+  }
+  let body = null;
+  try { body = await r.json(); } catch (e) { body = null; }
+  if (!r.ok) throw new Error((body && (body.error || body.detail)) || ('HTTP ' + r.status));
+  return body;
+}
+
+// The install log is the EXISTING panel log source (GET /api/logs/<name>), rendered
+// inline here because this document is not the panel and cannot open its log dialog.
+async function loadLog() {
+  const box = el('logbox');
+  try {
+    const j = await jfetch('/api/logs/goose-install?lines=60');
+    const lines = (j && j.lines) || [];
+    box.textContent = lines.length ? lines.join('\n')
+      : 'the install log is empty — the installer has not written anything yet.';
+  } catch (e) {
+    box.textContent = 'could not read the install log: ' + e.message;
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function showLog(on) {
+  logOpen = !!on;
+  el('logwrap').className = logOpen ? 'show' : '';
+  el('lnk-log').textContent = logOpen ? 'hide log' : 'view log';
+  el('lnk-log').style.display = '';
+  if (logOpen) loadLog();
+}
+el('lnk-log').onclick = () => showLog(!logOpen);
+
+function ensureTerm() {
+  if (term) return term;
+  if (!TermCtor) { say('xterm.js is missing — run ./scripts/fetch_vendor_assets.sh'); return null; }
+  term = new TermCtor({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 12.5, cursorBlink: true, scrollback: 5000,
+    theme: { background: '#0b0910', foreground: '#efe9dc', cursor: '#c9a44d',
+             selectionBackground: '#2f2946' }
+  });
+  if (FitCtor) { fit = new FitCtor(); term.loadAddon(fit); }
+  term.open(el('term'));
+  refit();
+  term.onData(d => { if (sock && sock.readyState === 1) sock.send(new TextEncoder().encode(d)); });
+  return term;
+}
+
+// FitAddon proposes cols/rows from the element size; the SERVER owns the real winsize,
+// so every fit is followed by the one control message the wire carries.
+let refitPending = 0;
+function refit() {
+  if (!term) return;
+  cancelAnimationFrame(refitPending);
+  refitPending = requestAnimationFrame(() => {
+    try { if (fit) fit.fit(); } catch (e) { /* element not laid out yet */ }
+    sendResize();
+  });
+}
+function sendResize() {
+  if (!term || !sock || sock.readyState !== 1) return;
+  const c = Math.max(2, term.cols | 0), r = Math.max(1, term.rows | 0);
+  sock.send(new TextEncoder().encode('\x1b[RESIZE:' + c + ';' + r + ']'));
+}
+window.addEventListener('resize', refit);
+
+async function loadStatus() {
+  try {
+    state = await jfetch('/api/goose/status');
+  } catch (e) { state = { ok: false, error: String(e.message || e) }; }
+  paint();
+  return state;
+}
+
+function paint() {
+  const s = state || {};
+  const connected = sock && sock.readyState === 1;
+  const dead = s.ok === false;                 // the lane itself is unavailable
+  const inst = !!s.installing;
+  el('p-install').textContent = dead ? 'lane unavailable'
+    : inst ? 'installing…' : (s.installed ? ('installed · ' + (s.pin || '')) : 'not installed');
+  el('p-install').className = 'pill' + (s.installed ? ' on' : (dead ? ' bad' : ''));
+  el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
+  el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
+  el('p-ws').textContent = connected ? 'session live' : 'not connected';
+  el('p-ws').className = 'pill' + (connected ? ' on' : '');
+  if (s.workspace) el('ws-dir').textContent = s.workspace;
+  if (s.endpoint) el('ep').textContent = s.endpoint;
+  el('btn-install').style.display = (!dead && (!s.installed || inst)) ? '' : 'none';
+  el('btn-install').disabled = inst;
+  el('btn-install').textContent = inst ? 'installing…' : 'Install goose';
+  el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
+  el('btn-start').disabled = !s.model_ready;
+  el('btn-stop').style.display = connected ? '' : 'none';
+  if (inst || s.install_error) el('lnk-log').style.display = '';
+
+  // Failure is reported ONCE per distinct error, so a poll cannot re-open a log the
+  // user just closed — and a healthy paint never clobbers a websocket message.
+  if (dead) {
+    say('the goose lane is not available on this bridge: ' + (s.error || 'unknown'));
+  } else if (s.install_error && s.install_error !== lastErr) {
+    lastErr = s.install_error;
+    say('install failed:\n' + s.install_error);
+    showLog(true);
+  } else if (!connected && !inst && s.installed && s.tools_warning) {
+    // ⚠️ WARN, NEVER REFUSE (the advisory-gates ruling). goose requires tool calling and
+    // has no text-edit fallback, so on a model that cannot emit one it looks BROKEN
+    // rather than slow — the user deserves that sentence BEFORE typing, not after a
+    // silent nothing. Start stays enabled; the sentence is information, not a wall.
+    say(s.tools_warning, 'info');
+  }
+}
+
+// Poll while an install runs — one 90MB download plus two sha256 passes.
+function watchInstall() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const s = await loadStatus();
+    if (logOpen) loadLog();
+    if (!s.installing) {
+      clearInterval(pollTimer);
+      pollTimer = 0;
+      if (s.installed && !s.install_error) say('goose is installed.', 'info');
+    }
+  }, 3000);
+}
+
+el('btn-install').onclick = async () => {
+  say('');
+  lastErr = null;
+  const b = el('btn-install');
+  b.disabled = true;
+  try {
+    await jfetch('/api/goose/install', { method: 'POST' });
+  } catch (e) {
+    b.disabled = false;
+    say('could not start the install: ' + e.message);
+    showLog(true);
+    return;
+  }
+  say('installing goose — one 90MB download, verified against the pinned sha256 before '
+      + 'anything is extracted. The log below updates as it runs.', 'info');
+  showLog(true);
+  await loadStatus();
+  watchInstall();
+};
+
+el('btn-start').onclick = () => start();
+el('btn-stop').onclick = () => { if (sock) sock.close(); };
+
+function start() {
+  if (sock && sock.readyState <= 1) return;
+  const t = ensureTerm();
+  if (!t) return;
+  say('');
+  t.reset();
+  const q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
+  sock = new WebSocket('ws://' + location.host + '/api/pty/goose' + q);
+  sock.binaryType = 'arraybuffer';
+  sock.onopen = () => { paint(); sendResize(); t.focus(); };
+  sock.onmessage = ev => {
+    const d = ev.data;
+    if (typeof d === 'string') t.write(d);
+    else t.write(new Uint8Array(d));
+  };
+  sock.onclose = ev => {
+    sock = null;
+    paint();
+    if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
+    else if (ev.code === 4409) say('goose is already running in another window.');
+    else if (ev.code === 4412) say('');            // the message came through the terminal
+    else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
+    loadStatus();
+  };
+  sock.onerror = () => say('the terminal connection failed.');
+  paint();
+}
+
+(async function boot() {
+  ensureTerm();
+  const s = await loadStatus();
+  // An install started before this tab was opened (or reloaded) keeps being watched.
+  if (s.installing) { say('an install is already running.', 'info'); watchInstall(); }
+  else if (s.installed && s.model_ready) start();  // the tab IS the session
+})();
+</script>
+</body>
+</html>

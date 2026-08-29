@@ -34,6 +34,11 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S4 | 🔵 NEXT | Voice/music spawn gates still use old budget_gb predicate — retrofit onto the fit engine (core/fit.py) | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` queued in v1.5.30 report |
 | S5 | 🟡 LATER | Post-load truth: parse runner's own buffer-size log lines, store measured-vs-predicted per model | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` designed in v1.5.30, not built |
 | S6 | 🟡 LATER | Guardrail spectrum as a setting (Quiet / Advise / Advise-early / Custom headroom) per UX research §9.6 | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` |
+| S7 | 🔵 NEXT | Wan 2.1 colour defect on MPS: A/B the bf16 variant (2.84GB, same repo) against the recorded fp16 numbers | 🟡 HIGH | ⚪ Low | 🟢 Medium | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` verdict printed on the /comfy card meanwhile |
+| S8 | 🔵 NEXT | bridge/routers/comfy.py sits at exactly 1500 lines (facade ceiling) — extract curation+graph builders to core/comfycur.py BEFORE comfy S2 | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` |
+| S9 | 🟡 LATER | Goose slice 2: --resume/--name/--fork surface (history persisted+reachable, tab offers no way in); session-store size readout + prune for data/goose | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` contract test already pins the flags |
+| S10 | 🟡 LATER | aider.html predates theme packs (dark-only); goose.html's syncSkin is the backport pattern; studio-goose/aider.css if the design axis should reach terminal lanes | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` |
+| S11 | ⚪ SOMEDAY | opencode_tools_warning should take a lane label so goose+OpenCode share one decision table | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 1 file | Trivial | `@status:open` |
 
 ### Detail - Session spillover
 

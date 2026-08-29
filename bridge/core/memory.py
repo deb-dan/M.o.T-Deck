@@ -366,6 +366,12 @@ def _label(name: str) -> str:
     return {"runner": "Model runner", "hermes": "Hermes", "odysseus": "Odysseus",
             "searxng": "SearXNG", "voicestudio": "VoiceStudio", "voicebox": "Voicebox",
             "comfyui": "ComfyUI", "unsloth": "Unsloth", "opencode": "OpenCode",
+            # ⚠️ goose is NOT a supervised component — it is a PTY lane. It appears here
+            # anyway, and legitimately: bridge/routers/goose.py writes data/goose.pid for
+            # exactly the lifetime of a session, so the row exists while the process does
+            # and vanishes with it. A tab holding a 27B-driven agent is a real tenant of
+            # this machine's RAM and the ledger would be lying by omission without it.
+            "goose": "Goose",
             "bridge": "Bridge", "app": "App UI"}.get(name, name)
 
 
@@ -451,8 +457,22 @@ def component_rows() -> list:
     if "runner" in pf:
         add("runner", [pf.pop("runner")])
     # The bridge: this process, plus the children it spawns (aider ptys, workers).
+    #
+    # ⚠️ MINUS ANY CHILD THAT HAS A PIDFILE OF ITS OWN, and that exclusion is a MEASURED
+    # fix, not tidiness. `add` claims pids into `seen` in call order, so a child that is
+    # BOTH a direct child of this process AND the subject of data/<name>.pid was folded
+    # into the Bridge row here and its own row — added below — came out empty and was
+    # dropped. Measured 2026-08-29 on the goose lane: /api/memory listed only
+    # ['bridge','app'] with a live goose session, i.e. the ledger silently attributed an
+    # agent's whole footprint to "Bridge". Named rows outrank the catch-all: if a thing
+    # is worth a pidfile it is worth its own line, and the sum is unchanged either way.
+    #
+    # The general rule: whenever one accounting pass can claim the same pid as another,
+    # the MORE SPECIFIC claimant must run first or be excluded from the general one.
     me = os.getpid()
-    bridge_pids = [me] + [p for p in _SCAN["all"] if _ppid(p) == me]
+    owned = {p for p in pf.values()}
+    bridge_pids = [me] + [p for p in _SCAN["all"]
+                          if _ppid(p) == me and p not in owned]
     add("bridge", bridge_pids)
     for name in sorted(pf):
         add(name, [pf[name]])

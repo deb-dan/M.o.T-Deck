@@ -577,6 +577,30 @@ build:
   # cecli-dev/cecli at a release tag (Apache-2.0 verified) keeping --edit-format whole.
   # Read by scripts/install_aider.sh (awk, same pattern as the other pins).
   aider_pin: "5dc9490bb35f9729ef2c95d00a19ccd30c26339c"
+  # ── GOOSE, the third agent lane (docs/research/2026-08-28-goose-source-verify.md) ──
+  # ⚠️ THESE FOUR KEYS ARE DOCUMENTATION, NOT THE PIN THE INSTALLER READS. Every other
+  # *_pin here is read back out of this file by its installer's `_yb` awk; goose's
+  # constants live in scripts/install_goose.sh instead, because the pin is FOUR values
+  # that must move TOGETHER (tag, asset size, asset sha256, extracted-binary sha256) and
+  # a manifest edit that moved one of them without the others would be a way to install
+  # bytes nobody measured. bridge/contract_tests/test_goose_contract.py asserts these
+  # values and the script's agree, so this block can never quietly go stale.
+  # LICENSE: Apache-2.0, verified at source at this sha; no NOTICE file exists upstream.
+  # github.com/block/goose HTTP-301s to aaif-goose/goose — a redirect, not a fork.
+  # ⚠️ v2.0 RELEASE CANDIDATE tags exist upstream (v2-rc.1, v2.0.0-rc-04-27-0). The sha
+  # pin insulates us; evaluating v2 is its own sitting, not a bump.
+  # ⚠️ TOOL-CALLING IS REQUIRED and there is NO text-edit fallback, so on a model that
+  # cannot emit one goose looks BROKEN rather than degraded — the same property that
+  # gives the opencode lane its `tools` verdict. The Goose tab carries the same warning.
+  #   The experimental "toolshim" does NOT change this: its interpreter backends are
+  #   ollama / goose's own bundled llama.cpp only, so it cannot point at our :6767.
+  # ⚠️ NOT A COMPONENT: no `components.goose` block, no port, no card, no daemon. It is
+  # a PTY lane (bridge/pty_goose.py), because goose has NO browser UI — verified at
+  # source: no `web` and no `ui` subcommand, and `goose serve` is an ACP client API.
+  goose_pin: "v1.48.0"
+  goose_src_sha: "25021517f12cab87c94bed0874fe7d28168dc264"
+  goose_asset_sha256: "d502945fca78d8e58c8f56932973f454ad57d0754b272f5d44f696a4722da49a"
+  goose_bin_sha256: "e900f1b96662818791ee599c58ea0e44204ca29579dd182ecc238b732ef5d768"
   # ── OPENCODE, the second coding lane (recon 2026-08-21, slice 2026-08-21) ────
   # An NPM VERSION, not a git sha: upstream publishes a prebuilt native binary per
   # platform and `npm i` is just a download. Verified LIVE against registry.npmjs.org

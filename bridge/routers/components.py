@@ -126,6 +126,9 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               # the aider lane: one line per PTY session (start/exit/teardown) plus the
               # online-only install log — same voicebox-install rule.
               "aider", "aider-install",
+              # the goose lane: identical shape to aider's — one line per PTY session
+              # plus the online-only, sha-verified binary install.
+              "goose", "goose-install",
               # the OpenCode tab: its server log + the online-only binary install
               # (same voicebox-install rule — a download install must be readable
               # in-panel, not only from a terminal).

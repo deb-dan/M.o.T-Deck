@@ -226,6 +226,9 @@ _LANES = (
     # separates no pair of neighbours, and it costs only where /comfy and /api/comfy/*
     # appear in /openapi.json.
     "routers.comfy",
+    # …and the GOOSE agent lane by the SAME rule, a sixth time: new, it separates no
+    # pair of neighbours, and it costs only where /goose and /api/goose/* appear.
+    "routers.goose",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

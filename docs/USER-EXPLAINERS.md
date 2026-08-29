@@ -147,6 +147,47 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
+## Goose — the agent lane in a terminal
+
+- **Goose** is a coding/ops agent that runs *in a terminal inside its own tab*. It is
+  not a service: there is no card on MOT Deck to start or stop, because it exists only
+  while that tab holds it. Close the tab and the session ends; press **Start** and you
+  get a new one.
+- It is **not installed until you ask**. The first time you open the tab it offers
+  **Install goose** — one 90 MB download, checked against a **pinned sha256 before
+  anything is unpacked**, and checked again on the file it unpacked. If either check
+  fails nothing is installed and the log says which one.
+- It talks to **the model loaded on this Mac**, at the runner this app already runs.
+  The header shows the exact URL it will call, so a wrong port is visible without
+  reading a log. Nothing goes to a cloud.
+- **It needs a model that can call tools.** Goose has no fallback for one that cannot —
+  it will look broken rather than merely slow. The tab says so *before* you type if the
+  loaded model lacks the green **tools** pill in Models. It still lets you try: that is
+  a warning, not a wall.
+- **It asks in the terminal before it writes a file or runs a command.** That prompt is
+  the approval step, it appears in the terminal, and it is switched *on* by this app —
+  goose on its own would have done those things without asking. Read it, then answer it.
+- **What it can touch is one folder:** `data/goose-workspace`. That is the directory it
+  is started in and the only boundary on what it edits — so put the files you want it
+  to work on there.
+- **Everything it remembers stays under `data/goose/`** — its settings, its session
+  history, its logs. It never writes to your home folder's usual hidden config
+  directories, which is what makes the whole lane removable by deleting one folder.
+- **Telemetry is off, twice.** Goose's own analytics are opt-in upstream; this app
+  additionally switches them off in its environment *and* in its config file, and a
+  test checks both on every release.
+- The terminal keeps a **dark background in every theme**. The colours in it are
+  goose's own — its banner, its diffs, its prompts — and they were drawn for a dark
+  terminal. The frame around it follows whatever theme you picked.
+- Goose is on the **sidebar** by default, not on the tab strip: the strip is nearly
+  full. Clicking the sidebar row opens its tab; you can pin it in **Capabilities →
+  Appearance** if you want it there permanently.
+- Sessions are named by time, not by a generated title, and that is deliberate: asking
+  the model for a title costs a whole second request, and on a thinking model that
+  request can outlive the answer you were waiting for.
+
+---
+
 ## Window and layout
 
 - **⫽** splits the window. The **gold rail** marks the focused pane; the tab strip
