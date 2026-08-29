@@ -113,6 +113,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | U8 | ⚪ SOMEDAY | MiniMax H3 video+audio (open weights 2026-08-03, day-0 ComfyUI) — REFUSED FOR NOW by Debi: smallest set ~39.6GB vs ~48GB free disk | ⚪ LOW | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Large | `@status:blocked` on disk space; revisit when freed |
 | U9 | 🟡 LATER | ComfyUI's ASSET SYSTEM is off at our pin, so the newest workflow templates carry no `properties.models` registry — the Generate lane's curation can only be generated from the 78 of 517 templates that still do. Bridge: curate registry-bearing templates only; drift is named on the card | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:blocked` on an upstream/config change that enables `/api/assets` |
 | U10 | 🔵 NEXT | aider.html observed saying "already running in another window" while header read NOT CONNECTED — stale-state contradiction, seen once, not root-caused | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` reproduce first |
+| U11 | 🔵 NEXT | seed_odysseus_jan.py VIOLATES never-clobber: resets the Local runner endpoint's name/api_key/is_enabled on EVERY Start (lines ~109-117), vs the v1.5.33 odyvision rules (honour renames, never re-enable) — found by the isolation research | 🟡 HIGH | ⚪ Low | 🟢 Medium | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` fold into isolation S1 or fix standalone |
 
 ### Detail - User-reported / observed
 
