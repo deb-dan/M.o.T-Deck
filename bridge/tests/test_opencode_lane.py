@@ -926,8 +926,14 @@ def test_status_publishes_the_verdict_and_keeps_degraded_byte_identical():
     assert '"degraded": _expected_path("runner").exists() and not port_up,' in APP, (
         "the runner's degraded rule is untouched — a live port with no model is still "
         "'loading', not degraded")
-    assert APP.count('"health": ') == 2 and APP.count('"misses": ') == 2, (
-        "both the components loop and the runner publish it, and nothing else does")
+    # 3, not 2, since v1.5.36: routers/comfy.py:134 nests a "health" object inside
+    # /api/comfy/state — a DIFFERENT surface (the generate page's engine block), not a
+    # third writer of the /api/status verdict this test guards. The two /api/status
+    # writers are still pinned exactly by the two `"degraded":` asserts above; this
+    # count is the tripwire that makes the NEXT new "health" key stop here and argue.
+    assert APP.count('"health": ') == 3 and APP.count('"misses": ') == 2, (
+        "both the components loop and the runner publish the /api/status verdict, "
+        "comfy state nests its own engine block, and nothing else does")
     # The runner's verdict is keyed on PORT_UP, exactly as its degraded is — NOT on
     # `loaded`, or a 90s model load would be reported as a health failure.
     i = APP.index('_health_track(\n            "runner"')

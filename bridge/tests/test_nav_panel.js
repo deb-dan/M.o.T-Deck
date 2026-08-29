@@ -45,7 +45,7 @@ console.log('registry');
   // Debi's amendment: the two newest LANES are registry entries — that is precisely how
   // they become reachable from the sidebar (they are lanes, not services, so they have
   // no Mission Control card and were previously reachable only from the tab strip).
-  for (const id of ['aider', 'loffice']) {
+  for (const id of ['aider', 'loffice', 'goose', 'comfy']) {
     const e = M.navEntry(id);
     ok(e && e.kind === 'lane', id + ' is a registry LANE');
     ok(e && e.prefersTab === true, '...and a click on it asks the shell for its tab');
@@ -55,6 +55,25 @@ console.log('registry');
   }
   ok(M.navEntry('loffice').tab === 'LOffice' && M.navEntry('aider').tab === 'Aider',
      'the lane tab titles are the shell\'s, spelled exactly');
+  // THE COMFY PAIR (comfy-nav slice). Two entries, two real surfaces — `comfy` is OUR
+  // /comfy generate page and `comfyui` is upstream's stock UI on :8188. This is written
+  // down because the obvious "cleanup" is to collapse them, and either collapse silently
+  // removes a surface the user has: no stock UI, or no navigation to Generate at all.
+  {
+    const g = M.navEntry('comfy'), c = M.navEntry('comfyui');
+    ok(g && c, 'both comfy entries exist');
+    ok(g.kind === 'lane' && c.kind === 'component', 'comfy is our LANE, comfyui THE component');
+    ok(g.label === 'Generate' && g.tab === 'Generate' && g.url === '/comfy',
+       'the Generate row is labelled for what it does and points at our own page');
+    ok(c.label === 'Comfyui' && c.tab === 'ComfyUI',
+       '…and the stock ComfyUI entry keeps its own name and its own tab, untouched');
+    ok(g.tab !== c.tab, 'they are two different native tabs');
+    // The ICON may not be a chrome control's glyph: ✦ is the design-axis toggle in the
+    // topbar, and a sidebar row wearing it reads as that control. Caught live.
+    ok(g.ico !== '✦', 'the Generate icon is not the design-toggle glyph');
+    ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === g.ico).length === 1,
+       '…and no other nav row wears it either');
+  }
   // every `tab` the panel names must be a title the shell actually has, or the
   // switchTab bridge silently does nothing.
   const swiftTitles = (swift.match(/HarnessTab\(id: "[^"]+", title: "([^"]+)"/g) || [])
@@ -105,8 +124,12 @@ console.log('defaults');
   const ws = ids(d, 'sidebar').filter(i => M.navEntry(i).kind !== 'component');
   // …and the goose slice adds a THIRD lane, next to aider (its sibling: both are pty
   // lanes in their own tab). Everything else still moves nothing.
-  ok(ws.join(',') === 'mc,chat,models,music,aider,goose,loffice,caps,logs,help',
-     'the workspace rail is today\'s order + the three lanes + Help under Logs: ' + ws.join(','));
+  // …and the comfy-nav slice adds a FOURTH, `comfy` (Generate), placed next to MUSIC
+  // rather than next to the agent lanes — Music and Generate are MOT Deck's own two
+  // generate surfaces (sound, then image/video), so they read as a pair. Still an
+  // ADDITION only: no existing row changed position relative to its neighbours.
+  ok(ws.join(',') === 'mc,chat,models,music,comfy,aider,goose,loffice,caps,logs,help',
+     'the workspace rail is today\'s order + the four lanes + Help under Logs: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -120,8 +143,11 @@ console.log('defaults');
   // ⚠️ WIDENED, NOT WEAKENED, at the goose slice: still a closed literal list, and
   // goose is on it because the strip is at 11 of 12 pins and a new lane must not spend
   // the last one silently. It is one sidebar click (or one ⋯) away.
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose',
-     'the three pinnable VIEWS + goose start hidden (they are one sidebar click away)');
+  // ⚠️ WIDENED AGAIN, STILL NOT WEAKENED, at the comfy-nav slice: `comfy` (Generate)
+  // joins for goose's identical argument — the pinned prefix above is STILL eleven, so
+  // the last free pin is still free. Closed literal list; order mirrors nav.py's tail.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy',
+     'the three pinnable VIEWS + goose + comfy start hidden (one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
 }
 
@@ -281,8 +307,11 @@ console.log('render (executed)');
              comp: document.getElementById('sidecomponents').innerHTML };`);
   const out = run(...Object.values(env));
   const rows = [...out.ws.matchAll(/id="nav-([a-z]+)"/g)].map(m => m[1]);
-  ok(rows.join(',') === 'mc,chat,models,music,aider,goose,loffice,caps,logs,help',
-     'with NO saved layout the workspace rail renders today\'s rows + the three lanes + Help');
+  // ⚠️ WIDENED (not weakened) at the comfy-nav slice, in step with the defaults fence
+  // above: this one proves the rail actually RENDERS what the model declares, so the
+  // two literals must move together or the Generate row is declared but never drawn.
+  ok(rows.join(',') === 'mc,chat,models,music,comfy,aider,goose,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders today\'s rows + the four lanes + Help');
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),

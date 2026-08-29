@@ -83,6 +83,22 @@ let tabRegistry: [HarnessTab] = [
     // the name is LOffice (2026-08-21). The ROUTE stays /office: internal names do
     // not churn with a wordmark.
     HarnessTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!),
+    // Generate — MOT Deck's OWN image/video surface (v1.5.36), served by the bridge at
+    // /comfy and driving the ComfyUI engine through /api/comfy/*. Ours, bridge origin,
+    // its own document for LOffice's reason: it renders a gallery and long-lived
+    // download/generate progress, so it must not carry the panel's poll loops.
+    //
+    // ⚠️ IT IS A SECOND, SEPARATE TAB FROM "ComfyUI" ABOVE, ON PURPOSE. That one loads
+    // upstream's stock UI straight off :8188; this one is our page. Removing or
+    // renaming either would take a real surface away from the user.
+    //
+    // ⚠️ IN THE REGISTRY BUT NOT IN navDefaultTopbar, AND BOTH ARE REQUIRED — goose's
+    // note below-left applies verbatim: the registry is "does this build know that tab
+    // at all" (switchTab shows a hidden tab for the session, which is how the sidebar
+    // row opens it), while navDefaultTopbar is the PINNED prefix that test_nav_model.py
+    // asserts equals nav.py's pinned defaults. `comfy` is declared unpinned there, so it
+    // must NOT appear in that list or the three-way agreement breaks.
+    HarnessTab(id: "comfy", title: "Generate", url: URL(string: "http://127.0.0.1:8700/comfy")!),
     // PHASE 2: the three panel VIEWS that can be pinned to the strip. They are the same
     // chromeless `?solo=` load Music already used, generalised — the panel hides its own
     // sidebar/topbar and pins itself to that view. None of them is on the strip by
@@ -638,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         //
         // OUR OWN PAGES — and only ours — get the "harness" script-message handler, so
         // that a sidebar row (or LOffice's File menu) can ask the shell to switch tabs.
-        // That is the panel here, plus LOffice, Aider and Goose in the loop below;
+        // That is the panel here, plus LOffice, Aider, Goose and Generate in the loop below;
         // registering it on any other webview would let a THIRD-PARTY component page
         // drive our tab strip, so those configurations are deliberately bare.
         //
@@ -680,11 +696,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if t.id == panelId { wvById[t.id] = panelWV! }
             else if t.id == odysseusId { wvById[t.id] = odyWV! }
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
-            // LOffice + Aider + Goose are OUR OWN pages served by the bridge
+            // LOffice + Aider + Goose + Generate are OUR OWN pages served by the bridge
             // (first-party, same origin as the panel) — they get the "harness" handler
             // too, so their File menus can ask the shell to switch tabs. Third-party
-            // pages never do.
-            else if t.id == "loffice" || t.id == "aider" || t.id == "goose" {
+            // pages never do. The list is EXPLICIT rather than "anything on :8700": a
+            // page earns the handler by being one we wrote, and that has to be stated
+            // once per page.
+            else if t.id == "loffice" || t.id == "aider" || t.id == "goose" || t.id == "comfy" {
                 let c = WKWebViewConfiguration()
                 c.userContentController.add(self, name: "harness")
                 c.userContentController.addUserScript(shellScript)

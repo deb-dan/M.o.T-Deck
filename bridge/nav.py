@@ -41,6 +41,20 @@ NAV_ENTRIES = (
     {"id": "chat",        "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "models",      "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "music",       "kind": "view",      "bars": ("sidebar", "topbar")},
+    # GENERATE (v1.5.36's first-party ComfyUI surface — bridge/routers/comfy.py serves
+    # bridge/panel/comfy.html at /comfy). A LANE for aider's and loffice's reason: it is
+    # OUR page, not a service with its own port and lifecycle, so it has no Mission
+    # Control card of its own and had NO navigation entry at all until this slice —
+    # reachable only by typing the URL. It sits beside Music on purpose: those two are
+    # MOT Deck's own generate surfaces (sound, then image/video) and read as a pair.
+    #
+    # ⚠️ THIS IS NOT THE `comfyui` ENTRY BELOW, AND IT DOES NOT REPLACE IT. `comfyui` is
+    # the COMPONENT: upstream's own stock web UI on :8188, with a Mission Control card
+    # and a start/stop lifecycle. `comfy` is our surface, which drives that same engine
+    # through /api/comfy/*. Two entries because there are two real surfaces; the id is
+    # the ROUTE (/comfy) while the label the panel shows is "Generate", which is what
+    # the page does for the user.
+    {"id": "comfy",       "kind": "lane",      "bars": ("sidebar", "topbar")},
     {"id": "aider",       "kind": "lane",      "bars": ("sidebar", "topbar")},
     # GOOSE (docs/research/2026-08-28-goose-source-verify.md) — a LANE, not a component,
     # for aider's exact reason: it has no port, no daemon and no browser UI of its own,
@@ -92,7 +106,7 @@ NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 # "fixed" by a migration that would move rows somebody may have arranged.
 # That is the whole upgrade path: no `v` bump, no one-time migration.
 DEFAULT_SIDEBAR = (
-    ("mc", True), ("chat", True), ("models", True), ("music", True),
+    ("mc", True), ("chat", True), ("models", True), ("music", True), ("comfy", True),
     ("aider", True), ("goose", True), ("loffice", True), ("caps", True), ("logs", True),
     ("help", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
@@ -123,6 +137,14 @@ DEFAULT_TOPBAR = (
     # agree: Goose is one sidebar click or one ⋯ away, and pinning it is a choice the
     # Appearance editor can make — rather than a default that quietly spends the last pin.
     ("goose", False),
+    # ⚠️ AND `comfy` (Generate) IS DECLARED-BUT-NOT-PINNED FOR EXACTLY GOOSE'S REASON.
+    # The pinned prefix is still 11 of NAV_TOPBAR_MAX=12; there is ONE free pin, and it
+    # is not this slice's to spend — goose is already waiting behind ⋯ for it, and a
+    # default that quietly fills the last slot on a fresh machine while doing nothing on
+    # Debi's (her nav.json is stamped v2, so `migrate` returns early and `normalize`
+    # appends a new id UNPINNED regardless) makes the two machines disagree. Generate is
+    # one sidebar click or one ⋯ away, and the Appearance editor can pin it by choice.
+    ("comfy", False),
 )
 # THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
 # it is the ONLY way to tell "this user never customised their strip" from "this user

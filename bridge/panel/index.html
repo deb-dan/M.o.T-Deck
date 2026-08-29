@@ -2935,6 +2935,12 @@ const NAV_ENTRIES = [
   { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
   { id:'music',   label:'Music',           ico:'♫', kind:'view', view:'music',  tab:'Music', prefersTab:true },
+  // GENERATE — our own ComfyUI-driving page at /comfy (v1.5.36). The LABEL is what it
+  // does, the id is its route. It is NOT the `comfyui` component row further down: that
+  // one is upstream's stock UI on :8188, and both stay.
+  // ⚠️ THE ICON IS ❖, DELIBERATELY NOT ✦ — ✦ is already the topbar's DESIGN-axis
+  // toggle, and a sidebar row wearing a chrome control's glyph reads as that control.
+  { id:'comfy',   label:'Generate',        ico:'❖', kind:'lane', view:null,     tab:'Generate', url:'/comfy', prefersTab:true },
   { id:'aider',   label:'Aider',           ico:'⌨', kind:'lane', view:null,     tab:'Aider',   url:'/aider',  prefersTab:true },
   { id:'goose',   label:'Goose',           ico:'⌁', kind:'lane', view:null,     tab:'Goose',   url:'/goose',  prefersTab:true },
   { id:'loffice', label:'LOffice',         ico:'▦', kind:'lane', view:null,     tab:'LOffice', url:'/office', prefersTab:true },
@@ -2965,7 +2971,7 @@ const NAV_SIDEBAR_ONLY = ['logs','help'];
 const NAV_ALWAYS = ['logs','help'];
 const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
 // Defaults = TODAY'S layout, so a machine with no saved nav looks unchanged.
-const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','aider','goose','loffice','caps','logs',
+const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','music','comfy','aider','goose','loffice','caps','logs',
                              'help',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode'];
@@ -2979,9 +2985,10 @@ const NAV_DEFAULT_TOPBAR = ['mc','hermes','unsloth','opencode','odysseus','voice
 const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox','comfyui',
                                'unsloth','music','aider','loffice','opencode'];
 /* …and the entries the strip DECLARES but does not pin by default. `goose` joined the
-   three views at the goose slice: the strip is at 11 of 12 pins, so a new lane takes the
-   ⋯ overflow rather than the last slot. Mirrors nav.py's DEFAULT_TOPBAR tail. */
-const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose'];
+   three views at the goose slice, and `comfy` (Generate) at the comfy-nav slice, for the
+   same reason both times: the strip is at 11 of 12 pins, so a new lane takes the ⋯
+   overflow rather than the last slot. Mirrors nav.py's DEFAULT_TOPBAR tail. */
+const NAV_TOPBAR_UNPINNED = ['chat','models','caps','goose','comfy'];
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar

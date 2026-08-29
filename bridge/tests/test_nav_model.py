@@ -62,10 +62,16 @@ def test_registry():
     # Debi's amendment: the two newest lanes ARE in the registry — that is how they
     # become reachable from the sidebar at all (they are lanes, not services, so they
     # never appear on Mission Control).
-    for lane in ("aider", "loffice"):
+    for lane in ("aider", "loffice", "goose", "comfy"):
         e = nav.entry(lane)
         ok(e is not None and e["kind"] == "lane", f"{lane} is a registry lane")
         ok(e and set(e["bars"]) == {"sidebar", "topbar"}, f"{lane} may live on either bar")
+    # ⚠️ THE COMFY PAIR. `comfy` (our /comfy Generate surface) and `comfyui` (upstream's
+    # stock UI on :8188) are TWO entries for TWO real surfaces, and the comfy-nav slice
+    # must never be "simplified" into one: dropping `comfyui` takes the stock UI away,
+    # dropping `comfy` takes our generate page back off the navigation entirely.
+    ok(nav.entry("comfy")["kind"] == "lane" and nav.entry("comfyui")["kind"] == "component",
+       "comfy is OUR lane and comfyui is THE component — both present, and distinct")
     # Logs and Help are the sidebar-only entries, and the ones that may be hidden
     # everywhere (⌘K reaches both) — all of it is load-bearing for `validate`.
     #
@@ -110,8 +116,14 @@ def test_normalize():
     # deliberate choice with its argument written at its registry line. Goose joins the
     # three views because the strip is at 11 of NAV_TOPBAR_MAX=12 pins and a new lane
     # must not silently spend the last one — see nav.py's DEFAULT_TOPBAR tail.
-    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose"],
-       "the three pinnable views + goose start hidden (one sidebar click away)")
+    #
+    # ⚠️ WIDENED AGAIN AT THE COMFY-NAV SLICE, AND AGAIN NOT WEAKENED: `comfy`
+    # (Generate) is on the list for goose's identical argument — the pinned prefix is
+    # STILL 11 of 12, so the one free pin stays free rather than being spent by whichever
+    # lane happens to land next. The list remains closed and ordered; a fifth entry
+    # requires its own argument at its own registry line.
+    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose", "comfy"],
+       "the three pinnable views + goose + comfy start hidden (one sidebar click away)")
 
     # junk totality: none of these may raise, and each must return a full model
     for junk in [None, 0, "x", [], {"sidebar": "x"}, {"topbar": 7},

@@ -471,10 +471,10 @@ const handler = swift.slice(swift.indexOf('func userContentController(_ ucc:'));
 const handlerBody = handler.slice(0, handler.indexOf('\n    }\n', handler.indexOf('default:')) + 6);
 check('the shell conforms to WKScriptMessageHandler',
       /NSSplitViewDelegate, WKScriptMessageHandler \{/.test(swift));
-// It is registered on OUR OWN pages only: the panel, plus LOffice and Aider (also
-// first-party documents served by our bridge, whose File menus ask for a tab the same
-// way the sidebar does). That is TWO registration sites — the panel's, and one arm of
-// the registry loop gated on exactly those two ids. THAT GATE IS THE SECURITY PROPERTY:
+// It is registered on OUR OWN pages only: the panel, plus the first-party documents our
+// bridge serves (LOffice, Aider, Goose, Generate — whose own menus ask for a tab the
+// same way the sidebar does). That is TWO registration sites — the panel's, and one arm
+// of the registry loop gated on an explicit id list. THAT GATE IS THE SECURITY PROPERTY:
 // a third-party component page must never be able to drive our tab strip.
 check('the handler is registered on the panel configuration',
       /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,300}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
@@ -482,9 +482,14 @@ check('the handler is registered on the panel configuration',
 // an EXPLICIT list of our own first-party bridge pages, and every other webview gets a
 // bare configuration. Goose is the third (loffice, aider, goose) — a pty terminal in
 // our own document, whose page must be able to ask the shell to switch tabs.
-check('...and on our own LOffice/Aider/Goose pages, on nothing else',
+// ⚠️ WIDENED AGAIN AT THE COMFY-NAV SLICE, and STILL the same closed gate — the count
+// of registration sites is unchanged (two), and the arm still names every id
+// explicitly. `comfy` is the fourth (loffice, aider, goose, comfy): our own /comfy
+// Generate page, served by the bridge from the panel's origin. A fifth id may only be
+// added here by someone who can say, at main.swift's arm, why that page is ours.
+check('...and on our own LOffice/Aider/Goose/Generate pages, on nothing else',
       (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
-      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose" \{[\s\S]{0,300}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose" \|\| t\.id == "comfy" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift)
       // the generic arm — every third-party component page — gets a BARE configuration.
@@ -498,7 +503,7 @@ check('the shell injects its own capability record into its first-party pages',
       && /injectionTime: \.atDocumentStart, forMainFrameOnly: true/.test(swift));
 check('...the tab list it publishes is the REGISTRY, not the visible strip',
       /shellIds = tabRegistry\.map/.test(swift) && !/shellIds = tabs\.map/.test(swift));
-check('...and it is added to the panel and to LOffice/Aider/Goose, nowhere else',
+check('...and it is added to the panel and to LOffice/Aider/Goose/Generate, nowhere else',
       (swift.match(/addUserScript\(shellScript\)/g) || []).length === 2);
 check('it accepts only the "harness" message name',
       /message\.name == "harness"/.test(handlerBody));
