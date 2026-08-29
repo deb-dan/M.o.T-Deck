@@ -120,3 +120,16 @@ expectations (the recorded signal). Research checked only the CLI artifact, conc
 destination. Hours spent; the fork ("CLI has no UI; the project ships a desktop UI;
 terminal lane or embed work?") was never put to them. The backend work (pins, telemetry
 kill, isolation, runner wiring) survives; the shape didn't.
+
+### 2b. The install path is a journey too (Debi, 2026-08-29)
+
+Self-provisioning is a golden journey, not plumbing: every installer/provisioner must be
+WALKED FROM SCRATCH on the real network against the pinned upstream — a clean target dir,
+the actual download, the digest verification firing — and its FAILURE MODES exercised:
+corrupted digest → refusal (never a half-install), interrupted transfer → honest
+resume/restart state, upstream 404/moved → a readable error naming the pin. "The files are
+already on disk" is NEVER evidence the install path works — sourcing an artifact from a
+local copy (the user's Downloads, a cached bundle) is a spike convenience that must be
+retired before shipping, because it silently exempts the install journey from testing.
+Incidents: the goose UI spike read Debi's ~/Downloads/Goose.app (install path untested);
+suspicion raised on the ONLYOFFICE bundle's install history — audited 2026-08-29.
