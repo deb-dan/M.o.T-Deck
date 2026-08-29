@@ -45,7 +45,7 @@ console.log('registry');
   // Debi's amendment: the two newest LANES are registry entries — that is precisely how
   // they become reachable from the sidebar (they are lanes, not services, so they have
   // no Mission Control card and were previously reachable only from the tab strip).
-  for (const id of ['aider', 'loffice', 'goose', 'comfy']) {
+  for (const id of ['aider', 'loffice', 'goose', 'comfy', 'compose']) {
     const e = M.navEntry(id);
     ok(e && e.kind === 'lane', id + ' is a registry LANE');
     ok(e && e.prefersTab === true, '...and a click on it asks the shell for its tab');
@@ -73,6 +73,29 @@ console.log('registry');
     ok(g.ico !== '✦', 'the Generate icon is not the design-toggle glyph');
     ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === g.ico).length === 1,
        '…and no other nav row wears it either');
+  }
+  // THE MUSIC PAIR (Compose slice) — the comfy pair's argument, one surface down.
+  // `music` is the shipped panel view; `compose` is the redesigned alternative at
+  // /compose driving the SAME /api/music/* routes. Debi's ruling is that both stay
+  // until they pick one, so either collapse removes a real surface.
+  {
+    const m = M.navEntry('music'), c = M.navEntry('compose');
+    ok(m && c, 'both music entries exist');
+    ok(m.kind === 'view' && c.kind === 'lane', 'music is the VIEW, compose is our LANE');
+    ok(c.label === 'Compose' && c.tab === 'Compose' && c.url === '/compose',
+       'the Compose row is labelled for what it does and points at our own page');
+    ok(m.tab !== c.tab, 'they are two different native tabs');
+    ok(m.view === 'music' && c.view === null,
+       '…and the Music view is untouched: it still renders inside the panel');
+    // The GENERAL form of the v1.5.38 lesson: a nav row may never wear another
+    // control's OR another row's glyph. A row wearing Music's mark would read as Music.
+    ok(c.ico !== m.ico && c.ico !== '✦' && c.ico !== '▣',
+       'the Compose icon is neither Music\u2019s note nor a chrome control\u2019s glyph');
+    ok(M.NAV_ENTRIES.filter(e => e.ico && e.ico === c.ico).length === 1,
+       '…and no other nav row wears it either');
+    const nids = M.NAV_ENTRIES.map(e => e.id);
+    ok(nids.indexOf('compose') === nids.indexOf('music') + 1,
+       'Compose is registered DIRECTLY after Music (the spec\u2019s placement)');
   }
   // every `tab` the panel names must be a title the shell actually has, or the
   // switchTab bridge silently does nothing.
@@ -128,8 +151,11 @@ console.log('defaults');
   // rather than next to the agent lanes — Music and Generate are MOT Deck's own two
   // generate surfaces (sound, then image/video), so they read as a pair. Still an
   // ADDITION only: no existing row changed position relative to its neighbours.
-  ok(ws.join(',') === 'mc,chat,models,music,comfy,aider,goose,loffice,caps,logs,help',
-     'the workspace rail is today\'s order + the four lanes + Help under Logs: ' + ws.join(','));
+  // …and the Compose slice adds a FIFTH, `compose`, DIRECTLY after Music — the two
+  // music surfaces read as the pair they are. Still an ADDITION only: no existing row
+  // changed position relative to its neighbours.
+  ok(ws.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,loffice,caps,logs,help',
+     'the workspace rail is today\'s order + the five lanes + Help under Logs: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
   ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
      'the components group lists every component that has a tab');
@@ -146,8 +172,12 @@ console.log('defaults');
   // ⚠️ WIDENED AGAIN, STILL NOT WEAKENED, at the comfy-nav slice: `comfy` (Generate)
   // joins for goose's identical argument — the pinned prefix above is STILL eleven, so
   // the last free pin is still free. Closed literal list; order mirrors nav.py's tail.
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy',
-     'the three pinnable VIEWS + goose + comfy start hidden (one sidebar click away)');
+  // ⚠️ WIDENED A THIRD TIME, STILL NOT WEAKENED, at the Compose slice: `compose` joins
+  // for the same reason plus one of its own — it is an alternative to the PINNED
+  // `music`, and pinning both by default would choose for the user. Closed literal
+  // list; the order mirrors nav.py's tail.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'chat,models,caps,goose,comfy,compose',
+     'the pinnable VIEWS + goose + comfy + compose start hidden (one sidebar click away)');
   ok(top.length <= M.NAV_TOPBAR_MAX, 'the default strip is inside the pin cap');
 }
 
@@ -310,8 +340,8 @@ console.log('render (executed)');
   // ⚠️ WIDENED (not weakened) at the comfy-nav slice, in step with the defaults fence
   // above: this one proves the rail actually RENDERS what the model declares, so the
   // two literals must move together or the Generate row is declared but never drawn.
-  ok(rows.join(',') === 'mc,chat,models,music,comfy,aider,goose,loffice,caps,logs,help',
-     'with NO saved layout the workspace rail renders today\'s rows + the four lanes + Help');
+  ok(rows.join(',') === 'mc,chat,models,music,compose,comfy,aider,goose,loffice,caps,logs,help',
+     'with NO saved layout the workspace rail renders today\'s rows + the five lanes + Help');
   ok(rows.indexOf('help') === rows.indexOf('logs') + 1,
      '…and Help is DIRECTLY under Logs, which is where the roadmap put it');
   ok(/id="nav-chat" class="on"/.test(out.ws),

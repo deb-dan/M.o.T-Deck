@@ -41,6 +41,19 @@ NAV_ENTRIES = (
     {"id": "chat",        "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "models",      "kind": "view",      "bars": ("sidebar", "topbar")},
     {"id": "music",       "kind": "view",      "bars": ("sidebar", "topbar")},
+    # COMPOSE (docs/FABLE-MUSIC-COMPOSE-SPEC.md) — the ALTERNATIVE music surface:
+    # bridge/routers/music.py serves bridge/panel/compose.html at /compose and drives
+    # the SAME /api/music/* routes the Music view drives. A LANE for `comfy`'s reason:
+    # it is our own page, not a service with a port and a lifecycle, so it has no
+    # Mission Control card.
+    #
+    # ⚠️ IT DOES NOT REPLACE `music`, AND BOTH ARE REQUIRED. Debi's ruling is that the
+    # redesigned surface ships behind its OWN button while the current Music view stays
+    # untouched, and that they are compared live before either is retired. Dropping
+    # `music` takes the shipped surface away; dropping `compose` takes the alternative
+    # off the navigation entirely and leaves it reachable only by typing a URL. It sits
+    # DIRECTLY AFTER Music because they are the same job done two ways.
+    {"id": "compose",     "kind": "lane",      "bars": ("sidebar", "topbar")},
     # GENERATE (v1.5.36's first-party ComfyUI surface — bridge/routers/comfy.py serves
     # bridge/panel/comfy.html at /comfy). A LANE for aider's and loffice's reason: it is
     # OUR page, not a service with its own port and lifecycle, so it has no Mission
@@ -106,7 +119,8 @@ NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 # "fixed" by a migration that would move rows somebody may have arranged.
 # That is the whole upgrade path: no `v` bump, no one-time migration.
 DEFAULT_SIDEBAR = (
-    ("mc", True), ("chat", True), ("models", True), ("music", True), ("comfy", True),
+    ("mc", True), ("chat", True), ("models", True), ("music", True), ("compose", True),
+    ("comfy", True),
     ("aider", True), ("goose", True), ("loffice", True), ("caps", True), ("logs", True),
     ("help", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
@@ -145,6 +159,13 @@ DEFAULT_TOPBAR = (
     # appends a new id UNPINNED regardless) makes the two machines disagree. Generate is
     # one sidebar click or one ⋯ away, and the Appearance editor can pin it by choice.
     ("comfy", False),
+    # ⚠️ AND `compose` IS DECLARED-BUT-NOT-PINNED FOR THE SAME REASON A THIRD TIME. The
+    # pinned prefix is STILL 11 of NAV_TOPBAR_MAX=12: the one free pin stays free rather
+    # than being spent by whichever lane happens to land next, and Compose is an
+    # ALTERNATIVE to a tab that is already pinned (`music`) — pinning both by default
+    # would put two surfaces for one job on the strip without anyone choosing that. One
+    # sidebar click or one ⋯ away, and the Appearance editor can pin it by choice.
+    ("compose", False),
 )
 # THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
 # it is the ONLY way to tell "this user never customised their strip" from "this user

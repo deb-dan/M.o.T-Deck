@@ -46,6 +46,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S16 | 🔵 NEXT | Caps→Tools: three standing paragraphs duplicate two Help sections verbatim-in-substance (index.html:5582) — demote to chips + Help link | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
 | S17 | 🟡 LATER | Audio tab curated section: seven essay cards with dependency plumbing at rest (index.html:10494) — rows + hover per the chip grammar | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
 | S18 | 🟡 LATER | Office AI panel empty state is a six-paragraph Help article (office.html:1501) — one-sentence invitation + Help link | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
+| S19 | 🟡 LATER | nav normalize tail-appends on saved layouts (A8 second instance: Compose lands under Help, not after Music, on Debi's machine) — neighbour-append fix; also: music SSE kind would let Music+Compose drop polling; Music-view '0 track(s)' stamp quirk (pre-existing, untouched) | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Small | `@status:open` |
 
 ### Detail - Session spillover
 

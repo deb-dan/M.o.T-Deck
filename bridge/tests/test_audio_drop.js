@@ -487,9 +487,14 @@ check('the handler is registered on the panel configuration',
 // explicitly. `comfy` is the fourth (loffice, aider, goose, comfy): our own /comfy
 // Generate page, served by the bridge from the panel's origin. A fifth id may only be
 // added here by someone who can say, at main.swift's arm, why that page is ours.
-check('...and on our own LOffice/Aider/Goose/Generate pages, on nothing else',
+// ⚠️ WIDENED AGAIN AT THE COMPOSE SLICE, and STILL the same closed gate — the count of
+// registration sites is unchanged (two) and the arm still names every id explicitly.
+// `compose` is the fifth (loffice, aider, goose, comfy, compose): our own /compose page,
+// served by the bridge from the panel's origin. A sixth id may only be added here by
+// someone who can say, at main.swift's arm, why that page is ours.
+check('...and on our own LOffice/Aider/Goose/Generate/Compose pages, on nothing else',
       (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
-      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose" \|\| t\.id == "comfy" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose"\s*\n?\s*\|\| t\.id == "comfy" \|\| t\.id == "compose" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift)
       // the generic arm — every third-party component page — gets a BARE configuration.
@@ -503,7 +508,7 @@ check('the shell injects its own capability record into its first-party pages',
       && /injectionTime: \.atDocumentStart, forMainFrameOnly: true/.test(swift));
 check('...the tab list it publishes is the REGISTRY, not the visible strip',
       /shellIds = tabRegistry\.map/.test(swift) && !/shellIds = tabs\.map/.test(swift));
-check('...and it is added to the panel and to LOffice/Aider/Goose/Generate, nowhere else',
+check('...and it is added to the panel and to our own bridge pages, nowhere else',
       (swift.match(/addUserScript\(shellScript\)/g) || []).length === 2);
 check('it accepts only the "harness" message name',
       /message\.name == "harness"/.test(handlerBody));

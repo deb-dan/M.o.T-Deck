@@ -62,7 +62,7 @@ def test_registry():
     # Debi's amendment: the two newest lanes ARE in the registry — that is how they
     # become reachable from the sidebar at all (they are lanes, not services, so they
     # never appear on Mission Control).
-    for lane in ("aider", "loffice", "goose", "comfy"):
+    for lane in ("aider", "loffice", "goose", "comfy", "compose"):
         e = nav.entry(lane)
         ok(e is not None and e["kind"] == "lane", f"{lane} is a registry lane")
         ok(e and set(e["bars"]) == {"sidebar", "topbar"}, f"{lane} may live on either bar")
@@ -72,6 +72,15 @@ def test_registry():
     # dropping `comfy` takes our generate page back off the navigation entirely.
     ok(nav.entry("comfy")["kind"] == "lane" and nav.entry("comfyui")["kind"] == "component",
        "comfy is OUR lane and comfyui is THE component — both present, and distinct")
+    # ⚠️ THE MUSIC PAIR, for the comfy pair's exact reason (Compose slice). `music` is
+    # the shipped panel VIEW and `compose` is the redesigned surface at /compose; Debi's
+    # ruling is that both stay until they choose between them, so collapsing either into
+    # the other silently removes a surface the user has.
+    ok(nav.entry("music")["kind"] == "view" and nav.entry("compose")["kind"] == "lane",
+       "music is the panel VIEW and compose is OUR lane — both present, and distinct")
+    ids = list(nav.NAV_IDS)
+    ok(ids.index("compose") == ids.index("music") + 1,
+       "compose is registered DIRECTLY after music (the spec's placement, not a tail append)")
     # Logs and Help are the sidebar-only entries, and the ones that may be hidden
     # everywhere (⌘K reaches both) — all of it is load-bearing for `validate`.
     #
@@ -122,8 +131,17 @@ def test_normalize():
     # STILL 11 of 12, so the one free pin stays free rather than being spent by whichever
     # lane happens to land next. The list remains closed and ordered; a fifth entry
     # requires its own argument at its own registry line.
-    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose", "comfy"],
-       "the three pinnable views + goose + comfy start hidden (one sidebar click away)")
+    #
+    # ⚠️ WIDENED A THIRD TIME AT THE COMPOSE SLICE, AND AGAIN NOT WEAKENED: `compose`
+    # joins for goose's and comfy's identical argument (the pinned prefix is STILL 11 of
+    # 12) plus one of its own — it is an ALTERNATIVE to `music`, which IS pinned, and
+    # pinning both by default would put two surfaces for one job on the strip without
+    # anyone choosing that. The list remains closed and ordered.
+    ok(nav.hidden(d, "topbar") == ["chat", "models", "caps", "goose", "comfy", "compose"],
+       "the three pinnable views + goose + comfy + compose start hidden "
+       "(one sidebar click away)")
+    ok([i for i, _p in nav.DEFAULT_TOPBAR if _p].count("music") == 1,
+       "…while music itself stays pinned exactly as it was — this slice moved no row")
 
     # junk totality: none of these may raise, and each must return a full model
     for junk in [None, 0, "x", [], {"sidebar": "x"}, {"topbar": 7},

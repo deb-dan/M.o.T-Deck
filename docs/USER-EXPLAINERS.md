@@ -107,6 +107,61 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
+## Music and Compose — making songs
+
+- There are **two surfaces for the same job**, and they drive the same engines and the
+  same library: **Music** (the original page, everything on one screen) and **Compose**
+  (the redesigned one, where the latest song is the big thing at the top and plays in
+  place). Neither keeps its own copy of anything — rename or delete a track on one and
+  the other sees it immediately.
+- **What a render actually is:** a one-shot process. Nothing runs in the background, no
+  port is opened, and no model stays in memory afterwards. One render happens at a time
+  on purpose — two would fight over the GPU. You can leave the tab; the song is waiting
+  when you come back.
+- **Two engines, a real trade-off.** *acestep.cpp* renders a song in roughly 25 seconds
+  and is the fast one; *MiniMax-Music3* takes about two minutes per minute of song and
+  is the high-quality one. Each is a download (7.6 GB and 11.1 GB here); acestep is
+  also **built** on your machine, which needs `cmake` — the app says so before it spends
+  a byte.
+- **How much memory a render wants** (about 9 GB for acestep, 14 GB for MiniMax) is a
+  *planning* figure — the weights plus working set, not a measured peak. If a render
+  would not fit alongside the models already loaded you get the numbers and a **Generate
+  anyway**. It is advice, never a wall: being wrong costs swap, not your song.
+- **The prompt is the biggest lever.** Both engines were trained on structured
+  descriptions: genre, tempo, key, instrumentation, vocal character, section by section,
+  mix. That is why the **presets** are long — they are examples of a good caption, and
+  clicking one only fills the fields; it never renders by itself.
+- **Lyrics are optional.** Leave the field empty and you get an instrumental (MiniMax is
+  explicitly told `[Instrumental]`). Section tags — `[Verse]`, `[Chorus]`, `[Bridge]` —
+  shape the arrangement rather than being sung.
+- **Length** is 10 to 300 seconds. Render time grows *faster* than length on MiniMax (60
+  seconds of song cost 115s here, 145 seconds cost 676s), which is why any
+  remaining-time figure comes from renders measured on this Mac — and is left out
+  entirely when it cannot be said honestly.
+- **Steps** default to each engine's own design point (30 for MiniMax, 8 for acestep)
+  and mean different things in each; they are not a shared knob. Leave the field empty
+  to use the default.
+- **Seeds make a song repeatable.** The same seed with the same settings and the same
+  engine gives the same song again. If you leave the seed empty one is drawn for you and
+  **recorded with the track**, so a song you like can always be made again — click the
+  seed on a finished track to put it back in the field.
+- **A track's name is yours, and it is not the filename.** Files are written with a
+  timestamp name (`minimax-20260820-235921.wav`) and are **never renamed**: a name you
+  give a track is stored beside it, so the list and the folder can never disagree. Clear
+  the name and the track falls back to the start of its prompt.
+- **Nothing is deleted automatically.** Tracks are kept until you delete them; *Reveal*
+  opens the file in Finder. A finished track can be converted to MP3 or M4A beside
+  itself — only the formats your ffmpeg can actually write are offered, and only when
+  that sibling does not exist yet. A conversion shares one record with the original, so
+  both carry the same name, prompt and seed.
+- **Where songs are saved** can be changed (type a path — this window has no folder
+  picker). The library then lists that folder only; tracks in the old one are untouched
+  and reappear if you set it back.
+- **Stopping a render leaves nothing behind** — no half-written file, and no false entry
+  in the measured history. A failed render says what the engine said.
+
+---
+
 ## Generate — pictures and video clips
 
 ### What you see, and where everything else went

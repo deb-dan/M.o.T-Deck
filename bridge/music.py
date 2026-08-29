@@ -1274,6 +1274,55 @@ def sidecar_path(wav_path: str) -> str:
     return os.path.splitext(str(wav_path))[0] + ".json"
 
 
+# A TRACK'S NAME IS NOT ITS FILENAME (Compose slice, 2026-08-29). `minimax-20260820-
+# 235921.wav` is a timestamp, not a name — the human identity of a song is what the
+# person who made it calls it. So a title lives in the SIDECAR and the file on disk is
+# never renamed: a rename would make the library and the folder disagree the moment one
+# half failed, and would break every path a user already has (a converted sibling, a
+# Finder alias, a playlist). The filename stays the file's truth and is shown as
+# provenance; the title is the identity the surfaces display.
+TITLE_MAX = 120
+
+
+def set_track_title(root, name, title) -> tuple:
+    """(ok, reason). Writes — or clears — one track's display title in its sidecar.
+
+    Containment is `library_target`'s, the same single boundary /file and /delete use,
+    so a title can never be written outside the music folder. The sidecar is per-STEM,
+    so song.wav and song.mp3 (its convert sibling) share one title, which is correct:
+    they are one song in two containers.
+    """
+    target, reason = library_target(root, name)
+    if not target:
+        return False, reason
+    if title is None:
+        title = ""
+    if not isinstance(title, str):
+        return False, "a title is text"
+    title = " ".join(title.split())            # no newlines, no runs of spaces
+    if len(title) > TITLE_MAX:
+        return False, f"a title can be at most {TITLE_MAX} characters"
+    p = sidecar_path(target)
+    meta = {}
+    try:
+        with open(p, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, dict):
+            meta = loaded
+    except Exception:                                            # noqa: BLE001
+        meta = {}                  # a track whose sidecar was lost can still be named
+    if title:
+        meta["title"] = title
+    else:
+        meta.pop("title", None)    # empty = back to having no title of its own
+    try:
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+    except OSError as e:
+        return False, f"could not write the title: {e}"
+    return True, ""
+
+
 def library_entries(root) -> list:
     """Every finished song, newest first, each married to its sidecar metadata.
     A wav with no sidecar is still listed (the file is real; only its provenance is
@@ -1304,6 +1353,10 @@ def library_entries(root) -> list:
             meta = {}
         out.append({
             "name": n,
+            # The human identity, when the user has given one (Compose). Absent = the
+            # surfaces fall back to the prompt and then to the filename; the filename
+            # itself is always carried, so nothing displays a name the disk denies.
+            "title": (meta.get("title") or "") if isinstance(meta, dict) else "",
             "ext": os.path.splitext(n)[1].lower().lstrip("."),
             "size_bytes": st.st_size,
             "created": st.st_mtime,

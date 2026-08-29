@@ -1,0 +1,1430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose · MOT Deck</title>
+<meta name="harness-build" content="compose-2026-08-29a">
+<!--
+  ══ COMPOSE — THE ALTERNATIVE MUSIC SURFACE ════════════════════════════════════
+  docs/FABLE-MUSIC-COMPOSE-SPEC.md (BINDING) · design source:
+  docs/research/2026-08-29-surface-audit.md §3 (the Music deep-dive) +
+  docs/research/2026-08-29-generate-page-redesign.md §3/§4 (the house IA).
+
+  ⚠️ THE MUSIC VIEW IS NOT TOUCHED BY THIS PAGE. index.html #view-music stays exactly
+  as it shipped: Debi compares the two surfaces live and rules later. Both drive the
+  SAME backend (bridge/routers/music.py), which this slice changed in exactly two
+  ways — a GET /compose that serves this file, and POST /api/music/title, because the
+  library had no concept of a NAME at all (a track's identity was a timestamp).
+
+  WHAT THIS PAGE IS. Describe a song, get a song, hear it here. The audit's biggest
+  structural finding was that the Music page has no result stage at all — the library
+  is a file list — so the single largest change is that the latest song is the biggest
+  thing on the page and plays in place.
+
+  ⚠️ THE SENTENCE RULE. A sentence may ship AT REST only if it is (a) an action's
+  label, (b) a state that is true right now and demands a decision, or (c) the
+  first-run invitation. Everything else is a CHIP whose hover carries the sentence, or
+  Help (docs/USER-EXPLAINERS.md §Music, written by this slice). Nothing honest was
+  deleted — every mechanic the Music view carries is conserved here, demoted from
+  prose to chip+tooltip, sheet row or detail sheet. bridge/tests/test_compose_page.js
+  renders every state and fails the build if a sentence appears outside `.say`.
+
+  ⚠️ ONE VERDICT OBJECT PER CHIP (the v1.5.34 grammar, as on /comfy). A chip's LABEL
+  and its TOOLTIP come off the same object, so a chip cannot contradict its own hover.
+
+  ⚠️ THE PLAYER IS A PERSISTENT ELEMENT, NEVER RE-RENDERED. Everything else on this
+  page is innerHTML'd on every poll; an <audio> rebuilt that way would stop playing
+  mid-song every time the timer fired. `heroAudio()` creates the element once and only
+  ever changes its .src — and only when the track it points at actually changes.
+
+  ⚠️ NOTHING EXTERNAL IN <head> — no stylesheet link, no script src, no font fetch
+  (the office.html lesson: a render-blocking resource that never resolves paints a
+  blank rectangle and no further script in the document runs).
+-->
+<script>
+(function () {
+  // ══ SKIN COHERENCE — read the panel's three axes, never write them ══════════
+  // Same contract as comfy.html/office.html: this page is served from the SAME ORIGIN
+  // as the panel, so the choices the panel persists are simply readable here. There is
+  // no theme button on this page on purpose — a tab that could disagree with the app it
+  // lives in is the original complaint.
+  //
+  //   harness-theme  ∈ dark(default) | light | gold | cyber   → data-theme
+  //   harness-chrome === 'studio'                             → data-chrome="studio"
+  //   harness-design ∈ studio | studio-light                  → data-design/-dvariant
+  //
+  // It runs in the HEAD, before the stylesheet is parsed: applying it later paints the
+  // page dark and then flips it, on every load. The whitelists are duplicated here
+  // rather than shared so a corrupt or future value falls through to Editorial instead
+  // of stamping an attribute no rule in this file answers.
+  function skin(){
+    var d = document.documentElement, t = null, c = null, g = null;
+    try {
+      t = localStorage.getItem('harness-theme');
+      c = localStorage.getItem('harness-chrome');
+      g = localStorage.getItem('harness-design');
+    } catch (e) { return; }                    // private mode: defaults stand, silently
+    if (t === 'light' || t === 'gold' || t === 'cyber') d.setAttribute('data-theme', t);
+    else d.removeAttribute('data-theme');
+    if (c === 'studio') d.setAttribute('data-chrome', 'studio');
+    else d.removeAttribute('data-chrome');
+    if (g === 'studio' || g === 'studio-light') {
+      d.setAttribute('data-design', 'studio');
+      if (g === 'studio-light') d.setAttribute('data-dvariant', 'light');
+      else d.removeAttribute('data-dvariant');
+    } else { d.removeAttribute('data-design'); d.removeAttribute('data-dvariant'); }
+  }
+  skin();
+  window.__skin = skin;
+  // TOTAL and IDEMPOTENT: it states absolute state rather than toggling, so calling it
+  // on every focus/storage/visibility event is free and can never drift.
+  addEventListener('storage', skin);
+  addEventListener('focus', skin);
+  addEventListener('visibilitychange', skin);
+})();
+</script>
+<style>
+  /* ══ EDITORIAL — the default, byte-compatible with the panel's :root ═══════════
+     Every colour on this page resolves through a token, which is what makes the four
+     packs + the light theme + the studio design token-swaps rather than rule forks.
+     The ALL-DESIGNS rule in one sentence: if you write a literal colour below the
+     token blocks, one of the six looks will be wrong and nobody will notice. */
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22);
+    --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    /* the ONE floating grammar — tooltips and both sheets sit on it, so every floating
+       surface is correct in all six looks without a rule per look */
+    --float-bg:rgba(20,18,29,.94); --float-edge:var(--line2);
+    --float-blur:blur(20px) saturate(140%);
+    --float-shadow:0 24px 60px rgba(0,0,0,.5);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+    --r:6px; --r-lg:10px; --ctl-h:28px;
+  }
+  html[data-theme="light"] {
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
+    --on-accent:#faf7f0;
+    --scrim:rgba(60,50,30,.34);
+    --float-bg:rgba(255,253,247,.96); --float-shadow:0 24px 60px rgba(60,50,30,.22);
+  }
+  html[data-theme="gold"] {
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
+    --gold:#e8bf76; --ok:#4fc79b; --warn:#e8a95e; --bad:#e77070; --accent:#a89bf5;
+    --on-wash:rgba(232,191,118,.22); --on-accent:#171420;
+    --scrim:rgba(4,3,2,.66);
+    --float-bg:rgba(19,17,16,.95);
+  }
+  html[data-theme="cyber"] {
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
+    --gold:#7dd3fc; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#a78bfa;
+    --on-wash:rgba(125,211,252,.20); --on-accent:#171420;
+    --scrim:rgba(4,7,14,.64);
+    --float-bg:rgba(17,24,40,.95);
+  }
+  /* ══ THE STUDIO DESIGN (✦) — palette + four shape properties ═══════════════════
+     Its palette values are copied from bridge/panel/assets/studio-design.css so the
+     surfaces are the same design, and NOT imported from it so this page cannot be
+     half-painted by a missing asset. If that file's palette moves, move these. */
+  html[data-design="studio"] {
+    --bg:#0d1112; --bg2:#111617; --card:#161c1e; --card2:#1b2325;
+    --line:#232c2e; --line2:#313c3e;
+    --cream:#e9efef; --fg:#c3cccc; --dim:#aeb9b9; --faint:#909d9d;
+    --gold:#41c2ac; --ok:#4ac98d; --warn:#e2aa5e; --bad:#ea7370; --accent:#41c2ac;
+    --on-wash:rgba(65,194,172,.18); --on-accent:#03211d;
+    --scrim:rgba(5,9,10,.62);
+    --float-bg:rgba(22,28,30,.95);
+    --sans:"Avenir Next", -apple-system, "SF Pro Text", system-ui, sans-serif;
+    /* ⚠️ STUDIO IS A SANS DESIGN, AND THIS IS THE TOKEN SWAP, NOT A SELECTOR RULE —
+       `:where(html[data-design="studio"]) h1` and `h1` are BOTH specificity (0,0,1),
+       so the later rule wins and the base typography block sits later in this file.
+       Restating --serif wins by construction instead of by ordering (comfy.html's
+       measured lesson, carried over rather than re-learned). */
+    --serif:var(--sans);
+    --r:8px; --r-lg:10px; --ctl-h:30px;
+  }
+  html[data-design="studio"][data-dvariant="light"] {
+    --bg:#fbfcfd; --bg2:#f3f6f7; --card:#fdfeff; --card2:#f6fafa;
+    --line:#e3eaeb; --line2:#c9d4d5;
+    --cream:#101a1b; --fg:#33403f; --dim:#4b5a5a; --faint:#5a6a6a;
+    --gold:#097268; --ok:#0d7d5c; --warn:#8a600d; --bad:#b23636; --accent:#097268;
+    --on-wash:rgba(9,114,104,.14); --on-accent:#e4fbf5;
+    --scrim:rgba(30,50,50,.30);
+    --float-bg:rgba(253,254,255,.96); --float-shadow:0 24px 60px rgba(20,50,50,.18);
+  }
+  /* ══ STUDIO CHROME (▣) — control shapes only, never the palette ════════════════ */
+  html[data-chrome="studio"] { --r:4px; --ctl-h:26px; }
+  :where(html[data-chrome="studio"]) button,
+  :where(html[data-chrome="studio"]) input,
+  :where(html[data-chrome="studio"]) select,
+  :where(html[data-chrome="studio"]) textarea { font-size:11.5px; }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg);
+    font:13px/1.55 var(--sans); -webkit-font-smoothing:antialiased;
+  }
+  a { color:var(--gold); }
+  h1 { font:600 17px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.2px; }
+  h2 { font:600 13px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.3px; }
+  .caps { font:600 10px/1 var(--sans); letter-spacing:.10em; text-transform:uppercase; color:var(--faint); }
+  .mono { font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow-wrap:anywhere; }
+  .dim { color:var(--dim); } .faint { color:var(--faint); }
+  .hide { display:none !important; }
+  .grow { flex:1 1 auto; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  /* ── THE PROSE CLASS ────────────────────────────────────────────────────────
+     `.say` is the ONLY element allowed to carry a sentence, in exactly the three
+     sanctioned places: the first-run invitation, a live state that demands a decision
+     (the RAM advisory, an engine that vanished, a failed render), and a section
+     failure. `.utext` is the user's OWN words (a prompt, a lyric sheet) shown back to
+     them in the track sheet — never our copy, and never at rest. */
+  .say { font-size:12px; color:var(--dim); margin:0; max-width:62ch; }
+  .say b { color:var(--cream); font-weight:600; }
+  .say.bad { color:var(--bad); }
+  .utext { font:11.5px/1.6 var(--mono); color:var(--dim); white-space:pre-wrap;
+           max-height:210px; overflow:auto; background:var(--bg2);
+           border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; }
+
+  /* ── CHIPS — the v1.5.34 grammar ────────────────────────────────────────────
+     A chip is ≤ ~5 words. The sentence, the arithmetic and the hedge live in the
+     tooltip, off the SAME verdict object. */
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+    border:1px solid var(--line2); border-radius:999px; background:var(--card);
+    font:11px var(--sans); color:var(--dim); white-space:nowrap; max-width:100%;
+  }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok   { color:var(--ok);   border-color:var(--ok); }
+  .chip.c-warn { color:var(--warn); border-color:var(--warn); }
+  .chip.c-bad  { color:var(--bad);  border-color:var(--bad); }
+  .chip.c-gold { color:var(--gold); border-color:var(--gold); }
+  .chip.c-dim  { color:var(--faint); border-color:var(--line2); }
+  .chip.act { cursor:pointer; }
+  .chip.act:hover { border-color:var(--gold); color:var(--cream); }
+  .chip.tipped { cursor:help; }
+  .chip.tipped:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
+
+  /* ── THE ONE FLOATING GRAMMAR — tooltip + the two sheets ─────────────────────── */
+  .float-surface { background:var(--float-bg); border:1px solid var(--float-edge);
+                   border-radius:14px; box-shadow:var(--float-shadow);
+                   -webkit-backdrop-filter:var(--float-blur);
+                   backdrop-filter:var(--float-blur); }
+  #tip { position:fixed; z-index:9800; max-width:360px; padding:11px 13px;
+         font:11px var(--mono); color:var(--dim); line-height:1.65; }
+  #tip[hidden] { display:none; }
+  #tip .t-line  { color:var(--fg); display:block; margin-top:7px; }
+  #tip .t-line:first-child { margin-top:0; }
+  #tip .t-math  { color:var(--cream); display:block; margin-top:6px; }
+  #tip .t-hedge { color:var(--faint); display:block; margin-top:6px; }
+  #tip .t-link  { display:block; margin-top:8px; }
+  #tip.inert { pointer-events:none; }
+
+  header {
+    position:sticky; top:0; z-index:5; background:var(--bg2);
+    border-bottom:1px solid var(--line); padding:10px 16px;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  main { padding:14px 16px 6px; max-width:1000px; margin:0 auto; display:grid; gap:12px; }
+
+  /* ── ② THE HERO STAGE — the latest song, playable, biggest on the page ──────── */
+  #stage {
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg);
+    min-height:min(34vh, 260px); display:grid; place-items:center; padding:20px 22px;
+  }
+  #stage-body { width:100%; display:grid; gap:12px; justify-items:center; text-align:center; }
+  #hero-title { font:600 20px/1.25 var(--serif); color:var(--cream); max-width:30ch;
+                overflow-wrap:anywhere; }
+  /* id + element (1,0,1) beats `.say` (0,1,0): the invitation heading carries the prose
+     class because it IS prose, and still reads as a heading. */
+  #stage-invite h2 { font:600 16px/1.35 var(--serif); color:var(--cream); max-width:36ch; }
+  /* ⚠️ THE PLAYER'S WIDTH IS ON ITS HOST, NOT ON THE ELEMENT. Walked live and caught:
+     `audio { width:min(560px,92%) }` measured 0px wide in the real page — <audio> is
+     inline, its host is a shrink-to-fit grid item, so the percentage resolved against a
+     box that was sizing itself to the audio. The product's central control was present,
+     correct, and invisible. The host now carries the width and the player fills it. */
+  #hero-player { width:min(560px, 92%); }
+  audio { display:block; width:100%; height:34px; }
+  #caps { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-height:22px; }
+  /* the in-progress surface */
+  .prog { display:grid; gap:10px; justify-items:center; width:min(460px,86%); }
+  .bar { height:5px; border-radius:3px; background:var(--line); overflow:hidden; width:100%; }
+  .bar > i { display:block; height:100%; background:var(--gold); transition:width .25s linear; }
+
+  /* ── ③ RECENT STRIP ─────────────────────────────────────────────────────────── */
+  #strip, #alltracks { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  #alltracks { display:grid; gap:6px; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
+  .tk { display:flex; gap:7px; align-items:center; max-width:230px; height:26px;
+        padding:0 10px; border:1px solid var(--line2); border-radius:999px;
+        background:var(--card); color:var(--dim); font:11.5px var(--sans);
+        cursor:pointer; overflow:hidden; }
+  .tk:hover { border-color:var(--gold); color:var(--cream); }
+  .tk.on { border-color:var(--gold); color:var(--cream); background:var(--card2); }
+  .tk .tkn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tk .tkd { color:var(--faint); flex:none; }
+
+  /* ── ④⑤⑥⑦ THE COMPOSER ──────────────────────────────────────────────────────── */
+  #composer { display:grid; gap:9px; }
+  textarea, input, select {
+    background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
+    border-radius:var(--r); padding:7px 9px; font:12.5px var(--sans); width:100%;
+  }
+  textarea { resize:vertical; min-height:56px; font-family:var(--sans); }
+  input[type="range"] { width:132px; padding:0; background:transparent; border:0;
+                        accent-color:var(--gold); }
+  label { display:block; }
+  label .caps { display:block; margin-bottom:3px; }
+  .lenwrap { display:inline-flex; gap:8px; align-items:center; }
+
+  button {
+    height:var(--ctl-h); padding:0 11px; border-radius:var(--r);
+    border:1px solid var(--line2); background:var(--card2); color:var(--fg);
+    font:500 12px var(--sans); cursor:pointer;
+  }
+  button:hover { background:var(--line); color:var(--cream); }
+  button.primary { background:var(--gold); border-color:var(--gold); color:var(--on-accent); font-weight:600; }
+  button.primary:hover { background:var(--gold); filter:brightness(1.08); color:var(--on-accent); }
+  button:disabled { opacity:.55; cursor:default; }
+  button.ghost { background:transparent; }
+  button.arm { border-color:var(--bad); color:var(--bad); }
+  button.dotted { position:relative; }
+  button.dotted::after { content:""; position:absolute; top:4px; right:4px; width:5px;
+                         height:5px; border-radius:50%; background:var(--gold); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  #more { display:grid; gap:9px; border:1px solid var(--line); border-radius:var(--r);
+          padding:11px; background:var(--card); }
+  .grid3 { display:grid; gap:9px; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
+
+  /* ── the sheets (engines · track · presets) ─────────────────────────────────── */
+  #scrim { position:fixed; inset:0; z-index:40; background:var(--scrim); display:grid;
+           place-items:start center; padding:44px 16px 16px; overflow:auto; }
+  #scrim[hidden] { display:none; }
+  #sheet { width:min(860px,100%); padding:16px 18px 14px; display:grid; gap:11px; }
+  .erow { display:grid; gap:10px; align-items:center; padding:9px 2px;
+          grid-template-columns:minmax(160px,1.2fr) 1fr auto auto;
+          border-top:1px solid var(--line); }
+  .erow:first-of-type { border-top:0; }
+  .ename { font:600 13px/1.25 var(--serif); color:var(--cream); }
+  .prow { display:grid; gap:8px; align-items:center; padding:8px 2px;
+          grid-template-columns:minmax(150px,1fr) auto auto; border-top:1px solid var(--line); }
+
+  /* Inline toast — alert() is a SILENT NO-OP inside the app shell's WKWebView (it has
+     no runJavaScriptAlertPanel delegate), so feedback routed through alert() simply
+     never appears there (the v1.5.39 finding). */
+  #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+    max-width:min(560px, 92vw); z-index:9900;
+    border:1px solid var(--gold); border-radius:var(--r-lg);
+    background:var(--card2); color:var(--fg); padding:10px 14px; font-size:12.5px; }
+  #toast.bad { border-color:var(--bad); color:var(--bad); }
+
+  footer { padding:10px 16px 22px; max-width:1000px; margin:0 auto;
+           color:var(--faint); font-size:10.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Compose</h1>
+  <span class="chip" id="c-engines"><i class="dot"></i><span>checking…</span></span>
+  <span class="chip c-gold hide" id="c-work"></span>
+</header>
+
+<main>
+  <!-- Where a header failure lands. Empty and invisible until something throws. -->
+  <div id="pageerr"></div>
+
+  <!-- ② THE HERO STAGE. The song is the product, so it is the biggest thing on the
+       page and it PLAYS here; while a render runs this is the progress surface; with
+       no engine on disk it is the first-run invitation. -->
+  <section id="stage"><div id="stage-body"></div></section>
+  <div id="caps"></div>
+
+  <!-- ③ RECENT STRIP + "All tracks ▸" expanding in place. -->
+  <div id="strip"></div>
+  <div id="alltracks" class="hide"></div>
+
+  <!-- ④⑤⑥⑦ THE COMPOSER -->
+  <section id="composer">
+    <textarea id="f-prompt" rows="2"
+      placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+    <div id="lyricsline"></div>
+    <div class="row" id="crow"></div>
+    <div id="more" class="hide"></div>
+    <div id="advisory"></div>
+  </section>
+</main>
+
+<footer><span id="stamp">—</span></footer>
+
+<!-- ONE TAP: the engines sheet, the track detail, the presets. A visit, not a residence. -->
+<div id="scrim" hidden><div id="sheet" class="float-surface"></div></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════════
+   THE PAGE'S BRAIN. One state object, one render(), and a poll whose cadence is a
+   function of whether anything is actually happening: 1s while a render or an install
+   is live, 20s otherwise (the Music view can start a render in its own tab, and a
+   page that only learned about it on reload would be lying by omission).
+   ══════════════════════════════════════════════════════════════════════════════ */
+const S = {
+  st:null, lib:[], err:null,
+  form:{ engine:null, prompt:'', lyrics:'', seconds:null, steps:'', seed:'', format:'' },
+  busy:false, warn:'', jobErr:'',
+  sheet:null,            /* null | 'engines' | 'track' | 'presets' */
+  dirEdit:false, dirValue:null,   /* the tracks-folder editor, held in STATE */
+  more:false, all:false, lyricsOpen:false,
+  sel:null,              /* the track filename the stage is showing (null = newest) */
+  detail:null,           /* the track filename the detail sheet is about */
+  wroteBack:null,
+};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ── PURE helpers (all executed by bridge/tests/test_compose_page.js) ────────── */
+function bytes(n) {
+  if (n == null) return '?';
+  n = Number(n);
+  if (n === 0) return 'nothing';
+  if (n < 1e6) return (n / 1e3).toFixed(0) + ' kB';
+  if (n < 1e9) return (n / 1e6).toFixed(0) + ' MB';
+  return (n / 1e9).toFixed(2) + ' GB';
+}
+/* The one time format the lane uses, spelled as a person would say it. */
+function clock(s) {
+  if (s == null) return '—';
+  s = Math.max(0, Math.round(Number(s) || 0));
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+}
+function ago(ts) {
+  const d = Math.max(0, (Date.now() / 1000) - (Number(ts) || 0));
+  if (d < 90) return 'just now';
+  if (d < 5400) return Math.round(d / 60) + ' min ago';
+  if (d < 172800) return Math.round(d / 3600) + 'h ago';
+  return Math.round(d / 86400) + ' days ago';
+}
+
+/* THE NAME OF A TRACK — the audit's charge, answered. A raw filename is a timestamp,
+   not an identity, so: the title the user gave it, else the head of the prompt that
+   made it, else (only then) the filename. PURE and total: a track with no sidecar at
+   all still gets a name it can be found by. */
+function titleOf(t) {
+  if (!t) return '';
+  if (t.title) return t.title;
+  const p = String(t.prompt || '').split('\n').map(s => s.trim()).find(Boolean) || '';
+  const head = p.replace(/^[^A-Za-z0-9(«"']+/, '').split(/\s+/).filter(Boolean).slice(0, 6);
+  if (head.length) return head.join(' ') + (p.split(/\s+/).length > 6 ? '…' : '');
+  return t.name || '';
+}
+
+/* ══ THE VERDICT OBJECTS ═══════════════════════════════════════════════════════
+   ONE object per chip: `chip` is the label (≤ ~5 words), `cls` the colour class, and
+   line/math/hedge/link are the tooltip. A chip and its hover are physically the same
+   object, so they cannot contradict. All PURE, all executed by the suite. */
+function engines()   { return ((S.st || {}).engines) || []; }
+function installed() { return engines().filter(e => e.installed); }
+function engineOf(id){ return engines().find(e => e.engine === id) || null; }
+function job()       { return (S.st || {}).job || null; }
+function running()   { const j = job(); return !!(j && (j.state === 'running' || j.state === 'queued')); }
+function installing(){ return engines().some(e => e.installing); }
+function current()   {
+  const inst = installed();
+  return inst.find(e => e.engine === S.form.engine) || inst[0] || null;
+}
+
+/* ① the header's ONE verdict object: what can render right now. */
+function enginesVerdict() {
+  const all = engines(), inst = installed();
+  if (!S.st) {
+    return { chip:'checking…', cls:'c-dim', up:false,
+             line:'Reading which engines are on disk.' };
+  }
+  if (!all.length) {
+    return { chip:'music lane off', cls:'c-bad', up:false,
+             line:'The bridge did not answer with any engine.',
+             hedge:'Nothing here can render until it does. The Logs view carries the '
+                 + 'bridge’s own words.' };
+  }
+  if (!inst.length) {
+    return { chip:'no engine yet', cls:'c-warn', up:false,
+             line:'Neither engine is on disk yet.',
+             math:all.map(e => e.label + ' · ' + (e.size_gb || '?') + ' GB').join('  ·  '),
+             hedge:'They are downloads, not services: nothing runs in the background '
+                 + 'and nothing downloads until you press.' };
+  }
+  return { chip:inst.length + ' of ' + all.length + ' engines ready', cls:'c-ok', up:true,
+           line:inst.map(e => e.label).join(' · '),
+           math:'a render is a one-shot process — no server, no port, nothing held in '
+              + 'memory afterwards',
+           hedge:'One render at a time, on purpose: two would fight for the GPU. You '
+               + 'can leave this tab while it works.' };
+}
+/* Per-engine row objects for the sheet. `state` is the ACTION chip. */
+function engineStateVerdict(e) {
+  if (e.installing)
+    return { chip:'Installing…', cls:'c-gold', act:null, busy:true,
+             line:'Downloading and building this engine now.',
+             hedge:'Several GB. It survives leaving this tab; the chip goes green when '
+                 + 'the files are on disk.' };
+  if (e.install_error)
+    return { chip:'Retry install', cls:'c-bad', act:'install', pick:e.engine,
+             line:'The last install did not finish.',
+             math:String(e.install_error).slice(-400),
+             hedge:'Nothing was half-installed into the library — an engine counts as '
+                 + 'present only when its files are actually on disk.' };
+  if (e.installed)
+    return { chip:'On disk ✓', cls:'c-ok', act:null, done:true,
+             line:'Every file this engine needs is on disk.',
+             math:(e.size_gb || '?') + ' GB' + (e.size_estimated ? ' (estimated)' : ' measured here'),
+             hedge:'Read from disk on every poll, never a stored flag: delete the files '
+                 + 'and this says so immediately.' };
+  return { chip:'Get ' + (e.size_gb || '?') + ' GB', cls:'c-gold', act:'install', pick:e.engine,
+           line:e.reason || 'Not on disk yet.',
+           math:(e.size_gb || '?') + ' GB to download',
+           hedge:'Nothing downloads until you press. acestep is also BUILT here, which '
+               + 'needs cmake; the bridge says so before it spends a byte.' };
+}
+function licenseVerdict(e) {
+  const l = e.license || {};
+  return { chip:l.license || 'licence unknown',
+           cls:l.badge === 'ok' ? 'c-ok' : l.badge === 'bad' ? 'c-bad' : 'c-warn',
+           line:l.reason || 'The licence recorded for these weights.',
+           hedge:'Read from the same table the model search rows use, so one surface '
+               + 'cannot be honest while another is wrong.',
+           link:l.source_url, linkLabel:'read the licence text ↗' };
+}
+/* The RAM figure, provenance-worded — it is a PLANNING number, not a measured peak,
+   and (Debi's advisory-gates ruling) it never blocks a render. */
+function ramVerdict(e) {
+  return { chip:'~' + (e.ram_gb || '?') + ' GB while rendering', cls:'c-dim',
+           line:'This engine wants about ' + (e.ram_gb || '?') + ' GB of the model-RAM '
+              + 'budget while it renders.',
+           math:'planning figure: the weights plus working set, not a measured peak',
+           hedge:'Advisory only. If it does not fit, the page says so with the numbers '
+               + 'and you can render anyway — being wrong costs swap, not your song.' };
+}
+function speedVerdict(e) {
+  /* The engine note is two clauses ("~2 min per minute of song · highest quality").
+     A chip is ≤ ~5 words, so it carries the FIRST and the hover carries the whole
+     line — never a truncation that changes the meaning. */
+  const head = String(e.note || '').split('·')[0].trim();
+  return { chip:head || 'speed unknown', cls:'c-dim',
+           line:e.note || 'The engine’s own trade-off.',
+           hedge:'MiniMax is slower than linear in song length, which is why any time '
+               + 'shown here comes from renders that actually happened.' };
+}
+/* MEASURED, from this machine's own library — never a published rate. */
+function measuredVerdict(engineId, lib) {
+  const rows = (lib || []).filter(t => t.engine === engineId && t.wall != null && t.seconds);
+  if (!rows.length)
+    return { chip:'first run = measurement', cls:'c-dim', unmeasured:true,
+             line:'This engine has not finished a render on this Mac yet.',
+             hedge:'No time is shown until one has been measured here — a made-up '
+                 + 'number would be worse than no number.' };
+  const last = rows[0];
+  return { chip:'last ' + clock(last.wall) + ' for ' + last.seconds + 's', cls:'c-dim',
+           line:'Last render here: ' + clock(last.wall) + ' of wall time for a '
+              + last.seconds + '-second song.',
+           math:rows.length + ' finished render' + (rows.length === 1 ? '' : 's') + ' recorded',
+           hedge:'Measured on this Mac from the track’s own record, not a published rate.' };
+}
+/* The composer's engine chip: identity + readiness, and the RAM mark when the choice
+   matters. ONE object, echoed from the same engine row the sheet draws. */
+function engineChipVerdict(e) {
+  if (!e) return { chip:'no engine yet', cls:'c-warn', none:true,
+                   line:'Nothing on disk can render a song.',
+                   hedge:'Both engines are one download each; the sizes are on the buttons.' };
+  const meas = measuredVerdict(e.engine, S.lib);
+  return { chip:e.label, cls:'',
+           line:e.note || '',
+           math:meas.unmeasured ? '' : meas.line,
+           hedge:'Click to compare the engines — size, licence, memory and what each one '
+               + 'has actually cost here live in that sheet.' };
+}
+function lengthVerdict(secs) {
+  const mn = (S.st || {}).seconds_min || 10, mx = (S.st || {}).seconds_max || 300;
+  return { chip:clock(secs), cls:'c-dim',
+           line:'How long the song will be: ' + mn + ' to ' + mx + ' seconds.',
+           hedge:'Render time grows faster than length on MiniMax, so a 5-minute song is '
+               + 'a great deal more than five times a one-minute one.' };
+}
+function seedVerdict(seed) {
+  return { chip:'seed ' + seed, cls:'c-dim',
+           line:(S.st || {}).seed_help || 'The same seed with the same settings gives the '
+              + 'same song again.',
+           hedge:'Click to put this seed back in the field. It is left empty after every '
+               + 'render on purpose, so the next song is a new one.' };
+}
+function totalVerdict(lib) {
+  const b = lib.reduce((a, t) => a + (Number(t.size_bytes) || 0), 0);
+  return { chip:lib.length + ' track' + (lib.length === 1 ? '' : 's') + ' · ' + bytes(b),
+           cls:'c-dim',
+           line:'Everything is kept — nothing here is ever deleted automatically.',
+           math:(S.st || {}).dir || '',
+           hedge:'Pruning is deliberate: open a track and delete it there, or Reveal it '
+               + 'and use Finder.' };
+}
+/* A running render's ONE object. `remaining_s` is the bridge's blended figure and is
+   DELIBERATELY absent when it cannot be said honestly. */
+function jobVerdict(j) {
+  const pv = (j && j.progress_view) || {};
+  const el = Math.max(0, Math.round(Date.now() / 1000 - (j && j.started || 0)));
+  const left = pv.remaining_s != null ? '~' + clock(pv.remaining_s) + ' left'
+                                      : 'longer than estimated';
+  return { chip:clock(el) + ' · ' + left, cls:'c-gold',
+           pct:pv.progress == null ? null : Math.round(pv.progress * 100),
+           line:(j.engine || '') + ' · ' + (j.seconds || '?') + 's song · '
+              + (j.steps || '?') + ' steps · seed ' + (j.seed || '?'),
+           math:pv.phase || (pv.phase_kind === 'setup' ? 'loading the model' : ''),
+           hedge:'The remaining time comes from renders measured on this Mac; it is '
+               + 'left out entirely rather than invented. The bar stops at 95% because both '
+               + 'engines finish with a write their counters never mention.' };
+}
+/* A finished track's caption chips, one object each. */
+function trackChips(t) {
+  const out = [];
+  if (t.seconds != null) out.push({ chip:clock(t.seconds), cls:'c-dim',
+    line:'The length of the song.', hedge:'What was asked for and what was written.' });
+  if (t.engine) out.push({ chip:t.engine, cls:'c-dim', line:'The engine that rendered it.',
+    math:(engineOf(t.engine) || {}).label || '',
+    hedge:'Recorded with the track, so re-using its settings picks the same engine.' });
+  if (t.wall != null) out.push({ chip:'took ' + clock(t.wall), cls:'c-dim',
+    line:'Wall time of this render.', hedge:'Measured on this Mac, never estimated.' });
+  if (t.steps != null) out.push({ chip:t.steps + ' steps', cls:'c-dim',
+    line:'Steps this render actually used.',
+    hedge:'More steps is more compute. Each engine has its own default and its own ceiling.' });
+  out.push({ chip:bytes(t.size_bytes), cls:'c-dim', line:'Size on disk.',
+    math:t.name, hedge:'The file keeps its own name — a title is yours and lives beside it.' });
+  if (t.ext) out.push({ chip:String(t.ext).toUpperCase(), cls:'c-dim',
+    line:'The container this track is written in.',
+    hedge:'Any track can also be converted afterwards; open it to do that.' });
+  return out;
+}
+
+/* ══ the wire ═════════════════════════════════════════════════════════════════ */
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts || {}));
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = { ok:false, error:'the bridge returned no JSON (HTTP ' + r.status + ')' }; }
+  if (!r.ok && j && j.ok === undefined) j.ok = false;
+  return j;
+}
+async function load() {
+  try {
+    const st = await api('/api/music/status');
+    if (st && st.ok) { S.st = st; S.err = null; }
+    else S.err = (st && st.error) || 'the music lane did not answer';
+    const lb = await api('/api/music/library');
+    if (lb && lb.ok) S.lib = lb.tracks || [];
+  } catch (e) {
+    /* The bridge itself is unreachable. Say so, and do NOT blank the page: what was
+       last rendered is still the truth about the last moment we could see. */
+    S.err = 'the bridge is not answering (' + e + ')';
+  }
+  render();
+}
+
+/* ══ TOOLTIPS — the v1.5.34 tipBind grammar ════════════════════════════════════
+   The chip is a control: hover, tap and keyboard all open it; Escape, scroll, resize
+   and leaving all close it. `title` is set underneath as the last-resort fallback —
+   one payload, no second wording. A tooltip carrying a LINK (the licence text) must be
+   reachable with the pointer, so it drops pointer-events:none and gets a grace period. */
+let _tipFor = null, _tipHideT = null;
+function tipNode() {
+  let t = $('tip');
+  if (!t) { t = document.createElement('div'); t.id = 'tip';
+            t.className = 'float-surface inert'; t.hidden = true;
+            t.setAttribute('role', 'tooltip'); document.body.appendChild(t);
+            t.addEventListener('mouseenter', () => clearTimeout(_tipHideT));
+            t.addEventListener('mouseleave', () => tipHide()); }
+  return t;
+}
+function tipHide() { const t = tipNode(); t.hidden = true; _tipFor = null; }
+function tipShow(el, html) {
+  const t = tipNode();
+  clearTimeout(_tipHideT);
+  t.innerHTML = html;
+  t.classList.toggle('inert', !/t-link/.test(html));
+  t.hidden = false;
+  _tipFor = el;
+  const r = el.getBoundingClientRect();
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = Math.min(r.left, window.innerWidth - w - 10);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 8);
+  t.style.left = Math.max(10, left) + 'px';
+  t.style.top = top + 'px';
+}
+function tipBind(el, html, plain) {
+  if (!el) return;
+  el.classList.add('tipped');
+  if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+  el.title = plain || '';
+  el._tipHtml = html;
+  if (_tipFor === el) tipShow(el, html);
+  if (el._tipWired) return;
+  el._tipWired = true;
+  el.addEventListener('mouseenter', () => tipShow(el, el._tipHtml));
+  el.addEventListener('mouseleave', () => {
+    if (_tipFor !== el) return;
+    clearTimeout(_tipHideT);
+    _tipHideT = setTimeout(() => { if (_tipFor === el) tipHide(); }, 220);
+  });
+  el.addEventListener('focus', () => tipShow(el, el._tipHtml));
+  el.addEventListener('blur', () => { if (_tipFor === el) tipHide(); });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); e.stopPropagation();
+      if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
+    }
+  });
+}
+function tipHtml(v) {
+  if (!v) return '';
+  let h = '';
+  if (v.line)  h += '<span class="t-line">' + esc(v.line) + '</span>';
+  if (v.math)  h += '<span class="t-math">' + esc(v.math) + '</span>';
+  if (v.hedge) h += '<span class="t-hedge">' + esc(v.hedge) + '</span>';
+  if (v.link)  h += '<span class="t-link"><a href="' + esc(v.link) + '" target="_blank" ' +
+                    'rel="noopener">' + esc(v.linkLabel || 'read more ↗') + '</a></span>';
+  return h;
+}
+function tipPlain(v) {
+  if (!v) return '';
+  return [v.line, v.math, v.hedge, v.link].filter(Boolean).join('  ');
+}
+/* Verdict objects reach the markup by KEY, never serialised into an attribute: the
+   payload stays out of the DOM text, which is what keeps the at-rest prose count
+   honest rather than merely small. */
+let TIPS = {}, _tipSeq = 0;
+function tipRef(v) {
+  if (!v || (!v.line && !v.math && !v.hedge)) return '';
+  const k = 't' + (++_tipSeq);
+  TIPS[k] = v;
+  return ' data-tip="' + k + '"';
+}
+function wireTips(root) {
+  (root || document).querySelectorAll('[data-tip]').forEach(el => {
+    const v = TIPS[el.dataset.tip];
+    if (v) tipBind(el, tipHtml(v), tipPlain(v));
+  });
+}
+function chipHtml(v, extra) {
+  if (!v) return '';
+  return '<span class="chip ' + esc(v.cls || '') + ' ' + (extra || '') + '"' +
+         tipRef(v) + '>' + esc(v.chip) + '</span>';
+}
+
+/* ── ① header ───────────────────────────────────────────────────────────────── */
+function renderHeader() {
+  const ev = enginesVerdict();
+  const e = $('c-engines');
+  e.className = 'chip ' + ev.cls;
+  e.innerHTML = '<i class="dot ' + (ev.up ? 'on' : 'off') + '"></i><span>' + esc(ev.chip) + '</span>';
+  tipBind(e, tipHtml(ev), tipPlain(ev));
+
+  /* THE SECOND CHIP EXISTS ONLY WHILE SOMETHING IS HAPPENING — an install in flight.
+     When nothing is, the header says nothing about it at all. */
+  const inst = engines().filter(x => x.installing);
+  const w = $('c-work');
+  w.classList.toggle('hide', !inst.length);
+  if (inst.length) {
+    const v = { chip:'installing ' + inst.map(x => x.engine).join(', '), cls:'c-gold',
+                line:'Downloading and building an engine now.',
+                hedge:'Several GB, and it keeps going if you leave this tab.' };
+    w.textContent = v.chip;
+    tipBind(w, tipHtml(v), tipPlain(v));
+  }
+  $('stamp').textContent = 'compose-2026-08-29a · ' + new Date().toLocaleTimeString();
+}
+
+/* ── ② THE HERO STAGE ────────────────────────────────────────────────────────
+   The one place on this page that owns a persistent DOM element: the <audio>. */
+function tracks() { return S.lib || []; }
+function heroTrack() {
+  const list = tracks();
+  return list.find(t => t.name === S.sel) || list[0] || null;
+}
+let _audio = null;
+function heroAudio(src) {
+  if (!_audio) {
+    _audio = document.createElement('audio');
+    _audio.controls = true;
+    _audio.preload = 'none';
+  }
+  /* ⚠️ ONLY WHEN IT CHANGES. Re-setting .src to the same URL restarts playback, and
+     this function is called from a render that runs every poll. */
+  if (_audio.getAttribute('src') !== src) {
+    _audio.setAttribute('src', src);
+    _audio.src = src;
+  }
+  return _audio;
+}
+function fileSrc(t) { return '/api/music/file/' + encodeURIComponent(t.name); }
+
+function renderStage() {
+  const body = $('stage-body');
+  const caps = $('caps');
+  const j = job();
+
+  /* FIRST RUN — nothing on disk. The invitation lives in the stage, Fooocus-grade:
+     one heading, the sized Get buttons, one line. The standing Engines section the
+     Music view opens with does not exist here; it is the sheet. */
+  if (!installed().length && !installing()) {
+    body.innerHTML =
+      '<div id="stage-invite">' +
+        '<h2 class="say">Describe a song and hear it here — rendered on this Mac, offline.</h2>' +
+        '<div class="row" style="justify-content:center;margin-top:10px">' +
+        engines().map(e => '<button class="primary" data-act="install" data-pick="' +
+          esc(e.engine) + '"' + tipRef(licenseVerdict(e)) + '>Get ' + esc(e.label) +
+          ' · ' + esc(String(e.size_gb || '?')) + ' GB</button>').join('') +
+        '</div>' +
+        '<p class="say">Nothing downloads until you press, and the sizes are exact.</p>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
+    return;
+  }
+
+  /* INSTALLING WITH NOTHING ELSE ON DISK — the stage says so, or the empty-library
+     line below would read as "nothing is happening" while several GB are landing. */
+  if (!installed().length) {
+    const busy = engines().filter(x => x.installing).map(x => x.engine).join(', ');
+    body.innerHTML = '<p class="say"><b>Installing ' + esc(busy) + '.</b> Several GB — '
+      + 'it keeps going if you leave this tab, and the chip above turns green when the '
+      + 'files are on disk.</p>';
+    caps.innerHTML = '';
+    return;
+  }
+
+  /* RENDERING — the stage is the progress surface. */
+  if (j && running()) {
+    const v = jobVerdict(j);
+    body.innerHTML =
+      '<div class="prog">' +
+        '<div class="bar"><i style="width:' + (v.pct == null ? 4 : v.pct) + '%"></i></div>' +
+        '<div class="row" style="justify-content:center">' + chipHtml(v) + '</div>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
+    return;
+  }
+
+  const t = heroTrack();
+  if (!t) {
+    /* Engines are ready and the library is empty: one quiet line, not a paragraph. */
+    body.innerHTML = '<p class="say">The song you make lands here, and stays.</p>';
+    caps.innerHTML = '';
+    return;
+  }
+
+  /* THE SONG. The title and the audio come off the SAME track object — a stage that
+     could name one file and play another is the lie this construction prevents. */
+  body.innerHTML = '<div id="hero-title">' + esc(titleOf(t)) + '</div>' +
+                   '<div id="hero-player"></div>';
+  const host = document.getElementById('hero-player');
+  if (host && host.appendChild) host.appendChild(heroAudio(fileSrc(t)));
+
+  const chips = trackChips(t).map(v => chipHtml(v)).join('') +
+    (t.seed != null ? '<span class="chip c-dim act" data-act="reuse-seed" data-seed="' +
+       esc(t.seed) + '"' + tipRef(seedVerdict(t.seed)) + '>seed ' + esc(t.seed) + '</span>' : '') +
+    chipHtml({ chip:ago(t.created), cls:'c-dim', line:'When it was rendered.',
+               math:new Date((t.created || 0) * 1000).toLocaleString() });
+  caps.innerHTML = chips + '<span class="grow"></span>' +
+    '<button class="ghost" data-act="reuse" data-name="' + esc(t.name) + '">Use these settings</button>' +
+    '<button class="ghost" data-act="open-track" data-name="' + esc(t.name) + '">Open ▸</button>';
+  wireTips(caps);
+}
+
+/* ── ③ the recent strip + All tracks ────────────────────────────────────────── */
+function renderStrip() {
+  const list = tracks();
+  const sel = heroTrack();
+  const pill = (t) => '<button class="tk' + (sel && sel.name === t.name ? ' on' : '') +
+    '" data-act="select" data-name="' + esc(t.name) + '" title="' +
+    esc(titleOf(t)) + '"><span class="tkn">' + esc(titleOf(t)) + '</span>' +
+    '<span class="tkd">' + esc(clock(t.seconds)) + '</span></button>';
+  $('strip').innerHTML = list.length
+    ? list.slice(0, 6).map(pill).join('') + chipHtml(totalVerdict(list)) +
+      (list.length > 6 || S.all
+        ? '<button class="ghost" data-act="all">' +
+          (S.all ? 'Hide tracks' : 'All tracks ▸') + '</button>' : '')
+    : '';
+  $('alltracks').classList.toggle('hide', !S.all);
+  $('alltracks').innerHTML = S.all ? list.map(pill).join('') : '';
+  wireTips($('strip'));
+}
+
+/* ── ④⑤⑥⑦ the composer ─────────────────────────────────────────────────────── */
+function secondsNow() {
+  const d = (S.st || {}).seconds_default || 60;
+  return S.form.seconds == null ? d : S.form.seconds;
+}
+function renderComposer() {
+  const e = current();
+  if (e && S.form.engine !== e.engine) S.form.engine = e.engine;
+  const j = job();
+  const live = running();
+  const secs = secondsNow();
+  const fmts = (((S.st || {}).formats) || {})[S.form.engine] || [];
+  const defFmt = (((S.st || {}).format_default) || {})[S.form.engine] || '';
+  /* ⚠️ THE DOT MEANS "SOMETHING UNDER HERE DIFFERS FROM THE DEFAULT", so it is measured
+     against THE ENGINE'S OWN DEFAULTS — not against "the field is non-empty". Walked
+     live: after a run the write-back puts the steps that were actually used into the
+     field, and acestep's run used its default 8, so a non-empty test made the page claim
+     a hidden edit that did not exist. A dot that cries wolf is the same class of lie as
+     a dot that stays silent. */
+  const dirty = !!e && !!(
+    (String(S.form.steps || '').trim() &&
+     Number(S.form.steps) !== Number(e && e.default_steps)) ||
+    String(S.form.seed || '').trim() ||
+    (S.form.format && S.form.format !== defFmt));
+
+  const prompt = $('f-prompt');
+  if (prompt && document.activeElement !== prompt && (S.form.prompt || '') !== prompt.value)
+    prompt.value = S.form.prompt || '';
+
+  /* ⑤ LYRICS — the one promoted field, and a collapsed affordance while it is empty
+     (Suno-corroborated; the [Verse]/[Chorus] teaching is the chip's hover, not a
+     standing sentence). */
+  const lyricTip = { chip:'lyrics', line:'Optional — leave it empty for an instrumental.',
+    math:'section tags like [Verse] / [Chorus] shape the arrangement',
+    hedge:'MiniMax is told [Instrumental] when this is empty, so an empty field is a '
+        + 'real instruction rather than a missing one.' };
+  const wantLyrics = S.lyricsOpen || !!(S.form.lyrics || '').trim();
+  $('lyricsline').innerHTML = wantLyrics
+    ? '<label><span class="caps"' + tipRef(lyricTip) + '>lyrics</span>' +
+      '<textarea id="f-lyrics" rows="3" placeholder="[Verse]">' + esc(S.form.lyrics || '') +
+      '</textarea></label>'
+    : '<span class="chip act"' + tipRef(lyricTip) + ' data-act="lyrics">+ lyrics</span>';
+
+  /* ⑥ the control row: length · engine chip · presets · More ▸ — and ⑦ Generate. */
+  const lv = lengthVerdict(secs);
+  const mn = (S.st || {}).seconds_min || 10, mx = (S.st || {}).seconds_max || 300;
+  $('crow').innerHTML =
+    '<span class="lenwrap"><input type="range" id="f-secs" min="' + mn + '" max="' + mx +
+      '" step="5" value="' + secs + '" aria-label="length">' +
+      '<span class="chip c-dim" id="lenchip"' + tipRef(lv) + '>' + esc(lv.chip) + '</span></span>' +
+    '<span class="chip act ' + esc(engineChipVerdict(e).cls) + '" data-act="engines"' +
+      tipRef(engineChipVerdict(e)) + '>' + esc(engineChipVerdict(e).chip) + '</span>' +
+    '<span class="chip act" data-act="presets"' + tipRef({ chip:'presets',
+      line:'Ready-made captions in the structured style both engines read best.',
+      hedge:'Clicking one fills the fields; it never renders by itself. Your own can be '
+          + 'saved there too.' }) + '>Presets</span>' +
+    '<button class="ghost' + (dirty ? ' dotted' : '') + '" data-act="more">More ' +
+      (S.more ? '▾' : '▸') + '</button>' +
+    '<span class="grow"></span>' +
+    (live
+      ? '<button class="ghost" id="stopbtn" data-act="stop">Stop</button>'
+      : '') +
+    '<button class="primary" data-act="go"' +
+      ((S.busy || !e || live) ? ' disabled' : '') + '>' +
+      (live ? 'Rendering…' : S.busy ? 'Starting…' : 'Generate') + '</button>';
+
+  /* MORE ▸ — ONE disclosure gate, closed by default, dotted when anything under it
+     differs from the engine's own defaults, so a hidden edit is never silent. */
+  $('more').classList.toggle('hide', !S.more || !e);
+  if (S.more && e) {
+    const stepsTip = { chip:'steps',
+      line:'More steps is more compute.',
+      math:'this engine’s default is ' + (e.default_steps || '?') + ' (max ' + (e.max_steps || '?') + ')',
+      hedge:'Leave it empty to use the default. Steps mean different things per engine — '
+          + 'they are each engine’s own design point, not a shared knob.' };
+    const seedTip = { chip:'seed', line:(S.st || {}).seed_help || '',
+      hedge:'Left empty, the bridge draws one and records it with the track, so a song '
+          + 'you like can always be made again.' };
+    const fmtTip = { chip:'format', line:'What the engine itself writes.',
+      hedge:'Any track can also be converted afterwards from its own panel.' };
+    $('more').innerHTML =
+      '<div class="grid3">' +
+        '<label><span class="caps"' + tipRef(stepsTip) + '>steps</span>' +
+          '<input id="f-steps" inputmode="numeric" placeholder="' +
+          esc(String(e.default_steps || '')) + '" value="' + esc(S.form.steps || '') + '"></label>' +
+        '<label><span class="caps"' + tipRef(seedTip) + '>seed</span>' +
+          '<input id="f-seed" inputmode="numeric" placeholder="random" value="' +
+          esc(S.form.seed || '') + '"></label>' +
+        (fmts.length > 1
+          ? '<label><span class="caps"' + tipRef(fmtTip) + '>format</span><select id="f-fmt">' +
+            fmts.map(f => '<option value="' + esc(f) + '"' +
+              ((S.form.format || defFmt) === f ? ' selected' : '') + '>' +
+              esc((((S.st || {}).format_label) || {})[f] || f) + '</option>').join('') +
+            '</select></label>'
+          : '') +
+      '</div>';
+    wireTips($('more'));
+  } else { $('more').innerHTML = ''; }
+
+  /* THE LIVE STATES THAT DEMAND A DECISION — the only other sanctioned sentences. */
+  $('advisory').innerHTML = advisoryHtml(j);
+  wireTips($('crow'));
+  wireTips($('lyricsline'));
+  wireTips($('advisory'));
+}
+
+/* PURE-ish: the composer's decision line. The RAM warning is an OVERRIDE, never a
+   wall (Debi's advisory-gates ruling): the bridge states the numbers and the person
+   at the machine decides. */
+function advisoryHtml(j) {
+  if (S.warn)
+    return '<div class="row"><p class="say"><b>Heads up.</b> ' + esc(S.warn) + '</p>' +
+      '<button data-act="go-anyway" class="primary">Generate anyway</button>' +
+      '<button class="ghost" data-act="dismiss-warn">Not now</button></div>';
+  if (S.jobErr)
+    return '<p class="say bad">' + esc(S.jobErr) + '</p>';
+  if (S.err)
+    return '<p class="say bad">' + esc(S.err) + '</p>';
+  if (j && j.state === 'failed' && j.error)
+    return '<p class="say bad"><b>The last render failed.</b> ' +
+           esc(String(j.error).slice(-300)) + '</p>';
+  if (j && j.state === 'cancelled')
+    return '<p class="say">The last render was stopped, and nothing was saved.</p>';
+  return '';
+}
+
+/* ── ONE TAP: the sheets ────────────────────────────────────────────────────── */
+function renderSheet() {
+  $('scrim').hidden = !S.sheet;
+  if (!S.sheet) { $('sheet').innerHTML = ''; return; }
+  /* ⚠️ A POLL MAY NEVER WIPE WHAT SOMEBODY IS TYPING. Walked live: the 20s poll
+     re-rendered the sheet and deleted the half-typed tracks-folder path — and would
+     have done the same to a half-typed track name. So while the focus is inside a
+     field in this sheet, the sheet is left exactly as it is; the next poll after the
+     field is left redraws it. (The Music view learned this on its composer; it is the
+     same rule, so it is written here as the rule and not as the incident.) */
+  const a = document.activeElement;
+  if (a && (String(a.id || '').indexOf('t-') === 0 ||
+            String(a.id || '').indexOf('dir-') === 0)) return;
+  /* …and a COMMITTED field gives the focus back (blurCommitted below), so the sheet is
+     never left showing a stale row just because the caret is still in a saved field. */
+  if (S.sheet === 'engines') renderEnginesSheet();
+  else if (S.sheet === 'track') renderTrackSheet();
+  else if (S.sheet === 'presets') renderPresetsSheet();
+  wireTips($('sheet'));
+}
+function sheetHead(title, extra) {
+  return '<div class="row"><h2>' + esc(title) + '</h2><span class="grow"></span>' +
+    (extra || '') +
+    '<button class="ghost" data-act="close-sheet" aria-label="Close">✕</button></div>';
+}
+/* THE ENGINES SHEET — rows with aligned columns (the Studio Models-page grammar), not
+   the essay cards the Music view opens with. It is also where the tracks folder lives:
+   an absolute path is not standing UI, but it must be reachable. */
+function renderEnginesSheet() {
+  const dir = (S.st || {}).dir || '';
+  const def = (S.st || {}).default_dir || '';
+  $('sheet').innerHTML = sheetHead('Engines') +
+    engines().map(e => {
+      const sv = engineStateVerdict(e);
+      return '<div class="erow">' +
+        '<span class="ename">' + esc(e.label) + (e.engine === S.form.engine ? ' ✓' : '') + '</span>' +
+        '<span class="row">' + chipHtml(speedVerdict(e)) + chipHtml(ramVerdict(e)) +
+          chipHtml(licenseVerdict(e)) + chipHtml(measuredVerdict(e.engine, S.lib)) + '</span>' +
+        '<span class="chip act ' + esc(sv.cls) + '"' +
+          (sv.act ? ' data-act="' + esc(sv.act) + '" data-pick="' + esc(e.engine) + '"' : '') +
+          tipRef(sv) + '>' + esc(sv.chip) + '</span>' +
+        (e.installed
+          ? '<button class="ghost" data-act="pick-engine" data-pick="' + esc(e.engine) + '"' +
+            (e.engine === S.form.engine ? ' disabled' : '') + '>Use</button>'
+          : '<span></span>') +
+      '</div>';
+    }).join('') +
+    '<div class="row" style="border-top:1px solid var(--line);padding-top:10px">' +
+      chipHtml({ chip:'tracks folder', cls:'c-dim', line:'Where finished songs are written.',
+                 math:dir, hedge:dir && def && dir !== def
+                   ? 'Only this folder is listed here; tracks left in the default one are '
+                     + 'untouched and reappear if you set it back.'
+                   : 'Change it and only that folder is listed; nothing is moved or deleted.' }) +
+      '<button class="ghost" data-act="reveal-dir">Reveal</button>' +
+      (S.dirEdit
+        ? '<input id="dir-inp" style="width:260px" value="' +
+            esc(S.dirValue == null ? dir : S.dirValue) + '" placeholder="~/Music/Harness">' +
+          '<button data-act="set-dir">Set</button>' +
+          '<button class="ghost" data-act="cancel-dir">Cancel</button>'
+        : '<button class="ghost" data-act="edit-dir">Change ▸</button>') +
+    '</div>';
+}
+/* THE TRACK SHEET — one tap from the stage or the strip. Real name editing lives here:
+   a filename is not an identity, and the run's own numbers are written back beside it. */
+function renderTrackSheet() {
+  const t = tracks().find(x => x.name === S.detail);
+  if (!t) { $('sheet').innerHTML = sheetHead('Track') +
+    '<p class="say">That track is no longer in the library.</p>'; return; }
+  const stem = t.name.replace(/\.[^.]+$/, '');
+  const have = tracks().filter(x => x.name.replace(/\.[^.]+$/, '') === stem)
+                       .map(x => String(x.ext || '').toLowerCase());
+  const conv = (((S.st || {}).convert_formats) || []).filter(f => have.indexOf(f) < 0);
+  $('sheet').innerHTML = sheetHead('Track') +
+    '<label><span class="caps"' + tipRef({ chip:'name',
+      line:'What you call this song.',
+      math:'the file on disk stays ' + t.name,
+      hedge:'The name lives beside the track, not in the filename: nothing on disk is '
+          + 'renamed, so the folder and this list can never disagree. Empty it to go '
+          + 'back to no name of its own.' }) + '>name</span>' +
+      '<input id="t-title" maxlength="120" value="' + esc(t.title || '') +
+      '" placeholder="' + esc(titleOf(t)) + '"></label>' +
+    '<div class="row">' +
+      '<button data-act="save-title" data-name="' + esc(t.name) + '">Save name</button>' +
+      '<span class="mono">' + esc(t.name) + '</span></div>' +
+    '<div class="row">' + trackChips(t).map(v => chipHtml(v)).join('') +
+      (t.seed != null ? '<span class="chip c-dim act" data-act="reuse-seed" data-seed="' +
+        esc(t.seed) + '"' + tipRef(seedVerdict(t.seed)) + '>seed ' + esc(t.seed) + '</span>' : '') +
+    '</div>' +
+    (t.prompt ? '<div class="utext">' + esc(t.prompt) + '</div>' : '') +
+    (t.lyrics ? '<div class="utext">' + esc(t.lyrics) + '</div>' : '') +
+    '<div class="row" style="border-top:1px solid var(--line);padding-top:10px">' +
+      '<button data-act="reuse" data-name="' + esc(t.name) + '">Use these settings</button>' +
+      conv.map(f => '<button class="ghost" data-act="convert" data-name="' + esc(t.name) +
+        '" data-fmt="' + esc(f) + '"' + tipRef({ chip:f,
+          line:'Write ' + f.toUpperCase() + ' beside this track.',
+          hedge:'Only formats this build of ffmpeg can actually write are offered, and '
+              + 'only when that sibling does not already exist.' }) + '>' + esc(f) + '</button>').join('') +
+      '<button class="ghost" data-act="reveal" data-name="' + esc(t.name) + '">Reveal</button>' +
+      '<span class="grow"></span>' +
+      '<button class="ghost" data-act="delete" data-name="' + esc(t.name) + '">Delete</button>' +
+    '</div>';
+}
+/* PRESETS — the Music view's templates, kept whole (built-ins + your own + save +
+   forget), moved one tap away because a gallery of captions is not a standing element
+   of a composer. */
+function renderPresetsSheet() {
+  const tpls = ((S.st || {}).templates) || [];
+  $('sheet').innerHTML = sheetHead('Presets',
+    '<button data-act="save-preset">Save what is in the composer</button>') +
+    tpls.map(t => '<div class="prow">' +
+      '<span class="ename">' + esc(t.name) + '</span>' +
+      chipHtml({ chip:(t.tag || '') + (t.builtin ? '' : ' · yours'), cls:'c-dim',
+                 line:String(t.prompt || '').slice(0, 260),
+                 hedge:t.builtin ? 'A starter, written in the structured style both '
+                     + 'engines read best.' : 'Yours, saved from this composer.' }) +
+      '<span class="row"><button data-act="use-preset" data-id="' + esc(t.id) + '">Use</button>' +
+      (t.builtin ? '' : '<button class="ghost" data-act="forget-preset" data-id="' +
+        esc(t.id) + '">✕</button>') + '</span></div>').join('') +
+    (tpls.length ? '' : '<p class="say">No presets are available from the bridge.</p>');
+}
+
+/* ⚠️ EACH SECTION RENDERS INSIDE ITS OWN try/catch — a walked defect on /comfy, not
+   defensive boilerplate: one throw inside a renderer unwound the whole render and
+   three sections painted EMPTY, which reads as "there is nothing here" rather than
+   "this half is broken". A section that throws says so, in that section, in one line;
+   every other section still draws, and the poll lets a transient fault self-heal. */
+function section(name, el, fn) {
+  try { return fn(); }
+  catch (e) {
+    try {
+      const box = $(el);
+      if (box) box.innerHTML = '<p class="say bad">' + esc(name) + ' failed to draw: ' +
+        esc(String(e && e.message || e)) + ' — retrying on the next poll.</p>';
+    } catch (e2) { /* the error path may never throw */ }
+    return null;
+  }
+}
+
+function render() {
+  TIPS = {};                     /* the registry is per-render: no stale verdicts */
+  section('header', 'pageerr', renderHeader);
+  section('stage', 'stage-body', renderStage);
+  section('tracks', 'strip', renderStrip);
+  section('composer', 'crow', renderComposer);
+  section('sheet', 'sheet', renderSheet);
+  writeBack();
+  arm(running() || installing() ? 1000 : 20000);
+}
+
+/* ══ WRITE-BACK (the Pixelmator mechanic) ══════════════════════════════════════
+   When a render finishes, the values ACTUALLY used — the engine, the resolved length,
+   the steps, the format — land in the ordinary controls, so what the user sees is what
+   they can edit and re-run. The seed deliberately does NOT: it stays empty so the next
+   song is a new one, and the drawn seed lives on the finished track's caption chip,
+   which is click-to-reuse. */
+function writeBack() {
+  const j = job();
+  if (!j || j.state !== 'done' || S.wroteBack === j.id) return;
+  S.wroteBack = j.id;
+  if (j.engine) S.form.engine = j.engine;
+  if (j.seconds) S.form.seconds = Number(j.seconds);
+  if (j.steps) S.form.steps = String(j.steps);
+  if (j.format) S.form.format = j.format;
+  S.form.seed = '';
+  S.sel = null;                  /* the newest track is what the stage should show */
+  section('composer', 'crow', renderComposer);
+}
+
+/* ── the timer ──────────────────────────────────────────────────────────────── */
+let timer = null, cadence = 0;
+/* ⚠️ `timer = null` INSIDE THE CALLBACK IS THE WHOLE MECHANISM, and leaving it out is a
+   LIE-CLASS BUG walked live on this page: a fired setTimeout leaves its handle truthy,
+   so the `already armed at this cadence` guard saw a timer that had already run and
+   returned without re-arming. The page polled ONCE and then went quietly stale — it
+   kept showing a library and an engine state from minutes ago as if they were now.
+   (Same defect and same fix as bridge/panel/comfy.html's arm(), found there in
+   v1.5.41; doctrine 6b — the class is pinned by a test in test_compose_page.js.) */
+function arm(ms) {
+  if (timer && cadence === ms) return;
+  cadence = ms;
+  clearTimeout(timer);
+  timer = setTimeout(() => { timer = null; load(); }, ms);
+}
+
+/* NOT alert(): the app shell's WKWebView has no runJavaScriptAlertPanel delegate, so
+   alert() shows nothing there (v1.5.39). This toast renders in every host. */
+let toastTimer = null;
+function toast(msg, bad) {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.className = bad ? 'bad' : '';
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 9000);
+}
+
+/* ── input plumbing ─────────────────────────────────────────────────────────── */
+function readForm() {
+  if ($('f-prompt')) S.form.prompt = $('f-prompt').value;
+  if ($('f-lyrics')) S.form.lyrics = $('f-lyrics').value;
+  if ($('f-steps'))  S.form.steps = $('f-steps').value.trim();
+  if ($('f-seed'))   S.form.seed = $('f-seed').value.trim();
+  if ($('f-fmt'))    S.form.format = $('f-fmt').value;
+  if ($('f-secs'))   S.form.seconds = Number($('f-secs').value);
+}
+document.addEventListener('input', (e) => {
+  const id = e.target && e.target.id;
+  if (id === 'dir-inp') { S.dirValue = e.target.value; return; }
+  if (!id || id.indexOf('f-') !== 0) return;
+  readForm();
+  /* The length chip follows the slider WITHOUT a re-render — rebuilding the composer
+     on every drag would fight the thumb the user is holding. */
+  if (id === 'f-secs') {
+    const c = $('lenchip');
+    const v = lengthVerdict(S.form.seconds);
+    if (c) { c.textContent = v.chip; tipBind(c, tipHtml(v), tipPlain(v)); }
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { tipHide(); if (S.sheet) { S.sheet = false; render(); } }
+}, true);
+window.addEventListener('scroll', () => tipHide(), true);
+window.addEventListener('resize', () => tipHide(), true);
+
+/* Two-step arming for the irreversible ones (delete): a rendered song cannot be made
+   again by accident, so the first press only asks. The same grammar the panel uses. */
+function armed(btn, label) {
+  if (btn._armed) { btn._armed = false; btn.classList.remove('arm'); btn.textContent = label; return true; }
+  btn._armed = true; btn.classList.add('arm'); btn.textContent = 'sure?';
+  setTimeout(() => { if (btn._armed) { btn._armed = false; btn.classList.remove('arm');
+                                       btn.textContent = label; } }, 3000);
+  return false;
+}
+
+/* After a field is COMMITTED (a name saved, a folder set) the caret is released, so the
+   typing guard above stops holding the sheet and the very next render shows the truth. */
+function blurCommitted() {
+  const a = document.activeElement;
+  if (a && a.blur && /^(INPUT|TEXTAREA)$/.test(a.tagName || '')) a.blur();
+}
+
+async function startRender(confirm) {
+  readForm();
+  const e = current();
+  if (!e) { toast('There is no engine on disk yet.', true); return; }
+  if (!(S.form.prompt || '').trim()) { toast('Describe the music first.', true); return; }
+  const body = { engine:e.engine, prompt:S.form.prompt, lyrics:S.form.lyrics || '',
+                 seconds:secondsNow(), steps:S.form.steps || '', seed:S.form.seed || '',
+                 format:S.form.format || '' };
+  if (confirm) body.confirm = true;
+  S.busy = true; S.jobErr = ''; if (!confirm) S.warn = '';
+  render();
+  const r = await api('/api/music/generate', { method:'POST', body:JSON.stringify(body) });
+  S.busy = false;
+  if (!r.ok) {
+    /* A RAM warning is not an error: it goes to the advisory row with a way through.
+       Everything else surfaces inline, in the bridge's own words. */
+    if (r.needs_confirm) { S.warn = r.error || 'that render may not fit'; S.jobErr = ''; }
+    else { S.jobErr = r.error || 'the render could not start'; S.warn = ''; }
+    render();
+    return;
+  }
+  S.warn = '';
+  await load();
+}
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('.tipped') && !e.target.closest('#tip')) tipHide();
+  if (e.target.id === 'scrim') { S.sheet = false; render(); return; }
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+
+  if (act === 'engines')      { readForm(); S.sheet = 'engines'; render(); }
+  else if (act === 'presets') { readForm(); S.sheet = 'presets'; render(); }
+  else if (act === 'close-sheet') { S.sheet = null; S.detail = null; render(); }
+  else if (act === 'more')    { readForm(); S.more = !S.more; render(); }
+  else if (act === 'all')     { S.all = !S.all; render(); }
+  else if (act === 'lyrics')  { readForm(); S.lyricsOpen = true; render();
+                                const l = $('f-lyrics'); if (l && l.focus) l.focus(); }
+  else if (act === 'select')  { S.sel = b.dataset.name; render(); }
+  else if (act === 'open-track') { S.detail = b.dataset.name; S.sheet = 'track'; render(); }
+  else if (act === 'pick-engine') { S.form.engine = b.dataset.pick; render(); }
+  else if (act === 'reuse-seed') {
+    S.form.seed = String(b.dataset.seed); S.more = true; render();
+    toast('Seed ' + b.dataset.seed + ' is in the seed field.');
+  }
+  else if (act === 'reuse') {
+    /* THE REPLICATION AFFORDANCE. Everything that made a song is in its sidecar, so
+       "another one like that" is one click plus an edit — the whole reason seeds and
+       steps are recorded at all. */
+    const t = tracks().find(x => x.name === b.dataset.name);
+    if (!t) return;
+    if (t.engine && installed().some(x => x.engine === t.engine)) S.form.engine = t.engine;
+    S.form.prompt = t.prompt || '';
+    S.form.lyrics = t.lyrics || '';
+    if (t.lyrics) S.lyricsOpen = true;
+    if (t.seconds) S.form.seconds = Number(t.seconds);
+    S.form.steps = t.steps == null ? '' : String(t.steps);
+    S.form.seed = t.seed == null ? '' : String(t.seed);
+    S.more = true; S.sheet = null; S.detail = null;
+    render();
+    toast('Loaded the settings from “' + titleOf(t) + '”.');
+  }
+  else if (act === 'save-title') {
+    const el = $('t-title');
+    const r = await api('/api/music/title', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name, title:(el && el.value) || '' }) });
+    if (!r.ok) { toast(r.error || 'could not save that name', true); return; }
+    blurCommitted();
+    S.lib = r.tracks || S.lib;
+    render();
+    toast((el && el.value.trim()) ? 'Named “' + el.value.trim() + '”.'
+                                  : 'That track has no name of its own again.');
+  }
+  else if (act === 'convert') {
+    b.disabled = true;
+    const r = await api('/api/music/convert', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name, fmt:b.dataset.fmt }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'the conversion failed', true); return; }
+    toast('Wrote ' + (r.name || b.dataset.fmt) + '.');
+    await load();
+  }
+  else if (act === 'reveal') {
+    const t = tracks().find(x => x.name === b.dataset.name);
+    if (!t) return;
+    const r = await api('/api/open', { method:'POST',
+      body:JSON.stringify({ path:t.path, action:'reveal' }) });
+    /* /api/open answers with `log`, not `error`, when it refuses — read both or a
+       real refusal ("path does not exist") would show as "undefined". */
+    if (r && r.ok === false) toast(r.error || r.log || 'could not show that file', true);
+  }
+  else if (act === 'reveal-dir') {
+    const r = await api('/api/open', { method:'POST',
+      body:JSON.stringify({ path:(S.st || {}).dir || '', action:'reveal' }) });
+    if (r && r.ok === false) toast(r.error || r.log || 'could not open that folder', true);
+  }
+  else if (act === 'edit-dir') {
+    /* A TYPED PATH, NOT A PICKER: WKWebView has no folder picker (the recorded
+       silent-no-op class), which is why the voice lane types paths too. The editor is
+       STATE, so a poll that redraws the sheet cannot close it under the user. */
+    S.dirEdit = true; S.dirValue = (S.st || {}).dir || '';
+    render();
+    const i = $('dir-inp'); if (i && i.focus) i.focus();
+  }
+  else if (act === 'cancel-dir') { S.dirEdit = false; S.dirValue = null; render(); }
+  else if (act === 'set-dir') {
+    const v = ($('dir-inp') || {}).value || S.dirValue || '';
+    const r = await api('/api/music/settings', { method:'POST',
+      body:JSON.stringify({ output_dir:v }) });
+    if (!r.ok) { toast(r.error || 'could not set that folder', true); return; }
+    blurCommitted();
+    S.dirEdit = false; S.dirValue = null;
+    S.sel = null;                  /* a different folder is a different library */
+    toast('Tracks are saved to ' + (r.output_dir || 'the default') + '.');
+    await load();
+  }
+  else if (act === 'delete') {
+    if (!armed(b, 'Delete')) return;
+    b.disabled = true;
+    const r = await api('/api/music/delete', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not delete that track', true); return; }
+    if (S.sel === b.dataset.name) S.sel = null;
+    S.sheet = null; S.detail = null;
+    await load();
+  }
+  else if (act === 'install') {
+    b.disabled = true;
+    const r = await api('/api/music/install', { method:'POST',
+      body:JSON.stringify({ engine:b.dataset.pick }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not start that install', true); return; }
+    toast('Installing ' + b.dataset.pick + ' — several GB; you can leave this tab.');
+    await load();
+  }
+  else if (act === 'use-preset') {
+    const t = (((S.st || {}).templates) || []).find(x => x.id === b.dataset.id);
+    if (!t) return;
+    if (t.engine_hint && installed().some(x => x.engine === t.engine_hint))
+      S.form.engine = t.engine_hint;
+    S.form.prompt = t.prompt || '';
+    S.form.lyrics = t.lyrics || '';
+    if (t.lyrics) S.lyricsOpen = true;
+    if (t.seconds) S.form.seconds = Number(t.seconds);
+    if (t.steps != null) S.form.steps = String(t.steps);
+    S.sheet = null;
+    render();
+    toast('Loaded the “' + t.name + '” preset.');
+  }
+  else if (act === 'save-preset') {
+    readForm();
+    const name = (S.form.prompt || '').trim().split(/\s+/).slice(0, 4).join(' ');
+    if (!name) { toast('Describe the music first — a preset needs something to save.', true); return; }
+    const r = await api('/api/music/templates', { method:'POST',
+      body:JSON.stringify({ name, prompt:S.form.prompt, lyrics:S.form.lyrics || '',
+                            seconds:secondsNow(), steps:S.form.steps || '',
+                            engine:S.form.engine }) });
+    if (!r.ok) { toast(r.error || 'could not save that preset', true); return; }
+    if (S.st) S.st.templates = r.templates || S.st.templates;
+    render();
+    toast('Saved “' + name + '”.');
+  }
+  else if (act === 'forget-preset') {
+    if (!armed(b, '✕')) return;
+    const r = await api('/api/music/templates/delete', { method:'POST',
+      body:JSON.stringify({ id:b.dataset.id }) });
+    if (r.ok && S.st) S.st.templates = r.templates || [];
+    render();
+  }
+  else if (act === 'stop') {
+    if (!armed(b, 'Stop')) return;
+    b.disabled = true;
+    const r = await api('/api/music/cancel', { method:'POST', body:'{}' });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not stop the render', true); return; }
+    await load();
+  }
+  else if (act === 'dismiss-warn') { S.warn = ''; render(); }
+  else if (act === 'go')           { await startRender(false); }
+  else if (act === 'go-anyway')    { await startRender(true); }
+});
+
+load();
+</script>
+</body>
+</html>

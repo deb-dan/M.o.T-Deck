@@ -8,7 +8,7 @@ import threading
 import time
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from ..core.appctx import ROOT, _MUSIC_ERR, _music, app
+from ..core.appctx import PANEL, ROOT, _MUSIC_ERR, _music, app
 from ..core.procs import _script, cfg
 from .hf import license_override
 from .models import _budget_bytes, _loaded_models_bytes
@@ -79,6 +79,51 @@ def _music_job_view() -> dict:
     job.pop("log", None)              # a temp path is not the panel's business
     job["progress_view"] = _music.progress_view(job, tail, _music_history())
     return job
+
+
+@app.get("/compose")
+def compose_page() -> FileResponse:
+    """COMPOSE — the alternative music surface (docs/FABLE-MUSIC-COMPOSE-SPEC.md).
+
+    Its OWN document, for /comfy's and /aider's reason: it plays audio and watches a
+    long render, so it has no business carrying the panel's poll loops. It drives THESE
+    routes, unchanged — there is no second music backend and there never will be.
+
+    ⚠️ IT DOES NOT REPLACE THE MUSIC VIEW. The panel's Music view (index.html
+    #view-music) is untouched by this slice, on purpose: Debi compares the two surfaces
+    live and decides later which survives. Deleting either one takes a real surface
+    away from the user.
+    """
+    return FileResponse(
+        PANEL / "compose.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                 "Pragma": "no-cache"})
+
+
+@app.post("/api/music/title")
+async def music_title(req: Request) -> JSONResponse:
+    """Name a track. THE ONE ROUTE THIS SLICE ADDED, and it exists because the library
+    had no concept of a name at all: a track's identity was `minimax-20260820-235921.
+    wav`, which is a timestamp.
+
+    The file on disk is NOT renamed (see music.set_track_title): the title is sidecar
+    metadata, so the folder and the library can never disagree about what a file is
+    called. Both surfaces read it; the Music view simply does not display it yet.
+    """
+    if _music is None:
+        return _music_unavailable()
+    try:
+        body = await req.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    name = ((body or {}).get("name") or "").strip()
+    title = (body or {}).get("title")
+    ok, reason = await asyncio.to_thread(_music.set_track_title, ROOT, name, title)
+    if not ok:
+        print(f"[music] title reject {name!r}: {reason}", flush=True)
+        return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    print(f"[music] titled {name} -> {str(title or '')[:120]!r}", flush=True)
+    return JSONResponse({"ok": True, "tracks": _music.library_entries(ROOT)})
 
 
 @app.get("/api/music/status")
