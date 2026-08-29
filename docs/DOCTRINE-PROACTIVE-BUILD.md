@@ -104,9 +104,9 @@ section against the user's recorded expectations, not merely against internal
 consistency — a beautifully argued wrong destination still fails.
 
 **The incident (example, not the rule):** goose. Debi wanted goose embedded like
-Unsloth because of its UI — and had earlier said Aider having no UI defied her
+Unsloth because of its UI — and had earlier said Aider having no UI defied their
 expectations (the recorded signal). Research checked only the CLI artifact, concluded
 "no browser UI", and a PTY lane was built and QA-passed on rigor while being the wrong
 destination. Hours spent; the fork ("CLI has no UI; the project ships a desktop UI;
-terminal lane or embed work?") was never put to her. The backend work (pins, telemetry
+terminal lane or embed work?") was never put to them. The backend work (pins, telemetry
 kill, isolation, runner wiring) survives; the shape didn't.
