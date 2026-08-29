@@ -225,6 +225,14 @@ verify_sha512 "$XZ" "$X2T_SHA512" "${X2T_REPO} ${X2T_TAG} ${X2T_ASSET}"
 # version) and we keep that, so a later editor bump does not touch it.
 DV="$DEST/dist/v9"
 DX="$DEST/dist/x2t"
+# ⚠️ INVALIDATE THE STAMP BEFORE THE FIRST DESTRUCTIVE OP (2026-08-29 install-path
+# audit). From `rm -rf` below until the new stamp is renamed into place, the bundle is
+# not the thing the old stamp describes — an unzip that dies midway (kill, disk full,
+# corrupt central directory) would otherwise leave a stamp claiming the pinned hashes
+# over a half-populated dist/. bridge/oo.py re-checks four REQUIRED files per request,
+# but four files is a floor, not the bundle; the stamp must never outlive the bytes it
+# vouches for.
+rm -f "$STAMP"
 say "unzipping the editor into data/onlyoffice/dist/v9/ (about 1GB, a minute or two)"
 rm -rf "$DV"
 mkdir -p "$DV"

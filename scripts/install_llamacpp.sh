@@ -49,6 +49,10 @@ echo "[harness] extracting…"
 if ! tar xzf "$TARBALL" -C "$STAGE"; then
   echo "ERROR: extraction failed — archive may not be a gzip tar. Downloaded from:"
   echo "  $URL"
+  # 2026-08-29 install-path audit: clean up the corrupt tarball + staging debris, so a
+  # re-run starts from a fresh download instead of re-failing on the same bad bytes
+  # (this script has no digest pin, so the bytes themselves are the only evidence).
+  rm -rf "$STAGE" "$TARBALL"
   exit 1
 fi
 

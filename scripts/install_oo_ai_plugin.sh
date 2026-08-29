@@ -167,6 +167,11 @@ PZ="$CACHE/ai.plugin"
 fetch_verified "${RAW}/${PLUGIN_REL}" "$PZ" "$PLUGIN_SHA256" "${REPO}@${COMMIT:0:7} ${PLUGIN_REL}"
 
 AIDIR="$DEST/ai"
+# ⚠️ INVALIDATE THE STAMP BEFORE THE FIRST DESTRUCTIVE OP (2026-08-29 install-path
+# audit, same rule as install_onlyoffice.sh): between the `rm -rf` below and the new
+# stamp's rename, a stamp claiming the pinned hashes over a half-unzipped plugin would
+# be a lie an interrupted run leaves behind.
+rm -f "$STAMP"
 say "unzipping the plugin into data/onlyoffice-plugins/ai/"
 rm -rf "$AIDIR"
 mkdir -p "$AIDIR"
