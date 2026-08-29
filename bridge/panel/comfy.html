@@ -138,7 +138,14 @@
     /* ── Patchbay chrome ── */
     --zbar:26px; --zpad:10px; --zlabel:10px; --ztrack:.07em;
     --row:18px; --gut:8px; --ink:10.5px;
-    --railw:208px; --resw:184px;
+    /* ⚠️ --resw WAS 184px (generate-j's measured density) AND DEBI'S REVIEW MOVED IT.
+       Her words on the shipped page: the results rail should show "4 media, 2x2,
+       BIGGER" rather than six small ones. At 184px two columns are 86px wide, which is
+       a contact sheet, not a result. 224px makes each cell ~105px, and the peek below
+       drops from a whole third row to a sliver — four results, readable, plus a cue
+       that there are more. Both rails are now DRAGGABLE and persisted, so this is the
+       default rather than the answer. */
+    --railw:208px; --resw:224px;
     --pill-h:20px; --pill-r:3px; --r-panel:0px;
     --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.13);
     --zhover:rgba(255,255,255,.04); --sel-bg:rgba(255,255,255,.08);
@@ -348,8 +355,38 @@
   #top { display:flex; align-items:center; gap:7px; padding:3px var(--zpad); row-gap:4px;
          min-height:var(--zbar); flex-wrap:wrap;
          background:var(--bg2); border-bottom:1px solid var(--zborder); }
-  #frame { display:grid; grid-template-columns:var(--railw) minmax(0,1fr) var(--resw);
-           gap:var(--gut); padding:var(--gut); min-height:0; }
+  /* ⚠️ THE GUTTERS ARE THE HANDLES (Debi's review: "both side panes resizable, with
+     everything dynamic/auto-adjusting"). The grid used to be three columns with an 8px
+     `gap`; it is now five columns with NO gap, where columns 2 and 4 are the old gutter
+     width and are themselves the drag controls. The page therefore looks byte-identical
+     at rest — same 8px of air, no new visual element, no cost against the at-rest
+     budget — and every pixel of that air is grabbable. A separate 4px handle drawn
+     inside the gap would have been either invisible or an extra object on a page whose
+     whole argument is that it has seven. */
+  #frame { display:grid;
+           grid-template-columns:var(--railw) var(--gut) minmax(0,1fr) var(--gut) var(--resw);
+           gap:0; padding:var(--gut); min-height:0; }
+  /* ⚠️ THE HAIRLINE IS `currentColor`, NOT `var(--zborder-strong)`, AND THAT IS AN
+     ALL-DESIGNS BUG FOUND BY MEASURING RATHER THAN BY READING. In this engine a
+     PSEUDO-ELEMENT does not recompute its custom-property substitutions when the token
+     changes on :root — measured 2026-08-29: loading in the light theme gave the grip
+     rgba(0,0,0,.22) correctly, and flipping the theme live left it on the old value
+     until a reload. (The v3 stage grip below had the same defect; both are fixed the
+     same way.) `color` on the BUTTON does recompute, and a pseudo's `currentColor`
+     reads it, so the hairline follows the theme in all six looks — including the two
+     light ones, where a white 13% line on near-white ground is simply not there. */
+  .vgrip { cursor:col-resize; background:transparent; border:0; border-radius:0;
+           padding:0; width:100%; height:auto; display:grid; place-items:center;
+           color:var(--zborder-strong); }
+  .vgrip::after { content:""; width:2px; height:26px; border-radius:2px;
+                  background:currentColor; opacity:0;
+                  transition:opacity var(--t-fast); }
+  @media (hover:hover) and (pointer:fine) {
+    .vgrip:hover { background:transparent; color:var(--gold); }
+    .vgrip:hover::after { opacity:1; } }
+  .vgrip:focus-visible::after { opacity:1; }
+  .vgrip:active { transform:none; }
+  body.resizing-x { cursor:col-resize; user-select:none; }
 
   .panel { background:var(--card); border:1px solid var(--zborder);
            border-radius:var(--r-panel); min-height:0;
@@ -372,8 +409,10 @@
   /* ── LEFT RAIL: Draw Things density, with a verbosity gate ─────────────────── */
   .sgroup { padding:6px 0 2px; }
   .sgroup > .caps { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  /* currentColor, per the pseudo-element note on .vgrip — this divider is one of the
+     three sites the echo sweep of that class found on this page */
   .sgroup > .caps::after { content:""; flex:1 1 auto; height:1px;
-                           background:var(--zborder); }
+                           background:currentColor; opacity:.25; }
   /* Blender UI_ITEM_PROP_SEP_DIVIDE 0.4f — 40/60, one constant, every row */
   .srow { display:grid; grid-template-columns:.4fr .6fr; align-items:center;
           gap:7px; min-height:var(--row); }
@@ -428,8 +467,12 @@
   button:disabled { opacity:.45; cursor:default; }
   button.ghost { background:transparent; }
   button.dotted { position:relative; }
+  /* …and the third: the dirty-marker dot. It was var(--gold), which in the light looks
+     is a dark brown that a live theme flip left as light tan on cream. currentColor is
+     --fg (or --cream when the segment is selected), and the DOT'S MEANING IS ITS
+     PRESENCE, not its hue — so nothing is lost and it is right in all six looks. */
   button.dotted::after { content:""; position:absolute; top:2px; right:2px; width:4px;
-                         height:4px; border-radius:50%; background:var(--gold); }
+                         height:4px; border-radius:50%; background:currentColor; }
   .ovf { width:var(--row); padding:0; }
   :focus-visible { outline:2px solid var(--h7); outline-offset:-2px; border-radius:2px; }
 
@@ -495,11 +538,14 @@
     pointer-events:none; transition:opacity 620ms cubic-bezier(.4,0,.2,1); }
   body.full #fscrim { opacity:1; pointer-events:auto; }
 
+  /* same `currentColor` fix as .vgrip — this one shipped in v3 with the defect */
   #grip { flex:none; height:9px; cursor:row-resize; display:grid; place-items:center;
-          background:transparent; border:0; border-radius:0; padding:0; width:100%; }
+          background:transparent; border:0; border-radius:0; padding:0; width:100%;
+          color:var(--zborder-strong); }
   #grip::after { content:""; width:26px; height:2px; border-radius:2px;
-                 background:var(--zborder-strong); transition:background var(--t-fast); }
-  @media (hover:hover) and (pointer:fine) { #grip:hover::after { background:var(--gold); } }
+                 background:currentColor; }
+  @media (hover:hover) and (pointer:fine) {
+    #grip:hover { color:var(--gold); background:transparent; } }
   #grip:active { transform:none; }
   body.resizing { cursor:row-resize; user-select:none; }
 
@@ -524,6 +570,15 @@
     color:var(--cream); padding:6px var(--zpad) 7px; font:11.5px/1.5 var(--sans);
     min-height:30px; border-radius:0; }
   .fbox textarea::placeholder { color:var(--faint); }
+  /* ── THE MODEL / WORKFLOW PICKER (Debi's review) ────────────────────────────
+     "in between the settings pane and Generate, where one can pick the different types
+     and if it's present/installed, it'll work." It is ONE row: the model, its
+     workflows, and the state of the one you chose. Two selects rather than a list of
+     rows, because 26 models × 78 workflows is a menu, not a page — the list of rows is
+     what the models SHEET already is. */
+  #picker { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  #picker select { width:auto; max-width:min(240px, 40vw); flex:0 1 auto; }
+  #picker .caps { flex:none; }
   #keyrow { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
   #caps { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   #statusline { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -534,14 +589,37 @@
   /* ── RIGHT: slim results rail, two rows visible + a real peek ──────────────────
      Jakub: anything hidden shows 16–32px of peek, or "content hidden with zero cue
      may as well not exist". Not a fade — a slice. */
+  /* ⚠️ FOUR, NOT SIX (Debi's review). Two rows plus a 10px sliver of the third: four
+     results at a readable size, and a cue that there are more. It used to be two rows
+     plus a 26px peek, which drew SIX small pictures and read as a contact sheet. */
   #thumbs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px;
-            padding-top:6px; max-height:calc(2 * var(--thumb, 56px) + 6px + 26px);
-            overflow:hidden; transition:max-height 300ms var(--eo); }
+            padding-top:6px; max-height:calc(2 * var(--thumb, 72px) + 6px + 10px);
+            overflow:hidden; }
+  /* ⚠️ NO `transition: max-height` HERE, AND ITS REMOVAL IS THE FIX RATHER THAN A
+     SIMPLIFICATION. Measured in the app's own engine, 2026-08-29: once this property's
+     computed value comes from a calc() carrying an unregistered custom property, WebKit
+     never advances a transition off it — not to another calc, and NOT EVEN TO A PLAIN
+     INLINE LENGTH. The element pinned itself to the value it first computed (160px at
+     the fallback) while `--thumb` was measured correctly on every single render and
+     `style.maxHeight` read back "236px". That is why the shipped rail drew six small
+     pictures instead of four: not a wrong number, a number the engine refused to apply.
+     The declaration above is the pre-script fallback; syncPeek() writes the measured
+     length, and with no transition on the property it lands. */
   #results.all #thumbs { max-height:none; overflow:auto; }
   .thumb { position:relative; aspect-ratio:3/2; cursor:pointer; border:0; padding:0;
     height:auto; background:var(--bg2); border-radius:var(--pill-r); overflow:hidden;
     outline:1px solid var(--img-edge); outline-offset:-1px; }
-  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; display:block; }
+  /* ⚠️ THE BLACK BAR DEBI SAW, AND WHY object-fit ALONE DID NOT FIX IT. `object-fit:
+     cover` on a flow-laid `<video>` still leaves the ELEMENT box at its own intrinsic
+     ratio inside the 3:2 cell, and a `<video>` paints its unused box BLACK — so a
+     portrait clip showed two black bands, hardest to miss on hover when the outline
+     brightened around them. Pinning the media to the cell with `position:absolute;
+     inset:0` removes the box entirely: there is no unused area left to paint. The
+     `#t=0.1` fragment on the src is the other half — `preload="metadata"` loads the
+     duration but decodes NO frame, so an un-hovered clip was a black rectangle with a
+     correct aspect ratio, which is the same defect wearing a different hat. */
+  .thumb img, .thumb video { position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; display:block; background:transparent; }
   .thumb[aria-current="true"] { outline:1px solid var(--sel, var(--h1)); }
   .thumb.gone { outline-color:var(--bad); }
   .thumb.bad  { outline-color:var(--warn); }
@@ -590,6 +668,7 @@
     body, #app { overflow:auto; height:auto; min-height:100%; }
     #app { grid-template-rows:auto auto auto; }
     #frame { grid-template-columns:minmax(0,1fr); }
+    .vgrip { display:none; }
     .panel { grid-template-rows:var(--zbar) auto; }
     #rail .pbody { overflow:visible; }
     #centre { min-height:60vh; }
@@ -647,6 +726,9 @@
       <div class="pbody" id="railbody"></div>
     </section>
 
+    <button class="vgrip press" id="gripL" role="separator" aria-orientation="vertical"
+            aria-label="Resize the settings rail" title="Drag to resize · ←→ to nudge"></button>
+
     <!-- ③ CENTRE: the resizable, splittable media stage + the lower region -->
     <div id="centre">
       <section id="stage"><div id="stage-body"></div></section>
@@ -660,6 +742,7 @@
           <textarea id="f-prompt" rows="2"
             placeholder="a red fox moving quickly through a snowy forest, morning light"></textarea>
         </div>
+        <div id="picker"></div>
         <div id="keyrow"></div>
         <div id="caps"></div>
         <div id="refusal"></div>
@@ -667,6 +750,9 @@
         <div id="prog"><i></i></div>
       </div>
     </div>
+
+    <button class="vgrip press" id="gripR" role="separator" aria-orientation="vertical"
+            aria-label="Resize the results rail" title="Drag to resize · ←→ to nudge"></button>
 
     <!-- ④ RIGHT: the slim results rail — two rows, then All ▸ -->
     <section class="panel" id="results">
@@ -710,7 +796,14 @@ const S = {
   typed:{},
   /* Debi's stage: how tall it is, how many panes it has, and what is in them */
   split:1, pane:0, panes:[null, null, null, null], stagef:0.58, sized:false, full:false,
+  /* Debi's review: both side panes resize too, and both widths persist */
+  railw:208, resw:224,
+  /* the DYNAMIC catalogue (/api/comfy/catalog) and the media a workflow can start from */
+  catalog:null, catErr:null, sources:null, catAt:0,
 };
+/* The rails' travel. A rail narrower than this cannot hold a 40/60 settings row, and one
+   wider than this is not a rail any more — the stage is the point of the page. */
+const RAIL_MIN = 150, RAIL_MAX = 420, RES_MIN = 132, RES_MAX = 460;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -912,10 +1005,35 @@ async function api(path, opts) {
   return j;
 }
 
+/* ⚠️ THE CATALOGUE IS NOT ON THE 1s POLL, AND THAT IS DELIBERATE. It re-reads 533
+   template files and re-stats every model directory (~0.2s measured), which is exactly
+   right once and wrong sixty times a minute. So it is fetched on first load, whenever a
+   download changes state (a landed file is the one event that changes what is
+   installed), and on Refresh. Everything else on the page keeps its own cadence. */
+function dlSig() {
+  return ((S.state && S.state.downloads) || [])
+    .map(d => d.id + ':' + d.state + ':' + Math.round(d.pct || 0)).join('|');
+}
+let _lastDlSig = null;
+async function loadCatalog(force) {
+  const r = await api('/api/comfy/catalog' + (force ? '?refresh=1' : ''));
+  if (r && r.ok) { S.catalog = r.catalog; S.catErr = null; S.catAt = Date.now(); }
+  else S.catErr = (r && r.error) || 'the catalogue could not be read';
+}
+async function loadSources() {
+  const r = await api('/api/comfy/sources');
+  S.sources = (r && r.ok) ? r.sources : [];
+}
+
 async function load() {
   try {
     S.state = await api('/api/comfy/state');
     S.gallery = await api('/api/comfy/gallery');
+    const sig = dlSig();
+    if (S.catalog === null || sig !== _lastDlSig) {
+      _lastDlSig = sig;
+      await loadCatalog(S.catalog !== null);
+    }
     S.err = null;
   } catch (e) {
     /* The bridge itself is unreachable. Say that, and do not blank the page: whatever
@@ -1083,6 +1201,7 @@ function menuShow(anchor, items) {
     ? '<a href="' + esc(it.href) + '" target="_blank" rel="noopener">' + esc(it.label) + '</a>'
     : '<button data-act="' + esc(it.act) + '"' +
       (it.pick ? ' data-pick="' + esc(it.pick) + '"' : '') +
+      (it.workflow ? ' data-workflow="' + esc(it.workflow) + '"' : '') +
       (it.job ? ' data-job="' + esc(it.job) + '"' : '') +
       (it.fn ? ' data-fn="' + esc(it.fn) + '" data-sf="' + esc(it.sf || '') + '"' : '') +
       '>' + esc(it.label) + '</button>').join('');
@@ -1163,12 +1282,120 @@ function pickFor(mode) {
       || can.find(c => !(c.health || {})[mode])
       || can[0];
 }
+/* ══ THE DYNAMIC CATALOGUE, ON THE PAGE ════════════════════════════════════════
+   Debi, 2026-08-29: "if one deletes models, it should be dynamic. if one downloads
+   other models, it should be dynamic and cater to them, e.g. minimax h3, the wan
+   models, ltx and the distilled" — and, second bullet, one model carries SEVERAL
+   workflows (t2v, i2v, v2v, image), each with its own files, its own controls and its
+   own graph.
+
+   ⚠️ EVERYTHING BELOW IS INERT UNTIL /api/comfy/catalog HAS ANSWERED, and that is not
+   defensiveness — it is what keeps the curated path exactly as it shipped. With no
+   catalogue the page is byte-for-byte v3: the picker paints nothing and `currentPick()`
+   falls through to the curated logic. */
+function catModels()   { return ((S.catalog || {}).models) || []; }
+function curModel() {
+  const ms = catModels();
+  if (!ms.length) return null;
+  const held = ms.find(m => m.id === S.form.model);
+  if (held) return held;
+  /* THE DEFAULT IS THE ONE THAT WORKS. Opening on a model whose files are missing
+     would make the first thing a person sees a wall — the autocorrect standard says
+     pick the working one and leave the override one click away. */
+  return ms.find(m => m.installed && (m.workflows || []).some(w => w.runnable))
+      || ms.find(m => m.installed) || ms[0];
+}
+function curWorkflow() {
+  const m = curModel();
+  if (!m) return null;
+  const ws = m.workflows || [];
+  const held = ws.find(w => w.id === S.form.workflow);
+  if (held) return held;
+  return ws.find(w => w.runnable) || ws.find(w => w.complete) || ws[0] || null;
+}
+function wfCurated(w) {
+  return w && w.curated_pick ? (picks().find(c => c.id === w.curated_pick) || null) : null;
+}
+/* PURE: the state chip for one workflow row — the ONE object that says whether it will
+   run, what it is missing, and what the button does about it. */
+function workflowVerdict(w, dl) {
+  if (!w) {
+    return { chip:'no workflow yet', cls:'c-warn',
+             line:'Nothing in the catalogue can run yet.',
+             hedge:'The catalogue lists every model a stock template can drive; the '
+                 + 'starter downloads are in the models sheet.' };
+  }
+  if (dl && ['downloading', 'verifying'].includes(dl.state)) {
+    return { chip:'Downloading ' + Math.round(dl.pct || 0) + '%', cls:'c-gold',
+             act:'cancel', dl:dl.id,
+             line:(dl.done_h || '?') + ' of ' + (dl.total_h || '?'),
+             hedge:'Nothing is reported as here until the bytes match what the server '
+                 + 'declared. Cancelling keeps what landed; the next attempt resumes.' };
+  }
+  if (!w.complete) {
+    const known = w.missing_h;
+    return { chip:(known ? 'Get ' + known : 'Get · size unknown'), cls:'c-gold',
+             act:'download', workflow:w.id, incomplete:true,
+             line:'Missing: ' + (w.missing || []).join(', ') + '.',
+             math:(known ? known + ' to fetch' : 'no size has been HEAD-verified yet'),
+             hedge:(w.no_url && w.no_url.length
+                    ? 'Upstream publishes no download link for '
+                      + w.no_url.join(', ') + ' — put it in models/ yourself.'
+                    : 'Downloaded into the ComfyUI models folder and checked against '
+                      + 'the size the server declares. Upstream pins no sha256 for '
+                      + 'these, so that is the check they get.') };
+  }
+  if (w.runnable === false) {
+    return { chip:'not runnable here', cls:'c-warn', blocked:true,
+             line:w.run_reason || 'this template cannot be converted here.',
+             hedge:'Its files are all on disk. Open it in the ComfyUI tab from the ⋯ '
+                 + 'menu — it runs there exactly as it was authored.' };
+  }
+  if (w.runnable === null) {
+    return { chip:'not checked yet', cls:'c-dim', blocked:true,
+             line:w.run_reason || 'the engine has not been asked about this template.',
+             hedge:'Start ComfyUI in MOT Deck → Components and press Refresh.' };
+  }
+  return { chip:'ready', cls:'c-ok', ready:true,
+           line:'Every file this workflow loads is on disk.',
+           math:(w.file_count || 0) + ' file' + (w.file_count === 1 ? '' : 's'),
+           hedge:'"Installed" here means this workflow will run, not that the family '
+               + 'is complete — the other rows say what they still want.' };
+}
+/* The controls THIS workflow takes, in the order a person reaches for them. A template
+   with no negative prompt draws no negative prompt; one that makes stills draws no
+   frame count. Read off the converted graph by the bridge, never assumed. */
+function wfHas(w, key) { return !!(w && (w.controls || []).includes(key)); }
+function wfDefault(w, key) {
+  const d = (w && w.defaults) || {};
+  return d[key] == null ? null : d[key];
+}
 function currentPick(){
+  const w = curWorkflow();
+  if (w) return wfCurated(w);
   const list = usablePicks();
   const mode = S.form.mode;
   const held = list.find(c => c.id === S.form.pick);
   if (held && (!mode || held.modes.includes(mode))) return held;
   return pickFor(mode || modesAvailable()[0]) || list[0] || null;
+}
+/* Which submit path a press of Generate takes, and it is ONE question with one answer:
+   a curated template goes through its sha-pinned, measured builder (that is what the
+   health verdict and the measured numbers are ABOUT), and everything else goes through
+   the converter. Both are the same button. */
+function runMode() {
+  const w = curWorkflow();
+  if (!w) return currentPick() ? 'pick' : 'none';
+  if (wfCurated(w)) return 'pick';
+  return w.runnable ? 'workflow' : 'none';
+}
+function wfKind() {
+  const w = curWorkflow();
+  return w ? w.kind : S.form.mode;
+}
+function needsSource() {
+  const w = curWorkflow();
+  return (w && !wfCurated(w) && (w.needs || [])[0]) || null;
 }
 function liveJob() {
   return ((S.state && S.state.jobs) || [])
@@ -1242,12 +1469,27 @@ function loadView() {
       for (let i = 0; i < 4; i++) S.panes[i] = j.panes[i] || null;
     }
     if (j.adv === true) S.adv = true;
+    if (j.railw != null) S.railw = clampW(j.railw, RAIL_MIN, RAIL_MAX, 208);
+    if (j.resw != null) S.resw = clampW(j.resw, RES_MIN, RES_MAX, 224);
+    if (j.model) S.form.model = j.model;
+    if (j.workflow) S.form.workflow = j.workflow;
   } catch (e) { /* private mode or a corrupt value: the defaults stand, silently */ }
+}
+/* the rails' clamp, same shape as clampFrac: a corrupt stored width falls back to the
+   default rather than to NaN, which would collapse the column to nothing */
+function clampW(v, lo, hi, dflt) {
+  v = Number(v);
+  if (!isFinite(v)) return dflt;
+  return Math.min(hi, Math.max(lo, Math.round(v)));
 }
 function saveView() {
   try {
     localStorage.setItem(VIEW_KEY, JSON.stringify(
-      { split:S.split, stagef:S.stagef, sized:S.sized, panes:S.panes, adv:S.adv }));
+      { split:S.split, stagef:S.stagef, sized:S.sized, panes:S.panes, adv:S.adv,
+        railw:S.railw, resw:S.resw,
+        /* the model and workflow you left on are part of the view: coming back to
+           somebody else's default is the small daily annoyance this key exists for */
+        model:S.form.model || null, workflow:S.form.workflow || null }));
   } catch (e) { /* nothing here depends on persistence succeeding */ }
 }
 function setVar(el, name, val) {
@@ -1435,8 +1677,13 @@ function renderResults() {
 
   paint('thumbs', list.map(it => {
     const src = fileSrc(it);
+    /* ⚠️ `#t=0.1` IS THE REST OF DEBI'S BLACK-BAR FIX. `preload="metadata"` fetches the
+       duration and decodes NO frame, so a clip's thumbnail was a black rectangle until
+       something made it seek. The media fragment asks for one frame at 0.1s, which is
+       what every video-first gallery does and what makes a clip look like the clip. */
     const inner = it.state === 'missing' ? '' :
-      (it.kind === 'video' ? '<video src="' + src + '" muted preload="metadata"></video>'
+      (it.kind === 'video'
+        ? '<video src="' + src + '#t=0.1" muted playsinline preload="metadata"></video>'
        : it.kind === 'image' ? '<img src="' + src + '" loading="lazy" alt="">' : '');
     return '<button class="thumb ' +
       (it.state === 'missing' ? 'gone' : it.state === 'ok' ? '' : 'bad') +
@@ -1491,9 +1738,23 @@ function srow(label, id, val, tip) {
     esc(label) + '</label><input id="' + id + '" inputmode="numeric" value="' +
     esc(val == null ? '' : val) + '"></div>';
 }
+/* ⚠️ ONE SELECTION, ONE MODE. With the picker in charge, `mode` is no longer a free
+   variable: a discovered workflow's kind IS its mode, and a curated one may only be
+   asked for a mode its own graph has. Letting the old mode survive a workflow change
+   was how the page could offer "Clip" while pointed at an image-only template — the
+   submit would then be refused by the bridge for a reason the user never chose. */
+function syncMode() {
+  const w = curWorkflow();
+  if (!w) return;
+  const c = wfCurated(w);
+  if (!c) { S.form.mode = w.kind; return; }
+  if (!(c.modes || []).includes(S.form.mode))
+    S.form.mode = (c.modes || []).includes(w.kind) ? w.kind : (c.modes || [])[0];
+}
 function renderRail() {
   const allModes = modesAvailable();
-  if (!allModes.includes(S.form.mode)) S.form.mode = allModes[0];
+  if (catModels().length) syncMode();
+  else if (!allModes.includes(S.form.mode)) S.form.mode = allModes[0];
   const f = S.form;
   const c = currentPick();
   if (c && S.form.pick !== c.id) S.form.pick = c.id;
@@ -1503,21 +1764,115 @@ function renderRail() {
   const job = liveJob();
   const jobs = (S.state && S.state.jobs) || [];
 
-  let h = '';
-  /* MODEL — the hue of the family, then the model chip that opens the sheet */
-  h += '<div class="sgroup"><span class="caps">' +
-    '<i class="famdot" style="background:var(--h6)"></i>Model</span>' +
-    '<div class="srow wide">' +
-      '<span class="chip act ' + esc(mv.cls) + '" data-act="sheet"' + tipRef(mv) + '>' +
-      esc(mv.chip) + '</span></div>' +
-    (meas && meas.unmeasured && c ? '<div class="srow wide">' + chipHtml(meas) + '</div>' : '') +
-    '<div class="srow"><label>Mode</label><span class="seg" id="f-mode">' +
-      allModes.map(m => '<button data-mode="' + m + '" class="' +
-        (m === f.mode ? 'on' : '') + '">' + (m === 'image' ? 'Image' : 'Clip') +
-        '</button>').join('') + '</span></div>' +
-  '</div>';
+  const wf = curWorkflow();
+  const dyn = wf && !wfCurated(wf);
 
-  if (c) {
+  let h = '';
+  /* MODEL — the hue of the family, then the model chip that opens the sheet.
+     ⚠️ IT IS DROPPED WHEN THE CATALOGUE IS DRIVING, and that is the one-verdict-object
+     rule rather than tidiness: the picker below the prompt already names the model, its
+     workflow and its state. A second chip bound to the same choice is exactly the pair
+     that can disagree. The MODE segment goes with it — a discovered workflow's kind IS
+     the workflow you picked, so the toggle would be a control with nothing to say. */
+  if (!catModels().length) {
+    h += '<div class="sgroup"><span class="caps">' +
+      '<i class="famdot" style="background:var(--h6)"></i>Model</span>' +
+      '<div class="srow wide">' +
+        '<span class="chip act ' + esc(mv.cls) + '" data-act="sheet"' + tipRef(mv) + '>' +
+        esc(mv.chip) + '</span></div>' +
+      (meas && meas.unmeasured && c ? '<div class="srow wide">' + chipHtml(meas) + '</div>' : '') +
+      '<div class="srow"><label>Mode</label><span class="seg" id="f-mode">' +
+        allModes.map(m => '<button data-mode="' + m + '" class="' +
+          (m === f.mode ? 'on' : '') + '">' + (m === 'image' ? 'Image' : 'Clip') +
+          '</button>').join('') + '</span></div>' +
+    '</div>';
+  } else if (c && (c.modes || []).length > 1) {
+    /* the one case a MODE still exists: a curated model whose own graph does two
+       things (Wan's t2v graph emits a single frame at length 1). That is a choice
+       inside one workflow, so it stays a control inside the settings. */
+    h += '<div class="sgroup"><span class="caps">' +
+      '<i class="famdot" style="background:var(--h6)"></i>Mode</span>' +
+      '<div class="srow"><label>Output</label><span class="seg" id="f-mode">' +
+        allModes.map(m => '<button data-mode="' + m + '" class="' +
+          (m === f.mode ? 'on' : '') + '">' + (m === 'image' ? 'Image' : 'Clip') +
+          '</button>').join('') + '</span></div>' +
+      (meas && meas.unmeasured ? '<div class="srow wide">' + chipHtml(meas) + '</div>' : '') +
+    '</div>';
+  }
+
+  if (dyn) {
+    /* ── A DISCOVERED WORKFLOW'S OWN CONTROLS ──────────────────────────────────
+       Only the knobs the CONVERTED GRAPH actually carries, prefilled from the values
+       the template itself ships with. A workflow with no negative prompt shows no
+       negative prompt; one that makes stills shows no frame count. Both facts are read
+       off the graph by the bridge — there is no table of "video models have frames"
+       here to go stale. */
+    const sizeRows =
+      (wfHas(wf, 'width') ? srow('Width', 'f-width',
+         f.width != null ? f.width : wfDefault(wf, 'width')) : '') +
+      (wfHas(wf, 'height') ? srow('Height', 'f-height',
+         f.height != null ? f.height : wfDefault(wf, 'height')) : '') +
+      (wfHas(wf, 'length') ? srow('Frames', 'f-frames',
+         f.frames != null ? f.frames : wfDefault(wf, 'length'),
+         { chip:'frames', line:'Frame counts snap to 4n+1.',
+           hedge:'These latents move four frames at a time. The number actually used '
+               + 'is written back here after the run.' }) : '') +
+      (wfHas(wf, 'fps') ? srow('FPS', 'f-fps',
+         f.fps != null ? f.fps : wfDefault(wf, 'fps')) : '');
+    if (sizeRows) {
+      h += '<div class="sgroup"><span class="caps">' +
+        '<i class="famdot" style="background:var(--h2)"></i>Size</span>' + sizeRows +
+      '</div>';
+    }
+    const sampRows =
+      (wfHas(wf, 'steps') ? srow('Steps', 'f-steps',
+         f.steps != null ? f.steps : wfDefault(wf, 'steps')) : '') +
+      (wfHas(wf, 'cfg') ? srow('CFG', 'f-cfg',
+         f.cfg != null ? f.cfg : wfDefault(wf, 'cfg')) : '') +
+      (wfHas(wf, 'seed') ? '<div class="srow adv"><label for="f-seed">Seed</label>' +
+         '<input id="f-seed" placeholder="random" value="' +
+         esc(f.seed == null ? '' : f.seed) + '"></div>' : '');
+    if (sampRows) {
+      h += '<div class="sgroup"><span class="caps">' +
+        '<i class="famdot" style="background:var(--h1)"></i>Sampling</span>' + sampRows +
+      '</div>';
+    }
+    if (wfHas(wf, 'negative')) {
+      h += '<div class="sgroup adv"><span class="caps">' +
+        '<i class="famdot" style="background:var(--h5)"></i>Negative</span>' +
+        '<div class="srow wide"><textarea id="f-neg" rows="2">' +
+        esc(f.negative != null ? f.negative : (wfDefault(wf, 'negative') || '')) +
+        '</textarea></div></div>';
+    }
+    /* THE FILE LIST OF THIS WORKFLOW — its own, not the family's. Debi's bullet 2:
+       "each workflow row knows its OWN required files … state present/absent per file
+       with sizes". Present rows are quiet; the ones that are not are the whole point. */
+    h += '<div class="sgroup"><span class="caps">' +
+      '<i class="famdot" style="background:var(--h4)"></i>Files</span>' +
+      (wf.files || []).map(fl => '<div class="erow">' +
+        '<span class="sw" style="background:var(' +
+          (fl.present ? '--h2' : '--h4') + ')"></span>' +
+        '<span class="n">' + esc(fl.name) + '<small>' + esc(fl.directory) +
+          (fl.bytes != null ? ' · ' + gb(fl.bytes) : '') + '</small></span>' +
+        chipHtml({ chip:(fl.present ? 'here' : fl.state === 'partial' ? 'partly here'
+                                              : 'missing'),
+                   cls:fl.present ? 'c-ok' : fl.state === 'partial' ? 'c-gold' : 'c-warn',
+                   line:(fl.present ? 'On disk at ' + gb(fl.bytes) + '.'
+                         : fl.state === 'partial' ? 'Partly downloaded; Get resumes it.'
+                         : 'Not downloaded yet.'),
+                   math:'models/' + fl.directory + '/',
+                   hedge:(fl.present ? 'Shared with the ComfyUI tab: one copy, both '
+                                     + 'surfaces. Delete it there and this row changes.'
+                          : fl.url ? (fl.bytes != null
+                              ? 'Size HEAD-verified against the URL upstream published.'
+                              : 'No size has come back from a HEAD request yet, so none '
+                                + 'is shown.')
+                                   : 'Upstream publishes no download link for this file.') }) +
+      '</div>').join('') +
+    '</div>';
+  }
+
+  if (c && !dyn) {
     /* SIZE — the real defaults of the real template for the real mode */
     h += '<div class="sgroup"><span class="caps">' +
       '<i class="famdot" style="background:var(--h2)"></i>Size</span>' +
@@ -1587,6 +1942,75 @@ function renderRail() {
   wireTips($('railbody'));
 }
 
+/* ── ③a THE MODEL / WORKFLOW PICKER ─────────────────────────────────────────────
+   Debi's placement, verbatim: "in between the settings pane and Generate, where one can
+   pick the different types and if it's present/installed, it'll work."
+
+   Two selects and one verdict chip. The model list is the DISCOVERED catalogue, ordered
+   installed-first; the workflow list is that model's own types, ordered ready-first.
+   The chip is the whole answer to "will this work": ready, or exactly what is missing
+   with its size and a Get that fetches only those files. It is advisory to the end —
+   an incomplete workflow is selectable, readable and explains itself; nothing is
+   greyed out of existence. */
+function renderPicker() {
+  const ms = catModels();
+  if (!ms.length) { paint('picker', ''); return; }
+  const m = curModel(), w = curWorkflow();
+  const dl = w ? dlFor('wf:' + w.id) : null;
+  const cur = wfCurated(w);
+  const wv = workflowVerdict(w, dl || (cur ? dlFor(cur.id) : null));
+  const hv = cur ? healthVerdict(cur, S.form.mode) : null;
+  const need = needsSource();
+  let h = '<span class="caps">Model</span>' +
+    '<select id="p-model" aria-label="Model">' + ms.map(x =>
+      '<option value="' + esc(x.id) + '"' + (m && x.id === m.id ? ' selected' : '') + '>' +
+      esc(x.title) + ' · ' + (x.installed ? x.ready + ' of ' + x.workflow_count + ' ready'
+                                          : 'not installed') +
+      '</option>').join('') + '</select>' +
+    '<span class="caps">Type</span>' +
+    '<select id="p-wf" aria-label="Workflow">' + ((m && m.workflows) || []).map(x =>
+      '<option value="' + esc(x.id) + '"' + (w && x.id === w.id ? ' selected' : '') + '>' +
+      esc(x.title) + (x.complete ? '' : ' · ' + esc(x.missing_h || 'size unknown')) +
+      '</option>').join('') + '</select>' +
+    '<span class="chip ' + esc(wv.cls) + (wv.act ? ' act" data-act="' + esc(wv.act) +
+      '" data-workflow="' + esc(w.id) + '"' + (wv.dl ? ' data-dl="' + esc(wv.dl) + '"' : '')
+      : '"') + tipRef(wv) + '>' + esc(wv.chip) + '</span>' +
+    (hv ? chipHtml(hv) : '') +
+    (m && m.refused ? chipHtml({ chip:'refused here', cls:'c-bad', line:m.refused,
+        hedge:'Standing verdict. It is listed rather than hidden, because a model that '
+            + 'simply is not there reads as a bug in the scan.' }) : '');
+  /* THE SOURCE. An image-to-video workflow with nothing to start from is a dead end
+     dressed as a ready button, so the picture is chosen HERE, from what actually
+     exists: this surface's own results and whatever is already in ComfyUI's input/. */
+  if (need) {
+    const list = (S.sources || []).filter(s => s.kind === need);
+    h += '<span class="caps">Source</span>';
+    if (!list.length) {
+      h += chipHtml({ chip:'nothing to start from', cls:'c-warn',
+        line:'This workflow starts from ' + (need === 'image' ? 'a picture' : 'a ' + need)
+           + ' and there is none yet.',
+        hedge:'Make one with an image model first, or drop a file into ComfyUI’s '
+            + 'input folder — anything in the results rail can be used.' });
+    } else {
+      const held = (S.form.source || {}).filename;
+      h += '<select id="p-src" aria-label="Source">' + list.map(s =>
+        '<option value="' + esc(s.origin + '|' + s.subfolder + '|' + s.filename) + '"' +
+        (held === s.filename ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') +
+        '</select>';
+      if (!S.form.source) {
+        const s = list[0];
+        S.form.source = { origin:s.origin, subfolder:s.subfolder, filename:s.filename };
+      }
+    }
+  }
+  h += '<span class="grow"></span>' +
+    '<button class="ghost ovf" data-act="wf-menu"' +
+      (w ? ' data-workflow="' + esc(w.id) + '"' : '') +
+      ' aria-label="More actions">⋯</button>';
+  paint('picker', h);
+  wireTips($('picker'));
+}
+
 /* ── ③b the lower region: key options, the run control, the live status ─────── */
 function renderComposer() {
   const c = currentPick();
@@ -1605,18 +2029,26 @@ function renderComposer() {
      -object rule exists to prevent. What lives here is what you reach for between two
      runs of the same prompt — the mode, the model, and Generate — while the numbers
      stay in one place, the rail. */
+  /* the numbers a run will really use, whichever path it takes — a discovered
+     workflow's defaults come off its own converted graph, not off a curated table */
+  const wf = curWorkflow(), dyn = wf && !wfCurated(wf);
+  const dv = (k, alt) => {
+    const typed = f[k];
+    if (typed != null && typed !== '') return typed;
+    return dyn ? wfDefault(wf, alt || k) : d[k];
+  };
+  const canRun = runMode() !== 'none';
   paint('keyrow',
-    '<span class="chip c-dim num">' +
-      esc((f.width != null ? f.width : d.width) || '?') + '×' +
-      esc((f.height != null ? f.height : d.height) || '?') + '</span>' +
-    '<span class="chip c-dim num">' +
-      esc((f.steps != null ? f.steps : d.steps) || '?') + ' steps</span>' +
-    (f.mode === 'video' && (f.frames != null ? f.frames : d.frames) != null
-      ? '<span class="chip c-dim num">' + esc(f.frames != null ? f.frames : d.frames) +
-        'f</span>' : '') +
+    (dv('width') || dv('height')
+      ? '<span class="chip c-dim num">' + esc(dv('width') || '?') + '×' +
+        esc(dv('height') || '?') + '</span>' : '') +
+    (dv('steps') != null ? '<span class="chip c-dim num">' + esc(dv('steps')) +
+      ' steps</span>' : '') +
+    (wfKind() === 'video' && dv('frames', 'length') != null
+      ? '<span class="chip c-dim num">' + esc(dv('frames', 'length')) + 'f</span>' : '') +
     '<span class="grow"></span>' +
     '<button class="primary press" data-act="' + (job ? 'stop' : 'go') + '"' +
-      ((S.busy || !c || !ev.up) && !job ? ' disabled' : '') + '>' +
+      ((S.busy || !canRun || !ev.up) && !job ? ' disabled' : '') + '>' +
       (job ? 'Stop' : S.busy ? 'Submitting…' : 'Generate') + '</button>');
 
   /* THE LIVE STATUS. Chips, and only the ones that are true right now. */
@@ -1673,7 +2105,12 @@ function refusalHtml() {
   const v = S.validation;
   if (v && !v.ok && v.missing_models && v.missing_models.length) {
     const m = v.missing_models[0];
-    const dl = dlFor(m.pick);
+    /* the Get is aimed at whichever thing owns the file: a curated pick (sha-pinned) or
+       the discovered workflow that named it (size-checked). Same button, same refusal
+       grammar, and neither claims the other's guarantee. */
+    const target = m.pick ? ' data-pick="' + esc(m.pick) + '"'
+                          : ' data-workflow="' + esc(m.workflow || '') + '"';
+    const dl = dlFor(m.pick || ('wf:' + (m.workflow || '')));
     /* ⚠️ "PRESS GET" WHILE IT IS DOWNLOADING IS A SMALL LIE, and this is the likeliest
        moment to hit the refusal — so the live download is shown instead of a button
        that would start nothing. The router says the same thing in `how`. */
@@ -1683,7 +2120,7 @@ function refusalHtml() {
       (live
         ? chipHtml({ chip:'Downloading ' + (dl.pct || 0) + '%', cls:'c-gold',
                      line:m.how, hedge:'It will run as soon as the file lands.' })
-        : '<button class="primary" data-act="download" data-pick="' + esc(m.pick) + '">Get ' +
+        : '<button class="primary" data-act="download"' + target + '>Get ' +
           esc(m.size_h) + '</button>') + '</div>';
   }
   if (v && !v.ok) return '<p class="say bad">' + esc(v.reason || 'cannot run') + '</p>';
@@ -1704,7 +2141,9 @@ function renderSheet() {
     '<div class="row"><h2>Models</h2><span class="grow"></span>' +
       chipHtml(dv) +
       '<button class="ghost" data-act="refresh">Refresh</button>' +
-      '<a class="chip act" href="' + esc(st.url || '#') + '" target="_blank" rel="noopener">ComfyUI tab ↗</a>' +
+      /* ⚠️ A BUTTON, NOT AN ANCHOR — see openComfyTab(): an <a target="_blank"> here
+         opened Chrome instead of our own ComfyUI tab (Debi's bug). */
+      '<button class="chip act" data-act="comfyui-tab">ComfyUI tab ↗</button>' +
       '<button class="ghost" data-act="close-sheet" aria-label="Close">✕</button></div>' +
     /* THE CAP-OVERSHOOT STATEMENT — Debi's ruling, kept verbatim, as ONE line and
        nowhere else on the page. ⚠️ IT SITS ABOVE THE ROWS, not in the footer the IA
@@ -1794,18 +2233,29 @@ function render() {
   if (_tipFor && document.body.contains && !document.body.contains(_tipFor)) tipHide();
   setVar($('centre'), '--stagef', String(S.stagef));
   if ($('centre')) $('centre').classList.toggle('sized', !!S.sized);
+  /* both rails' widths are grid TRACKS, so the whole layout reflows off two numbers —
+     the stage, the prompt, the thumbnails and the peek all follow with no second rule */
+  setVar($('frame'), '--railw', S.railw + 'px');
+  setVar($('frame'), '--resw', S.resw + 'px');
   section('header', 'pageerr', renderHeader);
   section('stage', 'stage-body', renderStage);
   section('caption', 'caps', renderCaps);
   section('results', 'thumbs', renderResults);
   section('settings', 'railbody', renderRail);
+  section('picker', 'picker', renderPicker);
   section('composer', 'keyrow', renderComposer);
+  /* the source list is fetched only when a workflow actually needs one — an
+     image-to-video template is the only thing on this page that asks the question */
+  if (needsSource() && S.sources === null) { S.sources = []; loadSources().then(render); }
   section('models', 'sheet', renderSheet);
   const live = liveJob();
   const dlLive = ((S.state && S.state.downloads) || [])
     .some(d => ['downloading', 'verifying'].includes(d.state));
   arm(live || dlLive ? 1000 : 15000);
   writeBack();
+  /* the thumbnails were just repainted, so their measured height may have changed —
+     re-resolve the peek after layout rather than on the next resize */
+  queuePeek();
 }
 
 /* ══ WRITE-BACK (the Pixelmator mechanic) ══════════════════════════════════════
@@ -1818,6 +2268,14 @@ function writeBack() {
   const j = lastJob();
   if (!j || j.state !== 'done' || S.wroteBack === j.id) return;
   S.wroteBack = j.id;
+  /* ⚠️ ONLY ONTO THE WORKFLOW THAT RAN — walked live 2026-08-29, and it is the same
+     lie as the mode-switch one door over. With the catalogue in charge the page can
+     open on SDXL while the last finished run was a Wan clip, and the unguarded
+     write-back then put 576×320 · 10 steps into SDXL's fields: numbers that describe a
+     run this workflow never did, sitting under a Generate button that would use them.
+     A finished run's values belong to the workflow that produced them. */
+  const w = curWorkflow();
+  if (w && j.workflow && j.workflow !== w.id) return;
   const m = /(\d+)\s*×\s*(\d+)(?:\s*·\s*(\d+)f)?/.exec(j.shape || '');
   if (m) {
     S.form.width = Number(m[1]);
@@ -1862,10 +2320,32 @@ function readForm() {
   if ($('f-prompt')) f.prompt = $('f-prompt').value;
   if ($('f-neg')) f.negative = $('f-neg').value;
   if ($('f-seed')) { const v = $('f-seed').value.trim(); f.seed = v === '' ? null : Number(v); }
-  ['width', 'height', 'steps', 'frames', 'fps'].forEach(k => {
+  ['width', 'height', 'steps', 'frames', 'fps', 'cfg'].forEach(k => {
     const v = num('f-' + k); if (v !== undefined) f[k] = v;
   });
 }
+/* ⚠️ THE PICKER'S SELECTS ARE `change`, NOT `click`, AND THE LIST MUST NOT REPAINT
+   UNDER AN OPEN MENU. Choosing a model re-reads that model's own workflows and drops
+   every number the PAGE wrote (the mode/model reset rule, one door over): a size that
+   belonged to SDXL is not a size that belongs to a Wan template. A number the user
+   TYPED is theirs and survives, exactly as it does across a mode switch. */
+document.addEventListener('change', (e) => {
+  const id = e.target && e.target.id;
+  if (id === 'p-model') {
+    readForm();
+    S.form.model = e.target.value;
+    S.form.workflow = null; S.form.source = null; S.sources = null;
+    resetUntouched(); S.validation = null; saveView(); render();
+  } else if (id === 'p-wf') {
+    readForm();
+    S.form.workflow = e.target.value;
+    S.form.source = null; S.sources = null;
+    resetUntouched(); S.validation = null; saveView(); render();
+  } else if (id === 'p-src') {
+    const p = String(e.target.value || '').split('|');
+    S.form.source = { origin:p[0], subfolder:p[1], filename:p.slice(2).join('|') };
+  }
+});
 /* ⚠️ SWITCHING MODE OR MODEL RE-READS THAT TEMPLATE'S OWN DEFAULTS — unless you typed.
    Walked 2026-08-29: after an SDXL run wrote 1024×1024 back into the fields, switching
    to Clip kept 1024×1024 on a model whose stock video shape is 832×480, so the page
@@ -1873,9 +2353,14 @@ function readForm() {
    the user TYPED is theirs and survives; a value the page wrote (a default, or a
    finished run's write-back) belongs to the model it came from and goes with it. */
 function resetUntouched() {
-  ['width', 'height', 'steps', 'frames', 'fps'].forEach(k => {
+  ['width', 'height', 'steps', 'frames', 'fps', 'cfg'].forEach(k => {
     if (!S.typed[k]) S.form[k] = null;
   });
+  /* the negative prompt belongs to the template that shipped it — Wan's is a paragraph
+     of Chinese, SDXL's is a list of English words, and carrying one into the other is
+     the same defect as carrying 1024×1024 onto a 832×480 template. The id is `f-neg`,
+     so the typed-flag is keyed `neg`. */
+  if (!S.typed.neg) S.form.negative = null;
 }
 document.addEventListener('input', (e) => {
   if (e.target.id && e.target.id.startsWith('f-')) {
@@ -1887,6 +2372,50 @@ document.addEventListener('input', (e) => {
 });
 /* a change that arrived while a field had focus is applied the moment it loses it */
 document.addEventListener('focusout', () => setTimeout(flushPending, 0));
+
+/* ══ THE SHELL BRIDGE — an IN-APP destination is a TAB SWITCH, never a URL ═══════
+   ⚠️ DEBI'S BUG, VERBATIM: the ⋯ menu's "ComfyUI tab ↗" opened Google Chrome. It was an
+   `<a target="_blank">` pointing at http://127.0.0.1:8188, and inside the app shell a
+   target=_blank navigation is handed to the default browser — so the control named
+   after one of our OWN tabs took the user out of the app entirely.
+
+   The fix is the shipped handler pattern (v1.5.38 / v1.5.46, and office.html's goHome):
+   post `{cmd:'switchTab', id, title}` to `window.webkit.messageHandlers.harness`, which
+   app/main.swift resolves against its tab REGISTRY — id first, title second — and then
+   takes the exact path a strip click takes. The Generate tab is one of the six webviews
+   that gets the handler registered (main.swift's `t.id == "comfy"` branch), so this
+   works from here.
+
+   THE RULE THIS ENCODES, because the bug is a class and not an incident: a link to an
+   IN-APP destination must switch tabs; a link to somebody else's website (a licence
+   text on huggingface.co) is exactly what the browser is for and stays an anchor. The
+   audit of this page found ONE offender — the two "ComfyUI tab ↗" items — and the two
+   licence links, which are correct as they are. */
+function shellHandler() {
+  try {
+    return (window.webkit && window.webkit.messageHandlers
+            && window.webkit.messageHandlers.harness) || null;
+  } catch (e) { return null; }
+}
+function switchTab(title, id) {
+  const h = shellHandler();
+  if (!h) return false;
+  try { h.postMessage({ cmd:'switchTab', title:title, id:id }); return true; }
+  catch (e) { return false; }
+}
+function openComfyTab() {
+  /* id first, title second — the shell resolves the stable id against its registry and
+     shows the tab even if the user had hidden it. */
+  if (switchTab('ComfyUI', 'comfyui')) return true;
+  const url = ((S.state && S.state.comfy && S.state.comfy.url) || '');
+  if (!shellHandler() && url) { window.open(url, '_blank', 'noopener'); return true; }
+  /* In the shell with no handler = a stale build. Say which control does the job rather
+     than silently doing nothing, and never fall through to window.open, which is what
+     would open Chrome again. */
+  toast('This build cannot switch tabs from this page — pick ComfyUI on the tab strip '
+      + 'above. (Run ./scripts/ship.sh if the shell is stale.)', true);
+  return false;
+}
 
 /* NOT alert(): the app shell's WKWebView has no runJavaScriptAlertPanel delegate, so
    alert() shows nothing there — "Open template in ComfyUI" looked dead in the app while
@@ -1996,6 +2525,61 @@ function initGrip() {
   });
 }
 
+/* ══ THE TWO SIDE RAILS — same grammar as the stage's grip ═════════════════════
+   Debi's review: "both side panes resizable, with everything dynamic/auto-adjusting
+   including the default stage view", and "when the user squeezes the stage toward the
+   left, the right rail AUTO-GROWS in correlation (the thumbnails scale up)".
+
+   Both are literally true here because the widths are GRID TRACKS: the centre column is
+   `minmax(0,1fr)`, so every pixel taken from the stage is given to the rail being
+   dragged, and the thumbnails — two `1fr` columns inside that rail — grow with it. The
+   peek is re-measured off a real thumbnail afterwards, so "two rows plus a sliver"
+   stays true at every width instead of only at the default one. */
+function initVGrip(id, get, set, lo, hi) {
+  const g = $(id), fr = $('frame');
+  if (!g || !fr || !g.addEventListener) return;
+  let dragging = false;
+  const apply = (px) => {
+    set(clampW(px, lo, hi, get()));
+    setVar(fr, id === 'gripL' ? '--railw' : '--resw', get() + 'px');
+    clearTimeout(window.__pk);
+    window.__pk = setTimeout(syncPeek, 40);
+  };
+  g.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    if (g.setPointerCapture && e.pointerId != null) g.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing-x');
+    if (e.preventDefault) e.preventDefault();
+  });
+  g.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const r = fr.getBoundingClientRect();
+    if (!r || !r.width) return;
+    apply(id === 'gripL' ? (e.clientX - r.left - 8) : (r.right - 8 - e.clientX));
+  });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('resizing-x');
+    saveView();
+    syncPeek();
+  };
+  g.addEventListener('pointerup', end);
+  g.addEventListener('pointercancel', end);
+  g.addEventListener('lostpointercapture', end);
+  g.addEventListener('keydown', (e) => {
+    const d = e.key === 'ArrowLeft' ? -12 : e.key === 'ArrowRight' ? 12 : 0;
+    if (!d) return;
+    if (e.preventDefault) e.preventDefault();
+    apply(get() + (id === 'gripL' ? d : -d));
+    saveView();
+  });
+}
+function initRails() {
+  initVGrip('gripL', () => S.railw, (v) => { S.railw = v; }, RAIL_MIN, RAIL_MAX);
+  initVGrip('gripR', () => S.resw, (v) => { S.resw = v; }, RES_MIN, RES_MAX);
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     tipHide(); menuHide();
@@ -2037,7 +2621,11 @@ document.addEventListener('click', async (e) => {
   else if (act === 'verb')    { readForm(); S.adv = b.dataset.v === '1'; saveView(); render(); }
   else if (act === 'all')     { S.all = !S.all; $('results').classList.toggle('all', S.all);
                                 b.innerHTML = S.all ? '&#9662;' : '&#9656;';
-                                b.title = S.all ? 'Show two rows' : 'Show all results'; }
+                                b.title = S.all ? 'Show two rows' : 'Show all results';
+                                /* the peek is an inline length now, so the expand has
+                                   to clear it — the CSS `max-height:none` cannot win
+                                   against an inline rule */
+                                syncPeek(); }
   else if (act === 'split')   { setSplit(Number(b.dataset.n)); }
   else if (act === 'refresh') { await load(); }
   else if (act === 'select')  { assign(b.dataset.fn); render(); }
@@ -2072,9 +2660,28 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'download') {
     b.disabled = true;
-    const r = await api('/api/comfy/download', { method:'POST', body: JSON.stringify({ pick: b.dataset.pick }) });
+    const body = b.dataset.workflow ? { workflow: b.dataset.workflow }
+                                    : { pick: b.dataset.pick };
+    const r = await api('/api/comfy/download', { method:'POST', body: JSON.stringify(body) });
     if (!r.ok) { S.err = r.error; toast(r.error, true); }
+    else if (r.no_url && r.no_url.length)
+      toast('Fetching what upstream published; it has no link for ' +
+            r.no_url.join(', ') + '.', true);
     await load();
+  }
+  else if (act === 'comfyui-tab') {
+    menuHide();
+    openComfyTab();
+  }
+  else if (act === 'wf-menu') {
+    const w = curWorkflow();
+    const its = [];
+    if (w) its.push({ label:'Open template in ComfyUI', act:'template',
+                      workflow:w.id });
+    its.push({ label:'ComfyUI tab ↗', act:'comfyui-tab' });
+    its.push({ label:'Models ▸', act:'sheet' });
+    its.push({ label:'Reveal the models folder', act:'reveal-models' });
+    menuShow(b, its);
   }
   else if (act === 'cancel') {
     await api('/api/comfy/download/' + b.dataset.dl + '/cancel', { method:'POST' });
@@ -2102,11 +2709,11 @@ document.addEventListener('click', async (e) => {
     ]);
   }
   else if (act === 'item-menu') {
-    const st = (S.state && S.state.comfy) || {};
     const its = [];
     if (b.dataset.job) its.push({ label:'The exact graph that made this', act:'graph', job:b.dataset.job });
     its.push({ label:'Reveal in Finder', act:'reveal', fn:b.dataset.fn, sf:b.dataset.sf });
-    its.push({ label:'ComfyUI tab ↗', href:st.url || '#' });
+    /* an act, not an href — the second half of Debi's Chrome bug lived here */
+    its.push({ label:'ComfyUI tab ↗', act:'comfyui-tab' });
     menuShow(b, its);
   }
   else if (act === 'manifest') {
@@ -2115,13 +2722,15 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'reveal-models') {
     menuHide();
-    const r = await api('/api/comfy/reveal', { method:'POST', body: JSON.stringify({ filename:'' }) });
+    const r = await api('/api/comfy/reveal', { method:'POST',
+      body: JSON.stringify({ what:'models' }) });
     if (!r.ok) toast(r.error || 'could not open that folder', true);
   }
   else if (act === 'template') {
     menuHide();
     const r = await api('/api/comfy/open-template', { method:'POST',
-      body: JSON.stringify({ pick: b.dataset.pick }) });
+      body: JSON.stringify(b.dataset.workflow ? { workflow: b.dataset.workflow }
+                                              : { pick: b.dataset.pick }) });
     toast(r.ok ? r.note : ('Could not write the template: ' + r.error), !r.ok);
   }
   else if (act === 'graph') {
@@ -2146,9 +2755,22 @@ document.addEventListener('click', async (e) => {
   else if (act === 'go') {
     readForm();
     if (!(S.form.prompt || '').trim()) { toast('Type a prompt first.', true); return; }
+    const how = runMode();
+    if (how === 'none') { toast('Pick a model whose files are here first.', true); return; }
     S.busy = true; S.err = null; S.validation = null; render();
-    const c = currentPick();
-    const body = Object.assign({}, S.form, { pick: c.id, mode: S.form.mode });
+    /* ONE BUTTON, TWO SUBMIT PATHS, AND THE PICKER DECIDES WHICH — a curated template
+       runs through its sha-pinned, MEASURED builder (that is what the health verdict is
+       about), everything else through the converter. */
+    let body;
+    if (how === 'workflow') {
+      const w = curWorkflow();
+      body = Object.assign({}, S.form, { workflow: w.id, mode: w.kind });
+      delete body.pick;
+    } else {
+      const c = currentPick();
+      body = Object.assign({}, S.form, { pick: c.id, mode: S.form.mode });
+      delete body.workflow;
+    }
     const r = await api('/api/comfy/generate', { method:'POST', body: JSON.stringify(body) });
     S.busy = false;
     if (!r.ok) { S.err = r.error; S.validation = r.validation || null;
@@ -2185,13 +2807,44 @@ function syncPeek() {
   const one = t && t.querySelector ? t.querySelector('.thumb') : null;
   if (one && one.offsetHeight)
     setVar(document.documentElement, '--thumb', one.offsetHeight + 'px');
+  /* ⚠️ THE RESOLVED HEIGHT IS WRITTEN AS A PLAIN LENGTH, AND THAT IS THE FIX FOR THE
+     DEFECT DEBI ACTUALLY SAW. The CSS says `max-height: calc(2 * var(--thumb, 72px) …)`
+     with `transition: max-height 300ms`. Measured live in this engine on 2026-08-29:
+     WebKit NEVER ADVANCES that transition — a calc() carrying an unregistered custom
+     property is not interpolable against the previous length, so the element sits on
+     the FROM value forever and the rail keeps rendering at the fallback. Setting
+     `transition:none` on the node made the same declaration resolve to 230px instantly,
+     which is how the cause was established rather than guessed.
+
+     That is why the shipped rail drew SIX SMALL pictures instead of four: --thumb was
+     being measured correctly every time and the CSS was ignoring it, so the peek was
+     frozen at whatever the fallback happened to be. Writing the number here transitions
+     between two plain lengths, which WebKit does animate, and makes the measured peek
+     true at every rail width — which is the whole point of a rail you can drag. */
+  if (t && t.style) {
+    t.style.maxHeight = S.all ? 'none'
+      : (one && one.offsetHeight ? (2 * one.offsetHeight + 6 + 10) + 'px' : '');
+  }
 }
-window.addEventListener('resize', () => setTimeout(syncPeek, 60));
+/* ⚠️ A TIMER AS WELL AS A FRAME, AND THE TIMER IS THE ONE THAT ACTUALLY FIRES. Walked
+   2026-08-29: with the tab in the background requestAnimationFrame does not run at all,
+   so the peek was never resolved on a load that happened while the Generate tab was not
+   the front one — the rail then stood at the CSS fallback and drew six small pictures
+   again, which is the very defect this is here to fix, restored by an invisible
+   scheduling assumption. rAF still runs first when it can (it measures after layout);
+   the timer is what guarantees it runs at all. */
+function queuePeek() {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncPeek);
+  clearTimeout(window.__peekT);
+  window.__peekT = setTimeout(syncPeek, 60);
+}
+window.addEventListener('resize', queuePeek);
 
 loadView();
 initGrip();
+initRails();
 load();
-if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncPeek);
+queuePeek();
 setTimeout(syncPeek, 300);
 </script>
 </body>

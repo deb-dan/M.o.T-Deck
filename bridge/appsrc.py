@@ -92,6 +92,11 @@ FILES: tuple[str, ...] = (
     "routers/odyvision.py",
     # The ComfyUI generate surface (S1), appended by the same rule.
     "routers/comfy.py",
+    # …and its curation/catalog/graph core (S8 extraction, v1.5.49). It owns no route,
+    # but it MUST be here anyway: the contract seam test requires FILES to equal the app
+    # layer on disk both ways, and a module missing from this view makes every
+    # `X not in APP_SOURCE` assertion about it pass VACUOUSLY.
+    "core/comfycur.py",
     # The goose agent lane, appended by the same rule.
     "routers/goose.py",
     # The goose EMBED lane (goose Desktop's UI served by us), appended by the same rule.

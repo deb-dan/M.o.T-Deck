@@ -38,7 +38,11 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S5 | 🟡 LATER | Post-load truth: parse runner's own buffer-size log lines, store measured-vs-predicted per model | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` designed in v1.5.30, not built |
 | S6 | 🟡 LATER | Guardrail spectrum as a setting (Quiet / Advise / Advise-early / Custom headroom) per UX research §9.6 | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` |
 | S7 | 🔵 NEXT | Wan 2.1 colour defect on MPS: A/B the bf16 variant (2.84GB, same repo) against the recorded fp16 numbers | 🟡 HIGH | ⚪ Low | 🟢 Medium | 🟠 Excellent | ⚪ 1 file | Small | `@status:open` verdict printed on the /comfy card meanwhile |
-| S8 | 🔵 NEXT | bridge/routers/comfy.py sits at exactly 1500 lines (facade ceiling) — extract curation+graph builders to core/comfycur.py BEFORE comfy S2 | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` |
+| S8 | ✅ DONE | bridge/routers/comfy.py sits at exactly 1500 lines (facade ceiling) — extract curation+graph builders to core/comfycur.py BEFORE comfy S2 | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:closed` v1.5.49 — router 1353 / core 1380, registered in BOTH `_LANES` and `appsrc.FILES` |
+| S24 | 🔵 NEXT | **A PSEUDO-ELEMENT DOES NOT REPAINT ON A LIVE TOKEN FLIP (class, engine-wide).** Measured in the app's own WebKit 2026-08-29 on /comfy: with `data-theme` flipped by script, `::after { background:var(--token) }` keeps the PREVIOUS look's colour until a reload — and, separately, several ordinary properties on already-computed elements went stale too while `body` updated. comfy.html is fixed (all four pseudos use `currentColor`, gated by a class test); the echo sweep found **two live sites in other builders' files**: `compose.html:552` `.btn.dotted::after { background:var(--gold) }` and `office.html:454-459` `#rail-resize::after` / `#ai-resize::after` painted `var(--gold)` on hover — both go stale on a live theme flip. Fix is one line each (`color:` on the element, `background:currentColor` on the pseudo) | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` **Verify-still-open:** `grep -n "::\(after\|before\)" bridge/panel/*.html \| grep "var(--"` — expect: compose.html + office.html still hit |
+| S25 | 🔵 NEXT | **WebKit will not transition a property whose computed value came from `calc(var(--x))`** — not to another calc and not to a plain inline length; the element pins itself to the first value it computed, silently, forever. This is what made the Generate results rail draw six small thumbnails instead of four for a whole release: `--thumb` was measured correctly every render and the CSS ignored it. comfy.html now writes the resolved length and carries no transition on that property. Sweep for `transition:` on any property whose value is a `calc(var(…))` elsewhere in the panel | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | 🟡 6-15 files | Small | `@status:open` **Verify-still-open:** `grep -n "transition:[^;]*\(height\|width\|size\)" bridge/panel/*.html` then check each property's own declaration for `calc(var(` |
+| S26 | 🟡 LATER | Generate: 7 of 78 template-native workflows are refused because they are built out of **ComfyUI SUBGRAPHS** (`definitions.subgraphs`, node type = a uuid) — incl. HiDream O1, Qwen inpainting ControlNet, SD3.5 depth, Wan 2.2 S2V, Flux.2 Klein. The refusal is honest and points at the ComfyUI tab; expanding subgraph definitions in `core/comfycur.ui_to_api` would recover them, and upstream is authoring MORE templates this way each pin | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | ⚪ 1 file | Medium | `@status:open` **Verify-still-open:** the count printed by converting every template — expect: still 7+ |
+| S27 | 🟡 LATER | Generate: a discovered download is verified against the **size the server declares, not a sha256** — upstream's `properties.models[]` publishes no hash. The card says which check it got, so nothing lies, but a curated-grade guarantee would need either upstream hashes or our own first-download-pins-it store (`data/comfy/sizes.json` is already the shape) | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | ⚪ 1 file | Small | `@status:open` **Verify-still-open:** `grep -n "size declared by server" bridge/routers/comfy.py` |
 | S9 | 🟡 LATER | Goose slice 2: --resume/--name/--fork surface (history persisted+reachable, tab offers no way in); session-store size readout + prune for data/goose | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` contract test already pins the flags |
 | S10 | 🟡 LATER | aider.html predates theme packs (dark-only); goose.html's syncSkin is the backport pattern; studio-goose/aider.css if the design axis should reach terminal lanes | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` |
 | S11 | ⚪ SOMEDAY | opencode_tools_warning should take a lane label so goose+OpenCode share one decision table | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 1 file | Trivial | `@status:open` |
@@ -50,8 +54,9 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 | S17 | 🟡 LATER | Audio tab curated section: seven essay cards with dependency plumbing at rest (index.html:10494) — rows + hover per the chip grammar | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
 | S18 | 🟡 LATER | Office AI panel empty state is a six-paragraph Help article (office.html:1501) — one-sentence invitation + Help link | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | ⚪ 1 file | Small | `@status:open` |
 | S19 | 🟡 LATER | ~~nav normalize tail-appends on saved layouts~~ **CORE CLOSED 2026-08-29** (neighbour-append shipped; see A8). REMAINDER, still open: music SSE kind would let Music+Compose drop polling; Music-view '0 track(s)' stamp quirk (pre-existing, untouched) | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` only the two small quirks remain — the append bug is fixed |
-| S21 | 🔵 NEXT | OpenCode phantom drafts — Debi's ruling: LEAVE the landing behavior, but (a) label auto-minted drafts "runner auto session" via a version-fenced WKUserScript in OUR shell (zero vendored bytes; degrade to nothing on mismatch; needs main.swift — after the chrome builder lands) and (b) add the Help/USER-EXPLAINERS note explaining the harmless auto-drafts for anyone who installs OpenCode | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Small | `@status:blocked` on the chrome slice freeing main.swift |
-| S22 | 🔵 NEXT | Isolation ladder slice: the DEPENDENCY SIGNAL — banner overlay on vendor tabs + lane-page polls ("this tab needs the runner — restart to rebind"), derived needs list from the supervisor's depends_on + health + runner state; live rebind where supported (Hermes config patch, Odysseus admin API); Aider skipped per verdict | 🟡 HIGH | 🟢 Medium | 🟢 Medium | 🟠 Excellent | 🟡 6-15 files | Medium | `@status:blocked` on the chrome builder freeing main.swift; per-app provider slices dispatched 2026-08-29 |
+| S21 | ✅ CLOSED | OpenCode phantom drafts — Debi's ruling: LEAVE the landing behavior, but (a) label auto-minted drafts "runner auto session" via a version-fenced WKUserScript in OUR shell (zero vendored bytes; degrade to nothing on mismatch; needs main.swift — after the chrome builder lands) and (b) add the Help/USER-EXPLAINERS note explaining the harmless auto-drafts for anyone who installs OpenCode | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Small | `@status:done-verified` 2026-08-29 — WKUserScript shipped in main.swift (openCodeDraftScript), four fences, zero vendored bytes and zero store writes; walked on the REAL SPA at the pin in a scratch headless-Chrome profile (relabels; forced pin 9.9.9 → upstream's own wording, store byte-identical); §OpenCode added to USER-EXPLAINERS. Gate: bridge/tests/test_opencode_draft_label.js. Closure pointer in the detail below |
+| S22 | 🟡 LATER | Isolation ladder slice: the DEPENDENCY SIGNAL — banner overlay on vendor tabs + lane-page polls ("this tab needs the runner — restart to rebind"), derived needs list from the supervisor's depends_on + health + runner state; live rebind where supported (Hermes config patch, Odysseus admin API); Aider skipped per verdict | 🟡 HIGH | 🟢 Medium | 🟢 Medium | 🟠 Excellent | 🟡 6-15 files | Medium | `@status:partial` 2026-08-29 — **the banner half SHIPPED** (GET /api/deps + POST /api/components/{name}/restart + the shell strip; proven on a real live case: Hermes bound to Qwen3.6-27B while the runner served gemma-4-31B). **STILL OPEN, moved to S24:** the two live-rebind actions and the lane-page polls |
+| S24 | 🔵 NEXT | Dependency signal, part 2 — (a) LIVE REBIND buttons ("Rebind now" instead of "Restart X") for the two apps the research says support it: Hermes (config patch applies to new chats) and Odysseus (admin-API ensure); (b) the two goose lanes + aider in the signal at all — they are bridge-supervised children with no /api/status row, so `needs` derived for them today would have no action behind it; (c) the LANE-PAGE polls (aider.html / goose.html keep their `model_ready` pill alive mid-session, per research §6) | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` seams named in the detail below |
 | S23 | 🔵 NEXT | **PARTIAL-INSTALL HONESTY (Debi's principle 2026-08-29: "not everyone will install everything")** — every surface must degrade gracefully when its component is absent, and that has never been audited as a whole. Today it is per-lane folklore: Mission Control cards and sidebar dots are honest by construction, the Goose UI lane has a named not-installed page, the Music/Compose engines say which of the two is missing — but nobody has swept the app with each component removed in turn and READ every surface that mentions it (Caps strip, ⌘K palette, Help links, the AI tab, chat model pickers, the tab strip's own placeholders) | 🟡 HIGH | 🟢 Medium | 🟡 High | 🟠 Excellent | 🔴 16+ files | Large | `@status:open` its own slice: uninstall-one-at-a-time matrix, then fix what lies |
 | S20 | 🟡 LATER | The Goose UI lane's three logs (`gooseui`, `gooseui-serve`, `goose-ui-install`) are on disk and named by the lane's own failure page, but unreadable in the panel: `_LOG_NAMES` in bridge/routers/components.py is a closed allowlist and the panel's Logs dialog list mirrors it | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` needs the bridge allowlist AND ~120 bytes of index.html ceiling headroom — panel rows alone would be dead controls (caught by trying it) |
 
@@ -59,8 +64,59 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 
 - **S1** - Incident: model called retired office_write_cells from stale session history; Debi cleared the session by hand. The fix: catalog-change hash → panel auto-starts a fresh Agent session with a notice line.
 - **S4** - v1.5.30 shipped the engine + ledger; spawn_guard on music/voice lanes still uses the pre-advisor file-size predicate. Retrofit = same advisory + confirm shape as /api/models/switch. **Verify-still-open:** `grep -rn "budget_gb" bridge/ | head -3` — expect: hits in the spawn-gate path.
+- **S21** - CLOSED 2026-08-29. Shipped: `app/main.swift` `opencodePin()` +
+  `openCodeDraftScript()` (a WKUserScript on the OpenCode webview ONLY — that webview
+  still gets neither the `harness` message handler nor the shell self-description),
+  and the `## OpenCode` section in `docs/USER-EXPLAINERS.md` (which IS the in-app Help
+  view). **Why DOM and not the store, proven at the pin rather than preferred:** a draft
+  entry is exactly `{type,server,draftID,directory,worktree}` and the strip renders it
+  with a hardcoded `t("command.session.new")` at render time (bundle `U6e`), so no store
+  field could carry a label. The store is never written. **Four fences, any one failing
+  = nothing happens:** the pin from harness.yaml vs OpenCode's own `/global/health`;
+  a `opencode.window.*.dat:tabs` key that parses as an array; the store agreeing the id
+  is a `type:"draft"`; and the exact text "New session". **Verify-still-open (i.e. that
+  the relabel still works after an OpenCode bump):** bump `build.opencode_pin`, then
+  `node bridge/tests/test_opencode_draft_label.js` — it reads the pin from harness.yaml,
+  so a bump with no re-verification of the bundle's `data-tab-key` / `data-titlebar-tab-
+  title` contract will still pass while the live UI silently reverts to "New session".
+  Re-run the live walk after any bump.
+- **S22** - PARTIAL 2026-08-29 — the signal half is in. `bridge/routers/components.py`
+  gained `NEEDS_SOFT`, `needs_message()`, `needs_derive()`, `_hermes_binding()`,
+  `GET /api/deps` and `POST /api/components/{name}/restart` (a composition of the audited
+  stop/start, no new kill logic); `app/main.swift` gained `DepsBanner`, `DepNeed`, and
+  the poll/paint/act trio armed from applyPanes. Four states are derived and each carries
+  the one action that fixes it: `down`, `no-model`, `swapped`, `moved`. The banner
+  SHORTENS the page rather than covering it, is dismissable per SENTENCE (so a dismissal
+  expires when the situation changes), and clears itself when the need is met.
+  **The lie it was built for was live on the machine the day it shipped:** Hermes's
+  `model.default` was `Qwen3.6-27B-Fable-Fus-711-…` while the runner had been swapped to
+  `gemma-4-31B-it-uncensored-biproj-q4_k_m` — the dashboard looked perfectly healthy and
+  every new chat would have failed. Gate: `bridge/tests/test_dep_signal.py`.
+  **Verify-still-open:** `curl -s 127.0.0.1:8700/api/deps` — `{"components":{}}` is the
+  healthy answer; anything else names a real unmet dependency.
+- **S24** - The seams the remaining half needs, named so the next builder does not have
+  to re-derive them. **Hermes live rebind:** `scripts/seed_hermes_provider.py` landed
+  2026-08-29 as an env-driven, strictly-idempotent standalone script (`HERMES_CFG`,
+  `BASE_URL`, `KEY`, `MODEL`, `CTXLEN`, `HARNESS_ROOT`) — that is a usable seam, but it
+  writes only `custom_providers`; the `model.*` patch that `model.default` lives in is
+  still a text edit inside `scripts/start_component.sh`'s hermes branch, so a rebind that
+  only calls the script would fix the picker and NOT the stale default. Either lift that
+  patcher into a callable seam or extend the script to own both keys — then wire the
+  banner's action to it. **Odysseus live rebind:** the research is explicit that the DB
+  script (`scripts/seed_odysseus_jan.py`) wants offline DB access and must not be run
+  against a live Odysseus; the right seam is an admin-API upsert of the `local-jan` row
+  in the shape `bridge/routers/odyvision.py` already uses for the describer endpoint
+  (`ody_vision_shim_ensure`, matched by base_url, never by name). Neither seam existed at
+  ship time, which is why both apps ship restart-only. **The goose lanes and aider:**
+  they have no `/api/status` row, so adding them to `NEEDS_SOFT` today would derive a
+  sentence with no action behind it — they need either component rows or a per-lane
+  action mapping (`/api/gooseui/start` exists; the PTY lanes rebind on their next
+  session by construction and only want the sentence).
 - **S5** - Ollama-pattern (fit-math research §3): the engine's own log lines are ground truth; storing measured-vs-predicted per model closes the loop and tightens future verdicts.
-- **S21** - Debi's words, 2026-08-29: "not everyone will install everything." The class is
+- **S23** - (this bullet was labelled S21 by mistake when S23 was renumbered out of a
+  collision; corrected 2026-08-29 by the dependency-signal slice, which needed the real
+  S21 detail slot.) Debi's words, 2026-08-29: "not everyone will install everything."
+  The class is
   the standing empty-state lesson generalised one level up — a surface must land on
   something usable when the thing it is ABOUT is not on the machine, not merely when a
   list is empty. **Scope:** for each optional component (odysseus, hermes, voicestudio,

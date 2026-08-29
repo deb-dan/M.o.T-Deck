@@ -374,10 +374,23 @@ check("exactly two streaming download→rename sites exist in the bridge",
       f"found {_sites} — a NEW one must gate size+digest before the rename "
       f"(or be argued out of class) before this test is updated")
 _comfy = (ROOT / "bridge" / "routers" / "comfy.py").read_text()
+_rename = _comfy.index("os.replace(part, dest)")
 check("CONTROL: the comfy sibling still verifies size before its rename",
-      _comfy.index("if got != want:") < _comfy.index("os.replace(part, dest)"))
+      _comfy.index("if want and got != want:") < _rename)
+# ⚠️ THE SHA GATE IS NOW CONDITIONAL THERE, AND THAT IS THE HONEST SHAPE RATHER THAN A
+# WEAKENING (v1.5.49). The comfy lane gained a second download path: files DISCOVERED
+# through ComfyUI's vendored template registry, for which upstream publishes a URL and
+# NO hash. Those are verified against the size the server declares, and the card says
+# which of the two checks the file got. A CURATED pick still carries its pinned sha256
+# and still cannot be renamed without matching it — that is what this pair asserts:
+# the digest gate exists, it runs before the rename, and the branch that skips it is
+# the one where there is no pin to check.
 check("CONTROL: the comfy sibling still verifies sha256 before its rename",
-      _comfy.index('if digest != f["sha256"]:') < _comfy.index("os.replace(part, dest)"))
+      _comfy.index('if digest != f["sha256"]:') < _rename)
+check("CONTROL: …and it skips that check only where no sha256 is pinned at all "
+      "(the registry-discovered path), never for a curated pick",
+      _comfy.index('if f.get("sha256"):') < _comfy.index('if digest != f["sha256"]:')
+      and '"sha256": None' in _comfy and '"verify": "size + sha256"' in _comfy)
 
 if fails:
     print(f"FAIL ({len(fails)}):")

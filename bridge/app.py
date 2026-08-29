@@ -226,6 +226,14 @@ _LANES = (
     # separates no pair of neighbours, and it costs only where /comfy and /api/comfy/*
     # appear in /openapi.json.
     "routers.comfy",
+    # …and its CURATION/CATALOG/GRAPH core (the S8 extraction). ⚠️ A CORE MODULE WITH NO
+    # ROUTES STILL BELONGS IN THIS LIST, and the reason is `_Facade.__setattr__` below:
+    # a write through the facade only reaches the modules in `_FACADE_MODULES`, which is
+    # built from THIS tuple. `A.ROOT = tmpdir` — which the whole gallery/file-state group
+    # of test_comfy_lane.py depends on — would otherwise leave core.comfycur's own ROOT
+    # pointing at the real app directory, and those tests would go GREEN while measuring
+    # the wrong tree. It registers no route, so route order is untouched.
+    "core.comfycur",
     # …and the GOOSE agent lane by the SAME rule, a sixth time: new, it separates no
     # pair of neighbours, and it costs only where /goose and /api/goose/* appear.
     "routers.goose",

@@ -421,7 +421,15 @@ check('there is exactly ONE Hermes poll and ONE place that arms it',
       // PHASE 2 added a SECOND timer — the nav poll — so this is no longer "the only
       // scheduledTimer in the file". It is still the only HERMES one, and the nav one is
       // armed from exactly one place too (see the nav section below).
-      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 2
+      // ⚠️ WIDENED 2 → 3 BY THE DEPENDENCY-SIGNAL SLICE (S22), with the argument this
+      // fence exists to demand. The third is `depsTimer`, and it earns its place the way
+      // the other two did: it is the ONLY deps poll, it is armed from applyPanes and
+      // nowhere else, it invalidates itself the moment no tab that could carry a banner
+      // is on screen, and every one of those properties is asserted in full by
+      // bridge/tests/test_dep_signal.py. This number is a CEILING on new pollers rather
+      // than a detail — raising it must always cost a paragraph like this one.
+      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 3
+      && (swift.match(/depsTimer = Timer\.scheduledTimer/g) || []).length === 1
       && (swift.match(/hermesGenTimer = Timer\.scheduledTimer/g) || []).length === 1);
 check('the poll calls the EXISTING sync, not a second copy of the logic',
       /syncHermesGen\(reloadIfNewer: true, why: "poll"\)/.test(tim)
@@ -448,8 +456,14 @@ check('...and the visibility gate still runs BEFORE the activity gate',
       tim.indexOf('visibleHermesWebViews().isEmpty') < tim.indexOf('!NSApp.isActive'));
 check('the closure does not retain the delegate strongly',
       /\{ \[weak self\] _ in/.test(tim));
+// ⚠️ THE TAIL OF applyPanes IS NOW TWO ARMINGS, NOT ONE (S22): the dependency poll is
+// armed from the same place and for the same reason, so the assertion is "the Hermes
+// arming is the LAST THING applyPanes does apart from the other armings", not "the very
+// last line". Widening it this way keeps what the check is for — no second rule for
+// what is on screen — while allowing a sibling that obeys the same rule.
 check('arming happens from applyPanes — the one place that settles what is visible',
-      /applyPanes[\s\S]{0,3200}updateHermesGenTimer\(\)\s*\n\s*\}/.test(swift));
+      /applyPanes[\s\S]{0,3200}updateHermesGenTimer\(\)\s*\n[\s\S]{0,600}\n\s*\}/.test(swift)
+      && /updateHermesGenTimer\(\)[\s\S]{0,400}updateDepsTimer\(\)/.test(swift));
 check('the tab-select entry point is KEPT, so a switch checks immediately',
       /maybeReloadStaleHermes\(idx\)/.test(swift)
       && /syncHermesGen\(reloadIfNewer: true\)/.test(swift));
@@ -583,11 +597,15 @@ check('the sidebar rows call openComponent, not jumpToCard directly',
 // in-panel view, so it can never become a dead control. What moved is the ENTRY POINT —
 // there is no `music` sidebar row any more (ONE Music door), so the caller is the
 // Studio page's header switcher and ⌘K, and the function is named for that.
-check('the Music Classic route still prefers the native tab with an in-panel fallback',
-      /\{ id:'music',[\s\S]{0,200}prefersTab:true \}/.test(html)
-      && /function openMusicClassic\(\)[\s\S]{0,420}switchTab\(e\.tab, 'music'\)[\s\S]{0,140}showView\('music'\)/.test(html));
-check('...and the Studio\'s own switcher is the same call path as the sidebar row',
-      /function openMusicStudio\(\) \{ navOpen\('compose'\); \}/.test(html));
+// REVISED (v1.5.50, Debi's live feedback): the ruling CHANGED — Studio<->Classic swap
+// IN PLACE inside the one Music tab; a switchTab here parked a second Music tab in a
+// strip window slot (the two-Music-tabs pollution). The fence now pins the revision:
+// no switchTab in either direction; the solo document navigates, the panel showViews.
+check('the Music Classic route is in-panel only — no switchTab (v1.5.50 revision)',
+      /function openMusicClassic\(\)[\s\S]{0,220}showView\('music'\)/.test(html)
+      && !/function openMusicClassic\(\)[\s\S]{0,420}switchTab\(/.test(html));
+check('...and openMusicStudio navigates IN PLACE from the solo document, navOpen elsewhere',
+      /function openMusicStudio\(\) \{[\s\S]{0,260}solo=music[\s\S]{0,120}location\.href = '\/compose'[\s\S]{0,120}navOpen\('compose'\)/.test(html));
 
 // ── STUDIO PHASE 2: the strip is a VIEW of the nav model ──
 // The shell cannot read the panel's localStorage, so data/nav.json is the shared copy.

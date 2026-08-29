@@ -48,7 +48,13 @@ const ROOT = path.resolve(__dirname, '..', '..');
    from a previous report. The gate itself always runs against the shipped file. */
 const PAGE = process.env.COMFY_HTML || path.join(ROOT, 'bridge', 'panel', 'comfy.html');
 const html = fs.readFileSync(PAGE, 'utf8');
-const py = fs.readFileSync(path.join(ROOT, 'bridge', 'routers', 'comfy.py'), 'utf8');
+/* THE LANE IS TWO PYTHON FILES SINCE THE S8 EXTRACTION (v1.5.49): the router keeps the
+   routes / downloads / jobs / gallery, and bridge/core/comfycur.py owns the curation,
+   the catalogue and the graph builders. Both are read here, because the mirror
+   assertions below are about the LANE's spelling of a number — the same decimal-GB rule
+   on both sides of the wire — and not about which side of the seam it now sits on. */
+const py = fs.readFileSync(path.join(ROOT, 'bridge', 'routers', 'comfy.py'), 'utf8')
+  + '\n' + fs.readFileSync(path.join(ROOT, 'bridge', 'core', 'comfycur.py'), 'utf8');
 const css = html.split('<style>')[1].split('</style>')[0];
 
 let fails = 0, checks = 0;
@@ -126,6 +132,9 @@ function runPage(state, gallery, mutate, store) {
     'document', 'window', 'localStorage', 'fetch', 'EventSource', 'setTimeout',
     'clearTimeout', 'addEventListener', 'location',
     bodyScript + '\n;return { S, render, gb, secs, cardAction, stateVerdict, ' +
+    /* v1.5.49 — the dynamic catalogue, the picker and the rails */
+    'catModels, curModel, curWorkflow, wfCurated, workflowVerdict, runMode, wfKind, ' +
+    'needsSource, wfHas, wfDefault, syncMode, clampW, RAIL_MIN, RAIL_MAX, ' +
     'licenseVerdict, healthVerdict, measuredVerdict, diskVerdict, engineVerdict, ' +
     'modelVerdict, itemVerdict, tipHtml, tipPlain, refusalHtml, ' +
     /* v3 — Debi's stage + the hue type system, all pure and all executed below */
@@ -156,7 +165,8 @@ function textNodes(markup) {
   let last = 0, m;
   const push = (t) => {
     const s = t.replace(/&[a-z]+;|&#\d+;/g, 'x').replace(/\s+/g, ' ').trim();
-    if (s) out.push({ cls: stack[stack.length - 1].cls, text: s });
+    if (s) out.push({ cls: stack[stack.length - 1].cls, text: s,
+                      tag: stack[stack.length - 1].tag || '' });
   };
   const VOID = ['br', 'img', 'input', 'i', 'hr', 'meta'];
   while ((m = re.exec(markup))) {
@@ -165,7 +175,7 @@ function textNodes(markup) {
     if (m[0][1] === '/') { if (stack.length > 1) stack.pop(); }
     else if (!/\/\s*$/.test(m[2]) && !VOID.includes(m[1].toLowerCase())) {
       const c = /class\s*=\s*"([^"]*)"/.exec(m[2]);
-      stack.push({ cls: c ? c[1] : '' });
+      stack.push({ cls: c ? c[1] : '', tag: m[1].toLowerCase() });
     }
   }
   push(markup.slice(last));
@@ -330,7 +340,18 @@ ok(/−9\.83 GB on this download/.test(M.diskVerdict(STATE({
 console.log('\n3. the at-rest budget and the sentence rule (v1: 106 text elements, 27 sentences)');
 function proseAudit(label, res, budget) {
   const nodes = audit(res.env);
-  const prose = nodes.filter(n => words(n.text) >= 8);
+  /* ⚠️ AN <option> IS A NAME, NOT PROSE, AND IT GETS ITS OWN BUDGET RATHER THAN AN
+     EXEMPTION. The model/workflow picker's labels are upstream's own titles ("Wan 2.1
+     Fun Camera 1.3B") plus a size, and one of them crosses eight words while being
+     nobody's idea of a sentence. Letting them through the .say rule unchecked would
+     open a hole a real paragraph could later walk through, so they are audited
+     separately, one line below, at nine words. */
+  const opts = nodes.filter(n => n.tag === 'option');
+  const longOpts = opts.filter(n => words(n.text) > 9);
+  ok(longOpts.length === 0,
+     `${label}: every picker option is ≤9 words (${longOpts.map(n => n.text).join(' | ')
+       || (opts.length ? 'all short' : 'no options')})`);
+  const prose = nodes.filter(n => words(n.text) >= 8 && n.tag !== 'option');
   const outside = prose.filter(n => !/\bsay\b/.test(n.cls));
   const says = nodes.filter(n => /\bsay\b/.test(n.cls));
   ok(outside.length === 0,
@@ -452,7 +473,12 @@ for (const sel of ['html[data-theme="light"]', 'html[data-theme="gold"]',
   ok(/--float-bg:/.test(blk) && /--scrim:/.test(blk),
      `${sel} defines --float-bg and --scrim (the sheet + tooltip ground)`);
 }
-const cssBody = css.split('* { box-sizing')[1] || '';
+/* COMMENTS STRIPPED FIRST, and that is a correctness fix rather than a convenience:
+   this pair of checks is about what the RULES declare, and a comment that quotes the
+   colour it is explaining ("…left it on rgba(0,0,0,.22)…") is documentation, not a
+   hard-coded colour. Measuring the raw text made the gate a booby trap for the next
+   person who explains a colour bug in the file where it was fixed. */
+const cssBody = (css.split('* { box-sizing')[1] || '').replace(/\/\*[\s\S]*?\*\//g, '');
 const hexes = (cssBody.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
 ok(hexes.length === 0, `no hard-coded colour in any layout rule (found ${hexes.join(', ') || 'none'})`);
 const rgba = (cssBody.match(/rgba?\(/g) || []);
@@ -571,6 +597,7 @@ ok(done.M.S.form.steps === 20, 'so do the steps actually used');
 ok(done.M.S.form.seed === null,
    'the seed field still resets to random after a run (the deliberate v1 behaviour, kept)');
 
+
 // ADVERSARIAL FINDING (2026-08-29), now a gate: a run that DIED must not vanish. The
 // progress chips come off the LIVE job, so an errored job simply stopped being drawn —
 // the bar emptied, the button said Generate again, and the previous picture stayed on
@@ -598,12 +625,16 @@ for (const id of ['id="rail"', 'id="centre"', 'id="results"', 'id="stage"',
                   'id="splitseg"', 'id="verb"']) {
   ok(staticHtml.includes(id), `the frame carries ${id}`);
 }
-ok(/#frame \{[^}]*grid-template-columns:var\(--railw\) minmax\(0,1fr\) var\(--resw\)/
+/* ⚠️ FIVE TRACKS, NOT THREE, SINCE DEBI'S REVIEW ("both side panes resizable"). The
+   two 8px columns between the panels ARE the old `gap` — the frame looks identical at
+   rest and every pixel of the gutter is a drag handle. */
+ok(/#frame \{[^}]*grid-template-columns:var\(--railw\) var\(--gut\) minmax\(0,1fr\) var\(--gut\) var\(--resw\)/
      .test(css.replace(/\s+/g, ' ')),
-   'the frame is settings rail | centre | results rail, by token');
+   'the frame is settings rail | grip | centre | grip | results rail, by token');
 const rootBlk = css.split(':root {')[1].split('}')[0];
-ok(/--railw:208px/.test(rootBlk) && /--resw:184px/.test(rootBlk),
-   'the rails are 208 / 184 px (generate-j’s measured density, not a round guess)');
+ok(/--railw:208px/.test(rootBlk) && /--resw:224px/.test(rootBlk),
+   'the rails DEFAULT to 208 / 224 px — generate-j’s measured 184 widened on Debi’s '
+   + 'review ("4 media, 2x2, bigger"), and both are now draggable from there');
 ok(/--row:18px/.test(rootBlk) && /--ink:10\.5px/.test(rootBlk),
    '…on an 18px row unit at 10.5px ink');
 ok(/--gut:8px/.test(rootBlk), '…with 8px gutters');
@@ -825,6 +856,326 @@ ok(/value="832"/.test(vid.markup) && /value="480"/.test(vid.markup) &&
 ok(!/last /.test(runPage(STATE({ curation: Object.assign({}, BASE.curation,
      { picks: [Object.assign({}, SDXL, { measured: {} })] }) }), GAL).markup),
    'a model that has never run here quotes no "last …" time in the rail');
+
+
+// ── 9. THE DYNAMIC CATALOGUE ON THE PAGE (Debi's review, 2026-08-29) ─────────
+// "if one deletes models, it should be dynamic. if one downloads other models, it
+// should be dynamic and cater to them" + "one model can carry several workflows (t2v,
+// i2v, v2v, image), each with its own required files, its own controls, its own graph"
+// + the placement: "in between the settings pane and Generate".
+console.log('\n9. the model / workflow picker, driven by the discovered catalogue');
+const WF_SDXL = {
+  id:'image_sdxl_simple', template:'image_sdxl_simple',
+  title:'SDXL1.0: Text to Image', kind:'image', tags:['Text to Image'],
+  complete:true, runnable:true, run_reason:null, curated_pick:'sdxl',
+  controls:['cfg', 'height', 'negative', 'prompt', 'seed', 'steps', 'width'], needs:[],
+  defaults:{ width:1024, height:1024, steps:20, cfg:8, negative:'text, watermark' },
+  files:[{ directory:'checkpoints', name:'sd_xl_base_1.0.safetensors', present:true,
+           state:'present', bytes:6938078334, url:'https://hf/x', size_source:'on disk' }],
+  present_count:1, file_count:1, missing:[], missing_bytes:null, missing_h:null, no_url:[],
+};
+const WF_REFINER = {
+  id:'sdxl_refiner_prompt_example', template:'sdxl_refiner_prompt_example',
+  title:'SDXL Refiner Prompt', kind:'image', tags:['Text to Image'],
+  complete:false, runnable:false, run_reason:'files are missing', curated_pick:null,
+  controls:[], needs:[], defaults:{},
+  files:[{ directory:'checkpoints', name:'sd_xl_base_1.0.safetensors', present:true,
+           state:'present', bytes:6938078334, url:'https://hf/x', size_source:'on disk' },
+         { directory:'checkpoints', name:'sd_xl_refiner_1.0.safetensors', present:false,
+           state:'absent', bytes:6075673160, url:'https://hf/r', size_source:'HEAD' }],
+  present_count:1, file_count:2, missing:['sd_xl_refiner_1.0.safetensors'],
+  missing_bytes:6075673160, missing_h:'6.08 GB', no_url:[],
+};
+const WF_CAM = {
+  id:'video_wan2.1_fun_camera_v1.1_1.3B', template:'video_wan2.1_fun_camera_v1.1_1.3B',
+  title:'Wan 2.1 Fun Camera 1.3B', kind:'video', tags:['Image to Video'],
+  complete:true, runnable:true, run_reason:null, curated_pick:null,
+  controls:['cfg', 'fps', 'height', 'image', 'length', 'prompt', 'seed', 'steps', 'width'],
+  needs:['image'],
+  defaults:{ width:832, height:480, steps:25, cfg:6, fps:16, length:81 },
+  files:[{ directory:'clip_vision', name:'clip_vision_h.safetensors', present:true,
+           state:'present', bytes:1264219396, url:'https://hf/c', size_source:'on disk' },
+         { directory:'diffusion_models', name:'wan2.1_fun_camera_v1.1_1.3B_bf16.safetensors',
+           present:true, state:'present', bytes:3232727784, url:'https://hf/f',
+           size_source:'on disk' }],
+  present_count:2, file_count:2, missing:[], missing_bytes:null, missing_h:null, no_url:[],
+};
+const WF_T2V = Object.assign({}, WF_SDXL, {
+  id:'text_to_video_wan', template:'text_to_video_wan', title:'Wan 2.1 Text to Video',
+  kind:'video', curated_pick:'wan',
+  controls:['cfg', 'fps', 'height', 'length', 'negative', 'prompt', 'seed', 'steps', 'width'],
+  defaults:{ width:832, height:480, steps:20, cfg:6, fps:16, length:33 } });
+const WF_HY = Object.assign({}, WF_REFINER, {
+  id:'hunyuanvideo_t2v', title:'HunyuanVideo Text to Video', kind:'video',
+  missing:['hunyuan_video_720.safetensors'], missing_bytes:null, missing_h:null });
+const CAT = { ok:true, templates:78, reason:null, models:[
+  { id:'m:sdxl', title:'SDXL', curated:true, installed:true, ready:1, workflow_count:2,
+    kinds:['image'], on_disk_bytes:6938078334, refused:null,
+    workflows:[WF_SDXL, WF_REFINER] },
+  { id:'m:wan2.1', title:'Wan2.1', curated:true, installed:true, ready:2,
+    workflow_count:2, kinds:['video'], on_disk_bytes:9828025775, refused:null,
+    workflows:[WF_T2V, WF_CAM] },
+  { id:'m:hunyuan_video', title:'Hunyuan Video', curated:false, installed:false, ready:0,
+    workflow_count:1, kinds:['video'], on_disk_bytes:0,
+    refused:'no EU licence grant — MOT Deck refuses this family outright',
+    workflows:[WF_HY] },
+] };
+const withCat = (over) => (S) => { S.catalog = CAT; if (over) over(S); };
+
+const pick = runPage(STATE(), GAL, withCat());
+proseAudit('daily use, catalogue live', pick, 0);
+ok(/id="p-model"/.test(pick.markup) && /id="p-wf"/.test(pick.markup),
+   'the picker is a model select and a workflow select…');
+const staticNow = html.split('</style>')[1].split('<script>')[0];
+ok(staticNow.indexOf('id="promptbox"') < staticNow.indexOf('id="picker"')
+   && staticNow.indexOf('id="picker"') < staticNow.indexOf('id="keyrow"'),
+   '…and it sits BETWEEN the settings/prompt region and Generate, which is where Debi '
+   + 'drew it ("in between the settings pane and Generate")');
+ok(/>SDXL · 1 of 2 ready</.test(pick.markup) && />Wan2.1 · 2 of 2 ready</.test(pick.markup),
+   'every discovered model is listed with how many of ITS workflows will actually run');
+ok(/>Hunyuan Video · not installed</.test(pick.markup),
+   '…including one with nothing on disk — the catalogue is a superset, not a filter');
+ok(pick.M.curWorkflow().id === 'image_sdxl_simple',
+   'the page opens on a workflow that WORKS, not on the first row of the list');
+ok(/SDXL Refiner Prompt · 6\.08 GB/.test(pick.markup),
+   'an incomplete workflow is still offered, priced with the size it is missing');
+ok(pick.M.workflowVerdict(WF_SDXL, null).chip === 'ready'
+   && pick.M.workflowVerdict(WF_REFINER, null).chip === 'Get 6.08 GB',
+   'the state chip is "ready" or the exact Get — Debi’s "if it’s present/installed, '
+   + 'it’ll work"');
+ok(pick.M.workflowVerdict(WF_REFINER, null).act === 'download'
+   && pick.M.workflowVerdict(WF_REFINER, null).workflow === 'sdxl_refiner_prompt_example',
+   '…and the Get fetches THAT WORKFLOW’s missing files, not the whole family');
+ok(/Missing: sd_xl_refiner_1\.0/.test(pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER, null))),
+   '…naming them in its hover');
+ok(/no sha256 for/.test(pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER, null))),
+   'LIE GUARD: a discovered download says it is checked against the SIZE, because '
+   + 'upstream pins no hash for it — implying the stronger check would be the lie');
+const unknownSize = Object.assign({}, WF_REFINER, { missing_h:null, missing_bytes:null });
+ok(pick.M.workflowVerdict(unknownSize, null).chip === 'Get · size unknown',
+   'a size no HEAD has confirmed is SAID to be unknown, never rounded into a number');
+for (const v of [pick.M.workflowVerdict(WF_SDXL, null),
+                 pick.M.workflowVerdict(WF_REFINER, null),
+                 pick.M.workflowVerdict(unknownSize, null),
+                 pick.M.workflowVerdict(WF_CAM, null),
+                 pick.M.workflowVerdict(null, null),
+                 pick.M.workflowVerdict(Object.assign({}, WF_SDXL, { runnable:false,
+                   run_reason:'this template is built out of SUBGRAPHS' }), null)]) {
+  ok(words(v.chip) <= 7 && !!(v.line || v.math || v.hedge),
+     `workflow verdict "${v.chip}" is chip-length and carries its sentence in the hover`);
+}
+ok(/refused here/.test(runPage(STATE(), GAL,
+     withCat((S) => { S.form.model = 'm:hunyuan_video'; })).markup),
+   'a REFUSED family is listed and says so — an absent row reads as a bug in the scan');
+
+// WALKED DEFECT (2026-08-29, catalogue era): the write-back is aimed at the workflow
+// that RAN. The page can legitimately open on SDXL while the last finished job was a
+// Wan clip, and the unguarded version put 576×320 · 10 steps into SDXL's fields —
+// numbers describing a run that workflow never did, under a button that would use them.
+const elsewhere = runPage(STATE({ jobs: [{ id: 'j12', state: 'done',
+  shape: '576×320 · 21f', steps: 10, workflow: 'video_wan2.1_fun_camera_v1.1_1.3B',
+  pick_title: 'Wan 2.1 Fun Camera 1.3B', mode: 'video' }] }), GAL, withCat());
+ok(elsewhere.M.curWorkflow().id === 'image_sdxl_simple'
+   && elsewhere.M.S.form.width == null && elsewhere.M.S.form.steps == null,
+   'a finished run writes its values back ONLY onto the workflow that produced them');
+const samewf = runPage(STATE({ jobs: [{ id: 'j13', state: 'done', shape: '1024×1024',
+  steps: 20, workflow: 'image_sdxl_simple', pick_title: 'SDXL', mode: 'image' }] }),
+  GAL, withCat());
+ok(samewf.M.S.form.width === 1024 && samewf.M.S.form.steps === 20,
+   '…and still writes them back when it IS the selected one (Pixelmator, intact)');
+
+console.log('\n9b. one model, several workflows, each with its own controls');
+const cam = runPage(STATE(), GAL, withCat((S) => {
+  S.form.model = 'm:wan2.1'; S.form.workflow = WF_CAM.id; }));
+ok(cam.M.curWorkflow().id === WF_CAM.id && cam.M.runMode() === 'workflow',
+   'a DISCOVERED workflow submits through the converter…');
+ok(runPage(STATE(), GAL, withCat((S) => {
+     S.form.model = 'm:wan2.1'; S.form.workflow = 'text_to_video_wan'; })).M.runMode()
+   === 'pick',
+   '…and a CURATED one still goes through its sha-pinned, measured builder');
+ok(/id="f-frames"/.test(cam.markup) && /id="f-fps"/.test(cam.markup)
+   && /value="81"/.test(cam.markup),
+   'the video workflow draws frames + fps, prefilled from ITS OWN template defaults');
+ok(!/id="f-neg"/.test(cam.markup),
+   'and NO negative-prompt field, because that template has no negative prompt — the '
+   + 'controls are read off the converted graph, not off a table of "video models"');
+const sdxlRail = runPage(STATE(), GAL, withCat());
+ok(/id="f-neg"/.test(sdxlRail.markup) && !/id="f-frames"/.test(sdxlRail.markup),
+   '…while the image workflow, which HAS one, draws it and draws no frame count');
+ok(/clip_vision_h\.safetensors/.test(cam.markup)
+   && /wan2\.1_fun_camera_v1\.1_1\.3B_bf16/.test(cam.markup),
+   'the rail lists THIS workflow’s own files (Debi’s bullet 2), including the 1.26 GB '
+   + 'companion that is not the model itself');
+ok(cam.M.needsSource() === 'image',
+   'a workflow that starts from a picture says so…');
+ok(/nothing to start from/.test(cam.markup),
+   '…and with nothing to start from it says THAT, instead of a ready button that fails');
+const camSrc = runPage(STATE(), GAL, withCat((S) => {
+  S.form.model = 'm:wan2.1'; S.form.workflow = WF_CAM.id;
+  S.sources = [{ origin:'gallery', kind:'image', filename:'image_00002_.png',
+                 subfolder:'harness', label:'image_00002_.png', at:2 }]; }));
+ok(/id="p-src"/.test(camSrc.markup) && /image_00002_\.png/.test(camSrc.markup),
+   '…and a real result from the rail becomes the source it starts from');
+proseAudit('a discovered image-to-video workflow', camSrc, 0);
+// the mode/model reset rule, one door over: a number the PAGE wrote belongs to the
+// template it came from and goes with it.
+const sw2 = runPage(STATE(), GAL, withCat());
+sw2.M.S.form = { model:'m:sdxl', workflow:'image_sdxl_simple', width:1024, height:1024,
+                 steps:20, negative:'text, watermark' };
+sw2.M.S.typed = { width:true };
+sw2.M.resetUntouched();
+ok(sw2.M.S.form.width === 1024 && sw2.M.S.form.height === null
+   && sw2.M.S.form.negative === null,
+   'switching workflow keeps what you TYPED and drops what the page wrote — including '
+   + 'the negative prompt, which belongs to the template that shipped it');
+ok(runPage(STATE(), GAL, withCat((S) => {
+     S.form.model = 'm:wan2.1'; S.form.workflow = WF_CAM.id; })).M.wfKind() === 'video',
+   'the workflow IS the mode — a discovered template’s kind is not a second choice');
+// the curated Wan keeps its two modes, and its measured defect still rides the choice
+const wanCur = runPage(STATE(), GAL, withCat((S) => {
+  S.form.model = 'm:wan2.1'; S.form.workflow = 'text_to_video_wan'; }));
+ok(/colour shift/.test(wanCur.markup),
+   'THE WAN DEFECT IS STILL ECHOED AT THE MOMENT OF CHOICE, now on the picker row');
+ok(!/colour shift/.test(pick.markup),
+   '…and stays silent when the healthy image workflow is selected');
+ok(/id="f-mode"/.test(wanCur.markup) && !/id="f-mode"/.test(cam.markup),
+   'a curated model whose own graph does two things keeps its Image/Clip toggle; a '
+   + 'discovered workflow has nothing to toggle');
+
+console.log('\n9c. the catalogue is inert until it answers (the curated page is unchanged)');
+ok(!/id="p-model"/.test(daily.markup),
+   'with no catalogue the picker paints NOTHING — the shipped v3 page, unchanged');
+ok(daily.M.runMode() === 'pick',
+   '…and Generate still routes through the curated builder, exactly as before');
+ok(/id="f-mode"/.test(daily.markup),
+   '…with the rail’s own model chip and mode toggle still standing');
+
+// ── 10. DEBI'S REVIEW: both rails resize, the results rail shows FOUR ────────
+console.log('\n10. both side panes resize, and the results rail shows four');
+ok(/id="gripL"/.test(staticNow) && /id="gripR"/.test(staticNow),
+   'there is a separator control on BOTH sides of the centre');
+ok((html.match(/aria-orientation="vertical"/g) || []).length === 2
+   && /aria-orientation="horizontal"/.test(html),
+   '…both are real separators, alongside the stage’s horizontal one');
+ok(/cursor:col-resize/.test(css), 'they carry the col-resize affordance…');
+ok(/ArrowLeft/.test(html) && /ArrowRight/.test(html),
+   '…and ←→ nudge them, so neither rail is mouse-only');
+ok(pick.M.clampW(300, 150, 420, 208) === 300 && pick.M.clampW(9, 150, 420, 208) === 150
+   && pick.M.clampW(9999, 150, 420, 208) === 420,
+   'a rail width is clamped to a range that can still hold a settings row…');
+ok(pick.M.clampW('nonsense', 150, 420, 208) === 208,
+   '…and a corrupt persisted width falls back to the default, never to NaN');
+const rstore = makeStore();
+const rp = runPage(STATE(), G4, (S) => {
+  S.railw = 260; S.resw = 320; S.form.model = 'm:wan2.1'; S.form.workflow = 'text_to_video_wan';
+}, rstore);
+rp.M.saveView();
+const rv = JSON.parse(rstore._m['harness-comfy-view']);
+ok(rv.railw === 260 && rv.resw === 320,
+   'both widths persist in the SAME harness-comfy-view key as the stage');
+ok(rv.model === 'm:wan2.1' && rv.workflow === 'text_to_video_wan',
+   '…and so do the model and workflow you left on');
+const rr = runPage(STATE(), G4, null, makeStore({ 'harness-comfy-view':
+  '{"railw":300,"resw":180,"model":"m:sdxl","workflow":"image_sdxl_simple"}' }));
+ok(rr.M.S.railw === 300 && rr.M.S.resw === 180,
+   'a reload restores the rails you left');
+ok(rr.M.S.form.model === 'm:sdxl' && rr.M.S.form.workflow === 'image_sdxl_simple',
+   '…and the model you were working with');
+ok(/setVar\(\$\('frame'\), '--railw'/.test(html)
+   && /setVar\(\$\('frame'\), '--resw'/.test(html),
+   'the widths are GRID TRACKS, so squeezing the stage genuinely hands the pixels to '
+   + 'the rail — the thumbnails scale up because their columns do (Debi: "the right '
+   + 'rail AUTO-GROWS in correlation")');
+ok(/max-height:calc\(2 \* var\(--thumb, 72px\) \+ 6px \+ 10px\)/
+     .test(css.replace(/\s+/g, ' ')),
+   'the results rail stands FOUR results (2×2) plus a 10px sliver — Debi’s "4 media, '
+   + '2x2, bigger", where it used to draw six small ones');
+ok(/\.thumb img, \.thumb video \{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover/
+     .test(css.replace(/\s+/g, ' ')),
+   'THE BLACK BAR: rail media is pinned to its cell, so there is no unused element box '
+   + 'left for a <video> to paint black');
+ok(/src="' \+ src \+ '#t=0\.1"/.test(html),
+   '…and a clip is asked for a frame at 0.1s, because preload="metadata" decodes none '
+   + 'and an un-hovered clip was therefore a black rectangle');
+/* ⚠️ THE DEFECT UNDER DEBI'S "6 SMALL, NOT 4": the peek was never the fallback by
+   choice — WebKit simply never advanced the `transition: max-height` on a calc() that
+   carries an unregistered custom property, so `--thumb` was measured correctly on every
+   render and the rail went on rendering at the fallback forever. Measured in the app's
+   own engine (setting `transition:none` on the node made the same declaration resolve
+   to 230px instantly, which is how the cause was established rather than guessed). The
+   number is therefore written as a PLAIN LENGTH, which WebKit does interpolate. */
+ok(/t\.style\.maxHeight = S\.all \? 'none'/.test(html)
+   && /\(2 \* one\.offsetHeight \+ 6 \+ 10\) \+ 'px'/.test(html),
+   'the peek is written as a resolved length, never left to a transitioned calc(var()) '
+   + 'that this engine silently refuses to animate');
+ok(/queuePeek\(\);/.test(html.split('function render()')[1] || ''),
+   '…and it is re-resolved after every repaint, so a dragged rail keeps a true peek');
+// WALKED (2026-08-29): requestAnimationFrame does not run in a BACKGROUND tab, so a
+// load that happened while Generate was not the front tab left the peek unresolved and
+// the rail drew six small pictures again — the defect restored by a scheduling
+// assumption nobody had written down.
+ok(/function queuePeek\(\)[\s\S]{0,240}setTimeout\(syncPeek, 60\)/.test(html),
+   '…on a TIMER as well as a frame, because a background tab runs no frames');
+ok(!/#thumbs \{[^}]*transition:max-height/.test(css.replace(/\s+/g, ' ')),
+   '…and the property carries NO transition, because this engine will not advance one '
+   + 'off a calc(var()) computed value even onto a plain inline length — the peek then '
+   + 'pins itself to whatever it first computed, which is the whole defect');
+ok(/object-fit:contain/.test(css),
+   'the STAGE still contains rather than covers — cropping the picture you are '
+   + 'inspecting would be a lie about the render');
+/* ⚠️ NO PSEUDO-ELEMENT ON THIS PAGE MAY PAINT ITSELF FROM A TOKEN. Measured in the
+   app's own engine 2026-08-29: a ::before/::after does NOT recompute its custom-property
+   substitutions when the token changes on :root, so a live theme flip left the stage
+   grip's hairline on the previous look's colour until a reload — white-at-13% on a
+   near-white ground in the two light looks. `color` on the ELEMENT does recompute, and
+   a pseudo's `currentColor` reads it. The echo sweep of that class over this page found
+   three sites (the two grips, the settings divider, the dirty-marker dot); this check
+   is the class, not the incident, so a fourth cannot ship. */
+{
+  const pseudo = cssNC.match(/::(?:after|before)\s*\{[^}]*\}/g) || [];
+  const tokenPainted = pseudo.filter(b => /background:\s*var\(--/.test(b));
+  ok(tokenPainted.length === 0,
+     `no ::after/::before paints itself from a token (${tokenPainted.length
+       ? tokenPainted.join(' | ').slice(0, 160) : 'all use currentColor'})`);
+  ok(pseudo.length >= 4 && /background:currentColor/.test(pseudo.join('')),
+     `…and the ${pseudo.length} that exist are still drawing something (the check is `
+     + 'not passing because the selectors were renamed out from under it)');
+}
+ok(/\.vgrip \{[^}]*background:transparent/.test(css.replace(/\s+/g, ' '))
+   && /\.vgrip::after \{[^}]*opacity:0/.test(css.replace(/\s+/g, ' ')),
+   'the handles are INVISIBLE at rest — the gutters they live in are the same 8px of '
+   + 'air the page already had, so the at-rest budget is untouched');
+ok(/#centre\.sized #lower \{ flex:1 1 auto; max-height:none/.test(css.replace(/\s+/g, ' ')),
+   'dragging the stage SHORTER hands the freed height to the prompt (Debi: "resize '
+   + 'upward too — shrinking the stage frees bottom space that the layout uses")');
+
+// ── 11. NO IN-APP DESTINATION ESCAPES TO THE BROWSER ────────────────────────
+// Debi's bug: the ⋯ menu's "ComfyUI tab ↗" opened Google Chrome instead of our own
+// ComfyUI tab. The class is "an in-app destination rendered as a link"; the sweep found
+// two sites (the sheet header and the item menu) and two legitimate anchors (licence
+// texts on huggingface.co, which are exactly what a browser is for).
+console.log('\n11. an in-app destination switches tabs; only the web opens a browser');
+ok(/cmd: *'switchTab'/.test(html) && /messageHandlers[\s\S]{0,80}harness/.test(html),
+   'the page speaks the shell’s own switchTab handler (the v1.5.38 / v1.5.46 pattern)');
+ok(/postMessage\(\{ cmd:'switchTab', title:title, id:id \}\)/.test(html),
+   '…posting id AND title, so the shell resolves the stable id against its registry');
+ok(/switchTab\('ComfyUI', 'comfyui'\)/.test(html),
+   '…with the ComfyUI tab’s registered id, not a guess at its title');
+ok(/data-act="comfyui-tab"/.test(sheet.markup),
+   'the models sheet’s "ComfyUI tab ↗" is a BUTTON on that path…');
+ok(!/<a [^>]*127\.0\.0\.1:8188/.test(allMarkup) && !/<a [^>]*href="http:\/\/127/.test(allMarkup),
+   '…and no anchor anywhere on the page points at one of our own services');
+ok(/act:'comfyui-tab'/.test(html) && !/label:'ComfyUI tab ↗', href/.test(html),
+   'the item ⋯ menu’s copy of the same control is on the same path');
+ok(/if \(!shellHandler\(\) && url\) \{ window\.open/.test(html),
+   'window.open is the fallback ONLY outside the shell — inside it, that is precisely '
+   + 'what opened Chrome');
+ok(/This build cannot switch tabs/.test(html),
+   '…and a stale shell gets a toast naming the control that does work, never silence');
+const licLinks = (html.match(/target="_blank"/g) || []).length;
+ok(licLinks >= 1 && /huggingface\.co/.test(html),
+   'the licence links stay real anchors — somebody else’s website IS what a browser is '
+   + 'for, and demoting them would be the "invisible provenance" failure');
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

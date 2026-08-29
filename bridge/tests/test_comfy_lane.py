@@ -272,35 +272,48 @@ finally:
 
 # ── 6. ADVERSARIAL LEDGER, the rest ──────────────────────────────────────────
 print("\n6. the rest of the adversarial ledger")
-src = (ROOT / "bridge" / "routers" / "comfy.py").read_text()
-ok("relative_to(root)" in src,
+# ⚠️ THE LANE IS TWO FILES SINCE THE S8 EXTRACTION (v1.5.49), AND EACH SOURCE ASSERTION
+# NAMES THE ONE IT MEANS. Concatenating them and asserting against the blob would have
+# been one line shorter and would have made every check below unable to notice a symbol
+# moving to the wrong side of the seam — the same vacuity the appsrc view exists to
+# prevent, one scale down. `router` is the routes/client/downloads/jobs/gallery half;
+# `core` is curation/catalog/graphs. `src` stays the whole lane for the checks that are
+# genuinely about the lane rather than about a file.
+router = (ROOT / "bridge" / "routers" / "comfy.py").read_text()
+core = (ROOT / "bridge" / "core" / "comfycur.py").read_text()
+src = router + "\n" + core
+ok("relative_to(root)" in router,
    "A-5: the file/reveal routes contain the resolve+relative_to containment check")
-ok(src.count("relative_to(root)") >= 2,
+ok(router.count("relative_to(root)") >= 2,
    "…on BOTH routes that take a filename off the wire")
-ok("os.urandom" in src and "seed = int.from_bytes" in src,
+ok("os.urandom" in router and "seed = int.from_bytes" in router,
    "A-6: a blank seed becomes a real random number…")
-ok('"seed": seed' in src and "\"seed\": seed}" in src or '"seed": seed' in src,
+ok(router.count("int.from_bytes(os.urandom(6)") >= 2,
+   "…on the curated path AND on the discovered-workflow path, so neither can ship the "
+   "silent-zero seed the other was fixed for")
+ok('"seed": seed' in router or '"seed": used.get("seed", seed)' in router,
    "…which is written into the job record and returned, so the run is reproducible")
-ok("registry_drift" in src and "no download URL for" in src,
+ok("registry_drift" in core and "no download URL for" in router,
    "A-7: a template whose registry entry is gone is drift + a refusal, not a silent "
    "zero-file 'success'")
-ok("def cdl_inflight" in src and "joined" in src,
+ok("def cdl_inflight" in router and "joined" in router,
    "A-8: a second Download click joins the first rather than racing it")
-ok("def foreign_writer" in src and "LIVE_PART_S" in src,
+ok("def foreign_writer" in router and "LIVE_PART_S" in router,
    "A-10: a .part another PROCESS is still writing (bridge restarted mid-download — "
    "found by walking it) blocks a second writer that cdl_inflight cannot see")
-ok("_sha256" in src and "asyncio.to_thread" in src,
+ok("_sha256" in router and "asyncio.to_thread" in router,
    "hashing a multi-GB file goes to a thread — the bridge must not freeze mid-download")
-ok("node_errors" in src,
+ok("node_errors" in router,
    "ComfyUI's node_errors is surfaced verbatim, never swallowed into a generic failure")
 ok("phys_footprint" in src,
    "the measurement is phys_footprint (core/memory.py's rule), not RSS")
-ok("not measured on this Mac yet" in src,
+ok("not measured on this Mac yet" in core,
    "an unmeasured model SAYS SO instead of showing an invented ETA")
 
 # A-9: the fence is enforced at SUBMIT, not only at build time.
-ok(src.count("fence_violations(") >= 3,
-   "the fence is checked when building, when validating AND before POST /prompt")
+ok(src.count("fence_violations(") >= 5,
+   "the fence is checked when building, when validating and before POST /prompt — on "
+   "the curated path AND on the discovered one")
 
 # ── 7. WIRING ────────────────────────────────────────────────────────────────
 print("\n7. wiring")
@@ -309,11 +322,29 @@ for p in ("/comfy", "/api/comfy/state", "/api/comfy/download", "/api/comfy/gener
           "/api/comfy/jobs", "/api/comfy/gallery", "/api/comfy/file",
           "/api/comfy/validate"):
     ok(p in paths, f"{p} is on the route table")
+for p in ("/api/comfy/catalog", "/api/comfy/sources"):
+    ok(p in paths, f"{p} is on the route table (the dynamic catalogue, v1.5.49)")
 ok("routers.comfy" in A._LANES, "routers.comfy is in bridge/app.py's _LANES")
 ok("routers/comfy.py" in appsrc.FILES,
    "…and in bridge/appsrc.py's FILES, so a source assertion about it cannot pass vacuously")
 ok("bridge/routers/comfy.py" in appsrc.APP_SOURCE,
    "…which the concatenated source view proves by carrying its boundary marker")
+# THE S8 EXTRACTION'S OWN WIRING. core/comfycur.py owns no route, and both lists still
+# need it: FILES because the contract seam test compares the view against the directory
+# both ways, and _LANES because `A.ROOT = tmp` only reaches modules the facade knows —
+# without it the gallery group above would measure the REAL app tree and pass anyway.
+ok("core.comfycur" in A._LANES,
+   "core.comfycur is in _LANES, so A.ROOT = tmp reaches the module that resolves paths")
+ok("core/comfycur.py" in appsrc.FILES, "…and in bridge/appsrc.py's FILES")
+ok("bridge/core/comfycur.py" in appsrc.APP_SOURCE,
+   "…which the source view proves by carrying its boundary marker")
+ok(len(router.splitlines()) < 1500 and len(core.splitlines()) < 1500,
+   f"both halves are under the 1,500-line ceiling (router {len(router.splitlines())}, "
+   f"core {len(core.splitlines())}) — the S8 extraction is why router growth was legal")
+ok("from ..core.comfycur import" in router and "PICK_BY_ID" in router.split(
+       "from ..core.comfycur import")[1].split(")")[0],
+   "…and the router RE-EXPORTS the moved surface, so `bridge.routers.comfy.PICKS` and "
+   "every symbol the suite names through the facade still resolves at its old address")
 ok((ROOT / "bridge" / "panel" / "comfy.html").is_file(),
    "the page exists where the route serves it from")
 
@@ -327,6 +358,355 @@ ok('ROOT / "data" / "comfyui"' in src,
    "every path resolves off ROOT — the running ComfyUI is the app's, not the repo's")
 ok(not any(s in src for s in ('"/Users', "'/Users", '"/Library', "'/Library")),
    "…and no absolute machine path is hardcoded as a string literal (research §1.1's trap)")
+
+
+# ── 8. THE DYNAMIC CATALOGUE (Debi, 2026-08-29) ──────────────────────────────
+# "if one deletes models, it should be dynamic. if one downloads other models, it
+# should be dynamic and cater to them, e.g. minimax h3, the wan models, ltx and the
+# distilled." Everything below runs against a SYNTHETIC template registry in a temp
+# ROOT, because the repo has no ComfyUI install and a test that only passes on the one
+# Mac with the weights on it is not a gate. The live catalogue was walked separately
+# (26 models / 78 workflows / 71 converting) and the numbers are in the report.
+print("\n8. the catalogue is discovered from disk, not typed into this repo")
+from bridge.core import comfycur as CUR                              # noqa: E402
+
+_UI = {
+    "nodes": [
+        {"id": 1, "type": "UNETLoader", "mode": 0,
+         "widgets_values": ["famous_5B.safetensors", "default"],
+         "properties": {"models": [
+             {"name": "famous_5B.safetensors", "directory": "diffusion_models",
+              "url": "https://example.invalid/famous_5B.safetensors"},
+             # ⚠️ THE ALTERNATIVE. `properties.models` is a DOWNLOAD MENU: this 14B is
+             # offered by the same template and loaded by nothing. A catalogue that
+             # read the registry as the requirement would tell the user they are
+             # missing it.
+             {"name": "famous_14B.safetensors", "directory": "diffusion_models",
+              "url": "https://example.invalid/famous_14B.safetensors"}]},
+         "outputs": [{"name": "MODEL", "type": "MODEL", "links": [10]}], "inputs": []},
+        {"id": 2, "type": "CLIPLoader", "mode": 0,
+         "widgets_values": ["enc.safetensors", "wan", "default"],
+         "properties": {"models": [
+             {"name": "enc.safetensors", "directory": "text_encoders",
+              "url": "https://example.invalid/enc.safetensors"}]},
+         "outputs": [{"name": "CLIP", "type": "CLIP", "links": [11, 12]}], "inputs": []},
+        {"id": 3, "type": "CLIPTextEncode", "mode": 0, "widgets_values": ["a fox"],
+         "inputs": [{"name": "clip", "type": "CLIP", "link": 11}],
+         "outputs": [{"name": "CONDITIONING", "type": "CONDITIONING", "links": [13]}]},
+        {"id": 4, "type": "CLIPTextEncode", "mode": 0, "widgets_values": ["ugly"],
+         "inputs": [{"name": "clip", "type": "CLIP", "link": 12}],
+         "outputs": [{"name": "CONDITIONING", "type": "CONDITIONING", "links": [14]}]},
+        # BYPASSED (mode 4): ComfyUI routes MODEL straight through it.
+        {"id": 5, "type": "LoraLoaderModelOnly", "mode": 4,
+         "widgets_values": ["speedup.safetensors", 1.0],
+         "properties": {"models": [
+             {"name": "speedup.safetensors", "directory": "loras",
+              "url": "https://example.invalid/speedup.safetensors"}]},
+         "inputs": [{"name": "model", "type": "MODEL", "link": 10}],
+         "outputs": [{"name": "MODEL", "type": "MODEL", "links": [15]}]},
+        # A PrimitiveNode supplying a widget value from outside the node.
+        {"id": 6, "type": "PrimitiveNode", "mode": 0, "widgets_values": [12, "fixed"],
+         "outputs": [{"name": "INT", "type": "INT", "links": [16]}], "inputs": []},
+        {"id": 7, "type": "KSampler", "mode": 0,
+         "widgets_values": [999, "randomize", 20, 6.0, "uni_pc", "simple", 1.0],
+         "inputs": [{"name": "model", "type": "MODEL", "link": 15},
+                    {"name": "positive", "type": "CONDITIONING", "link": 13},
+                    {"name": "negative", "type": "CONDITIONING", "link": 14},
+                    {"name": "steps", "type": "INT", "link": 16}],
+         "outputs": [{"name": "LATENT", "type": "LATENT", "links": []}]},
+        {"id": 8, "type": "SaveImage", "mode": 0, "widgets_values": ["ComfyUI"],
+         "inputs": [], "outputs": []},
+        {"id": 9, "type": "MarkdownNote", "mode": 0, "widgets_values": ["read me"],
+         "inputs": [], "outputs": []},
+    ],
+    "links": [[10, 1, 0, 5, 0, "MODEL"], [11, 2, 0, 3, 0, "CLIP"],
+              [12, 2, 0, 4, 0, "CLIP"], [13, 3, 0, 7, 1, "CONDITIONING"],
+              [14, 4, 0, 7, 2, "CONDITIONING"], [15, 5, 0, 7, 0, "MODEL"],
+              [16, 6, 0, 7, 3, "INT"]],
+}
+_INFO = {
+    "UNETLoader": {"input": {"required": {"unet_name": [["famous_5B.safetensors"], {}],
+                                          "weight_dtype": [["default"], {}]}},
+                   "python_module": "nodes"},
+    "CLIPLoader": {"input": {"required": {"clip_name": [["enc.safetensors"], {}],
+                                          "type": [["wan"], {}],
+                                          "device": [["default"], {}]}},
+                   "python_module": "nodes"},
+    "CLIPTextEncode": {"input": {"required": {"text": ["STRING", {}],
+                                              "clip": ["CLIP", {}]}},
+                       "python_module": "nodes"},
+    "LoraLoaderModelOnly": {"input": {"required": {
+        "model": ["MODEL", {}], "lora_name": [["speedup.safetensors"], {}],
+        "strength_model": ["FLOAT", {}]}}, "python_module": "nodes"},
+    "KSampler": {"input": {"required": {
+        "model": ["MODEL", {}], "seed": ["INT", {"control_after_generate": True}],
+        "steps": ["INT", {}], "cfg": ["FLOAT", {}], "sampler_name": [["uni_pc"], {}],
+        "scheduler": [["simple"], {}], "denoise": ["FLOAT", {}],
+        "positive": ["CONDITIONING", {}], "negative": ["CONDITIONING", {}]}},
+        "python_module": "nodes"},
+    "SaveImage": {"input": {"required": {"images": ["IMAGE", {}],
+                                         "filename_prefix": ["STRING", {}]}},
+                  "python_module": "nodes"},
+    "EvilNode": {"input": {"required": {}}, "python_module": "custom_nodes.evil_pack"},
+}
+_IDX = [{"title": "Video", "type": "video", "templates": [
+    {"name": "famous_t2v", "title": "Famous 5B Text to Video",
+     "models": ["Famous", "FamousCo"], "size": 9_000_000_000,
+     "tags": ["Text to Video", "Video"]},
+    {"name": "famous_i2v", "title": "Famous 5B Image to Video",
+     "models": ["Famous"], "size": 9_500_000_000, "tags": ["Image to Video", "Video"]},
+    {"name": "hunyuanvideo_t2v", "title": "HunyuanVideo Text to Video",
+     "models": ["Hunyuan Video"], "size": 40_000_000_000, "tags": ["Video"]},
+]}]
+
+_saved_root = A.ROOT
+try:
+    _tmp = Path(tempfile.mkdtemp())
+    A.ROOT = _tmp
+    _tpl = (_tmp / "data" / "comfyui-venv" / "lib" / "python3.12" / "site-packages"
+            / "comfyui_workflow_templates_json" / "templates")
+    _tpl.mkdir(parents=True)
+    (_tpl / "index.json").write_text(json.dumps(_IDX))
+    (_tpl / "famous_t2v.json").write_text(json.dumps(_UI))
+    # a SECOND workflow on the SAME model — Debi's "one model can carry several
+    # workflows (t2v, i2v, v2v, image)". It takes a starting picture, so it also
+    # exercises the needs-a-source path.
+    _i2v = json.loads(json.dumps(_UI))
+    # …on its OWN weight file, so it stays incomplete while the t2v one is ready. That
+    # is the state Debi's picker has to draw: one model, two workflows, one works.
+    _i2v["nodes"][0]["widgets_values"] = ["famous_i2v_5B.safetensors", "default"]
+    _i2v["nodes"][0]["properties"]["models"].append(
+        {"name": "famous_i2v_5B.safetensors", "directory": "diffusion_models",
+         "url": "https://example.invalid/famous_i2v_5B.safetensors"})
+    _i2v["nodes"].append({"id": 20, "type": "LoadImage", "mode": 0,
+                          "widgets_values": ["x.png", "image"],
+                          "inputs": [], "outputs": []})
+    (_tpl / "famous_i2v.json").write_text(json.dumps(_i2v))
+    _hy = json.loads(json.dumps(_UI))
+    _hy["nodes"][0]["widgets_values"] = ["hunyuan_video_720.safetensors", "default"]
+    _hy["nodes"][0]["properties"]["models"] = [
+        {"name": "hunyuan_video_720.safetensors", "directory": "diffusion_models",
+         "url": "https://example.invalid/hy.safetensors"}]
+    (_tpl / "hunyuanvideo_t2v.json").write_text(json.dumps(_hy))
+
+    ok(CUR.templates_dir() == _tpl, "the vendored registry is FOUND by globbing the venv")
+    cat = CUR.catalog()
+    by = {m["title"]: m for m in cat["models"]}
+    ok(cat["ok"] and "Famous" in by,
+       "a model nobody typed into this repo appears, named by upstream's own index.json")
+    fam = by["Famous"]
+    ok(fam["workflow_count"] == 2,
+       "…carrying BOTH of its workflows (Debi's t2v / i2v / v2v shape)")
+    wt = next(w for w in fam["workflows"] if w["id"] == "famous_t2v")
+    ok(wt["title"] == "Famous 5B Text to Video" and wt["kind"] == "video",
+       "…each with upstream's own human title and kind, not a name we invented")
+    names = sorted(f["name"] for f in wt["files"])
+    ok(names == ["enc.safetensors", "famous_5B.safetensors"],
+       "⚠️ THE REQUIREMENT IS THE GRAPH, NOT THE REGISTRY: the 14B ALTERNATIVE and the "
+       "BYPASSED LoRA are both in properties.models and neither is required")
+    ok(all(not f["present"] for f in wt["files"]) and not wt["complete"],
+       "with nothing on disk the workflow is incomplete, and says which files are missing")
+    ok(wt["missing_bytes"] is None and wt["missing_h"] is None,
+       "…and a size nobody has HEAD-verified is NOTHING, never a plausible number")
+    ok(not fam["installed"], "…so the model is not 'installed'")
+    ok(by["Hunyuan Video"]["refused"] and "EU" in by["Hunyuan Video"]["refused"],
+       "HunyuanVideo is listed and REFUSED with its reason — an absent row would read "
+       "as a bug in the scan")
+
+    # DOWNLOAD ONE → IT APPEARS. DELETE IT → IT DROPS OFF. Debi's sentence, executed.
+    for d, n, size in (("diffusion_models", "famous_5B.safetensors", 5000),
+                       ("text_encoders", "enc.safetensors", 700)):
+        p = CUR.models_dir() / d / n
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"0" * size)
+    cat2 = CUR.catalog()
+    fam2 = next(m for m in cat2["models"] if m["title"] == "Famous")
+    wt2 = next(w for w in fam2["workflows"] if w["id"] == "famous_t2v")
+    ok(wt2["complete"] and fam2["installed"],
+       "the moment the files are on disk the workflow is complete and the model is "
+       "installed — no list edited, no cache invalidated")
+    ok(wt2["files"][0]["bytes"] == 5000 and wt2["files"][0]["size_source"] == "on disk",
+       "…and its size is the size on disk, which is the only size we can be sure of")
+    ok(fam2["ready"] == 1 and fam2["workflow_count"] == 2,
+       "…while the workflow that needs more is still listed, still incomplete")
+    (CUR.models_dir() / "diffusion_models" / "famous_5B.safetensors").unlink()
+    fam3 = next(m for m in CUR.catalog()["models"] if m["title"] == "Famous")
+    ok(not fam3["installed"],
+       "DELETE THE MODEL AND IT DROPS OFF, on the next read, with nothing to invalidate")
+    (CUR.models_dir() / "diffusion_models" / "famous_5B.safetensors").write_bytes(b"0" * 5000)
+
+    # ── the converter ────────────────────────────────────────────────────────
+    conv = CUR.ui_to_api(_UI, _INFO)
+    ok(conv["ok"], f"the vendored UI graph converts to API format ({conv['reason']})")
+    api = conv["graph"]
+    ok("9" not in api, "MarkdownNote is dropped — the frontend owns it, not the engine")
+    ok("5" not in api, "a BYPASSED node is not submitted…")
+    ok(api["7"]["inputs"]["model"] == ["1", 0],
+       "…and its MODEL input is routed straight through to the sampler, which is what "
+       "ComfyUI itself does with mode 4 — reading bypass as 'muted' refused four stock "
+       "Wan/SDXL templates that run perfectly in the editor")
+    ok(api["7"]["inputs"]["steps"] == 12,
+       "a PrimitiveNode feeding a widget resolves to its LITERAL value")
+    ok(api["7"]["inputs"]["cfg"] == 6.0 and api["7"]["inputs"]["sampler_name"] == "uni_pc",
+       "⚠️ control_after_generate IS ACCOUNTED FOR: the hidden 'randomize' slot sits in "
+       "widgets_values, and ignoring it shifts every later widget by one — silently "
+       "sampling with cfg where steps was meant")
+    ok(api["7"]["inputs"]["positive"] == ["3", 0]
+       and api["7"]["inputs"]["negative"] == ["4", 0],
+       "links become [node, slot] pairs pointing at nodes that exist")
+    ctl = CUR.workflow_controls(api, conv["widgets"])
+    ok(ctl["prompt"]["node"] == "3" and ctl["negative"]["node"] == "4",
+       "the prompt and the negative prompt are FOUND by walking back from the sampler, "
+       "not assumed from graph shape")
+    ok("width" not in ctl,
+       "a template with no size widget shows no size control — the page draws the "
+       "knobs this workflow really has")
+    used = CUR.apply_controls(api, ctl, {"prompt": "a red fox", "steps": 9999,
+                                         "seed": 7, "width": 512})
+    ok(api["3"]["inputs"]["text"] == "a red fox", "the typed prompt lands in its node")
+    ok(used["steps"] == 200 and api["7"]["inputs"]["steps"] == 200,
+       "…an absurd step count is clamped and the clamped value is REPORTED back")
+    ok("width" not in used,
+       "…and a value for a knob this workflow does not have is dropped, never injected")
+    ok(CUR.retarget_outputs(api) == 1
+       and api["8"]["inputs"]["filename_prefix"] == "harness/image",
+       "every Save node is retargeted under <output>/harness/ — otherwise the run "
+       "succeeds and the gallery, which only looks there, shows nothing")
+
+    # ── THE WALKED CONVERTER BUG (2026-08-29, LIE class) ─────────────────────
+    # A real discovered workflow — Wan 2.1 Fun Camera, downloaded live through the new
+    # lane — was submitted with `speed` = 81 against a max of 10, because
+    # WanCameraEmbedding's `camera_pose` is a combo spelled `"COMBO"` (the newer
+    # /object_info schema) rather than a LIST of options (the legacy one). Only the list
+    # form counted as a widget, so camera_pose fell out of the slot list and every later
+    # value shifted by one: width took "Zoom In", height took the width, speed took the
+    # frame count. ComfyUI's validator caught THIS one because a number was out of
+    # range. A template whose types happened to line up would have rendered the wrong
+    # picture in silence. Both halves of the fix are pinned: the spelling, and the
+    # invariant that makes the whole class a refusal instead of a wrong graph.
+    _COMBO = {
+        "NewSchema": {"python_module": "nodes", "input": {"required": {
+            "camera_pose": ["COMBO", {"default": "Static",
+                                      "options": ["Static", "Zoom In"]}],
+            "width": ["INT", {"default": 832}], "height": ["INT", {"default": 480}],
+            "length": ["INT", {"default": 81}]},
+            "optional": {"speed": ["FLOAT", {"default": 1.0}]}}},
+        # …and the THIRD spelling, found on the SAME walk one node further down the
+        # graph: SaveVideo's `format` and `codec` are "COMFY_DYNAMICCOMBO_V3". Missing
+        # them submitted SaveVideo with no format, and the run died sixty seconds in —
+        # AFTER the sampling had been paid for. Hence a predicate over the type NAME
+        # rather than a third entry in a list of spellings.
+        "Saver": {"python_module": "nodes", "input": {
+            "required": {"video": ["VIDEO", {}],
+                         "filename_prefix": ["STRING", {"default": "video/ComfyUI"}],
+                         "format": ["COMFY_DYNAMICCOMBO_V3", {"default": "auto"}]},
+            "optional": {"codec": ["COMFY_DYNAMICCOMBO_V3", {"default": "auto"}]}}},
+    }
+    _g = {"nodes": [{"id": 1, "type": "NewSchema", "mode": 0,
+                     "widgets_values": ["Zoom In", 512, 512, 81, 1],
+                     "inputs": [], "outputs": [],
+                     "properties": {"models": []}}], "links": []}
+    _c = CUR.ui_to_api(_g, _COMBO)
+    ok(_c["ok"], "a node whose combo is spelled \"COMBO\" converts at all")
+    ok(_c["graph"]["1"]["inputs"]["camera_pose"] == "Zoom In"
+       and _c["graph"]["1"]["inputs"]["width"] == 512
+       and _c["graph"]["1"]["inputs"]["length"] == 81
+       and _c["graph"]["1"]["inputs"]["speed"] == 1,
+       "…with EVERY value in its own slot — the shipped bug put the frame count in "
+       "`speed` and the words 'Zoom In' in `width`")
+    _sv = {"nodes": [{"id": 1, "type": "Saver", "mode": 0,
+                      "widgets_values": ["video/ComfyUI", "auto", "auto"],
+                      "inputs": [{"name": "video", "type": "VIDEO", "link": None}],
+                      "outputs": [], "properties": {"models": []}}], "links": []}
+    _svr = CUR.ui_to_api(_sv, _COMBO)
+    ok(_svr["ok"] and _svr["graph"]["1"]["inputs"]["format"] == "auto"
+       and _svr["graph"]["1"]["inputs"]["codec"] == "auto",
+       "…and so does the DYNAMIC combo spelling — the third one in a single "
+       "/object_info, and the one that cost a 60s render before it errored")
+    ok(CUR.retarget_outputs(_svr["graph"]) == 0,
+       "(a Save node this surface does not know the kind of is left alone rather than "
+       "retargeted into a folder it never writes to)")
+
+    _bad = {"Shifted": {"python_module": "nodes", "input": {"required": {
+        "width": ["INT", {"default": 8}], "mystery": [["a", "b"], {}]}}}}
+    _bg = {"nodes": [{"id": 1, "type": "Shifted", "mode": 0, "widgets_values": [512],
+                      "inputs": [], "outputs": [], "properties": {"models": []}}],
+           "links": []}
+    _br = CUR.ui_to_api(_bg, _bad)
+    ok(not _br["ok"] and "wrong slots" in (_br["reason"] or ""),
+       "THE ALIGNMENT GUARD: a node that would be submitted missing a REQUIRED widget "
+       "is refused by name — a workflow we cannot convert faithfully is never submitted "
+       "with values in the wrong slots (it caught five more stock templates on the "
+       "live tree the moment it was added)")
+    _tail = {"Grew": {"python_module": "nodes", "input": {"required": {
+        "a": ["INT", {"default": 1}], "b": ["INT", {"default": 7}]}}}}
+    _tg = {"nodes": [{"id": 1, "type": "Grew", "mode": 0, "widgets_values": [5],
+                      "inputs": [], "outputs": [], "properties": {"models": []}}],
+           "links": []}
+    _tr = CUR.ui_to_api(_tg, _tail)
+    ok(_tr["ok"] and _tr["graph"]["1"]["inputs"] == {"a": 5, "b": 7},
+       "…while a template authored BEFORE the node grew a parameter takes the node's "
+       "own default for the tail, which is exactly what ComfyUI's editor does — the "
+       "distinction is tail-vs-middle, so the guard above still bites")
+
+    # A SHAPE STATED TWICE MUST BE CHANGED TWICE (same walk, same workflow).
+    _two = {"A": {"python_module": "nodes", "input": {"required": {
+                "length": ["INT", {"default": 81}]}}},
+            "B": {"python_module": "nodes", "input": {"required": {
+                "length": ["INT", {"default": 81}], "width": ["INT", {"default": 8}]}}}}
+    _tg2 = {"nodes": [
+        {"id": 1, "type": "A", "mode": 0, "widgets_values": [81], "inputs": [],
+         "outputs": [], "properties": {"models": []}},
+        {"id": 2, "type": "B", "mode": 0, "widgets_values": [81, 832], "inputs": [],
+         "outputs": [], "properties": {"models": []}}], "links": []}
+    _r2 = CUR.ui_to_api(_tg2, _two)
+    _ctl2 = CUR.workflow_controls(_r2["graph"], _r2["widgets"])
+    CUR.apply_controls(_r2["graph"], _ctl2, {"length": 21})
+    ok(_r2["graph"]["1"]["inputs"]["length"] == 21
+       and _r2["graph"]["2"]["inputs"]["length"] == 21,
+       "a frame count the graph states TWICE is changed in BOTH places — Wan's camera "
+       "workflow embeds a camera path whose length must match the video's, and setting "
+       "only the first is how '21 frames' becomes a graph that disagrees with itself")
+
+    # THE DYNAMIC FENCE — the supply-chain ruling against evidence, not a name list.
+    ok(CUR.stock_class("KSampler", _INFO) and not CUR.stock_class("EvilNode", _INFO),
+       "a class whose /object_info python_module is custom_nodes.* is NOT stock")
+    ok(not CUR.stock_class("NeverHeardOf", _INFO),
+       "…and a class the server does not have at all is not stock either")
+    _evil = dict(api)
+    _evil["99"] = {"class_type": "EvilNode", "inputs": {}}
+    ok(CUR.dynamic_fence_violations(_evil, _INFO) == ["EvilNode"],
+       "a graph carrying a third-party class is refused BY NAME (LLMVISION / "
+       "Ultralytics, as a gate rather than a paragraph)")
+    ok(CUR.dynamic_fence_violations(api, _INFO) == [],
+       "…and a stock template passes it, which is what makes the fence usable at all")
+
+    # A SIZE WE HAVE HEAD-VERIFIED IS USED; ONE WE HAVE NOT IS ABSENT.
+    CUR.SIZES["https://example.invalid/enc.safetensors"] = 700_000_000
+    (CUR.models_dir() / "text_encoders" / "enc.safetensors").unlink()
+    w = next(w for w in CUR.catalog()["models"][0]["workflows"] if w["id"] == "famous_t2v")
+    f = next(f for f in w["files"] if f["name"] == "enc.safetensors")
+    ok(f["bytes"] == 700_000_000 and f["size_source"] == "HEAD",
+       "a HEAD-verified size is used and SAYS it came from a HEAD")
+    ok(w["missing_bytes"] == 700_000_000,
+       "…and the workflow's missing total is real arithmetic over known sizes only")
+finally:
+    A.ROOT = _saved_root
+    CUR.SIZES.pop("https://example.invalid/enc.safetensors", None)
+
+# ⚠️ THE SOURCE-TEXT HALF OF THE SAME GROUP: the page and the router must agree that a
+# discovered file gets the WEAKER of the two checks, and must not imply otherwise.
+ok("size declared by server" in router and '"verify": "size + sha256"' in router,
+   "a discovered download says which check it got (size only) and a curated one says "
+   "size + sha256 — a card that implied the stronger check would be the LIE class")
+ok('seen = {r["filename"] for r in out}' in router
+   and "p.name not in seen" in router,
+   "the Source list is DEDUPED on the file name — submitting a gallery picture copies "
+   "it into input/, so the same still appeared twice with the identical label and no "
+   "way to tell the two rows apart (walked 2026-08-29)")
+ok("needs_source" in router and "pick one under Source" in router,
+   "an image-to-video workflow that has been given no picture REFUSES with the fix, "
+   "instead of letting ComfyUI fail on a filename that is not in input/")
 
 print(f"\n{checks - fails}/{checks} checks passed")
 sys.exit(1 if fails else 0)
