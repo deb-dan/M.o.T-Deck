@@ -89,3 +89,24 @@ data/llamacpp/build/bin, and the field's hard-won lesson (Ollama abandoned preci
 prediction). Building from the brief alone would have shipped confidently wrong verdicts —
 the LIES-TO-USER class, the worst class. The lesson is general: it applies to ANY
 technical topic (memory, formats, protocols, licensing, security), not to RAM math.
+
+## 9. SHAPE IS SCOPE (Debi, 2026-08-29 — general form)
+
+A "shape decision" that changes what the user SEES OR GETS — UI vs terminal, embedded
+vs external app, page vs dialog, automatic vs manual — is not an implementation detail.
+It is a SCOPE decision, and scope belongs to Debi. When research or building surfaces a
+fact that forces the deliverable into a different shape than the user's evident
+expectation, the slice STOPS and the fork is surfaced BEFORE building — not argued
+brilliantly in the report after. Evident expectations count as requirements: a
+preference the user has stated anywhere (even about a different component) binds the
+analogous decision everywhere. Fable's QA must check every builder "shape decision"
+section against the user's recorded expectations, not merely against internal
+consistency — a beautifully argued wrong destination still fails.
+
+**The incident (example, not the rule):** goose. Debi wanted goose embedded like
+Unsloth because of its UI — and had earlier said Aider having no UI defied her
+expectations (the recorded signal). Research checked only the CLI artifact, concluded
+"no browser UI", and a PTY lane was built and QA-passed on rigor while being the wrong
+destination. Hours spent; the fork ("CLI has no UI; the project ships a desktop UI;
+terminal lane or embed work?") was never put to her. The backend work (pins, telemetry
+kill, isolation, runner wiring) survives; the shape didn't.
