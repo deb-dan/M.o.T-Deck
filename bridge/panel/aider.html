@@ -6,7 +6,7 @@
      below changes it, so "the scripts never ran" is answerable from the shell
      (webView.title) as well as from the static banner in the body. -->
 <title>Aider · booting…</title>
-<meta name="harness-build" content="aider-2026-08-21c">
+<meta name="harness-build" content="aider-2026-08-29a">
 <!-- The Aider tab is its OWN document, deliberately not the panel: it is a terminal,
      it loads xterm.js, and it must not carry the panel's poll loops. The palette
      values below are the panel's tokens, copied (a separate document cannot inherit
@@ -84,7 +84,7 @@
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>aider-2026-08-21c</code>.</div>
+  Build <code>aider-2026-08-29a</code>.</div>
 <header>
   <span class="name">Aider</span>
   <span class="pill" id="p-install">checking…</span>
@@ -99,13 +99,18 @@
 <div id="note">
   aider edits files in <b id="ws-dir">data/aider-workspace</b> — it asks before every
   change, and git is its undo (<b>/undo</b>, <b>/diff</b>). Nothing is auto-committed.
-  A dropped connection ends the session; there is no replay.
+  Reloading this tab does <b>not</b> end the session — it reattaches and replays the
+  last <b id="sbk">256</b>KB of the terminal. With no tab attached it keeps running for
+  <b id="grace">10 minutes</b>, then stops. <b>End session</b> stops it now.
 </div>
 <div id="msg"></div>
 <div id="logwrap"><pre id="logbox"></pre></div>
 <div id="wrap"><div id="term"></div></div>
-<div id="foot">aider is a lane, not a component — it has no MOT Deck card to
-  start or stop, because it lives in this tab and runs only while the tab is open.</div>
+<div id="foot">aider is a lane, not a component — it has no MOT Deck card to start or
+  stop. It outlives a reload but not the grace window above, and <b>End session</b> or
+  <code>/exit</code> stops it at once. Aider keeps no session list of its own: its
+  history lives in the workspace, which is why this tab offers a reattach and not a
+  picker.</div>
 
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>
@@ -226,17 +231,37 @@ function paint() {
   el('p-install').className = 'pill' + (s.installed ? ' on' : (dead ? ' bad' : ''));
   el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
   el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
-  el('p-ws').textContent = connected ? 'session live' : 'not connected';
-  el('p-ws').className = 'pill' + (connected ? ' on' : '');
+  // THE THREE SESSION STATES, and the middle one is new: a session can be RUNNING with
+  // no page on it (this tab was reloaded, or closed and reopened). Saying only
+  // 'not connected' there would hide a live agent holding the workspace.
+  // ⚠️ FOUR STATES, AND THE FOURTH IS DEBI'S OWN SCREENSHOT (2026-08-29, ledger U10):
+  // this chip read NOT CONNECTED while the terminal below said "aider is already
+  // running in another window". The chip had no word for "running, somebody else has
+  // it", so it reported the only other thing it knew — and contradicted its own page.
+  const elsewhere = !connected && s.running && s.attached;
+  el('p-ws').textContent = connected ? 'session live'
+    : elsewhere ? 'running · another window'
+    : (s.detached ? ('running · detached ' + Math.max(0, s.grace_left | 0) + 's')
+                  : 'not connected');
+  el('p-ws').className = 'pill' + (connected || s.detached || elsewhere ? ' on' : '');
   if (s.workspace) el('ws-dir').textContent = s.workspace;
+  if (s.scrollback_kb) el('sbk').textContent = s.scrollback_kb;
+  if (s.grace_s) el('grace').textContent = Math.round(s.grace_s / 60) + ' minutes';
   // The button STAYS VISIBLE while installing, wearing the state — it is the control
   // that was clicked, so it is where the answer belongs.
   el('btn-install').style.display = (!dead && (!s.installed || inst)) ? '' : 'none';
   el('btn-install').disabled = inst;
   el('btn-install').textContent = inst ? 'installing…' : 'Install aider';
   el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
-  el('btn-start').disabled = !s.model_ready;
-  el('btn-stop').style.display = connected ? '' : 'none';
+  // The button SAYS WHAT IT WILL DO — "Start" beside a running session was half of
+  // Debi's dead end: the label promised a new session and the bridge refused.
+  el('btn-start').textContent = elsewhere ? 'Take over'
+    : (!connected && s.detached) ? 'Reattach' : 'Start';
+  // A RUNNING session can ALWAYS be joined — the model check gates STARTING a new one.
+  el('btn-start').disabled = !s.model_ready && !s.detached && !elsewhere;
+  // End stays reachable while a session is running anywhere: that is exactly when the
+  // user needs it, and hiding it would leave a running agent with no off switch.
+  el('btn-stop').style.display = (connected || s.detached || elsewhere) ? '' : 'none';
   if (inst || s.install_error) el('lnk-log').style.display = '';
 
   // Failure is reported ONCE per distinct error, so a poll cannot re-open a log the
@@ -285,7 +310,19 @@ el('btn-install').onclick = async () => {
 };
 
 el('btn-start').onclick = () => start();
-el('btn-stop').onclick = () => { if (sock) sock.close(); };
+// ⚠️ ENDING IS A POST, NOT sock.close(). Closing the socket is now exactly what a ⌘R
+// does, and the bridge deliberately reads that as "the page went away" — so the old
+// handler would have made the End button mean "detach", i.e. a control that promises
+// to stop an agent and instead leaves it running. The POST kills the process; the
+// socket then closes because the child is gone.
+el('btn-stop').onclick = async () => {
+  el('btn-stop').disabled = true;
+  try { await jfetch('/api/aider/end', { method: 'POST' }); }
+  catch (e) { say('could not end the session: ' + e.message); }
+  el('btn-stop').disabled = false;
+  if (sock) sock.close();
+  await loadStatus();
+};
 
 function start() {
   if (sock && sock.readyState <= 1) return;
@@ -308,6 +345,14 @@ function start() {
     if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
     else if (ev.code === 4409) say('aider is already running in another window.');
     else if (ev.code === 4412) say('');            // the message came through the terminal
+    // 'detached' is the bridge saying the CHILD IS STILL ALIVE and this socket simply
+    // went away — never printed as "session ended", which would be a lie the user
+    // would act on by starting a second one.
+    else if (ev.reason === 'detached') { /* the page is going away; say nothing */ }
+    // Another window took the session. The child is ALIVE — "session ended" would be
+    // the lie and silence would be the dead end.
+    else if (ev.reason === 'takeover')
+      say('another window took this session — Take over brings it back.', 'info');
     else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
     loadStatus();
   };
@@ -320,7 +365,11 @@ function start() {
   const s = await loadStatus();
   // An install started before this tab was opened (or reloaded) keeps being watched.
   if (s.installing) { say('an install is already running.', 'info'); watchInstall(); }
-  else if (s.installed && s.model_ready) start();  // the tab IS the session
+  // THE ⌘R PATH. `start()` opens the same socket either way; the bridge decides
+  // whether that is a spawn or a reattach (attach_verdict), so a reloaded tab lands
+  // back in its running session with the scrollback replayed. `s.detached` is enough
+  // on its own: a live session is reattachable even with the runner since unloaded.
+  else if (s.installed && (s.model_ready || s.detached)) start();
 })();
 </script>
 </body>

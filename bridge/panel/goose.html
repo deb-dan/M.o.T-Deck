@@ -6,7 +6,7 @@
      changes it, so "the scripts never ran" is answerable from the shell (webView.title)
      as well as from the static banner in the body. -->
 <title>Goose CLI · booting…</title>
-<meta name="harness-build" content="goose-2026-08-29a">
+<meta name="harness-build" content="goose-2026-08-29b">
 <!-- The Goose CLI tab is its OWN document, deliberately not the panel: it is a terminal,
      it loads xterm.js, and it must not carry the panel's poll loops.
      ⚠️ THE NAME ON THIS PAGE IS "Goose CLI" (Debi's naming ruling 2026-08-29) because
@@ -148,6 +148,50 @@
      page hid it with `display:none` here and re-showed it with `style.display=''`,
      which removes the inline declaration and falls straight back to this rule, so every
      message was structurally invisible. A class cannot be defeated that way. */
+  /* ══ THE SESSIONS STRIP (S9) ═══════════════════════════════════════════════
+     One line of chips, horizontally scrollable, above the terminal. It is a STRIP and
+     not a panel on purpose: goose's history is something you GLANCE at and pick from,
+     and a list that pushes the terminal down would fail the same squeeze rule the note
+     above already lost once. Chip grammar: a title (≤7 words, elided), a monospace
+     meta line, and nothing that is a sentence. */
+  #sess{flex:none;padding:7px 16px 8px;border-bottom:1px solid var(--line);
+        background:var(--bg2)}
+  #sess.hide{display:none}
+  .shead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .slab{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;color:var(--faint)}
+  .smeta{font:9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--faint)}
+  .srow{display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+  .schip{position:relative;flex:0 0 auto;max-width:240px;display:flex;
+         align-items:stretch;border:1px solid var(--line2);border-radius:8px;
+         background:var(--card)}
+  .schip:hover{border-color:var(--gold)}
+  .schip.live{border-color:var(--gold)}
+  .sopen{background:none;border:0;padding:5px 9px;text-align:left;display:flex;
+         flex-direction:column;gap:3px;min-width:0;cursor:pointer;border-radius:8px}
+  .sopen:hover{border-color:transparent}
+  .st{font-size:11.5px;color:var(--cream);white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;max-width:186px;display:flex;align-items:center;gap:5px}
+  .sm{font:9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--faint);
+      white-space:nowrap}
+  .sdot{width:6px;height:6px;border-radius:50%;background:var(--gold);flex:none}
+  .sdel{background:none;border:0;border-left:1px solid var(--line);color:var(--faint);
+        padding:0 8px;font-size:11px;cursor:pointer;border-radius:0 8px 8px 0}
+  .sdel:hover{color:var(--bad);border-color:var(--line)}
+  /* THE ARMED STATE is an OVERLAY, not a replacement: the chip keeps its size, so
+     arming one cannot make the strip reflow under the pointer the user is aiming. */
+  .sarm{display:none;position:absolute;inset:0;align-items:center;gap:7px;padding:0 9px;
+        background:var(--card2);border-radius:8px;font-size:10.5px;color:var(--dim)}
+  .schip.armed .sarm{display:flex}
+  .sempty{font-size:11px;color:var(--faint)}
+  /* The fold chip wears the strip's shape but is plainly not a session: no title line,
+     no delete, faint ink. It is the ONE control in the strip that changes what is
+     shown rather than what is running. */
+  .sfold{align-items:center;padding:5px 10px;font-size:10.5px;color:var(--faint);
+         white-space:nowrap;cursor:pointer}
+  /* A short window drops the chips' second line before it drops the strip: half a
+     chip still says which session is which; no strip says nothing at all. */
+  @media (max-height:520px){ .sm{display:none} }
   #boot{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);
         color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
   #boot b{color:var(--cream);font-weight:600}
@@ -195,13 +239,30 @@
     background:var(--cream);color:var(--bg);border-color:var(--st-edge)}
   :where(html[data-chrome="studio"]) .pill{
     background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+  /* The strip's chips are controls, so they take the Studio shape too. These are
+     (0,1,0) selectors tying with `.schip`/`.sarm`, which is exactly why they are down
+     here with the rest — see the block comment above. */
+  :where(html[data-chrome="studio"]) .schip{
+    background:var(--st-btn);border-color:var(--st-edge)}
+  :where(html[data-chrome="studio"]) .schip:hover{border-color:var(--gold)}
+  :where(html[data-chrome="studio"]) .sarm{background:var(--st-hi)}
+  /* ⚠️ MEASURED, NOT ASSUMED (ALL-DESIGNS pass, contrast ratios read off computed
+     values in all eight look-combos). --faint was picked against --card; the Studio
+     chrome paints the chip on the LIGHTER --st-btn instead, and the quiet 9.5px meta
+     line fell to 2.49:1 in Editorial/Studio — legible in a screenshot, not on a
+     laptop at arm's length. --dim is the same role one step up and restores every
+     combo to >4:1. The general rule: a token chosen against one surface is not
+     verified on a surface the second axis substitutes underneath it. */
+  :where(html[data-chrome="studio"]) .sm,
+  :where(html[data-chrome="studio"]) .sdel,
+  :where(html[data-chrome="studio"]) .sfold{color:var(--dim)}
 </style>
 </head>
 <body>
 <div id="boot"><b>If you can read this, this page's scripts did not run.</b>
   That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
   this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
-  Build <code>goose-2026-08-29a</code>.</div>
+  Build <code>goose-2026-08-29b</code>.</div>
 <header>
   <span class="name">Goose CLI</span>
   <span class="pill" id="p-install">checking…</span>
@@ -217,15 +278,29 @@
   goose edits files in <b id="ws-dir">data/goose-workspace</b> — it asks in the
   terminal below before it writes or runs anything, and <b>Enter</b> is the answer.
   It is pointed at
-  <b id="ep">this machine's runner</b>; nothing leaves this Mac. A dropped connection
-  ends the session; <b>/exit</b> then Start resumes a fresh one.
+  <b id="ep">this machine's runner</b>; nothing leaves this Mac. Reloading this tab does
+  <b>not</b> end the session — it reattaches and replays the last <b id="sbk">256</b>KB
+  of the terminal. With no tab attached it keeps running for
+  <b id="grace">10 minutes</b>, then stops.
+</div>
+<div id="sess" class="hide">
+  <div class="shead">
+    <span class="slab">Sessions</span>
+    <span class="grow"></span>
+    <span class="smeta" id="s-store"></span>
+    <button class="link" id="s-refresh">refresh</button>
+  </div>
+  <div class="srow" id="s-row"></div>
+  <div class="sempty" id="s-empty" style="display:none"></div>
 </div>
 <div id="msg"></div>
 <div id="logwrap"><pre id="logbox"></pre></div>
 <div id="wrap"><div id="term"></div></div>
 <div id="foot">goose is a lane, not a component — it has no MOT Deck card to start or
   stop, because it lives in this tab and runs only while the tab is open. Its home and
-  its history stay under <code>data/goose/</code>. The terminal keeps a dark ground in
+  its history stay under <code>data/goose/</code> — the strip above lists what goose
+  itself has kept, and deleting a row runs goose's own <code>session remove</code>.
+  The terminal keeps a dark ground in
   every theme: the colours in it are goose's own. <b>Goose UI</b> in the sidebar is the
   same agent with a graphical surface — it keeps its own home and its own sessions, so
   the two lanes never share a conversation and can run at the same time.</div>
@@ -259,7 +334,14 @@ window.addEventListener('storage', ev => {
     syncSkin();
 });
 window.addEventListener('focus', () => syncSkin());
-document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSkin(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  syncSkin();
+  // The ticker deliberately sleeps while the tab is hidden, so coming back means the
+  // pills and the countdown are stale. Refresh once, here, rather than letting a
+  // background tab burn polls for a page nobody is looking at.
+  loadStatus();
+});
 
 // kind: 'info' for an ordinary progress note, anything else (default) for a failure.
 function say(text, kind) {
@@ -360,16 +442,42 @@ function paint() {
   el('p-install').className = 'pill' + (s.installed ? ' on' : (dead ? ' bad' : ''));
   el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
   el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
-  el('p-ws').textContent = connected ? 'session live' : 'not connected';
-  el('p-ws').className = 'pill' + (connected ? ' on' : '');
+  // THE THREE SESSION STATES, and the middle one is what this slice added: a session
+  // can be RUNNING with no page on it (this tab was reloaded, or closed and reopened).
+  // Saying only 'not connected' there would hide a live agent holding the workspace —
+  // and the countdown is part of the truth, because that process is going to be reaped.
+  // ⚠️ FOUR STATES, AND THE FOURTH IS DEBI'S REPRO (2026-08-29, ledger U10). Her tab
+  // said NOT CONNECTED while the terminal below said "already running in another
+  // window": the chip had no vocabulary for "running, and somebody else has it", so it
+  // reported the only other thing it knew and contradicted the page it sat on.
+  const elsewhere = !connected && s.running && s.attached;
+  el('p-ws').textContent = connected ? 'session live'
+    : elsewhere ? 'running · another window'
+    : (s.detached ? ('running · detached ' + Math.max(0, s.grace_left | 0) + 's')
+                  : 'not connected');
+  el('p-ws').className = 'pill' + (connected || s.detached || elsewhere ? ' on' : '');
   if (s.workspace) el('ws-dir').textContent = s.workspace;
   if (s.endpoint) el('ep').textContent = s.endpoint;
+  if (s.scrollback_kb) el('sbk').textContent = s.scrollback_kb;
+  if (s.grace_s) el('grace').textContent = Math.round(s.grace_s / 60) + ' minutes';
   el('btn-install').style.display = (!dead && (!s.installed || inst)) ? '' : 'none';
   el('btn-install').disabled = inst;
   el('btn-install').textContent = inst ? 'installing…' : 'Install goose';
   el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
-  el('btn-start').disabled = !s.model_ready;
-  el('btn-stop').style.display = connected ? '' : 'none';
+  // The button SAYS WHAT IT WILL DO. "Start" beside a running session was half of the
+  // dead end: the label promised a new session, the bridge refused, and nothing on the
+  // page explained the gap.
+  el('btn-start').textContent = elsewhere ? 'Take over'
+    : (!connected && s.detached) ? 'Reattach' : 'Start';
+  // A RUNNING session can ALWAYS be joined — the model check gates STARTING a new one.
+  // Refusing to let the user back into a process that is already running would be
+  // exactly the wall the advisory-gates ruling forbids, and it is what made every
+  // control on Debi's screenshot a dead end.
+  el('btn-start').disabled = !s.model_ready && !s.detached && !elsewhere;
+  // End stays reachable while a session is running anywhere: that is precisely when the
+  // user needs it, and hiding it would leave a running agent with no off switch.
+  el('btn-stop').style.display = (connected || s.detached || elsewhere) ? '' : 'none';
+  el('sess').className = (s.installed && !dead) ? '' : 'hide';
   if (inst || s.install_error) el('lnk-log').style.display = '';
 
   // Failure is reported ONCE per distinct error, so a poll cannot re-open a log the
@@ -387,6 +495,177 @@ function paint() {
     // silent nothing. Start stays enabled; the sentence is information, not a wall.
     say(s.tools_warning, 'info');
   }
+}
+
+// ══ THE SESSIONS STRIP (S9) ════════════════════════════════════════════════
+// goose has persisted every session since slice 1; before this, the tab offered no way
+// in. The list is goose's OWN `session list --format json` (see bridge/pty_goose.py for
+// the measured flags) — we do not read its database to build it, so a schema change
+// upstream cannot silently show the wrong history.
+let sessions = [], armed = null, liveId = '', showEmpty = false;
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function loadSessions() {
+  // ⚠️ NEVER REDRAW WHILE SOMETHING IS ARMED. A poll that rebuilds the strip under a
+  // half-aimed "delete?" moves the yes button somewhere else — the same defect the
+  // Compose sheet fixed in v1.5.47, and it is worse here because the control deletes.
+  if (armed) return;
+  let j;
+  try { j = await jfetch('/api/goose/sessions'); }
+  catch (e) { el('s-empty').style.display = ''; el('s-empty').textContent =
+              'could not read the session list: ' + e.message; el('s-row').innerHTML = '';
+              return; }
+  sessions = (j && j.sessions) || [];
+  liveId = (j && j.live_session) || '';
+  const st = (j && j.store) || {};
+  // The footer chip: a count and a size, or the count alone. A size we could not
+  // measure is ABSENT, never a zero — absence of information is not information.
+  el('s-store').textContent = st.human
+    ? (st.count + ' sessions · ' + st.human) : (st.count + ' sessions');
+  // ⚠️ MEASURED ON THE WALK: deleting a session made the size go UP (2.8 → 3.1 MB).
+  // That is sqlite, which does not shrink its file on a delete — and a number that
+  // grows when you remove something reads as "the delete did nothing". The chip keeps
+  // reporting what is actually on disk (never a computed fiction) and says why on
+  // hover, which is the honest pair.
+  el('s-store').title = st.path
+    ? (st.path + ' — one sqlite database; it does not shrink when a session is '
+       + 'deleted, so the size can hold or rise after a delete.')
+    : '';
+  renderSessions(j && j.error);
+}
+
+function renderSessions(err) {
+  const row = el('s-row'), empty = el('s-empty');
+  row.innerHTML = '';
+  if (!sessions.length) {
+    empty.style.display = '';
+    // The honest empty state, and it says what will fill it rather than apologising.
+    empty.textContent = err
+      ? ('goose could not list its sessions: ' + err)
+      : 'No sessions yet — the one you start next is listed here.';
+    return;
+  }
+  empty.style.display = 'none';
+  // ⚠️ THE ZERO-MESSAGE ROWS, AND WHY THEY ARE FOLDED RATHER THAN LISTED OR DROPPED.
+  // MEASURED on the real store: 21 of 31 sessions had NO messages at all — goose
+  // records a session the moment it launches, and this tab used to launch one on every
+  // single page load. A strip of twenty-one identical "CLI Session · 0 msgs" chips is
+  // not a history, it is a list nobody can choose from — the very complaint the strip
+  // exists to answer. But deleting them from the view silently would be a different
+  // lie, so they are FOLDED behind a chip that counts them and opens on a click.
+  // (The reload fix also stops the growth at the source: a ⌘R no longer starts one.)
+  const shown = showEmpty ? sessions : sessions.filter(
+    s => s.messages > 0 || (liveId && s.id === liveId));
+  const hidden = sessions.length - shown.length;
+  for (const s of shown) {
+    const live = liveId && s.id === liveId;
+    const chip = document.createElement('div');
+    chip.className = 'schip' + (live ? ' live' : '');
+    chip.dataset.id = s.id;
+    const meta = [s.when, s.messages + (s.messages === 1 ? ' msg' : ' msgs')]
+      .filter(Boolean).join(' · ');
+    chip.innerHTML =
+      '<button class="sopen" type="button">' +
+        '<span class="st">' + (live ? '<span class="sdot"></span>' : '') +
+          esc(s.title || s.id) + '</span>' +
+        '<span class="sm">' + esc(meta) + '</span>' +
+      '</button>' +
+      '<button class="sdel" type="button" title="Delete this session">✕</button>' +
+      '<span class="sarm"><b>delete?</b>' +
+        '<button class="link syes" type="button">yes</button>' +
+        '<button class="link sno" type="button">no</button></span>';
+    chip.querySelector('.sopen').onclick = () => openSession(s, live);
+    chip.querySelector('.sdel').onclick = () => arm(chip, s.id);
+    chip.querySelector('.sno').onclick = () => disarm();
+    chip.querySelector('.syes').onclick = () => removeSession(s.id);
+    row.appendChild(chip);
+  }
+  if (hidden > 0 || showEmpty) {
+    const b = document.createElement('button');
+    b.className = 'schip sfold';
+    b.type = 'button';
+    b.textContent = showEmpty ? 'hide empty' : ('+' + hidden + ' empty');
+    b.title = 'sessions goose opened but nothing was said in';
+    b.onclick = () => { showEmpty = !showEmpty; renderSessions(); };
+    row.appendChild(b);
+  }
+  if (!shown.length && !showEmpty) {
+    // Every session is an empty one. Say that, rather than showing a bare fold chip
+    // next to nothing and letting it read as a broken strip.
+    el('s-empty').style.display = '';
+    el('s-empty').textContent = 'No conversations yet — only empty sessions so far.';
+  }
+}
+
+function arm(chip, id) { disarm(); armed = id; chip.classList.add('armed'); }
+function disarm() {
+  armed = null;
+  for (const c of document.querySelectorAll('.schip.armed')) c.classList.remove('armed');
+}
+
+async function openSession(s, live) {
+  // Clicking the LIVE row is a reattach, not a resume: the bridge would refuse a
+  // resume of a running session, and asking it to is the page's mistake, not the
+  // user's, so the page does not ask.
+  if (live) { start(); return; }
+  // ⚠️ ASK THE BRIDGE FIRST, EVERY TIME — do not decide off `state`. Found on the live
+  // walk: the ticker below skips while the tab is hidden (deliberately), so `state`
+  // can be minutes old, and a stale "nothing is running" sent a resume at a LIVE
+  // session. The bridge refused correctly — but `start()` had already reset the
+  // terminal, so a perfectly healthy session came back as a blank screen. One extra
+  // GET before a destructive-looking action is the cheap half of that trade.
+  const s2 = await loadStatus();
+  const running = s2 && (s2.running || s2.detached);
+  if (running) {
+    // ⚠️ NEVER SILENTLY DROP A LIVE SESSION. Resuming another one would kill the
+    // conversation in progress; the refusal names the one action that unblocks it.
+    say('a session is still running — end it first, then open “' + (s.title || s.id)
+        + '”.');
+    return;
+  }
+  say('');
+  start(s.id);
+}
+
+async function removeSession(id) {
+  disarm();
+  say('deleting ' + id + '…', 'info');
+  try {
+    const j = await jfetch('/api/goose/session/remove',
+                           { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify({ id: id }) });
+    // The route reports goose's OWN receipt; we repeat it rather than inventing one.
+    say((j && j.message) || ('session ' + id + ' deleted'), 'info');
+  } catch (e) {
+    say('nothing was deleted: ' + e.message);
+  }
+  await loadSessions();
+}
+
+el('s-refresh').onclick = () => { disarm(); loadSessions(); };
+// Esc disarms — an armed destructive control must always have a way out that is not
+// clicking something.
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && armed) disarm(); });
+
+// ⚠️ A SLOW TICKER, AND IT EARNS ITS KEEP THREE TIMES OVER. Found on the live walk:
+// the strip rendered before goose had printed its banner, so the LIVE row was not
+// marked — and, being a fresh session with no messages yet, it was folded away with
+// the other empty ones. Its id arrives a second or two after the socket opens, so
+// something has to look again.
+//   1. it marks the live row once the bridge has learned the session's id;
+//   2. it keeps the detached countdown honest instead of frozen at whatever it said
+//      when the page loaded;
+//   3. it notices a session reaped or ended from somewhere else.
+// Five seconds, two cheap GETs, and it never redraws while a delete is armed.
+let tick = 0;
+function watchSession() {
+  clearInterval(tick);
+  tick = setInterval(async () => {
+    if (document.hidden || armed) return;
+    const s = await loadStatus();
+    if ((s.live_session || '') !== liveId) loadSessions();
+  }, 5000);
 }
 
 // Poll while an install runs — one 90MB download plus two sha256 passes.
@@ -424,18 +703,36 @@ el('btn-install').onclick = async () => {
 };
 
 el('btn-start').onclick = () => start();
-el('btn-stop').onclick = () => { if (sock) sock.close(); };
+// ⚠️ ENDING IS A POST, NOT sock.close(). Closing the socket is now exactly what a ⌘R
+// does, and the bridge deliberately reads that as "the page went away" — so the old
+// handler would have turned the End button into a detach: a control that promises to
+// stop an agent and instead leaves it running with the workspace. The POST kills the
+// process; the socket then closes because the child is gone.
+el('btn-stop').onclick = async () => {
+  const b = el('btn-stop');
+  b.disabled = true;
+  try { await jfetch('/api/goose/end', { method: 'POST' }); }
+  catch (e) { say('could not end the session: ' + e.message); }
+  b.disabled = false;
+  if (sock) sock.close();
+  await loadStatus();
+  await loadSessions();
+};
 
-function start() {
+// `resumeId` — '' opens a NEW session, an id resumes that one. Either way the bridge
+// decides whether this socket is a spawn or a REATTACH to a session that is already
+// running (pty_aider.attach_verdict), which is what makes ⌘R harmless.
+function start(resumeId) {
   if (sock && sock.readyState <= 1) return;
   const t = ensureTerm();
   if (!t) return;
   say('');
   t.reset();
-  const q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
+  let q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
+  if (resumeId) q += '&session=' + encodeURIComponent(resumeId);
   sock = new WebSocket('ws://' + location.host + '/api/pty/goose' + q);
   sock.binaryType = 'arraybuffer';
-  sock.onopen = () => { paint(); sendResize(); t.focus(); };
+  sock.onopen = () => { paint(); sendResize(); t.focus(); loadSessions(); };
   sock.onmessage = ev => {
     const d = ev.data;
     if (typeof d === 'string') t.write(d);
@@ -444,11 +741,33 @@ function start() {
   sock.onclose = ev => {
     sock = null;
     paint();
+    // 4409 now carries two different refusals; the terminal already received the
+    // sentence that says which, so the pill line must not overwrite it with a guess.
     if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
-    else if (ev.code === 4409) say('goose is already running in another window.');
+    // 4409 now carries two refusals (another tab has it · a different session is
+    // live). The terminal already received the sentence saying which, so the status
+    // line must not overwrite it with a guess. And if the refusal was OURS — we asked
+    // to resume while our own session was merely detached — the reset above left the
+    // user staring at a blank terminal for a session that is perfectly alive, so we
+    // put it back by reattaching. Self-healing, and it cannot loop: the reattach
+    // carries no session id, and reattach is never refused with 4409.
+    else if (ev.code === 4409) {
+      say('');
+      loadStatus().then(s2 => { if (s2 && s2.detached) start(); });
+    }
     else if (ev.code === 4412) say('');            // the message came through the terminal
+    // 'detached' is the bridge saying the CHILD IS STILL ALIVE and this socket merely
+    // went away. It must NEVER be printed as "session ended" — that is a lie the user
+    // would act on by starting a second session.
+    else if (ev.reason === 'detached') { /* the page is going away; say nothing */ }
+    // Another window took the session. The child is ALIVE — saying "session ended"
+    // here would be the lie, and leaving the page mute would be the dead end. The
+    // terminal already carries the rule; the chip and the button do the rest.
+    else if (ev.reason === 'takeover')
+      say('another window took this session — Take over brings it back.', 'info');
     else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
     loadStatus();
+    loadSessions();
   };
   sock.onerror = () => say('the terminal connection failed.');
   paint();
@@ -457,9 +776,15 @@ function start() {
 (async function boot() {
   ensureTerm();
   const s = await loadStatus();
+  loadSessions();
   // An install started before this tab was opened (or reloaded) keeps being watched.
   if (s.installing) { say('an install is already running.', 'info'); watchInstall(); }
-  else if (s.installed && s.model_ready) start();  // the tab IS the session
+  // THE ⌘R PATH, and it is the same call as a cold start on purpose: the bridge, not
+  // the page, decides whether this socket spawns or reattaches. `s.detached` alone is
+  // enough to reconnect — a live session is reattachable even if the runner has since
+  // been unloaded, and refusing on the model check would strand it.
+  else if (s.installed && (s.model_ready || s.detached)) start();
+  if (s.installed) watchSession();
 })();
 </script>
 </body>

@@ -24,9 +24,32 @@ What is load-bearing in here, and why:
    group, so a dropped socket kills aider AND everything aider spawned (`/run`
    subprocesses, linters). Without it an orphan keeps the workspace.
 
-5. **NO BUFFER REPLAY ON RECONNECT.** Hermes needed a whole resume-sanitizer module
-   because an unterminated CSI must never reach xterm. v1 does not inherit that bug
-   class: a dropped socket ENDS the session, and the page says so.
+5. **THE PROCESS OUTLIVES THE SOCKET — A DROPPED SOCKET IS NOT AN ENDED SESSION.**
+   ⚠️ THIS REVERSES v1'S RULE, AND THE REASON IS THE COMPLAINT THAT PRODUCED IT (Debi,
+   2026-08-29): "every refresh wipes off the current session. That shouldn't be the
+   case." v1 said a dropped socket ENDS the session and the page said so honestly — but
+   a ⌘R is not a drop, it is the most ordinary thing a person does to a tab, and it was
+   killing a running agent mid-turn. The lifetime is now the PROCESS's, not the
+   socket's:
+
+     · `start_relay()` gives the master fd to a thread owned by the SESSION, so bytes
+       keep being read (and buffered) while nobody is attached — without it the child
+       blocks on a full pty buffer and a long turn stalls behind a closed tab.
+     · `attach()/detach()` swap the one subscriber. Attach REPLAYS the ring buffer, so
+       a reattached terminal is not blank.
+     · detach arms a GRACE TIMER (`DETACH_GRACE_S`, 10 min). Reattach cancels it;
+       expiry closes the process through our OWN child handle and calls `on_reap` so
+       the lane can clear its pidfile. Nothing is ever killed by name or by port.
+     · The DELIBERATE end stays explicit and is distinguishable BY CONSTRUCTION rather
+       than by a flag on the wire: the End button kills the PROCESS, so the socket then
+       closes because the child is gone. Hence the router's rule — child alive at
+       socket close ⇒ a drop (grace); child dead ⇒ an ending (reap now).
+
+   Hermes needed a whole resume-sanitizer module because an unterminated CSI must never
+   reach xterm. We do not inherit that bug class either, and not by luck: the ring
+   buffer is only ever trimmed at an ESCAPE-SAFE BOUNDARY (`esc_safe_cut`), so the
+   replay can never BEGIN in the middle of a control sequence. It is a bounded buffer,
+   not a transcript — `SCROLLBACK_BYTES` of tail, and the page says so.
 
 6. **THE LOCKDOWN ARGV IS A DECISION TABLE, NOT A STRING.** `--analytics-disable`
    (mixpanel + posthog are CORE deps), `--disable-playwright` (else aider can block on
@@ -68,6 +91,26 @@ DEFAULT_COLS, DEFAULT_ROWS = 100, 30
 
 READ_CHUNK = 65536
 KILL_GRACE_S = 3.0
+
+# ── THE DETACH CONTRACT (2026-08-29) ─────────────────────────────────────────
+# How long a live child keeps running with NOBODY attached, before it is reaped.
+#
+# ⚠️ WHY TEN MINUTES AND NOT THIRTY SECONDS. The window has to cover the whole realistic
+# gap between "the page went away" and "the page came back", and the slowest ordinary
+# case is not a ⌘R (sub-second) — it is the user closing the tab, doing something else,
+# and re-opening it. Too short and the fix does not fix the complaint; too long and a
+# forgotten tab leaves an agent holding the workspace all afternoon. Ten minutes is the
+# stated default and it is CONFIGURABLE per lane (harness.yaml `goose.detach_grace_s`),
+# clamped by the two bounds below so a typo cannot mean "forever" or "immediately".
+DETACH_GRACE_S = 600.0
+MIN_GRACE_S, MAX_GRACE_S = 5.0, 3600.0
+
+# The bounded scrollback replayed to a reattaching page. 256 KiB is roughly a
+# 100×2000-cell terminal's worth of dense output — enough that a reattached tab shows
+# the turn you were reading, small enough that an agent looping on `find /` cannot make
+# the bridge's memory a function of how long you left it running. IT IS A TAIL, NOT A
+# TRANSCRIPT, and the page says so rather than letting the user infer completeness.
+SCROLLBACK_BYTES = 256 * 1024
 
 # Close codes the page understands (4000-4999 = application-defined).
 CLOSE_ORIGIN = 4403       # refused: the handshake did not come from our own page
@@ -151,6 +194,125 @@ def split_resize(data: bytes) -> tuple:
     return RESIZE_RE.sub(b"", data), sizes
 
 
+# ── pure: the escape-safe ring-buffer cut ────────────────────────────────────
+# ⚠️ THE BUG THIS EXISTS TO PREVENT, stated before the code so nobody "simplifies" it
+# back: a ring buffer trimmed at an arbitrary byte offset will eventually be cut IN THE
+# MIDDLE of an escape sequence, and the first thing the reattached xterm then receives
+# is a truncated CSI — which it renders as garbage text, or (worse) whose parameters it
+# swallows the following real output into. Hermes shipped an entire resume-sanitizer
+# module for this class. Cutting only at a boundary where the parser is idle removes the
+# class instead of cleaning up after it.
+ESC = 0x1B
+# How far back a cut looks for an unterminated sequence. Real terminal escapes are far
+# shorter than this (the longest thing goose emits is an OSC title, ~80 bytes); the
+# bound is what keeps the scan O(1) instead of O(buffer).
+ESC_SCAN_BACK = 256
+
+
+def esc_end(buf, i: int) -> int:
+    """PURE. Given `i` = the index of an ESC byte, return the index ONE PAST the end of
+    the sequence it starts, or len(buf) if the sequence is still unterminated.
+
+    Only the three shapes a pty actually produces are modelled — CSI (`ESC [ … final`,
+    final in 0x40–0x7E), OSC (`ESC ] … BEL` or `… ESC \\`), and everything else, which
+    is ESC plus exactly one byte (or two for the `ESC ( B` charset selects). A shape we
+    do not model degrades to "two bytes", which is a cut one byte later than ideal — a
+    cosmetic loss, never a truncated sequence, because the NEXT cut candidate is tried.
+    """
+    n = len(buf)
+    if i >= n:
+        return n
+    j = i + 1
+    if j >= n:
+        return n
+    b = buf[j]
+    if b == 0x5B:                                   # '[' → CSI
+        j += 1
+        while j < n and not (0x40 <= buf[j] <= 0x7E):
+            j += 1
+        return j + 1 if j < n else n
+    if b in (0x5D, 0x50, 0x5E, 0x5F):               # ']' OSC, 'P' DCS, '^' PM, '_' APC
+        j += 1
+        while j < n:
+            if buf[j] == 0x07:                      # BEL terminates
+                return j + 1
+            if buf[j] == ESC and j + 1 < n and buf[j + 1] == 0x5C:   # ESC \
+                return j + 2
+            j += 1
+        return n
+    if b in (0x28, 0x29, 0x2A, 0x2B, 0x25, 0x23):   # charset / DEC selects: ESC x y
+        return min(j + 2, n)
+    return j + 1
+
+
+def esc_safe_cut(buf, want: int) -> int:
+    """PURE. The nearest cut index >= `want` at which the buffer does NOT begin inside
+    an escape sequence. Total: any input returns a valid index into `buf`.
+
+    Look back at most ESC_SCAN_BACK bytes for an ESC; if the sequence it opens has not
+    finished by `want`, the cut moves to just past that sequence instead."""
+    n = len(buf)
+    if want <= 0:
+        return 0
+    if want >= n:
+        return n
+    lo = max(0, want - ESC_SCAN_BACK)
+    for i in range(want - 1, lo - 1, -1):
+        if buf[i] == ESC:
+            end = esc_end(buf, i)
+            return min(end, n) if end > want else want
+    return want
+
+
+# ── pure: what a connecting page should get ──────────────────────────────────
+def attach_verdict(alive: bool, attached: bool, requested_id: str = "",
+                   live_id: str = "") -> str:
+    """PURE. 'new' | 'reattach' | 'takeover' | 'conflict'.
+
+    The whole reload story is this table, and it is a pure function so every answer can
+    be proven without a browser:
+
+      · nothing running                    → new       (spawn)
+      · running, nobody attached           → reattach  ← THE ⌘R CASE
+      · running AND another page attached  → takeover  ← Debi's repro, see below
+      · running, a DIFFERENT session
+        asked for by id                    → conflict  (never silently drop a live one)
+
+    ⚠️ THERE IS NO 'busy' ANY MORE, AND REMOVING IT IS THE POINT. It used to be the
+    answer whenever another page held the session, and it produced Debi's screenshot
+    (2026-08-29, ledger U10): a tab reading "aider is already running in another window"
+    UNDER a NOT CONNECTED chip, beside a Start button whose only possible outcome was
+    that same refusal. Every control on the page was a dead end. The old rule was right
+    about the PROCESS — there is exactly one — and wrong about the WINDOW: a window that
+    asks for the one session should get it, and the window that had it should be told
+    plainly and be one click from taking it back. See PtySession.attach.
+
+    ⚠️ A CONFLICT STILL OUTRANKS A TAKEOVER. Taking over a session is recoverable — the
+    other tab presses one button. Resuming a DIFFERENT conversation over a running one
+    is not, so an id that does not match is still refused however few pages are
+    attached. And an unknown `live_id` with an id REQUESTED is a conflict rather than a
+    reattach: we would be guessing that the running session is the one asked for, and
+    answering a resume request with somebody else's conversation is the LIE class.
+    """
+    if not alive:
+        return "new"
+    rid = (requested_id or "").strip()
+    if rid and rid != (live_id or "").strip():
+        return "conflict"
+    return "takeover" if attached else "reattach"
+
+
+def clamp_grace(value, fallback=DETACH_GRACE_S) -> float:
+    """PURE. A grace window read off a hand-edited manifest is data, not a promise."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if v != v or v in (float("inf"), float("-inf")):    # NaN / inf
+        return float(fallback)
+    return max(MIN_GRACE_S, min(MAX_GRACE_S, v))
+
+
 # ── pure: install detection + the launch line ────────────────────────────────
 def aider_bin(root) -> str:
     return os.path.join(str(root), VENV_DIR, "bin", "aider")
@@ -222,6 +384,23 @@ class PtySession:
         self.proc = None
         self.started = 0.0
         self._closed = False
+        # ── the detach/reattach state (see header §5) ──
+        self._blk = threading.Lock()
+        self._buf = bytearray()      # the bounded scrollback ring
+        self._sub = None             # the ONE subscriber, or None while detached
+        self._relay = None           # the thread that owns the master fd
+        self._timer = None           # the armed grace timer
+        self._reaping = False        # latched the instant the grace timer commits
+        self.eof = False             # the child is gone and the relay has said so
+        self.detached_at = None      # when the last subscriber went away
+        self.grace_s = DETACH_GRACE_S
+        self.on_reap = None          # lane callback: clear the pidfile, log, release
+        self.on_chunk = None         # optional sniffer, called in the relay thread
+        # Lane metadata the routers hang here so the STATUS route can be honest about
+        # what is running without a second registry. '' = we do not know, which the
+        # attach verdict reads as "never claim a resume request is this session".
+        self.session_id = ""
+        self.resumed_from = ""
 
     # -- lifecycle --
     def start(self, cols=DEFAULT_COLS, rows=DEFAULT_ROWS, popen=subprocess.Popen):
@@ -275,8 +454,152 @@ class PtySession:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    # -- the relay: the master fd belongs to the SESSION, not to a socket --
+    def start_relay(self):
+        """Own the master fd for the LIFE OF THE PROCESS. Idempotent.
+
+        ⚠️ NOT OPTIONAL ONCE A SESSION MAY OUTLIVE ITS SOCKET, and not merely so we have
+        a buffer to replay: a pty's kernel buffer is small, and a child writing into one
+        that nobody drains BLOCKS. A detached agent mid-turn would silently stall — the
+        exact "it looks broken" shape this lane already learned to refuse.
+
+        ⚠️ AND IT IS OPT-IN. `read()` stays the raw primitive so a caller that wants the
+        bytes itself (the lane tests drive /bin/cat that way) is not fighting a thread
+        for them. Exactly one of the two may be used on a given session.
+        """
+        with self._blk:
+            if self._relay is not None:
+                return self._relay
+            t = threading.Thread(target=self._relay_loop, daemon=True)
+            self._relay = t
+        t.start()
+        return t
+
+    def _relay_loop(self) -> None:
+        while True:
+            data = self.read()
+            with self._blk:
+                if data:
+                    self._buf.extend(data)
+                    # Trim lazily (at 2× the bound) and only at an escape-safe boundary
+                    # — a cut inside a CSI is what makes a replayed terminal garbage.
+                    if len(self._buf) > SCROLLBACK_BYTES * 2:
+                        cut = esc_safe_cut(self._buf,
+                                           len(self._buf) - SCROLLBACK_BYTES)
+                        del self._buf[:cut]
+                else:
+                    self.eof = True
+                sub, sniff = self._sub, self.on_chunk
+            if sniff and data:
+                try:
+                    sniff(self, bytes(data))
+                except Exception:                                # noqa: BLE001
+                    pass
+            if sub is not None:
+                try:
+                    sub(bytes(data))
+                except Exception:                                # noqa: BLE001
+                    pass
+            if not data:
+                return
+
+    def scrollback(self) -> bytes:
+        with self._blk:
+            return bytes(self._buf)
+
+    def attached(self) -> bool:
+        with self._blk:
+            return self._sub is not None
+
+    def attach(self, cb):
+        """Become THE subscriber — TAKING OVER from whoever held it. Returns
+        (replay_bytes, eof), or None when this session is already committed to being
+        reaped, in which case the caller must treat it as gone and spawn a new one.
+
+        ⚠️ THE `None` IS THE RACE FIX, not defensiveness. The grace timer and a
+        reconnecting page can fire in the same millisecond; `_reaping` is latched under
+        the same lock the subscriber lives under, so exactly one of the two wins and the
+        page is never handed a terminal that is about to be killed underneath it.
+
+        ⚠️ AND ATTACH IS A TAKEOVER, NOT A QUEUE — Debi's live repro, 2026-08-29, which
+        is ledger U10 reproduced. Her Aider tab showed BOTH "aider is already running in
+        another window" AND a NOT CONNECTED chip with a Start button: a control whose
+        only outcome was the same refusal. A dead end. The old rule ("one at a time")
+        was right about the PROCESS and wrong about the WINDOW: there is exactly one
+        aider, and any window that asks for it should GET it. So a second page displaces
+        the first, and the first is TOLD — it gets `cb(None)`, the displace sentinel, so
+        it can close with a sentence and a button that takes the session straight back.
+        Reversible in one click in both directions; nobody is ever stranded.
+        """
+        with self._blk:
+            if self._reaping or self._closed:
+                return None
+            old, self._sub = self._sub, cb
+            replay, eof = bytes(self._buf), self.eof
+            timer, self._timer = self._timer, None
+        self.detached_at = None
+        if timer is not None:
+            timer.cancel()
+        if old is not None and old is not cb:
+            try:
+                old(None)              # the displace sentinel — never b"", which is eof
+            except Exception:                                    # noqa: BLE001
+                pass
+        return replay, eof
+
+    def detach(self, cb, grace=None, on_reap=None) -> bool:
+        """Give up the subscription and arm the grace window. False when `cb` was not
+        the current subscriber — a stale socket must not disarm a live one's claim, and
+        an ALREADY-detached session must not have its grace window silently restarted
+        by a late caller (`detach(None)` on a detached session would otherwise match,
+        because None is None: the bug that hides behind an identity test)."""
+        with self._blk:
+            if self._sub is None or self._sub is not cb:
+                return False
+            self._sub = None
+        if on_reap is not None:
+            self.on_reap = on_reap
+        self.grace_s = clamp_grace(self.grace_s if grace is None else grace)
+        self.detached_at = time.time()
+        if not self.alive():
+            return True                 # nothing to reap; the child is already gone
+        t = threading.Timer(self.grace_s, self._reap)
+        t.daemon = True                 # never hold the bridge open on a shutdown
+        with self._blk:
+            self._timer = t
+        t.start()
+        return True
+
+    def grace_left(self) -> float:
+        """Seconds until the reap, 0.0 when attached or already gone. For the STATUS
+        route: a page that says 'detached' without saying for how long is telling half
+        the truth about a process that is going to be killed."""
+        at = self.detached_at
+        if at is None or not self.alive():
+            return 0.0
+        return max(0.0, self.grace_s - (time.time() - at))
+
+    def _reap(self) -> None:
+        """The grace window expired. PROCESS-KILL RULE: this closes OUR OWN child
+        handle — the one this object spawned — never a pid found by name or by port."""
+        with self._blk:
+            if self._sub is not None or self._closed or self._reaping:
+                return
+            self._reaping = True
+        self.close()
+        cb = self.on_reap
+        if cb is not None:
+            try:
+                cb(self)
+            except Exception:                                    # noqa: BLE001
+                pass
+
     def close(self) -> str:
         """Kill the process GROUP, then drop the fd. Idempotent."""
+        with self._blk:
+            timer, self._timer = self._timer, None
+        if timer is not None:
+            timer.cancel()
         if self._closed:
             return "gone"
         self._closed = True

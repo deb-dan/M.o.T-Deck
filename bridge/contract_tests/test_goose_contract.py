@@ -191,8 +191,10 @@ def test_no_browser_ui_still():
 
 
 def test_session_still_takes_the_flags_the_lane_will_grow_into():
-    """--resume / --name / --fork are the daily-use journeys slice 2 is built on. They
-    are not on the launch line today; this asserts they are still there to build on."""
+    """--resume / --name / --fork / --history. ⚠️ UPDATED AT SLICE 2: these are no
+    longer 'flags the lane will grow into' — `--resume --session-id … --history` IS the
+    launch line for a resumed session (bridge/pty_goose.goose_argv), so losing one is
+    now a broken feature rather than a deferred one."""
     if not _installed():
         return
     out = _run("session", "--help")
@@ -200,6 +202,96 @@ def test_session_still_takes_the_flags_the_lane_will_grow_into():
         return
     for flag in ("--resume", "--name", "--fork", "--history"):
         assert flag in out, f"`goose session` lost {flag}"
+
+
+# ══ SLICE 2 (S9): the session-store semantics, MEASURED 2026-08-29 ═══════════
+# Everything the sessions strip does rests on these six facts. Each was read off THIS
+# binary's own --help and then walked; pinning them is what makes an upstream change
+# fail LOUDLY instead of quietly emptying the strip or — the one that matters — sending
+# a keystroke at a prompt that no longer says what we think it says.
+
+def test_resume_needs_its_two_companions():
+    """`--session-id` is documented as REQUIRING `--resume`, which is why
+    pty_goose.goose_argv never emits one without the other; and `--history` is what
+    makes a resumed session show its past instead of opening on a blank screen."""
+    if not _installed():
+        return
+    out = _run("session", "--help")
+    if not out:
+        return
+    assert "--session-id" in out, "`goose session` lost --session-id"
+    assert "Requires --resume" in out, (
+        "--session-id no longer documents that it requires --resume — re-read the help "
+        "before touching goose_argv")
+    assert "Show previous messages when resuming" in out, (
+        "--history's meaning changed; a resumed session may now open on a blank screen, "
+        "which is indistinguishable from a fresh one")
+
+
+def test_session_list_speaks_json_with_the_fields_the_strip_renders():
+    """F1. The strip is built from goose's OWN list — id, name, user_set_name, dates
+    and message_count. A vanished field would silently blank a column."""
+    if not _installed():
+        return
+    out = _run("session", "list", "--help")
+    if not out:
+        return
+    assert "--format" in out and "json" in out, "`session list` lost --format json"
+    raw = _run("session", "list", "--format", "json")
+    if not raw or "[" not in raw:
+        return                                  # an empty store is not a contract break
+    import json as _json
+    try:
+        rows = _json.loads(raw[raw.index("["):])
+    except ValueError:                          # noqa: BLE001
+        raise AssertionError(f"`session list --format json` is not JSON: {raw[:300]}")
+    if not rows:
+        return
+    for field in ("id", "name", "user_set_name", "created_at", "updated_at",
+                  "message_count", "working_dir"):
+        assert field in rows[0], (
+            f"`session list --format json` lost '{field}' — bridge/pty_goose.py's "
+            "parse_sessions renders it")
+    assert re.fullmatch(r"\d{8}_\d+", str(rows[0]["id"])), (
+        "session ids are no longer the YYYYMMDD_N shape pty_goose.SESSION_ID_RE "
+        "matches — the banner sniff AND the prune's id guard both key on it")
+
+
+def test_the_banner_still_prints_the_session_id():
+    """F3. The live session's id is learned from goose's own startup banner; without it
+    the strip cannot mark which persisted row is the running one. `run` prints the same
+    banner as `session`, and the banner precedes any provider error — so this holds
+    with no runner up."""
+    if not _installed():
+        return
+    out = _run("run", "--no-session", "--text", "x")
+    if not out:
+        return
+    assert re.search(r"\d{8}_\d+", out) or "session" in out, (
+        "goose's startup banner no longer carries a session id — routers/goose.py's "
+        f"_sniff_id has nothing to read. Got:\n{out[:600]}")
+
+
+def test_remove_still_confirms_in_its_own_words():
+    """F4, AND THIS IS THE PIN THAT MUST NEVER DRIFT SILENTLY. `session remove` takes an
+    explicit --session-id and STILL raises its own confirmation; the prune answers that
+    prompt with `y` only after reading goose's own two sentences back. remove_session
+    refuses if they change — but we want to find out HERE, at the pin bump, not there."""
+    if not _installed():
+        return
+    out = _run("session", "remove", "--help")
+    if not out:
+        return
+    assert "--session-id" in out, "`session remove` lost --session-id"
+    assert "--yes" not in out and "--force" not in out, (
+        "upstream grew a non-interactive flag for `session remove` — use it and delete "
+        "the pty-driven confirm in pty_goose.remove_session, which exists ONLY because "
+        "there was none")
+    # …and with no tty it must still refuse rather than delete. Aimed at an id that
+    # cannot exist, so this test can never remove anything of the user's.
+    got = _run("session", "remove", "--session-id", "00000000_0")
+    assert "not found" in got or "not connected" in got, (
+        f"`session remove` answered an unknown id unexpectedly: {got[:300]}")
 
 
 def test_update_is_a_subcommand_not_a_startup_check():

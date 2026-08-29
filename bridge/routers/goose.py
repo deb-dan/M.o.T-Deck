@@ -21,7 +21,7 @@ import os
 import subprocess
 import threading
 import time
-from fastapi import WebSocket
+from fastapi import Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from ..core.appctx import PANEL, ROOT, app
 from ..core.modelid import _live_model_id, wire_model_id
@@ -40,6 +40,20 @@ except Exception as _e:                                          # noqa: BLE001
         _goose, _GOOSE_ERR = None, (str(_e2) or str(_e))[:200]
         print(f"[goose] module unavailable — the Goose tab is disabled ({_GOOSE_ERR})",
               flush=True)
+
+# ⚠️ ONE ORPHAN SWEEP AT BRIDGE START, and it is the price of the detach fix. A session
+# now outlives its socket AND (start_new_session=True) the bridge, so a restart could
+# leave a live goose holding the workspace with nothing pointing at it — while a new tab
+# claimed the empty slot and started a SECOND one on the same directory. Identity is
+# verified against the pidfile's own command line before anything is signalled; see
+# pty_goose.reap_orphan for the rule in full.
+if _goose is not None:
+    try:
+        _orphan = _goose.reap_orphan(ROOT)
+        if _orphan not in ("none",):
+            print(f"[goose] startup pidfile sweep: {_orphan}", flush=True)
+    except Exception as _oe:                                     # noqa: BLE001
+        print(f"[goose] startup pidfile sweep skipped: {_oe}", flush=True)
 
 _GOOSE_INSTALLING: dict = {}          # {"since": ts|None, "done": bool, "error": str}
 _GOOSE_INSTALL_LOCK = threading.Lock()
@@ -75,7 +89,66 @@ def _bridge_port() -> int:
         return 8700
 
 
-def goose_spawn_spec() -> tuple:
+def _grace_s() -> float:
+    """The detach window, in seconds. A manifest key so an operator can shorten it
+    without a code change; clamped in pty_aider so a typo cannot mean 'forever'."""
+    try:
+        return _goose.clamp_grace((cfg().get("goose") or {}).get("detach_grace_s"))
+    except Exception:                                            # noqa: BLE001
+        return _goose.DETACH_GRACE_S
+
+
+def _reap_cb(sess) -> None:
+    """The grace window expired with nobody back. Called from the session's own timer
+    thread AFTER it has closed OUR OWN child; all that is left is the bookkeeping the
+    lane owns — and the pidfile is cleared only if it is still OURS (a pidfile holding
+    somebody else's number is not ours to remove)."""
+    _goose.release(sess)
+    _clear_our_pidfile(sess)
+    _goose_log(f"session reaped — {int(getattr(sess, 'grace_s', 0))}s grace expired "
+               f"with no page attached (pid {getattr(sess.proc, 'pid', '?')})")
+
+
+def _clear_our_pidfile(sess) -> None:
+    """⛔ PROCESS-KILL RULE, the bookkeeping half. data/goose.pid is removed only when it
+    still names the pid of the session that is ending. Two sessions cannot overlap
+    today, but a stale clear would make the memory ledger lose a LIVE row — and the
+    class (act on a handle without checking whose it is) is the one that closed Debi's
+    own goose Desktop twice."""
+    try:
+        pid = int(getattr(sess.proc, "pid", 0) or 0)
+        with open(_goose.pidfile_path(ROOT)) as fh:
+            on_disk = int((fh.read() or "0").strip() or 0)
+    except (OSError, TypeError, ValueError):
+        return
+    if pid and on_disk == pid:
+        _goose.clear_pidfile(ROOT)
+
+
+def _sniff_id(sess, data) -> None:
+    """F3 — learn the LIVE session's own id from goose's startup banner, so the strip
+    can mark which persisted row is the running one instead of guessing (and so a
+    resume request for that same session reattaches instead of being refused)."""
+    sess._sniff_seen = getattr(sess, "_sniff_seen", 0) + len(data)
+    if sess.session_id:
+        sess.on_chunk = None
+        return
+    # ⚠️ THE WHOLE BUFFER SO FAR, not this chunk. Measured on the live walk: goose
+    # writes its banner in several pty writes and `20260829_33` straddled two of them,
+    # so a per-chunk scan found nothing and the strip could not mark the live row. See
+    # pty_goose.scan_session_id for the general form of the lesson.
+    sid = _goose.scan_session_id(sess.scrollback(), 0)
+    if sid:
+        sess.session_id = sid
+        sess.on_chunk = None
+        _goose_log(f"session id {sid}")
+    elif sess._sniff_seen >= _goose.SNIFF_BUDGET:
+        # Past the banner and no id: we simply do not know, and we say so by leaving
+        # session_id empty rather than by guessing the newest row in the store.
+        sess.on_chunk = None
+
+
+def goose_spawn_spec(resume_id: str = "") -> tuple:
     """(argv, env, cwd, error). The whole precondition set in one place, so the
     websocket handler has exactly one refusal path and the tests have exactly one seam
     to substitute.
@@ -115,7 +188,7 @@ def goose_spawn_spec() -> tuple:
     # The registry goes with it so "MOT Deck (local)" lists EVERY model rather than the
     # loaded one — the picker then holds facts and stays populated with the runner down.
     _goose.seed_config(ROOT, endpoint, port, _registry_models())
-    argv = _goose.goose_argv(ROOT)
+    argv = _goose.goose_argv(ROOT, resume_id)
     env = _goose.goose_env(os.environ, ROOT, endpoint, rc.get("api_key") or "",
                            wire, port, config_text=before)
     return argv, env, cwd, ""
@@ -159,12 +232,32 @@ def goose_status() -> JSONResponse:
         tools = ""
     with _GOOSE_INSTALL_LOCK:
         inst = dict(_GOOSE_INSTALLING)
+    # THE DETACH FACTS. A page that reloads must be able to tell "your session is still
+    # here, reattaching" from "there is nothing to come back to" BEFORE it opens the
+    # socket — otherwise the pills lie for the half-second in between.
+    # ⚠️ `sess_live`, NOT `live` — `live` is ALREADY the model id four lines up, and the
+    # first draft of this block shadowed it with a bool. `"model": live or ""` then
+    # rendered "" on every poll: the tab said NO MODEL LOADED and disabled Start while
+    # the runner was serving. Caught on the live walk, and it is the LIE class, which is
+    # why the name is deliberate rather than incidental.
+    sess = _goose.current()
+    sess_live = bool(sess is not None and sess.alive())
+    detached = bool(sess_live and not sess.attached())
     return JSONResponse({
         "ok": True,
         "installed": bool(installed),
         "bin": path,
         "pin": _goose.PIN_TAG,
-        "running": _goose.busy(),
+        "running": sess_live,
+        "attached": bool(sess_live and sess.attached()),
+        "detached": detached,
+        # Seconds left before an unattended session is reaped — surfaced, not implied.
+        "grace_left": int(sess.grace_left()) if detached else 0,
+        "grace_s": int(_grace_s()),
+        # '' when the banner did not give us one: honest silence, never a guess.
+        "live_session": (sess.session_id if sess_live else "") or "",
+        "resumed_from": (sess.resumed_from if sess_live else "") or "",
+        "scrollback_kb": int(_goose.SCROLLBACK_BYTES / 1024),
         # `model` is what goose will be launched with (display id — the wire id can be a
         # long filesystem path for MLX and is nobody's idea of a label).
         "model": live or "",
@@ -177,6 +270,80 @@ def goose_status() -> JSONResponse:
         "installing": bool(inst.get("since") and not inst.get("done")),
         "install_error": inst.get("error") or "",
     })
+
+
+@app.get("/api/goose/sessions")
+def goose_sessions() -> JSONResponse:
+    """The persisted history, from goose's OWN `session list --format json`, plus a
+    best-effort one-line preview and the store's size.
+
+    S9's complaint in one route: the sessions were always there and there was no way in.
+    """
+    if _goose is None:
+        return _goose_unavailable()
+    rows, err = _goose.list_sessions(ROOT)
+    prev = _goose.previews(ROOT, [r["id"] for r in rows]) if rows else {}
+    for r in rows:
+        # THE CHIP TITLE, in preference order, and every branch is honest:
+        #   1. a name the USER set inside goose (user_set_name) — their words win;
+        #   2. the first thing they typed in that session (the preview);
+        #   3. goose's own generic name ("CLI Session"), which distinguishes nothing
+        #      and is therefore the LAST resort rather than the first.
+        line = prev.get(r["id"], "")
+        r["preview"] = line
+        r["title"] = _goose.chip_line(
+            r["name"] if r.get("named") and r["name"] else (line or r["name"] or r["id"]))
+    nbytes, measured = _goose.store_size(ROOT)
+    sess = _goose.current()
+    return JSONResponse({
+        "ok": True,
+        "sessions": rows,
+        "error": err,
+        "live_session": (sess.session_id if sess is not None and sess.alive() else "")
+                        or "",
+        "running": _goose.busy(),
+        "store": {"count": len(rows),
+                  "bytes": nbytes if measured else None,
+                  "human": _goose.human_mb(nbytes) if measured else "",
+                  "path": _goose.sessions_dir(ROOT)},
+    })
+
+
+@app.post("/api/goose/end")
+def goose_end() -> JSONResponse:
+    """THE DELIBERATE END, and the reason the reload fix does not need a flag on the
+    wire. Ending kills the PROCESS; the socket then closes because the child is gone.
+    So the websocket handler's rule can be structural — child alive at close ⇒ the page
+    merely went away (grace); child dead ⇒ the session was ended (reap now) — and there
+    is no 'was that deliberate?' bit that a dropped connection could forge."""
+    if _goose is None:
+        return _goose_unavailable()
+    sess = _goose.current()
+    if sess is None or not sess.alive():
+        return JSONResponse({"ok": True, "how": "gone", "running": False})
+    how = sess.close()                       # our OWN child handle, process group
+    _goose.release(sess)
+    _clear_our_pidfile(sess)
+    _goose_log(f"session end (deliberate, {how})")
+    return JSONResponse({"ok": True, "how": how, "running": False})
+
+
+@app.post("/api/goose/session/remove")
+async def goose_session_remove(request: Request) -> JSONResponse:
+    """Delete ONE session through goose's own `session remove` — see
+    pty_goose.remove_session for the measured protocol and why nothing under the store
+    is ever touched by hand. The page arms this behind a two-step confirm; this route
+    refuses while a session is running and reports only what goose itself confirmed."""
+    if _goose is None:
+        return _goose_unavailable()
+    try:
+        body = await request.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    sid = str((body or {}).get("id") or "").strip()
+    ok, msg = _goose.remove_session(ROOT, sid)
+    _goose_log(f"session remove {sid!r}: {'ok' if ok else 'REFUSED'} — {msg}")
+    return JSONResponse({"ok": ok, "message": msg}, status_code=200 if ok else 409)
 
 
 def _goose_install_thread() -> None:
@@ -238,54 +405,121 @@ async def goose_pty(ws: WebSocket) -> None:
     cols = _q("cols", (_goose.MIN_COLS, _goose.MAX_COLS, _goose.DEFAULT_COLS))
     rows = _q("rows", (_goose.MIN_ROWS, _goose.MAX_ROWS, _goose.DEFAULT_ROWS))
 
-    argv, env, cwd, err = goose_spawn_spec()
-    if err:
-        await ws.send_bytes(f"\r\n{err}\r\n".encode())
-        await ws.close(code=_goose.CLOSE_PRECONDITION, reason="not ready")
+    want = (ws.query_params.get("session") or "").strip()
+
+    # ══ THE RELOAD DECISION ═════════════════════════════════════════════════
+    # ⌘R does not end a session any more. The four answers are pty_aider's pure
+    # attach_verdict table; everything below just carries them out.
+    live = _goose.current()
+    verdict = _goose.attach_verdict(
+        bool(live is not None and live.alive()),
+        bool(live is not None and live.attached()),
+        want,
+        (live.session_id if live is not None else "") or "")
+
+    if verdict == "conflict":
+        await ws.send_bytes(
+            ("\r\na goose session is still running here. End it first, then pick the "
+             "session you want — resuming another one would drop the live "
+             "conversation without asking.\r\n").encode())
+        await ws.close(code=_goose.CLOSE_BUSY, reason="a session is live")
         return
 
-    sess = _goose.PtySession(argv, cwd, env)
-    if not _goose.claim(sess):
-        await ws.send_bytes("\r\ngoose is already running in another tab or window — "
-                            "only one session at a time.\r\n".encode())
-        await ws.close(code=_goose.CLOSE_BUSY, reason="busy")
-        return
-
-    try:
-        sess.start(cols=cols, rows=rows)
-    except Exception as e:                                       # noqa: BLE001
-        _goose.release(sess)
-        _goose_log(f"spawn FAILED: {e}")
-        await ws.send_bytes(f"\r\ncould not start goose: {e}\r\n".encode())
-        await ws.close(code=_goose.CLOSE_PRECONDITION, reason="spawn failed")
-        return
-
-    # THE MEMORY-LEDGER HANDLE. Written after the spawn succeeded and removed in the
-    # finally below, so /api/memory shows a "Goose CLI" row for exactly as long as this
-    # lane's goose is alive — and never a ghost row for a process that is gone. (The
-    # embedded lane writes data/goose-ui.pid and earns its own "Goose UI" row the same
-    # way; core/memory.py's _label maps both pidfile stems to their display names.)
-    _goose.write_pidfile(ROOT, sess.proc.pid)
-    _goose_log(f"session start pid={sess.proc.pid} cwd={cwd} "
-               f"model={env.get('GOOSE_MODEL')} host={env.get('OPENAI_HOST')} "
-               f"{cols}x{rows}")
+    # 'takeover' and 'reattach' are the SAME code path from here: both attach to the
+    # running child. The only difference is whether somebody had to be displaced, and
+    # PtySession.attach handles that by telling them.
+    reattached = verdict in ("reattach", "takeover")
+    if reattached:
+        sess = live
+    else:
+        argv, env, cwd, err = goose_spawn_spec(want)
+        if err:
+            await ws.send_bytes(f"\r\n{err}\r\n".encode())
+            await ws.close(code=_goose.CLOSE_PRECONDITION, reason="not ready")
+            return
+        sess = _goose.PtySession(argv, cwd, env)
+        sess.resumed_from = want
+        if want:
+            sess.session_id = want      # a resume already knows its own id
+        else:
+            sess.on_chunk = _sniff_id
+        if not _goose.claim(sess):
+            # The claim is LIVENESS-VERIFIED (`_SESSION.alive()` polls the child), so it
+            # cannot go stale — and it is in-process, so it cannot outlive the process
+            # either. Reaching here means a session was spawned in the microseconds
+            # since the verdict; say so and let the page reconnect, never dead-end.
+            await ws.send_bytes("\r\na goose session started in another window a "
+                                "moment ago — press Start to join it.\r\n".encode())
+            await ws.close(code=_goose.CLOSE_BUSY, reason="raced")
+            return
+        try:
+            sess.start(cols=cols, rows=rows)
+        except Exception as e:                                   # noqa: BLE001
+            _goose.release(sess)
+            _goose_log(f"spawn FAILED: {e}")
+            await ws.send_bytes(f"\r\ncould not start goose: {e}\r\n".encode())
+            await ws.close(code=_goose.CLOSE_PRECONDITION, reason="spawn failed")
+            return
+        # THE MEMORY-LEDGER HANDLE. Written after the spawn succeeded and removed when
+        # the session actually ENDS — not when a socket drops, which is the whole point
+        # of this slice: /api/memory shows a "Goose CLI" row for exactly as long as this
+        # lane's goose is alive, INCLUDING while it sits detached between two page
+        # loads, because a detached session is a real running process and pretending
+        # otherwise would be the ghost-row bug wearing the opposite sign. (The embedded
+        # lane writes data/goose-ui.pid and earns its own "Goose UI" row the same way.)
+        _goose.write_pidfile(ROOT, sess.proc.pid)
+        _goose_log(f"session {'resume ' + want if want else 'start'} "
+                   f"pid={sess.proc.pid} cwd={cwd} model={env.get('GOOSE_MODEL')} "
+                   f"host={env.get('OPENAI_HOST')} {cols}x{rows}")
 
     loop = asyncio.get_running_loop()
     outq: asyncio.Queue = asyncio.Queue()
 
-    def _reader() -> None:
-        # A THREAD, not loop.add_reader: this must behave identically under asyncio and
-        # uvloop, and a blocking read on a master fd is the simplest correct thing.
-        while True:
-            data = sess.read()
-            try:
-                loop.call_soon_threadsafe(outq.put_nowait, data)
-            except RuntimeError:
-                return              # the loop went away first (socket already torn down)
-            if not data:            # b"" = the child is gone
-                return
+    # `None` off the relay is the DISPLACE SENTINEL: another window took the session.
+    # It is deliberately not b"" — that means the child is gone, and telling a user
+    # their agent died when it is alive and answering somebody else's tab would be the
+    # LIE class.
+    state = {"displaced": False}
 
-    threading.Thread(target=_reader, daemon=True).start()
+    def _on_bytes(data) -> None:
+        # Called on the SESSION's relay thread — which outlives this socket. The
+        # RuntimeError guard is what makes a torn-down loop a no-op rather than a
+        # traceback on every detach.
+        if data is None:
+            state["displaced"] = True
+            data = b""                       # end this socket's pump, not the child
+        try:
+            loop.call_soon_threadsafe(outq.put_nowait, data)
+        except RuntimeError:
+            pass
+
+    attached = sess.attach(_on_bytes)
+    if attached is None:
+        # The grace timer committed to reaping this session in the microsecond we spent
+        # deciding to reattach to it. Say so and let the page press Start — the one
+        # thing we must not do is hand back a terminal that is being killed.
+        await ws.send_bytes("\r\nthe previous session was just reaped — press Start "
+                            "for a new one.\r\n".encode())
+        await ws.close(code=_goose.CLOSE_ENDED, reason="reaped")
+        return
+    replay, eof = attached
+    # ONE relay per session, started here rather than in start(): it is idempotent, and
+    # a reattach must not spawn a second reader for the same fd.
+    sess.start_relay()
+    if reattached:
+        _goose_log(f"session {'TAKEOVER' if verdict == 'takeover' else 'REATTACH'} "
+                   f"pid={sess.proc.pid} replay={len(replay)}B "
+                   f"id={sess.session_id or '?'}")
+        if replay:
+            await ws.send_bytes(replay)
+            # A rule, so the user can SEE where the replayed tail ends and live output
+            # begins. A scrollback that silently pretends to be the whole transcript is
+            # the quiet-wrong-answer shape this project ranks worst.
+            await ws.send_bytes(
+                ("\r\n\x1b[2m— reattached · last "
+                 f"{int(_goose.SCROLLBACK_BYTES / 1024)}KB replayed —\x1b[0m\r\n")
+                .encode())
+        sess.resize(cols, rows)
 
     async def _pump() -> None:
         while True:
@@ -310,6 +544,8 @@ async def goose_pty(ws: WebSocket) -> None:
 
     pump = asyncio.create_task(_pump())
     recv = asyncio.create_task(_recv())
+    if eof:                # the child died while nobody was attached: nothing to pump
+        pump.cancel()
     try:
         await asyncio.wait({pump, recv}, return_when=asyncio.FIRST_COMPLETED)
     except Exception:                                            # noqa: BLE001
@@ -317,9 +553,42 @@ async def goose_pty(ws: WebSocket) -> None:
     finally:
         for t in (pump, recv):
             t.cancel()
-        how = sess.close()          # SIGTERM → SIGKILL the whole process GROUP
+        # ══ DELIBERATE-VS-DROP, DECIDED BY THE CHILD AND NOT BY THE WIRE ═══════
+        # Ending is an explicit act that kills the PROCESS: the End button posts
+        # /api/goose/end, and `/exit` inside goose does the same thing from the other
+        # side. So the rule here is structural rather than a flag a dropped connection
+        # could forge —
+        #   child gone  ⇒ the session ENDED: reap, drop the pidfile, say so.
+        #   child alive ⇒ the PAGE went away (⌘R, a closed tab, a dead socket): keep
+        #                 the process, keep the ledger row, arm the grace window, and
+        #                 wait to be reattached.
+        if state["displaced"]:
+            # Another window took the session. This socket is finished; the CHILD is
+            # not, and neither is the user's work — the page says which and offers to
+            # take it straight back.
+            _goose_log(f"session TAKEN OVER from this socket pid={sess.proc.pid}")
+            try:
+                await ws.send_bytes(
+                    b"\r\n\x1b[2m\xe2\x80\x94 another window took this session "
+                    b"\xe2\x80\x94 press Take over to bring it back \xe2\x80\x94"
+                    b"\x1b[0m\r\n")
+                await ws.close(code=_goose.CLOSE_ENDED, reason="takeover")
+            except Exception:                                    # noqa: BLE001
+                pass
+            return
+        if sess.alive():
+            armed = sess.detach(_on_bytes, grace=_grace_s(), on_reap=_reap_cb)
+            _goose_log(f"session DETACHED pid={sess.proc.pid} — still running, "
+                       f"{int(_grace_s())}s to reattach" if armed else
+                       f"socket closed but it no longer held pid={sess.proc.pid}")
+            try:
+                await ws.close(code=_goose.CLOSE_ENDED, reason="detached")
+            except Exception:                                    # noqa: BLE001
+                pass
+            return
+        how = sess.close()          # idempotent; the child is already gone
         _goose.release(sess)
-        _goose.clear_pidfile(ROOT)
+        _clear_our_pidfile(sess)
         _goose_log(f"session end ({how})")
         try:
             await ws.close(code=_goose.CLOSE_ENDED, reason="session ended")

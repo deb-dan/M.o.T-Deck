@@ -293,6 +293,17 @@ def test_routes_live():
     for key in ("installed", "running", "model", "model_ready", "workspace"):
         ok(key in body, f"status carries {key}")
     ok(body["workspace"].endswith("data/aider-workspace"), "status names the workspace")
+    # ⚠️ THE SHADOW FENCE (adversarial, caught on the goose lane's live walk
+    # 2026-08-29 — the same two lines were here). The detach block added a local named
+    # `live` on top of the model id, so `"model": live or ""` rendered "" and the tab
+    # said NO MODEL LOADED while the runner was serving: the LIE class, from one
+    # variable name.
+    from bridge.core.modelid import _live_model_id as _lmi
+    from bridge.core.procs import cfg as _cfg
+    _p = int((_cfg().get("runner") or {}).get("port") or 6767)
+    ok(body["model"] == (_lmi(_p) or ""),
+       f"status reports the LIVE model, never a shadowed bool (got {body['model']!r})")
+    ok(body["model_ready"] is bool(body["model"]), "…and model_ready agrees with it")
 
     # the page exists and loads the pinned assets by the names the fetch script writes
     page = (ROOT / "bridge" / "panel" / "aider.html").read_text()
@@ -347,16 +358,72 @@ def test_routes_live():
             ok(b"RESIZE" not in got, "the resize escape never reached the pty")
             ok(b"after" in got, "…and the next real keystroke still arrived")
 
-            # ONE AT A TIME: a second connect is refused 4409 while the first is live.
+            # ══ DEBI'S SCREENSHOT, WALKED (2026-08-29, ledger U10) ═════════════
+            # ⚠️ THIS JOURNEY IS INVERTED ON PURPOSE. It used to assert a 4409 refusal —
+            # and that refusal IS her screenshot: THIS tab saying "aider is already
+            # running in another window" under a NOT CONNECTED chip, beside a Start
+            # button that could only produce the same refusal. A second window now TAKES
+            # THE SESSION OVER, and the displaced one is told rather than stranded.
             with client.websocket_connect("/api/pty/aider", headers=good) as ws2:
-                msgs = [ws2.receive(), ws2.receive()]
-            codes = [m.get("code") for m in msgs if m.get("type") == "websocket.close"]
-            ok(P.CLOSE_BUSY in codes, f"second session refused with 4409 (got {codes})")
-            ok(called["n"] == 2, "the second connect got as far as the spec, not the pty")
+                ws2.send_bytes(b"secondwindow\n")
+                got2, deadline = b"", time.time() + 5
+                while b"secondwindow" not in got2 and time.time() < deadline:
+                    got2 += ws2.receive_bytes()
+                ok(b"secondwindow" in got2,
+                   "a second window GETS the session — a live terminal, not a refusal")
+                ok(b"hello" in got2,
+                   "…with the scrollback replayed: the SAME conversation")
+                ok(called["n"] == 1,
+                   "…and nothing was spawned: one process, whichever window holds it")
+                displaced, closes = [], []
+                for _ in range(40):
+                    m = ws.receive()
+                    displaced.append(m)
+                    if m.get("type") == "websocket.close":
+                        closes.append(m)
+                        break
+                text = b"".join(m.get("bytes") or b"" for m in displaced)
+                ok(b"another window took this session" in text,
+                   "the displaced window is TOLD, in the terminal it is looking at")
+                ok(b"Take over" in text, "…and told what to press to get it back")
+                ok(closes and closes[0].get("reason") == "takeover",
+                   f"…and the close reason says takeover, not 'ended' (got {closes})")
 
-        # the session is released (and its child killed) when the socket drops
-        time.sleep(0.4)
-        ok(P.busy() is False, "a dropped socket ends the session")
+        # ══ THE ⌘R FIX, ECHOED FROM THE GOOSE LANE (doctrine 6b) ═══════════════
+        # ⚠️ THIS ASSERTION IS INVERTED ON PURPOSE. It used to read "a dropped socket
+        # ends the session" — which was TRUE, and was the bug: the two lanes share this
+        # pty machinery, so a ⌘R in the Aider tab killed a running aider mid-edit
+        # exactly as it did in Goose. A closing socket is what a reload looks like from
+        # in here, and it must no longer be fatal.
+        time.sleep(0.6)
+        ok(P.busy() is True,
+           "a dropped socket does NOT end the session — the child outlives the socket")
+        sess = P.current()
+        ok(sess is not None and not sess.attached(), "…it is sitting DETACHED")
+        st = client.get("/api/aider/status").json()
+        ok(st["running"] and st["detached"] and st["grace_left"] > 0,
+           "…and the status route says so, with the countdown")
+
+        # reconnecting REATTACHES the same child and replays the scrollback
+        spawns_before = called["n"]
+        with client.websocket_connect("/api/pty/aider", headers=good) as ws:
+            replay, deadline = b"", time.time() + 5
+            while b"reattached" not in replay and time.time() < deadline:
+                replay += ws.receive_bytes()
+            ok(called["n"] == spawns_before, "the reload spawned NOTHING")
+            ok(b"hello" in replay, "…and the terminal came back with its scrollback")
+            ws.send_bytes(b"stillhere\n")
+            got, deadline = b"", time.time() + 5
+            while b"stillhere" not in got and time.time() < deadline:
+                got += ws.receive_bytes()
+            ok(b"stillhere" in got, "…and it is a live terminal, not a transcript")
+
+        # a DELIBERATE end is still an end
+        time.sleep(0.3)
+        r = client.post("/api/aider/end")
+        ok(r.status_code == 200 and r.json()["running"] is False,
+           "POST /api/aider/end reports the session gone")
+        ok(P.busy() is False, "…and the child really is dead (End kills the PROCESS)")
 
         # PRECONDITION refusal: the spec's error text is delivered INTO the terminal,
         # then 4412 — the page must never sit at a blank prompt with no explanation.
@@ -514,6 +581,31 @@ def test_page_cannot_fail_silently():
        "say() toggles a class")
     ok("style.display" not in say_body,
        "say() NEVER uses style.display (the defect that muted the whole page)")
+
+    # (a2) ⚠️ THE END BUTTON MUST NOT BE sock.close(). Since the reattach slice,
+    #      closing the socket is EXACTLY what a ⌘R does and the bridge deliberately
+    #      reads it as "the page went away" — so the old handler would have turned End
+    #      into a detach: a control that promises to stop an agent and leaves it
+    #      running with the workspace. Same fence as the Goose page's.
+    ok("/api/aider/end" in page, "End posts the deliberate-end route")
+    ok("btn-stop').onclick = () => { if (sock) sock.close(); }" not in page,
+       "…and is NOT the old socket-close, which would now silently mean 'detach'")
+    ok("s.model_ready || s.detached" in page,
+       "a reloaded tab reconnects even when the runner has since been unloaded — a "
+       "live session must never be strandable behind a precondition check")
+    ok("'detached'" in page,
+       "a detached close is never printed to the user as 'session ended'")
+    ok("reattaches" in page,
+       "…and the note states the reload rule instead of leaving it to be discovered")
+    # ── DEBI'S SCREENSHOT, the page half (ledger U10) ──
+    ok("Take over" in page,
+       "the button SAYS what it will do when another window holds the session — "
+       "'Start' beside a running session was half the dead end")
+    ok("running · another window" in page,
+       "…and the chip has a word for that state, instead of contradicting the "
+       "terminal below it with NOT CONNECTED")
+    ok("already running in another tab or window" not in page,
+       "…and the refusal copy that produced the dead end is gone from the page")
 
     # (b) every request checks its status. Exactly one bare fetch( exists: jfetch's own.
     #     Comments are stripped first — prose about the bug is not a call site.
