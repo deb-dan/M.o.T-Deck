@@ -133,3 +133,17 @@ local copy (the user's Downloads, a cached bundle) is a spike convenience that m
 retired before shipping, because it silently exempts the install journey from testing.
 Incidents: the goose UI spike read Debi's ~/Downloads/Goose.app (install path untested);
 suspicion raised on the ONLYOFFICE bundle's install history — audited 2026-08-29.
+
+### 6b. Bug classes ECHO automatically (Debi, 2026-08-29)
+
+When a bug CLASS is identified anywhere (a lie pattern, a silent no-op, an untested path,
+a kill-by-name), the response is never just the local fix: the bug-echo discipline
+(installed skill; house precedent docs/research/2026-08-28-bug-echo-sweep.md +
+test_bug_echo_ledger.py) fires AS PART OF THE SAME response — sweep every analogous site
+in the app, record each verdict in the ledger format, pin the class with a gate test.
+Fable's QA rejects a fix that arrives without its echo sweep when the finding is plainly
+a class ("this could exist elsewhere" is the trigger, and it almost always could).
+Incidents that each cost a re-visit because the echo didn't fire with the fix: alert()
+silent no-op (fixed in comfy.html, class ledgered only later as S12), install-path
+shortcut (goose UI spike, then discovered to need checking on goose CLI + ONLYOFFICE +
+every provisioner — the sweep Debi had to demand).
