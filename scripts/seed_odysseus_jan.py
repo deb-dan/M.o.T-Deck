@@ -83,6 +83,29 @@ STATE_PATH = os.environ.get("HARNESS_ODY_SEED_STATE") or os.path.join(
 _OUR_URL_RE = re.compile(r"^https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+/v1/?$", re.I)
 
 
+# ── S29: the ONE definition of an offerable model (bridge/core/modelreg.py) ──
+# Loaded BY PATH, resolved from THIS FILE, because this script runs under Odysseus's
+# own venv with cwd=vendor/odysseus — neither the bridge package nor the repo root is
+# importable from there. None ⇒ registry_wire_models falls back to its own inline rule
+# (which now also honours the `absent` flag), because a helper that failed to import
+# must never empty a working picker.
+def _load_modelreg():
+    try:
+        import importlib.util
+        p = os.path.join(HARNESS_ROOT, "bridge", "core", "modelreg.py")
+        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+_MODELREG = _load_modelreg()
+
+
 # ── PURE HELPERS (no DB, no network — executed directly by the tests) ────────────
 
 def looks_like_our_runner_url(url) -> bool:
@@ -107,10 +130,24 @@ def registry_wire_models(models, active: str = "") -> list:
     Audio models are dropped (they are not chat models and Odysseus would offer them in
     the chat picker), so are registry rows marked hidden. The ACTIVE model is ordered
     first so a fresh default lands on the one the runner has actually loaded.
+
+    ⚠️ S29 — WHICH ROWS QUALIFY IS NOT DECIDED HERE ANY MORE. bridge/core/modelreg.py
+    owns the one definition (chat · not hidden · not flagged `absent` · file not
+    provably gone) and all four seeders import it. The clause this function was missing
+    is the FILE one: Odysseus went on pinning models whose weights had been deleted in
+    LM Studio, and llama.cpp answers those requests with whatever it has loaded, so the
+    picker offered a choice that silently became a different model.
+
+    A failure to load the helper falls back to the old inline rule rather than
+    enumerating nothing — an empty list here would empty a working picker.
     """
+    if _MODELREG is not None:
+        return _MODELREG.offerable_wire_ids(models, active)
     out = []
     for m in models or []:
         if not isinstance(m, dict) or m.get("kind") == "audio" or m.get("hidden"):
+            continue
+        if m.get("absent") is True:
             continue
         mid = str(m.get("id") or "").strip()
         if not mid:

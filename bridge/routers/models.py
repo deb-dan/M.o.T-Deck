@@ -4,6 +4,12 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+# ⚠️ `sys` WAS NEVER IMPORTED HERE, and the S28 rebind has referenced `sys.executable`
+# since v1.5.62 (_rebind_odysseus_offline's fallback). It never fired because the
+# Odysseus venv has always existed on this machine, so a NameError sat dormant on the
+# one path that runs when a component is half-provisioned. Found by running the new
+# rescan fan-out against the real snapshot — a code read would not have caught it.
+import sys
 import threading
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
@@ -420,6 +426,56 @@ def opencode_landing() -> Response:
                              "Cache-Control": "no-store"})
 
 
+# ══ THE PERSISTED `absent` FLAG (S29) ═══════════════════════════════════════════
+# The two-strike file verdict already existed (U15, core/health.file_state_track) and
+# it is honest — but it lived only in the /api/models RESPONSE. Nothing on disk carried
+# it, so every OTHER enumerator (the four seeders, all of which read data/models.json
+# directly and none of which stat anything) went on offering models whose weights Debi
+# had deleted days earlier. Writing the verdict INTO the row is what lets one file be
+# the single source of truth for "what may be offered".
+#
+# Three rules:
+#   1. WRITE ONLY ON A CHANGE. This runs inside a polled GET; a read-modify-write per
+#      poll would rewrite a 20KB file every 6s for no reason.
+#   2. FLAG, NEVER DELETE. The row keeps its identity (id, ctx, pinned voice, sampling
+#      overrides). The file may be on a volume that is unplugged. Removal is RESCAN's
+#      job alone, under an explicit human click, and it prints what it took.
+#   3. ONLY A DEBOUNCED VERDICT MAY WRITE. "checking" (one missed stat — what a sleeping
+#      network mount produces) and "unknown" change nothing, in either direction.
+def _persist_absent(states: dict) -> None:
+    """`states` is {model id: file_state}. Best-effort; never raises into the route."""
+    import json as _json
+    from ..core.modelreg import ABSENT_KEY
+    # ★ THE UNPLUGGED-DISK GUARD, same rule as modelreg.offerable's (adversarial pass).
+    # If EVERY model went "gone" in the same pass, that is not a user deleting their
+    # library — it is us losing sight of the disk. Persisting a flag on all of them
+    # would propagate one cable-out into four app catalogs, so this abstains entirely.
+    if states and all(v == "gone" for v in states.values()):
+        return
+    try:
+        reg = ROOT / "data" / "models.json"
+        data = _json.loads(reg.read_text())
+        models = data.get("models") or []
+        dirty = False
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            st = states.get(m.get("id"))
+            if st == "gone" and m.get(ABSENT_KEY) is not True:
+                m[ABSENT_KEY] = True
+                dirty = True
+            elif st == "ok" and m.get(ABSENT_KEY) is not None:
+                m.pop(ABSENT_KEY, None)
+                dirty = True
+        if not dirty:
+            return
+        tmp = reg.with_suffix(".json.tmp")
+        tmp.write_text(_json.dumps(data, indent=2) + "\n")
+        os.replace(str(tmp), str(reg))
+    except Exception:                                          # noqa: BLE001
+        pass                              # a registry we cannot rewrite is not an alarm
+
+
 @app.get("/api/models")
 def api_models() -> JSONResponse:
     """Installed models (from OUR registry data/models.json — the only source since
@@ -463,7 +519,12 @@ def api_models() -> JSONResponse:
         _audio_models = [m for m in _audio_models if not _is_hidden(m)]
         if _voice is not None:
             audio = [_voice.audio_entry_view(m) for m in _audio_models]
+        _file_states: dict = {}
         for m in models:
+            _fs = file_state_track(f"models:{m.get('id')}",
+                                   str(m.get("path") or ""),
+                                   str(m.get("format") or "gguf"))["state"]
+            _file_states[m.get("id")] = _fs
             installed.append({
                 "id": m.get("id"), "name": m.get("name") or m.get("id"),
                 "size_bytes": m.get("size_bytes"),
@@ -482,9 +543,14 @@ def api_models() -> JSONResponse:
                 # the pane accuse the user of deleting a model they still have. Values:
                 # ok | checking | gone | unknown. Only "gone" draws a chip; "checking"
                 # is deliberately invisible, which is the whole point of the debounce.
-                "file": file_state_track(f"models:{m.get('id')}",
-                                         str(m.get("path") or ""),
-                                         str(m.get("format") or "gguf"))["state"],
+                "file": _fs,
+                # S29 — THE PERSISTED verdict, as opposed to `file` above, which is this
+                # process's live debounce. The panel needs both: `file` draws the chip
+                # the instant we know, `absent` is what every OTHER enumerator (the four
+                # app seeders, all reading data/models.json off disk) will act on, and
+                # therefore what the composer picker must agree with so one screen never
+                # offers what another screen refuses.
+                "absent": m.get("absent") is True,
                 # Per-model sampling: the READ side of /api/models/settings lives
                 # here (one key on a payload the panel already polls) rather than in
                 # a second route. `sampling` is the rendered view (engine-filtered
@@ -498,6 +564,9 @@ def api_models() -> JSONResponse:
                 # v2.1: the shared Apply & reload row — sampling floors + load, in
                 # one claim, so an MLX model (no Load fields) still gets the chip.
                 "launch": launch_view(m, _LOAD_AT_LAUNCH.get(m.get("id")))})
+        # Write the debounced verdict back into the row (see _persist_absent). Done
+        # AFTER the list is built so a failure here can never cost the caller a payload.
+        _persist_absent(_file_states)
     except Exception as e:
         err = str(e)[:200]
         hidden = []
@@ -529,24 +598,73 @@ def api_models_rescan() -> JSONResponse:
     re-scanned sets ('local'/'jan-import'/'lmstudio-import') by replacing them with a
     fresh scan, so models the user deleted in LM Studio (or Jan) drop out; source
     "download" entries + known ctx are preserved. Does NOT touch the runner/live
-    model. Returns {ok, count} (models after rescan); never raises into the caller."""
+    model. Returns {ok, count} (models after rescan); never raises into the caller.
+
+    ⚠️ S29 — RESCAN IS ALSO THE PRUNE, AND THE FAN-OUT. Debi's words: "isn't there a way
+    to make the different apps scan?" Three things now happen behind this one click:
+
+      1. the import source dirs are re-walked (merge(), unchanged — an LM Studio
+         deletion propagates because that scan is what put the row there in the first
+         place);
+      2. EVERY row is stat'd, source-blind, and one whose file is provably gone is
+         REMOVED with a printed line — unless it is the pin or the live model, which is
+         flagged `absent: true` and kept, so the runner card keeps its subject;
+      3. every dependent app's catalog is rebuilt from what survived — Odysseus, both
+         goose lanes, Hermes and OpenCode — through the SAME fan-out a model switch
+         uses. Without (3) the registry would be clean and every third-party picker
+         would still be offering the dead models, which is precisely the state she was
+         looking at.
+
+    NOTHING here deletes a model FILE. Registry rows only.
+    """
     import json as _json
     try:
-        r = subprocess.run(["python3", "scripts/seed_registry.py"],
-                           cwd=ROOT, capture_output=True, text=True,
-                           timeout=120, check=False)
+        # The two ids the prune must never remove: harness.yaml's pin (an intent record
+        # — the card's honest "pinned model missing" needs the row to point at) and
+        # whatever the runner is actually serving.
+        _rc = cfg().get("runner", {}) or {}
+        _protect = [str(_rc.get("model") or "")]
+        try:
+            _p = _rc.get("port")
+            _protect.append(str(_live_model_id(int(_p)) or "") if _p else "")
+        except Exception:                                      # noqa: BLE001
+            pass
+        r = subprocess.run(
+            ["python3", "scripts/seed_registry.py"],
+            cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
+            env=dict(os.environ,
+                     HARNESS_PROTECT_MODELS="\n".join(x for x in _protect if x)))
         if r.returncode != 0:
             return JSONResponse(
                 {"ok": False, "error": (r.stderr or r.stdout or "seed failed")[:300]},
                 status_code=500)
         reg = ROOT / "data" / "models.json"
         count = len(_json.loads(reg.read_text()).get("models", []))
+        # The seed prints one line per row it took; hand those to the panel verbatim so
+        # a list that shrank always says WHY it shrank.
+        # Just the ids — the seed's line carries its own "— its file is no longer on
+        # disk" tail, and the panel already says "(file gone)" once for the whole group.
+        pruned = [ln.split("removed: ", 1)[1].split(" — ")[0]
+                  for ln in (r.stdout or "").splitlines() if ln.startswith("removed: ")]
+        flagged = [ln.split(": ", 1)[1] for ln in (r.stdout or "").splitlines()
+                   if ln.startswith("flagged absent")]
         # U15: the registry just changed under every path claim we were tracking —
         # drop the streaks so a re-pointed entry starts from a clean sample rather
         # than inheriting the old path's misses.
         from ..core.health import file_state_forget
         file_state_forget()
-        return JSONResponse({"ok": True, "count": count})
+        # THE ANSWER TO "can the different apps scan?" — they cannot, and they should
+        # not have to: they read OUR registry, so the rescan pushes the pruned list into
+        # every catalog through the same fan-out a switch uses. Best-effort and never
+        # fatal: a registry that is now clean beats a rescan that refused because one
+        # dependent was mid-restart.
+        fan = ""
+        try:
+            fan = _rescan_fanout()
+        except Exception as e:                                 # noqa: BLE001
+            fan = f"catalog refresh failed: {str(e)[:120]}"
+        return JSONResponse({"ok": True, "count": count, "pruned": pruned,
+                             "flagged": flagged, "apps": fan})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
 
@@ -692,6 +810,169 @@ def _rebind_odysseus_offline(wire: str) -> str:
         f"Odysseus seed exited {r.returncode}: {(r.stderr or r.stdout)[-160:].strip()}"
 
 
+def _rebind_opencode(wire: str) -> str:
+    """Rewrite OpenCode's provider catalog + default from the CURRENT registry.
+
+    THE GAP THIS CLOSES (audit §1, and Debi's words: "very old deleted models"):
+    OpenCode's catalog was only ever rewritten by its OWN Start. Her live config, last
+    written 2026-08-28 01:49, still advertised sixteen models — the muse/glimmer family,
+    the gemma-4 DECKARD, the deleted 27B — while the registry held fourteen and the
+    runner served one. Picking a ghost is not an error (llama.cpp ignores the request's
+    `model`), so the turn answers under a dead model's name: the lie class.
+
+    ⚠️ WHAT THIS DOES AND DOES NOT ACHIEVE — MEASURED ON THE LIVE SERVER 2026-08-29,
+    and the first draft of this comment claimed the opposite. After writing the pruned
+    catalog, an authenticated directory-scoped `GET :4096/provider` STILL RETURNED THE
+    SIXTEEN OLD MODELS, muse/glimmer and all: OpenCode reads its config at BOOT and
+    holds it for the life of the process. A file write alone changes nothing the user
+    can see. (The lane's own Start self-check already prints this fact — "a running
+    OpenCode reads its config at boot" — so assuming otherwise would have shipped a fix
+    that reported success and did nothing, which is the exact class this slice is about.)
+
+    The division of labour, therefore: THIS makes the file correct and durable, so no
+    future Start can re-introduce the ghosts and a component restart is all that is left
+    to do — and the CALLER says out loud that the restart is what makes it visible.
+    Never raises; returns a short log line, restart note included."""
+    root_env = dict(os.environ)
+    oc_home = ROOT / "data" / "opencode" / "xdg"
+    cfg_path = oc_home / "config" / "opencode" / "opencode.json"
+    if not cfg_path.is_file():
+        return ""                        # lane never started here — S23, say nothing
+    rc = cfg().get("runner", {}) or {}
+    root_env.update(
+        HARNESS_ROOT=str(ROOT),
+        OC_CFG=str(cfg_path),
+        OC_PCFG=str(ROOT / "data" / "opencode-workspace" / "opencode.json"),
+        OC_BASE=str(rc.get("endpoint") or ""),
+        OC_KEY=str(rc.get("api_key") or ""),
+        # LIVE OUTRANKS THE PIN (rule 2 above) — the Start arm can only read
+        # harness.yaml, but we know what is actually serving.
+        OC_MODEL=str(wire or ""))
+    try:
+        r = subprocess.run([sys.executable, "scripts/seed_opencode_config.py"],
+                           cwd=str(ROOT), env=root_env, capture_output=True,
+                           text=True, timeout=60)
+    except Exception as e:                                           # noqa: BLE001
+        return f"OpenCode catalog re-seed failed: {str(e)[:80]}"
+    if r.returncode != 0:
+        return (f"OpenCode catalog re-seed exited {r.returncode}: "
+                f"{(r.stderr or r.stdout)[-160:].strip()}")
+    # Only the REPAIRS travel (a config we rewrote under the user must be visible); the
+    # routine "provider llama.cpp -> N model(s)" line is the caller's to summarise.
+    bits = [ln.split("REPAIRED:", 1)[1].strip()
+            for ln in (r.stdout or "").splitlines() if "REPAIRED:" in ln]
+    # THE HONEST HALF (see the ⚠️ above): while the process is UP, its picker keeps the
+    # catalog it read at boot. Say so, or a correct file reads as a fixed UI.
+    try:
+        port = ((cfg().get("components") or {}).get("opencode") or {}).get("port") or 4096
+        if _port_alive_sync(int(port)):
+            bits.append("catalog written — RESTART OpenCode to load it "
+                        "(it reads its config at boot)")
+    except Exception:                                                # noqa: BLE001
+        pass
+    return "; ".join(bits)[:400]
+
+
+def _rebind_hermes_file(wire: str) -> str:
+    """The Hermes provider seed WITHOUT a restart — the config half of its Start arm.
+
+    Hermes reads ~/.hermes/config.yaml at USE time (audit §1, the one third-party app
+    that was already coherent), so the file write is the whole rebind for a catalog
+    change. `MODEL` is passed but the seed is SEEDED-NOT-ENFORCED for the main slot
+    (U12) — a model the user picked inside Hermes is honoured, with a printed line."""
+    script = ROOT / "scripts" / "seed_hermes_provider.py"
+    hcfg = os.path.expanduser("~/.hermes/config.yaml")
+    if not script.is_file() or not os.path.isfile(hcfg):
+        return ""
+    rc = cfg().get("runner", {}) or {}
+    env = dict(os.environ, HERMES_CFG=hcfg, HARNESS_ROOT=str(ROOT),
+               BASE_URL=str(rc.get("endpoint") or ""),
+               KEY=str(rc.get("api_key") or ""), MODEL=str(wire or ""))
+    try:
+        r = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), env=env,
+                           capture_output=True, text=True, timeout=60)
+    except Exception as e:                                           # noqa: BLE001
+        return f"Hermes provider re-seed failed: {str(e)[:80]}"
+    return "" if r.returncode == 0 else \
+        f"Hermes provider re-seed exited {r.returncode}"
+
+
+def _rescan_fanout() -> str:
+    """Push the JUST-PRUNED registry into every dependent's catalog. FILE WRITES ONLY.
+
+    Debi's actual question was "isn't there a way to make the different apps scan?" —
+    and the honest answer is that they should never have to: they do not own the
+    registry, we do. RESCAN is the moment the registry changes, so it is the moment
+    every catalog built from it must be rebuilt.
+
+    ⚠️ NO RESTARTS HERE, deliberately, and this is the difference from the switch
+    fan-out. A switch is already a disruptive act the user asked for; a rescan is a
+    read-the-disk button, and killing a live Odysseus or a goose session the user is
+    mid-conversation in to refresh a picker would be a far worse surprise than a stale
+    list. So: every catalog that is a file gets rewritten now, and anything that needs
+    a process restart is left to /api/deps' banner, which already carries that sentence
+    and that button. Returns a one-line summary for the panel."""
+    from ..core.modelid import wire_model_id
+    rc = cfg().get("runner", {}) or {}
+    port = rc.get("port")
+    live = _live_model_id(int(port)) if port else None
+    # LIVE OUTRANKS THE PIN; the pin is the fallback for a runner that is down.
+    base = live or rc.get("model") or ""
+    wire = wire_model_id(base, _registry_models()) or base
+    # How many models the catalogs will now carry — the number that makes the summary
+    # CHECKABLE. ("Refreshed" with no figure is indistinguishable from "did nothing",
+    # and this whole slice exists because a list nobody could check went stale.)
+    try:
+        from ..core.modelreg import offerable
+        n = len(offerable(_registry_models()))
+    except Exception:                                                # noqa: BLE001
+        n = -1
+    said = []
+    # ⚠️ THE THREE SEEDS ALL RETURN '' ON A CLEAN, NO-CHANGE RUN — which is right for
+    # the switch log (silence = nothing to report) and WRONG here, where the user has
+    # just pressed a button and is owed an answer. Installed-ness is checked FIRST so
+    # a lane that is not on this machine still says nothing at all (S23).
+    for label, fn, present in (
+            ("OpenCode", _rebind_opencode,
+             (ROOT / "data" / "opencode" / "xdg" / "config" / "opencode"
+              / "opencode.json").is_file()),
+            ("Hermes", _rebind_hermes_file,
+             os.path.isfile(os.path.expanduser("~/.hermes/config.yaml"))),
+            ("goose", _rebind_goose,
+             (ROOT / "data" / "goose" / "ui-home" / "goose" / "config").is_dir()
+             or (ROOT / "data" / "goose" / "home" / ".config" / "goose").is_dir())):
+        if not present:
+            continue
+        try:
+            note = fn(wire)
+        except Exception as e:                                       # noqa: BLE001
+            note = f"failed ({str(e)[:60]})"
+        said.append(f"{label}: {note}" if note else
+                    f"{label}: catalog refreshed ({n} models)" if n >= 0 else
+                    f"{label}: catalog refreshed")
+    # Odysseus: the seed wants OFFLINE sqlite access (S28's own note), so it runs only
+    # when Odysseus is not up. A running Odysseus rebinds on its next Restart, and the
+    # deps banner is what says so — the same honest limit the switch fan-out holds.
+    try:
+        ody_up = _port_alive_sync(int(
+            ((cfg().get("components") or {}).get("odysseus") or {}).get("port") or 0))
+    except Exception:                                                # noqa: BLE001
+        ody_up = True
+    # ⚠️ S23 SILENCE FIRST, AND THIS WAS A REAL FINDING IN THIS SLICE'S OWN WALK: with
+    # no Odysseus installed, _rebind_odysseus_offline returns '' — the same value it
+    # returns on SUCCESS — and the summary happily said "Odysseus: picker rebuilt" about
+    # a component that is not on the machine. A claim about work we did not do is the
+    # lie class in miniature. Absence is checked HERE, before anything is claimed.
+    if not (ROOT / "vendor" / "odysseus").is_dir():
+        pass                              # not installed — say nothing at all
+    elif ody_up:
+        said.append("Odysseus: running — its picker rebuilds on its next Restart")
+    else:
+        note = _rebind_odysseus_offline(wire)
+        said.append(f"Odysseus: {note}" if note else "Odysseus: picker rebuilt")
+    return "; ".join(said)[:600] or "no dependent apps installed here"
+
+
 def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> str:
     """Fan the just-loaded model out to every dependent. '' on success, else the ONE
     sentence _do_switch should report instead of a bare "active"."""
@@ -716,6 +997,14 @@ def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> 
     gnote = _rebind_goose(wire)
     if gnote:
         print(f"[switch] goose: {gnote}", flush=True)
+    # S29 — OPENCODE JOINS THE FAN-OUT. It was the one dependent left out of v1.5.62,
+    # and it is the one Debi named ("very old deleted models"): its catalog was rewritten
+    # ONLY by its own Start, so it kept advertising models deleted days earlier. A file
+    # write, no restart, same never-clobber rules — see _rebind_opencode.
+    _switch_log("re-wiring OpenCode…")
+    onote = _rebind_opencode(wire)
+    if onote:
+        print(f"[switch] opencode: {onote}", flush=True)
     return ""
 
 

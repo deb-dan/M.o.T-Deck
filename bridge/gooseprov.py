@@ -173,19 +173,15 @@ def model_entries(registry, wire_of=None) -> list:
     Audio models are excluded (`kind == "audio"`), hidden ones too, and duplicate ids are
     collapsed keeping first-seen order.
     """
+    # S29 — WHICH ROWS is not this function's decision any more. core/modelreg.offerable
+    # is the one definition (chat · not hidden · not flagged absent · file not provably
+    # gone), shared with the Odysseus, Hermes and OpenCode seeders. The file clause is
+    # what stops goose's picker offering weights the user deleted in LM Studio.
+    from .core.modelreg import offerable, wire_id
     out, seen = [], set()
-    for m in (registry or []):
-        if not isinstance(m, dict) or m.get("kind") == "audio" or m.get("hidden"):
-            continue
+    for m in offerable(registry):
         mid = str(m.get("id") or "").strip()
-        if not mid:
-            continue
-        if callable(wire_of):
-            wire = str(wire_of(mid) or mid)
-        elif str(m.get("format") or "gguf").strip().lower() == "mlx":
-            wire = str(m.get("path") or "").strip() or mid
-        else:
-            wire = mid
+        wire = str(wire_of(mid) or mid) if callable(wire_of) else wire_id(m)
         if wire in seen:
             continue
         seen.add(wire)
@@ -256,6 +252,16 @@ def merge_provider(existing, ours: dict) -> dict:
         return dict(ours)
     out = dict(existing)
     for k in OWNED_KEYS:
+        # ⚠️ AN EMPTY MODEL LIST IS NEVER A DECISION (S29, found in this slice's own
+        # adversarial pass). Until now the only way `models` came back empty was an
+        # unreadable data/models.json for one Start; the shared enumeration rule adds a
+        # second way — every artifact answering "gone" at once, which is exactly what an
+        # UNPLUGGED EXTERNAL DISK looks like for one poll. Writing that through would
+        # empty goose's picker over a cable, and the next seed with the disk back would
+        # not undo the confusion. The rule the other three seeders already hold, spelled
+        # here: when we learned nothing, we change nothing — the previous list stands.
+        if k == "models" and not ours.get(k) and existing.get(k):
+            continue
         out[k] = ours[k]
     # `name` is the file's own identity and must match the filename or goose indexes it
     # under a name nothing references. It is repaired, not preserved.

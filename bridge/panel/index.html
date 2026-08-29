@@ -7256,13 +7256,33 @@ function renderModelPop(){
   const pop = document.getElementById('model-pop');
   if (!pop) return;
   pop.innerHTML = '';
-  if (!modelEntries.length){
+  /* ★ S29 — A PICKER THAT OFFERS A MODEL WHICH CANNOT LOAD IS THE LIE CLASS.
+     This popover is where a switch is actually CHOSEN, so it enumerates exactly what
+     every app catalog enumerates: rows whose file is still on disk. A row the bridge
+     has twice failed to stat (`file === 'gone'`) or that carries the persisted `absent`
+     flag is not shown — not greyed, not disabled-with-a-tooltip. Clicking Switch on one
+     spends 60-90s to fail, and listing it is the invitation to do that.
+     The MODELS VIEW keeps them (sorted last, wearing the file-missing chip) because
+     that is the pane whose job is to TELL you and to offer RESCAN. One place says the
+     bad news; every place that offers a CHOICE offers only real ones.
+     ⚠️ `file === 'checking'` (one missed stat, which a sleeping network volume
+     produces) is deliberately NOT filtered — same two-strike discipline as the chip. */
+  /* ⚠️ …EXCEPT THE MODEL THAT IS RUNNING RIGHT NOW (adversarial pass). Its weights are
+     already in RAM, so "the file is gone" says nothing about whether it works — and
+     dropping its row would leave the chip naming a model the popover does not list,
+     with no way to Eject it or set it as Aux. A live row is never hidden, whatever the
+     disk says; the Models view's chip is where that fact is told. */
+  const pickable = modelEntries.filter(
+    m => (modelLiveId && m.id === modelLiveId) || !(m.absent || m.file === 'gone'));
+  if (!pickable.length){
     const e = document.createElement('div');
     e.className = 'mp-empty';
-    e.textContent = 'No models installed — open Models to download one.';
+    e.textContent = modelEntries.length
+      ? 'No loadable models — every entry’s file is missing. Open Models → RESCAN.'
+      : 'No models installed — open Models to download one.';
     pop.appendChild(e); return;
   }
-  for (const m of modelEntries){
+  for (const m of pickable){
     const isLive = !!(modelLiveId && m.id === modelLiveId);
     const row = document.createElement('div');
     row.className = 'mp-row' + (isLive ? ' live' : '');
@@ -9191,6 +9211,20 @@ async function rescanModels(){
     } else {
       mSel = null;          // selection may have been pruned; let initModels re-pick
       await initModels();   // re-fetch list + refresh stamp/count
+      /* S29 — A LIST THAT SHRANK MUST SAY WHY. The bridge returns the exact rows the
+         seed removed and the catalogs it refreshed; without this the user sees a
+         shorter library and cannot tell a prune from a bug. Appended to the stamp
+         initModels just rewrote, so it survives until the next refresh. */
+      const j2 = j || {};
+      const bits = [];
+      if ((j2.pruned || []).length)
+        bits.push('REMOVED ' + j2.pruned.length + ' (file gone): '
+                  + j2.pruned.slice(0, 3).join(', ')
+                  + (j2.pruned.length > 3 ? ' +' + (j2.pruned.length - 3) + ' more' : ''));
+      if ((j2.flagged || []).length)
+        bits.push('KEPT + FLAGGED (pinned/live): ' + j2.flagged.join(', '));
+      if (j2.apps) bits.push('APP CATALOGS · ' + j2.apps);
+      if (bits.length && stamp) stamp.textContent += ' · ' + bits.join(' · ');
     }
   } catch(e) {
     if (stamp) stamp.textContent = 'RESCAN FAILED — ' + e;
@@ -9737,10 +9771,15 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
   // advisor's "No estimate" (v1.5.30), which reads as "we couldn't price it", not as
   // "it isn't there". Drawn ONLY on the bridge's debounced `gone` — "checking" (one
   // missed stat, which a sleeping network volume produces) deliberately draws nothing.
-  if (m.file === 'gone') {
+  // S29 adds the PERSISTED half: `absent` is the same verdict written into the registry
+  // row, which is what every app catalog acts on. Either one draws the chip, so this
+  // pane and the third-party pickers can never disagree about a model's reality.
+  if (m.file === 'gone' || m.absent) {
     badges.push('<span class="mpill gone" title="The file this entry points at is not '
-      + 'on disk (deleted outside MOT Deck — LM Studio?). RESCAN prunes entries like '
-      + 'this.">file missing</span>');
+      + 'on disk (deleted outside MOT Deck — LM Studio?). It is excluded from the chat '
+      + 'picker and from every app catalog. RESCAN removes entries like this — and '
+      + 'refreshes OpenCode / goose / Hermes / Odysseus from what is left.'
+      + '">file missing</span>');
   }
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
   if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
@@ -9761,7 +9800,13 @@ function renderList(r){
     renderHiddenRow(col, r, 'chat');
     return;
   }
-  for (const m of r.installed){
+  /* S29 — MISSING-FILE ROWS SORT LAST. They stay listed (this is the pane that owes the
+     user the bad news, and the only pane that offers RESCAN), but they stop occupying
+     the top of a list of things you might load. STABLE: everything else keeps the
+     bridge's order exactly, so a rescan never appears to shuffle the library. */
+  const rows = (r.installed || []).slice().sort((a, b) =>
+    ((a.absent || a.file === 'gone') ? 1 : 0) - ((b.absent || b.file === 'gone') ? 1 : 0));
+  for (const m of rows){
     // "live" = the model the RUNNER actually reports serving (ISSUE C), not merely the
     // harness.yaml intent — so the pill matches MC and post-eject reality.
     const isLive = m.id === r.live_id;

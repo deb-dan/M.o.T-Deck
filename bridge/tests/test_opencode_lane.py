@@ -159,7 +159,9 @@ def test_start_confines_every_write_with_xdg():
 def test_start_disables_autoupdate_both_ways():
     b = branch()
     assert "OPENCODE_DISABLE_AUTOUPDATE=1" in b, "the env half"
-    assert '"autoupdate"' in b and "False" in b, "the config half"
+    # S29: the config half now lives in the shared seeding SCRIPT (the bridge writes
+    # this file too, so the rule must hold on every path, not only at Start).
+    assert 'cfg["autoupdate"] = False' in SEED_SRC, "the config half"
 
 
 def test_start_clears_the_port_with_the_ownership_check():
@@ -192,21 +194,27 @@ def test_start_health_probe_has_a_fallback():
 
 
 def test_config_fan_out_merges_and_seeds():
-    b = branch()
+    # S29 — asserted against the SCRIPT, which is now the single implementation both
+    # the Start arm and the bridge's rebind run.
+    b, src = branch(), SEED_SRC
     assert "opencode.json" in b
-    assert "@ai-sdk/openai-compatible" in b, "the provider package upstream documents"
-    assert "baseURL" in b and "apiKey" in b
+    assert "@ai-sdk/openai-compatible" in src, "the provider package upstream documents"
+    assert "baseURL" in src and "apiKey" in src
     # MERGE, not overwrite: a user's own keys in that file must survive a restart.
-    assert "json.load(fh)" in b and "cfg.setdefault" in b or "cfg[\"provider\"]" in b
-    # The MLX wire-id rule, the same one hermes and seed_odysseus_jan use.
-    assert '"mlx"' in b and "m.get(\"path\")" in b, (
+    assert "json.load(fh)" in src and 'cfg["provider"] = provider' in src
+    # The MLX wire-id rule, the same one hermes and seed_odysseus_jan use — and it now
+    # comes from ONE definition (core/modelreg.wire_id) rather than a fourth copy.
+    assert "wire_id" in src and '"mlx"' in src, (
         "MLX needs the model PATH as the wire id (the MLX servers treat `model` as a "
         "model to LOAD and would resolve a bare id on HuggingFace)")
     # The default model is SEEDED, never enforced.
-    assert "stale" in b, (
+    assert "stale" in src, (
         "the default model is replaced only when it points at one of OUR provider's "
         "models that no longer exists — a choice made inside OpenCode must survive")
-    assert "hidden" in b, "a model the user hid must not be offered here either"
+    assert "hidden" in src, "a model the user hid must not be offered here either"
+    assert "offerable" in src, (
+        "S29: which rows may be offered is decided by core/modelreg, so a model whose "
+        "file the user deleted in LM Studio cannot reach this picker")
 
 
 # ── the bridge ───────────────────────────────────────────────────────────────
@@ -460,12 +468,27 @@ import subprocess
 import tempfile
 
 
-def _seed_block() -> str:
-    """The python heredoc the opencode branch runs, extracted verbatim."""
+# S29 — THE SEEDING LOGIC IS NO LONGER A HEREDOC. It moved to
+# scripts/seed_opencode_config.py precisely so the BRIDGE can call it too: OpenCode's
+# catalog used to be rewritten only by its own Start, which is why Debi's picker still
+# offered the muse/glimmer family and gemma-4 days after she deleted them. The tests
+# below therefore run the REAL SCRIPT rather than text carved out of the shell — a
+# stronger fence, not a weaker one, and the shell arm's call to it is asserted
+# separately (test_the_branch_calls_the_shared_seeding_script).
+SEED_SCRIPT = os.path.join(ROOT, "scripts", "seed_opencode_config.py")
+SEED_SRC = open(SEED_SCRIPT, encoding="utf-8", errors="replace").read()
+
+
+def test_the_branch_calls_the_shared_seeding_script():
     b = branch()
-    i = b.index("<<'PYOC'\n") + len("<<'PYOC'\n")
-    j = b.index("\nPYOC\n", i)
-    return b[i:j]
+    assert "scripts/seed_opencode_config.py" in b, (
+        "the opencode arm must run the SAME script the bridge's rebind runs — two "
+        "implementations of this catalog is how it drifted in the first place")
+    assert "<<'PYOC'" not in b, (
+        "the old inline heredoc must be GONE, not merely bypassed — two copies of this "
+        "catalog logic is exactly the drift S29 exists to end")
+    for var in ("OC_CFG", "OC_PCFG", "OC_BASE", "OC_KEY", "OC_MODEL"):
+        assert var + '="$' in b, f"{var} must still be exported to the script"
 
 
 def _run_seed(models, want="", extra_global=None, extra_project=None):
@@ -482,21 +505,28 @@ def _run_seed(models, want="", extra_global=None, extra_project=None):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(seed, fh)
-    script = os.path.join(d, "seed.py")
-    with open(script, "w", encoding="utf-8") as fh:
-        fh.write(_seed_block())
     env = dict(os.environ, OC_CFG=gp, OC_PCFG=pp, OC_MODEL=want,
-               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="harness-key")
-    p = subprocess.run([sys.executable, script], cwd=d, env=env,
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="harness-key",
+               HARNESS_ROOT=d)
+    p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=d, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
     return (json.load(open(gp, encoding="utf-8")),
             json.load(open(pp, encoding="utf-8")))
 
 
-GGUF = {"id": "Qwen3-9B-Q4_0", "format": "gguf", "path": "/m/q.gguf", "ctx": 32768}
-MLX = {"id": "mlx-community/Qwen3-8B-4bit", "format": "mlx",
-       "path": "/Users/d/models/Qwen3-8B-4bit"}
+# S29 — REAL artifacts. The enumeration rule now drops a row whose file is provably
+# gone, so a fixture pointing at "/m/q.gguf" would be asserting the OLD behaviour: the
+# one that kept OpenCode's picker advertising the muse/glimmer family and gemma-4 for
+# days after Debi deleted them in LM Studio.
+_ART = tempfile.mkdtemp(prefix="opencode-artifacts-")
+_GGUF_PATH = os.path.join(_ART, "q.gguf")
+open(_GGUF_PATH, "wb").close()
+_MLX_PATH = os.path.join(_ART, "Qwen3-8B-4bit")
+os.makedirs(_MLX_PATH, exist_ok=True)
+
+GGUF = {"id": "Qwen3-9B-Q4_0", "format": "gguf", "path": _GGUF_PATH, "ctx": 32768}
+MLX = {"id": "mlx-community/Qwen3-8B-4bit", "format": "mlx", "path": _MLX_PATH}
 
 
 def test_seeded_provider_has_every_key_upstream_requires():
@@ -623,12 +653,9 @@ def test_a_broken_config_file_is_replaced_not_inherited():
     gp = os.path.join(d, "g.json")
     with open(gp, "w", encoding="utf-8") as fh:
         fh.write("{ this is not json")
-    script = os.path.join(d, "seed.py")
-    with open(script, "w", encoding="utf-8") as fh:
-        fh.write(_seed_block())
     env = dict(os.environ, OC_CFG=gp, OC_PCFG=os.path.join(d, "p.json"), OC_MODEL="",
-               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k")
-    p = subprocess.run([sys.executable, script], cwd=d, env=env,
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k", HARNESS_ROOT=d)
+    p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=d, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
     assert "llama.cpp" in json.load(open(gp, encoding="utf-8"))["provider"]
@@ -772,8 +799,7 @@ def test_the_repair_preserves_the_rest_of_the_users_config():
 
 def test_every_repair_announces_itself():
     """A config we silently rewrite under the user is worse than one we refuse to."""
-    code = _seed_block()
-    assert "REPAIRED" in code, "a repair the user cannot see is a surprise, not a fix"
+    assert "REPAIRED" in SEED_SRC, "a repair the user cannot see is a surprise, not a fix"
 
 
 # ── the self-check asks in the scope the UI asks in ──────────────────────────
@@ -863,8 +889,12 @@ def test_the_probe_is_a_handshake_not_an_http_request():
         "the rejected alternative must be named where the decision was made, with the "
         "reason — otherwise the next reader 'fixes' it back into an HTTP probe")
     # …and it is genuinely NOT used: the health block issues no HTTP request at all.
+    # Comments are stripped first (v1.5.57's incident documentation NAMES the start
+    # script's curl in a comment inside this block — a fence tripping on prose that
+    # explains a bug is the fence failing its own job).
+    code = "\n".join(l for l in block.split("\n") if not l.lstrip().startswith("#"))
     for http in ("urlopen", "httpx", "requests.get", "curl", "aiohttp"):
-        assert http not in block, f"the liveness probe must not speak HTTP ({http})"
+        assert http not in code, f"the liveness probe must not speak HTTP ({http})"
     assert APP.count("/global/health") == 1, (
         "one mention, in that comment — the bridge never calls the route")
     assert "/global/health" in branch(), (
@@ -931,7 +961,12 @@ def test_status_publishes_the_verdict_and_keeps_degraded_byte_identical():
     # third writer of the /api/status verdict this test guards. The two /api/status
     # writers are still pinned exactly by the two `"degraded":` asserts above; this
     # count is the tripwire that makes the NEXT new "health" key stop here and argue.
-    assert APP.count('"health": ') == 3 and APP.count('"misses": ') == 2, (
+    # "misses" counted in its STATUS-WRITER spellings only: v1.5.57's file tracker
+    # carries "misses" as a plain dict field in six more places (docstrings, the
+    # tracker's own returns) — none of them /api/status writers. The two writers pass
+    # a bare local; pin those exact spellings so tracker growth can't trip this.
+    assert APP.count('"health": ') == 3 \
+        and APP.count('"misses": misses,') == 1 and APP.count('"misses": r_misses,') == 1, (
         "both the components loop and the runner publish the /api/status verdict, "
         "comfy state nests its own engine block, and nothing else does")
     # The runner's verdict is keyed on PORT_UP, exactly as its degraded is — NOT on

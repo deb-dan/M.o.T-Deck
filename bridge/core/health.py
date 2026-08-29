@@ -7,10 +7,11 @@ asking "how does this app decide something is gone".
 """
 from __future__ import annotations
 
-import os
-import stat as _stat
-
 from .events import publish
+# S29 — the FILE half of "is this model real" has ONE definition, in core/modelreg.py
+# (stdlib-only and importable by path, because three of the four seeders are standalone
+# scripts). Re-exported here so every existing `health.path_present` caller is unmoved.
+from .modelreg import path_present, wants_dir as _wants_dir     # noqa: F401
 
 
 
@@ -151,42 +152,9 @@ MODEL_FILE_MISS_GONE = 2        # consecutive stat misses before we CLAIM "gone"
 _FILE_MISS: dict = {}           # key -> {"path": str, "misses": int}
 
 
-def _wants_dir(fmt: str) -> bool:
-    """Which registry formats are DIRECTORIES on disk rather than single files.
-
-    Byte-for-byte the rule scripts/start_component.sh resolves with (`os.path.isdir
-    if fmt == "mlx" else os.path.isfile`), widened only to the audio kinds, whose
-    entries are checkpoint directories too. Anything unrecognised is treated as a
-    file, which is what `gguf` — the overwhelming majority — is."""
-    f = str(fmt or "gguf").lower()
-    return f == "mlx" or f.startswith(("stt-", "tts-"))
-
-
-def path_present(path: str, fmt: str = "gguf") -> "bool | None":
-    """RAW, undebounced: is this model's artifact on disk right now?
-
-    True  — it is there, and it is the right KIND (a dir for mlx, a file for gguf)
-    False — the OS answered, and the answer was "no"
-    None  — we could not tell, so we say nothing: no path at all, or the stat failed
-            for a reason that is not absence (EACCES, ETIMEDOUT on a stalled mount,
-            ELOOP …). None is never rendered as a problem anywhere.
-
-    One stat() per call. Nothing here reads, opens or sizes the file — a 20GB GGUF
-    on a spinning disk must cost the same as a 2KB one."""
-    if not path or not isinstance(path, str):
-        return None
-    try:
-        st = os.stat(path)
-    except FileNotFoundError:
-        return False
-    except NotADirectoryError:
-        return False
-    except OSError:
-        return None                       # permission / timeout / loop — NOT a claim
-    except Exception:                                            # noqa: BLE001
-        return None
-    return bool(_stat.S_ISDIR(st.st_mode) if _wants_dir(fmt)
-                else _stat.S_ISREG(st.st_mode))
+# ⚠️ `_wants_dir` / `path_present` are imported at the top of this file from
+# core/modelreg.py (S29). They are documented there; nothing about their contract
+# changed when they moved.
 
 
 def file_state_track(key: str, path: str, fmt: str = "gguf",

@@ -112,6 +112,28 @@ except Exception:                                                   # noqa: BLE0
 PRODUCT_NAME = "MOT Deck (local)"
 
 
+# ── S29: the ONE definition of an offerable model (bridge/core/modelreg.py) ──
+# Loaded BY PATH, resolved from THIS FILE (never the cwd), so it works from the repo and
+# from the provisioned snapshot alike. None ⇒ registry_models falls back to its own
+# inline rule, because a helper that failed to import must not empty Hermes's picker.
+def _load_modelreg():
+    try:
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         os.pardir, "bridge", "core", "modelreg.py")
+        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                               # noqa: BLE001
+        return None
+
+
+_MODELREG = _load_modelreg()
+
+
 # ── identity helpers — mirrors of upstream, cited so a pin bump can be diffed ──
 
 def norm_url(value: str) -> str:
@@ -191,15 +213,22 @@ def registry_models(root: str, current_wire: str, ctxlen: int) -> "dict[str, dic
             reg = json.load(fh).get("models", []) or []
     except Exception:                                               # noqa: BLE001
         reg = []
-    for m in reg:
-        if not isinstance(m, dict) or m.get("kind") == "audio" or m.get("hidden"):
-            continue
+    # S29 — one definition of which rows may be offered (bridge/core/modelreg.py):
+    # chat · not hidden · not flagged `absent` · file not provably gone. This seeder
+    # was already the most careful of the four (it checked BOTH audio spellings) and it
+    # was still missing the file clause, which is the one that matters after a deletion
+    # in LM Studio. The inline fallback keeps this script standalone-correct.
+    if _MODELREG is not None:
+        rows = _MODELREG.offerable(reg)
+    else:
+        rows = [m for m in reg
+                if isinstance(m, dict) and m.get("kind") != "audio"
+                and not m.get("hidden") and m.get("absent") is not True
+                and str(m.get("id") or "").strip()
+                and not str(m.get("format") or "").lower().startswith(("tts-", "stt-"))]
+    for m in rows:
         mid = str(m.get("id") or "").strip()
-        if not mid:
-            continue
         fmt = str(m.get("format") or "gguf").strip().lower()
-        if fmt.startswith(("tts-", "stt-")):
-            continue                      # voice engines are not chat models
         wire = ((m.get("path") or "").strip() or mid) if fmt == "mlx" else mid
         try:
             ctx = int(m.get("ctx") or 0)
