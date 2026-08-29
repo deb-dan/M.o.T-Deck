@@ -14,24 +14,38 @@
  * mechanism that exists, and it leaves their store byte-untouched (which is what keeps
  * their own ✕ cleanup working).
  *
+ * THE DISCRIMINATOR (Debi's live bug, 2026-08-29). The first cut relabelled EVERY
+ * draft, so clicking + — a deliberate new session — was branded "runner auto session"
+ * too: the same lie the slice removes, pointed at the user's own work. Auto and user
+ * drafts are byte-identical in the store and land on the same `/new-session?draftId=…`
+ * url (their `newDraft` does both), so only the GESTURE separates them. AUTO = the one
+ * draft whose id was NOT in the documentStart snapshot, becomes THIS document's own
+ * `draftId`, and does so before any pointerdown/mousedown/keydown. The answer is
+ * persisted under OUR key `harness.opencode.autoDrafts` so labels survive reloads and a
+ * + draft is never marked later; the set is pruned to what their store still calls a
+ * draft, so promotion and closing drop out on their own.
+ *
  * This file EXTRACTS the script from app/main.swift — the shipped text, not a copy —
  * and RUNS it against a DOM fixture built from their real template, because the whole
  * safety argument is "any fence failing means it does nothing at all", and a source
  * assertion cannot prove that.
  *
- *   1. the happy path: a draft the STORE agrees is a draft gets the new label;
- *   2. the four fences, each proven to produce NO change: wrong version, missing store,
+ *   1. the happy path: the boot mint gets the new label;
+ *   2. THE DISCRIMINATOR: a + draft (gesture first) keeps "New session", forever —
+ *      including across a reload, and including while an auto draft sits beside it;
+ *   3. the four fences, each proven to produce NO change: wrong version, missing store,
  *      an id the store does not call a draft, and a label that is not upstream's;
- *   3. it never writes: the store is byte-identical afterwards;
- *   4. the wiring: the script reaches ONLY the opencode webview, and that webview gets
- *      neither the "harness" message handler nor the shell self-description.
+ *   4. it never writes to THEIRS: any opencode.* write throws in the fixture; only our
+ *      own key may be written, and the tabs blob is byte-identical afterwards;
+ *   5. promotion + pruning: a draft that becomes a session leaves our persisted set;
+ *   6. the wiring: the script reaches ONLY the opencode webview, at documentStart, and
+ *      that webview gets neither the "harness" message handler nor the shell self-desc.
  *
  * LIVE PROOF (2026-08-29, not repeatable in CI so recorded here): the same extracted
  * text was injected with CDP into a SCRATCH headless-Chrome profile against the running
- * OpenCode 1.18.23 at 127.0.0.1:4096. Two boots of the real landing URL rendered
- * `draft:4180d2ef…` and `draft:67cdee65…` as "runner auto session"; the same walk with
- * the pin forced to 9.9.9 rendered "New session" both times, and the persisted store was
- * identical in both runs.
+ * OpenCode 1.18.23 at 127.0.0.1:4096. See docs/research/… and the builder report: boot
+ * mint relabelled, + draft kept "New session", both survived a reload, promotion cleaned
+ * the id out of our set, and the pin forced to 9.9.9 relabelled nothing.
  *
  * Run: node bridge/tests/test_opencode_draft_label.js   (from repo root)
  */
@@ -66,129 +80,282 @@ ok(!!PIN, 'harness.yaml declares build.opencode_pin');
 ok(RAW.indexOf('\\(pin)') > 0, 'the pin is interpolated into the script by the shell');
 const SRC = RAW.split('\\(pin)').join(PIN);
 
+const MINE = 'harness.opencode.autoDrafts';
+ok(SRC.indexOf(MINE) > 0 && !/setItem\(\s*k[^A-Za-z]/.test(SRC),
+   'the persisted set lives under OUR OWN key, never an opencode.* one');
+
 // ── a DOM fixture built from OpenCode's own template ────────────────────────
 // Structure verified against the served bundle at the pin (index-DonkoK44.js, `R6e`):
 //   div[data-tab-key="draft:<id>"] > div[data-titlebar-tab] > a > span[data-titlebar-tab-title]
-function fixture({ store, version, tabs }) {
-  const nodes = tabs.map(t => {
-    const title = { textContent: t.text };
-    return {
-      key: t.key,
-      getAttribute: n => (n === 'data-tab-key' ? t.key : null),
-      querySelector: sel => (sel === '[data-titlebar-tab-title]' ? title : null),
-      _title: title,
-    };
-  });
-  const raw = store === null ? null : JSON.stringify(store);
+//
+// The fixture is now a small WORLD rather than a snapshot: the store is mutable (the
+// SPA mints into it), the url is mutable (their newDraft navigates), and gestures are
+// injectable — because the thing under test is a decision made over TIME.
+function world({ store, version, ours }) {
+  const bag = {};
+  bag['opencode.window.browser.dat:tabs'] = store === null ? undefined : JSON.stringify(store);
+  if (ours !== undefined) bag[MINE] = JSON.stringify(ours);
   const ls = {
-    _k: store === null ? [] : ['opencode.window.browser.dat:tabs'],
-    get length() { return this._k.length; },
-    key(i) { return this._k[i]; },
-    getItem(k) { return k === 'opencode.window.browser.dat:tabs' ? raw : null; },
-    setItem() { throw new Error('the relabel must never write to their store'); },
-    removeItem() { throw new Error('the relabel must never write to their store'); },
+    get length() { return Object.keys(bag).length; },
+    key(i) { return Object.keys(bag)[i]; },
+    getItem(k) { return bag[k] === undefined ? null : bag[k]; },
+    setItem(k, v) {
+      if (k.indexOf('opencode.') === 0) throw new Error('wrote to THEIR store: ' + k);
+      if (k !== MINE) throw new Error('wrote an unexpected key: ' + k);
+      bag[k] = String(v);
+    },
+    removeItem(k) { throw new Error('the relabel must never remove a key: ' + k); },
   };
+  const listeners = {};
+  const nodes = [];
   const doc = {
     body: {},
-    addEventListener() {},
+    addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
     querySelectorAll(sel) {
       return sel === '[data-tab-key^="draft:"]'
         ? nodes.filter(n => n.key.indexOf('draft:') === 0) : [];
     },
   };
-  return {
-    nodes, raw,
+  const timers = [];
+  const w = {
+    bag, nodes, listeners,
+    loc: { search: '' },
+    tabs() { return JSON.parse(bag['opencode.window.browser.dat:tabs']); },
+    mine() { return bag[MINE] === undefined ? null : JSON.parse(bag[MINE]); },
+    // a rendered tab strip entry
+    tab(key, text) {
+      const title = { textContent: text };
+      nodes.push({
+        key,
+        getAttribute: n => (n === 'data-tab-key' ? key : null),
+        querySelector: s => (s === '[data-titlebar-tab-title]' ? title : null),
+        _title: title,
+      });
+      return nodes[nodes.length - 1];
+    },
+    text(i) { return nodes[i]._title.textContent; },
+    // their newDraft: push the entry, then client-navigate to /new-session?draftId=…
+    mint(id) {
+      const v = JSON.parse(bag['opencode.window.browser.dat:tabs']);
+      v.push({ type: 'draft', server: 'http://127.0.0.1:4096', draftID: id, directory: '/w' });
+      bag['opencode.window.browser.dat:tabs'] = JSON.stringify(v);
+      w.loc.search = '?draftId=' + id;
+      return w.tab('draft:' + id, 'New session');
+    },
+    // their promoteDraft: the entry is REPLACED IN PLACE by a session entry
+    promote(id, title) {
+      const v = JSON.parse(bag['opencode.window.browser.dat:tabs']);
+      const n = v.findIndex(e => e.type === 'draft' && e.draftID === id);
+      if (n !== -1) v[n] = { type: 'session', server: 'http://127.0.0.1:4096', sessionId: 'ses_x' };
+      bag['opencode.window.browser.dat:tabs'] = JSON.stringify(v);
+      const node = nodes.find(x => x.key === 'draft:' + id);
+      if (node) { node.key = 'http://127.0.0.1:4096\n/x/y'; node._title.textContent = title; }
+    },
+    gesture() { (listeners['pointerdown'] || []).forEach(f => f()); },
+    // run every armed timer callback n times (the script's own bounded poll)
+    pump(n) { for (let i = 0; i < (n || 1); i++) timers.forEach(t => t()); },
     sandbox: {
       localStorage: ls,
       document: doc,
+      location: w0 => w0,
       JSON,
       MutationObserver: function () { this.observe = () => {}; },
       fetch: () => Promise.resolve({ json: () => Promise.resolve({ healthy: true, version }) }),
+      setInterval: fn => { timers.push(fn); return timers.length; },
+      clearInterval: h => { timers[h - 1] = () => {}; },
     },
   };
+  w.sandbox.location = w.loc;
+  return w;
 }
 
-function run(fx) {
-  const fn = new Function('localStorage', 'document', 'MutationObserver', 'fetch', SRC);
-  fn(fx.sandbox.localStorage, fx.sandbox.document, fx.sandbox.MutationObserver,
-     fx.sandbox.fetch);
-  // the script arms itself behind one resolved promise
-  return new Promise(r => setTimeout(r, 0));
+// The script is a documentStart script: it must be STARTED before the SPA mints, and
+// only then does the world move. `start` returns once the version fence has resolved.
+function start(w) {
+  const fn = new Function('localStorage', 'document', 'location', 'MutationObserver',
+                          'fetch', 'setInterval', 'clearInterval', SRC);
+  const s = w.sandbox;
+  fn(s.localStorage, s.document, s.location, s.MutationObserver, s.fetch,
+     s.setInterval, s.clearInterval);
+  return new Promise(r => setTimeout(r, 0));   // one resolved promise, then armed
 }
 
-const DRAFT = 'aaaaaaaa-1111-2222-3333-444444444444';
-const OTHER = 'bbbbbbbb-1111-2222-3333-444444444444';
-const draftStore = [{ type: 'draft', server: 'http://127.0.0.1:4096',
-                      draftID: DRAFT, directory: '/w' }];
+const AUTO = 'aaaaaaaa-1111-2222-3333-444444444444';
+const USER = 'bbbbbbbb-1111-2222-3333-444444444444';
+const OLD  = 'cccccccc-1111-2222-3333-444444444444';
+const oldDraft = { type: 'draft', server: 'http://127.0.0.1:4096',
+                   draftID: OLD, directory: '/w' };
 
 (async () => {
-  // ── 1. the happy path ─────────────────────────────────────────────────────
-  let fx = fixture({ store: draftStore, version: PIN,
-                     tabs: [{ key: 'draft:' + DRAFT, text: 'New session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'runner auto session',
-     'a draft the STORE calls a draft is relabelled');
+  // ── 1. the happy path: OUR boot mint ──────────────────────────────────────
+  let w = world({ store: [], version: PIN });
+  await start(w);            // documentStart: snapshot taken, no gesture yet
+  w.mint(AUTO);              // their landing mint, on SPA boot
+  w.pump();
+  ok(w.text(0) === 'runner auto session', 'the boot mint is relabelled');
+  ok(JSON.stringify(w.mine()) === JSON.stringify([AUTO]),
+     '…and its id is persisted in OUR set, so the label survives a reload');
 
   // A real session tab in the same strip is left completely alone — the id shape is
   // `<server>\n<href>`, never `draft:…`, so it is not even looked at.
-  fx = fixture({ store: draftStore, version: PIN, tabs: [
-    { key: 'draft:' + DRAFT, text: 'New session' },
-    { key: 'http://127.0.0.1:4096\n/x/y', text: 'Refactor the parser' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'runner auto session'
-     && fx.nodes[1]._title.textContent === 'Refactor the parser',
+  w = world({ store: [], version: PIN });
+  await start(w);
+  w.mint(AUTO);
+  w.tab('http://127.0.0.1:4096\n/x/y', 'Refactor the parser');
+  w.pump();
+  ok(w.text(0) === 'runner auto session' && w.text(1) === 'Refactor the parser',
      '…and a real session tab beside it is untouched');
 
-  // ── 2. the four fences: each one means NOTHING happens ────────────────────
-  fx = fixture({ store: draftStore, version: '9.9.9',
-                 tabs: [{ key: 'draft:' + DRAFT, text: 'New session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'New session',
+  // ── 2. THE DISCRIMINATOR — Debi's bug ─────────────────────────────────────
+  w = world({ store: [], version: PIN });
+  await start(w);
+  w.mint(AUTO);              // boot mint
+  w.pump();
+  w.gesture();               // she clicks…
+  w.mint(USER);              // …+, which mints exactly the same shape
+  w.pump(3);
+  ok(w.text(1) === 'New session',
+     'DISCRIMINATOR: a draft created by clicking + KEEPS upstream\'s "New session"');
+  ok(w.text(0) === 'runner auto session',
+     '…while the auto draft beside it stays labelled');
+  ok(JSON.stringify(w.mine()) === JSON.stringify([AUTO]),
+     '…and the + draft is never written into our set');
+
+  // …and it is still immune after a restart: a NEW document, our set restored from
+  // disk, both drafts already in the store (so both are in the documentStart snapshot).
+  const persisted = w.mine();
+  const restored = w.tabs();
+  let w2 = world({ store: restored, version: PIN, ours: persisted });
+  await start(w2);
+  w2.tab('draft:' + AUTO, 'New session');
+  w2.tab('draft:' + USER, 'New session');
+  w2.pump();
+  ok(w2.text(0) === 'runner auto session' && w2.text(1) === 'New session',
+     'RELOAD: both verdicts survive a restart — ours relabelled, hers not');
+
+  // The + draft is not marked even if it is the one in the url on that later boot
+  // (she left the app sitting on her own composer): the snapshot already knows it.
+  w2 = world({ store: restored, version: PIN, ours: persisted });
+  w2.loc.search = '?draftId=' + USER;
+  await start(w2);
+  w2.tab('draft:' + USER, 'New session');
+  w2.pump();
+  ok(w2.text(0) === 'New session',
+     '…and a pre-existing draft in the url is never newly marked');
+
+  // A draft minted in the SPLIT GHOST (the other webview) changes the shared store but
+  // never THIS document's url — so this document does not claim it.
+  w = world({ store: [], version: PIN });
+  await start(w);
+  const other = w.tabs();
+  other.push({ type: 'draft', server: 'http://127.0.0.1:4096', draftID: USER, directory: '/w' });
+  w.bag['opencode.window.browser.dat:tabs'] = JSON.stringify(other);
+  w.tab('draft:' + USER, 'New session');
+  w.pump(2);
+  ok(w.text(0) === 'New session' && w.mine() === null,
+     'a draft that never became THIS document\'s url is not claimed as ours');
+
+  // Drafts that predate the fix are left exactly as upstream draws them.
+  w = world({ store: [oldDraft], version: PIN });
+  await start(w);
+  w.tab('draft:' + OLD, 'New session');
+  w.pump();
+  ok(w.text(0) === 'New session' && w.mine() === null,
+     'a draft from before this fix is never newly marked (conservative by design)');
+
+  // ── 3. the four fences: each one means NOTHING happens ────────────────────
+  w = world({ store: [], version: '9.9.9' });
+  await start(w);
+  w.mint(AUTO); w.pump();
+  ok(w.text(0) === 'New session' && w.mine() === null,
      'FENCE version: a different OpenCode build is left exactly as upstream drew it');
 
-  fx = fixture({ store: null, version: PIN,
-                 tabs: [{ key: 'draft:' + DRAFT, text: 'New session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'New session',
+  w = world({ store: null, version: PIN });
+  await start(w);
+  w.loc.search = '?draftId=' + AUTO;
+  w.tab('draft:' + AUTO, 'New session');
+  w.pump();
+  ok(w.text(0) === 'New session' && w.mine() === null,
      'FENCE store: no persisted tabs key → no relabel');
 
-  fx = fixture({ store: draftStore, version: PIN,
-                 tabs: [{ key: 'draft:' + OTHER, text: 'New session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'New session',
+  w = world({ store: [], version: PIN });
+  await start(w);
+  w.loc.search = '?draftId=' + AUTO;          // url says draft, store never listed it
+  w.tab('draft:' + AUTO, 'New session');
+  w.pump();
+  ok(w.text(0) === 'New session' && w.mine() === null,
      'FENCE entry: an id the store does not list as a draft is not relabelled');
 
-  fx = fixture({ store: draftStore, version: PIN,
-                 tabs: [{ key: 'draft:' + DRAFT, text: 'Nouvelle session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'Nouvelle session',
+  w = world({ store: [], version: PIN });
+  await start(w);
+  const n = w.mint(AUTO); n._title.textContent = 'Nouvelle session';
+  w.pump();
+  ok(w.text(0) === 'Nouvelle session',
      'FENCE text: only the exact upstream string is replaced (a localised build is safe)');
 
   // A store that is not an array at all (a future schema change) must be inert.
-  fx = fixture({ store: { tabs: [] }, version: PIN,
-                 tabs: [{ key: 'draft:' + DRAFT, text: 'New session' }] });
-  await run(fx);
-  ok(fx.nodes[0]._title.textContent === 'New session',
+  w = world({ store: { tabs: [] }, version: PIN });
+  await start(w);
+  w.loc.search = '?draftId=' + AUTO;
+  w.tab('draft:' + AUTO, 'New session');
+  w.pump();
+  ok(w.text(0) === 'New session' && w.mine() === null,
      'a store shape we do not recognise is inert, not a crash');
 
-  // ── 3. it never writes ────────────────────────────────────────────────────
-  // setItem/removeItem THROW in the fixture, so reaching either would have failed
-  // every case above. State it as its own check so the intent survives a refactor.
-  ok(SRC.indexOf('setItem') < 0 && SRC.indexOf('removeItem') < 0,
-     'the script contains no write to their store at all (zero vendored bytes, zero state)');
+  // ── 4. it never writes to THEIRS ──────────────────────────────────────────
+  // Any setItem on an `opencode.*` key THROWS in the fixture, so reaching one would
+  // have failed every case above. State the byte-identity as its own check too.
+  w = world({ store: [], version: PIN });
+  const beforeBytes = w.bag['opencode.window.browser.dat:tabs'];
+  await start(w);
+  w.mint(AUTO); w.pump(2);
+  const afterBytes = JSON.stringify(w.tabs().filter(e => e.draftID !== AUTO));
+  ok(afterBytes === beforeBytes,
+     'their tabs blob is byte-identical apart from their OWN mint (we never write it)');
+  ok(SRC.indexOf('removeItem') < 0,
+     'the script never removes a key from that origin at all');
 
-  // ── 4. the wiring ─────────────────────────────────────────────────────────
+  // ── 5. promotion + pruning ────────────────────────────────────────────────
+  w = world({ store: [], version: PIN });
+  await start(w);
+  w.mint(AUTO); w.pump();
+  ok(JSON.stringify(w.mine()) === JSON.stringify([AUTO]), 'the auto id is in our set');
+  w.gesture();
+  w.promote(AUTO, 'Fix the parser');     // she types and sends: draft → session
+  w.pump(2);
+  ok(w.mine() !== null && w.mine().length === 0,
+     'PROMOTION: a draft that became a session drops out of our persisted set');
+  ok(w.text(0) === 'Fix the parser',
+     '…and its real session title is never touched');
+
+  // closing a draft with their ✕ prunes it the same way
+  w = world({ store: [], version: PIN });
+  await start(w);
+  w.mint(AUTO); w.pump();
+  w.bag['opencode.window.browser.dat:tabs'] = '[]';
+  w.nodes.length = 0;
+  w.pump(2);
+  ok(w.mine().length === 0, 'a draft closed with their ✕ drops out of our set too');
+
+  // ── 6. the wiring ─────────────────────────────────────────────────────────
   const oc = swift.slice(swift.indexOf('else if t.id == "opencode"'), swift.indexOf('else if t.id == "loffice"'));
   ok(oc.indexOf('openCodeDraftScript()') > 0, 'the opencode webview gets the script');
   ok(oc.indexOf('userContentController.add(self') < 0,
      '…and NOT the "harness" message handler (it is a third-party page)');
   ok(oc.indexOf('shellScript') < 0, '…and not the shell self-description either');
   ok(swift.indexOf('forMainFrameOnly: true') > 0, '…injected into the main frame only');
-  ok(/injectionTime: \.atDocumentEnd[\s\S]{0,80}forMainFrameOnly/.test(
+  ok(/injectionTime: \.atDocumentStart[\s\S]{0,80}forMainFrameOnly/.test(
        swift.slice(swift.indexOf('func openCodeDraftScript'))),
-     '…at documentEnd, so their own bundle has already defined the strip');
+     '…at documentStart — the snapshot must precede their SPA, or it would contain the '
+     + 'very draft it exists to identify');
   ok(swift.indexOf('opencodePin()') > 0 && /guard let pin = opencodePin\(\) else \{/.test(swift),
      'no readable pin → the script is not injected AT ALL (degrade to nothing)');
+  // ship.sh's additive pyyaml merge writes the snapshot's copy UNQUOTED
+  // (`opencode_pin: 1.18.23`). A quote-only pin regex reads the repo on a dev Mac and
+  // finds NOTHING on a fat/portable install, where the snapshot is the only
+  // harness.yaml — the feature would silently not exist there.
+  ok(/opencode_pin:\\s\*"\?\[0-9\]/.test(swift),
+     'the pin regex accepts the SNAPSHOT\'s unquoted form as well as the repo\'s quoted one');
 
   console.log(fails ? `\nFAILED ${fails} of ${checks}` : `\nopencode draft label: ${checks} checks passed`);
   process.exit(fails ? 1 : 0);

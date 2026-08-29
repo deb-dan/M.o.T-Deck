@@ -798,7 +798,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //   4. THE TEXT. Only the exact string "New session" is replaced. A renamed tab, a
     //      localised build, or an upstream wording change is left alone.
     // ZERO VENDORED BYTES: this runs in our webview, in our shell, and writes nothing
-    // anywhere. Removing it restores upstream's label on the next launch.
+    // into anything of theirs. Removing it restores upstream's label on the next launch.
+    //
+    // ── THE DISCRIMINATOR (Debi, live bug 2026-08-29): AUTO vs USER drafts ──────
+    // The first cut relabelled EVERY draft, so clicking + — a deliberate new session —
+    // was also branded "runner auto session". That is a LIE-TO-USER of the same family
+    // the slice was written to remove, pointed the other way: it renames the user's own
+    // work. Only the draft OUR landing route mints may carry the label.
+    //
+    // The two kinds are byte-identical in the store (same shape, same fresh UUID) and
+    // land on the SAME url: `newDraft` (bundle, verified at the pin) pushes the entry
+    // and then client-navigates to `/new-session?draftId=<uuid>` — for the boot mint and
+    // for the + click alike. So the store cannot answer this and neither can the URL.
+    // What separates them is the GESTURE, and the honest definition of the boot window:
+    //
+    //   an AUTO draft is the ONE draft whose id (a) is not in the snapshot of draft ids
+    //   taken at documentStart, BEFORE their SPA has run a line, (b) becomes the
+    //   `draftId` of THIS document's own url — i.e. it is the navigation the landing
+    //   mint performs — and (c) does so before this document has seen a single
+    //   pointerdown / mousedown / keydown. At most one per document, because the
+    //   landing route mints exactly one per boot.
+    //
+    // Every other draft — the + click (a pointerdown precedes it), a draft minted in the
+    // OTHER webview (the split ghost changes the shared store but never THIS document's
+    // url), anything already in the store before this fix existed — renders upstream's
+    // own text, untouched. Conservative by construction: the failure mode of every
+    // clause is "no label", never "wrong label".
+    //
+    // ⚠️ THIS IS WHY THE SCRIPT MOVED TO documentStart. At documentEnd their SPA has
+    // already booted and minted, so the snapshot would contain the very draft it exists
+    // to identify. The snapshot and the gesture listeners are the only things that run
+    // before the version fence resolves, and both are PASSIVE (two reads and three
+    // listeners; no write, no DOM change) — so a non-matching build still gets nothing.
+    //
+    // FIFTH FENCE, AND OUR ONE PIECE OF STATE: the answer is remembered under OUR OWN
+    // key `harness.opencode.autoDrafts` (a plain array of ids) so a label survives a
+    // reload and a relaunch — and so a + draft, once judged the user's, is NEVER marked
+    // later even after a restart. We never read or write ANY `opencode.*` entry: theirs
+    // stay byte-untouched, which is what keeps their ✕ cleanup working. The set is
+    // pruned to what their store still calls a draft, so a promoted draft (type flips to
+    // "session" in place — their `promoteDraft`) or a closed one drops out by itself.
+    // Drafts that predate this fix are deliberately NOT adopted: they render whatever
+    // upstream renders.
     func opencodePin() -> String? {
         // ⚠️ THE WEBVIEWS ARE BUILT BEFORE `resolvedRoot` IS SETTLED (the provisioning
         // resolve runs later in applicationDidFinishLaunching), so this reads the baked
@@ -814,11 +855,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         guard let y = yaml else { return nil }
         // `opencode_pin: "1.18.23"` in build:. A regex, not a YAML parser: one value,
         // and an unreadable/renamed key must mean "do not inject", not "guess".
-        guard let m = y.range(of: #"opencode_pin:\s*"([0-9][0-9A-Za-z.\-]*)""#,
+        //
+        // ⚠️ THE QUOTES ARE OPTIONAL, AND THAT IS NOT COSMETIC. The repo writes the pin
+        // quoted; the SNAPSHOT's copy is produced by ship.sh's additive pyyaml merge,
+        // which dumps it UNQUOTED (`opencode_pin: 1.18.23` — verified on the live
+        // snapshot 2026-08-29). A quote-only regex therefore reads the pin on this dev
+        // Mac (where harnessRoot points at the repo) and finds NOTHING on a fat or
+        // portable install, where the snapshot is the only harness.yaml there is — the
+        // whole feature would silently not exist there. The value class excludes spaces
+        // and `#`, so an unquoted match still cannot swallow a trailing comment.
+        guard let m = y.range(of: #"opencode_pin:\s*"?[0-9][0-9A-Za-z.\-]*"?"#,
                               options: .regularExpression) else { return nil }
-        guard let q = y[m].range(of: #""([0-9][0-9A-Za-z.\-]*)""#,
-                                 options: .regularExpression) else { return nil }
-        return String(y[q].dropFirst().dropLast())
+        let seg = String(y[m])   // starts with the key, which carries no digits
+        guard let q = seg.range(of: #"[0-9][0-9A-Za-z.\-]*"#,
+                                options: .regularExpression) else { return nil }
+        return String(seg[q])
     }
 
     func openCodeDraftScript() -> WKUserScript? {
@@ -829,6 +880,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let src = """
         (function(){
           var PIN = "\(pin)", LABEL = "runner auto session", FROM = "New session";
+          // OURS. Never an `opencode.*` key: their entries are read-only to us.
+          var MINE = "harness.opencode.autoDrafts", CAP = 64;
           function tabsKey(){
             try {
               for (var i=0;i<localStorage.length;i++){
@@ -851,23 +904,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
               return out;
             } catch(e){ return null; }
           }
-          function paint(){
+          function readMine(){
+            var out = {};
+            try {
+              var v = JSON.parse(localStorage.getItem(MINE));
+              if (Array.isArray(v)) for (var i=0;i<v.length;i++)
+                if (typeof v[i] === "string") out[v[i]] = 1;
+            } catch(e){}
+            return out;
+          }
+          function writeMine(map){
+            var a = [], id;
+            for (id in map) a.push(id);
+            try { localStorage.setItem(MINE, JSON.stringify(a.slice(0, CAP))); } catch(e){}
+          }
+          function urlDraft(){
+            try {
+              var m = String(location.search).match(/[?&]draftId=([^&#]+)/);
+              return m ? decodeURIComponent(m[1]) : null;
+            } catch(e){ return null; }
+          }
+
+          // ── documentStart, and PASSIVE: two reads and three listeners. Nothing here
+          // writes or paints; the version fence still owns every effect below.
+          var before = draftIds() || {};   // drafts that existed before their SPA ran
+          var auto = readMine();           // ids WE have already judged auto (persisted)
+          var gestured = false, minted = false;
+          function gesture(){ gestured = true; }
+          try {
+            document.addEventListener("pointerdown", gesture, true);
+            document.addEventListener("mousedown", gesture, true);
+            document.addEventListener("keydown", gesture, true);
+          } catch(e){}
+
+          // Merge with what is on disk (the split ghost is a second document writing the
+          // same key) and prune to what their store still calls a draft — a promoted or
+          // closed draft leaves our set by itself. Writes only when the answer changed.
+          function sync(ids){
+            var disk = readMine(), merged = {}, id, same = true;
+            for (id in disk) if (ids[id]) merged[id] = 1;
+            for (id in auto) if (ids[id]) merged[id] = 1;
+            for (id in merged) if (!disk[id]) same = false;
+            for (id in disk) if (!merged[id]) same = false;
+            auto = merged;
+            if (!same) writeMine(merged);
+          }
+          // THE DISCRIMINATOR. See the note above openCodeDraftScript().
+          function consider(ids){
+            if (minted || gestured) return;
+            var id = urlDraft();
+            if (!id || before[id] || auto[id] || !ids[id]) return;
+            auto[id] = 1; minted = true;
+          }
+          function tick(){
             var ids = draftIds(); if (!ids) return;
+            consider(ids);
+            sync(ids);
             var slots = document.querySelectorAll('[data-tab-key^="draft:"]');
             for (var i=0;i<slots.length;i++){
               var id = slots[i].getAttribute("data-tab-key").slice(6);
-              if (!ids[id]) continue;
+              if (!auto[id] || !ids[id]) continue;
               var t = slots[i].querySelector("[data-titlebar-tab-title]");
               if (!t) continue;
               if (t.textContent === FROM) t.textContent = LABEL;
             }
           }
           function arm(){
-            paint();
+            tick();
             try {
-              new MutationObserver(function(){ paint(); })
+              new MutationObserver(function(){ tick(); })
                 .observe(document.body, {childList:true, subtree:true, characterData:true});
             } catch(e){}
+            // The mint's navigation is a client-side route change: it need not touch the
+            // DOM subtree the observer watches on the tick that matters. A bounded 30s
+            // poll covers the boot window; after that the observer alone keeps painting.
+            var n = 0, iv = setInterval(function(){
+              tick(); if (++n > 60) clearInterval(iv);
+            }, 500);
           }
           try {
             fetch("/global/health").then(function(r){ return r.json(); }).then(function(j){
@@ -878,7 +991,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
           } catch(e){}
         })();
         """
-        return WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        return WKUserScript(source: src, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
     // ── the dependency signal (S22) ──

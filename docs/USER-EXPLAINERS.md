@@ -420,6 +420,11 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   opened does not read like a conversation you started and abandoned. Only the *label*
   is changed — nothing inside OpenCode is edited, and if OpenCode is ever updated past
   the version this app pins, the rename quietly stops and you see its own wording again.
+- **A draft *you* start keeps OpenCode's own "New session".** Only the one draft the app
+  lands on by itself when the tab boots is renamed. Click **+** in OpenCode and the tab it
+  creates is yours: it reads "New session", it stays that way through a reload and a
+  restart, and MOT Deck never puts its own words on it. (Drafts already in the strip from
+  before this rule arrived read "New session" too — closing them with **✕** is enough.)
 - **Nothing is stored in them and nothing is lost by closing them.** They are empty
   composers: no message was ever sent, and there is no session on the server behind them
   (OpenCode's own session list is empty). Close each one with its **✕** in OpenCode's own
