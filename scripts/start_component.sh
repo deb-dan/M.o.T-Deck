@@ -1252,9 +1252,20 @@ PYOCCHK
     CTXLEN=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
-    if [[ -z "$MODEL" ]]; then
-      MODEL=$(curl -sf -m 4 -H "Authorization: Bearer $KEY" "${BASE_URL%/}/models" \
-        | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
+    # ⚠️ THE RUNNER'S ANSWER OUTRANKS harness.yaml (found live: the pin said a 27B whose
+    # file Debi had deleted while the runner was serving a 4B). What the runner SERVES is
+    # what answers every turn — llama.cpp ignores the request's `model` field entirely
+    # (measured, ledger U13/U16) — so seeding the pinned-but-absent id would make both the
+    # main slot and our "MOT Deck has X loaded" line say something untrue. The pin is the
+    # fallback, for the runner-down Start (config-resident by design).
+    MSRC="pinned in harness.yaml (the runner did not answer)"
+    LIVE_MODEL=$(curl -sf -m 4 -H "Authorization: Bearer $KEY" "${BASE_URL%/}/models" \
+      | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
+    if [[ -n "$LIVE_MODEL" ]]; then
+      [[ -n "$MODEL" && "$MODEL" != "$LIVE_MODEL" ]] && \
+        echo "[harness] note: harness.yaml pins '$MODEL' but the runner is serving '$LIVE_MODEL' — using what it serves."
+      MODEL="$LIVE_MODEL"
+      MSRC="live from the runner"
     fi
     if [[ -z "$MODEL" ]]; then
       echo "ERROR: could not reach the runner at ${BASE_URL} or no model available."
@@ -1281,47 +1292,39 @@ else:
 PYWIRE
 )
     mkdir -p "$(dirname "$HCFG")"
-    HCFG="$HCFG" BASE_URL="$BASE_URL" MODEL="$MODEL" CTXLEN="$CTXLEN" KEY="$KEY" python3 - <<'PYPATCH'
-import os, re
-path = os.environ["HCFG"]
-def y(v):
-    """Minimal YAML-scalar safety for the model default ONLY — it can now be a
-    filesystem PATH (the MLX wire identifier), which may contain a space or '#';
-    unquoted, YAML would keep the space but treat ' #' as a comment. Plain ids are
-    emitted unchanged, so an existing config's formatting is untouched."""
-    s = str(v)
-    if s and (s != s.strip() or "#" in s or ": " in s or s[0] in "-?:,[]{}&*!|>'\"%@`"):
-        return "'" + s.replace("'", "''") + "'"
-    return s
-managed = {"default": y(os.environ["MODEL"]), "provider": "custom",
-           "base_url": os.environ["BASE_URL"], "api_key": os.environ["KEY"],
-           "context_length": os.environ["CTXLEN"]}
-order = ["default", "provider", "base_url", "api_key", "context_length"]
-def block():
-    return "model:\n" + "".join(f"  {k}: {managed[k]}\n" for k in order)
-if not os.path.exists(path):
-    open(path, "w").write(block())
-else:
-    lines = open(path).read().split("\n")
-    out, in_model, seen = [], False, set()
-    for ln in lines:
-        if re.match(r'^model:\s*$', ln):
-            in_model = True; out.append(ln); continue
-        if in_model and re.match(r'^\S', ln):  # left the model block
-            for k in order:
-                if k not in seen: out.append(f'  {k}: {managed[k]}')
-            in_model = False
-        if in_model:
-            m = re.match(r'^  (default|provider|base_url|api_key|context_length):', ln)
-            if m:
-                k = m.group(1); seen.add(k); out.append(f'  {k}: {managed[k]}'); continue
-        out.append(ln)
-    if in_model:  # model block ran to EOF
-        for k in order:
-            if k not in seen: out.append(f'  {k}: {managed[k]}')
-    open(path, "w").write("\n".join(out))
-print(f"[harness] Hermes -> {managed['default']} @ {managed['base_url']} (key set, ctx {managed['context_length']})")
-PYPATCH
+    # ── WIRING HERMES TO THE RUNNER (isolation mode S-ISO-3 + ledger U12) ────────
+    # ONE writer owns ~/.hermes/config.yaml's two harness surfaces:
+    #   * `custom_providers:` — the named "MOT Deck (local)" row that puts our whole
+    #     registry in Hermes's OWN model picker (instead of the anonymous `custom` row
+    #     whose model list is a live probe — empty whenever the runner is down);
+    #   * `model:`            — the main slot, now SEEDED-NOT-ENFORCED. It used to be
+    #     re-asserted here on every Start, which silently reset a model the user had
+    #     picked inside Hermes (U12). The script updates only what is provably ours
+    #     (a marker in data/hermes_seed_state.json records ONLY values we wrote) and
+    #     prints a line for every value it honoured instead.
+    # Idempotent; refuses (leaving the file untouched) on an unparseable config or a
+    # missing PyYAML, and says so.
+    # rm FIRST: a verdict left by a PREVIOUS Start must never be read as this one's.
+    rm -f data/hermes-provider.json
+    HERMES_CFG="$HCFG" BASE_URL="$BASE_URL" KEY="$KEY" MODEL="$MODEL" CTXLEN="$CTXLEN" \
+      HARNESS_ROOT="$PWD" python3 scripts/seed_hermes_provider.py || \
+      echo "[harness] WARNING: Hermes wiring failed — check ~/.hermes/config.yaml"
+    # The provider slug the seed decided ('custom:<normalized name>', or the user's
+    # renamed one) — read back for the post-start picker check below.
+    # ⚠️ NO FALLBACK, deliberately. Falling back to bare `custom` would make the check
+    # look for a slug that ALWAYS exists (Hermes lists every unconfigured canonical
+    # provider, `custom` among them, with 0 models) — so a Start where the seed refused
+    # would print "IS in its own model picker" about a row that is not ours. An empty
+    # slug makes the check say the truth instead: it could not verify anything.
+    HPROV=$(python3 - <<'PYSLUG'
+import json, os
+try:
+    with open(os.path.join("data", "hermes-provider.json"), encoding="utf-8") as fh:
+        print(str(json.load(fh).get("slug") or "").strip())
+except Exception:
+    print("")
+PYSLUG
+)
     # Safety floor: warn loudly if approvals are globally disabled (warn-only —
     # 'smart' is a legitimate user choice; we never overwrite the user's mode).
     python3 - "$HCFG" <<'PYAPPR'
@@ -1443,6 +1446,16 @@ PYGUARD
     # "write-capable" means "no annotations.readOnlyHint: true", which
     # bridge/office_mcp.py declares per tool. Drop this key and the four write tools run
     # with no approval card at all.
+    #
+    # ⚠️ NEVER-CLOBBER, AND THE ONE DOCUMENTED EXCEPTION (ledger U12b). Everything else
+    # in this entry is seed-if-absent and a user's value is honoured with a printed
+    # line — but `trust` is RE-ASSERTED on every Start, deliberately, in the same shape
+    # as OpenCode's disabled_providers repair (:1023-1045). The trade is stated out
+    # loud: a security fence a user can silently turn off by editing one word is not a
+    # fence, this server exposes write tools into their documents, and the line below
+    # says we did it (a user who really wants it trusted can say so and not Start).
+    # `url` is ours too: it must point at the bridge port this harness is running on,
+    # or the toolset simply 404s.
     BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
     BR_PORT="${BR_PORT:-8700}"
     HCFG="$HCFG" BR_PORT="$BR_PORT" python3 - <<'PYLOFFICE'
@@ -1453,8 +1466,7 @@ try:
 except Exception:
     print("[harness] WARNING: PyYAML unavailable — LOffice MCP server NOT registered")
     raise SystemExit(0)
-entry = {"url": "http://127.0.0.1:%s/mcp/office" % port,
-         "trust": "untrusted", "timeout": 120}
+url = "http://127.0.0.1:%s/mcp/office" % port
 try:
     data = yaml.safe_load(open(cfg, encoding="utf-8").read()) if os.path.exists(cfg) else {}
 except Exception as exc:
@@ -1465,8 +1477,31 @@ if not isinstance(data, dict):
 servers = data.get("mcp_servers")
 if not isinstance(servers, dict):
     servers = {}
-if servers.get("loffice") == entry:
-    print("[harness] LOffice MCP server: already registered at " + entry["url"])
+cur = servers.get("loffice")
+cur = dict(cur) if isinstance(cur, dict) else None
+notes = []
+if cur is None:
+    entry = {"url": url, "trust": "untrusted", "timeout": 120}
+else:
+    # Start from what is THERE — every key we do not manage (headers, env, a
+    # description, anything a future Hermes adds) survives untouched.
+    entry = dict(cur)
+    if str(entry.get("url") or "") != url:
+        if entry.get("url"):
+            notes.append("url: repointed %s -> %s (it must match this bridge)"
+                         % (entry.get("url"), url))
+        entry["url"] = url
+    if str(entry.get("trust") or "") != "untrusted":
+        notes.append("trust: RE-ASSERTED untrusted (was %r) — this server exposes "
+                     "write tools into your documents; untrusted is what makes them "
+                     "raise an approval card" % entry.get("trust"))
+        entry["trust"] = "untrusted"
+    if "timeout" not in entry:
+        entry["timeout"] = 120
+    elif entry.get("timeout") != 120:
+        notes.append("timeout: honoured your %s (not reset to 120)" % entry.get("timeout"))
+if cur == entry:
+    print("[harness] LOffice MCP server: already registered at " + url)
     raise SystemExit(0)
 servers["loffice"] = entry
 data["mcp_servers"] = servers
@@ -1478,6 +1513,8 @@ with os.fdopen(fd, "w", encoding="utf-8") as fh:
 os.replace(tmp, cfg)
 print("[harness] LOffice MCP server registered at " + entry["url"]
       + " (trust: untrusted - write tools get an approval card)")
+for _n in notes:
+    print("[harness]   " + _n)
 PYLOFFICE
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
@@ -1520,7 +1557,51 @@ PYLOFFICE
       sleep 1
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] hermes dashboard up on http://127.0.0.1:${PORT} (UI + API; model=$MODEL @ $BASE_URL)"
+      echo "[harness] hermes dashboard up on http://127.0.0.1:${PORT} (UI + API; model=$MODEL [$MSRC] @ $BASE_URL)"
+      # ── PROVIDER SELF-CHECK — the line that makes "no local model" decidable ────
+      # Same discipline as the opencode lane's `/provider` check: ask the running
+      # server for the payload its OWN picker renders (web/src/lib/api.ts:517-536 →
+      # web_server.py:6369 → inventory.build_model_options_payload) and say in one
+      # line whether our row reached it. A wrong answer here means the config we
+      # wrote is not the config this server read — worth a loud line instead of a
+      # picker the user finds empty later.
+      # rm FIRST: a leftover from a previous Start must never be read as this one's.
+      rm -f data/hermes-model-options.json
+      curl -sf -m 40 -H "Authorization: Bearer $HTOKEN" \
+        "http://127.0.0.1:${PORT}/api/model/options?include_unconfigured=1" \
+        -o data/hermes-model-options.json 2>/dev/null || :
+      HPROV="$HPROV" HCFG="$HCFG" python3 - data/hermes-model-options.json <<'PYHCHK' || true
+import json, os, sys
+slug = str(os.environ.get("HPROV") or "").strip().lower()
+if not slug:
+    print("[harness] hermes provider check: the seed wrote no verdict this Start (see "
+          "the warning above) — the picker was NOT verified.")
+    raise SystemExit(0)
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        rows = json.load(fh).get("providers") or []
+except Exception as e:                                            # noqa: BLE001
+    print("[harness] hermes provider check: could not read /api/model/options (%s)" % e)
+    raise SystemExit(0)
+mine = next((r for r in rows if str(r.get("slug", "")).lower() == slug), None)
+if mine and (mine.get("models") or []):
+    print('[harness] hermes provider check: "%s" IS in its own model picker — '
+          "%d model(s)%s" % (mine.get("name"), len(mine.get("models") or []),
+                             ", currently selected" if mine.get("is_current") else ""))
+elif mine:
+    # The row reached Hermes but carries nothing to pick — a picker the user would
+    # find empty. Saying "it IS there" here would be true and useless.
+    print('[harness] hermes provider check: "%s" is in the picker but lists NO models'
+          " — check data/models.json (the registry the row is seeded from)."
+          % mine.get("name"))
+else:
+    print("[harness] hermes provider check: %s NOT in the picker — its Models page will"
+          " show the bare 'Custom endpoint' row instead." % slug)
+    print("[harness]   config: %s" % os.environ.get("HCFG", "~/.hermes/config.yaml"))
+    print("[harness]   rows it does list: %s"
+          % (", ".join(str(r.get("slug")) for r in rows[:8]) or "(none)"))
+PYHCHK
+      rm -f data/hermes-model-options.json
       echo "[harness] tool-calling proof: run scripts/test_hermes.sh"
     else
       echo "ERROR: hermes dashboard did not open :${PORT} within 25s. Last log lines:"
