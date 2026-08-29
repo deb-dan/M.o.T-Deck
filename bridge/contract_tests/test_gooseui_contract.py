@@ -340,3 +340,31 @@ def test_bundle_target_refuses_traversal():
     assert got is None and "outside" in why
     assert G.bundle_target(ROOT, "")[0] is None
     assert G.bundle_target(ROOT, "a\x00b")[0] is None
+
+
+# ── 4. THE TWO UPSTREAM FACTS THE SIDEBAR ✕ STANDS ON (v1.5.64) ──────────────
+@_needs_bundle
+def test_the_delete_method_and_the_refresh_event_are_still_gooses_own():
+    """The sidebar delete is not a shim and not a store edit: it sends goose's OWN ACP
+    method and then fires goose's OWN refresh event. Both names are read out of the
+    pinned bundle here, so a goose bump that renames either one turns THIS red at the
+    gate instead of silently making a ✕ that deletes nothing (or a list that keeps
+    showing a chat that is gone).
+
+    Measured 2026-08-29 against a live goosed: `session/delete` answers `{}` — see
+    bridge/gooseui.py A2 for why the confirmation is a re-list and not that answer.
+    """
+    blob = ""
+    for f in glob.glob(os.path.join(UI, "assets", "*.js")):
+        blob += open(f, encoding="utf-8", errors="replace").read()
+    assert "session_delete:`session/delete`" in blob.replace('"', "`").replace("'", "`"), \
+        "upstream's ACP method table no longer maps session_delete → session/delete"
+    assert "SESSION_DELETED=`session-deleted`" in blob.replace('"', "`").replace("'", "`"), \
+        "upstream's SESSION_DELETED event name changed — our list refresh would go nowhere"
+    # And the two places we depend on them agree with the bundle.
+    router = open(os.path.join(ROOT, "bridge", "gooseui.py"),
+                  encoding="utf-8").read()
+    assert '"session/delete"' in router, "the bridge sends the method by that exact name"
+    swift = open(os.path.join(ROOT, "app", "main.swift"), encoding="utf-8").read()
+    assert 'CustomEvent("session-deleted"' in swift, \
+        "the injected script fires the event by that exact name"

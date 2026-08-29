@@ -643,6 +643,10 @@ def gooseui_status() -> JSONResponse:
         "app_version": _ui.PIN_APP_VERSION,
         "asar_sha256": _ui.PIN_ASAR_SHA256,
         "bundle_sha256": _ui.bundle_sha(ROOT),
+        # ⚠️ THE FENCE THE INJECTED SIDEBAR SCRIPT READS (app/main.swift). It compares
+        # the two and injects NOTHING unless they are equal and non-empty: a bundle that
+        # is not the one whose DOM we measured gets upstream's UI, untouched.
+        "pin_bundle_sha256": _ui.PIN_BUNDLE_SHA256,
         "running": running,
         "acp_port": _PORT if running else 0,
         # ⚠️ THE URL WITHOUT THE TOKEN. A status endpoint is the wrong place to hand out
@@ -733,6 +737,44 @@ def gooseui_start() -> JSONResponse:
         return JSONResponse({"ok": False, "error": err}, status_code=503)
     return JSONResponse({"ok": True, "running": True, "acp_port": _PORT,
                          "acp_url": _ui.acp_url(_PORT, "REDACTED")})
+
+
+@app.post("/api/gooseui/session/delete")
+async def gooseui_session_delete(request: Request) -> JSONResponse:
+    """Delete ONE chat through goose's OWN ACP `session/delete` — the same method its
+    Session History trash sends to the same goosed we supervise. See
+    gooseui.delete_session for the measured protocol (A1-A4) and why the confirmation is
+    a re-list rather than the empty `{}` goose answers with.
+
+    ⚠️ WHO IS ALLOWED TO ASK. The sidebar ✕ that calls this is injected by app/main.swift
+    into OUR tab, and this route lives behind the same loopback bridge as the rest of the
+    lane. The refusal body always carries `message` — a human sentence — because the
+    caller renders it verbatim to a user who just tried to delete something.
+
+    ⚠️ NOT A HARD-DELETE PATH OF OUR OWN. If goosed is not up, this refuses; it never
+    falls back to touching data/goose/ui-home's sqlite by hand. The store belongs to
+    goose (the PTY lane's identical ruling, pty_goose's header)."""
+    if _ui is None:
+        return _unavailable()
+    try:
+        body = await request.json()
+    except Exception:                                                # noqa: BLE001
+        body = {}
+    sid = str((body or {}).get("id") or "").strip()
+    if not _ui.valid_session_id(sid):
+        return JSONResponse({"ok": False, "message": f"{sid!r} is not a goose chat id"},
+                            status_code=400)
+    if not (_alive() and _probe(_PORT)):
+        return JSONResponse(
+            {"ok": False,
+             "message": "goose's backend is not running — reload this tab to start it"},
+            status_code=409)
+    url = _ui.acp_url(_PORT, _TOKEN)
+    origin = f"http://127.0.0.1:{_bridge_port()}"
+    ok, msg = await _ui.delete_session(url, origin, sid)
+    _log(f"session delete {sid!r}: {'ok' if ok else 'REFUSED'} — {msg}")
+    return JSONResponse({"ok": ok, "message": msg, "id": sid},
+                        status_code=200 if ok else 409)
 
 
 @app.post("/api/gooseui/stop")

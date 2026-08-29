@@ -333,7 +333,13 @@ async def goose_session_remove(request: Request) -> JSONResponse:
     """Delete ONE session through goose's own `session remove` — see
     pty_goose.remove_session for the measured protocol and why nothing under the store
     is ever touched by hand. The page arms this behind a two-step confirm; this route
-    refuses while a session is running and reports only what goose itself confirmed."""
+    reports only what goose itself confirmed.
+
+    ⚠️ The refusal is PER-SESSION, not per-lane (v1.5.64): an old session deletes
+    normally while another one is live — measured, F6 in pty_goose — and only the LIVE
+    id is refused. The 409 body always carries `message`, the human sentence; any
+    consumer that renders `HTTP 409` instead is showing the status line of a refusal
+    that had words."""
     if _goose is None:
         return _goose_unavailable()
     try:

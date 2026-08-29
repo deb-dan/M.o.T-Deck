@@ -307,15 +307,26 @@ def test_named_provider_file_matches_what_goose_itself_wrote():
         ok(k in doc, f"the file carries goose's own field `{k}` — we write the FULL "
                      "document its editor round-trips, so a user pressing Update in "
                      "goose's form does not silently lose fields")
+    # S29 — the MLX fixture is a REAL directory now: model_entries enumerates through
+    # the shared rule (core/modelreg.offerable), which drops a row whose artifact is
+    # provably gone. A fixture naming a path that never existed would be asserting the
+    # OLD behaviour — the one that kept goose's picker offering the models Debi deleted
+    # in LM Studio days earlier.
+    import tempfile as _tf
+    _mlxdir = _tf.mkdtemp(prefix="gooseui-mlx-")
     m = PR.model_entries([{"id": "g", "format": "gguf"},
-                          {"id": "x", "format": "mlx", "path": "/abs/mlx"},
+                          {"id": "x", "format": "mlx", "path": _mlxdir},
                           {"id": "a", "kind": "audio"},
                           {"id": "h", "hidden": True},
+                          {"id": "deleted-in-lmstudio", "format": "gguf",
+                           "path": os.path.join(_mlxdir, "gone.gguf")},
+                          {"id": "flagged-absent", "format": "gguf", "absent": True},
                           {"id": "g", "format": "gguf"}])
-    ok([e["name"] for e in m] == ["g", "/abs/mlx"],
+    ok([e["name"] for e in m] == ["g", _mlxdir],
        "chat models only, WIRE identifiers (an MLX row is its path, because goose's "
        "model object has ONE identifier slot and a pretty label that 400s is a lie), "
-       "audio/hidden excluded, duplicates collapsed")
+       "audio/hidden excluded, duplicates collapsed — and S29: a row whose FILE is gone, "
+       "or one carrying the persisted `absent` flag, is not offered either")
     ok(all(e["context_limit"] > 0 for e in m),
        "…and every row carries a context limit — goose's own form always writes one")
 
@@ -627,6 +638,119 @@ def test_the_lane_is_REACHABLE():
        "specific claimant first, or this row comes out empty and is dropped")
 
 
+# ── v1.5.64: the per-chat delete the SIDEBAR never had ──────────────────────
+def _fake(results, err):
+    """An awaitable stand-in for gooseui.acp_calls."""
+    async def _run():
+        return results, err
+    return _run()
+
+
+def test_the_sidebar_delete_speaks_gooses_own_protocol():
+    """Debi asked twice for a per-chat delete in the CHATS list. Upstream has none there
+    (the row component renders a name and status dots; deletion lives on the Session
+    History page behind a hover-revealed trash). The ✕ we inject calls this bridge, and
+    the bridge sends goose's OWN ACP `session/delete` to the goosed we supervise."""
+    for good in ("20260829_1", "20260829_42", "19991231_9"):
+        ok(G.valid_session_id(good), f"{good} is goose's own id shape")
+    for bad in ("", None, "nope", "../../etc/passwd", "20260829_1; rm -rf /",
+                " 20260829_1 x", "2026089_1"):
+        ok(not G.valid_session_id(bad),
+           f"{bad!r} never reaches a protocol call — the id crosses a process boundary")
+    ok(G._session_titles({"sessions": [{"sessionId": "20260829_1", "title": "hi"},
+                                       {"sessionId": "", "title": "x"},
+                                       "junk", {"nope": 1}]}) == {"20260829_1": "hi"},
+       "a list result is read totally: a junk row costs THAT row, never the answer")
+    ok(G._session_titles(None) == {} and G._session_titles({}) == {},
+       "…and nothing at all is {}, not a crash")
+
+    # The four honest answers, with the transport substituted (the LIVE walk against a
+    # real goosed is in the report; this pins the decision table forever).
+    import asyncio
+    real = G.acp_calls
+    try:
+        G.acp_calls = lambda *_a, **_k: _fake([{"sessions": []}], "")
+        okr, msg = asyncio.run(G.delete_session("ws://x", "o", "20260829_1"))
+        ok(okr is False and "does not have that chat" in msg,
+           "an id goose does not list is refused with a sentence, not attempted")
+
+        G.acp_calls = lambda *_a, **_k: _fake([], "goose refused session/list")
+        okr, msg = asyncio.run(G.delete_session("ws://x", "o", "20260829_1"))
+        ok(okr is False and "refused" in msg, "goose's own words are passed through")
+
+        state = {"n": 0}
+
+        def still_there(*_a, **_k):
+            state["n"] += 1
+            rows = [{"sessionId": "20260829_1", "title": "keeper"}]
+            if state["n"] == 1:
+                return _fake([{"sessions": rows}], "")
+            return _fake([{}, {"sessions": rows}], "")
+        G.acp_calls = still_there
+        okr, msg = asyncio.run(G.delete_session("ws://x", "o", "20260829_1"))
+        ok(okr is False and "still in its list" in msg,
+           "⚠️ `session/delete` answers an EMPTY {} (measured): a re-list is the receipt, "
+           "and a chat still listed is reported as a FAILURE rather than a success")
+
+        state2 = {"n": 0}
+
+        def gone(*_a, **_k):
+            state2["n"] += 1
+            if state2["n"] == 1:
+                return _fake([{"sessions": [{"sessionId": "20260829_1",
+                                             "title": "the tax thing"}]}], "")
+            return _fake([{}, {"sessions": []}], "")
+        G.acp_calls = gone
+        okr, msg = asyncio.run(G.delete_session("ws://x", "o", "20260829_1"))
+        ok(okr is True and "the tax thing" in msg,
+           "…and success names the chat, so the user knows WHICH one went")
+    finally:
+        G.acp_calls = real
+
+
+def test_the_sidebar_delete_is_wired_and_fenced():
+    ok("/api/gooseui/session/delete" in _APP_SOURCE,
+       "the route exists in the app-layer source view")
+    ok('"pin_bundle_sha256"' in _APP_SOURCE,
+       "…and /api/gooseui/status publishes the sha the injected script fences on")
+    swift = (ROOT / "app" / "main.swift").read_text()
+    ok("gooseSidebarDeleteScript" in swift and 'if t.id == "gooseui"' in swift,
+       "the user script is attached to the gooseui tab and nowhere else")
+    ok("goosePin()" in swift and "goose_pin:" in swift,
+       "FENCE 1: the pin is read from harness.yaml, and an unreadable pin means no "
+       "injection at all")
+    ok(r'goose_pin:\s*"?v?[0-9][0-9A-Za-z.\-]*"?' in swift,
+       "…with the quotes OPTIONAL — ship.sh's pyyaml merge writes the snapshot's copy "
+       "unquoted, and a quote-only regex would make the feature not exist on a fat "
+       "install (the v1.5.59 lesson, pinned)")
+    ok("j.bundle_sha256 !== j.pin_bundle_sha256" in swift,
+       "FENCE 2: a bundle that is not the one whose DOM we measured gets nothing")
+    ok("fiberSession" in swift and "p.session.id" in swift,
+       "FENCE 3: the row's id comes from its OWN props — their DOM carries no session "
+       "id anywhere, and matching on the text 'New Chat' would be indefensible")
+    ok('wrap.addEventListener("click", function (ev) { ev.stopPropagation(); }, false)'
+       in swift,
+       "the row guard is BUBBLE phase: in capture it stopped the event before it "
+       "reached our own buttons and the ✕ did nothing (caught on the live walk)")
+    ok('class="ask"' in swift and "delete?" in swift and "armedRow" in swift,
+       "one click never deletes: the ✕ arms a two-step, because their own confirm "
+       "dialog cannot be raised from the sidebar")
+    ok('CustomEvent("session-deleted"' in swift,
+       "the list refresh is THEIR OWN event — we do not re-implement their list")
+    ok("function showing(id)" in swift and "resumeSessionId=" in swift
+       and "if (showing(id)) newChat();" in swift,
+       "deleting the chat you are LOOKING AT lands on a new chat — walked live: without "
+       "this the main pane kept rendering the transcript of a chat that no longer "
+       "exists, which is a screen full of something that is gone")
+    ok('String(b.className).indexOf("w-full") < 0' in swift,
+       "…and the New Chat it presses is THEIR nav item, told apart from the titlebar "
+       "chip of the same name by the class only the nav row carries")
+    ok("hgdel-note" in swift and "Nothing was deleted — " in swift,
+       "a refusal renders goose's sentence next to the row…")
+    ok("d.title = raw" in swift and '"HTTP " + res.status' in swift,
+       "…with the status code behind the hover, never as the message")
+
+
 def main():
     for fn in (test_entry_document, test_route_shapes_are_registered,
                test_the_lane_is_REACHABLE,
@@ -642,7 +766,9 @@ def main():
                test_acp_url_and_argv, test_bundle_containment,
                test_media_types_are_forced,
                test_absent_dependency_lands_on_something_usable,
-               test_the_shim_is_complete_and_honest):
+               test_the_shim_is_complete_and_honest,
+               test_the_sidebar_delete_speaks_gooses_own_protocol,
+               test_the_sidebar_delete_is_wired_and_fenced):
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"goose UI lane: {CHECKS} checks passed")

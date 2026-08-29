@@ -875,6 +875,267 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         return String(seg[q])
     }
 
+    // ── GOOSE UI: a per-chat ✕ IN THE SIDEBAR (Debi, asked twice) ───────────────
+    //
+    // WHAT SHE HIT. The sidebar's CHATS list — the one thing on screen while you are
+    // chatting — has NO per-item delete upstream. Read off the pinned v1.48.0 bundle:
+    // the row component renders an inline rename field and three status dots and nothing
+    // else, and it merely LISTENS for `session-deleted`. Deletion exists only on the
+    // Session History page, on a card, behind icons that are `opacity-0` until hovered.
+    // So a user looking at six rows all called "New Chat" has no way to remove one from
+    // where they are looking. That is a missing affordance, not a missing capability —
+    // and the fix belongs where she is looking.
+    //
+    // WHY THE DELETE GOES THROUGH THE BRIDGE AND NOT THROUGH THEIR OWN FUNCTION.
+    // Measured in the bundle: the trash's delete is `v(id)`, a MODULE-SCOPE binding in
+    // their Vite chunk — no global, no window object, no React context reaches it, and
+    // their confirm dialog is mounted only on the Sessions page. An injected script
+    // therefore CANNOT call their function or raise their dialog. What it can do is ask
+    // the bridge to send goose's OWN protocol method (`session/delete`, ACP) to the
+    // goosed WE supervise — the same call their trash makes, to the same server, on the
+    // same store. See bridge/gooseui.py's ACP section for the measured protocol (A1-A4)
+    // and bridge/routers/gooseui.py for the route.
+    //
+    // ⚠️ NEVER A SILENT DELETE. Since their confirm cannot be raised, the ✕ arms an
+    // equivalent TWO-STEP in the row — ✕ → `delete? yes / no`, Esc cancels — which is
+    // the same armed grammar the Goose CLI tab's session strip already uses. One click
+    // never deletes anything.
+    //
+    // THREE FENCES. Any one failing ⇒ NOTHING is injected or painted, and the tab is
+    // upstream's UI exactly as before:
+    //   1. THE PIN. `goose_pin` is read from harness.yaml here (repo or snapshot,
+    //      quoted or not — the v1.5.59 lesson) and compared, inside the page, against
+    //      the version the bridge reports. No pin readable ⇒ the script is not injected.
+    //   2. THE BUNDLE. /api/gooseui/status must report `bundle_sha256` EQUAL to
+    //      `pin_bundle_sha256` and non-empty: the DOM shapes below were measured against
+    //      exactly that bundle, so a different one gets nothing rather than a guess.
+    //   3. THE ROW. A ✕ is added only to a row whose OWN React props carry
+    //      `session.id` matching goose's id shape (a bounded 40-hop fiber walk from the
+    //      row node). Their DOM carries no session id anywhere — no data attribute, no
+    //      href — and matching on the rendered TEXT would be indefensible when every row
+    //      says "New Chat". A row that will not answer with an id gets no ✕.
+    // ZERO VENDORED BYTES: nothing in data/goose/ui is touched, and removing this
+    // function restores upstream's sidebar on the next launch.
+    func goosePin() -> String? {
+        var yaml: String? = nil
+        for r in [resolvedRoot, harnessRoot,
+                  NSString(string: "~/Library/Application Support/Harness").expandingTildeInPath] {
+            if let s = try? String(contentsOfFile: "\(r)/harness.yaml", encoding: .utf8) {
+                yaml = s; break
+            }
+        }
+        guard let y = yaml else { return nil }
+        // `goose_pin: "v1.48.0"` in build:. Quotes optional for the same reason as
+        // opencodePin's: ship.sh's pyyaml merge writes the snapshot's copy unquoted.
+        guard let m = y.range(of: #"goose_pin:\s*"?v?[0-9][0-9A-Za-z.\-]*"?"#,
+                              options: .regularExpression) else { return nil }
+        let seg = String(y[m])
+        guard let q = seg.range(of: #"[0-9][0-9A-Za-z.\-]*"#,
+                                options: .regularExpression) else { return nil }
+        return String(seg[q])          // "1.48.0" — the leading v never enters the match
+    }
+
+    func gooseSidebarDeleteScript() -> WKUserScript? {
+        guard let pin = goosePin() else {
+            NSLog("%@", "[gooseui] no readable goose_pin — sidebar delete NOT injected" as NSString)
+            return nil
+        }
+        let src = """
+        (function () {
+          var PIN = "\(pin)", MARK = "data-harness-gdel";
+          var ID_RE = /^\\d{8}_\\d+$/, armedRow = null;
+
+          // FENCE 3: the row's OWN props. Bounded walk; no id ⇒ no ✕ on that row.
+          function fiberSession(node) {
+            var f = null, k;
+            for (k in node) { if (k.indexOf("__reactFiber$") === 0) { f = node[k]; break; } }
+            for (var i = 0; i < 40 && f; i++) {
+              var p = f.memoizedProps;
+              if (p && p.session && typeof p.session.id === "string" && ID_RE.test(p.session.id))
+                return { id: p.session.id, name: String(p.session.name || "") };
+              f = f.return;
+            }
+            return null;
+          }
+          // The CHATS section, found by its own heading. Scoping to it is what keeps the
+          // ✕ off every other pill-shaped row in their UI.
+          function chatsScope() {
+            var els = document.querySelectorAll("span,div,h2,h3,p");
+            for (var i = 0; i < els.length; i++) {
+              var e = els[i];
+              if (e.children.length === 0 &&
+                  String(e.textContent || "").trim().toLowerCase() === "chats")
+                return e.parentElement && e.parentElement.parentElement;
+            }
+            return null;
+          }
+          function style() {
+            if (document.getElementById("harness-gdel-style")) return;
+            var s = document.createElement("style");
+            s.id = "harness-gdel-style";
+            s.textContent =
+              ".hgdel{margin-left:auto;flex:none;display:flex;align-items:center;gap:4px;" +
+                "opacity:0;transition:opacity .12s}" +
+              "[" + MARK + "]:hover .hgdel,.hgdel:focus-within,.hgdel.armed{opacity:1}" +
+              ".hgdel button{background:none;border:0;padding:0 3px;cursor:pointer;" +
+                "font:inherit;font-size:11px;line-height:1;color:inherit;opacity:.75}" +
+              ".hgdel button:hover{opacity:1}" +
+              ".hgdel .x{font-size:13px}" +
+              ".hgdel .yes{color:#e5484d}" +
+              ".hgdel .ask{display:none;font-size:11px;opacity:.9;white-space:nowrap}" +
+              ".hgdel.armed .ask{display:inline}" +
+              ".hgdel.armed .x{display:none}" +
+              ".hgdel-note{margin:2px 12px 6px;font-size:11px;line-height:1.35;" +
+                "color:#e5484d;cursor:help}";
+            (document.head || document.documentElement).appendChild(s);
+          }
+          function disarm() {
+            if (!armedRow) return;
+            var w = armedRow.querySelector(".hgdel");
+            if (w) w.classList.remove("armed");
+            armedRow = null;
+          }
+          // The refusal is a SENTENCE, next to the row it is about. The status code goes
+          // on the hover and in the console — never as the message (the log-vomit rule).
+          function note(row, sentence, raw) {
+            var old = row.parentNode && row.parentNode.querySelector(".hgdel-note");
+            if (old) old.remove();
+            var d = document.createElement("div");
+            d.className = "hgdel-note";
+            d.textContent = sentence;
+            if (raw) d.title = raw;
+            if (row.parentNode) row.parentNode.insertBefore(d, row.nextSibling);
+            setTimeout(function () { if (d.parentNode) d.remove(); }, 9000);
+          }
+          // Is THIS chat the one on screen? Their router puts it in the hash as
+          // `#/pair?resumeSessionId=<id>` (measured).
+          function showing(id) {
+            try { return String(location.hash || "").indexOf("resumeSessionId=" + id) >= 0; }
+            catch (e) { return false; }
+          }
+          // THEIR OWN "New Chat" nav item — the one in the nav panel, not the titlebar
+          // chip of the same name (the `w-full` class is what tells them apart).
+          function newChat() {
+            try {
+              var scope = chatsScope();
+              var nav = scope && scope.parentElement;
+              if (!nav) return;
+              var all = nav.querySelectorAll("button");
+              for (var i = 0; i < all.length; i++) {
+                var b = all[i];
+                if (String(b.textContent || "").trim() !== "New Chat") continue;
+                if (String(b.className).indexOf("w-full") < 0) continue;
+                if (scope.contains(b)) continue;
+                b.click();
+                return;
+              }
+            } catch (e) {}
+          }
+          function remove(row, id) {
+            fetch("/api/gooseui/session/delete", {
+              method: "POST", cache: "no-store",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: id })
+            }).then(function (r) {
+              return r.json().catch(function () { return null; })
+                .then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
+            }).then(function (res) {
+              if (res.ok && res.j && res.j.ok) {
+                // THEIR OWN refresh path: the sidebar, the Sessions page and the active
+                // -session store all listen for this exact event (bundle: `session-deleted`).
+                try {
+                  window.dispatchEvent(new CustomEvent("session-deleted",
+                                                       { detail: { sessionId: id } }));
+                } catch (e) {}
+                // Belt and braces: if their listener did not take the row away, take
+                // ours away — a row for a chat that no longer exists is a lie.
+                setTimeout(function () {
+                  if (row.parentNode && row.getAttribute(MARK) === id) row.remove();
+                }, 1500);
+                // ⚠️ DELETING THE CHAT YOU ARE LOOKING AT. Walked live: the row goes and
+                // the store agrees, but the MAIN PANE keeps rendering the transcript of
+                // a chat that no longer exists — a screen full of something that is
+                // gone. Upstream's own Sessions-page handler clears its active-session
+                // state alongside the delete; we cannot call that, so we do what a user
+                // would do next and press THEIR OWN "New Chat". Not found ⇒ nothing
+                // happens, which is exactly today's behaviour.
+                if (showing(id)) newChat();
+                return;
+              }
+              var msg = (res.j && res.j.message) || "goose refused that";
+              try { console.warn("[harness-gdel] " + id + ": HTTP " + res.status + " — " + msg); }
+              catch (e) {}
+              note(row, "Nothing was deleted — " + msg,
+                   "HTTP " + res.status + " · /api/gooseui/session/delete");
+            }).catch(function (e) {
+              note(row, "Nothing was deleted — the bridge is not answering.", String(e));
+            });
+          }
+          function decorate(row, sess) {
+            if (row.getAttribute(MARK)) return;
+            row.setAttribute(MARK, sess.id);
+            var wrap = document.createElement("span");
+            wrap.className = "hgdel";
+            wrap.innerHTML =
+              '<button class="x" type="button" title="Delete this chat">✕</button>' +
+              '<span class="ask"><b>delete?</b> ' +
+                '<button class="yes" type="button">yes</button> ' +
+                '<button class="no" type="button">no</button></span>';
+            // ⚠️ BUBBLE PHASE, NOT CAPTURE. The first draft stopped propagation in the
+            // CAPTURE phase on this wrapper, which stops the event BEFORE it reaches the
+            // buttons inside — the ✕ then did nothing at all (caught on the live walk).
+            // Bubble is what "do not also open the chat" actually means.
+            wrap.addEventListener("click", function (ev) { ev.stopPropagation(); }, false);
+            wrap.querySelector(".x").onclick = function (ev) {
+              ev.stopPropagation(); ev.preventDefault();
+              disarm(); armedRow = row; wrap.classList.add("armed");
+            };
+            wrap.querySelector(".no").onclick = function (ev) {
+              ev.stopPropagation(); ev.preventDefault(); disarm();
+            };
+            wrap.querySelector(".yes").onclick = function (ev) {
+              ev.stopPropagation(); ev.preventDefault();
+              disarm(); remove(row, sess.id);
+            };
+            row.appendChild(wrap);
+          }
+          function tick() {
+            var scope = chatsScope();
+            if (!scope) return;
+            var rows = scope.querySelectorAll("div.rounded-full.cursor-pointer");
+            for (var i = 0; i < rows.length; i++) {
+              var r = rows[i];
+              if (r.getAttribute(MARK)) continue;
+              var s = fiberSession(r);
+              if (!s) continue;
+              decorate(r, s);
+            }
+          }
+          function arm() {
+            style(); tick();
+            try {
+              new MutationObserver(function () { tick(); })
+                .observe(document.body, { childList: true, subtree: true });
+            } catch (e) {}
+            document.addEventListener("keydown", function (ev) {
+              if (ev.key === "Escape") disarm();
+            }, true);
+          }
+          // FENCES 1 + 2, before anything is painted.
+          fetch("/api/gooseui/status", { cache: "no-store" })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (!j || !j.ok) return;
+              if (!j.bundle_sha256 || j.bundle_sha256 !== j.pin_bundle_sha256) return;
+              if (String(j.app_version || "") !== PIN) return;
+              if (document.body) arm();
+              else document.addEventListener("DOMContentLoaded", arm);
+            }).catch(function () {});
+        })();
+        """
+        return WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
+
     func openCodeDraftScript() -> WKUserScript? {
         guard let pin = opencodePin() else {
             NSLog("%@", "[opencode] no readable pin — draft relabel NOT injected" as NSString)
@@ -1182,6 +1443,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 let c = WKWebViewConfiguration()
                 c.userContentController.add(self, name: "harness")
                 c.userContentController.addUserScript(shellScript)
+                // The sidebar's per-chat ✕ — see gooseSidebarDeleteScript(). Fenced;
+                // any fence unreadable ⇒ nothing injected and the tab is upstream's.
+                if t.id == "gooseui", let s = gooseSidebarDeleteScript() {
+                    c.userContentController.addUserScript(s)
+                }
                 wvById[t.id] = WKWebView(frame: .zero, configuration: c)
             }
             else { wvById[t.id] = WKWebView(frame: .zero, configuration: WKWebViewConfiguration()) }

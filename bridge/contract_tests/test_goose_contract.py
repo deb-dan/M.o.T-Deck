@@ -294,6 +294,31 @@ def test_remove_still_confirms_in_its_own_words():
         f"`session remove` answered an unknown id unexpectedly: {got[:300]}")
 
 
+def test_the_delete_guard_is_per_session_not_per_lane():
+    """F6 (v1.5.64), the ARGUMENT for the shape of the guard, pinned as source facts.
+
+    v1.5.61 refused every delete while ANY session ran. Measured in a scratch profile on
+    the pinned binary: deleting a DIFFERENT session while one is live is uneventful
+    (goose's receipt, `PRAGMA integrity_check` ok, the live session keeps persisting its
+    later turns), while deleting the RUNNING one succeeds and then kills the live window
+    mid-answer with `Error: Session not found`. Exactly one refusal is earned, by id.
+
+    This test deletes NOTHING: it reads the guard, because the empirical half cannot be
+    re-run at gate time without a real session and a real store to risk.
+    """
+    src = open(os.path.join(ROOT, "bridge", "pty_goose.py"), encoding="utf-8").read()
+    assert "def live_id()" in src, "the guard needs the live session's OWN id to compare"
+    guard = src.split("def remove_session")[1][:4000]
+    assert "if busy():" in guard and "live_id()" in guard, (
+        "the busy check must resolve to an ID comparison — a bare `if busy(): refuse` is "
+        "the over-broad guard this fact set removed")
+    assert "if live == sid:" in guard, "…only the LIVE id is refused"
+    assert "has not said which one it is" in guard, (
+        "…and a running session whose banner we have not read yet refuses as a WAIT, "
+        "never by guessing")
+    assert "F6" in src, "the measurements stay written down beside the guard they justify"
+
+
 def test_update_is_a_subcommand_not_a_startup_check():
     """Pin discipline: goose must never update ITSELF when the lane starts. Upstream's
     `update` is a manual subcommand and there is no startup check (verified at source,

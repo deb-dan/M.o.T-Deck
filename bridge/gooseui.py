@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 
 # The NAMED PROVIDER, shared with the PTY lane. Its module docstring carries the whole
@@ -367,6 +368,143 @@ def new_token() -> str:
     start without one unless `--dangerously-unauthenticated` is passed, and that flag is
     exactly the thing not to pass on a machine where any local page can open a socket."""
     return secrets.token_urlsafe(32)
+
+
+# ══ ACP, THE ONE CALL WE MAKE OURSELVES: session/delete ══════════════════════
+#
+# WHY THIS EXISTS (Debi, asked twice): the sidebar's CHATS list has NO per-item delete
+# upstream. Its row component renders a name, a rename field and three status dots and
+# nothing else — deletion lives only on the Session History page, behind a hover-revealed
+# trash on a card. So a user looking at six rows called "New Chat" in the sidebar has no
+# way to remove one from where they are looking. app/main.swift injects a hover ✕ on
+# those rows (fenced, zero vendored bytes) and it calls the route that calls THIS.
+#
+# ⚠️ WHY A SECOND ACP CONNECTION AND NOT THEIR OWN FUNCTION. Measured in the pinned
+# v1.48.0 bundle: the delete the trash performs is `v(id)` — a MODULE-SCOPE import inside
+# their Vite chunk, reachable from no global, no window object and no React context. The
+# Sessions page's confirm dialog is mounted only on that page. So an injected script
+# cannot call their function; what it CAN do is speak the same protocol to the same
+# goosed we supervise. The method is theirs (`session/delete`, ACP), the server doing the
+# deleting is theirs, the store is theirs. Nothing writes into the sqlite by hand.
+#
+# ⚠️ MEASURED ON THE PINNED BINARY (2026-08-29, live goosed, a session WE created for the
+# purpose and then removed):
+#   A1  A SECOND ACP websocket is accepted while the tab's own connection is open, and
+#       neither disturbs the other. `initialize` must come first on each connection;
+#       `agentCapabilities.sessionCapabilities.delete` is advertised in its result.
+#   A2  `session/delete` answers `{"result": {}}` — an EMPTY OBJECT. It is not a receipt:
+#       it says nothing about what went. So the confirmation here is a re-LIST, exactly
+#       as the PTY lane refuses to read "exit 0" as evidence (pty_goose.remove_session).
+#   A3  `session/list` returns `sessions[].sessionId` + `title`; that title is what the
+#       receipt quotes back, so the user is told WHICH chat went, not just that one did.
+#   A4  goosed exposes only /health, /status and /acp over HTTP — there is no REST
+#       deletion endpoint to prefer over this (all four probed, 404).
+ACP_PROTOCOL_VERSION = 1
+ACP_TIMEOUT_S = 20.0
+# goose's own session id shape. The id crosses a process boundary; nothing else may.
+_SESSION_ID_RE = re.compile(r"\d{8}_\d+")
+
+
+def valid_session_id(sid) -> bool:
+    """PURE."""
+    return bool(_SESSION_ID_RE.fullmatch((sid or "").strip()))
+
+
+async def acp_calls(url: str, origin: str, calls, timeout=ACP_TIMEOUT_S) -> tuple:
+    """(results, error). ONE connection: `initialize`, then each (method, params) in
+    order. Notifications and other ids are skipped, never mistaken for our answer.
+
+    Total by construction: every failure — no websockets module, a refused socket, a
+    timeout, a JSON-RPC error object — comes back as a SENTENCE in `error` and an empty
+    result list. Nothing here raises into a route handler.
+    """
+    try:
+        import websockets                                    # noqa: PLC0415
+    except Exception as e:                                   # noqa: BLE001
+        return [], f"this bridge has no websocket client installed ({e})"
+    import asyncio                                           # noqa: PLC0415
+    out = []
+    try:
+        async with websockets.connect(url, origin=origin,
+                                      open_timeout=timeout,
+                                      max_size=8 * 1024 * 1024) as ws:
+            seq = 0
+            todo = [("initialize", {"protocolVersion": ACP_PROTOCOL_VERSION,
+                                    "clientCapabilities": {}})] + list(calls)
+            for method, params in todo:
+                seq += 1
+                await ws.send(json.dumps({"jsonrpc": "2.0", "id": seq,
+                                          "method": method, "params": params}))
+                answer = None
+                # A bounded read loop: goosed pushes session/update notifications on the
+                # same socket, and an unbounded `while True` here would hang a request
+                # thread on a chatty agent.
+                for _ in range(64):
+                    raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                    try:
+                        msg = json.loads(raw)
+                    except (ValueError, TypeError):
+                        continue
+                    if isinstance(msg, dict) and msg.get("id") == seq:
+                        answer = msg
+                        break
+                if answer is None:
+                    return out, f"goose did not answer {method} in time"
+                if "error" in answer:
+                    err = answer.get("error") or {}
+                    return out, (str(err.get("message") or err)[:200]
+                                 + f" (goose refused {method})")
+                if method != "initialize":
+                    out.append(answer.get("result") or {})
+    except asyncio.TimeoutError:
+        return out, "goose did not answer in time"
+    except Exception as e:                                   # noqa: BLE001
+        return out, f"could not talk to goose: {type(e).__name__}: {e}"[:200]
+    return out, ""
+
+
+def _session_titles(result) -> dict:
+    """PURE. A `session/list` result → {id: title}. Total: any odd shape costs that row."""
+    out = {}
+    rows = (result or {}).get("sessions") if isinstance(result, dict) else None
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        sid = str(r.get("sessionId") or "").strip()
+        if sid:
+            out[sid] = str(r.get("title") or "").strip()
+    return out
+
+
+async def delete_session(url: str, origin: str, sid: str) -> tuple:
+    """(ok, message). goose's OWN `session/delete`, confirmed by goose's OWN list.
+
+    The four honest answers, in order: a malformed id; a chat goose does not have; a
+    delete goose refused (its words); and a delete goose accepted but that did not
+    change its list — which is reported as a FAILURE, because "it returned {}" is not
+    evidence (A2). Only the last case's opposite says deleted.
+    """
+    sid = (sid or "").strip()
+    if not valid_session_id(sid):
+        return False, f"{sid!r} is not a goose chat id"
+    res, err = await acp_calls(url, origin, [("session/list", {})])
+    if err:
+        return False, err
+    before = _session_titles(res[0] if res else {})
+    if sid not in before:
+        return False, ("goose does not have that chat any more — the list you clicked "
+                       "is out of date")
+    title = before.get(sid) or sid
+    res, err = await acp_calls(url, origin,
+                               [("session/delete", {"sessionId": sid}),
+                                ("session/list", {})])
+    if err:
+        return False, err
+    after = _session_titles(res[1] if len(res) > 1 else {})
+    if sid in after:
+        return False, ("goose reported no error but the chat is still in its list — "
+                       "nothing is assumed; try again or delete it from Session History")
+    return True, f"“{title}” deleted"
 
 
 # ── pure: the launch line and the fence ──────────────────────────────────────

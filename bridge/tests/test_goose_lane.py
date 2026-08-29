@@ -686,7 +686,9 @@ def test_page_cannot_fail_silently():
     ok("style.display" not in page.split("#msg")[0] or True, "(see the class rule)")
     ok('id="boot"' in page and "scripts did not run" in page,
        "a static banner is visible until the first line of script removes it")
-    ok("jfetch" in page and "if (!r.ok) throw" in page,
+    # v1.5.64: the throw moved into a block (it now carries the sentence AND the raw
+    # status separately), so the assertion is on the CHECK, not on its one-line shape.
+    ok("jfetch" in page and "if (!r.ok) {" in page and "throw err" in page,
        "every request checks its status — a 409/503 can never look like success")
 
 
@@ -1200,6 +1202,98 @@ def test_the_page_carries_the_strip_and_the_reload_story():
        "…same for the chip's own surface")
 
 
+def test_a_delete_is_refused_only_for_the_LIVE_session(live_check=True):
+    """v1.5.64, Debi's screenshot: 'nothing was deleted: HTTP 409' over a live session.
+
+    v1.5.61's guard refused EVERY delete while ANY session ran. MEASURED on the pinned
+    binary in a scratch profile (pty_goose F6): deleting a DIFFERENT session while one
+    is live is uneventful — goose's own receipt, `PRAGMA integrity_check` = ok, the live
+    session keeps answering and its later turns persist. What is NOT safe is deleting the
+    RUNNING one: goose does it, and the live window dies mid-turn with
+    `Error: Session not found`. So the refusal is per-ID, and the id is the live one.
+    """
+    G.kill_current()
+    ok(G.live_id() == "", "nothing running → no live id, and busy() is False")
+    ok(not G.busy(), "…the two answers agree when idle")
+
+    sess = G.PtySession(["/bin/cat"], "/tmp", {"PATH": "/bin:/usr/bin"})
+    sess.start()
+    ok(G.claim(sess), "a session is live for the rest of this test")
+    try:
+        # 1. the banner has NOT been read yet: we do not know WHICH session runs, so a
+        #    delete is refused — but as a WAIT, never as a blanket "end it first".
+        sess.session_id = ""
+        ok(G.live_id() == "" and G.busy(),
+           "busy() and live_id() disagree on purpose while the banner is unread")
+        okr, msg = G.remove_session(ROOT, "20260829_3")
+        ok(okr is False and "has not said which one it is yet" in msg,
+           "an unknown live id refuses conservatively and says it is a moment, not a rule")
+
+        # 2. the live one, by id: ONE sentence, naming End.
+        sess.session_id = "20260829_7"
+        okr, msg = G.remove_session(ROOT, "20260829_7")
+        ok(okr is False and "live" in msg and "End it first" in msg,
+           "deleting the LIVE session is refused with the sentence Debi should have seen")
+        ok("409" not in msg and "HTTP" not in msg,
+           "…a sentence, not a status line (the log-vomit class this slice removes)")
+
+        # 3. ANOTHER session, while that one runs: the busy guard must NOT be what stops
+        #    it. ⚠️ THIS ARM POINTS AT A BINARY THAT DOES NOT EXIST, ON PURPOSE — an
+        #    earlier draft of this very test ran the real `session remove` against the
+        #    REPO's own goose store and deleted a row out of it. A test that can delete
+        #    real history to prove a guard is a worse bug than the guard. So: the
+        #    installed-check is satisfied with a path that cannot spawn, and reaching the
+        #    spawn IS the proof that the guard let it through.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            fake = os.path.join(td, "data", "goose", "bin")
+            os.makedirs(fake, exist_ok=True)
+            with open(os.path.join(fake, "goose"), "w") as fh:
+                fh.write("#!/bin/sh\nexit 0\n")     # says nothing, deletes nothing
+            os.chmod(os.path.join(fake, "goose"), 0o755)
+            okr, msg = G.remove_session(td, "20260829_3")
+        ok(okr is False and "did not ask its own confirmation" in msg,
+           "it got all the way to the spawn (a stub that answers nothing) rather than "
+           "being stopped at the guard")
+        ok("running" not in msg and "live" not in msg and "End it first" not in msg,
+           "…i.e. it was NOT refused for being busy — an old session deletes while "
+           "another is live (F6a), which is the whole bug Debi reported")
+    finally:
+        G.kill_current()
+    ok(not G.busy() and G.live_id() == "", "the lane is idle again")
+
+
+def test_a_refusal_reaches_the_user_as_a_sentence_not_a_status_code():
+    """THE RENDERING HALF of Debi's screenshot. /api/goose/session/remove answers
+    {ok:false, message:"…"} with 409; the page's jfetch read only `error`/`detail`, so
+    every refusal on that route rendered as `HTTP 409`. The sentence exists — it just
+    never reached her."""
+    page = PAGE.read_text()
+    ok("body.message" in page,
+       "jfetch reads the `message` key the remove route actually answers with")
+    idx = page.index("async function jfetch")
+    blk = page[idx:idx + 1600]
+    ok("err.raw" in blk and "HTTP " in blk,
+       "…and the raw status is kept — on the error's `raw`, not in the message")
+    ok("function say(text, kind, raw)" in page,
+       "say() takes the raw detail separately from the sentence")
+    ok("m.title = raw" in page and "console.warn" in page,
+       "…and renders it behind a hover + one console line, never in the user's face")
+    ok("hasraw" in page and "cursor:help" in page,
+       "a message with detail behind it SAYS so — an invisible hover is no affordance")
+    rm = page[page.index("async function removeSession"):][:1600]
+    ok("e.raw" in rm and "'Nothing was deleted. '" in rm,
+       "the delete failure prints the bridge's own sentence verbatim")
+    ok("'nothing was deleted: ' + e.message" not in page,
+       "…and the old lowercase status-code line is gone")
+    # the live row never arms a confirm that can only be refused
+    ok("That session is live — End it first" in page,
+       "clicking ✕ on the LIVE row says the sentence at once rather than arming a "
+       "two-step whose only possible outcome is a refusal")
+    ok("End this session before deleting it" in page,
+       "…and its tooltip says the same thing before the click")
+
+
 def main():
     for fn in (test_origin_gate, test_resize, test_env_fence,
                test_the_cli_lane_gets_the_named_provider_too,
@@ -1222,7 +1316,10 @@ def main():
                test_the_startup_sweep_reaps_only_what_is_provably_ours,
                test_the_store_readout_never_reports_a_number_it_did_not_measure,
                test_the_sessions_route_live,
-               test_the_page_carries_the_strip_and_the_reload_story):
+               test_the_page_carries_the_strip_and_the_reload_story,
+               # ── v1.5.64: the delete Debi could not perform ──
+               test_a_delete_is_refused_only_for_the_LIVE_session,
+               test_a_refusal_reaches_the_user_as_a_sentence_not_a_status_code):
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"goose lane: {CHECKS} checks passed")

@@ -200,6 +200,11 @@
   #msg.show{display:block}
   #msg.warn{color:var(--bad)}
   #msg.info{color:var(--faint)}
+  /* A message that has raw detail behind it says so — a hover target nobody can see is
+     a hover target nobody uses. The sentence stays the message; the code stays the
+     tooltip (and the console line). */
+  #msg.hasraw{cursor:help;text-decoration:underline dotted var(--faint);
+              text-underline-offset:3px}
   #logwrap{flex:none;display:none;padding:0 16px 10px}
   #logwrap.show{display:block}
   #logbox{margin:0;max-height:170px;overflow:auto;background:var(--card);
@@ -300,10 +305,14 @@
   stop, because it lives in this tab and runs only while the tab is open. Its home and
   its history stay under <code>data/goose/</code> — the strip above lists what goose
   itself has kept, and deleting a row runs goose's own <code>session remove</code>.
+  Old sessions delete while another one is running; only the LIVE session has to be
+  Ended first, because goose would otherwise delete it out from under this terminal.
   The terminal keeps a dark ground in
   every theme: the colours in it are goose's own. <b>Goose UI</b> in the sidebar is the
   same agent with a graphical surface — it keeps its own home and its own sessions, so
-  the two lanes never share a conversation and can run at the same time.</div>
+  the two lanes never share a conversation and can run at the same time. Over there,
+  hovering a chat in the sidebar's CHATS list shows a ✕ that deletes it (two-step, and
+  it runs goose's own deletion) — upstream only offers that on its Session History page.</div>
 
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>
@@ -344,10 +353,19 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // kind: 'info' for an ordinary progress note, anything else (default) for a failure.
-function say(text, kind) {
+// raw: the machine detail (status line, endpoint) — NEVER shown in the sentence; it is
+// the tooltip and one console line, so a support question still has something to quote.
+function say(text, kind, raw) {
   const m = el('msg');
   m.textContent = text || '';
-  m.className = text ? ('show ' + (kind === 'info' ? 'info' : 'warn')) : '';
+  m.className = text ? ('show ' + (kind === 'info' ? 'info' : 'warn')
+                        + (raw ? ' hasraw' : '')) : '';
+  if (text && raw) {
+    m.title = raw;
+    try { console.warn('[goose] ' + raw); } catch (e) {}
+  } else {
+    m.removeAttribute('title');
+  }
 }
 
 // EVERY request on this page goes through here, so a non-2xx or a dead bridge can never
@@ -362,7 +380,22 @@ async function jfetch(url, opts) {
   }
   let body = null;
   try { body = await r.json(); } catch (e) { body = null; }
-  if (!r.ok) throw new Error((body && (body.error || body.detail)) || ('HTTP ' + r.status));
+  if (!r.ok) {
+    // ⚠️ `message` IS ONE OF THE SENTENCE FIELDS. Debi's screenshot: a refusal that had
+    // real words ("that session is live — End it first") reached her as
+    // `nothing was deleted: HTTP 409`, because this line read only `error`/`detail`
+    // while /api/goose/session/remove answers `{ok:false, message:"…"}`. A status code
+    // shown where a sentence exists is the log-vomit class — it tells the user nothing
+    // they can act on. The code is KEPT, on the error's `raw`: rendered behind a hover
+    // and written to the console, because it is still what you quote when something is
+    // genuinely broken.
+    const sentence = (body && (body.message || body.error || body.detail)) || '';
+    const err = new Error(sentence
+      || ('the bridge refused that (HTTP ' + r.status + ') without saying why'));
+    err.raw = 'HTTP ' + r.status + ' · ' + url + (sentence ? ' · ' + sentence : '');
+    err.status = r.status;
+    throw err;
+  }
   return body;
 }
 
@@ -571,12 +604,24 @@ function renderSessions(err) {
           esc(s.title || s.id) + '</span>' +
         '<span class="sm">' + esc(meta) + '</span>' +
       '</button>' +
-      '<button class="sdel" type="button" title="Delete this session">✕</button>' +
+      '<button class="sdel" type="button" title="' +
+        (live ? 'End this session before deleting it' : 'Delete this session') +
+        '">✕</button>' +
       '<span class="sarm"><b>delete?</b>' +
         '<button class="link syes" type="button">yes</button>' +
         '<button class="link sno" type="button">no</button></span>';
     chip.querySelector('.sopen').onclick = () => openSession(s, live);
-    chip.querySelector('.sdel').onclick = () => arm(chip, s.id);
+    // ⚠️ The LIVE row does not arm a confirm that can only end in a refusal (the
+    // bridge protects the running session by id — pty_goose F6b). It says the sentence
+    // straight away and names End, which is the one thing that unblocks it.
+    chip.querySelector('.sdel').onclick = () => {
+      if (live) {
+        disarm();
+        say('That session is live — End it first, then delete it.', 'warn');
+        return;
+      }
+      arm(chip, s.id);
+    };
     chip.querySelector('.sno').onclick = () => disarm();
     chip.querySelector('.syes').onclick = () => removeSession(s.id);
     row.appendChild(chip);
@@ -638,7 +683,13 @@ async function removeSession(id) {
     // The route reports goose's OWN receipt; we repeat it rather than inventing one.
     say((j && j.message) || ('session ' + id + ' deleted'), 'info');
   } catch (e) {
-    say('nothing was deleted: ' + e.message);
+    // The SENTENCE the bridge sent, verbatim — it already names the one action that
+    // unblocks this. The status code lives on the hover (see jfetch/say). The outcome
+    // leads (nothing was deleted), then the reason, as two sentences rather than one
+    // double-dashed run-on — the bridge's own sentences carry their own dashes.
+    const why = String(e.message || '');
+    say('Nothing was deleted. ' + (why.charAt(0).toUpperCase() + why.slice(1)),
+        'warn', e.raw || '');
   }
   await loadSessions();
 }

@@ -502,6 +502,22 @@ def seed_config(root, endpoint: str, port=6767, registry=None) -> str:
 #       it prints the receipt ``Session `<id>` removed.`` (rc 0). See remove_session.
 #   F5  The store is ONE SQLITE FILE, `$XDG_DATA_HOME/goose/sessions/sessions.db`
 #       (+ -wal/-shm). That is what the size readout measures.
+#   F6  ⚠️ THE CONCURRENCY FACTS, MEASURED 2026-08-29 on the pinned binary in a scratch
+#       profile (three real sessions, real turns against the live runner) — because
+#       v1.5.61 shipped a guard that refused EVERY delete while ANY session ran, and
+#       "one sqlite file" was an assumption, not a measurement:
+#         F6a  Removing a session that is NOT the running one, while another session is
+#              live, WORKS: goose prints its own receipt, `PRAGMA integrity_check` = ok,
+#              the live session keeps answering, and the turns it takes AFTER the delete
+#              persist (messages 5 → 8). Nothing about the store is corrupted. So the
+#              old blanket refusal was over-broad and cost the user a real capability.
+#         F6b  Removing the session that IS running does NOT refuse and does NOT
+#              corrupt either — it DELETES, and the live window then dies mid-turn with
+#              `Error: Session not found`, taking the in-flight answer with it. goose
+#              has no guard of its own here. THAT is why exactly one refusal survives:
+#              the live id. It protects work in progress, not the file.
+#       The consequence for this module: the guard discriminates BY ID (see
+#       remove_session) instead of by "is anything running".
 #
 # ⚠️ WHAT THIS MODULE WILL NOT DO: delete, move or rewrite anything under the store by
 # hand. A live goose holds that sqlite open in WAL mode, and "delete the rows for a
@@ -814,6 +830,15 @@ def remove_session(root, session_id: str, base_env=None) -> tuple:
       3. We report success only on goose's own receipt line. "The process exited 0" is
          not evidence that anything was deleted; the receipt is.
     Every deviation is a refusal with a sentence, never a retry with a different key.
+
+    ⚠️ THE GUARD IS PER-SESSION, NOT PER-LANE (v1.5.64, correcting v1.5.61). The first
+    version refused while ANY session ran, on the theory that a live goose holds the
+    sqlite open. Measured (F6): it holds it open in WAL mode and a delete of a DIFFERENT
+    session is completely uneventful — receipt, integrity ok, live session unharmed and
+    still persisting its later turns. The refusal that IS earned is the LIVE ID: goose
+    will cheerfully delete the session it is running and the window then dies mid-answer
+    (F6b). So the rule is: everything else deletes; the live one says one sentence and
+    names the one action that unblocks it.
     """
     sid = (session_id or "").strip()
     if not sid:
@@ -825,8 +850,18 @@ def remove_session(root, session_id: str, base_env=None) -> tuple:
     if not ok:
         return False, reason
     if busy():
-        return False, ("a goose session is running — end it before deleting history "
-                       "(goose holds the store open while it runs)")
+        live = live_id()
+        if not live:
+            # A session IS running but has not printed its id yet (the banner arrives a
+            # second or two after the spawn — see routers/goose.py::_sniff_id). We
+            # cannot tell whether the user just pointed at THAT session, and deleting
+            # blind is exactly the F6b accident. Refuse for a moment, and say why.
+            return False, ("a session just started and has not said which one it is "
+                           "yet — try again in a moment, or End it first")
+        if live == sid:
+            return False, ("that session is live — End it first, then delete it "
+                           "(goose would delete it out from under the running window "
+                           "and the answer in progress would be lost)")
     import pty as _pty
     import select as _select
     master, slave = _pty.openpty()
@@ -1033,6 +1068,17 @@ def current():
 def busy() -> bool:
     s = current()
     return bool(s is not None and s.alive())
+
+
+def live_id() -> str:
+    """The RUNNING session's own goose id, '' when nothing runs — and ALSO '' when
+    something runs whose banner we have not read yet. The two are told apart by
+    busy(), deliberately: a caller that needs to discriminate (remove_session) must
+    handle the don't-know state explicitly rather than reading '' as 'nothing runs'."""
+    s = current()
+    if s is None or not s.alive():
+        return ""
+    return (getattr(s, "session_id", "") or "").strip()
 
 
 def kill_current() -> str:
