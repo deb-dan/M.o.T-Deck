@@ -90,6 +90,8 @@ FILES: tuple[str, ...] = (
     "routers/memory.py",
     # The Odysseus vision shim (v1.5.33), appended by the same rule.
     "routers/odyvision.py",
+    # The ComfyUI generate surface (S1), appended by the same rule.
+    "routers/comfy.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

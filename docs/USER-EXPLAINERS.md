@@ -107,6 +107,46 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 
 ---
 
+## Generate — pictures and video clips
+
+- The **Generate** page turns a sentence into a still image or a short clip, on this
+  Mac, offline. It drives the ComfyUI engine that is already installed here, so you
+  never have to touch a node graph — the **ComfyUI** tab stays there for that.
+- It needs **model weights** first, and those are big files. Nothing downloads until
+  you press a button, every size is printed before you press it, and the **free space
+  on the volume the files land on** is in the header. Weights downloaded here are
+  shared with the ComfyUI tab: one copy, both surfaces.
+- The **starter set is two downloads**, one per job: *SDXL base 1.0* (6.94 GB,
+  CreativeML Open RAIL++-M) for stills and *Wan 2.1 T2V 1.3B* (9.83 GB, Apache-2.0)
+  for clips. Take either on its own. Together they are **16.77 GB, which is 2.77 GB
+  over the 14 GB budget**, and the page says so rather than quietly dropping one.
+  One model would have covered both — the video model can be asked for a single frame
+  — but that was tried on this Mac and the picture came out unusable, so it is not
+  offered as the image answer.
+- A curated model is **not a promise that its output is good on your machine**. Where
+  a model has been run here and found wanting, the verdict is printed on its card and
+  again beside the Generate button, with the date and the numbers.
+- Every downloaded file is checked against a **pinned size and sha256**. A file that
+  fails either check keeps its `.part` name and the card says so — it is never
+  reported as downloaded. If the bridge restarts mid-download the part-file survives
+  and the button offers **Resume**, stating how much is already down.
+- **Disk warnings never block a download.** They tell you what it needs, what is free
+  and what would be left; the decision stays yours.
+- Speed and memory are **measured, never predicted**. The first run of a given model
+  is the measurement; after it, the card reads `last run: 68s · peaked 21 GB`. Until
+  then it says so plainly rather than inventing a time.
+- **The gallery keeps everything.** Per-item and total size are shown; nothing is ever
+  deleted automatically. *Reveal* opens the file in Finder; *Graph* shows the exact
+  graph that produced it.
+- Only **stock ComfyUI nodes** are used, and no third-party node packs are installed
+  by this page. Those are arbitrary code loaded into the engine at startup and have
+  twice been used to ship credential stealers.
+- If a model file is missing, the page **names the file** and puts its Download button
+  in the refusal. If ComfyUI is not running, it says that instead of failing quietly —
+  start it from MOT Deck → Components and press Refresh.
+
+---
+
 ## Window and layout
 
 - **⫽** splits the window. The **gold rail** marks the focused pane; the tab strip

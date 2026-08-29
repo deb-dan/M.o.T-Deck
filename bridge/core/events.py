@@ -82,9 +82,17 @@ RETRY_MS = 3000         # the SSE `retry:` hint — EventSource's own reconnect 
 #                >32MB, or a change of pressure / swap-used / free-percentage — plus a
 #                60s keepalive so a client can tell "nothing changed" from "the
 #                sampler died". Sampled only while somebody is subscribed.
+#   comfy      → the ComfyUI generate surface moved: a model download changed state,
+#                or a generation job did. It carries `what` ("download" | "job") plus
+#                an id and a state, and NEVER any numbers — /comfy's handler refetches
+#                /api/comfy/state, so a frame can never disagree with the list. The
+#                PANEL has no handler for this kind and needs none: an unknown type
+#                falls through index.html's dispatch table harmlessly, and the only
+#                subscriber that acts on it is /comfy itself.
 #   hello      → sent once per connection, never emitted by a state transition
 #   ping       → the keepalive above
-KINDS = ("component", "health", "model", "download", "config", "nav", "memory")
+KINDS = ("component", "health", "model", "download", "config", "nav", "memory",
+         "comfy")
 
 
 class Hub:

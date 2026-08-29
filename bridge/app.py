@@ -222,6 +222,10 @@ _LANES = (
     # new, it separates no pair of neighbours, and it costs only where
     # /api/ody/vlshim/* appears in /openapi.json.
     "routers.odyvision",
+    # …and the ComfyUI GENERATE SURFACE (S1) by the SAME rule, a fifth time: new, it
+    # separates no pair of neighbours, and it costs only where /comfy and /api/comfy/*
+    # appear in /openapi.json.
+    "routers.comfy",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
