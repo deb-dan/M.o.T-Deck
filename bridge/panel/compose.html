@@ -396,6 +396,9 @@
   /* ── the settings pane ──────────────────────────────────────────────────────── */
   .sgroup { padding:9px 0 3px; }
   .sgroup > .caps { display:block; margin-bottom:6px; }
+  /* The header hint runs a notch smaller than panel labels (Debi 2026-08-29): it is
+     ambience, not a control label, and it shares the row with the look switcher. */
+  #tophint { font-size:9.5px; letter-spacing:.04em; }
   .sgroup .row { gap:5px; }
   /* Blender's UI_ITEM_PROP_SEP_DIVIDE 0.4 — one global constant, every row */
   .srow { display:grid; grid-template-columns:.4fr .6fr; align-items:center;
@@ -637,15 +640,20 @@
          because in the app this document STAYS LOADED in its tab while the shell moves
          to another one — a select left reading "Music Classic" on a page that is the
          Studio would be a small lie sitting in the header forever. -->
+    <span class="chip" id="c-engines"><i class="dot"></i><span>checking…</span></span>
+    <span class="chip c-gold hide" id="c-work"></span>
+    <span class="grow"></span>
+    <!-- Right side, per Debi's placement feedback (2026-08-29): the shortened drag
+         hint sits beside the look switcher at the far right — the switcher AFTER the
+         status chips, never before them. One sentence: the settings-to-edge detail
+         lives on the hint's hover instead of standing in the bar. -->
+    <span class="caps" id="tophint"
+          title="drag a panel's label bar to rearrange · drag SETTINGS to either edge">drag panels to rearrange</span>
     <select id="look" aria-label="Which Music surface"
             title="Music Studio is this page · Music Classic is the original Music view">
       <option value="studio" selected>Music Studio</option>
       <option value="classic">Music Classic</option>
     </select>
-    <span class="chip" id="c-engines"><i class="dot"></i><span>checking…</span></span>
-    <span class="chip c-gold hide" id="c-work"></span>
-    <span class="grow"></span>
-    <span class="caps" id="tophint">drag a label bar to rearrange · drag SETTINGS to either edge</span>
   </div>
 
   <div id="bench">
