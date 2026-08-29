@@ -58,3 +58,19 @@ list that may not recur. Doctrine 8b applies: the design derives from our princi
   comments.
 - The Generate page redesign REPLACES the current comfy.html surface in place (same /comfy
   URL, same ❖ Generate entry) — Debi's scrap-or-keep fork applies to MUSIC, not here.
+
+---
+
+# SPEC v3 — Generate visual rebuild (Debi's GO, 2026-08-29): "Patchbay" (generate-j)
+
+BINDING design source: docs/mockups/2026-08-29/generate-j.html + visual-craft.md §3c.
+Structure (Debi's spec, round 3): compact left settings rail (Draw Things density,
+Basic/Advanced gate), ONE center media stage with click-to-fullscreen, prompt + key
+options in the center's lower region, slim right results rail (first ~2 rows visible,
+click puts it on stage).
+DEBI'S ADDITIONS AT GO: (1) the media stage is RESIZABLE (drag to make it smaller,
+layout reflows) and SPLITTABLE into up to FOUR panes (1/2/4 layouts) — each pane holds a
+result for side-by-side comparison; click any pane to promote/fullscreen; (2) THE
+REAL-DATA RULE: the mockups carried invented depiction data — the build surfaces ONLY
+real values from the real endpoints; every chip/number/thumbnail is live or absent, never
+decorative. All v2 conservation (sentence rule, chips, honest mechanics) carries forward.

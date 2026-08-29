@@ -35,3 +35,20 @@ the facade manifest). Nav: sidebar Workspace entry directly after Music, label *
 (one-line rename later if Debi prefers another name), glyph unique (not ♪ if Music wears it —
 follow the v1.5.38 ❖ lesson: never wear another control's glyph), tab declared-not-pinned,
 fences widened with arguments per the goose/comfy precedent. Current Music view: ZERO changes.
+
+---
+
+# SPEC v2 — Compose visual rebuild (Debi's GO, 2026-08-29): "Spectrum" (compose-i)
+
+BINDING design source: docs/mockups/2026-08-29/compose-i.html + visual-craft.md §3c.
+Structure (Debi's spec, round 3): draggable block grid (~3/row, 2-3 rows, live reflow,
+arrangement persisted), settings pane dockable left/right + shrinkable to half-height
+(spill slot accepts blocks), ledger as ONE compact block, prompt + lyrics side by side
+growing DOWNWARD with Compose on the line, quiet dock strip at the bottom with one ghost
+slot (P6: stem separation is its first future occupant — nothing built for it yet).
+THE IDENTITY: colour budget spent ONLY on the section-coloured waveform (hue as
+information — the STRUCTURE data drives it; where real section data doesn't exist,
+derive honestly from audio analysis or energy envelope, or fall back to a single-hue
+ramp — NEVER paint fake sections). THE REAL-DATA RULE (Debi at GO): mockup depiction
+data does not ship; every value is live or absent. All v1.5.43 conservation (30
+mechanics, sentence rule, advisory gates, never-rename-files) carries forward.
