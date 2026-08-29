@@ -852,8 +852,10 @@ check('the action group is ordered Rich · Import · New · Save, with Save the 
       && /id="btn-save" class="primary"/.test(html));
 check('row 1 carries the DOCUMENT TITLE, and it is a control — clicking a title '
       + 'renames the document in every office app there is',
+      // The guard grew a VOICE at the stuck-latch fix (2026-08-29): the row IS disabled
+      // in both blocked states, but a handler that can be reached at all must answer.
       /<button id="doctitle"/.test(html)
-      && /doctitle'\)\.onclick = \(\) => \{ if \(current && !busy\) nameRow\('rename'\)/.test(html));
+      && /doctitle'\)\.onclick = \(\) => \{[\s\S]{0,400}?busyBlock\('renaming'\)[\s\S]{0,120}?nameRow\('rename'\)/.test(html));
 check('…and paint() keeps it truthful rather than leaving the placeholder up',
       // 'no workbook open' → 'no file open' at loffice-2026-08-29a: three types live
       // here now, and two of them are not workbooks.
@@ -957,7 +959,10 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     check('create() no longer bails on an empty name — that early return WAS the dead '
           + 'end: no request, no message, no beacon, nothing at all',
           !/if\s*\(\s*!name/.test(src));
-    check('…while the busy guard, which is a real one, stays', /if\s*\(busy\)\s*return/.test(src));
+    // …and at the stuck-latch fix (2026-08-29) it stopped being SILENT: a real guard
+    // still refuses, but "nothing happened" is not an answer a button may give.
+    check('…while the busy guard, which is a real one, stays — and now SPEAKS',
+          /if \(busyBlock\('creating that file'\)\) return null;/.test(src));
     check('create() sends whatever is in the box, empty included, and lets the bridge '
           + 'choose the default name',
           // `kind` joined the body at loffice-2026-08-29a (stage 3): '' is a
@@ -2456,6 +2461,242 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
         subGo('open', 'm-zoom', 'click');
         eq('…while a real change is', beacons.filter(b => /^submenu:m-zoom/.test(b)).length, 1);
       })();
+    }
+
+    /* ══ THE BUSY LATCH, AND THE SILENT-GUARD CLASS ════════════════════════════
+       THE JOURNEY THIS PINS (Debi, 2026-08-29, five failed clicks): the LOffice file
+       list's Delete did nothing at all, five times running. The bridge was fine and the
+       confirm banner rendered — what swallowed it was `remove()`'s first line,
+       `if (busy) return;`, reading a latch that had stuck true earlier in the session.
+       No message, no beacon, no spinner. A click that does NOTHING is the dead-end
+       class, and this section is the gate that keeps it dead:
+
+         · the latch cannot stick (busyOn arms a watchdog; every reset goes through
+           busyOff, and a cross-frame call that never settles loses a race),
+         · and no user action reads it silently ever again (busyBlock speaks).
+
+       The functions are EXECUTED here, not grepped, because "the guard says something"
+       is a behaviour and a regex would pass against a sentence that never renders. */
+    await (async () => {
+      var busy = false, busyWhat = '', busyAt = 0, busyTimer = 0, busyGen = 0;
+      var said = [], beacons = [], painted = 0, rendered = 0;
+      // The page's collaborators, reduced to what these five functions actually touch.
+      function say(text, kind) { said.push([String(text || ''), kind || null]); }
+      function bx(stage, detail) { beacons.push(stage + ':' + (detail === undefined ? '' : detail)); }
+      function paint() { painted++; }
+      function renderFiles() { rendered++; }
+      const nap = (ms) => new Promise(r => setTimeout(r, ms));
+
+      eval(grabConsts('BUSY_MAX_MS', 'OO_RPC_MS'));
+      eval(grab('busyOn'));
+      eval(grab('busyOff'));
+      eval(grab('busyWatchdog'));
+      eval(grab('busyBlock'));
+      eval(grab('ooCall'));
+
+      // ── the budgets are ordered, and the order is the design ──
+      // The RPC race must expire INSIDE the editor watchdog's budget, so the normal
+      // stuck-editor case gets ooCall's honest "the editor did not answer" sentence and
+      // the watchdog stays what it is: the last resort that should never be reached.
+      check('the editor budget is longer than a bridge call\'s', BUSY_MAX_EDITOR_MS > BUSY_MAX_MS);
+      check('and the cross-frame RPC gives up INSIDE it, so the honest sentence wins the '
+            + 'race against the watchdog', OO_RPC_MS < BUSY_MAX_EDITOR_MS);
+
+      // ── 1. the ordinary round trip ──
+      busyOn('deleting “a.xlsx”');
+      check('busyOn sets the latch', busy === true);
+      eq('…and names the operation in the user\'s words, for busyBlock to quote back',
+         busyWhat, 'deleting “a.xlsx”');
+      check('…and beacons it', beacons.some(b => b === 'busy-on:deleting “a.xlsx”'));
+      busyOff();
+      check('busyOff clears it', busy === false);
+      check('…and disarms the watchdog with it', busyTimer === 0);
+
+      // ── 2. THE FIX FOR THE STUCK LATCH: the watchdog ──
+      said.length = 0; beacons.length = 0;
+      // ⚠️ 1ms is not a legal budget: busyOn floors it at 1000ms on purpose, so a caller
+      // that passes nonsense cannot turn the safety net into a self-tripping wire. The
+      // test therefore waits out the real floor rather than pretending it isn't there.
+      busyOn('saving “a.xlsx”', 1);
+      await nap(1200);
+      check('a latch nothing ever resets is cleared by the watchdog', busy === false);
+      check('…and the page is repainted so the buttons come back', painted > 0 && rendered > 0);
+      check('…and it SAYS so, naming the operation and the wait',
+            said.length === 1 && /gave up waiting on saving “a\.xlsx”/.test(said[0][0]));
+      check('…and it refuses to claim the operation failed — it says what is NOT known',
+            /NOT known/.test(said[0][0]));
+      check('…and it beacons the defect it just papered over',
+            beacons.some(b => /^busy-watchdog:saving/.test(b)));
+
+      // ── 3. …and it NEVER fires on a healthy page ──
+      // The subtle way a watchdog becomes a bug of its own: firing on generation N while
+      // generation N+1 is legitimately running, and unlocking a page mid-write.
+      said.length = 0; beacons.length = 0;
+      busyOn('opening “a.xlsx”', 1);      // floored to 1000ms — see above
+      busyOff();
+      busyOn('saving “a.xlsx”', 30000);
+      await nap(1200);
+      check('an operation that finished cannot have its watchdog fire on the NEXT one',
+            busy === true && !beacons.some(b => /^busy-watchdog/.test(b)) && said.length === 0);
+      busyOff();
+
+      // ── 4. THE SILENT GUARD IS GONE ──
+      said.length = 0; beacons.length = 0;
+      check('busyBlock lets an action through when the page is idle',
+            busyBlock('deleting “a.xlsx”') === false);
+      eq('…saying nothing at all while it does', said.length, 0);
+      busyOn('saving “a.xlsx”', 30000);
+      check('…and stops it when the page is busy', busyBlock('deleting “a.xlsx”') === true);
+      check('…having first told the user BOTH halves: what is running, and what was asked',
+            said.length === 1 && /saving “a\.xlsx”/.test(said[0][0])
+            && /deleting “a\.xlsx”/.test(said[0][0]));
+      check('…and promised it will work — a guard is a WAIT, not a refusal',
+            /in a moment/.test(said[0][0]));
+      check('…and beaconed the block, so a stuck latch is visible in the beacon trail '
+            + 'instead of being reconstructed from a user saying "nothing happened"',
+            beacons.some(b => /^busy-block:deleting/.test(b)));
+      busyOff();
+
+      // ── 5. ooCall: the cross-frame promise that never settles ──
+      // THE ACTUAL UNRESETTABLE PATH. `ooChild.save()` is a promise from the iframe's
+      // realm; re-point or reload that frame and it neither resolves nor rejects, for
+      // ever. `finally` never runs on a promise that never settles, which is why this
+      // race exists and why the watchdog above is a SECOND net rather than the only one.
+      eq('ooCall passes the child\'s answer straight through',
+         await ooCall('save', () => Promise.resolve({ ok: true, bytes: 42 }), 500),
+         { ok: true, bytes: 42 });
+      const rej = await ooCall('save', () => Promise.reject(new Error('x2t died')), 500);
+      check('a rejecting child becomes a result, never an unhandled rejection',
+            rej.ok === false && /x2t died/.test(rej.error));
+      const thr = await ooCall('save', () => { throw new Error('the frame is gone'); }, 500);
+      check('…and so does a SYNCHRONOUS throw across the frame boundary',
+            thr.ok === false && /the frame is gone/.test(thr.error));
+      const never = await ooCall('save', () => new Promise(() => {}), 1);   // floored to 1000ms
+      check('AND A PROMISE THAT NEVER SETTLES RESOLVES ANYWAY — the whole point',
+            never.ok === false && /did not answer in/.test(never.error));
+      check('…in the editor\'s own terms, not a stack trace', /reloading/.test(never.error));
+      /* ⚠️ AND THE TIMEOUT IS MARKED AS A TIMEOUT (adversarial finding, 2026-08-29).
+         "We stopped waiting" and "it failed" are DIFFERENT FACTS, and ooSave's failure
+         sentence ends "the workbook on disk was not changed" — which after a timeout is
+         a claim nobody can make: the editor's save may land a second later. Reporting it
+         as a failure is the LIE-TO-USER class, and it is the sentence a user acts on
+         when deciding whether to retype. So the flag exists and the sentences branch. */
+      check('a timeout is FLAGGED as one, distinct from a real failure',
+            never.timedOut === true && rej.timedOut !== true && thr.timedOut !== true);
+
+      // ── 6. the walked journey, in one line of state ──
+      // A stuck latch, then a Delete click. Before the fix this was `return;`.
+      said.length = 0;
+      busyOn('making the PDF of “a.xlsx”', 30000);     // the shape of Debi's stuck page
+      const blocked = busyBlock('deleting “a.xlsx”');
+      check('THE LIVE BUG: Delete on a stuck page is answered, not swallowed',
+            blocked === true && said.length === 1);
+      busyOff();
+      said.length = 0;
+      check('…and once the latch clears, the very next Delete click goes through',
+            busyBlock('deleting “a.xlsx”') === false && said.length === 0);
+    })();
+
+    /* ── the class, pinned in the SOURCE ──────────────────────────────────────
+       Behaviour tests above prove the helpers work. This proves nobody quietly adds a
+       sixteenth silent guard next month: there is exactly ONE `busy` early-return left
+       in office.html that says nothing, it is the heartbeat, and it is commented as
+       such. Every other one is a busyBlock() or an actNote(). */
+    {
+      const office = html;
+      /* ⚠️ COMMENTS OUT FIRST, AND IT IS NOT FUSSiness: this file DOCUMENTS the old
+         `if (busy) return;` in three separate comment blocks, quoting the exact line
+         this test exists to ban. A scan over raw source finds those quotations and
+         "fails" against prose — which is how a gate teaches people to delete the
+         comments instead of keeping the fix. Blank-fill rather than delete, so the
+         surviving lines keep their real shape. */
+      const code = office.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
+                         .replace(/^([ \t]*)\/\/.*$/gm, '$1');
+      const silent = [];
+      const re = /^.*\bbusy\b.*\breturn\b.*$/gm;
+      let m;
+      while ((m = re.exec(code))) {
+        const line = m[0];
+        if (!/if\s*\(/.test(line)) continue;
+        // Answers the user in some voice → not silent.
+        if (/busyBlock|aiBusyBlock|actNote|say\(/.test(line)) continue;
+        // A PREDICATE, not a guard: these compute an enabled/disabled state for paint().
+        if (/return (false|true)\b/.test(line)) continue;
+        // busyWatchdog's own re-entrancy check, and the changeset CARD's own state
+        // machine (`card._state === 'busy'` is the card's latch, not the page's, and its
+        // buttons are `disabled` in exactly that state).
+        if (/busyGen|card\._state/.test(line)) continue;
+        silent.push(line.trim());
+      }
+      eq('exactly ONE silent busy guard survives in office.html — the extCheck '
+         + 'heartbeat, which nobody clicked (every other one now speaks)',
+         silent, ['if (!current || busy || extAsking) return null;']);
+      check('…and it carries the comment saying WHY silence is right there',
+            /THE ONE SILENT `busy` GUARD LEFT IN THIS FILE, AND IT IS DELIBERATE/.test(office));
+
+      // The five-failed-clicks line itself, by name.
+      // ⚠️ read off the COMMENT-STRIPPED source: remove()'s own header quotes the banned
+      // line verbatim, which is the point of the header.
+      const removeSrc = code.slice(code.indexOf('async function remove(name, backups)'),
+                                   code.indexOf('const madeThisSession'));
+      check('remove() — THE five-failed-clicks function — opens with busyBlock, and the '
+            + 'bare silent guard is gone from its code',
+            /if \(busyBlock\('deleting/.test(removeSrc)
+            && !/if \(busy\) return;/.test(removeSrc));
+      check('…and every busy mutation in the page goes through busyOn/busyOff/'
+            + 'busyWatchdog, so the watchdog can never be bypassed by a stray assignment',
+            (code.match(/(?<!ai)\bbusy = (true|false)/g) || []).length === 4);   // 1 decl + 3 in the manager
+      check('remove() reports its own success — a row vanishing from a list is not a '
+            + 'sentence, and "did it even do anything?" was a fair question',
+            /say\('Deleted /.test(grab('remove')));
+      check('…and beacons both outcomes', /bx\('delete-ok'/.test(grab('remove'))
+            && /bx\('delete-fail'/.test(grab('remove')));
+      check('the editor RPCs are RACED, never bare-awaited: save, downloadPdf, open, reload',
+            /ooCall\('save'/.test(office) && /ooCall\('downloadPdf'/.test(office)
+            && /ooCall\('open'/.test(office) && /ooCall\('reload'/.test(office));
+      check('ooSave resets the latch in a `finally`, so a throw cannot strand it',
+            /finally \{ busyOff\(\); paint\(\); \}/.test(grab('ooSave')));
+      check('…and so does ooDownloadPdf',
+            /finally \{ busyOff\(\); paint\(\); \}/.test(grab('ooDownloadPdf')));
+      // The download-first path is EXISTING behaviour and stays: downloading is not
+      // answering the question, so the question comes back.
+      check('“Download it first” still re-arms the delete question rather than answering it',
+            /setTimeout\(\(\) => deleteAsk\(n, opts\), 400\)/.test(grab('deleteAsk')));
+      check('the AI panel\'s latch echoes the same fix (doctrine 6b)',
+            /if \(aiBusyBlock\(\)\) return;/.test(grab('aiSend'))
+            && /if \(aiBusyBlock\(\)\) return;/.test(grab('agentSend')));
+
+      // ── the two adversarial findings the busy fix itself produced ──
+      {
+        const ooS = grab('ooSave'), ooP = grab('ooDownloadPdf');
+        check('a TIMED-OUT save does not tell the user their work was not written — '
+              + '"we stopped waiting" is not "it failed", and this is the sentence they '
+              + 'act on when deciding whether to retype',
+              /if \(r && r\.timedOut\)/.test(ooS)
+              && /does NOT mean it failed/.test(ooS)
+              && ooS.indexOf('r.timedOut') < ooS.indexOf('the workbook on disk was not changed'));
+        check('…and a timed-out PDF does not claim nothing was downloaded, when it may '
+              + 'land in Downloads a moment later',
+              /if \(r && r\.timedOut\)/.test(ooP)
+              && ooP.indexOf('r.timedOut') < ooP.indexOf('Nothing was downloaded'));
+        check('…and a 409 is still answered inside the editor frame, not twice',
+              /r\.status !== 409/.test(ooS));
+      }
+      {
+        /* THE STRANDED BANNER. extAsking used to be un-stuck only by a BLANK message
+           line, so any say() that replaced the external-change banner with a different
+           sentence retired the agent-write watch for the rest of the session — and
+           busyBlock() puts up exactly such a sentence. Identity, not emptiness. */
+        const ec = grab('extCheck'), ea = grab('extAct'), sy = grab('say');
+        check('every say() bumps msgGen, blank ones included — a cleared strip is a '
+              + 'different message, not the absence of one', /^\s*msgGen\+\+;/m.test(sy));
+        check('…the external-change banner records WHICH message it is',
+              /extMsgGen = msgGen;/.test(ea));
+        check('…and extCheck un-sticks its latch when something REPLACED the banner, not '
+              + 'only when the strip was left blank',
+              /extAsking && msgGen !== extMsgGen/.test(ec)
+              && !/extAsking && !el\('msg'\)\.textContent/.test(ec));
+      }
     }
 
     // ── report ──

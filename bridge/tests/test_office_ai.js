@@ -2512,8 +2512,11 @@ check('THE DIRTY FLIP RIDES paint(), the one funnel every change of `dirty` alre
      + 'past', orphans.map(i => lines[i].trim()), []);
   check('…and the three that paint through their CALLER really are painted for, in that '
         + 'caller\'s own finally',
-        /finally \{ busy = false; renderFiles\(\); paint\(\); extCheck\(\); \}/.test(grab('openDoc'))
-        && /finally \{ busy = false; paint\(\); \}/.test(grab('save'))
+        // `busy = false` became `busyOff()` at the stuck-latch fix (2026-08-29): the
+        // reset also disarms the operation's watchdog, so a raw assignment here would
+        // leave a timer live to fire in the middle of the NEXT operation.
+        /finally \{ busyOff\(\); renderFiles\(\); paint\(\); extCheck\(\); \}/.test(grab('openDoc'))
+        && /finally \{ busyOff\(\); paint\(\); \}/.test(grab('save'))
         && /paint\(\); aiPaint\(true\)/.test(grab('mi_close')));
 }
 check('the keepalive rides the page tick, not a timer of its own',
@@ -2675,7 +2678,7 @@ eval(grab('extPlan'));
   check('…and says the sentence AFTER it, because openDoc clears the message line first',
         /ooExtReload\(name\)\.then\(\(\) => \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\); \}\)/
           .test(ea)
-        && /busy = true; say\(''\); paint\(\);/.test(grab('openDoc')));
+        && /busyOn\('opening [^)]*\); say\(''\); paint\(\);/.test(grab('openDoc')));
   check('…and never over the top of something openDoc had to say — a read failure or a '
         + 'truncation warning is the bigger sentence', /!el\('msg'\)\.textContent/.test(ea));
   check('the dirty path is a TWO-BUTTON banner, in the message box that already exists',
@@ -2719,9 +2722,15 @@ eval(grab('extPlan'));
         && /extSeen = 0/.test(grab('clearWorkbook')));
   check('…and an open establishes it at once rather than a beat later',
         /renderFiles\(\); paint\(\); extCheck\(\)/.test(grab('openDoc')));
-  check('a banner wiped off the message line by some other say() does not leave the '
+  /* ⚠️ STRENGTHENED 2026-08-29 (adversarial pass on the stuck-latch fix). The old check
+     was `!el('msg').textContent` — recovery only when the strip was left BLANK. Any
+     say() that REPLACED the banner with a different sentence stranded the latch true for
+     the session, silently retiring the agent-write watch; busyBlock() puts up exactly
+     such a sentence. Identity (msgGen), not emptiness. */
+  check('a banner REPLACED by some other say() — not merely cleared — does not leave the '
         + 'latch stuck ON, silently retiring the whole mechanism',
-        /if \(extAsking && !el\('msg'\)\.textContent\) \{ extAsking = false;/.test(ec));
+        /if \(extAsking && msgGen !== extMsgGen\) \{ extAsking = false;/.test(ec)
+        && /extMsgGen = msgGen;/.test(grab('extAct')));
   check('one banner at a time, and it does not race the load it asked for',
         /if \(!current \|\| busy \|\| extAsking\) return/.test(ec)
         && /if \(name !== current\) return null/.test(ec));
@@ -2741,6 +2750,9 @@ eval(grab('extPlan'));
   msg.classList = { toggle() {} };
   const document = { createElement: mk };
   const el = () => msg;
+  // say() stamps the strip's identity (msgGen) so a banner's owner can tell "still
+  // mine" from "replaced" — see extCheck's stranded-latch fix, 2026-08-29.
+  var msgGen = 0;
   eval(grab('say'));
   msg.kids = [];
   say('one', null, { label: 'A', run() {} });

@@ -2771,7 +2771,15 @@ document.addEventListener('click', async (e) => {
       body = Object.assign({}, S.form, { pick: c.id, mode: S.form.mode });
       delete body.workflow;
     }
-    const r = await api('/api/comfy/generate', { method:'POST', body: JSON.stringify(body) });
+    /* ⚠️ ECHO OF THE LOFFICE STUCK-LATCH BUG (2026-08-29, doctrine 6b). `api()` does NOT
+       wrap its fetch, so a bridge that is down rejects — and this handler had no catch,
+       so `S.busy` stayed true for the rest of the session. Nothing crashed visibly; the
+       Generate button simply sat disabled reading "Submitting…" for ever, with the real
+       reason only in a console nobody opens. A rejection is an ANSWER now. */
+    let r = null;
+    try { r = await api('/api/comfy/generate', { method:'POST', body: JSON.stringify(body) }); }
+    catch (e) { r = { ok:false, error:'the bridge could not be reached: '
+                                      + ((e && e.message) || e) }; }
     S.busy = false;
     if (!r.ok) { S.err = r.error; S.validation = r.validation || null;
                  if (!r.validation) toast(r.error, true); }

@@ -1568,6 +1568,119 @@ const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).conte
 let files = [], current = null, dirty = false, busy = false, armed = null;
 // WHEN the armed delete was armed. It is a timestamp and NOT a timer — see armDelete().
 let armedAt = 0;
+
+/* ══ THE BUSY LATCH IS MANAGED, AND EVERY GUARD ON IT SPEAKS ═══════════════════
+   THE LIVE BUG (Debi, 2026-08-29, five failed clicks): Delete did nothing. Five
+   times. The bridge was fine — POST /api/office/delete worked first try — and the
+   confirm banner had rendered correctly. What killed it was the FIRST LINE of
+   remove(): `if (busy) return;`. `busy` was stuck true from an earlier operation, so
+   the click ran the function, hit the guard, and returned. No message, no beacon, no
+   spinner, nothing in the console. A click that does NOTHING is the dead-end class
+   this page exists to remove, and a LATCH that can stick is how you get one.
+
+   TWO defects, so two fixes, and neither alone would be enough:
+
+   1. HOW IT STUCK. Every `busy = true` now goes through busyOn() and every reset
+      through busyOff(), and busyOn ARMS A WATCHDOG. The fetch paths all reset in a
+      `finally`, so they are safe against a throw — but a `finally` only runs when the
+      promise SETTLES, and two kinds of await here can genuinely never settle:
+        · a cross-frame RPC into the editor iframe (`ooChild.save()`, `.downloadPdf()`,
+          `.reload()`, `.open()`). That promise is created in the CHILD's realm. Reload
+          or re-point the frame while it is pending — which ooStart does on a document
+          swap, and which an editor fatal does — and the realm is torn down with the
+          promise still pending. It never resolves and it never rejects. There is no
+          way to cancel it: this is the genuinely-unresettable path, and it is why the
+          watchdog exists at all. (ooCall() below races those with a budget so the
+          normal case gets an HONEST sentence instead of a watchdog line.)
+        · a `fetch()` to a bridge that accepted the connection and then never answered.
+          Browsers do not time these out on their own.
+      The watchdog is the second net for both: after the operation's budget it clears
+      the latch, repaints, beacons and SAYS what happened. A stuck page heals itself
+      within one budget instead of staying dead until ⌘R.
+
+   2. THAT IT WAS SILENT. Fixed separately and on purpose — see busyBlock(). Even with
+      the watchdog, there is a real window in which a second click lands on a genuinely
+      running operation, and the answer to that is a sentence, never a no-op.
+
+   The budgets are per-operation because the operations are not comparable: a POST to a
+   bridge on localhost is a different animal from x2t serialising a workbook to PDF
+   through wasm with 91 fonts mounted. */
+const BUSY_MAX_MS = 25000;          // anything that is a fetch to our own bridge
+const BUSY_MAX_EDITOR_MS = 90000;   // anything that awaits the editor frame
+const OO_RPC_MS = 75000;            // ...and the RPC's own budget, INSIDE that one
+let busyWhat = '', busyAt = 0, busyTimer = 0, busyGen = 0;
+
+// `what` is a NOUN PHRASE that finishes "still working on the ___" — it is read by a
+// user, not by a log, so 'saving that workbook' and never 'ooSave'.
+function busyOn(what, ms) {
+  busy = true;
+  busyWhat = String(what || 'the last action');
+  busyAt = Date.now();
+  const gen = ++busyGen;
+  if (busyTimer) { clearTimeout(busyTimer); busyTimer = 0; }
+  busyTimer = setTimeout(() => busyWatchdog(gen), Math.max(1000, Number(ms) || BUSY_MAX_MS));
+  bx('busy-on', busyWhat);
+}
+function busyOff() {
+  if (busyTimer) { clearTimeout(busyTimer); busyTimer = 0; }
+  if (busy) bx('busy-off', busyWhat + ' ' + (Date.now() - busyAt) + 'ms');
+  busy = false; busyWhat = ''; busyAt = 0;
+  busyGen++;                        // a watchdog already queued for this one is void
+}
+// ⚠️ THE WATCHDOG NEVER FIRES ON A HEALTHY PAGE, so when it does fire it is a REPORT
+// of a defect and it says so in the beacon. What it must not do is fire on an
+// operation that has already finished and been replaced by another one — hence the
+// generation check rather than a bare `if (busy)`.
+function busyWatchdog(gen) {
+  busyTimer = 0;
+  if (!busy || gen !== busyGen) return;
+  const what = busyWhat, ms = Date.now() - busyAt;
+  bx('busy-watchdog', what + ' stuck ' + ms + 'ms — latch cleared');
+  busy = false; busyWhat = ''; busyAt = 0; busyGen++;
+  paint();
+  renderFiles();
+  say('LOffice gave up waiting on ' + what + ' (' + Math.round(ms / 1000) + 's) and '
+      + 'unlocked the page, so your buttons work again. Whether that finished is NOT '
+      + 'known here — check the file list, and reload with ⌘R if anything looks wrong.');
+}
+// THE ANSWER TO A SECOND CLICK. Returns true when the caller must stand down, and it
+// has already said why by then. Every user-facing action that used to open with
+// `if (busy) return;` opens with this instead.
+function busyBlock(action) {
+  if (!busy) return false;
+  const secs = Math.round((Date.now() - busyAt) / 1000);
+  bx('busy-block', (action || '?') + ' blocked by ' + busyWhat);
+  say('Still working on ' + (busyWhat || 'the last action')
+      + (secs >= 3 ? ' (' + secs + 's)' : '') + ' — ' + (action || 'that')
+      + ' will work in a moment.', 'dim');
+  return true;
+}
+// The timeout race for a cross-frame call. `fn` is invoked HERE (not handed in as a
+// promise) so a synchronous throw inside the child is caught by the same net.
+// ⚠️ Resolving late is not an error: the loser of the race is simply ignored, and the
+// caller has already been told the truth — that we stopped waiting, not that it failed.
+function ooCall(what, fn, ms) {
+  let done = false;
+  const budget = Math.max(1000, Number(ms) || OO_RPC_MS);
+  return new Promise((resolve) => {
+    const finish = (r) => { if (!done) { done = true; resolve(r); } };
+    const t = setTimeout(() => {
+      bx('oo-rpc-timeout', what);
+      // `timedOut` marks it as WE STOPPED WAITING, which is not the same fact as
+      // "it failed" — ooSave branches on it rather than telling the user their work
+      // was not written when nobody knows whether it was.
+      finish({ ok: false, timedOut: true,
+               error: 'the editor did not answer in '
+                      + Math.round(budget / 1000) + 's (it may be reloading)' });
+    }, budget);
+    let p = null;
+    try { p = fn(); }
+    catch (e) { clearTimeout(t); finish({ ok: false, error: String((e && e.message) || e) }); return; }
+    Promise.resolve(p).then(
+      (r) => { clearTimeout(t); finish(r); },
+      (e) => { clearTimeout(t); finish({ ok: false, error: String((e && e.message) || e) }); });
+  });
+}
 // Set by loadFiles from the bridge's own answer. The landing consults BOTH: a
 // listing that never arrived, or a bridge with no openpyxl, must not be answered
 // by cheerfully trying to create a workbook that cannot be written — that would
@@ -1620,7 +1733,12 @@ const CV_STRING = 1, CV_NUMBER = 2, CV_BOOLEAN = 3;
 //
 // ⚠️ `innerHTML = ''` CLEARS, it never WRITES: every string that reaches this box is
 // still put in through textContent, so a bridge error containing a < is still text.
+// ⚠️ EVERY CALL BUMPS THIS, blank ones included. It is the identity of whatever is on
+// the strip right now, and it is what lets a banner's owner ask "is my banner still
+// up?" without comparing text — see extCheck.
+let msgGen = 0;
 function say(text, kind, action) {
+  msgGen++;
   const m = el('msg');
   m.innerHTML = '';
   if (text) {
@@ -3494,7 +3612,7 @@ function disarmDelete(clearMsg) {
 }
 // The ONE click handler both lists use.
 function delClick(name) {
-  if (busy) return;
+  if (busyBlock('deleting “' + String(name || '') + '”')) return;
   if (armed !== name) { armDelete(name); return; }
   if (Date.now() - armedAt < DEL_ARM_MIN_MS) { armDelete(name); return; }   // a double-click
   armed = null; armedAt = 0;
@@ -3562,7 +3680,9 @@ async function newBlob(kind) {
    wait for the editor to hold the file, then write through it. */
 async function newFromTemplate(kind) {
   const t = TPL[kind];
-  if (!t || busy) return;
+  if (!t) { bx('template-unknown', String(kind));
+            say('That template is not one this build knows about.'); return; }
+  if (busyBlock('starting the “' + t.name + '” template')) return;
   bx('template', kind);
   el('new-name').value = t.name;
   const made = await create(true);      // create() names it, opens it, and reports
@@ -4783,7 +4903,10 @@ async function ooStart(name, why) {
     el('ooframe').src = '/oo-edit?embed=1&doc=' + encodeURIComponent(name);
     return true;
   }
-  const r = await ooChild.open(name);
+  // Raced for the same reason as ooSave: a swap that is superseded by ANOTHER swap
+  // leaves this promise pending in a realm that is being replaced, and `ooBooting`
+  // would stay true for ever — the editor stuck on "Full editor loading…".
+  const r = await ooCall('open', () => ooChild.open(name));
   if (!r || !r.ok) {
     ooBooting = false;
     ooPaintClass(); paint();
@@ -4802,15 +4925,33 @@ async function ooSave(force) {
     say('The full editor is not ready to save yet.');
     return false;
   }
-  busy = true; paint();
+  // ⚠️ THE RACE, NOT A BARE AWAIT — see the busy-latch block. `ooChild.save` is a
+  // promise from the IFRAME's realm; re-point or reload that frame while it is pending
+  // (ooStart's swap, an editor fatal) and it neither resolves nor rejects, ever. A
+  // bare `await` there is how the page locks itself out of Delete.
+  busyOn('saving “' + (current || 'the workbook') + '”', BUSY_MAX_EDITOR_MS);
+  paint();
   let r = null;
-  try { r = await ooChild.save(!!force); }
-  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
-  busy = false; paint();
+  try { r = await ooCall('save', () => ooChild.save(!!force)); }
+  finally { busyOff(); paint(); }
   if (!r || !r.ok) {
+    /* ⚠️ A TIMEOUT IS NOT A FAILURE, AND SAYING IT IS WOULD BE A LIE-TO-USER — the worst
+       class. Found in the adversarial pass on the stuck-latch fix: giving up waiting
+       means we stopped listening, NOT that nothing was written. The editor's save
+       serialises through x2t and then POSTs to /api/office/writeback; a slow one that
+       crosses the budget may very well land a second later. "The workbook on disk was
+       not changed" would then be false, and it is the sentence a user acts on when they
+       decide whether to retype something. So the timeout gets its own words, and they
+       say plainly that the outcome is unknown and how to find out. */
+    if (r && r.timedOut) {
+      say('LOffice stopped waiting for the editor while saving “' + (current || 'it')
+          + '”. That does NOT mean it failed — the save may still be finishing, so do '
+          + 'not retype anything yet. Check the time beside the file in the list; if the '
+          + 'editor stays unresponsive, reload with ⌘R (your typing is still in it until '
+          + 'you do).');
     // A 409 is answered INSIDE the editor frame (its own note strip already offers
     // "Overwrite it"), so this must not put a second, competing question on screen.
-    if (r && r.status !== 409) {
+    } else if (r && r.status !== 409) {
       say('Not saved: ' + ((r && r.error) || 'the editor did not say why')
           + ' — the workbook on disk was not changed.');
     }
@@ -4843,13 +4984,24 @@ async function ooDownloadPdf() {
         + 'again; Download still gives you the .xlsx itself.');
     return false;
   }
-  busy = true; paint();
+  busyOn('making the PDF of “' + (current || 'the document') + '”', BUSY_MAX_EDITOR_MS);
+  paint();
   say('Making a PDF of “' + current + '” as it would print…', 'dim');
   let r = null;
-  try { r = await ooChild.downloadPdf(); }
-  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
-  busy = false; paint();
+  // Same race, same reason as ooSave — and this one is the LONGER of the two: x2t
+  // renders the print layout through wasm with the bundle's 91 fonts mounted.
+  try { r = await ooCall('downloadPdf', () => ooChild.downloadPdf()); }
+  finally { busyOff(); paint(); }
   if (!r || !r.ok) {
+    // Same rule as ooSave: "nothing was downloaded" is a CLAIM, and after a timeout it
+    // is a claim nobody can make — the x2t render may finish and drop the file in
+    // Downloads a moment later.
+    if (r && r.timedOut) {
+      say('LOffice stopped waiting for the editor while making the PDF. It may still '
+          + 'appear in your Downloads folder — look there before trying again, so you '
+          + 'do not end up with two. Your workbook on disk was not touched either way.');
+      return false;
+    }
     say('No PDF: ' + ((r && r.error) || 'the editor did not say why')
         + '\n\nNothing was downloaded, and the workbook on disk was not touched.');
     return false;
@@ -4871,7 +5023,7 @@ async function ooReload(why) {
   bx('oo-reload', (ooDoc || '?') + ' why=' + (why || '?'));
   ooBooting = true; rich('Reloading the file in the editor…');
   ooPaintClass();
-  const r = await ooChild.reload();
+  const r = await ooCall('reload', () => ooChild.reload());
   if (!r || !r.ok) {
     ooBooting = false; rich(''); ooPaintClass(); paint();
     return false;
@@ -5261,7 +5413,7 @@ async function ooApplyBridge(plan) {
 // worse than no control. `upgrade` keeps its name because that is what the View-menu
 // row, the header button and three tests all reach for.
 async function upgrade() {
-  if (busy) return;
+  if (busyBlock('opening the full editor')) return;
   if (!current) {
     say('Open a workbook first — the editor opens the file you are looking at.');
     return;
@@ -5464,7 +5616,7 @@ function showWorkbook(data, name) {
 }
 
 async function openDoc(name) {
-  if (busy) return;
+  if (busyBlock('opening “' + String(name || '') + '”')) return;
   if (!confirmDiscard(name)) return;
   // ⚠️ A DOCUMENT OR A PRESENTATION NEVER GOES THROUGH /api/office/open, AND THAT ROUTE
   // NOW REFUSES IT BY NAME (office.require_sheet). It returns an IWorkbookData snapshot
@@ -5472,7 +5624,7 @@ async function openDoc(name) {
   // place of a document. So the blob path is its own branch, three lines long, and it
   // hands the file straight to the editor that owns it.
   if (kindOf(name) !== 'sheet') { openBlob(name); return; }
-  busy = true; say(''); paint();
+  busyOn('opening “' + name + '”'); say(''); paint();
   bx('open-start', name);
   try {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name), { cache: 'no-store' });
@@ -5486,7 +5638,7 @@ async function openDoc(name) {
                + '200,000 cells. Saving would write back only what you can see, so this '
                + 'copy is best treated as read-only.', 'dim');
   } catch (e) { bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
-  finally { busy = false; renderFiles(); paint(); extCheck(); }
+  finally { busyOff(); renderFiles(); paint(); extCheck(); }
 }
 
 // ── OPEN A .docx / .pptx ─────────────────────────────────────────────────────
@@ -5601,7 +5753,11 @@ function snapshotToSave() {
 }
 
 async function save() {
-  if (!current || busy) return;
+  // ⚠️ NOT `if (!current || busy) return;` — that collapsed two different situations
+  // into one silent no-op, and ⌘S is the shortcut a user hits hardest when they are
+  // worried about their work. Each half now answers in its own words.
+  if (!current) { say('There is nothing open to save.'); return; }
+  if (busyBlock('saving')) return;
   // ⚠️ THE EDITOR OWNS THE DOCUMENT, SO THE EDITOR SAVES IT. Our strip's Save button
   // and ⌘S both land here, and when the editor is up they become its save path —
   // asc_nativeGetFile → x2t → /api/office/writeback, with the mtime fence and the
@@ -5625,7 +5781,7 @@ async function save() {
   catch (e) { bx('save-fail', 'read-back threw: ' + e);
               say('could not read the workbook back: ' + e); return; }
   if (!snapshot) { say('there is nothing to save'); return; }
-  busy = true; say(''); paint();
+  busyOn('saving “' + current + '”'); say(''); paint();
   try {
     const r = await fetch('/api/office/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5642,7 +5798,7 @@ async function save() {
     // instead of reporting our own save as somebody else's edit.
     extSeen = 0;
   } catch (e) { bx('save-fail', 'threw: ' + e); say('save failed: ' + e); }
-  finally { busy = false; paint(); }
+  finally { busyOff(); paint(); }
 }
 
 function clearWorkbook() {
@@ -5673,19 +5829,35 @@ function clearWorkbook() {
 // because a backup is the thing that exists to survive a mistake — but a user deleting a
 // file for privacy must be able to mean it, and until now she could not.
 async function remove(name, backups) {
-  if (busy) return;
-  busy = true; paint();
+  // ⚠️ THIS LINE IS THE LIVE BUG OF 2026-08-29 (five failed clicks) — see the busy-latch
+  // block at the top. It was `if (busy) return;`, which meant a stuck latch swallowed
+  // every Delete in total silence: the banner was up, the button ran this function, and
+  // nothing happened. The guard stays (deleting the same file twice concurrently is
+  // still wrong); what changed is that it now SAYS SO, and that the latch it reads can
+  // no longer stick for ever.
+  if (busyBlock('deleting “' + String(name || '') + '”')) return;
+  busyOn('deleting “' + String(name || '') + '”'); paint();
   try {
     const r = await fetch('/api/office/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name, backups: !!backups }),
     });
     const j = await r.json();
-    if (!j.ok) { say(j.error || 'could not delete that spreadsheet'); return; }
+    if (!j.ok) { bx('delete-fail', 'http=' + r.status + ' ' + (j.error || 'not ok'));
+                 say(j.error || 'could not delete that spreadsheet'); return; }
     if (name === current) clearWorkbook();
     await loadFiles();
-  } catch (e) { say('could not delete that spreadsheet: ' + e); }
-  finally { busy = false; paint(); }
+    // ⚠️ AND IT SAYS SO. A row vanishing from a list is evidence only to somebody who
+    // was watching that list; the user was watching the BUTTON. Every other verb on
+    // this page reports its outcome in the message strip, and this one used to be the
+    // exception — which is precisely why "did it even do anything?" was a fair
+    // question during the live bug.
+    bx('delete-ok', name + (backups ? ' +backups' : ''));
+    say('Deleted “' + name + '”'
+        + (backups ? ' and its safety copies.' : '.'), 'ok');
+  } catch (e) { bx('delete-fail', 'threw: ' + e);
+                say('could not delete that spreadsheet: ' + e); }
+  finally { busyOff(); paint(); }
 }
 
 // AN EMPTY NAME IS A REQUEST, NOT A MISTAKE. This used to open with
@@ -5721,9 +5893,9 @@ function bakNote(backup) {
 // on the wire as the KIND rather than an extension because that is what the button says;
 // the bridge maps it (routers/office.py) and refuses anything it does not know.
 async function create(step, kind) {
-  if (busy) return null;
+  if (busyBlock('creating that file')) return null;
   const name = (el('new-name').value || '').trim();
-  busy = true; say(''); paint();
+  busyOn('creating ' + (name ? '“' + name + '”' : 'the new file')); say(''); paint();
   try {
     const r = await fetch('/api/office/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5741,7 +5913,11 @@ async function create(step, kind) {
     el('newrow').classList.remove('on');
     madeThisSession.add(j.name);          // see bakNote (live finding C3)
     await loadFiles();
-    busy = false;
+    // ⚠️ THE LATCH IS DROPPED BEFORE openDoc, DELIBERATELY: openDoc takes it itself and
+    // would otherwise busyBlock against its own caller. It goes through busyOff() so
+    // the create watchdog is disarmed with it — leaving that timer live would let it
+    // fire in the middle of the open it handed off to.
+    busyOff();
     await openDoc(j.name);
     return j.name;
   } catch (e) {
@@ -5751,7 +5927,7 @@ async function create(step, kind) {
     say('could not create that ' + (KIND_NOUN[kind || 'sheet'] || 'file') + ': ' + e);
     return null;
   }
-  finally { busy = false; paint(); }
+  finally { busyOff(); paint(); }
 }
 
 // ── rename ───────────────────────────────────────────────────────────────────
@@ -5763,11 +5939,12 @@ async function create(step, kind) {
 // and quietly picking a different one hides the collision.
 let nameMode = 'create';
 async function renameDoc() {
-  if (busy || !current) return;
+  if (!current) { say('Open a file first — rename renames the file you are looking at.'); return; }
+  if (busyBlock('renaming')) return;
   const to = (el('new-name').value || '').trim();
   if (!to) { say('Type the new name first.'); return; }
   const from = current;
-  busy = true; say(''); paint();
+  busyOn('renaming “' + from + '”'); say(''); paint();
   try {
     const r = await fetch('/api/office/rename', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5842,7 +6019,7 @@ async function renameDoc() {
     bx('rename-fail', 'threw: ' + e);
     say('could not rename that spreadsheet: ' + e);
   }
-  finally { busy = false; paint(); }
+  finally { busyOff(); paint(); }
 }
 
 function nameRow(want) {
@@ -5869,13 +6046,17 @@ function nameRowGo() { if (nameMode === 'rename') renameDoc(); else create(); }
 // ⊕-attach bug). The bytes go up as the RAW body, the /api/voice/library/save
 // precedent: one part, so multipart would buy nothing.
 async function importFile(file) {
-  if (!file || busy) return;
+  if (!file) return;                       // the picker was cancelled: not an action
+  if (busyBlock('importing that file')) return;
   if (file.size > UPLOAD_MAX_BYTES) {
     say('That file is ' + fmtSize(file.size) + ' — the import cap is '
         + fmtSize(UPLOAD_MAX_BYTES) + '.');
     return;
   }
-  busy = true; say('', 'dim'); paint();
+  // A 30 MB body over the loopback is still a body: the import gets the editor-sized
+  // budget rather than the bridge-call one, so the watchdog cannot cut off a real
+  // upload that is simply large.
+  busyOn('importing “' + file.name + '”', BUSY_MAX_EDITOR_MS); say('', 'dim'); paint();
   try {
     const r = await fetch('/api/office/upload?name=' + encodeURIComponent(file.name),
                           { method: 'POST', body: file });
@@ -5883,13 +6064,13 @@ async function importFile(file) {
     if (!j.ok) { bx('import-fail', j.error || 'not ok');
                  say(j.error || 'could not import that file'); return; }
     await loadFiles();
-    busy = false;
+    busyOff();                             // openDoc takes the latch itself — see create()
     if (j.renamed) say('Imported as ' + j.name + ' — a workbook called ' + file.name
                        + ' was already here, so nothing was overwritten.', 'ok');
     await openDoc(j.name);
     return;
-  } catch (e) { say('could not import that file: ' + e); }
-  finally { busy = false; paint(); }
+  } catch (e) { bx('import-fail', 'threw: ' + e); say('could not import that file: ' + e); }
+  finally { busyOff(); paint(); }
 }
 
 // ══ ASK THE MODEL — slice 2 ═══════════════════════════════════════════════════
@@ -5928,6 +6109,21 @@ const AI_CTX_CHARS = 20000;           // …and a hard character ceiling over th
 const AI_Q_MAX = 4000;                // the question itself (matches the textarea)
 const AI_POLL_MS = 15000;             // how often the model pill re-checks, when open
 let aiBusy = false, aiSel = '', aiModel = '', aiCtxOn = true;
+// ⚠️ THE SAME CLASS AS `busy`, ECHOED HERE ON PURPOSE (doctrine 6b, after the
+// five-failed-clicks Delete bug). `aiBusy` guarded both send paths with a bare
+// `if (aiBusy) return;`. The Send BUTTON is disabled while it is set, so the usual way
+// in is closed — but ⌘Enter is not a button, and a keypress that does nothing at all is
+// the same dead end wearing a different hat. aiBusyBlock() answers it in the panel's
+// own voice (aiStatus, not the document message strip: it is the panel's action).
+let aiBusyAt = 0;
+function aiBusyBlock() {
+  if (!aiBusy) return false;
+  const secs = Math.round((Date.now() - (aiBusyAt || Date.now())) / 1000);
+  bx('ai-busy-block', String(secs) + 's');
+  aiStatus('Still working on the last question' + (secs >= 3 ? ' (' + secs + 's)' : '')
+           + ' — this one goes next.');
+  return true;
+}
 
 function a1(r, c) {
   return (isFinite(r) && isFinite(c) && r >= 0 && c >= 0) ? colName(c) + (r + 1) : '';
@@ -7176,7 +7372,8 @@ function ooWaitReady(ms) {
 
 async function actApply(card, plan) {
   if (!card || !plan || card._state === 'busy' || card._state === 'applied') return;
-  if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
+  if (busy) { actNote(card, 'The page is busy — ' + (busyWhat || 'the last action')
+                            + ' has not finished. Try that again in a moment.'); return; }
   /* ⚠️⚠️ THE CREATE HAPPENS BEFORE THE ROUTE IS CHOSEN, AND THAT ORDERING IS THE WHOLE
      FIX FOR live finding L2 — "create a spreadsheet with this data" reporting six cells
      written into a file that was empty on disk.
@@ -7387,7 +7584,8 @@ function actUndo(card) {
                 + 'place. Edit → Undo (⌘Z) walks the sheet’s whole history.');
     return;
   }
-  if (busy) { actNote(card, 'The page is busy — try that again in a moment.'); return; }
+  if (busy) { actNote(card, 'The page is busy — ' + (busyWhat || 'the last action')
+                            + ' has not finished. Try that again in a moment.'); return; }
   if (current !== actLast.name) {
     actNote(card, 'That change was made in “' + actLast.name + '”, which is not the '
                 + 'open workbook any more.');
@@ -7720,7 +7918,7 @@ function aiAdd(role, text, ctx) {
 }
 
 async function aiSend() {
-  if (aiBusy) return;
+  if (aiBusyBlock()) return;
   // ⚠️ THE LANE FORK IS ONE LINE AND IT IS THE FIRST ONE, so the Quick lane below is
   // byte-for-byte the lane that shipped: same endpoint, same body, same reader, same
   // cards. The Agent lane is a sibling, never a wrapper.
@@ -7749,7 +7947,7 @@ async function aiSend() {
   bx('ai-send', 'chars=' + message.length + ' ctx=' + (ctx && ctx.text ? ctx.rows + 'x' + ctx.cols : 'none'));
   el('ai-in').value = ''; aiGrow();
   aiAdd('user', q, shown);
-  aiBusy = true; aiStatus('thinking…'); aiPaint();
+  aiBusy = true; aiBusyAt = Date.now(); aiStatus('thinking…'); aiPaint();
   const turn = aiAdd('assistant', '', null);
   let out = '', think = '', got = false, failed = '';
   try {
@@ -7786,7 +7984,7 @@ async function aiSend() {
   } catch (e) {
     failed = String((e && e.message) || e);
   }
-  aiBusy = false;
+  aiBusy = false; aiBusyAt = 0;
   if (failed) {
     bx('ai-reply-fail', failed.slice(0, 160));
     const d = document.createElement('div');
@@ -8146,7 +8344,7 @@ async function agentProbe(pin) {
 // proxy_error, status, [DONE]. `ask` (the clarify tool) is rendered as a note rather
 // than a picker — see the honest limit on agentFrame.
 async function agentSend() {
-  if (aiBusy) return;
+  if (aiBusyBlock()) return;
   const q = (el('ai-in').value || '').trim().slice(0, AI_Q_MAX);
   if (!q) return;
   if (!agentGate(agentEnv).ok) { aiStatus(agentGate(agentEnv).why, true); return; }
@@ -8181,7 +8379,7 @@ async function agentSend() {
   bx('agent-send', 'chars=' + message.length + ' sid=' + (agentSid || 'new'));
   el('ai-in').value = ''; aiGrow();
   aiAdd('user', q, shown);
-  aiBusy = true; aiStatus('Hermes is working…'); aiPaint();
+  aiBusy = true; aiBusyAt = Date.now(); aiStatus('Hermes is working…'); aiPaint();
   const turn = aiAdd('assistant', '', null);
   // ⚠️ THE CARD OWNS THE SESSION IT WAS BORN IN, captured per turn — the same rule the
   // main panel's chatApproval follows, and for the same reason: approvals carry no
@@ -8222,7 +8420,7 @@ async function agentSend() {
   } catch (e) {
     failed = String((e && e.message) || e);
   }
-  aiBusy = false;
+  aiBusy = false; aiBusyAt = 0;
   // Every card left open when the turn ends stops pretending it is answerable.
   agentExpire(turn.wrap);
   if (failed) {
@@ -9060,6 +9258,7 @@ function hbSync() { return hbRun(false); }
 const EXT_EPS = 0.5;            // seconds of mtime slack: a filesystem, not a clock
 let extSeen = 0;                // the mtime this page believes it is showing
 let extAsking = false;          // a banner is up; do not stack a second one
+let extMsgGen = -1;             // ...and WHICH message it is (see say/msgGen, extCheck)
 let extCopy = '';               // the safety copy the banner NAMED, or '' — finding L4
 
 // The decision, given four numbers and a flag. PURE — this is the state machine the
@@ -9115,10 +9314,25 @@ function extPlan(s) {
 }
 
 async function extCheck() {
-  // A banner that was wiped off the message line by some OTHER say() must not leave
-  // this latch stuck ON for the rest of the session — that would silently retire the
-  // whole mechanism after one dismissed banner.
-  if (extAsking && !el('msg').textContent) { extAsking = false; bx('ext-banner-lost', ''); }
+  /* A banner that was wiped off the message line by some OTHER say() must not leave
+     this latch stuck ON for the rest of the session — that would silently retire the
+     whole mechanism after one dismissed banner.
+
+     ⚠️ AND IT IS THE MESSAGE'S IDENTITY THAT DECIDES, NOT ITS EMPTINESS. This used to
+     read `&& !el('msg').textContent`, which only recovered when the strip was left
+     BLANK — so any say() that replaced the banner with a DIFFERENT sentence stranded
+     `extAsking` true for ever, and the external-change watch was retired in silence.
+     Found in the adversarial pass on the stuck-latch fix (2026-08-29): busyBlock() puts
+     exactly such a sentence up, so a user who pressed Delete while the page was busy
+     with the banner on screen would have lost the agent-write watch for the session.
+     Every say() bumps msgGen, so "is my banner still the thing on screen" is one
+     comparison and cannot be fooled by a replacement. */
+  if (extAsking && msgGen !== extMsgGen) { extAsking = false; bx('ext-banner-lost', ''); }
+  // ⚠️ THE ONE SILENT `busy` GUARD LEFT IN THIS FILE, AND IT IS DELIBERATE. Every OTHER
+  // one is on a control a human pressed, and a press must always be answered (busyBlock).
+  // This is a HEARTBEAT — nobody clicked it, it runs again in a few seconds, and a
+  // message strip that announced every skipped beat would bury the banners it exists to
+  // raise. Silence is right here for exactly that reason and no other.
   if (!current || busy || extAsking) return null;
   const name = current;
   let row = null;
@@ -9197,6 +9411,9 @@ function extAct(plan, name) {
             'dim');
       } },
   ]);
+  // THE BANNER'S IDENTITY, taken AFTER the say() that drew it. extCheck compares this
+  // against msgGen to tell "my banner is still up" from "something replaced it".
+  extMsgGen = msgGen;
 }
 
 function aiSetOpen(open, why) {
@@ -9564,7 +9781,12 @@ mi('mi-delete', () => deleteAsk(current));
    it. Both surfaces call THIS, so there is one sentence to get right. */
 function deleteAsk(name, opts) {
   const n = String(name || '');
-  if (!n || busy) return;
+  // ⚠️ THE FIRST HALF OF THE FIVE-FAILED-CLICKS BUG lived here too: a menu row wired to
+  // deleteAsk(current) with nothing open, or with the latch stuck, put NO question on
+  // screen at all — a Delete row that opens no dialog is the same dead end as a Delete
+  // button that deletes nothing.
+  if (!n) { say('Nothing is open to delete — pick a file in the list first.'); return; }
+  if (busyBlock('deleting “' + n + '”')) return;
   const mine = n === current;
   const row = (files || []).filter(f => f && f.name === n)[0] || null;
   const bak = !!(row && row.has_backup);
@@ -9587,7 +9809,13 @@ function deleteAsk(name, opts) {
                        run: () => { say(''); remove(n, true); } }] : []));
 }
 // The document title IS the rename control, the way it is in every office app.
-el('doctitle').onclick = () => { if (current && !busy) nameRow('rename'); };
+// (It is `disabled` in both those states, so this is the belt to paint()'s braces —
+// but a guard that can be reached at all is a guard that has to speak.)
+el('doctitle').onclick = () => {
+  if (!current) { say('Nothing is open — pick a file, or start a new one.'); return; }
+  if (busyBlock('renaming')) return;
+  nameRow('rename');
+};
 
 // ── the other seven menus ────────────────────────────────────────────────────
 // Every row here is wired; every row NOT here is `disabled` in the markup with its

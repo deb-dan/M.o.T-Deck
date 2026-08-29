@@ -361,8 +361,14 @@ check("the tier-1 verbs are off for a blob, from the same one gate",
       "!editorActive() && !blobDoc" in PAGE)
 check("…and Save is greyed rather than routed into a mapper that would refuse",
       "(blobDoc && !editorActive())" in PAGE)
+# "BEFORE the request" is the actual claim, so it is measured as an ORDER rather than as
+# a character count — the old [:1200] window was a proxy for that order, and it broke the
+# moment save() grew a comment (the stuck-latch fix, 2026-08-29). A gate that goes red
+# for prose teaches people to delete the prose.
+_SAVE = PAGE.split("async function save()")[1].split("\nfunction ")[0]
 check("…and save() refuses BEFORE the request rather than after it",
-      "if (blobDoc) {" in PAGE.split("async function save()")[1][:1200])
+      "if (blobDoc) {" in _SAVE
+      and _SAVE.index("if (blobDoc) {") < _SAVE.index("fetch('/api/office/save'"))
 check("the status line never calls itself a grid editor for a blob",
       "editor only" in PAGE)
 check("the AI panel says it cannot see the file, and swaps its whole placeholder",
