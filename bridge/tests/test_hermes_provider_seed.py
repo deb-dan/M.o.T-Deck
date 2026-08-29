@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -34,10 +35,18 @@ BASE = "http://127.0.0.1:6767/v1"
 KEY = "harness-local"
 WIRE = "gemma-4-31B-it-uncensored-biproj-q4_k_m"
 
+# ── S29: the enumeration rule now includes "the file is still on disk" ───────
+# So the MLX fixture points at a REAL directory. Before this slice it named a path that
+# has never existed on any machine and the test passed — which is precisely how a
+# seeder that offered deleted models stayed green.
+_TMP = tempfile.mkdtemp(prefix="hermes-seed-fixture-")
+MLX_ONE = os.path.join(_TMP, "mlx-one")
+os.makedirs(MLX_ONE, exist_ok=True)
+
 REGISTRY = {"models": [
     {"id": "chat-a", "format": "gguf", "ctx": 32768},
     {"id": "chat-b", "format": "gguf"},
-    {"id": "mlx-one", "format": "mlx", "path": "/models/mlx-one", "ctx": 8192},
+    {"id": "mlx-one", "format": "mlx", "path": MLX_ONE, "ctx": 8192},
     {"id": "whisper-x", "format": "stt-mlx", "kind": "audio"},
     {"id": "hidden-one", "format": "gguf", "hidden": True},
 ]}
@@ -89,11 +98,11 @@ def test_first_start_writes_one_named_row_with_the_whole_registry(tmp_path):
     assert e["name"] == "MOT Deck (local)"
     assert e["api_key"] == KEY
     # the catalog: chat models only, keyed by the WIRE id (MLX = its path)
-    assert set(e["models"]) == {"chat-a", "chat-b", "/models/mlx-one", WIRE}, (
+    assert set(e["models"]) == {"chat-a", "chat-b", MLX_ONE, WIRE}, (
         "audio and hidden registry rows must not reach a chat picker, and the "
         "model the runner is serving must always be offered")
     assert e["models"]["chat-a"]["context_length"] == 32768
-    assert e["models"]["/models/mlx-one"]["context_length"] == 8192
+    assert e["models"][MLX_ONE]["context_length"] == 8192
     # config-resident, not probed — this is what keeps the picker populated when
     # the runner is down (and stops it collapsing to the one served model when up)
     assert e["discover_models"] is False

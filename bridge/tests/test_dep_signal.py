@@ -443,9 +443,24 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
         odir = root / "data" / "opencode" / "xdg" / "config" / "opencode"
         odir.mkdir(parents=True)
         (odir / "opencode.json").write_text(_json.dumps({"model": "llama.cpp/ghost-27B"}))
+        # S29 — `_dangling_only` asks the SHARED enumerator what we offer, and that
+        # answer now excludes rows whose file is gone. So this fixture must supply a
+        # registry with a REAL artifact: reading it off the dev tree (whose models.json
+        # long outlived its weights) made the test depend on one machine's disk, which
+        # is exactly how it went red here. An empty `offered` is deliberately NOT
+        # information — dangles() repairs nothing then — so the fixture has to mean
+        # something for the readers below to have anything to say.
+        live_art = root / "live-4B.gguf"
+        live_art.write_bytes(b"")
+        other_art = root / "another-9B.gguf"
+        other_art.write_bytes(b"")
+        old_reg = C._registry_models
         old = C.ROOT
         try:
             C.ROOT = root
+            C._registry_models = lambda: [
+                {"id": "live-4B", "format": "gguf", "path": str(live_art)},
+                {"id": "another-9B", "format": "gguf", "path": str(other_art)}]
             ody, goo, opc = (C._ody_binding("live-4B"), C._goose_binding("live-4B"),
                              C._opencode_binding("live-4B"))
             ok(ody.get("model") == "ghost-27B", "Odysseus's default_model is readable")
@@ -511,6 +526,7 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
                "an unreadable file is NO CLAIM, not a problem")
         finally:
             C.ROOT = old
+            C._registry_models = old_reg
 
 
 def test_two_strikes_before_we_accuse_an_app():

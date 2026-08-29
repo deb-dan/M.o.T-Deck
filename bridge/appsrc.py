@@ -53,6 +53,12 @@ FILES: tuple[str, ...] = (
     "core/procs.py",
     "routers/panel.py",
     "core/modelid.py",
+    # S29 — core/modelreg.py is the BOTTOM of the model-identity stack (health.py
+    # re-exports its path check and every seeder loads it by path), so it sits directly
+    # before its first consumer. Registered here the moment it was created: a module on
+    # disk and missing from this tuple is invisible to every source-text assertion in
+    # the gate, and the NEGATIVE ones would then pass vacuously forever.
+    "core/modelreg.py",
     "core/health.py",
     "routers/components.py",
     "routers/ody.py",

@@ -47,11 +47,38 @@ def _load_modeltools():
 
 MODELTOOLS = _load_modeltools()
 
-JAN_MODELS_DIR = os.path.expanduser(
+# ── S29 / registry hygiene: the ONE definition of "a model that is real" ─────
+# Loaded the same way, and for the same reason: this script is not part of a package.
+# If it cannot be loaded the prune below turns itself OFF entirely (see prune_absent) —
+# a helper that failed to import must never be read as "every model is gone".
+def _load_modelreg():
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         os.pardir, "bridge", "core", "modelreg.py")
+        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+MODELREG = _load_modelreg()
+
+# ⚠️ The IMPORT SOURCE DIRS. merge() replaces each of these scans WHOLESALE, which is
+# what makes a deletion made in LM Studio (or Jan) propagate on the next rescan — the
+# models arrived through this walk and they leave through it. The env overrides exist so
+# the suite can walk the whole rescan journey against a temp tree rather than against
+# whatever happens to be in the tester's own library (the "already on disk is never
+# evidence" rule, doctrine 2b, applied to a scan instead of an install).
+JAN_MODELS_DIR = os.environ.get("HARNESS_JAN_MODELS_DIR") or os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/models")
-JAN_PRESET_INI = os.path.expanduser(
+JAN_PRESET_INI = os.environ.get("HARNESS_JAN_PRESET_INI") or os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/router.preset.ini")
-LMSTUDIO_MODELS_DIR = os.path.expanduser("~/.lmstudio/models")
+LMSTUDIO_MODELS_DIR = os.environ.get(
+    "HARNESS_LMSTUDIO_DIR") or os.path.expanduser("~/.lmstudio/models")
 LOCAL_MODELS_DIR = os.path.join("data", "models")
 REGISTRY_PATH = os.path.join("data", "models.json")
 
@@ -633,6 +660,69 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     return result
 
 
+# ══ RESCAN IS THE PRUNE (Debi, 2026-08-29: "isn't there a way to make the apps scan?")
+#
+# THE INCIDENT: she deleted the muse/glimmer family and gemma-4 days ago. merge() above
+# already re-walks the IMPORT SOURCE DIRS — 'lmstudio-import', 'jan-import', 'local' are
+# replaced wholesale by a fresh scan, so a deletion made in LM Studio propagates on the
+# next rescan, which is exactly how those models arrived and how they leave. What merge()
+# CANNOT prune is the other half of a real registry: source 'download' rows, which it
+# preserves untouched by design (nothing on disk can re-derive a download's metadata).
+# Those rows outlive their files forever, and every seeded app catalog is built from them.
+#
+# So the rescan gets a second, source-blind pass — one stat per row, three outcomes:
+#
+#   file THERE          → clear any absent flag (a re-plugged volume heals silently)
+#   file PROVABLY GONE  → REMOVE the row, and PRINT the line, unless it is protected
+#                         (the pin / the live model), which is FLAGGED `absent: true`
+#                         and kept so the runner card's honest state keeps its subject
+#   we could not TELL   → do nothing at all, say nothing at all
+#
+# ⚠️ WHY FLAG AND NOT DELETE, EVER, OUTSIDE THIS FUNCTION: the file may be on a volume
+# that is merely unplugged. A row carries identity a scan cannot rebuild — the pinned
+# TTS voice, the per-model sampling overrides, the known ctx. Removal happens ONLY here,
+# ONLY under an explicit human RESCAN, and it always says which rows it took.
+# ⚠️ AND IT NEVER TOUCHES MODEL FILES. This function edits data/models.json and nothing
+# else; deleting weights is /api/models/delete's job and a different consent.
+def prune_absent(models, protect=(), present_of=None):
+    """PURE-ish (one stat per row via `present_of`). Returns (kept, removed, flagged).
+
+    `protect` — ids that must be FLAGGED rather than removed (pin + live model).
+    `present_of` — row → True|False|None; defaults to modelreg.entry_present. When the
+    helper could not be loaded at all this whole pass is skipped by main(), because
+    "we cannot check" must never become "everything is gone".
+    """
+    if present_of is None:
+        if MODELREG is None:
+            return list(models or []), [], []
+        present_of = MODELREG.entry_present
+    absent_key = MODELREG.ABSENT_KEY if MODELREG else "absent"
+    keep_ids = {str(x).strip() for x in (protect or []) if str(x or "").strip()}
+    kept, removed, flagged = [], [], []
+    for m in (models or []):
+        if not isinstance(m, dict):
+            continue
+        try:
+            present = present_of(m)
+        except Exception:                                      # noqa: BLE001
+            present = None
+        if present is True:
+            if m.get(absent_key) is not None:
+                m = {k: v for k, v in m.items() if k != absent_key}
+            kept.append(m)
+            continue
+        if present is None:
+            kept.append(m)                # unknown is not a claim, in either direction
+            continue
+        mid = str(m.get("id") or "")
+        if mid in keep_ids:
+            kept.append(dict(m, **{absent_key: True}))
+            flagged.append(mid)
+        else:
+            removed.append(mid)
+    return kept, removed, flagged
+
+
 def write(path, models):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as fh:
@@ -677,11 +767,25 @@ def main():
     merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
                    audio_cache)
     merged = annotate_tools(merged)
+    # RESCAN IS THE PRUNE (see prune_absent). Protected = harness.yaml's pin plus
+    # whatever the caller knows is LIVE (the bridge's rescan route exports
+    # HARNESS_PROTECT_MODELS); those are flagged, never removed, so the runner card's
+    # honest "pinned model missing" keeps the row it is talking about.
+    removed, flagged = [], []
+    if MODELREG is not None:
+        merged, removed, flagged = prune_absent(
+            merged, protect=MODELREG.protected_ids("."))
     write(REGISTRY_PATH, merged)
     print(f"seeded {len(merged)} models "
           f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "
           f"{len(lmstudio_entries)} lmstudio-imports, "
           f"{len(audio_local) + len(audio_cache)} audio)")
+    # The printed line is the point: a rescan that silently shrinks a list is
+    # indistinguishable from a rescan that broke. One line per row it took.
+    for mid in removed:
+        print(f"removed: {mid} — its file is no longer on disk")
+    for mid in flagged:
+        print(f"flagged absent (kept — it is the pinned/live model): {mid}")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
@@ -37,8 +38,28 @@ _spec.loader.exec_module(seed)
 
 SRC = open(SEED_PATH, encoding="utf-8").read()
 
+# ── S29: the enumeration rule now includes "the file is still on disk" ───────
+# The fixtures below therefore point at REAL artifacts in a temp dir. That is not
+# ceremony: before this slice every one of these fixtures named a path that has never
+# existed on any machine, and they all passed — which is exactly how a seeder that
+# offered models whose weights the user had deleted stayed green for weeks.
+_TMP = tempfile.mkdtemp(prefix="ody-seed-fixture-")
+
+
+def artifact(name, is_dir=False):
+    """A real file (gguf) or directory (mlx) the file check will find."""
+    p = os.path.join(_TMP, name)
+    if is_dir:
+        os.makedirs(p, exist_ok=True)
+    else:
+        open(p, "wb").close()
+    return p
+
+
+MLX_9B = artifact("mlx-9b", is_dir=True)
+
 WANT = {"name": "Local runner", "base_url": "http://127.0.0.1:6767/v1",
-        "api_key": "harness-local", "models": ["big-27b", "small-4b", "/models/mlx-9b"]}
+        "api_key": "harness-local", "models": ["big-27b", "small-4b", MLX_9B]}
 
 
 def row(**over):
@@ -247,14 +268,14 @@ def test_registry_enumeration_rules():
     reg = [
         {"id": "big-27b", "format": "gguf"},
         {"id": "whisper-base-mlx", "format": "stt-mlx", "kind": "audio"},
-        {"id": "mlx-9b", "format": "mlx", "path": "/models/mlx-9b"},
+        {"id": "mlx-9b", "format": "mlx", "path": MLX_9B},
         {"id": "retired", "format": "gguf", "hidden": True},
         {"id": "small-4b"},
         {"id": ""},
         "not-a-dict",
     ]
     out = seed.registry_wire_models(reg)
-    assert out == ["big-27b", "/models/mlx-9b", "small-4b"], (
+    assert out == ["big-27b", MLX_9B, "small-4b"], (
         "audio + hidden + junk out; MLX addressed by PATH (mlx_lm LOADS the `model` "
         "field and would 404 an id on HuggingFace); llama.cpp by registry id (--alias)")
     # the loaded model leads, so a fresh default lands on what is actually resident
@@ -270,10 +291,36 @@ def test_the_real_registry_produces_a_populated_picker():
     except Exception:
         return
     out = seed.registry_wire_models(reg)
-    assert len(out) == len([m for m in reg if isinstance(m, dict) and m.get("id")
-                            and m.get("kind") != "audio" and not m.get("hidden")
-                            and (m.get("format") != "mlx" or m.get("path"))]) or out
+    # S29 — the count is now the FILE-PRESENT, non-absent chat rows. On a dev tree whose
+    # registry outlived its weights that is legitimately zero; what must hold is that
+    # the seed and the SHARED helper agree exactly, and that nothing junk gets through.
+    from bridge.core.modelreg import offerable, wire_id
+    assert len(out) == len({wire_id(m) for m in offerable(reg)})
     assert all(isinstance(x, str) and x for x in out)
+
+
+# ── E2. S29: a deleted model is never offered, and that is decided in ONE place ──
+def test_a_model_whose_file_is_gone_is_never_pinned(tmp_path):
+    """Debi's incident, as a unit: she deleted the muse/glimmer family in LM Studio and
+    Odysseus went on pinning it. llama.cpp ignores the request's `model`, so picking one
+    ANSWERS — under the dead model's name. That is the lie class, above a crash."""
+    alive = str(tmp_path / "alive.gguf")
+    open(alive, "wb").close()
+    reg = [
+        {"id": "alive", "format": "gguf", "path": alive},
+        {"id": "Muse-Glimmer-30B-Heretic-Q4_K_S", "format": "gguf",
+         "path": str(tmp_path / "deleted-in-lmstudio.gguf")},
+        # the persisted flag alone is enough, even without a stat-able path
+        {"id": "flagged-absent", "format": "gguf", "absent": True},
+    ]
+    assert seed.registry_wire_models(reg) == ["alive"]
+
+
+def test_an_unreadable_path_is_not_a_claim_that_the_model_is_gone():
+    """ABSENCE IS NOT INFORMATION. A row with no path at all (or one whose stat fails
+    for a reason that is not absence — a sleeping mount) stays offered: accusing a user
+    of deleting a model they still have is the same lie, one direction over."""
+    assert seed.registry_wire_models([{"id": "no-path-recorded"}]) == ["no-path-recorded"]
 
 
 # ── F. the default model: seeded, never enforced ─────────────────────────────
@@ -337,9 +384,9 @@ def test_no_unconditional_assignment_survives():
 # PROPAGATED it into a third-party picker.
 
 def test_a_probe_is_only_believed_when_it_maps_to_something_we_ship():
-    reg = [{"id": "small-4b"}, {"id": "mlx-9b", "format": "mlx", "path": "/m/mlx-9b"}]
+    reg = [{"id": "small-4b"}, {"id": "mlx-9b", "format": "mlx", "path": MLX_9B}]
     assert seed.live_wire("small-4b", reg) == "small-4b"
-    assert seed.live_wire("/m/mlx-9b", reg) == "/m/mlx-9b", "MLX answers with its path"
+    assert seed.live_wire(MLX_9B, reg) == MLX_9B, "MLX answers with its path"
     # An MLX server's /v1/models enumerates the whole HuggingFace CACHE, so data[0] is
     # routinely an unrelated repo. An unmappable probe is DISCARDED, never trusted —
     # the same rule bridge/core/modelid.py::_reconcile_live has always applied.

@@ -167,6 +167,12 @@ _LANES = (
     "core.procs",
     "routers.panel",
     "core.modelid",
+    # S29 — the shared registry rule (the BOTTOM of the model-identity stack;
+    # core.health re-exports its path check). Registered here as well as in
+    # appsrc.FILES: a module missing from THIS tuple is unreachable through the facade,
+    # which the suite's 945-name reachability check catches — and which would otherwise
+    # only surface as a confusing AttributeError inside a monkeypatched test.
+    "core.modelreg",
     "core.health",
     "routers.components",
     "routers.ody",
