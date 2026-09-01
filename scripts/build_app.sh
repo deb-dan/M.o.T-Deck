@@ -212,8 +212,16 @@ if [[ $FAT -eq 1 ]]; then
   rsync -a \
     --exclude='.git' --exclude='.gitmodules' --exclude='node_modules' \
     --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
-    vendor scripts bridge app skills policies harness.yaml "$STAGE/" 2>/dev/null || {
+    vendor scripts bridge app skills policies harness.yaml VERSION "$STAGE/" 2>/dev/null || {
       echo "ERROR (fat): rsync of the seed failed."; exit 1; }
+  # ⚠️ VERSION is in that list on purpose (2026-09-02): the seed shipped WITHOUT it for
+  # every fat build up to and including the 2026-08-20 dmg, so a freshly provisioned
+  # snapshot had no file naming the release it came from — only SEED_STAMP's git_sha.
+  # Nothing FUNCTIONAL read it (the Version tile reads harness.yaml `version:`), which is
+  # exactly why the gap stayed invisible; a release marker that only exists in the repo is
+  # not a release marker. Do not drop it again.
+  [[ -f "$STAGE/VERSION" ]] \
+    || { echo "ERROR (fat): VERSION did not make it into the seed — the bundle would not name its own release."; exit 1; }
   [[ -d docs ]]   && rsync -a --exclude='.git' docs "$STAGE/" 2>/dev/null || true
   [[ -f README.md ]] && cp README.md "$STAGE/" 2>/dev/null || true
   # the pinned llama-server binary + its dylibs
