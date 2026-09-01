@@ -206,6 +206,76 @@ _clear_port() {   # <port> <component> [force]
   done
 }
 
+# ── U54: THE PIDFILE NAMES THE PROCESS THAT HOLDS THE PORT, NOT THE ONE WE LAUNCHED ──
+#
+# `echo $! > data/<comp>.pid` records a REPORT: "the pid I just backgrounded". After a
+# single launch that report is also the fact (see _detached — the exec chain keeps the
+# pid), but the runner arm below is allowed to launch TWICE: a speculative-decoding
+# guess that a model cannot honour makes the first llama-server die, and the retry arm
+# relaunches. Measured on the live stack twice (2026-08-30): data/runner.pid said 35568
+# while llama-server was 35558, and after the detachment fix 44288 while :6767 was held
+# by 44276. So the file named a dead pid on every observed restart of that shape.
+#
+# CONSEQUENCES, all of them quiet: _reap_pidfile could not stop the real runner (it
+# fell through to _clear_port, which is why nobody noticed); the "[harness] runner … up
+# … pid=$(cat data/runner.pid)" line the panel shows was false; and health never
+# noticed because health is probe-based.
+#
+# THE FIX IS THE HOUSE RULE — AN OBSERVATION OUTRANKS A REPORT (see the U15 header in
+# bridge/routers/components.py). Once the readiness poll says the server is answering,
+# ASK THE PORT who holds it and record THAT.
+#
+# ⛔ AND IT MAY NEVER RECORD A STRANGER (CLAUDE.md PROCESS-KILL RULE). The pidfile is
+# the one input _reap_pidfile trusts enough to signal on sight, so writing an
+# unverified pid into it would turn this helper into a way to make the next Start kill
+# Debi's own llama-server. Every candidate goes through _cmd_looks_like_ours first, an
+# ambiguous answer (no listener we own, or more than one) CHANGES NOTHING and says so
+# in a sentence, and a missing lsof degrades to exactly today's behaviour.
+_stamp_pidfile_from_port() {   # <component> <port>
+  local comp="$1" port="$2" pf was mine pid cmd
+  pf="data/${comp}.pid"
+  was="$(tr -cd '0-9' < "$pf" 2>/dev/null || true)"
+  mine=""
+  for pid in $(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null); do
+    cmd="$(_proc_cmd "$pid")"
+    if _cmd_looks_like_ours "$comp" "$cmd"; then mine="${mine}${pid} "; fi
+  done
+  # `set --` is function-local in bash, and comp/port/pf/was are already read out of
+  # the positional parameters above. Kept as a string + set-- rather than an array
+  # because macOS bash is 3.2, where `${#arr[@]}` on an EMPTY array under `set -u` is
+  # an unbound-variable error (the same reason SPEC_ARGS is expanded with the
+  # `${a[@]+…}` guard everywhere below).
+  set -- $mine
+  if [[ $# -eq 0 ]]; then
+    echo "[harness] ${pf}: nothing we own is listening on :${port} — keeping the launch"
+    echo "[harness]   pid ${was:-<none>}. Stop may have to fall back to clearing the port."
+    return 1
+  fi
+  for pid in "$@"; do
+    if [[ -n "$was" ]] && [[ "$pid" == "$was" ]]; then return 0; fi   # already true
+  done
+  if [[ $# -gt 1 ]]; then
+    echo "[harness] ${pf}: :${port} has $# listeners that look like ours ($*) — that is"
+    echo "[harness]   ambiguous, so the file keeps ${was:-<none>} rather than guessing."
+    return 1
+  fi
+  echo "$1" > "$pf"
+  echo "[harness] ${pf}: launch reported pid ${was:-<none>}, but :${port} is held by $1 —"
+  echo "[harness]   recorded the listener (U54)."
+  return 0
+}
+
+# Self-test hook for the contract suite (same shape as --detach-selftest above): run the
+# REAL helper against a component name + port and report what it decided, so a live test
+# can spawn its OWN listener, prove both the stamp and the stranger-refusal, and reap
+# only the pid it wrote itself. Never used by the harness.
+#   start_component.sh --pidfile-from-port <component> <port>
+if [[ "$NAME" == "--pidfile-from-port" ]]; then
+  if _stamp_pidfile_from_port "${2:-}" "${3:-0}"; then echo "STAMPED $(cat "data/${2:-}.pid" 2>/dev/null)"
+  else echo "UNCHANGED $(cat "data/${2:-}.pid" 2>/dev/null)"; fi
+  exit 0
+fi
+
 case "$NAME" in
   runner)
     R_ADAPTER=$(awk '/^runner:/{f=1} f && /^  adapter:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*adapter:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
@@ -576,7 +646,16 @@ PYRESOLVE
         # 90×2s budget and then EXITED NON-ZERO, i.e. "the runner did not come up" about
         # a runner that was up. -f treats 401 as failure, which is what hid it.
         if curl -sf -m 2 -H "Authorization: Bearer ${R_KEY}" \
-             "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then return 0; fi
+             "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then
+          # U54 — the server is answering, so :$R_PORT can now be ASKED who holds it.
+          # This is the one instant where the answer is unambiguous, and it is why the
+          # stamp lives inside _launch_llama rather than after the retry ladder: each
+          # attempt that reaches readiness corrects the pidfile for itself, so the
+          # retry arm below cannot leave a losing $! behind. Never fatal — a failure
+          # here only means the pidfile keeps the value it already had.
+          _stamp_pidfile_from_port runner "$R_PORT" || true
+          return 0
+        fi
         sleep 2
       done
       return 1
@@ -662,6 +741,10 @@ PYRESOLVE
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
+      # U54 — same rule for the MLX engines. They launch once, so `$!` is normally
+      # already right; the stamp is here so the RULE, not the arm, is what makes the
+      # pidfile true, and so a future retry ladder on this arm inherits the fix.
+      _stamp_pidfile_from_port runner "$R_PORT" || true
       echo "[harness] runner ($ENGINE) up on :$R_PORT — model=$R_MODEL pid=$(cat data/runner.pid) (loopback only, no auth)"
     else
       echo "ERROR: runner ($ENGINE) did not become ready on :${R_PORT} in ~5min."

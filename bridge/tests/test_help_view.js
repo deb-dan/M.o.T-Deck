@@ -148,6 +148,63 @@ console.log('\n2. the renderer, executed over the real document');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+console.log('\n2b. the API page is EXPLAINED, not merely mentioned (Debi, 2026-09-02)');
+// ═════════════════════════════════════════════════════════════════════════════
+/* "api page looks good… let's ensure it's well explained in help too." The four things
+   a person actually has to understand before another app talks to this runner, each
+   asserted on the RENDERED text rather than on the markdown — so a topic that gets
+   reworded survives, and a topic that gets deleted does not. Every claim here is a
+   claim the API page itself makes on screen (bridge/panel/index.html apiEndpointHtml /
+   apiKeysHtml / apiLogHtml and bridge/routers/apikeys.py::ENDPOINTS); the pairing is
+   the point — Help must not drift into describing a page that no longer exists.
+
+   ⚠️ COUNTED, NOT LISTED. The check is "every topic below is covered", derived from the
+   TOPICS table, so adding a fifth topic here is the only edit a fifth topic needs. */
+{
+  const api = DOC.sections.find(s => s.title.indexOf('API') === 0);
+  ok(!!api, 'the document has an API section');
+  const t = strip(api.html).toLowerCase();
+  const TOPICS = [
+    ['what the page IS — a local address other apps point at',
+     /openai-compatible/.test(t) && /own machine/.test(t) && /127\.0\.0\.1:6767/.test(t)],
+    ['the three fields another app asks for, INCLUDING the model name',
+     /model name/.test(t) && /serving/.test(t) && /copy button/.test(t)],
+    ['keys are shown once and pasted into the other app',
+     /create key/.test(t) && /once/.test(t) && /never shown again/.test(t)],
+    ['revoke exists and takes two clicks',
+     /revoke/.test(t) && /two clicks/.test(t)],
+    ['restart-to-apply, and WHY — the engine reads the key file once, at startup',
+     /restart to apply/.test(t) && /llama\.cpp/.test(t) && /once/.test(t)
+       && /(read the file again|re-read)/.test(t)],
+    ['…in BOTH directions: a revoked key keeps working until the restart',
+     /revoked/.test(t) && /still works/.test(t)],
+    ['the route catalogue, and the "need a launch flag" chips',
+     /routes served/.test(t) && /launch flag/.test(t)
+       && /--embeddings/.test(t) && /v1\/chat\/completions/.test(t)],
+    ['…and WHY the dead routes are listed rather than hidden',
+     /deliberate/.test(t) && /embeddings/.test(t)],
+    ['the request log is honestly split: rows are our lanes, totals are everything',
+     /totals/.test(t) && /one row per\s*turn/.test(t.replace(/\s+/g, ' '))],
+    ['…and WHY direct callers appear only in the totals',
+     /(goose and opencode|goose)/.test(t) && /directly/.test(t)
+       && /no line of its own|no row of its own/.test(t)],
+    ['keys never leave the machine',
+     /data\/api_keys\.json/.test(t) && /leaves the machine/.test(t)],
+  ];
+  const uncovered = TOPICS.filter(([, hit]) => !hit).map(([name]) => name);
+  for (const [name, hit] of TOPICS) ok(hit, 'Help covers: ' + name);
+  ok(uncovered.length === 0,
+     TOPICS.length + ' of ' + TOPICS.length + ' API topics covered'
+     + (uncovered.length ? ' (missing: ' + uncovered.join('; ') + ')' : ''));
+  // …and it is PROSE, not a spec dump: the section stays inside the document's own
+  // voice, which here means it is written as bullets with bold lead-ins like every
+  // other section, and carries no fenced code or table.
+  ok(/<ul><li>/.test(api.html), 'the API section is written as bullets, like its neighbours');
+  ok(!/<table>/.test(api.html) && !/<pre/.test(api.html),
+     '…with no table and no code block — the renderer subset and the house voice agree');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 console.log('\n3. the adversarial ledger — every finding, pinned');
 // ═════════════════════════════════════════════════════════════════════════════
 {

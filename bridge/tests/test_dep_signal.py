@@ -663,6 +663,107 @@ def test_a_switch_re_seeds_every_dependent():
        "change without a respawn, so the banner covers that half")
 
 
+# ══ §8 A FAILURE REASON IS RETRACTED WHEN THE THING IS OBSERVABLY UP (U60) ═══
+#
+# THE INCIDENT (Debi, screenshot, 2026-09-02, and the reason this is not just more of
+# §6): the runner card read "Online · serving Qwen3.5-9B-Q4_0" with "no model is pinned
+# — pick one in Models" on the line below it. /api/status agreed with the green half in
+# every field — pin = pin_intent = live_id = Qwen3.5-9B-Q4_0, running true, health ok —
+# and carried the red half anyway, in `last_error`, with stale: false, model: "",
+# path: "". The sentence was TRUE about a start attempt made while harness.yaml had no
+# runner.model; it was published as though it described now.
+#
+# REPRODUCED before it was fixed, on a scratch bridge on a free port with the runner
+# stood in for by a scratch listener: unpin → Start (fails, "runner.model not set",
+# reason recorded) → bring the runner up → Start → prov = {"state": "on", "detail":
+# "already running"} and the reason standing beside running: true / health: ok, poll
+# after poll. That prov detail is the fingerprint: _provision's `_running_sync`
+# short-circuit was the one success path in the file that cleared nothing — and it is
+# not even the only door, because models.py's _do_switch (a Load from the Models pane)
+# runs start_component.sh itself and never touches the dict at all.
+#
+# THE CLASS is §6's, one field over — v1.5.57 killed "a failed OVERLAY persists while
+# observably running"; this is "a failed SENTENCE persists while observably running".
+# Which is why the retraction lives on the READ, over every component's row, rather than
+# on one starter's success path: a rule each new start path has to remember is a rule
+# one of them will forget.
+
+
+def test_a_recorded_failure_is_retracted_once_the_thing_is_up():
+    """THE CONTRACT, executed: present while stopped+failed, GONE once running+ok."""
+    from bridge.routers.components import (FAIL_RETRACT_OK, clear_start_failure,
+                                           fail_note_to_publish)
+    note = {"text": "no model is pinned — pick one in Models", "stale": False}
+    clear_start_failure("t")
+    # STOPPED + FAILED: the reason is what the card is FOR. Any number of polls.
+    for _ in range(5):
+        pub = fail_note_to_publish("t", False, note)
+        ok(pub is not None and pub["text"] == note["text"] and pub["stale"] is False,
+           "while it is down, the reason is published as the current state")
+    # RUNNING + OK: one poll of history, then gone — and gone stays gone.
+    first = fail_note_to_publish("t", True, note)
+    ok(first is not None and first["stale"] is True,
+       "the first good poll publishes it as HISTORY, never as a bare failure")
+    ok(note["stale"] is False,
+       "…and publishes a COPY: the stored record is not rewritten to say so")
+    ok(fail_note_to_publish("t", True, note) is None,
+       f"the {FAIL_RETRACT_OK}nd consecutive running+ok poll retracts it entirely")
+    ok(fail_note_to_publish("t", True, note) is None, "…and it does not come back")
+    clear_start_failure("t")
+
+
+def test_a_flapping_component_keeps_the_sentence_that_explains_it():
+    """THE DEBOUNCE, and why it is health.py's shape rather than "clear immediately":
+    a component that comes up for ONE poll and dies must not erase the reason it keeps
+    dying. Walked live on the scratch bridge as well as executed here."""
+    from bridge.routers.components import clear_start_failure, fail_note_to_publish
+    note = {"text": "the runner binary is missing", "stale": False}
+    clear_start_failure("f")
+    ok(fail_note_to_publish("f", False, note)["stale"] is False, "down: the reason")
+    ok(fail_note_to_publish("f", True, note)["stale"] is True, "up for one poll: history")
+    ok(fail_note_to_publish("f", False, note)["stale"] is False,
+       "…and back down: the streak is forgotten and the reason is current again")
+    ok(fail_note_to_publish("f", True, note)["stale"] is True,
+       "a second flap starts the count over — it cannot accumulate its way to silence")
+    clear_start_failure("f")
+
+
+def test_every_start_path_clears_it_and_the_read_is_the_backstop():
+    src = _APP_SOURCE
+    prov = src[src.index("def _provision("):]
+    ok(prov.count("clear_start_failure(") >= 2,
+       "BOTH of _provision's success arms clear the record — including the "
+       "`already running` short-circuit, the arm the live bug came through")
+    already = prov[prov.index("if _running_sync(n, c):"):][:900]
+    ok("clear_start_failure(" in already,
+       "…and it is in the short-circuit specifically, not only on the rc == 0 path")
+    ok("_FAIL_OK_STREAK.pop(" in prov,
+       "a FRESH failure resets the debounce, so it always gets its full grace")
+    st = src[src.index("async def status() -> dict:"):]
+    st = st[:st.index("# ══ THE DEPENDENCY SIGNAL")]
+    ok('fail_note_to_publish(n, running_ok, row.get("last_error"))' in st,
+       "the read-side backstop runs over EVERY component's row, not the runner's only "
+       "— the echo IS the loop, so no component can be left out of it")
+    ok('row.get("health") == "ok"' in st,
+       "…and takes the DEBOUNCED health verdict, not one probe, as its evidence")
+
+
+def test_the_card_can_never_pair_a_green_dot_with_a_bare_failure():
+    """THE PANEL HALF. The lie was VISIBLE here, so this surface must not depend on the
+    bridge being right about something it can check for itself."""
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    card = panel[panel.index("function cardHTML("):]
+    card = card[:card.index("\nfunction rescanFromCard")]
+    ok("const upOk = !!c.running && h === 'ok';" in card,
+       "the card derives 'observably up and healthy' for itself")
+    ok("le.stale || upOk ? 'last start attempt: '" in card,
+       "…and a component that is up NEVER gets an unlabelled failure sentence")
+    ok("le.target === 'models' && !upOk" in card,
+       "…nor an Open Models button hung off a start that is over")
+    ok(card.split("const wantsModels")[1][:40].find("fileGone") >= 0,
+       "…while a dead model FILE is a now-fact and keeps every button it had")
+
+
 for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_swapped_is_the_lie_this_catches, test_moved_endpoint,
            test_a_dep_that_is_not_the_runner, test_a_stopped_component_says_nothing,
@@ -684,7 +785,12 @@ for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_the_pin_affordance_exists_end_to_end,
            test_the_chat_lane_stops_labelling_turns_with_the_pin,
            test_the_seeders_agree_on_what_dangles,
-           test_a_switch_re_seeds_every_dependent):
+           test_a_switch_re_seeds_every_dependent,
+           # §8 — the stale failure sentence (U60)
+           test_a_recorded_failure_is_retracted_once_the_thing_is_up,
+           test_a_flapping_component_keeps_the_sentence_that_explains_it,
+           test_every_start_path_clears_it_and_the_read_is_the_backstop,
+           test_the_card_can_never_pair_a_green_dot_with_a_bare_failure):
     fn()
 
 if FAILS:

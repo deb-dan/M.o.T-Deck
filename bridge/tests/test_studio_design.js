@@ -498,8 +498,29 @@ console.log('2. Editorial does not pay for the second design');
                reason it is a TABLE rather than a live probe (probing writes one
                `got exception:` line into runner.log per path per call) live in
                bridge/routers/apikeys.py; the fences live in test_api_keys.py (77) and
-               test_api_view.js (166). */
-  const CEILING = 876000;
+               test_api_view.js (166).
+         877000  A GREEN CARD MAY NOT CARRY A BARE FAILURE SENTENCE (U60) — +0.7KB, and
+               it is the smallest entry in this table because almost all of the fix is in
+               the bridge. Debi's screenshot: "Online · serving Qwen3.5-9B-Q4_0" and, on
+               the line below it, "no model is pinned — pick one in Models" — a true
+               sentence about a start attempt that was over, rendered in the present
+               tense. Same class as the 840000 entry above, one field over: v1.5.57
+               retracted the failed OVERLAY when a component is observably running; this
+               retracts the failed SENTENCE.
+               THE CODE HALF is three lines in cardHTML: one derived value (`upOk` —
+               running AND the bridge's DEBOUNCED health verdict), the `why` branch
+               labelling any surviving sentence as history, and `wantsModels` no longer
+               growing an Open Models button out of a start that has finished. Nothing
+               new is rendered and no CSS moved — `.why` already existed.
+               ⚠️ WHY IT IS HERE AT ALL, given the bridge now retracts the note two polls
+               after the component reads up: because THIS is the surface the lie was
+               visible on, and it can check the claim itself from data it already holds.
+               A panel that renders whatever the bridge sends is a panel that repeats the
+               bridge's next mistake. THE PROSE HALF is one comment at the branch — the
+               argued kind this ceiling allows AT the rule it excuses; the incident, the
+               reproduction and the debounce reasoning live in
+               bridge/routers/components.py's U60 header and test_dep_signal.py §8. */
+  const CEILING = 877000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

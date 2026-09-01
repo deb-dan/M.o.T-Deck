@@ -62,6 +62,95 @@ def _fail_note(name: str) -> "dict | None":
     return dict(r) if isinstance(r, dict) else None
 
 
+# ══ U60 — A FAILURE REASON IS RETRACTED WHEN THE THING IS OBSERVABLY UP ══════
+#
+# THE LIVE BUG (Debi, screenshot, 2026-09-02). The runner card read
+# "Online · serving Qwen3.5-9B-Q4_0" and, one line below it,
+# "no model is pinned — pick one in Models". /api/status agreed with the GREEN half
+# of that card in every field — pin = pin_intent = live_id = Qwen3.5-9B-Q4_0,
+# running true, health ok — and carried the red half anyway, in `last_error`, with
+# `stale: false`, `model: ""`, `path: ""`. So the card was not confused: it was
+# faithfully rendering a sentence about a DIFFERENT, EARLIER start attempt, one that
+# ran while harness.yaml had no runner.model at all, as though it described now.
+#
+# WHY IT SURVIVED. rc == 0 in _provision pops LAST_START_FAIL — but that is only ONE
+# of the ways this app starts something, and it was not the way the runner came up.
+# The evidence on the live stack was `prov.runner == {"state": "on", "detail":
+# "already running"}`: _provision's `if _running_sync(n, c)` short-circuit, which
+# marks the component on and `continue`s WITHOUT clearing anything. The other doors
+# in are models.py's _do_switch (a Load from the Models pane runs
+# start_component.sh itself and never touches this dict at all) and any start that
+# happened outside this process. Every one of them left the sentence standing.
+#
+# THE GENERAL FORM, and it is the same rule the U15 header already states one field
+# over — AN EXIT CODE IS A REPORT, NOT A FACT: a recorded failure is a report about a
+# past instant, and it is retracted by the OBSERVATION that the component is up. So
+# the retraction cannot live on the success path of one starter; it lives HERE, on
+# the read, where every start path's outcome is observed the same way and no future
+# starter can forget to call it. That also makes the echo automatic: it runs over
+# EVERY component's row in the same loop, not just the runner's.
+#
+# THE DEBOUNCE is health.py's, for health.py's reason: one probe is not evidence. A
+# component must read running-and-ok on FAIL_RETRACT_OK consecutive /api/status polls
+# before the reason is thrown away, so a runner that flaps up for one poll cannot
+# erase the sentence that explains why it keeps dying. In the window between the
+# first good poll and the retraction the sentence is published `stale: true`, which
+# the card renders as history ("last start attempt: …") rather than as the current
+# state — so at no point is a bare failure sentence shown beside a green dot.
+FAIL_RETRACT_OK = 2
+_FAIL_OK_STREAK: dict = {}      # component -> consecutive running+ok observations
+
+
+def clear_start_failure(name: str) -> None:
+    """Forget `name`'s recorded start failure and its recovery streak. Call this from
+    any path that has just brought a component up; the read-side retraction in
+    status() is the backstop for the paths that forget."""
+    LAST_START_FAIL.pop(name, None)
+    _FAIL_OK_STREAK.pop(name, None)
+
+
+def fail_note_to_publish(name: str, running_ok: bool,
+                         note: "dict | None") -> "dict | None":
+    """THE WHOLE RULE, IN ONE CALLABLE (so the gate can execute it rather than read it).
+    Given a component's CURRENT observed state, the failure note a card may render:
+
+        stopped / unhealthy          -> the note, as recorded            (stale: False)
+        running+ok, first poll       -> the note, marked HISTORY         (stale: True)
+        running+ok, FAIL_RETRACT_OK  -> None, and the record is dropped
+
+    Advances the debounce as a side effect — call it once per component per poll."""
+    if _retract_track(name, running_ok):
+        return None
+    if not isinstance(note, dict):
+        return None
+    if running_ok:
+        note = dict(note)
+        note["stale"] = True
+    return note
+
+
+def _retract_track(name: str, running_ok: bool) -> bool:
+    """Advance `name`'s consecutive running+ok counter; True once the recorded failure
+    has been retracted (and it is popped here). A single bad observation forgets the
+    streak, exactly as _health_track forgets a miss streak on recovery."""
+    if not running_ok:
+        _FAIL_OK_STREAK.pop(name, None)
+        return False
+    n = _FAIL_OK_STREAK.get(name, 0) + 1
+    _FAIL_OK_STREAK[name] = n
+    if n >= FAIL_RETRACT_OK:
+        # ⚠️ THE STREAK IS KEPT (CLAMPED), NOT FORGOTTEN — found by the gate test
+        # "…and it does not come back". Popping it here restarts the count at 1 on the
+        # very next poll, so a note that reappears for any reason (a re-record, a
+        # second reader) would be re-published as history instead of staying retracted.
+        # It is only ever cleared by clear_start_failure, i.e. by a START — which is
+        # exactly the event that should give a new sentence its full grace again.
+        _FAIL_OK_STREAK[name] = FAIL_RETRACT_OK
+        LAST_START_FAIL.pop(name, None)
+        return True
+    return False
+
+
 def start_failure_reason(output: str, model: str = "", path: str = "",
                          file_state: str = "") -> dict:
     """PURE (unit-tested). A failed start's script output → the ONE sentence the card
@@ -278,11 +367,19 @@ async def status() -> dict:
     # a failure overlay is dropped the moment the component is observably RUNNING.
     # Nothing is lost — the sentence and the raw log move to `last_error`, which the
     # card still shows, marked stale.
+    #
+    # …and the SENTENCE follows the overlay (U60, above): a component that reads
+    # running-and-ok for two polls running has its recorded failure RETRACTED, so no
+    # card can ever pair a green dot with a bare failure sentence. One poll of grace
+    # publishes it as history instead. This loop is the whole echo sweep: it is keyed
+    # on nothing runner-specific, so every component gets the same honesty.
     for n, row in out["components"].items():
         if (out["prov"].get(n) or {}).get("state") == "failed" and row.get("running"):
             out["prov"].pop(n, None)
             if isinstance(row.get("last_error"), dict):
                 row["last_error"]["stale"] = True
+        running_ok = bool(row.get("running")) and row.get("health") == "ok"
+        row["last_error"] = fail_note_to_publish(n, running_ok, row.get("last_error"))
     return out
 
 
@@ -1280,6 +1377,14 @@ def _provision(target: str) -> None:
         _prov_set(n, "pending", "queued")
     for i, n in enumerate(order):
         if _running_sync(n, c):
+            # U60 — THE BRANCH THAT KEPT DEBI'S STALE SENTENCE ALIVE. This arm reports
+            # a component UP, which is exactly the observation that retracts a recorded
+            # failure; before this line it was the one success path in the file that
+            # did not clear it, and `prov.runner = {"state": "on", "detail": "already
+            # running"}` was the live fingerprint on the screenshot. status() retracts
+            # it on the read too — this is the source-side half, so the dict is not
+            # carrying a lie between polls.
+            clear_start_failure(n)
             _prov_set(n, "on", "already running")
             _mark_expected(n)
             continue
@@ -1324,7 +1429,7 @@ def _provision(target: str) -> None:
                       f"runner is serving “{served}” but the pin asks for “{want}” — "
                       f"this start really did fail", flush=True)
         if rc_code == 0:
-            LAST_START_FAIL.pop(n, None)
+            clear_start_failure(n)
             if n == "runner":
                 _record_load_launch((c.get("runner", {}) or {}).get("model") or "")
             _prov_set(n, "on", "started")
@@ -1337,6 +1442,12 @@ def _provision(target: str) -> None:
             LAST_START_FAIL[n] = {"at": time.time(), "rc": rc_code,
                                   "model": mv.get("pin", ""), "path": mv.get("path", ""),
                                   "stale": False, **why}
+            # A FRESH failure gets the FULL debounce (U60). Without this reset a
+            # component that was reading running+ok when the start failed (the runner
+            # still serving the OLD model is exactly that state) would arrive with a
+            # streak already part-way to retraction and lose its brand-new sentence on
+            # the next poll. The counter measures "up since the failure", not "up".
+            _FAIL_OK_STREAK.pop(n, None)
             # PROV's detail stays the RAW tail (View log has always shown it verbatim
             # and people diagnose from it); the sentence travels in last_error.
             _prov_set(n, "failed", output[-1500:])

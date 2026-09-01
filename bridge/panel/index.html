@@ -3599,6 +3599,10 @@ function cardHTML(name, c, isBridge, prov) {
   const isRunner = (name === 'runner');
   const fileGone = isRunner && (c.model_file === 'gone' || c.model_file === 'unregistered');
   const le = (c.last_error && c.last_error.text) ? c.last_error : null;
+  // OBSERVABLY UP AND HEALTHY, AT THIS INSTANT — the fact that outranks any stored
+  // report about a past start attempt (U60). `h` is the bridge's DEBOUNCED verdict, so
+  // this is not a single lucky probe.
+  const upOk = !!c.running && h === 'ok';
   // Priority: a dead file outranks a past start error, because it explains the NEXT
   // failure as well as the last one. A STALE error (the component is up again now) is
   // labelled as history rather than presented as the current state.
@@ -3616,8 +3620,20 @@ function cardHTML(name, c, isBridge, prov) {
   } else if (drift) {
     why = 'serving ' + c.live_id + ' right now, but the pin still points at '
         + c.pin_intent + ' — “Pin this model” makes the two agree without a reload.';
-  } else if (le) why = (le.stale ? 'last start attempt: ' : '') + le.text;
-  const wantsModels = fileGone || !!(le && le.target === 'models');
+  } else if (le) {
+    // ⚠️ A GREEN CARD MAY NEVER CARRY A BARE FAILURE SENTENCE (U60). Debi's screenshot:
+    // "Online · serving Qwen3.5-9B-Q4_0" with "no model is pinned — pick one in Models"
+    // on the line below it. The bridge now RETRACTS the reason once the component has
+    // read running+ok twice — but the panel is where the lie was VISIBLE, and it must
+    // not depend on the bridge being right about a claim it can check for itself. If
+    // this component is up and healthy at this instant, the sentence is history and is
+    // labelled as history, whatever `stale` says.
+    why = (le.stale || upOk ? 'last start attempt: ' : '') + le.text;
+  }
+  // …and the same fact decides whether the sentence gets an ACTION beside it: a card
+  // whose component is up must not grow an "Open Models" button because of a sentence
+  // about a start that is over (fileGone is a NOW fact and keeps its buttons).
+  const wantsModels = fileGone || !!(le && le.target === 'models' && !upOk);
   let dot, state, actions = '';
   const provisioning = (ps === 'starting' || ps === 'pending' || ps === 'blocked');
   if (provisioning) {
