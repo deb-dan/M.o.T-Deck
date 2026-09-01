@@ -50,6 +50,23 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parents[2]
 PANEL = Path(__file__).resolve().parents[1] / "panel"
 
+# ── THE BRIDGE SINGLETON (2026-08-30 incident, second find) ───────────────────
+# Runs HERE, at import, deliberately BEFORE uvicorn binds its socket: a bridge that
+# is going to stand down should do so before it has touched anything. It is a no-op
+# unless argv says this really is a `python -m uvicorn bridge.app:app` boot, so the
+# ~40 test files that import bridge.app can never be exited by it. Imported
+# defensively like every other satellite below: a snapshot that predates
+# singleton.py must still boot a working bridge — it just loses the guard, loudly.
+try:
+    from . import singleton as _singleton
+    _singleton.claim_or_exit(ROOT)
+except SystemExit:                    # an explicit stand-down must never be swallowed
+    raise
+except Exception as _e:               # noqa: BLE001
+    _singleton = None
+    print(f"[bridge] singleton guard unavailable ({_e}) - this bridge starts without "
+          f"the one-bridge-per-root check.", flush=True)
+
 # Harness-native voice capability (Phase B). Imported DEFENSIVELY: ship.sh has
 # historically copied only bridge/app.py into the fat snapshot, so a snapshot that
 # predates voice.py must still boot a working bridge — it just loses /api/voice/tts

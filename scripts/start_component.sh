@@ -62,6 +62,98 @@ if [[ "$NAME" == "--owner-check" ]]; then
   _cmd_looks_like_ours "${1:-}" "${2:-}"; exit $?
 fi
 
+# ── FULL DETACHMENT AT SPAWN (THE 2026-08-30 SILENT-DEATH INCIDENT) ───────────
+# Runner + Hermes + Odysseus died together, repeatedly, on an idle machine, while
+# Searxng/Voicestudio/Voicebox/ComfyUI/Unsloth/OpenCode survived. Root cause, proven
+# on the live process table and then reproduced from scratch:
+#
+#   `nohup CMD &` BLOCKS SIGHUP AND NOTHING ELSE. It does not change the process
+#   group. A component launched through a BRIDGE ROUTE (Restart button, model switch,
+#   rebind) therefore runs this script as a child of the bridge and inherits the
+#   BRIDGE's process group id. Measured before the fix: llama-server 35558, hermes
+#   35657, odysseus 35673 all carried pgid 25183 — which is the bridge's own pid.
+#
+#   macOS Foundation's `Process.terminate()` — what app/main.swift calls in
+#   applicationWillTerminate — does NOT signal only the child. Foundation launches
+#   the child as a process-group LEADER and terminate() signals THE GROUP. Verified
+#   with a purpose-built Swift harness, both directions:
+#     · child bash + `nohup sleep 600 &`         → terminate() → the sleep DIED.
+#     · child bash + setsid'd `sleep 600`        → terminate() → the sleep SURVIVED.
+#   So every quit of MOT Deck was a group kill that reached straight through the
+#   bridge into whatever this script had most recently spawned. The long-lived
+#   survivors were simply started from shells whose groups were already dead.
+#
+# THE FIX: give every component its OWN SESSION (setsid), which implies its own
+# process group and no controlling terminal. Nothing upstream — an app quit, a bridge
+# death, a ship, an agent process-tree reaping — can then address it by group.
+#
+# macOS ships no /usr/bin/setsid, so the native detour is perl (always present):
+# it calls POSIX::setsid() and then EXECs the real command, so the pid that `$!`
+# records IS the component. argv is passed through untouched — spaces, arrays and
+# `env VAR=val` prefixes all survive, because nothing is ever re-parsed by a shell
+# (`exec { $ARGV[0] } @ARGV` is the block form, which never falls back to /bin/sh
+# even when the list has a single element).
+#
+# `exec` inside the function is LOAD-BEARING, not tidiness: every call site is
+# `_detached … >>log 2>&1 &` and then `echo $! > data/<comp>.pid`. Without exec,
+# bash's background subshell would linger as an extra frame and `$!` could name the
+# WRAPPER instead of the component, quietly breaking every pidfile in this file.
+# It also means _detached must ONLY ever be called backgrounded — calling it in the
+# foreground would replace this script. test_detached_spawn_contract.py fences both.
+#
+# nohup is kept inside the wrapper: a setsid'd process has no controlling terminal
+# and cannot receive a terminal SIGHUP anyway, but the ignore-disposition survives
+# exec for free and the redirection semantics at the call sites are unchanged.
+#
+# If setsid ever fails (it can only fail when the caller is already a process-group
+# leader — i.e. under job control, which this script never enables), we say so in a
+# sentence and launch anyway: a component that starts un-detached is strictly better
+# than a component that does not start, and the line makes it diagnosable instead of
+# silent. Guards speak in sentences.
+#
+# GRACEFUL ABSENCE. perl has shipped with every macOS to date and this harness is
+# macOS-only, so the fallback below should never fire — but "should never" is how a
+# missing dependency turns into a component that simply refuses to start with a
+# cryptic message. If perl is gone we launch the OLD way and say, in one sentence,
+# exactly what the user loses. Starting un-detached is a real regression; not
+# starting at all is a worse one.
+_detached() {   # <cmd> [args…]   — ALWAYS call as: _detached … >>log 2>&1 &
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "[harness] detach: perl is not on PATH, so this component cannot be put in its" >&2
+    echo "[harness]   own session. Starting it the old way — it will run, but quitting" >&2
+    echo "[harness]   MOT Deck or shipping may take it down with the bridge (the" >&2
+    echo "[harness]   2026-08-30 incident). Install perl to restore detachment." >&2
+    # `trap '' HUP` + exec, NOT `exec nohup "$@"`: this branch exists because the
+    # environment is already missing something it should have, so it must not lean on
+    # a SECOND external binary. (Measured: with nohup also absent the old form died as
+    # `exec: nohup: not found`, leaving a dead `$!` in the pidfile and a component that
+    # never started — a fallback that fails silently is worse than no fallback.) An
+    # ignored SIGHUP disposition survives exec, so this IS what nohup does.
+    trap '' HUP
+    exec "$@"
+  fi
+  exec nohup perl -MPOSIX -e '
+    my $s = POSIX::setsid();
+    if (!defined($s) || $s < 0) {
+      print STDERR "[harness] detach: setsid failed ($!) - this component keeps the parent process group and can still be reaped with it\n";
+    }
+    exec { $ARGV[0] } @ARGV or die "[harness] detach: cannot exec $ARGV[0]: $!\n";
+  ' -- "$@"
+}
+
+# Self-test hook for the contract suite: spawn a scratch process through the real
+# helper and report its pid, so the LIVE test can prove the session/group split and
+# then reap ONLY that pid (which it wrote itself). Never used by the harness.
+if [[ "$NAME" == "--detach-selftest" ]]; then
+  shift
+  # stderr is deliberately NOT swallowed: the helper's "setsid failed" sentence is
+  # the one thing a failing self-test needs to show, and hiding it once already
+  # turned a two-line diagnosis into an hour of guessing.
+  _detached "$@" >/dev/null &
+  echo "$!"
+  exit 0
+fi
+
 # The ONLY sanctioned way to stop a PREVIOUS instance of one of our components: the
 # pid WE recorded, whose identity is re-verified before any signal. Pids are recycled,
 # so a stale pidfile must never become a stranger's death warrant — a pid that is not
@@ -449,7 +541,7 @@ PYRESOLVE
     # be retried WITHOUT those flags instead of leaving the runner dead (spec flags
     # on a model that has no MTP heads fail the load — self-healing beats a hard stop).
     _launch_llama() {   # args: the full argv after $BIN
-      nohup "$BIN" "$@" >> data/logs/runner.log 2>&1 &
+      _detached "$BIN" "$@" >> data/logs/runner.log 2>&1 &
       echo $! > data/runner.pid
       # THE APPLIED STAMP (S32). b10662 reads --api-key-file exactly ONCE, at this
       # instant — adding a key to the file afterwards does not admit it and removing one
@@ -556,7 +648,7 @@ PYRESOLVE
     _reap_pidfile runner force
     _clear_port "$R_PORT" runner force
     sleep 1
-    nohup "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
+    _detached "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
       ${MLX_FLOOR[@]+"${MLX_FLOOR[@]}"} >> data/logs/runner.log 2>&1 &
     echo $! > data/runner.pid
     up=0
@@ -596,7 +688,7 @@ PYRESOLVE
     # pid + log use ABSOLUTE paths so the earlier '../../ from wrong cwd' bug can't recur.
     (
       cd vendor/odysseus
-      nohup python -m uvicorn app:app --host 127.0.0.1 --port 7860 >>"$ROOT/data/logs/odysseus.log" 2>&1 &
+      _detached python -m uvicorn app:app --host 127.0.0.1 --port 7860 >>"$ROOT/data/logs/odysseus.log" 2>&1 &
       echo $! > "$ROOT/data/odysseus.pid"
     )
     sleep 2
@@ -611,7 +703,7 @@ PYRESOLVE
     ROOT="$(pwd)"
     _clear_port 8080 searxng
     sleep 1
-    nohup env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
+    _detached env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
       "$ROOT/data/searxng-venv/bin/python" -m searx.webapp \
       >>"$ROOT/data/logs/searxng.log" 2>&1 &
     echo $! > "$ROOT/data/searxng.pid"
@@ -705,7 +797,7 @@ PYWIRE
     # pid + log use ABSOLUTE paths so they can never land outside the project.
     (
       cd vendor/voicestudio
-      nohup env "${VS_ENV[@]}" \
+      _detached env "${VS_ENV[@]}" \
         "$VSPY" "${VS_CMD[@]}" >>"$ROOT/data/logs/voicestudio.log" 2>&1 &
       echo $! > "$ROOT/data/voicestudio.pid"
     )
@@ -768,7 +860,7 @@ PYWIRE
     # root); pid + log use ABSOLUTE paths so they can never land outside the project.
     (
       cd vendor/voicebox
-      nohup "$VBPY" "${VB_CMD[@]}" >>"$ROOT/data/logs/voicebox.log" 2>&1 &
+      _detached "$VBPY" "${VB_CMD[@]}" >>"$ROOT/data/logs/voicebox.log" 2>&1 &
       echo $! > "$ROOT/data/voicebox.pid"
     )
     up=0
@@ -841,7 +933,7 @@ PYWIRE
     # root); pid + log use ABSOLUTE paths so they can never land outside the project.
     (
       cd vendor/comfyui
-      nohup "$CUPY" "${CU_CMD[@]}" >>"$ROOT/data/logs/comfyui.log" 2>&1 &
+      _detached "$CUPY" "${CU_CMD[@]}" >>"$ROOT/data/logs/comfyui.log" 2>&1 &
       echo $! > "$ROOT/data/comfyui.pid"
     )
     up=0
@@ -969,7 +1061,7 @@ PYWIRE
       export UNSLOTH_DISABLE_UPDATE_CHECK=1
       export UNSLOTH_STUDIO_HOME="$US_HOME"
       unset STUDIO_HOME
-      nohup "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
+      _detached "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
       echo $! > "$ROOT/data/unsloth.pid"
     )
     up=0
@@ -1063,10 +1155,16 @@ PYWIRE
       # from xdg-basedir, so these four variables are the ONLY thing keeping its
       # sessions db and the provider packages it installs at runtime (@npmcli/arborist)
       # inside data/opencode instead of ~/.config and ~/.cache.
-      XDG_CONFIG_HOME="$OC_HOME/config" XDG_CACHE_HOME="$OC_HOME/cache" \
+      # ⚠️ `VAR=val _detached …` would NOT be safe: bash's temporary-assignment
+      # prefix on a FUNCTION call sets the variables in the shell rather than
+      # reliably placing them in the exec'd program's environment, so the
+      # confinement above could silently evaporate and OpenCode would write to
+      # ~/.config after all — a silent-wrong, not a crash. `env` makes it explicit
+      # and matches how the searxng/voicestudio arms already pass their environment.
+      _detached env XDG_CONFIG_HOME="$OC_HOME/config" XDG_CACHE_HOME="$OC_HOME/cache" \
       XDG_DATA_HOME="$OC_HOME/data" XDG_STATE_HOME="$OC_HOME/state" \
       OPENCODE_DISABLE_AUTOUPDATE=1 \
-      nohup "$OC_BIN" serve --hostname 127.0.0.1 --port "$OC_PORT" \
+      "$OC_BIN" serve --hostname 127.0.0.1 --port "$OC_PORT" \
         >>"$ROOT/data/logs/opencode.log" 2>&1 &
       echo $! > "$ROOT/data/opencode.pid"
     )
@@ -1486,7 +1584,7 @@ PYLOFFICE
     # Electron app, and adds minor desktop framing to the system prompt. NOTE: if the
     # gateway is later run as a component, BOTH would fire cron (no cross-process lock)
     # → dedupe then (single ticker). See CLAUDE.md.
-    nohup env HERMES_DESKTOP=1 HERMES_DASHBOARD_SESSION_TOKEN="$HTOKEN" hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
+    _detached env HERMES_DESKTOP=1 HERMES_DASHBOARD_SESSION_TOKEN="$HTOKEN" hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
     echo $! > data/hermes.pid
     up=0
     for _ in $(seq 1 25); do

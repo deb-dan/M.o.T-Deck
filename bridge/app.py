@@ -163,6 +163,13 @@ app.mount("/assets", _WatchedStatic(directory=str(PANEL / "assets")), name="asse
 # assembles the source view in the same order, which a dozen assertions that slice
 # BETWEEN two neighbouring routes depend on.
 _LANES = (
+    # core.singleton — the one-bridge-per-root guard (2026-08-30 incident). It is
+    # imported by core.appctx before anything else runs, and is listed FIRST here for
+    # the same reason it is first in appsrc.FILES. Registered in BOTH tuples on the
+    # day it was created: a module missing from THIS one is unreachable through the
+    # facade (the suite's ~1000-name reachability check catches it), and one missing
+    # from appsrc.FILES makes every `not in` source assertion about it pass vacuously.
+    "core.singleton",
     "core.appctx",
     "core.procs",
     "routers.panel",

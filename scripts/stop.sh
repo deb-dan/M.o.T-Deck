@@ -35,8 +35,13 @@ for pidfile in data/*.pid; do
   rm -f "$pidfile"
 done
 
-# The bridge has no pidfile: the app spawns it as its own child and stops what it
-# started. Reap only a listener on OUR bridge port whose command line names this tree.
+# THE BRIDGE NOW HAS A PIDFILE (2026-08-30): it writes data/bridge.pid itself at boot
+# (bridge/core/singleton.py), so the `data/*.pid` loop above already stops it by the
+# same identity-verified rule as every component — and does so first, which is safe
+# precisely because components no longer share the bridge's process group.
+# This listener sweep stays as the fallback for a bridge started before that shipped
+# (no pidfile) or one whose pidfile was lost to a SIGKILL. Reap only a listener on OUR
+# bridge port whose command line names this tree; a stranger is left alone.
 BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml 2>/dev/null || true)
 [[ "$BR_PORT" =~ ^[0-9]+$ ]] || BR_PORT=8700
 for pid in $(lsof -ti tcp:"$BR_PORT" -sTCP:LISTEN 2>/dev/null); do

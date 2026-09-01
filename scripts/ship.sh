@@ -19,8 +19,13 @@
 #      (NEVER harness.yaml or data/ — those hold live state)
 #   2. if app/main.swift is newer than the installed app binary → recompile the
 #      Swift shell in place + ad-hoc re-sign (no full fat rebuild)
-#   3. quit the app, kill the :8700 bridge LISTENER (components stay up),
-#      relaunch, wait for the bridge, print a sanity check
+#   3. quit the app, stop the OLD bridge (data/bridge.pid first, identity always),
+#      start the NEW bridge in its OWN SESSION, wait for it, then relaunch the app
+#      and print a sanity check.
+#      "COMPONENTS STAY UP" IS NOW TRUE, AND WAS NOT BEFORE (2026-08-30 incident):
+#      every component is spawned setsid'd by scripts/start_component.sh, so no
+#      teardown of the app, the bridge or this script can reach them by process
+#      group. Before the fix this line was a promise the script could not keep.
 #   4. optionally restart named COMPONENTS from the snapshot (--restart)
 set -euo pipefail
 
@@ -274,13 +279,47 @@ for _pid in $(_ship_app_pids); do
   kill "$_pid" 2>/dev/null || true
 done
 sleep 1
+# ── REAPING THE OLD BRIDGE: PIDFILE FIRST, IDENTITY ALWAYS ────────────────────
+# The bridge writes data/bridge.pid at boot (bridge/core/singleton.py), so the pid we
+# stop is the one that ANNOUNCED itself as this harness's bridge — the same standard
+# start_component.sh's _reap_pidfile already holds for components. The :8700 listener
+# is still consulted, because a bridge started before that shipped wrote no pidfile,
+# but a listener is only ever signalled when its FULL command line verifies as ours
+# (this snapshot's or this repo's venv python running `uvicorn bridge.app:app`).
+# Anything else stops the ship with the honest reason. Nothing is killed by name and
+# no port is ever cleared blind (CLAUDE.md PROCESS-KILL RULE).
+_bridge_cmd_is_ours() {   # <command line>
+  local c="$1"
+  [[ -z "$c" ]] && return 1
+  [[ "$c" == *"uvicorn"* && "$c" == *"bridge.app:app"* ]] || return 1
+  [[ "$c" == *"$DST/data/bridge-venv/bin/python"* || "$c" == *"$ROOT/data/bridge-venv/bin/python"* ]]
+}
+_bridge_stop() {   # <pid> <why>
+  local pid="$1" why="$2" c
+  c="$(ps -o command= -p "$pid" 2>/dev/null | tr '\n' ' ')"
+  if _bridge_cmd_is_ours "$c"; then
+    echo "[ship] stopping the previous bridge, pid $pid ($why, identity verified)"
+    kill "$pid" 2>/dev/null || true       # SIGTERM: --timeout-graceful-shutdown bounds it
+    for _ in $(seq 1 12); do kill -0 "$pid" 2>/dev/null || return 0; sleep 1; done
+    echo "[ship] bridge pid $pid ignored SIGTERM for 12s — SIGKILL (still identity verified)"
+    kill -9 "$pid" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+_BPF="$DST/data/bridge.pid"
+if [[ -f "$_BPF" ]]; then
+  _bpid="$(tr -cd '0-9' < "$_BPF" 2>/dev/null || true)"
+  if [[ -n "$_bpid" ]] && kill -0 "$_bpid" 2>/dev/null; then
+    _bridge_stop "$_bpid" "data/bridge.pid" \
+      || echo "[ship] data/bridge.pid names pid $_bpid, which is not this harness's bridge — leaving it alone."
+  fi
+  rm -f "$_BPF"
+fi
 for _pid in $(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null); do
   _cmd="$(ps -o command= -p "$_pid" 2>/dev/null | tr '\n' ' ')"
   [[ -z "$_cmd" ]] && continue            # vanished between the probe and the check
-  # our bridge is "<root>/data/bridge-venv/bin/python -m uvicorn bridge.app:app"
-  if [[ "$_cmd" == *"$DST"* || "$_cmd" == *"$ROOT"* ]]; then
-    kill -9 "$_pid" 2>/dev/null || true
-  else
+  if ! _bridge_stop "$_pid" "the :8700 listener, no pidfile"; then
     echo "[ship] REFUSING to ship: :8700 is held by pid $_pid, which is not this harness:"
     echo "[ship]   $_cmd"
     echo "[ship]   Stop that process yourself, then re-run ./scripts/ship.sh."
@@ -288,6 +327,41 @@ for _pid in $(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null); do
   fi
 done
 sleep 1
+
+# ── SHIP LAUNCHES THE BRIDGE, DETACHED, BEFORE THE APP ────────────────────────
+# Two reasons, both from the 2026-08-30 incident:
+#   · OWN SESSION. A bridge in ship.sh's process group would be reaped along with
+#     this script by anything that tears down the agent/terminal process tree —
+#     the same class of bug that killed the components. setsid via perl, exactly as
+#     scripts/start_component.sh's _detached does it (macOS has no setsid binary).
+#   · IT SETTLES THE RACE. app/main.swift only spawns a bridge when :8700 is NOT
+#     already answering. By starting one here and WAITING for it before `open`, the
+#     app always finds a live bridge, never spawns its own, and its
+#     applicationWillTerminate therefore has nothing of ours to terminate — so
+#     "components stay up" in this script's header is now true of the bridge too.
+#     If this launch somehow fails, the app still spawns its own bridge on the old
+#     path and the singleton guard keeps exactly one of them alive: the app always
+#     ends up with a working :8700 either way.
+echo "[ship] starting the snapshot bridge (own session, detached from this script)"
+(
+  cd "$DST"
+  nohup perl -MPOSIX -e '
+    my $s = POSIX::setsid();
+    if (!defined($s) || $s < 0) {
+      print STDERR "[ship] detach: setsid failed ($!) - the bridge keeps this script s process group\n";
+    }
+    exec { $ARGV[0] } @ARGV or die "[ship] detach: cannot exec $ARGV[0]: $!\n";
+  ' -- "$DST/data/bridge-venv/bin/python" -m uvicorn bridge.app:app \
+        --host 127.0.0.1 --port 8700 --timeout-graceful-shutdown 10 \
+    >>"$DST/data/logs/bridge.log" 2>&1 &
+  # No pidfile is written here on purpose: the bridge records its OWN pid in
+  # data/bridge.pid as its first act (bridge/core/singleton.py), which is the pid a
+  # later ship must reap. A pidfile written from outside could name a wrapper.
+)
+for _ in $(seq 1 60); do
+  curl -sf -m 2 http://127.0.0.1:8700/api/status >/dev/null 2>&1 && break
+  sleep 1
+done
 open "$APP"
 
 # 90s, not 30: a cold snapshot bridge (imports + registry read) can legitimately

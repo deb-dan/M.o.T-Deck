@@ -48,6 +48,10 @@ BRIDGE = Path(__file__).resolve().parent
 # is second because what remains of it — the /assets subclass and its mount — sat at
 # 156-219; and so on down. `python -m bridge.appsrc` prints the boundaries.
 FILES: tuple[str, ...] = (
+    # core/singleton.py sits FIRST because it runs first: appctx.py calls its
+    # claim_or_exit() at import, before uvicorn binds, so a bridge that is going to
+    # stand down does so before touching anything (2026-08-30 incident).
+    "core/singleton.py",
     "core/appctx.py",
     "app.py",
     "core/procs.py",

@@ -3348,8 +3348,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         guard FileManager.default.isExecutableFile(atPath: py) else { return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: py)
+        // --timeout-graceful-shutdown: THE ZOMBIE-BRIDGE FIX (2026-08-30 incident,
+        // second find). On SIGTERM uvicorn closes the LISTENING socket immediately and
+        // then waits — with no default deadline — for every in-flight response to
+        // finish. /api/events is an infinite text/event-stream, so a single client
+        // holding one (measured: the Claude desktop app, across two separate bridges)
+        // makes that wait eternal. The result was bridges with no listening socket that
+        // never exited: they kept their health poller running and kept appending to
+        // data/logs/bridge.log while a NEW bridge owned the port. Three were alive at
+        // once. Ten seconds is generous for a real request and finite for a stream.
         p.arguments = ["-m", "uvicorn", "bridge.app:app",
-                       "--host", "127.0.0.1", "--port", "8700"]
+                       "--host", "127.0.0.1", "--port", "8700",
+                       "--timeout-graceful-shutdown", "10"]
         p.currentDirectoryURL = URL(fileURLWithPath: resolvedRoot)
         let log = FileHandle(forWritingAtPath: logPath()) ?? FileHandle.nullDevice
         log.seekToEndOfFile()
