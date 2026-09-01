@@ -122,6 +122,12 @@ FILES: tuple[str, ...] = (
     # assertions are the ones that matter most (no key value in /api/status, no key
     # value in any log line) — exactly the ones that would pass vacuously.
     "routers/apikeys.py",
+    # QUIT EVERYTHING (U55, 2026-09-02), appended by the same rule, and registered here
+    # the moment it was created for the reason above — with extra force. This lane's
+    # fences are almost all NEGATIVE (no pkill, no killall, no name match, no second
+    # implementation of a stop), and a module missing from this view makes every one of
+    # them pass vacuously, forever, on the one route in the app that ends processes.
+    "routers/quitall.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

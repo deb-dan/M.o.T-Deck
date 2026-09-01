@@ -3425,6 +3425,186 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         decisionHandler(type == .camera ? .deny : .grant)
     }
 
+    // ══ QUIT EVERYTHING (U55 — Debi's ruling, 2026-09-02) ════════════════════
+    //
+    // BOTH DOORS. ⌘Q ("Quit MOT Deck") is UNCHANGED and stays the default: since
+    // v1.5.69 the bridge and every component are setsid'd out of the app's process
+    // group on purpose, so closing the window leaves the stack serving and reopening
+    // the app reuses it. ⌥⌘Q is the second door — the one Debi asked for — and it means
+    // exactly what it says: every component down, the bridge down, then the app.
+    //
+    // THE HONESTY RULES THIS UI OBEYS, all three of which are the same rule:
+    //   · the confirmation NAMES what is running, read live from /api/quitall/plan,
+    //     because "this will stop everything" is a sentence the user cannot check;
+    //   · the app does NOT vanish on a partial stop. If the bridge answers 409 the
+    //     failures are shown, the app stays open, and quitting anyway is a second,
+    //     explicitly-labelled choice — a quit that leaves orphans behind a closed door
+    //     is worse than one that refuses, because nothing is left to see them from;
+    //   · losing contact mid-quit is reported as UNKNOWN, not as success.
+    //
+    // ⚠️ NSAlert, not confirm(). alert()/confirm() are silent no-ops in this WKWebView
+    // shell — a panel-side confirm would return instantly and always false.
+    var quitAllSheet: NSWindow?
+    // ⚠️ ONE AT A TIME (adversarial pass, 2026-09-02). ⌥⌘Q twice in a second — an
+    // impatient second press while the first sweep is still working — used to stack a
+    // second confirmation ON TOP of the progress sheet and fire a second POST. The
+    // bridge now refuses the overlap with a 409, but the app must not put the user in
+    // front of that dialog at all: the honest answer to "quit again" while quitting is
+    // to do nothing.
+    var quitAllInFlight = false
+
+    /// GET /api/quitall/plan → the component names currently running, or nil when the
+    /// bridge does not answer (which is itself a valid, and quiet, outcome).
+    func quitAllPlan(_ done: @escaping ([String]?) -> Void) {
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/quitall/plan"))
+        req.timeoutInterval = 2.5
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let running = obj["running"] as? [String] else { return done(nil) }
+            done(running)
+        }.resume()
+    }
+
+    @objc func quitEverything(_ sender: Any?) {
+        if quitAllInFlight { NSSound.beep(); return }
+        quitAllInFlight = true
+        quitAllPlan { running in
+            DispatchQueue.main.async { self.confirmQuitEverything(running) }
+        }
+    }
+
+    func confirmQuitEverything(_ running: [String]?) {
+        let a = NSAlert()
+        a.alertStyle = .warning
+        guard let running = running else {
+            // No bridge to ask. Nothing of ours is being supervised, so this is just a
+            // quit — said plainly rather than pretending a stop happened.
+            a.messageText = "Quit MOT Deck?"
+            a.informativeText = "The bridge on 127.0.0.1:8700 is not answering, so there "
+                + "is nothing running for MOT Deck to stop. The app will just close."
+            a.addButton(withTitle: "Quit")
+            a.addButton(withTitle: "Cancel")
+            if a.runModal() == .alertFirstButtonReturn { NSApp.terminate(nil) }
+            quitAllInFlight = false
+            return
+        }
+        a.messageText = "Quit MOT Deck and stop everything?"
+        if running.isEmpty {
+            a.informativeText = "Nothing is running right now. MOT Deck will stop the "
+                + "bridge and close.\n\nPlain ⌘Q leaves the bridge running instead."
+        } else {
+            a.informativeText = "This stops \(running.count) running "
+                + (running.count == 1 ? "process" : "processes") + ", then the bridge, "
+                + "then the app:\n\n    " + running.joined(separator: "\n    ")
+                + "\n\nModels are unloaded and anything mid-flight is ended. "
+                + "Plain ⌘Q leaves all of it running instead."
+        }
+        a.addButton(withTitle: "Quit Everything")
+        a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else {
+            quitAllInFlight = false          // Cancel leaves the stack, and the menu, alone
+            return
+        }
+        performQuitEverything(running)
+    }
+
+    /// The honest progress surface. Indeterminate on purpose: the bridge stops
+    /// components sequentially and a fake percentage would be the only lie here.
+    func showQuitAllSheet(_ running: [String]) {
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 118),
+                         styleMask: [.titled], backing: .buffered, defer: false)
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.title = "Quitting everything"
+        let v = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 118))
+        let label = NSTextField(labelWithString:
+            running.isEmpty ? "Stopping the bridge…"
+                            : "Stopping \(running.count) "
+                              + (running.count == 1 ? "process" : "processes") + "…")
+        label.frame = NSRect(x: 24, y: 62, width: 392, height: 20)
+        let sub = NSTextField(labelWithString:
+            running.isEmpty ? "" : running.joined(separator: ", "))
+        sub.frame = NSRect(x: 24, y: 40, width: 392, height: 18)
+        sub.textColor = .secondaryLabelColor
+        sub.lineBreakMode = .byTruncatingTail
+        sub.font = NSFont.systemFont(ofSize: 11)
+        let spin = NSProgressIndicator(frame: NSRect(x: 24, y: 14, width: 392, height: 16))
+        spin.style = .bar
+        spin.isIndeterminate = true
+        spin.startAnimation(nil)
+        v.addSubview(label); v.addSubview(sub); v.addSubview(spin)
+        w.contentView = v
+        quitAllSheet = w
+        if let host = window, host.isVisible {
+            host.beginSheet(w, completionHandler: nil)
+        } else {
+            w.center(); w.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func hideQuitAllSheet() {
+        guard let w = quitAllSheet else { return }
+        if let host = window, host.isVisible, host.attachedSheet === w {
+            host.endSheet(w)
+        }
+        w.orderOut(nil)
+        quitAllSheet = nil
+    }
+
+    func performQuitEverything(_ running: [String]) {
+        showQuitAllSheet(running)
+        var req = URLRequest(url: bridgeURL.appendingPathComponent("api/quitall"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = "{}".data(using: .utf8)
+        // Generous: the bridge gives each component up to ~1.5s of settle time and there
+        // can be eleven of them, and a wedged model server can take longer still. A
+        // timeout shorter than the work is a false "lost contact".
+        req.timeoutInterval = 180
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let obj = data.flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? nil
+            DispatchQueue.main.async {
+                self.hideQuitAllSheet()
+                if code == 200, let obj = obj, (obj["ok"] as? Bool) == true {
+                    NSApp.terminate(nil)                      // everything really is down
+                    return
+                }
+                let b = NSAlert()
+                b.alertStyle = .critical
+                if obj == nil || code == 0 {
+                    // ⚠️ NOT reported as success. The bridge exits ~1.2s after answering,
+                    // so a dropped connection here is genuinely ambiguous: it may have
+                    // stopped everything and gone, or it may have died mid-sweep.
+                    b.messageText = "Lost contact with the bridge while quitting"
+                    b.informativeText = "MOT Deck did not get an answer"
+                        + (err.map { " (\($0.localizedDescription))" } ?? "")
+                        + ". Some components may still be running.\n\n"
+                        + "Check from Terminal:\n"
+                        + "    curl -s 127.0.0.1:8700/api/status\n"
+                        + "    lsof -ti tcp:6767 -sTCP:LISTEN"
+                } else {
+                    let lines = (obj?["sentences"] as? [String]) ?? []
+                    let failed = (obj?["failed"] as? [String]) ?? []
+                    b.messageText = failed.isEmpty
+                        ? "Quit Everything did not finish"
+                        : "Still running: " + failed.joined(separator: ", ")
+                    b.informativeText = (lines.isEmpty ? "The bridge refused the quit."
+                                                       : lines.joined(separator: "\n"))
+                        + "\n\nThe bridge was left running on purpose, so you can still "
+                        + "see and stop these from Mission Control."
+                }
+                b.addButton(withTitle: "Stay Open")
+                b.addButton(withTitle: "Quit MOT Deck Anyway")
+                if b.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil) }
+                // Staying open must leave ⌥⌘Q usable — the user's next move after
+                // reading which component refused is very often to try again.
+                self.quitAllInFlight = false
+            }
+        }.resume()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if spawnedBridge { bridgeProcess?.terminate() }   // only stop what we started
     }
@@ -3447,7 +3627,28 @@ let appMenu = NSMenu()
 let reloadItem = NSMenuItem(title: "Reload Tab", action: #selector(AppDelegate.reloadTab(_:)), keyEquivalent: "r")
 reloadItem.target = delegate
 appMenu.addItem(reloadItem)
+appMenu.addItem(NSMenuItem.separator())
+// ⌘Q — UNCHANGED, and deliberately still the plain quit (v1.5.69 behaviour: the bridge
+// and every component keep serving; reopening the app reuses them).
 appMenu.addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+// ⌥⌘Q — THE SECOND DOOR (U55, Debi 2026-09-02: "i think we should have an option that
+// fully quits everything too"). Right next to the plain quit, because that is where a
+// user looks for it, and one modifier away, because it is the same intent with a bigger
+// blast radius.
+//
+// ⌥⌘Q WAS CHECKED AGAINST EVERY BINDING THIS APP AND THE PANEL OWN, the same way ⌘⇧T
+// was: ⌘R (Reload Tab), ⌘Q (this menu), ⌘C/⌘V/⌘A (Edit), ⌘⇧T (View → tab strip), and
+// ⌘K (command palette) + ⌘\ (sidebar) inside the panel. Unclaimed.
+// ⚠️ AND ⇧⌘Q WAS REJECTED, not merely not-chosen: ⇧⌘Q is macOS's own LOG OUT shortcut.
+// Binding an app action to it means a user reaching for Quit Everything sometimes logs
+// out of the Mac instead — the worst kind of near-miss, since it takes everything else
+// with it.
+let quitAllItem = NSMenuItem(title: "Quit Everything (stop all components)",
+                             action: #selector(AppDelegate.quitEverything(_:)),
+                             keyEquivalent: "q")
+quitAllItem.keyEquivalentModifierMask = [.command, .option]
+quitAllItem.target = delegate
+appMenu.addItem(quitAllItem)
 appItem.submenu = appMenu
 let editItem = NSMenuItem()
 mainMenu.addItem(editItem)

@@ -182,6 +182,12 @@ if [[ -d "$ROOT/docs" ]]; then
 fi
 
 # Swift shell: recompile only when main.swift is newer than the installed binary.
+# ⚠️ PENDING FABLE QA — ops-path edit (this block and the app-mark block below,
+# 2026-09-02). _RESIGN replaces the codesign call that used to sit INSIDE the swiftc
+# branch: the bundle's ad-hoc signature covers Contents/Resources as well as the binary,
+# so REPLACING THE .icns invalidates it exactly as replacing the binary does. One
+# re-sign after both branches is the only version of this that cannot go stale.
+_RESIGN=0
 if [[ "$ROOT/app/main.swift" -nt "$APP/Contents/MacOS/Harness" ]]; then
   echo "[ship] main.swift changed → recompiling the shell"
   if [[ ! -f "$ROOT/app/Config.swift" ]]; then
@@ -192,7 +198,69 @@ let fatBuild = true
 EOF
   fi
   swiftc -O "$ROOT/app/main.swift" "$ROOT/app/Config.swift" -o "$APP/Contents/MacOS/Harness"
+  _RESIGN=1
+fi
+
+# ── THE APP MARK ("M.O.T", 2026-09-02) ────────────────────────────────────────
+# WHY SHIP.SH CARRIES THE ICON AND scripts/build_app.sh IS NOT ENOUGH. build_app.sh
+# builds the icon from app/icon.png with ten `sips -z` downscales, and it only runs on a
+# FULL fat rebuild — which is not what a normal slice does. ship.sh is THE way code
+# reaches the app, so a mark that only build_app.sh installs is a mark that reverts to
+# whatever the last fat build produced and then never updates again. And the downscale
+# path cannot produce this mark anyway: "M.O.T" box-filtered to 16px is five smudges and
+# the two periods are the first pixels a downscaler discards. So app/Harness.icns is
+# drawn PER SIZE by app/make_icon.swift (the wordmark at ≥64px, a matching "M" at ≤32px)
+# and committed — copying that committed file is both the fix and the reason there is a
+# file to copy.
+_ICON_CHANGED=0
+if [[ -f "$ROOT/app/Harness.icns" ]]; then
+  if ! cmp -s "$ROOT/app/Harness.icns" "$APP/Contents/Resources/Harness.icns"; then
+    echo "[ship] app mark changed → installing app/Harness.icns"
+    cp "$ROOT/app/Harness.icns" "$APP/Contents/Resources/Harness.icns"
+    # CFBundleIconFile: Set if the key is there, Add if it is not. Both best-effort — a
+    # bundle whose Info.plist we cannot edit still gets the new .icns, and the key has
+    # been present since build_app.sh first wrote it.
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Harness" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Harness" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+      || echo "[ship] WARN: could not set CFBundleIconFile — the new .icns is installed but may not be read"
+    _ICON_CHANGED=1
+    _RESIGN=1
+  fi
+fi
+
+if [[ "$_RESIGN" -eq 1 ]]; then
   codesign --force --sign - "$APP"
+fi
+
+if [[ "$_ICON_CHANGED" -eq 1 ]]; then
+  # ⚠️ THE ICON CACHE, AND WHY IT IS NOT A `killall`. macOS caches a bundle's icon and
+  # will keep showing the OLD tile in the Dock and in Finder for an unbounded time after
+  # the .icns changes, so a new mark that nobody can see is the default outcome. Three
+  # supported steps, in order:
+  #   1. `touch` the bundle — invalidates the cache entry keyed on its mtime;
+  #   2. lsregister -f — asks Launch Services to re-read this ONE bundle (not the whole
+  #      machine: `lsregister -kill -r` rebuilds every app's registration and can take
+  #      minutes; a ship has no business doing that);
+  #   3. launchctl kickstart -k on com.apple.Dock.agent — launchd's OWN restart of the
+  #      Dock, addressed by SERVICE NAME in the user's GUI domain.
+  #
+  # ⛔ Debi authorised "killall Dock" for this (2026-09-02: "Dock restart is allowed,
+  # it's the system Dock refresh idiom"). It is deliberately NOT what this does. The
+  # PROCESS-KILL RULE's contract test (bridge/contract_tests/test_no_name_kills_contract.py)
+  # bans `killall` from every shell file here with no exception list, and the right answer
+  # to a banned-by-name pattern is not an exception — it is the supported call that does
+  # not need one. `launchctl kickstart` asks launchd to restart a service it owns; it
+  # never enumerates processes, never matches a name against `ps`, and cannot hit a
+  # standalone app of Debi's the way `killall` can. Same effect, inside the rule.
+  #
+  # All three are fenced to fire ONLY when the mark actually changed, so a routine ship
+  # touches none of them.
+  echo "[ship] refreshing the icon cache (touch + lsregister -f + Dock kickstart)"
+  touch "$APP"
+  _LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  [[ -x "$_LSREG" ]] && "$_LSREG" -f "$APP" >/dev/null 2>&1 || true
+  launchctl kickstart -k "gui/$(id -u)/com.apple.Dock.agent" >/dev/null 2>&1 \
+    || echo "[ship] note: the Dock did not reload — log out/in, or run: launchctl kickstart -k gui/\$(id -u)/com.apple.Dock.agent"
 fi
 
 # harness.yaml is NEVER copied wholesale (the snapshot's copy holds LIVE state:

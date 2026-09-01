@@ -267,6 +267,12 @@ _LANES = (
     # new, it separates no pair of neighbours, and it costs only where /api/apikeys*
     # and /api/apilog appear.
     "routers.apikeys",
+    # …and QUIT EVERYTHING (U55, Debi's both-doors ruling 2026-09-02) by the SAME rule, a
+    # ninth time: new, it separates no pair of neighbours, and it costs only where
+    # /api/quitall and /api/quitall/plan appear in /openapi.json. ⚠️ It imports
+    # routers.components — the ONE identity-verified stop path, which it must never
+    # reimplement — so it stays AFTER that lane here as well as on disk.
+    "routers.quitall",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
