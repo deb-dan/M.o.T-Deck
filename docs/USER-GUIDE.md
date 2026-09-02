@@ -4,6 +4,14 @@
 > (Both were renamed on 2026-08-21; older text may still say "the harness" and
 > "Mission Control" — same thing.)
 
+> **⟳ STALE (as of v1.5.72, 2026-09-02):** the "one window with three tabs" tour below
+> describes an early state. The app now runs nine components on Mission Control (Bridge,
+> runner, Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode)
+> plus Goose (two lanes), LOffice, Music/Compose, and a sidebar API page — see
+> `docs/USER-EXPLAINERS.md` for the current, per-feature guide (it is what the in-app
+> Help view serves) and `docs/ROADMAP.md` for what's shipped and what's next. This file
+> is kept for its still-accurate general framing but is not reliable for specifics below.
+
 Everything here runs on your Mac. The models, the conversations, the search engine,
 the files — all of it lives on your disk and answers to you. This guide is organized
 around what you'll want to do, not around how the software is built. Read the first

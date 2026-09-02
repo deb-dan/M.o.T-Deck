@@ -7,10 +7,14 @@
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 This is the original v0.1 design (2026-07-10). It remains the best statement of *intent*; the built
-system has moved past it. **Authoritative today: `docs/HARNESS-INTERNALS.md`** (code-derived —
-ports, the two builds + snapshot rule, `harness.yaml` keys, the four chat lanes, session stores,
-models/registry, path-guard, endpoint index, ops gotchas, install footprint, test index), with
-decisions and dated history in `CLAUDE.md` and the user-facing view in `docs/USER-GUIDE.md`.
+system has moved past it — far more than "Next" below suggests (voice/goose/comfy/office/music
+surfaces, isolation ladder, local API, and much more have since shipped; see
+`docs/ROADMAP.md` for the current done/next picture). **Authoritative today:
+`docs/HARNESS-INTERNALS.md`** (code-derived — ports, the two builds + snapshot rule,
+`harness.yaml` keys, the four chat lanes, session stores, models/registry, path-guard, endpoint
+index, ops gotchas, install footprint, test index), with decisions and dated history in
+`CLAUDE.md`, the deferred-work ledger in `docs/UNFORGET.md`, and the user-facing view in
+`docs/USER-EXPLAINERS.md`.
 
 Corrections and deltas:
 

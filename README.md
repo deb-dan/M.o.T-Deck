@@ -7,20 +7,31 @@
 > other path/key stay exactly as they are. Older text below says "Harness" for the
 > product; read it as MOT Deck.
 
-## ⟳ STATE UPDATE — 2026-08-07
+## ⟳ STATE UPDATE — 2026-09-02 (v1.5.72)
 
 This README describes the early scaffold. Current reality, in order of authority:
-**`CLAUDE.md`** (working memory), **`docs/HARNESS-INTERNALS.md`** (code-derived system reference),
-**`docs/USER-GUIDE.md`** (how to use it).
+**`CLAUDE.md`** (working memory), **`docs/ROADMAP.md`** (what's done / in progress / next),
+**`docs/UNFORGET.md`** (the deferred-work ledger — every paused plan, audit finding, and
+user-reported issue), **`docs/HARNESS-INTERNALS.md`** (code-derived system reference),
+**`docs/USER-GUIDE.md`** / **`docs/USER-EXPLAINERS.md`** (how to use it).
 
-- Components today: **Bridge** :8700 · **runner** :6767 (llama.cpp `b10295` for GGUF, Apple MLX for
-  mlx models) · optional **aux runner** :6768 · **Hermes** `v2026.7.30` :9119 · **Odysseus**
-  `25c9e73` :7860 · **SearXNG** :8080. Jan was removed in July 2026; the **gearbox is shelved**
+- Nine live components on Mission Control: **Bridge** :8700 (our own code — control panel, panel
+  UI, all lifecycle/model/chat plumbing) · **runner** :6767 (llama.cpp for GGUF, Apple MLX for mlx
+  models) · optional **aux runner** :6768 · **Hermes** :9119 · **Odysseus** :7860 · **SearXNG**
+  :8080 · **VoiceStudio** · **Voicebox** · **ComfyUI** · **Unsloth** · **OpenCode**. Alongside
+  these: **Goose** as two coexisting lanes (Goose CLI over a PTY, Goose UI embedding upstream's
+  own desktop renderer), and **LOffice** (ONLYOFFICE, one editor for .xlsx/.docx/.pptx with its
+  own AI plugin wired into the ribbon). Jan was removed in July 2026; the **gearbox is shelved**
   (local-only) and `bridge/gearbox.py` / `policies/routing.yaml` are historical.
+- Local API access: mintable/revocable API keys any app's own Add-Provider form can consume, plus
+  a sidebar-only API page (base URL, status, route catalogue, request log).
+- **⌥⌘Q "Quit Everything"** stops every component identity-verified, then the bridge, then the
+  app; plain **⌘Q "Quit MOT Deck"** leaves the stack running so reopening reuses it instantly.
 - Two app builds: `./scripts/build_app.sh` (lean dev app — serves this repo live) and
-  `./scripts/build_app.sh --fat` (offline installer + `.dmg` — serves a provisioned snapshot at
-  `~/Library/Application Support/Harness`). **Standing ops rule: all code ships via
-  `./scripts/ship.sh`** — the fat app will otherwise serve stale code (HARNESS-INTERNALS §3).
+  `./scripts/build_app.sh --fat` (offline installer + a fat `.dmg` at `dist/` — serves a
+  provisioned snapshot at `~/Library/Application Support/Harness`). **Standing ops rule: all
+  code ships via `./scripts/ship.sh`** — the fat app will otherwise serve stale code
+  (HARNESS-INTERNALS §3).
 - `guards/harness-path-guard/` is a Hermes plugin (seeded into `~/.hermes/plugins/` on start) that
   fences the agent's `write_file`/`patch` calls; `bridge/tests/` + `bridge/contract_tests/` are the
   test and pin-bump suites.

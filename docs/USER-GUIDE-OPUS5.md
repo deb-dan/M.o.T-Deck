@@ -3,6 +3,11 @@
 > Renamed 2026-08-21: the app is **MOT Deck** (*Mixture of Tools*), its home screen
 > **MOT Main**. Older text below may say "Harness" / "Mission Control" — same thing.
 
+> **⟳ STALE (as of v1.5.72, 2026-09-02):** written before Goose, LOffice, Music/Compose,
+> the local API page, and several other components/surfaces existed. See
+> `docs/USER-EXPLAINERS.md` for the current per-feature guide (what in-app Help serves)
+> and `docs/ROADMAP.md` for what's shipped and what's next.
+
 A plain-language guide to using the app. No setup knowledge required.
 
 ---

@@ -1,5 +1,19 @@
 # New Harness — working memory (canonical project home)
 
+> **📍 CURRENT STATE (2026-09-02, v1.5.72) — supersedes the "2026-08-28, v1.5.12" banner
+> below for anything about what's shipped.** Full reader-facing status (done / in
+> progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
+> `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
+> isolation ladder landed for Odysseus/Hermes/goose (CLI+UI)/OpenCode; registry truth +
+> rescan (S29); the post-switch coherence wave (S28); local API keys + a sidebar API page
+> (S32); Generate/Compose rebuilt (Patchbay/Spectrum); goose session continuity + a
+> per-chat delete; the process-group detachment fix so components survive an app quit
+> (U52); ⌥⌘Q "Quit Everything" alongside plain ⌘Q (U55); the M.O.T app icon; a runner
+> pidfile fix (U54) and a stale-Failed-card fix (U60). Two rows are being fixed in-flight
+> as this banner is written: U56 (version tile shows 0.1.0) and U64 (Python-side pkill
+> purge). Read `docs/ROADMAP.md` for the full picture before treating the older banners
+> below as current.
+
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
 
 > **⚖️ ADVISORY-GATES RULING (Debi, 2026-08-28): RAM/resource gates WARN AND RECOMMEND,
