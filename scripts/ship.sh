@@ -154,6 +154,20 @@ for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
 
+# ── VERSION: the release number the app now READS (U56, 2026-09-02) ───────────
+# Until this line the top-level VERSION file was copied by exactly one thing — the FAT
+# SEED in build_app.sh — which runs on a full rebuild and not on a slice. So the moment
+# the bridge started reading ROOT/VERSION (bridge/core/procs.py::harness_version), the
+# snapshot's copy would have frozen at whatever release last rebuilt the DMG and the
+# tile would have gone on lying with a different number. ship.sh is THE way code reaches
+# the app, so the number that names that code ships with it.
+# Absence is honest, not fatal: the bridge reads a missing VERSION as "unknown" with a
+# sentence, so a copy that cannot happen must not stop a ship.
+if [[ -f "$ROOT/VERSION" ]]; then
+  cp "$ROOT/VERSION" "$DST/VERSION" \
+    || echo "[ship] WARN: could not copy VERSION — the app's Version tile will read stale"
+fi
+
 # ── the TOP-LEVEL docs/*.md, and only those ───────────────────────────────────
 # ⚠️ PENDING FABLE QA — ops-path edit, flagged rather than assumed, per the note above.
 #
@@ -212,7 +226,10 @@ fi
 # drawn PER SIZE by app/make_icon.swift (the wordmark at ≥64px, a matching "M" at ≤32px)
 # and committed — copying that committed file is both the fix and the reason there is a
 # file to copy.
-_ICON_CHANGED=0
+# _MARK_CHANGED covers BOTH halves of the app's identity — the icon below and the
+# display name after it — because both need the same Launch Services / Dock refresh at
+# the end, and a ship that changed only one of them still has to do it.
+_MARK_CHANGED=0
 if [[ -f "$ROOT/app/Harness.icns" ]]; then
   if ! cmp -s "$ROOT/app/Harness.icns" "$APP/Contents/Resources/Harness.icns"; then
     echo "[ship] app mark changed → installing app/Harness.icns"
@@ -223,20 +240,68 @@ if [[ -f "$ROOT/app/Harness.icns" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Harness" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
       || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Harness" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
       || echo "[ship] WARN: could not set CFBundleIconFile — the new .icns is installed but may not be read"
-    _ICON_CHANGED=1
+    _MARK_CHANGED=1
     _RESIGN=1
   fi
+fi
+
+# ── THE APP NAME: THE DOCK MUST SAY "M.O.T" (Debi, 2026-09-02) ────────────────
+# "the dock hover shows Harness — i think it should show M.O.T".
+#
+# WHERE THE NAME COMES FROM. The Dock's hover label is Launch Services' display name
+# for the bundle (`lsappinfo info -only name <asn>` prints exactly it). LS resolves it
+# as: a LOCALIZED name from Contents/Resources/<lang>.lproj/InfoPlist.strings, else
+# CFBundleDisplayName, else the .app FILENAME. The installed bundle had neither key —
+# its CFBundleName even still said "Harness", predating build_app.sh's "MOT Deck" — so
+# the filename won by default and hover read "Harness".
+#
+# ⛔ THE BUNDLE IS *NOT* RENAMED, and that is a decision, not laziness: ship.sh,
+# stop.sh, the pidfiles, the `osascript -e 'quit app "Harness"'` recipe in CLAUDE.md and
+# Debi's own muscle memory all point at /Applications/Harness.app. Renaming the path is
+# a separate slice with its own blast radius. A display name changes what is SHOWN
+# without moving anything.
+#
+# WHY IT IS HERE AND NOT ONLY IN build_app.sh: same reason as the icon above — ship.sh
+# is THE way code reaches the app, and build_app.sh only runs on a full fat rebuild.
+# Idempotent: the block is a no-op once the keys already say M.O.T.
+_APP_NAME="M.O.T"
+_HAVE_NAME="$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" \
+                "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "$_HAVE_NAME" != "$_APP_NAME" ]]; then
+  echo "[ship] app name → $_APP_NAME (Dock hover + the menu bar)"
+  _plist_put() {   # <key> <value> — Set if present, Add if not; loud only if both fail
+    /usr/libexec/PlistBuddy -c "Set :$1 $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+      || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+      || echo "[ship] WARN: could not set $1 — the app may still show its old name"
+  }
+  # CFBundleDisplayName is what the Dock/Finder read; CFBundleName is what the MENU BAR
+  # reads (and it must agree, or the app menu says one thing while hover says another —
+  # the incoherence this slice exists to end). The mic prompt names the app to the user
+  # in a system dialog, so it moves with them.
+  _plist_put CFBundleDisplayName "$_APP_NAME"
+  _plist_put CFBundleName "$_APP_NAME"
+  _plist_put NSMicrophoneUsageDescription \
+             "'$_APP_NAME uses the microphone for voice dictation into chat.'"
+  # ⚠️ AND A LOCALIZED NAME, BECAUSE CFBundleDisplayName ALONE IS NOT RELIABLY HONOURED:
+  # Apple's own rule is that a display name which does NOT match the filename may be
+  # ignored (it is an anti-spoofing measure), while a LOCALIZED name always wins. en is
+  # the only localization this bundle has ever claimed, so en.lproj is the whole job.
+  mkdir -p "$APP/Contents/Resources/en.lproj"
+  printf 'CFBundleDisplayName = "%s";\nCFBundleName = "%s";\n' \
+         "$_APP_NAME" "$_APP_NAME" > "$APP/Contents/Resources/en.lproj/InfoPlist.strings"
+  _MARK_CHANGED=1
+  _RESIGN=1
 fi
 
 if [[ "$_RESIGN" -eq 1 ]]; then
   codesign --force --sign - "$APP"
 fi
 
-if [[ "$_ICON_CHANGED" -eq 1 ]]; then
-  # ⚠️ THE ICON CACHE, AND WHY IT IS NOT A `killall`. macOS caches a bundle's icon and
-  # will keep showing the OLD tile in the Dock and in Finder for an unbounded time after
-  # the .icns changes, so a new mark that nobody can see is the default outcome. Three
-  # supported steps, in order:
+if [[ "$_MARK_CHANGED" -eq 1 ]]; then
+  # ⚠️ THE ICON *AND NAME* CACHE, AND WHY IT IS NOT A `killall`. macOS caches a bundle's
+  # icon and its display name, and will keep showing the OLD tile and the OLD hover label
+  # for an unbounded time after either changes — so a new mark or name that nobody can
+  # see is the default outcome. Three supported steps, in order:
   #   1. `touch` the bundle — invalidates the cache entry keyed on its mtime;
   #   2. lsregister -f — asks Launch Services to re-read this ONE bundle (not the whole
   #      machine: `lsregister -kill -r` rebuilds every app's registration and can take
@@ -255,7 +320,7 @@ if [[ "$_ICON_CHANGED" -eq 1 ]]; then
   #
   # All three are fenced to fire ONLY when the mark actually changed, so a routine ship
   # touches none of them.
-  echo "[ship] refreshing the icon cache (touch + lsregister -f + Dock kickstart)"
+  echo "[ship] refreshing the icon/name cache (touch + lsregister -f + Dock kickstart)"
   touch "$APP"
   _LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   [[ -x "$_LSREG" ]] && "$_LSREG" -f "$APP" >/dev/null 2>&1 || true

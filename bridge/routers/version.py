@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from fastapi.responses import JSONResponse
 from ..core.appctx import app
-from ..core.procs import cfg
+from ..core.procs import VERSION_UNKNOWN_NOTE, cfg, harness_version
 
 
 # --- Version / update notice (PART 4) -------------------------------------------
@@ -23,27 +23,54 @@ def _assemble_update(local_version, gh_result):
     """Pure helper (unit-testable, no network): build the `update` dict.
 
     gh_result is either a dict parsed from the GitHub releases/latest response,
-    or None (404 / timeout / error / no network)."""
+    or None (404 / timeout / error / no network).
+
+    ⚠️ U56 REWROTE THE COMPARISON, AND THE OLD ONE HAD TWO WAYS TO LIE.
+      1. It was fed `harness.yaml version:` = 0.1.0, frozen for 72 releases, so ANY
+         tag on the repo compared as newer FOR EVER. That half is fixed at the source
+         (the caller now passes the VERSION file), but the local version can still be
+         genuinely UNKNOWN on a pre-v1.5.70 install — and comparing against an unknown
+         is guessing. An unknown local version now yields "no local version to compare
+         against", never an update banner.
+      2. `_parts` returned None for anything not cleanly numeric ("v1.5.72-beta",
+         "2026.09.01-rc1") and the fallback was `latest != local`, i.e. ANY unparseable
+         tag became "update available" — a false positive by construction. Unparseable
+         now means UNCOMPARABLE and says so."""
     if not gh_result or not gh_result.get("tag_name"):
         return {"available": False, "latest": None, "note": "unavailable"}
     latest = str(gh_result.get("tag_name") or "")
     url = gh_result.get("html_url") or ""
-    local_norm = str(local_version or "").lstrip("vV")
-    latest_norm = latest.lstrip("vV")
-    # Simple, conservative comparison: "available" only when the tags differ AND
-    # the latest sorts after the local one (tuple-compare numeric dotted parts;
-    # fall back to a plain string inequality if either isn't cleanly numeric).
+    local_norm = str(local_version or "").strip().lstrip("vV")
+    latest_norm = latest.strip().lstrip("vV")
+    if not local_norm:
+        return {"available": False, "latest": latest, "url": url,
+                "note": "no local version to compare against"}
+
     def _parts(s):
-        try:
-            return tuple(int(x) for x in s.split(".") if x != "")
-        except Exception:
-            return None
+        """Leading dotted-numeric parts, or None when there is nothing comparable."""
+        out = []
+        for chunk in s.split("."):
+            digits = ""
+            for ch in chunk:
+                if not ch.isdigit():
+                    break
+                digits += ch
+            if digits == "":
+                break
+            out.append(int(digits))
+            if digits != chunk:      # "72-beta" → take 72, then stop
+                break
+        return tuple(out) or None
+
     lp, rp = _parts(local_norm), _parts(latest_norm)
-    if lp is not None and rp is not None:
-        available = rp > lp
-    else:
-        available = latest_norm != local_norm
-    return {"available": available, "latest": latest, "url": url}
+    if lp is None or rp is None:
+        return {"available": False, "latest": latest, "url": url,
+                "note": f"cannot compare “{latest}” with “{local_norm}”"}
+    # Zero-pad so 1.5 vs 1.5.72 compares on equal footing rather than by tuple length.
+    n = max(len(lp), len(rp))
+    lp = lp + (0,) * (n - len(lp))
+    rp = rp + (0,) * (n - len(rp))
+    return {"available": rp > lp, "latest": latest, "url": url}
 
 
 def _fetch_latest_release():
@@ -68,12 +95,16 @@ async def api_version() -> JSONResponse:
     """Local versions instantly + a best-effort update check. Never raises."""
     out = {"harness": None, "hermes": None, "odysseus": None,
            "searxng": None, "update": {"available": False, "latest": None, "note": "unavailable"}}
-    local_version = None
+    # ⛔ THE VERSION COMES FROM ROOT/VERSION AND FROM NOWHERE ELSE (U56). It used to be
+    # `cfg().get("version")` — harness.yaml's dead 0.1.0 — which is why the tile read
+    # 0.1.0 at release 1.5.72. See core/procs.harness_version for the whole story.
+    local_version = harness_version()
+    out["harness"] = local_version or "unknown"
+    if not local_version:
+        out["harness_note"] = VERSION_UNKNOWN_NOTE
     try:
         c = cfg()
-        local_version = c.get("version")
         comps = c.get("components", {}) or {}
-        out["harness"] = local_version
         out["hermes"] = (comps.get("hermes") or {}).get("pin")
         out["odysseus"] = (comps.get("odysseus") or {}).get("pin")
         out["searxng"] = (comps.get("searxng") or {}).get("pin")

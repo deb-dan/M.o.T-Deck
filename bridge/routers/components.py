@@ -14,7 +14,7 @@ from ..core.events import publish
 from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
 from ..core.modelid import _live_model_id, _runner_engine
-from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg
+from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile
 from .models import opencode_tools_warning
 from .nav import nav_gen
 from .sampling import _record_load_launch
@@ -1190,8 +1190,11 @@ def stop(name: str) -> JSONResponse:
     if name == "runner":
         rc = cfg().get("runner", {})
         port = rc.get("port")
-        # legacy jan-supervisor sweep (harmless once Jan is uninstalled — no-op if none match)
-        subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
+        # ⛔ U64: a `pkill -f "jan serve.*port[= ]N"` sweep stood here, described as a
+        # harmless legacy no-op. Jan was retired 2026-07-23, so it could no longer
+        # match OUR process — only somebody else's, which is the one thing a kill by
+        # pattern is actually good at. Deleted, not replaced: the ownership-checked
+        # listener kill below is what has been stopping the runner all along.
         refused = _kill_port_listener(int(port), force=True, component="runner")
         (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
         if refused:
@@ -1238,28 +1241,24 @@ def stop(name: str) -> JSONResponse:
              "log": f"port :{port} still answers 3s after the listener was killed — "
                     f"refusing to start a second runner on top of it"},
             status_code=409)
+    # ── THE GENERIC STOP: PIDFILE-FIRST **AND IDENTITY-VERIFIED** ─────────────
+    # ⛔ U64's sixth site, found by the sweep rather than by the ledger. This arm was
+    # pidfile-FIRST, which is the right half, and it verified NOTHING: it read
+    # data/<name>.pid and signalled that number, with an explicit
+    #     except PermissionError:  alive = True   # exists but not ours — still kill
+    # branch that signalled a process it had just established was somebody ELSE'S.
+    # Pids are recycled (and this file has been observed stale — see the hermes note
+    # below), so on a machine where Debi runs standalone copies of the very components
+    # we embed, a stale number was a stranger's death warrant with our name on it.
+    # It now goes through core/procs.reap_pidfile: the pid we wrote, its live command
+    # line re-verified as ours, no signal at all when that cannot be proven — the same
+    # helper and the same sentences the shell's _reap_pidfile has used since U19.
     notes = []
     pidf = ROOT / "data" / f"{name}.pid"
     if pidf.exists():
-        pid = None
-        try:
-            pid = int(pidf.read_text().strip())
-        except ValueError:
-            notes.append("unreadable pid file")
-        pidf.unlink(missing_ok=True)
-        if pid is not None:
-            try:
-                os.kill(pid, 0)
-                alive = True
-            except ProcessLookupError:
-                alive = False           # stale: that process is gone (or pid reused+gone)
-            except PermissionError:
-                alive = True            # exists but not ours — still attempt the kill
-            if alive:
-                subprocess.run(["kill", str(pid)], check=False)
-                notes.append(f"killed pid {pid}")
-            else:
-                notes.append(f"stale pid file (pid {pid} not running)")
+        _was = "".join(ch for ch in pidf.read_text(errors="replace") if ch.isdigit())
+        _refused = reap_pidfile(name)
+        notes += _refused or [f"stopped pid {_was} (identity verified as ours)"]
     # ALWAYS verify the port afterwards — a stale/absent pid file must never mask a
     # live process (observed: hermes.pid held 36254 while the real hermes was 41584 →
     # Stop was a silent no-op). If a LISTENER still holds the port, kill it by port.

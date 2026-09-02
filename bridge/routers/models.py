@@ -17,7 +17,7 @@ from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
 from ..core.health import file_state_track
 from ..core.modelid import _live_model_id
-from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, cfg
+from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
 from .downloads import _registry_drop, _registry_update
 from .sampling import _LOAD_AT_LAUNCH, _record_load_launch, launch_view, load_view, sampling_view
@@ -671,6 +671,10 @@ def api_models_rescan() -> JSONResponse:
 
 _SWITCH = {"busy": False, "log": ""}
 
+# U64: the pidfile the switch's start-script run is tracked under, so Cancel stops THAT
+# process instead of pattern-matching a script name across every harness root here.
+SWITCH_TRACK = "switch-runner"
+
 
 def _switch_log(msg: str, done: bool = False) -> None:
     """THE single writer of the switch log — and therefore the single SSE emit point
@@ -1033,7 +1037,9 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
     try:
         _switch_log(f"downloading + loading {new_id} — large downloads take minutes…"
                     if "/" in new_id else f"loading {new_id}…")
-        r = _script("start_component.sh", "runner")
+        # TRACKED, not merely run (U64): the pid lands in data/switch-runner.pid for
+        # the duration, which is what lets Cancel stop this exact process by identity.
+        r = _script_tracked("start_component.sh", "runner", track=SWITCH_TRACK)
         if r.returncode != 0:
             # RULE 1 — ask the runner itself before repeating the script's verdict.
             port = (cfg().get("runner", {}) or {}).get("port")
@@ -1223,8 +1229,10 @@ def _eject_runner() -> None:
     rc = cfg().get("runner", {}) or {}
     port = rc.get("port")
     if port:
-        # legacy jan-supervisor sweep (harmless no-op post-Jan) + kill whatever holds the port
-        subprocess.run(f'pkill -f "jan serve.*port[= ]{int(port)}"', shell=True, check=False)
+        # ⛔ U64: a kill-by-pattern "jan serve" sweep stood here — dead code since Jan
+        # was retired 2026-07-23, but still able to reach a process we did not launch.
+        # Deleted, not replaced: the ownership-checked port kill is what stops OUR
+        # runner, and always was.
         _kill_port_listener(int(port), force=True, component="runner")
     (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
     _clear_expected("runner")     # intentional → "stopped", not "degraded"
@@ -1323,7 +1331,11 @@ async def api_delete_model(req: Request) -> JSONResponse:
     was_aux = (ax.get("model") or "") == mid
     if was_aux:
         if ax.get("port"):
-            _aux_kill(int(ax["port"]))
+            # PRINTED, not swallowed: if the aux stop refused, the files are about to
+            # go while a server may still hold them open, and the log is where that is
+            # findable an hour later.
+            for _n in _aux_kill(int(ax["port"])):
+                print(f"[delete] aux stop: {_n}", flush=True)
         _set_yaml_model("aux", "")
     # If it was a VOICE default, clear that slot too — leaving harness.yaml pointing at
     # deleted weights would only fail later, at speak time, far from this click.
@@ -1353,140 +1365,50 @@ def api_switch_status() -> JSONResponse:
     return JSONResponse({k: _SWITCH.get(k) for k in ("busy", "log")})
 
 
+# ⛔ U64 — TWO KILLS BY PATTERN LIVED IN THE CANCEL BELOW: a dead "jan serve" sweep, and
+# one matching the runner START SCRIPT BY NAME, which names that script in EVERY harness
+# root on this machine (the repo's own checkout included). The script is now launched
+# through _script_tracked and stopped by ITS OWN pid, identity re-verified first.
 @app.post("/api/models/switch-cancel")
 def api_switch_cancel() -> JSONResponse:
-    """Cancel an in-flight switch: kill the runner on its port AND the waiting start
-    script (legacy jan-serve sweep kept, harmless) — _do_switch then sees the failure
-    and rolls the model pin back to the previous one automatically."""
+    """Cancel an in-flight switch: stop the runner on its port AND the start script WE
+    launched — _do_switch then sees the failure and rolls the model pin back to the
+    previous one automatically."""
     if not _SWITCH.get("busy"):
         return JSONResponse({"ok": False, "log": "no switch in progress"}, status_code=400)
     port = int((cfg().get("runner", {}) or {}).get("port") or 6767)
-    subprocess.run(f'pkill -f "jan serve.*port[= ]{port}"', shell=True, check=False)
-    _kill_port_listener(port, force=True, component="runner")
-    subprocess.run('pkill -f "start_component.sh runner"', shell=True, check=False)
-    return JSONResponse({"ok": True, "log": "cancelling — pin will revert to the previous model"})
+    notes = _kill_port_listener(port, force=True, component="runner")
+    notes += reap_pidfile(SWITCH_TRACK,
+                          sigs=(str(ROOT / "scripts" / "start_component.sh"),))
+    log = "cancelling — pin will revert to the previous model"
+    if notes:
+        # An honest cancel says what it could NOT stop. The switch still unwinds (the
+        # script's own readiness poll fails against a dead port), it just takes longer.
+        log += " · " + "; ".join(notes)
+    return JSONResponse({"ok": True, "log": log})
 
 
 # ── Aux runner (optional): a small second model on its own port for Odysseus's
-# Background Tasks (titles, search-query gen, memory extraction) so they stop
-# hogging the main runner's single slot. Model is user-chosen from installed
-# models ("Set aux" in the Models pane) — never hardcoded.
-@app.post("/api/aux/set")
-async def aux_set(req: Request) -> JSONResponse:
-    new_id = ((await req.json()).get("id") or "").strip()
-    if not new_id:
-        return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
-    _bad = _reject_if_audio(new_id)
-    if _bad is not None:
-        return _bad
-    _set_yaml_model("aux", new_id)
-    return JSONResponse({"ok": True, "model": new_id})
-
-
-def _aux_kill(port: int) -> None:
-    for pat in (f'jan serve.*port[= ]{port}', f'llama-server.*--port {port}',
-                f'mlx_lm.server.*--port {port}', f'mlx_vlm.server.*--port {port}'):
-        subprocess.run(f'pkill -f "{pat}"', shell=True, check=False)
-    _kill_port_listener(port, force=True, component="aux")
-
-
-@app.post("/api/aux/start")
-def aux_start(req: Request) -> JSONResponse:
-    """Launch the aux model on its own port using the SAME engine dispatch as the
-    main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
-    `jan serve` path knew nothing about harness-downloaded models."""
-    import json as _json, os as _os, glob as _glob
-    note = ""                    # the W-04 line about a foreign binary, "" when ours
-    ax = cfg().get("aux", {}) or {}
-    model, port = ax.get("model") or "", int(ax.get("port") or 6768)
-    key = ax.get("api_key", "harness-aux")
-    if not model:
-        return JSONResponse({"ok": False, "log": "no aux model set — use 'Set aux' on an installed model"}, status_code=400)
-    try:
-        models = _json.loads((ROOT / "data" / "models.json").read_text()).get("models", [])
-    except Exception:
-        models = []
-    m = next((x for x in models if x.get("id") == model), None)
-    if not m or not m.get("path"):
-        return JSONResponse({"ok": False, "log": f"aux model '{model}' not in registry"}, status_code=400)
-    fmt, path, mmproj = m.get("format", "gguf"), m["path"], m.get("mmproj")
-    # The aux slot gets the SAME advisory gate as the main one (v1.5.30) — it is a
-    # second model resident BESIDE the first, so nothing is freed by starting it and
-    # `freeing_bytes` stays 0. Consent rides `?confirm=1` here because this route has
-    # never taken a body; the override exists on every surface either way.
-    _confirm = str(req.query_params.get("confirm") or "").lower() in ("1", "true", "yes")
-    _adv = _fit_advice(model, slot="aux")
-    if _adv is not None and _adv.get("verdict") == "over" and not _confirm:
-        _c = _adv.get("copy") or {}
-        return JSONResponse({"ok": False, "needs_confirm": True, "advisory": _adv,
-                             "log": _c.get("line") or "this may not fit"},
-                            status_code=409)
-    _aux_kill(port)
-    if fmt == "mlx":
-        venv = ROOT / "data" / "mlx-venv"
-        if not (venv / "bin" / "python").exists():
-            return JSONResponse({"ok": False, "log": "mlx runtime missing — run scripts/install_mlx.sh"}, status_code=500)
-        mod = "mlx_vlm.server" if m.get("vision") else "mlx_lm.server"
-        srv = venv / "bin" / mod
-        cmd = ([str(srv)] if srv.exists() else [str(venv / "bin" / "python"), "-m", mod])
-        cmd += ["--model", path, "--host", "127.0.0.1", "--port", str(port)]
-    else:
-        binp = (cfg().get("runner") or {}).get("binary") or ""
-        owner = ""
-        if not binp:
-            # SHARED binary-discovery order (keep identical in start_component.sh):
-            #   explicit runner.binary → OUR pin (data/llamacpp) → Jan backends → LM Studio.
-            pin_bin = str(ROOT / "data" / "llamacpp" / "build" / "bin" / "llama-server")
-            if _os.path.isfile(pin_bin) and _os.access(pin_bin, _os.X_OK):
-                binp = pin_bin
-            else:
-                jan = sorted(_glob.glob(_os.path.expanduser(
-                          "~/Library/Application Support/Jan/data/llamacpp/backends/*/macos-arm64/build/bin/llama-server")),
-                          key=_os.path.getmtime, reverse=True)
-                lms = sorted(_glob.glob(_os.path.expanduser("~/.lmstudio/extensions/backends/*/llama-server")),
-                          key=_os.path.getmtime, reverse=True)
-                cands = jan or lms
-                if not cands:
-                    return JSONResponse({"ok": False, "log": "no llama-server binary found — run scripts/install_llamacpp.sh"}, status_code=500)
-                binp = cands[0]
-                # WHOSE binary this is — the whole of the W-04 gate below rests on it.
-                owner = "Jan" if jan else "LM Studio"
-        # ⚠️ A FOREIGN llama-server IS NAMED, AND REFUSED UNLESS ITS BUILD IS THE PIN
-        # (bug-echo W-04). See foreign_runner_gate: same rules, same words, as
-        # scripts/start_component.sh's runner branch.
-        note, refusal = foreign_runner_gate(binp, owner)
-        if refusal:
-            return JSONResponse({"ok": False, "log": refusal}, status_code=409)
-        helptxt = ""
-        try:
-            hp = subprocess.run([binp, "--help"], capture_output=True, text=True, timeout=15)
-            helptxt = (hp.stdout or "") + (hp.stderr or "")
-        except Exception:
-            pass
-        # Aux tasks are short — small ctx keeps the second model light in RAM.
-        ctx = m.get("ctx") or 8192
-        cmd = [binp, "--no-context-shift", "--host", "127.0.0.1", "--port", str(port),
-               "--alias", model, "--ctx-size", str(ctx), "--no-cont-batching",
-               "--cache-ram", "-1", "--fit", "off", "--model", path, "--parallel", "1"]
-        if mmproj:
-            cmd += ["--mmproj", mmproj]
-        if "--api-key" in helptxt:
-            cmd += ["--api-key", key]
-    logf = open(ROOT / "data" / "logs" / "aux.log", "ab")
-    # ⚠️ A FOREIGN BINARY THAT IS ALLOWED THROUGH IS STILL SAID OUT LOUD — on the card
-    # (the log string the pane renders) AND in aux.log, where somebody debugging the
-    # thing an hour later will be looking (bug-echo W-04). `note` is "" on every ordinary
-    # start, so this costs the normal path nothing.
-    if note:
-        logf.write(("[harness] " + note + "\n").encode())
-        logf.flush()
-    subprocess.Popen(cmd, stdout=logf, stderr=logf, start_new_session=True)
-    return JSONResponse({"ok": True, "log": (note + " · " if note else "")
-                         + "loading in background — refresh in ~20-60s"})
-
-
-@app.post("/api/aux/stop")
-def aux_stop() -> JSONResponse:
-    ax = cfg().get("aux", {}) or {}
-    _aux_kill(int(ax.get("port") or 6768))
-    return JSONResponse({"ok": True})
+# background tasks. ⚠️ ITS THREE ROUTES NOW LIVE IN routers/aux.py — moved there by the
+# U64 slice because this file had reached 1,492 of the app layer's 1,500-line limit
+# (bridge/tests/test_app_facade.py) and a fix has to be allowed to explain itself.
+# `_aux_kill` STAYS here: the model-delete path below calls it, and importing it back
+# out of routers/aux.py would make the two modules mutually dependent. aux → models,
+# one direction, for ever.
+#
+# ⛔ U64 — _aux_kill WAS THE ORIGINAL SHAPE OF THE WHOLE INCIDENT CLASS: four
+# kill-by-pattern sweeps, three of them the very ENGINE patterns (llama-server /
+# mlx_lm.server / mlx_vlm.server + "--port N") that U19 had already torn out of
+# scripts/start_component.sh. A pattern is not an identity, and Debi runs standalone
+# llama-server / LM Studio / MLX backends: "Stop aux" reached anything on this machine
+# whose command line happened to match. Now, in order: (1) data/aux.pid — the pid WE
+# wrote at launch, command line re-verified before the signal (core/procs.reap_pidfile);
+# (2) the ownership-checked kill on the aux PORT, which refuses a holder that is not
+# provably ours. There is no third step. Fenced by
+# bridge/contract_tests/test_no_name_kills_contract.py, which is also where the banned
+# commands are still spelled out.
+def _aux_kill(port: int) -> list:
+    """Stop the aux model. Returns the notes for anything it declined to stop."""
+    notes = reap_pidfile("aux", force=True)
+    notes += _kill_port_listener(port, force=True, component="aux")
+    return notes

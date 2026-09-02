@@ -2980,6 +2980,14 @@ async function refresh(manual) {
     const ver = await (await fetch('/api/version')).json();
     if (ver && ver.harness) {
       let vv = esc(ver.harness);
+      // U56: this tile now shows ROOT/VERSION — the number QA bumps every release —
+      // instead of harness.yaml's frozen 0.1.0 (it read 0.1.0 at release 1.5.72). An
+      // install with NO VERSION file (fat seeds before v1.5.70) reads "unknown" AND
+      // SAYS WHY rather than inventing a number: the bridge sends the sentence in
+      // `harness_note`, and the tile carries the short form with the full text on hover.
+      if (ver.harness_note) {
+        vv += `<small title="${escAttr(ver.harness_note)}"> · no VERSION file — run ship.sh</small>`;
+      }
       // <!-- FABLE: style pass --> update line only appears if a public release is ever found
       if (ver.update && ver.update.available && ver.update.url) {
         vv += `<small> · <a href="${escAttr(ver.update.url)}" onclick="openExt(event,this.href)">Update available → ${esc(ver.update.latest||'')}</a></small>`;

@@ -3427,7 +3427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // ══ QUIT EVERYTHING (U55 — Debi's ruling, 2026-09-02) ════════════════════
     //
-    // BOTH DOORS. ⌘Q ("Quit MOT Deck") is UNCHANGED and stays the default: since
+    // BOTH DOORS. ⌘Q ("Quit M.O.T") is UNCHANGED and stays the default: since
     // v1.5.69 the bridge and every component are setsid'd out of the app's process
     // group on purpose, so closing the window leaves the stack serving and reopening
     // the app reuses it. ⌥⌘Q is the second door — the one Debi asked for — and it means
@@ -3480,18 +3480,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         guard let running = running else {
             // No bridge to ask. Nothing of ours is being supervised, so this is just a
             // quit — said plainly rather than pretending a stop happened.
-            a.messageText = "Quit MOT Deck?"
+            a.messageText = "Quit M.O.T?"
             a.informativeText = "The bridge on 127.0.0.1:8700 is not answering, so there "
-                + "is nothing running for MOT Deck to stop. The app will just close."
+                + "is nothing running for M.O.T to stop. The app will just close."
             a.addButton(withTitle: "Quit")
             a.addButton(withTitle: "Cancel")
             if a.runModal() == .alertFirstButtonReturn { NSApp.terminate(nil) }
             quitAllInFlight = false
             return
         }
-        a.messageText = "Quit MOT Deck and stop everything?"
+        a.messageText = "Quit M.O.T and stop everything?"
         if running.isEmpty {
-            a.informativeText = "Nothing is running right now. MOT Deck will stop the "
+            a.informativeText = "Nothing is running right now. M.O.T will stop the "
                 + "bridge and close.\n\nPlain ⌘Q leaves the bridge running instead."
         } else {
             a.informativeText = "This stops \(running.count) running "
@@ -3596,7 +3596,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                         + "see and stop these from Mission Control."
                 }
                 b.addButton(withTitle: "Stay Open")
-                b.addButton(withTitle: "Quit MOT Deck Anyway")
+                b.addButton(withTitle: "Quit M.O.T Anyway")
                 if b.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil) }
                 // Staying open must leave ⌥⌘Q usable — the user's next move after
                 // reading which component refused is very often to try again.
@@ -3630,7 +3630,7 @@ appMenu.addItem(reloadItem)
 appMenu.addItem(NSMenuItem.separator())
 // ⌘Q — UNCHANGED, and deliberately still the plain quit (v1.5.69 behaviour: the bridge
 // and every component keep serving; reopening the app reuses them).
-appMenu.addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+appMenu.addItem(withTitle: "Quit M.O.T", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 // ⌥⌘Q — THE SECOND DOOR (U55, Debi 2026-09-02: "i think we should have an option that
 // fully quits everything too"). Right next to the plain quit, because that is where a
 // user looks for it, and one modifier away, because it is the same intent with a bigger

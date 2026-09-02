@@ -108,13 +108,24 @@ check("concurrent switch → not ok", b'"ok":false' in resp.body.replace(b" ", b
 
 
 # ── busy cleared in finally on SUCCESS ────────────────────────────────────────
-def _ok_script(name, *a):
+def _ok_script(name, *a, **k):
     return types.SimpleNamespace(returncode=0, stdout="up", stderr="")
 
 
-orig_script, orig_set = app._script, app._set_runner_model
+# ⚠️ U64: _do_switch runs the RUNNER start through `_script_tracked` (same command, its
+# pid recorded in data/switch-runner.pid so Cancel can stop THAT process instead of
+# pattern-matching "start_component.sh runner" across every harness root on the
+# machine). Every fake below therefore has to stand in for BOTH seams — a fake that
+# covered only `_script` would leave this unit test shelling out to the real script.
+def _fake_script(fn):
+    app._script = app._script_tracked = fn
+    return fn
+
+
+orig_script, orig_tracked = app._script, app._script_tracked
+orig_set = app._set_runner_model
 orig_live, orig_reg = app._live_model_id, app._registry_models
-app._script = _ok_script
+_fake_script(_ok_script)
 app._set_runner_model = lambda *_: None
 
 # ── U15 fixtures: the switch watcher's two new inputs ─────────────────────────
@@ -138,7 +149,7 @@ try:
     # ── busy cleared in finally on FAILURE (load returncode != 0) ──────────────
     rolled = {}
     app._set_runner_model = lambda mid: rolled.__setitem__("to", mid)
-    app._script = lambda name, *a: types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
+    _fake_script(lambda name, *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="boom"))
     app._SWITCH.update(busy=True, log="starting…")
     app._do_switch("new", "old", False, False)
     check("failure path clears busy", app._SWITCH["busy"] is False)
@@ -184,10 +195,10 @@ try:
     #   2.49.854.040 W srv    operator(): unauthorized: Invalid API Key
     # — no cause, no file, no fix. The sentence now leads; the raw tail follows it,
     # labelled, for whoever is diagnosing.
-    app._script = lambda name, *a: types.SimpleNamespace(
+    _fake_script(lambda name, *a, **k: types.SimpleNamespace(
         returncode=1, stdout="",
         stderr="ERROR: model 'new' not in registry — run scripts/seed_registry.py "
-               "or pick another model\n2.49.854.040 W srv operator(): unauthorized\n")
+               "or pick another model\n2.49.854.040 W srv operator(): unauthorized\n"))
     app._registry_models = lambda: [
         {"id": "new", "format": "gguf", "path": "/nowhere/at/all/model.gguf"}]
     app._SWITCH.update(busy=True, log="starting…")
@@ -202,13 +213,14 @@ try:
     # ── busy cleared in finally on EXCEPTION ───────────────────────────────────
     def _boom(*a, **k):
         raise RuntimeError("subprocess exploded")
-    app._script = _boom
+    _fake_script(_boom)
     app._SWITCH.update(busy=True, log="starting…")
     app._do_switch("new", "old", False, False)
     check("exception path clears busy (finally)", app._SWITCH["busy"] is False)
     check("exception path log surfaces error", "switch error" in app._SWITCH["log"])
 finally:
-    app._script, app._set_runner_model = orig_script, orig_set
+    app._script, app._script_tracked = orig_script, orig_tracked
+    app._set_runner_model = orig_set
     app._live_model_id, app._registry_models = orig_live, orig_reg
     app._SWITCH.update(busy=False, log="")
 
@@ -230,8 +242,8 @@ try:
     seen, calls = {}, []
     app._rebind_goose = lambda wire: (seen.__setitem__("goose", wire), "")[1]
     app._rebind_odysseus_offline = lambda wire: (seen.__setitem__("ody", wire), "")[1]
-    app._script = lambda name, *a: (calls.extend([name, *a]),
-                                    types.SimpleNamespace(returncode=0, stdout="", stderr=""))[1]
+    _fake_script(lambda name, *a, **k: (calls.extend([name, *a]),
+                        types.SimpleNamespace(returncode=0, stdout="", stderr=""))[1])
 
     app._SWITCH.update(busy=True, log="starting…")
     seen.clear(); calls.clear()
@@ -256,8 +268,8 @@ try:
     # THE PATH THE REAL INCIDENT TOOK: start_component.sh exits non-zero (its keyless
     # readiness poll 401s on b10662) while the runner is genuinely serving the new
     # model. A fan-out hung only off the clean-exit branch would have missed it.
-    app._script = lambda name, *a: (calls.extend([name, *a]),
-                                    types.SimpleNamespace(returncode=1, stdout="", stderr=""))[1]
+    _fake_script(lambda name, *a, **k: (calls.extend([name, *a]),
+                        types.SimpleNamespace(returncode=1, stdout="", stderr=""))[1])
     app._live_model_id = lambda *_a, **_k: "new"
     app._SWITCH.update(busy=True, log="starting…")
     seen.clear(); calls.clear()
@@ -267,7 +279,8 @@ try:
     check("S28: …and still reports success", "active: new" in app._SWITCH["log"])
 finally:
     app._rebind_goose, app._rebind_odysseus_offline = orig_goose, orig_ody
-    app._script, app._set_runner_model = orig_script, orig_set
+    app._script, app._script_tracked = orig_script, orig_tracked
+    app._set_runner_model = orig_set
     app._live_model_id, app._registry_models = orig_live, orig_reg
     app._SWITCH.update(busy=False, log="")
 

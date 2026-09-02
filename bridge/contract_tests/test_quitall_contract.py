@@ -294,7 +294,13 @@ def test_the_route_is_registered_in_both_places():
 # ── 5. the app side ──────────────────────────────────────────────────────────
 def test_the_menu_carries_both_doors():
     src = _read(SWIFT)
-    assert 'addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")' in src, \
+    # The LABEL is not this fence's business — the app's display name became "M.O.T" on
+    # 2026-09-02 (Debi: the Dock hover), and test_app_identity_contract.py is what keeps
+    # this item's wording in step with it. What matters HERE is that plain ⌘Q is still
+    # bound to the UNCHANGED terminate (v1.5.69 behaviour is the default door).
+    assert re.search(r'addItem\(withTitle: "Quit [^"]+", '
+                     r'action: #selector\(NSApplication\.terminate\(_:\)\), '
+                     r'keyEquivalent: "q"\)', src), \
         "plain ⌘Q must still be the UNCHANGED quit (v1.5.69 behaviour is the default)"
     assert "Quit Everything (stop all components)" in src, "the second door is missing"
     assert "#selector(AppDelegate.quitEverything(_:))" in src
@@ -329,7 +335,12 @@ def test_the_app_does_not_quit_on_a_partial_stop():
     assert '(obj["ok"] as? Bool) == true' in body, \
         "the app must gate its own quit on the bridge's verified ok"
     assert "Stay Open" in body, "the failure path needs a door that is not 'quit anyway'"
-    assert body.index("Stay Open") < body.index("Quit MOT Deck Anyway"), \
+    # Again: the second button's wording carries the app's display name (M.O.T since
+    # 2026-09-02) and is fenced in test_app_identity_contract.py. The ORDER is what this
+    # asserts — the first button added is the default one.
+    _anyway = re.search(r'addButton\(withTitle: "Quit [^"]+ Anyway"\)', body)
+    assert _anyway, "the 'quit anyway' door disappeared from the partial-stop alert"
+    assert body.index("Stay Open") < _anyway.start(), \
         "Stay Open must be the DEFAULT button on a partial stop"
     assert "Lost contact with the bridge" in body, \
         "a dropped connection mid-quit is UNKNOWN, and must not be reported as success"

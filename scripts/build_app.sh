@@ -42,23 +42,37 @@ EOF
 echo "[harness] compiling Swift app..."
 swiftc -O app/main.swift app/Config.swift -o "$APP/Contents/MacOS/Harness"
 
+# ── THE APP'S NAME IS "M.O.T" (Debi, 2026-09-02) ──────────────────────────────
+# The BUNDLE stays Harness.app — every recipe, pidfile and quit script points at that
+# path — but what the user SEES is M.O.T: CFBundleDisplayName is what the Dock's hover
+# label and Finder read, CFBundleName is what the menu bar reads, and they must agree.
+# A fresh fat install gets it from here; an existing install gets it from ship.sh's
+# bundle step (which also writes the localized name — see the long note there on why
+# CFBundleDisplayName alone is not reliably honoured when it differs from the filename).
 cat > "$APP/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>MOT Deck</string>
+  <key>CFBundleName</key><string>M.O.T</string>
+  <key>CFBundleDisplayName</key><string>M.O.T</string>
   <key>CFBundleIdentifier</key><string>local.harness.app</string>
   <key>CFBundleVersion</key><string>0.1</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleExecutable</key><string>Harness</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>MOT Deck uses the microphone for voice dictation into chat.</string>
+  <key>NSMicrophoneUsageDescription</key><string>M.O.T uses the microphone for voice dictation into chat.</string>
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
+EOF
+mkdir -p "$APP/Contents/Resources/en.lproj"
+cat > "$APP/Contents/Resources/en.lproj/InfoPlist.strings" <<'EOF'
+CFBundleDisplayName = "M.O.T";
+CFBundleName = "M.O.T";
 EOF
 
 # icon (optional): app/icon.png -> icns via sips/iconutil; skipped if missing

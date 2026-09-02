@@ -17,24 +17,19 @@ def check(name, cond):
         FAILS.append(name)
 
 
-# ── _port_kill_cmd (pure) ──────────────────────────────────────────────────────
-c = app._port_kill_cmd(7860)
-check("listener scope present", "-sTCP:LISTEN" in c)
-check("scope attaches to the lsof selector", "lsof -ti tcp:7860 -sTCP:LISTEN" in c)
-check("default is plain kill (SIGTERM)", "| xargs kill 2>/dev/null" in c)
-check("no -9 without force", "-9" not in c)
-
-cf = app._port_kill_cmd(6767, force=True)
-check("force uses kill -9", "| xargs kill -9 2>/dev/null" in cf)
-check("force keeps listener scope", "lsof -ti tcp:6767 -sTCP:LISTEN" in cf)
-
-check("port coerced to int (no injection via str port)",
-      "lsof -ti tcp:9119 -sTCP:LISTEN" in app._port_kill_cmd("9119"))
-try:
-    app._port_kill_cmd("9119; rm -rf /")
-    check("non-numeric port rejected", False)
-except (ValueError, TypeError):
-    check("non-numeric port rejected", True)
+# ── the takeover path: NO shell string, and still listener-scoped (U64) ───────
+# `_port_kill_cmd` used to live here: a pure helper returning
+# `lsof -ti tcp:N -sTCP:LISTEN | xargs kill` for the HARNESS_PORT_TAKEOVER=1 branch.
+# U64 deleted it. An unowned port clear built from a shell string is the exact move that
+# closed Debi's standalone Unsloth, and the no-name-kills contract bans that pipeline
+# from every shell file in the tree with NO exception list — so keeping a Python copy of
+# it behind an env var was that exception coming in through the back door. The override
+# now walks the SAME `_port_listener_pids` list every other path walks and signals those
+# pids directly: one way to find a process, one way to signal one. The properties this
+# block used to assert on the string are asserted on the BEHAVIOUR below instead
+# (listener scope by construction, int coercion, and the -9 escalation).
+check("the unowned shell-string port clear is gone",
+      not hasattr(app, "_port_kill_cmd"))
 
 # ── _port_listener_pids (subprocess faked) ────────────────────────────────────
 class _FakeDone:
@@ -64,6 +59,38 @@ try:
     check("lsof failure degrades to empty list", app._port_listener_pids(8080) == [])
 finally:
     app.subprocess.run = _orig
+
+# ── the takeover override, exercised (U64) ────────────────────────────────────
+# Same guarantees the deleted string helper carried, now observed on the call:
+# LISTEN-scoped discovery, an int-coerced port, `kill -9` under force, and NO shell.
+import os as _os  # noqa: E402
+
+signalled = []
+
+
+def _rec_run(argv, **kw):
+    signalled.append((argv, kw))
+    return _FakeDone("777\n")
+
+
+_orig = app.subprocess.run
+_had = _os.environ.get("HARNESS_PORT_TAKEOVER")
+app.subprocess.run = _rec_run
+_os.environ["HARNESS_PORT_TAKEOVER"] = "1"
+try:
+    refused = app._kill_port_listener("6767", force=True, component="runner")
+    check("takeover refuses nothing (that is what the override is for)", refused == [])
+    check("takeover discovery is LISTEN-scoped",
+          any("-sTCP:LISTEN" in a for a in signalled[0][0]))
+    check("takeover coerces the port to int", "tcp:6767" in signalled[0][0])
+    check("takeover signals the listener pid with -9, as a real argv (no shell)",
+          signalled[-1][0] == ["kill", "-9", "777"] and not signalled[-1][1].get("shell"))
+finally:
+    app.subprocess.run = _orig
+    if _had is None:
+        _os.environ.pop("HARNESS_PORT_TAKEOVER", None)
+    else:
+        _os.environ["HARNESS_PORT_TAKEOVER"] = _had
 
 print()
 if FAILS:

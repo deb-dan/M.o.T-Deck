@@ -662,16 +662,24 @@ try:
     out = app._kill_port_listener(8899, component="unsloth")
     check("bridge: HARNESS_PORT_TAKEOVER=1 kills unconditionally",
           len(killed) == 1 and out == [])
-    check("bridge: takeover still goes through the LISTENER-scoped command",
-          "-sTCP:LISTEN" in str(killed[0][0]))
+    # U64: the override no longer builds its own `lsof … | xargs kill` shell string — it
+    # signals the pid the LISTENER-SCOPED probe (`_port_listener_pids`, faked here to
+    # return 4242) already handed every other path. Listener scope is now a property of
+    # where the pid came from rather than of a string this branch assembled itself.
+    check("bridge: takeover signals the listener pid as argv, never a shell string",
+          killed[0][0] == ["kill", "4242"])
     os.environ.pop("HARNESS_PORT_TAKEOVER", None)
 finally:
     app.subprocess.run = _orig_run
     app._port_listener_pids = _orig_pids
     app._proc_cmdline = _orig_cmd
 
-check("bridge: the pure _port_kill_cmd helper is still there (takeover path)",
-      "-sTCP:LISTEN" in app._port_kill_cmd(8080))
+# U64: `_port_kill_cmd` — the `lsof … | xargs kill` string the takeover branch ran — is
+# DELETED. bridge/tests/test_port_kill.py now exercises that override on the CALL rather
+# than on a string, so what is asserted here is that the escape hatch still exists and
+# that the unowned pipeline does not.
+check("bridge: the port-takeover override survives, the unowned pipeline does not",
+      "HARNESS_PORT_TAKEOVER" in _APP_SOURCE and not hasattr(app, "_port_kill_cmd"))
 BR = _APP_SOURCE
 check("bridge: every _kill_port_listener call site names its component",
       BR.count("_kill_port_listener(") - 1

@@ -1,7 +1,15 @@
 # Harness — single source of truth for pins, ports, endpoints.
 # Every change to a pin should be a git commit (that's your rollback history).
 
-version: "0.1.0"                # local harness version — shown in the MC Version tile; bump on release
+# ⛔ THERE IS NO `version:` KEY HERE ANY MORE — AND PUTTING ONE BACK IS A BUG (U56,
+# 2026-09-02). It used to read `version: "0.1.0"   # bump on release`; nothing bumped it
+# in 72 releases, and it was the ONLY thing /api/version ever read. So the Version tile
+# showed 0.1.0 at release 1.5.72, and the update check compared GitHub tags against
+# 0.1.0 — which makes ANY tag newer for ever. THE RELEASE VERSION IS THE TOP-LEVEL
+# `VERSION` FILE: QA bumps it in the same commit as the slice, ship.sh copies it into
+# the snapshot, build_app.sh seeds it into the fat app, and
+# bridge/core/procs.py::harness_version is its ONE reader. A second copy of a fact is a
+# second answer. Fenced by bridge/contract_tests/test_version_truth_contract.py.
 
 components:
   hermes:
