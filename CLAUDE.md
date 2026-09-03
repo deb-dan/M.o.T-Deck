@@ -87,6 +87,15 @@
 > ledger at QA time.
 
 
+> **⛔ LIVE-STATE FILES RULE (bitten once: harness.yaml clobber, 2026-09-03, U74):** the
+> snapshot's `harness.yaml` and everything under the snapshot's `data/` are LIVE STATE —
+> installed flags, pins, registries, sessions. The repo's `harness.yaml` is a TEMPLATE.
+> Repo↔snapshot byte-parity applies ONLY to code the repo owns (bridge/, scripts/, app/,
+> panel, docs); NEVER copy a live-state file from repo to snapshot, at QA or in a builder
+> ship. Legitimate live-yaml changes go through targeted key edits (the way seeders and
+> installers do it) — never a whole-file copy. ship.sh's `harness.yaml.bak-*` rotation is
+> the recovery path; a shallow `diff | head` is not an inspection.
+
 > **⛔ PROCESS-KILL RULE (bitten twice: Unsloth 2026-08-28, goose Desktop 2026-08-29):**
 > agents/builders may terminate ONLY processes they themselves spawned, tracked by their own
 > pidfile/child handle, identity-verified (full command line + env) before the kill. NEVER
