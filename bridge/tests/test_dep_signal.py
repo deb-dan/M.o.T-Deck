@@ -69,6 +69,10 @@ def healthy():
     return {
         "runner": up(port_up=True, loaded=True),
         "hermes": up(), "odysseus": up(), "searxng": up(), "opencode": up(),
+        # S34: the DeepSeek lane. Added to the FIXTURE as well as to the loop below,
+        # because a component missing from `healthy()` is a component every state test
+        # in this file skips in silence.
+        "deepseek": up(),
     }
 
 
@@ -99,7 +103,10 @@ def test_runner_down():
     c = healthy()
     c["runner"] = {"installed": True, "running": False, "port_up": False, "loaded": False}
     out = derive(c, bound())
-    for who in ("hermes", "odysseus", "opencode"):
+    # ⚠️ A HARDCODED TUPLE, NOT `NEEDS_SOFT.keys()`, AND THAT IS THE POINT: this list
+    # is the fence, so a new soft-dep component is NOT covered until somebody adds it
+    # here on purpose. `deepseek` joined at S34 (2026-09-03).
+    for who in ("hermes", "odysseus", "opencode", "deepseek"):
         ok(who in out, f"{who} signals when the runner is down")
         n = out[who]["needs"][0]
         ok(n["state"] == "down" and n["action"] == "start" and n["target"] == "runner",
@@ -109,6 +116,15 @@ def test_runner_down():
     # start closure are allowed to disagree; only this table may make them.
     ok(HARD.get("opencode") == [], "harness.yaml still declares opencode depends_on: []")
     ok("opencode" in NEEDS_SOFT, "…and the SOFT table is what puts it in the signal")
+    # …and the DeepSeek lane, on exactly the same two terms.
+    ok(HARD.get("deepseek") == [], "harness.yaml still declares deepseek depends_on: []")
+    ok("deepseek" in NEEDS_SOFT, "…and the SOFT table is what puts IT in the signal too")
+    # THE SENTENCE ITSELF, in her words rather than ours: the banner must lead with the
+    # tab title the strip shows, never the internal id.
+    m = needs_message("deepseek", "runner", "down", {})
+    ok(m["text"].startswith("DeepSeek"), "the sentence leads with the tab name")
+    ok("the Runner" in m["text"], "…and names the dependency in her words")
+    ok("deepseek" not in m["text"], "…and never leaks the internal id")
 
 
 def test_runner_has_no_model():

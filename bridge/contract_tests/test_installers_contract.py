@@ -41,6 +41,8 @@ SCRIPTS = os.path.join(ROOT, "scripts")
 OO = os.path.join(SCRIPTS, "install_onlyoffice.sh")
 PLUG = os.path.join(SCRIPTS, "install_oo_ai_plugin.sh")
 GOOSE = os.path.join(SCRIPTS, "install_goose.sh")
+DSH = os.path.join(SCRIPTS, "install_deepseek.sh")
+NODE = os.path.join(SCRIPTS, "ensure_node.sh")
 
 _SRC = {}
 
@@ -130,6 +132,74 @@ def test_stamp_dies_before_the_bundle_does():
     s = src(PLUG)
     assert s.index('rm -f "$STAMP"') < s.index('rm -rf "$AIDIR"'), \
         "install_oo_ai_plugin.sh: stamp must be invalidated before ai/ is removed"
+
+
+# ── the DeepSeek lane (S34): a THIRD install shape — an npm dependency tree ──
+# The three above pin BYTES (a digest per file). This one cannot: npm resolves a
+# transitive tree of 455 packages behind one pinned top-level version, and the honest
+# contract is therefore different in kind. These rows pin what CAN be pinned, and the
+# row that matters most is the last one, which pins the ADMISSION.
+def test_deepseek_pins_the_top_level_and_refuses_a_moved_version():
+    s = src(DSH)
+    assert "dsh_pin" in s, "the pin is single-sourced in harness.yaml, not inline"
+    assert "--save-exact" in s, "the top-level dependency is written exactly, not as ^"
+    # ⚠️ THE PRE-FLIGHT THAT REPLACES A DIGEST. npm verifies dist.integrity itself, but
+    # only against what the registry serves NOW; reading the metadata FIRST and
+    # refusing on a version mismatch is what turns "upstream unpublished or re-tagged
+    # this version" into a stop instead of a silently different install.
+    assert 'meta_ver" == "$pin' in s or '"$meta_ver" == "$pin"' in s
+    assert s.index("checking npm metadata") < s.index("installing …"), (
+        "the metadata check must precede the install, not follow it")
+    assert "npm update" not in "\n".join(
+        ln for ln in s.splitlines()
+        if not ln.strip().startswith(("#", "say ", "echo "))), (
+        "a floating update in an install script defeats the pin entirely")
+
+
+def test_deepseek_uses_the_lockfile_when_it_has_one():
+    """`npm ci` is byte-reproducible but only off an existing lock, and the first
+    install has none. BOTH halves must be present, or the second install of the same
+    pin silently re-resolves the tree."""
+    s = src(DSH)
+    assert "npm ci" in s and "package-lock.json" in s
+    assert "npm install" in s, "…and the first-install path that WRITES the lock"
+
+
+def test_deepseek_verifies_the_runtime_before_it_spends_seven_minutes():
+    """⚠️ THE PUBLISHED PACKAGE DECLARES NO `engines` FIELD, so npm enforces nothing
+    and a too-old Node fails at RUN time with an error nobody can place. The preflight
+    is the only check there is."""
+    s = src(DSH)
+    assert "ensure_node.sh" in s
+    assert s.index("ensure_node.sh") < s.index("installing …"), (
+        "resolve the runtime BEFORE the long download, not after")
+    assert "proves it RUNS" in s or "does not run" in s, (
+        "and prove the install executes before claiming success")
+
+
+def test_ensure_node_verifies_before_extract_like_the_other_three():
+    """The one place this lane DOES pin bytes, and it obeys the same ordering rule the
+    three installers above do."""
+    s = src(NODE)
+    assert s.index("sha256 MISMATCH") < s.index("tar xJf"), (
+        "a mismatched node tarball must stop before anything is unpacked")
+    assert s.index("SHASUMS256.txt") < s.index("tar xJf")
+    # …and it cleans up after itself, the install_llamacpp.sh rule.
+    assert s.count('rm -rf "$STAGE"') >= 3, (
+        "every failure path must remove the staging dir, or a corrupt download "
+        "survives to re-fail the next run")
+
+
+def test_the_checksum_source_is_stated_rather_than_implied():
+    """⚠️ THE HONEST-LIMIT ROW, and it is the reason this file gained a section rather
+    than a line. ensure_node.sh fetches SHASUMS256.txt from nodejs.org instead of
+    carrying a hardcoded digest, which is WEAKER than the three installers above: it
+    catches a corrupt, truncated or mismatched-asset download but not a compromised
+    nodejs.org. That trade may be made; it may not be made SILENTLY. The comment is
+    the artefact under test."""
+    s = src(NODE)
+    assert "does NOT defend against a compromised nodejs.org" in s, (
+        "the weaker guarantee must be written down where the guarantee is made")
 
 
 def test_llamacpp_cleans_debris_on_extract_failure():

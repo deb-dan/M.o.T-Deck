@@ -519,8 +519,33 @@ console.log('2. Editorial does not pay for the second design');
                bridge's next mistake. THE PROSE HALF is one comment at the branch — the
                argued kind this ceiling allows AT the rule it excuses; the incident, the
                reproduction and the debounce reasoning live in
-               bridge/routers/components.py's U60 header and test_dep_signal.py §8. */
-  const CEILING = 877000;
+               bridge/routers/components.py's U60 header and test_dep_signal.py §8.
+         877700  THE DEEPSEEK HARNESS LANE (S35, 2026-09-03) — +0.5KB, which makes this
+               the smallest entry in the table, and per the protocol here is exactly
+               what it bought. NO PROSE AT ALL, and no new behaviour: four data rows and
+               three words.
+               THE FOUR ROWS are the mirrors this page is REQUIRED to carry, each
+               asserted by a fence that would otherwise fail: one NAV_ENTRIES entry
+               (`id:'deepseek'`, `tab:'DeepSeek'` — test_nav_model.py compares the
+               harvest of this list to bridge/nav.py's NAV_IDS both ways), the id in
+               NAV_DEFAULT_SIDEBAR and in NAV_TOPBAR_UNPINNED (same test, ordered), and
+               two Logs chips (`deepseek`, `deepseek install`) — without which the
+               bridge's allowlisted logs are unreachable, which is ledger S20's whole
+               complaint about the Goose UI lane, avoided here by doing it in the same
+               slice.
+               THE THREE WORDS are honest-sentence repairs, not additions: the Rescan
+               button's own description said it "refreshes OpenCode / goose / Hermes /
+               Odysseus from what is left" while the rescan fan-out now also refreshes
+               DeepSeek — a sentence about what a button does, wrong by omission, which
+               is the class this project treats as worse than a crash; the tools pill's
+               title said tool calling is "required by OpenCode" when it is equally
+               required by DeepSeek; and the API-key hint listed the apps whose own
+               provider form asks for a key without listing the new one. Each is one
+               name inserted into an existing list.
+               ⚠️ NOTHING WAS ADDED TO THIS PAGE FOR THE LANE ITSELF. The DeepSeek tab
+               is a third-party page in its own WKWebView: no view, no renderer, no CSS,
+               no first-party handler. That is why 0.5KB is the whole cost. */
+  const CEILING = 877700;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

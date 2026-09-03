@@ -3,6 +3,43 @@
 **Question (Debi):** "let's add deepseek harness to our app, but just like Unsloth or Opencode
 in our app: https://github.com/deepseek-ai/deepseek-harness — Is this doable? Any issues?"
 
+> ## ⚠️ BUILT 2026-09-03 — READ THIS BOX BEFORE TRUSTING ANY CLAIM BELOW
+>
+> The lane SHIPPED (ledger S35) and the build measured things this read could only
+> infer. Everything below stands as the research it was; these seven claims did **not**
+> survive contact and are corrected here so the next reader does not act on them:
+>
+> 1. **Telemetry does NOT default to `FEEDBACK_ONLY`.** At the shipped pin the composed
+>    plugin tree reads `mode: process.env.DSH_TELEMETRY_MODE || 'DISABLED'` — verified in
+>    `dsh --dump-config`. Better than the brief said. (We set
+>    `DSH_TELEMETRY_DISABLED=1` anyway, so a future default cannot move it.)
+> 2. **There is no `pnpm install && pnpm run build` step and no 100MB checkout.** §4 read
+>    the MONOREPO. The published npm package is installed with plain `npm install` and
+>    serves immediately: MEASURED 455 packages / 283MB / 6m0s, no build.
+> 3. **`engines` is NOT enforced.** §4's `engines.node: "^22.19.0 || >=24.0.0"` is in the
+>    monorepo root package.json, which npm never sees — the PUBLISHED package declares no
+>    `engines` at all, so nothing checks Node but `scripts/ensure_node.sh`.
+> 4. **`compat.maxTokensField: max_tokens` is NOT needed** (§3, §7 issue 3 both predicted
+>    it would be). Measured on the wire and in both of our engines' source: llama.cpp
+>    b10662 and mlx_lm.server accept BOTH cap spellings. Ledger U68 has the table.
+>    `supportsDeveloperRole: false` IS set, for a different and measured trigger.
+> 5. **`input: [text]` is not a model-entry field** at this pin (the §3 sketch used it).
+>    The entry schema is id/name/contextWindow/maxTokens/reasoningEfforts/compat;
+>    modalities resolve through the route's `defaultInput`.
+> 6. **`providers` must be a MAP, not the array the §3 example implies is optional** — the
+>    pre-release array shape fails plugin load with migration directions.
+> 7. **§3's "⚠️ UNVERIFIED: a provider-less first boot may nag toward DeepSeek" is now
+>    ANSWERED, and it is worse than a nag:** the first boot shows an "Internal Testing
+>    Notice" modal (once) and then refuses to accept a message until a WORKSPACE is
+>    chosen — through a native `osascript` folder dialog that dsh opens itself. Ledger
+>    U67. Nothing points at DeepSeek's cloud, though: that part of §3 was right.
+>
+> Also worth knowing, because §7's plan sketch assumed otherwise: the pin is upstream's
+> own `latest` dist-tag (0.1.1-rc.2), NOT the highest published version — `next` was a
+> release ahead on the day. And the "restart to rebind" half of our house pattern does
+> **not** apply here: dsh re-reads its settings per operation, which is one place this
+> lane is better than OpenCode.
+
 **Read-only research.** No files outside `docs/research/` touched in this repo; nothing
 installed, run, or signaled. Method: `git clone --depth 1
 https://github.com/deepseek-ai/deepseek-harness.git` to scratchpad, read at HEAD

@@ -366,6 +366,7 @@ def _label(name: str) -> str:
     return {"runner": "Model runner", "hermes": "Hermes", "odysseus": "Odysseus",
             "searxng": "SearXNG", "voicestudio": "VoiceStudio", "voicebox": "Voicebox",
             "comfyui": "ComfyUI", "unsloth": "Unsloth", "opencode": "OpenCode",
+            "deepseek": "DeepSeek",
             # ⚠️ goose is NOT a supervised component — it is a PTY lane. It appears here
             # anyway, and legitimately: bridge/routers/goose.py writes data/goose.pid for
             # exactly the lifetime of a session, so the row exists while the process does

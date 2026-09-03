@@ -48,7 +48,15 @@ PROBE_TIMEOUT_DEFAULT = 0.5
 # — which makes an HTTP probe strictly MORE likely to time out on a busy server,
 # i.e. the exact false negative being fixed here. The wider budget is insurance
 # against OUR loop, and costs nothing at all when the port answers (sub-millisecond).
-PROBE_TIMEOUT_S = {"opencode": 2.0}
+# deepseek gets the SAME widened budget, for a stronger version of the same reason: it
+# is a node process with a ~283MB dependency tree behind it and a plugin graph it
+# mounts per boot, and its own websocket/RPC surface is doing real work while a session
+# streams. Same shape of probe (a TCP handshake the kernel completes from the listen
+# backlog — never an HTTP GET, for the reason above), same insurance against OUR loop,
+# same zero cost when the port answers. MEASURED at this pin: `dsh web` accepts
+# connections about 1s after spawn and answers `GET /` immediately after, so 2.0s is
+# headroom rather than a number the healthy case needs.
+PROBE_TIMEOUT_S = {"opencode": 2.0, "deepseek": 2.0}
 HEALTH_MISS_LOST = 3            # consecutive failed probes before "lost"
 _HEALTH_MISS: dict = {}         # component -> consecutive failed probes
 

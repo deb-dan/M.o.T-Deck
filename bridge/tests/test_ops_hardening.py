@@ -559,17 +559,21 @@ blind = [ln for ln in START.splitlines()
 check("no blind lsof|xargs-kill port clear survives in start_component.sh", blind == [], )
 check("_clear_port exists", "_clear_port() {" in START)
 clears = re.findall(r"^\s*_clear_port \S+ (\w+)( force)?$", START, re.M)
-check("every component's port clear is routed through _clear_port (11 sites)",
-      len(clears) == 11)
+# 11 -> 12 at the DeepSeek slice (S34). The count is deliberately a hardcoded number
+# rather than len(components): it is a fence against a NEW arm that clears a port some
+# other way, and a self-deriving count would pass vacuously for exactly that arm.
+check("every component's port clear is routed through _clear_port (12 sites)",
+      len(clears) == 12)
 check("every _clear_port site names its component",
       {c for c, _ in clears} == {"runner", "odysseus", "searxng", "voicestudio",
-                                 "voicebox", "comfyui", "unsloth", "hermes", "opencode"})
+                                 "voicebox", "comfyui", "unsloth", "hermes", "opencode",
+                                 "deepseek"})
 check("the runner keeps its force (-9) kill", clears.count(("runner", " force")) == 3)
 check("hermes keeps its force (-9) kill", ("hermes", " force") in clears)
-check("odysseus/searxng/voice*/comfy/unsloth/opencode keep plain SIGTERM",
+check("odysseus/searxng/voice*/comfy/unsloth/opencode/deepseek keep plain SIGTERM",
       all(f == "" for c, f in clears
           if c in {"odysseus", "searxng", "voicestudio", "voicebox", "comfyui",
-                   "unsloth", "opencode"}))
+                   "unsloth", "opencode", "deepseek"}))
 check("_clear_port is still LISTENER-scoped", "-sTCP:LISTEN" in START)
 check("a foreign listener refuses with the exact message",
       "does not look like ours — refusing to kill it." in START)

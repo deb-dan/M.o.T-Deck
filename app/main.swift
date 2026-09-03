@@ -54,6 +54,27 @@ let tabRegistry: [HarnessTab] = [
     // in bridge/app.py for why there is nothing to seed instead.
     HarnessTab(id: "opencode", title: "OpenCode",
                url: URL(string: "http://127.0.0.1:8700/opencode")!),
+    // DeepSeek Harness — the third coding lane (`dsh web`, MIT, pre-1.0). Its own
+    // server serves its own SPA and its own JSON/websocket API on one loopback port.
+    //
+    // ⚠️ THE URL IS :3080 DIRECTLY, NOT A BRIDGE REDIRECT, AND THE DIFFERENCE FROM THE
+    // ROW ABOVE IS THE POINT. OpenCode needs the bridge because its usable landing is a
+    // base64url-encoded WORKSPACE PATH inside the URL — a route only the bridge can
+    // build, since only it knows ROOT. dsh has no such deep link: its own root document
+    // IS the app, and the workspace is chosen inside the page (see U67). Inventing a
+    // /deepseek redirect that only ever forwarded to a constant would add a second hop,
+    // a second failure mode and a second place the port is written down, for nothing.
+    // 3080 is upstream's own default AND harness.yaml's `port` AND what
+    // start_component.sh passes explicitly — one number, three agreeing sources.
+    //
+    // Nothing else in this file needs an edit for this tab: it is a third-party page,
+    // so it falls into the final `else` of the wvById loop and gets a bare WKWebView
+    // with no `harness` handler and no shellScript. Deliberately NOT added to the
+    // loffice/aider/goose/comfy/compose/gooseui branch — that grants window.webkit to a
+    // page we did not write. It gets no OpenCode-style user script either: that one
+    // exists to relabel OpenCode's auto-minted draft tabs and has no analogue here.
+    HarnessTab(id: "deepseek", title: "DeepSeek",
+               url: URL(string: "http://127.0.0.1:3080")!),
     // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always

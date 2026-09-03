@@ -1170,6 +1170,224 @@ PYWIRE
       exit 1
     fi
     ;;
+  deepseek)
+    # OPTIONAL THIRD coding lane — DeepSeek Harness `dsh` (MIT, pre-1.0 developer
+    # preview). Like OpenCode it serves its OWN SPA and its own JSON/websocket API on
+    # one loopback port, which is exactly the tab shape — no PTY, no xterm.js, no
+    # websocket of ours. Unlike OpenCode it is a node app, not a Mach-O.
+    #
+    # ⚠️ PLACED BEFORE THE opencode) ARM ON PURPOSE. bridge/tests/test_opencode_lane.py
+    # slices OpenCode's arm as the text between "\n  opencode)" and "\n  hermes)" so
+    # that its assertions can never be satisfied by a neighbour's line. Inserting this
+    # arm BETWEEN them would have folded every line below into OpenCode's slice and
+    # made that suite assert about the wrong component. bridge/tests/test_deepseek_lane.py
+    # slices this one the same way, deepseek) -> opencode).
+    ROOT="$(pwd)"
+    DS_PREFIX="$ROOT/data/deepseek/npm"
+    DS_BIN="$DS_PREFIX/node_modules/.bin/dsh"
+    [[ -x "$DS_BIN" ]] || { echo "ERROR: deepseek is not installed ($DS_BIN missing) — click Install first"; exit 1; }
+    DS_PORT=$(awk '/^  deepseek:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    # Upstream's own default IS 3080 (dsh-host-webserver: `port: ctx.webStartup.port ??
+    # 3080`), so unlike OpenCode this fallback is belt-and-braces rather than
+    # load-bearing — but the port is still passed EXPLICITLY below, because a tab whose
+    # URL is a constant must not depend on a default we do not own.
+    [[ "$DS_PORT" =~ ^[0-9]+$ ]] || DS_PORT=3080
+    DS_HOME="$ROOT/data/deepseek/home"
+    DS_WS="$ROOT/data/deepseek-workspace"
+    mkdir -p "$DS_HOME" "$DS_WS"
+
+    # ── THE RUNTIME. node is dsh's RUN-time, not just its build-time, and the app
+    # spawns this script from a GUI process whose PATH is not the user's shell PATH —
+    # so `node` must be RESOLVED here, not assumed. The user's own node always wins;
+    # data/node is the pinned fallback (build.node_pin). scripts/ensure_node.sh prints
+    # the path on stdout and everything human on stderr.
+    # ⚠️ NO `|| true` HERE, unlike every ensure_bun.sh call site: bun builds an
+    # optional SPA, node runs the whole lane. An unresolvable node is a refusal with a
+    # sentence, not a degraded start.
+    DS_NODE="$(bash scripts/ensure_node.sh 2>/dev/null || true)"
+    if [[ -z "$DS_NODE" || ! -x "$DS_NODE" ]]; then
+      echo "ERROR: deepseek needs node >= 22.19 (or >= 24) and none could be resolved."
+      echo "       Run ./scripts/ensure_node.sh to see exactly what was tried. Your own"
+      echo "       node is always preferred; data/node is only the pinned fallback."
+      exit 1
+    fi
+    DS_NODE_DIR="$(dirname "$DS_NODE")"
+
+    # ── config fan-out: point dsh at OUR runner, the same way OpenCode is pointed ──
+    # Its settings document is $DSH_HOME/settings.yaml (dsh-settings-file: `path`
+    # defaults to "settings.yaml under the harness home"; the home resolves as explicit
+    # config, then $DSH_HOME, then ~/.dsh) — which is why the DSH_HOME export below is
+    # what makes this file the one it reads. We never write ~/.dsh.
+    # MERGE, never overwrite: only the two sections we own are replaced, so anything
+    # the user adds in that file (theme, permission presets, other providers) survives.
+    DS_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
+    DS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    DS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    [[ "$DS_MODEL" == \#* ]] && DS_MODEL=""
+    DS_SETTINGS="$DS_HOME/settings.yaml"
+    # THE KEY IS NAMED, NOT INLINE. dsh's `apiKeyEnv` holds an env var NAME resolved
+    # per request, so the secret never enters settings.yaml — and the NAME is DERIVED
+    # by the seeder (seed_deepseek_config.key_env_name), never hand-picked twice here.
+    # Two hand-picked names is how the goose lane ended up exporting a
+    # HARNESS_RUNNER_API_KEY that nothing read.
+    # ⚠️ PICK A PYTHON THAT HAS PyYAML, AND DO NOT ASSUME `python3` IS IT. FOUND ON THE
+    # FIRST REAL WALK OF THIS ARM: settings.yaml is YAML, the seeder needs PyYAML, and a
+    # bare `python3` (Debi's is /Users/debik/.local/bin/python3) does NOT have it — so
+    # the whole point of the lane, the seeded provider, degraded to
+    # "WARNING: PyYAML unavailable" on a perfectly healthy machine. The bridge venv
+    # always has it (it is in bridge/requirements.txt). This is ship.sh's own idiom,
+    # verbatim in spirit — its manifest merge picks an interpreter the same way and for
+    # the same stated reason ("a bare system python3 often does NOT — and skipping
+    # silently there would hide a missing component card").
+    # Order: OUR root's venv, then the SNAPSHOT's (a repo checkout on a machine whose
+    # venv lives only in the fat app still seeds), then whatever python3 is around.
+    DS_PY=""
+    for _c in "$ROOT/data/bridge-venv/bin/python" \
+              "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" \
+              python3; do
+      if "$_c" -c "import yaml" >/dev/null 2>&1; then DS_PY="$_c"; break; fi
+    done
+    if [[ -z "$DS_PY" ]]; then
+      # GRACEFUL ABSENCE, said in one sentence with the cure in it. The seeder itself
+      # also refuses safely (it prints a WARNING and exits 0 rather than failing the
+      # Start), so this is the earlier, more informative half of the same refusal.
+      echo "[harness] WARNING: no python with PyYAML found, so the 'MOT Deck (local)'"
+      echo "[harness]   provider CANNOT be written — DeepSeek will start, but its model"
+      echo "[harness]   picker will not list your models. PyYAML is in"
+      echo "[harness]   bridge/requirements.txt, so a bootstrapped bridge venv has it."
+      DS_PY="python3"
+    fi
+    DS_KEY_ENV="$("$DS_PY" -c 'import importlib.util;s=importlib.util.spec_from_file_location("s","scripts/seed_deepseek_config.py");m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.key_env_name())' 2>/dev/null || true)"
+    if [[ -z "$DS_KEY_ENV" ]]; then
+      # The seeder could not even be imported. Fall back to the SAME string its pure
+      # function returns for the default product name, so the env we export still
+      # matches whatever provider block is already on disk from a previous, working
+      # Start — a mismatched name would turn a working lane into MISSING_CREDENTIAL.
+      DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY"
+      echo "[harness] note: could not read the derived key env-var name from the seeder;"
+      echo "[harness]   using ${DS_KEY_ENV} (its value for the default product name)."
+    fi
+    DS_SETTINGS="$DS_SETTINGS" DS_BASE="$DS_BASE" DS_KEY_ENV="$DS_KEY_ENV" \
+      DS_MODEL="$DS_MODEL" HARNESS_ROOT="$ROOT" \
+      "$DS_PY" scripts/seed_deepseek_config.py || \
+      echo "[harness] WARNING: DeepSeek provider seeding failed — its model picker may not list yours"
+
+    # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
+    # ⚠️ NO name signature is added to _cmd_looks_like_ours for this component, on
+    # purpose: a standalone `dsh` a user installed themselves would match its own name,
+    # and that is precisely the process the guard exists to protect (the Unsloth /
+    # goose-Desktop class, twice bitten). Ours always runs out of
+    # "$ROOT/data/deepseek/npm/...", which the existing PATH rule already covers.
+    _clear_port "$DS_PORT" deepseek
+    sleep 1
+    {
+      echo "[harness] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${DS_PORT}, NO auth BY DESIGN"
+      echo "[harness]   loopback is dsh's POLICY, not just its default: its CLI refuses --host 0.0.0.0."
+      echo "[harness]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
+    } >>"$ROOT/data/logs/deepseek.log"
+
+    (
+      cd "$DS_WS"
+      # THE CONFINEMENT. DSH_HOME is upstream's documented home override and the ONLY
+      # thing keeping its settings, profiles, sessions and storages inside
+      # data/deepseek/home instead of ~/.dsh. VERIFIED on a from-scratch walk: after
+      # an install, a --help, a web boot and eight headless turns, ~/.dsh did not
+      # exist.
+      # DSH_TELEMETRY_DISABLED=1 is upstream's OWN authoritative pre-load kill switch.
+      # At this pin the composed tree already defaults the telemetry mode to DISABLED
+      # (verified in `dsh --dump-config`), so this is belt-and-braces — which is the
+      # point: a future pin changing that default cannot switch it on under us.
+      # ⚠️ `VAR=val _detached …` would NOT be safe: bash's temporary-assignment prefix
+      # on a FUNCTION call sets the variables in the shell rather than reliably placing
+      # them in the exec'd program's environment, so the confinement could silently
+      # evaporate and dsh would write to ~/.dsh after all — a silent-wrong, not a
+      # crash. `env` makes it explicit, exactly as the opencode/searxng arms do.
+      # PATH carries the resolved node's directory FIRST: the launcher is a node script
+      # with a `#!/usr/bin/env node` shebang, so a stale or too-old node earlier on
+      # PATH would otherwise be the one that ran it.
+      _detached env DSH_HOME="$DS_HOME" \
+      DSH_TELEMETRY_DISABLED=1 \
+      "$DS_KEY_ENV"="$DS_KEY" \
+      PATH="$DS_NODE_DIR:$PATH" \
+      "$DS_NODE" "$DS_BIN" web --host 127.0.0.1 --port "$DS_PORT" --no-open \
+        >>"$ROOT/data/logs/deepseek.log" 2>&1 &
+      echo $! > "$ROOT/data/deepseek.pid"
+    )
+    up=0
+    TRIES=60
+    for i in $(seq 1 "$TRIES"); do
+      # `/` (its embedded SPA) IS the health probe, and that is not laziness: measured
+      # against the real server at this pin, /api is a POST/websocket RPC surface and
+      # every plausible health path — /healthz, /health, /api/health, /version — is a
+      # 404. `/` returning its own document is the only honest HTTP readiness signal
+      # upstream offers.
+      if curl -sf -m 2 "http://127.0.0.1:${DS_PORT}/" >/dev/null 2>&1; then up=1; break; fi
+      kill -0 "$(cat "$ROOT/data/deepseek.pid")" 2>/dev/null || {
+        echo "ERROR: deepseek exited on launch. Last log lines:"
+        tail -20 "$ROOT/data/logs/deepseek.log"
+        echo "       (most common cause: node too old — this launch used"
+        echo "        ${DS_NODE}, $("$DS_NODE" --version 2>/dev/null || echo 'version unreadable'))"
+        exit 1; }
+      sleep 2
+    done
+    if [[ "$up" == "1" ]]; then
+      echo "[harness] deepseek up on http://127.0.0.1:${DS_PORT} (dsh web — its own SPA + API, loopback, NO auth)"
+      echo "[harness] workspace: $DS_WS — the only directory it is started in"
+      echo "[harness] home:      $DS_HOME (settings.yaml, profiles, sessions — never ~/.dsh)"
+      # ── PROVIDER SELF-CHECK — and an HONEST one, which here means admitting what
+      # cannot be checked. ⚠️ There is NO route to ask this server which providers it
+      # resolved: its whole API is a Typert RPC over POST /api plus two websockets, and
+      # MEASURED at this pin a deliberately-broken provider block produced a server
+      # that started, answered `GET /` with 200, and printed NOTHING to stdout or
+      # stderr — the provider was simply absent. So the OpenCode-style "ask the server
+      # and print a decidable line" check is not available here, and faking it with a
+      # grep that can never match would be worse than saying so.
+      # What IS decidable is the file we just wrote, read back independently of the
+      # writer: the re-read proves the section survived the YAML round trip, and the
+      # two refusal branches below are the exact two ways this lane goes quiet.
+      "$DS_PY" - "$DS_SETTINGS" <<'PYDS' || echo "[harness] note: could not verify the seeded provider (harmless; the seed line above is the record)"
+import sys
+try:
+    import yaml
+except Exception:
+    print("[harness] provider check: PyYAML unavailable — not verified")
+    raise SystemExit(0)
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        d = yaml.safe_load(fh) or {}
+except Exception as e:                                              # noqa: BLE001
+    # 200, not 80: the first walk truncated an ENOENT message exactly at the repo path
+    # and the line read like a path-splitting bug rather than a missing file.
+    print("[harness] provider check: could not re-read settings.yaml (%s)" % str(e)[:200])
+    raise SystemExit(0)
+p = (((d.get("llm-pi-ai") or {}).get("providers") or {}).get("mot-deck")) or {}
+ms = p.get("models") or []
+if not p:
+    print("[harness] provider check: NOT PRESENT in settings.yaml — dsh's model picker "
+          "will NOT list your models. The seed line above says why.")
+elif not ms:
+    print("[harness] provider check: present but with NO models — dsh REFUSES a "
+          "hand-declared route with an empty model list, so it will not load.")
+else:
+    sel = d.get("agent-default-model") or {}
+    print("[harness] provider check: 'MOT Deck (local)' -> %s · %d model(s) · default %s"
+          % (p.get("baseURL"), len(ms),
+             ("%s/%s" % (sel.get("provider"), sel.get("model")))
+             if sel.get("model") else "unset"))
+    print("[harness]   dsh re-reads settings.yaml per request, so a model switch or a "
+          "Rescan reaches it with NO restart of this component.")
+PYDS
+      echo "[harness] FIRST RUN: it shows an 'Internal Testing Notice' once, then asks you"
+      echo "[harness]   to choose a WORKSPACE before it will take a message — click 'Add"
+      echo "[harness]   workspace' and pick data/deepseek-workspace. That opens macOS's own"
+      echo "[harness]   folder chooser, launched by dsh itself; if it does not come forward,"
+      echo "[harness]   click the Harness icon in the Dock. (Ledger U67.)"
+    else
+      echo "ERROR: deepseek did not answer on :${DS_PORT} in ~2min. Last log lines:"
+      tail -20 "$ROOT/data/logs/deepseek.log"
+      exit 1
+    fi
+    ;;
   opencode)
     # OPTIONAL second coding lane (MIT). ONE prebuilt native binary; no venv, no repo.
     # It serves its OWN embedded SPA and its JSON API on the same loopback port, which
@@ -1729,5 +1947,5 @@ PYHCHK
       exit 1
     fi
     ;;
-  *) echo "usage: $0 runner|hermes|odysseus|searxng|voicestudio|voicebox|comfyui|unsloth"; exit 1 ;;
+  *) echo "usage: $0 runner|hermes|odysseus|searxng|voicestudio|voicebox|comfyui|unsloth|opencode|deepseek"; exit 1 ;;
 esac

@@ -15,7 +15,13 @@ from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
 from ..core.modelid import _live_model_id, _runner_engine
 from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile
-from .models import opencode_tools_warning
+# ⚠️ opencode_tools_warning is imported and NOT called: live_tools_warning wraps it
+# (S34). It is kept in this import list on purpose — bridge/app.py's _LANES ordering
+# comment names "routers/components.py needs opencode_tools_warning from
+# routers/models.py" as the reason all the models routes register ahead of /api/status,
+# and quietly deleting the name from the line that comment points at would leave that
+# explanation describing an import that is not there.  # noqa: F401 (see above)
+from .models import live_tools_warning, opencode_tools_warning  # noqa: F401
 from .nav import nav_gen
 from .sampling import _record_load_launch
 
@@ -418,6 +424,14 @@ async def status() -> dict:
 # in ledger S24 with the exact seam each one still wants.
 NEEDS_SOFT: dict = {
     "opencode": ("runner",),
+    # S34: the DeepSeek Harness lane joins the signal, for the SAME reason and by the
+    # same reading. harness.yaml gives it `depends_on: []` on purpose (it is usable
+    # against any provider it has configured), so a Start never drags the runner up —
+    # but its seeded 'MOT Deck (local)' route points at :6767, and a picker full of
+    # local models that cannot answer is exactly the state this table exists to name.
+    # It IS a real harness.yaml component with a /api/status row, so it clears the
+    # "only components status() answers for" fence above.
+    "deepseek": ("runner",),
     # S28: the Goose UI joins the signal. Its status row is SYNTHESISED in deps() from
     # its own lane (it is a bridge-supervised child, not a harness.yaml component) and
     # its Restart button is served by restart()'s lane branch — the two things S28b said
@@ -437,11 +451,47 @@ _NEEDS_TITLES = {
     "hermes": "Hermes", "odysseus": "Odysseus", "opencode": "OpenCode",
     "gooseui": "Goose UI", "goose": "Goose CLI", "aider": "Aider",
     "runner": "the Runner", "searxng": "SearXNG", "unsloth": "Unsloth",
+    # ⚠️ MUST stay byte-identical to app/main.swift's tab TITLE for this id, or the
+    # banner on that tab reads "deepseek" — a sentence written for us, not for her.
+    "deepseek": "DeepSeek",
 }
 
 
 def _needs_title(name: str) -> str:
     return _NEEDS_TITLES.get(name, name)
+
+
+# ── WHICH LANES ACTUALLY NEED A RESTART TO REBIND (S34) ──────────────────────
+# Every sentence below used to end "…then restart <who> to rebind", because until now
+# it was true of every lane that carries this banner: Hermes, Odysseus and OpenCode all
+# read their provider configuration ONCE, at boot. The DeepSeek lane does not — its
+# adapter "reads its profiles through a thunk once per operation" and its settings
+# provider hot-publishes external edits, so the next turn picks the runner up by itself.
+#
+# ⚠️ SO THE SHARED CLAUSE BECAME A FALSE INSTRUCTION FOR ONE LANE, and that is the
+# LIES-TO-USER class rather than a cosmetic slip: it tells her to do work that cannot
+# help, on the one lane where the fix has already happened. The same asymmetry is
+# fenced on the write side in routers/models._rebind_deepseek, which deliberately does
+# NOT append OpenCode's "restart it to load this" note — this table is that decision
+# applied to the READ side, where she actually sees it.
+#
+# A lane absent from this set is assumed to need a restart, which is the safe default:
+# advising a restart that was not needed costs one click, while omitting one that WAS
+# needed leaves a lane silently stale.
+REBINDS_LIVE = frozenset({"deepseek"})
+
+
+def _rebind_tail(who: str, comp: str) -> str:
+    """PURE. The tail of a 'the dependency is not ready' sentence, for this lane.
+
+    ⚠️ IT OWNS ITS OWN SEPARATOR, and that is not fussiness: the first version
+    returned only the clause and the call sites supplied a comma, which produced
+    "Start the Runner, DeepSeek picks it up on its next message" — a comma splice in
+    a sentence the user reads in a thin banner. One function, one punctuation
+    decision, both branches legible."""
+    if comp in REBINDS_LIVE:
+        return f" — {who} picks it up on its next message, no restart needed."
+    return f", then restart {who} to rebind."
 
 
 def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
@@ -461,7 +511,7 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
     if state == "down":
         return {"dep": dep, "state": state,
                 "text": f"{who} needs {what} — it isn't running. "
-                        f"Start {what}, then restart {who} to rebind.",
+                        f"Start {what}" + _rebind_tail(who, comp),
                 "action": "start", "target": dep,
                 "action_label": f"Start {what}"}
     if state == "model-gone":
@@ -488,7 +538,7 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
     if state == "no-model":
         return {"dep": dep, "state": state,
                 "text": f"{who} needs a model — {what} is up but nothing is loaded. "
-                        f"Load one in MOT Deck, then restart {who} to rebind.",
+                        f"Load one in MOT Deck" + _rebind_tail(who, comp),
                 "action": "open", "target": "mc",
                 "action_label": "Open MOT Deck"}
     if state == "swapped":
@@ -877,6 +927,11 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               # (same voicebox-install rule — a download install must be readable
               # in-panel, not only from a terminal).
               "opencode", "opencode-install",
+              # the DeepSeek Harness tab: its server log + the online-only npm install.
+              # The install log matters MORE here than anywhere else in this tuple: it
+              # is a ~7-minute, 455-package npm resolve, and without a panel-viewable
+              # log the user watches a spinner with no way to tell slow from stuck.
+              "deepseek", "deepseek-install",
               # LOffice's boot beacon (bridge/office.py DIAG_LOG_NAME). The page phones
               # home at every step of its own boot; this is where that trace lands, and
               # it must be readable in-panel because the tab it describes may be showing
@@ -1073,6 +1128,53 @@ def install_plan(name: str) -> dict:
             "by hand, Add server wants only the address http://127.0.0.1:4096 — leave "
             "name, username and password empty (this server has no password)",
         ],
+        "deepseek": [
+            "OPTIONAL third coding lane — DeepSeek AI's own agent harness (`dsh`), "
+            "license MIT. It is a TAB: `dsh web` serves its own UI and its own API on "
+            "one loopback port (:3080), the same shape as OpenCode",
+            "⚠ THIS IS THE SLOWEST OPTIONAL INSTALL AFTER THE TORCH STACKS. Not a "
+            "binary and not a checkout: it is an npm dependency tree. MEASURED at this "
+            "pin — 455 packages, 283MB, about 6-7 minutes. Watch the 'deepseek install' "
+            "log in Logs; the install prints why before it starts",
+            "⚠ PRE-1.0 DEVELOPER PREVIEW, and upstream says so itself: its SAFETY.md "
+            "reads \"experimental developer-preview software … has not undergone a "
+            "security audit\". Fifteen npm releases to date, every one an -rc or "
+            "-alpha. Pinned hard at build.dsh_pin, and the pin is upstream's own "
+            "`latest` dist-tag rather than the highest version number",
+            "It needs NODE >= 22.19 (or >= 24) at RUN time. Your own node always wins "
+            "and is never shadowed; if it is missing or too old, a pinned Node LTS is "
+            "fetched into data/node (verified against nodejs.org's own SHASUMS256.txt, "
+            "no sudo, nothing written outside data/)",
+            "Everything it writes stays inside our tree: the npm prefix in "
+            "data/deepseek/npm, its ENTIRE config+session home in data/deepseek/home "
+            "(exported as $DSH_HOME at spawn). Walked from scratch — ~/.dsh, "
+            "~/.cache/dsh and ~/.config/dsh are never created",
+            "data/deepseek-workspace is the directory it is STARTED in, and therefore "
+            "the boundary on what it edits by default — the same boundary the Aider and "
+            "OpenCode lanes have. (The Hermes path-guard is a Hermes plugin hook and "
+            "does NOT cover this lane.)",
+            "Start seeds ONE provider named 'MOT Deck (local)' into its settings.yaml, "
+            "pointing at the harness runner, with your registry's models enumerated. It "
+            "re-reads that file per request, so a model switch or a Rescan reaches it "
+            "with no restart",
+            "Telemetry: OFF. Verified at this pin rather than assumed — its composed "
+            "plugin tree defaults the telemetry mode to DISABLED, and we additionally "
+            "export upstream's own DSH_TELEMETRY_DISABLED=1 kill switch at spawn so a "
+            "future default cannot switch it on. It has no auto-updater at all "
+            "(grepped), so nothing moves under the pin on its own",
+            "Loopback by POLICY, not just by default: its CLI refuses --host 0.0.0.0. "
+            "No auth, by design — exactly like the OpenCode server and the Hermes "
+            "dashboard",
+            "⚠ FIRST RUN asks you for a WORKSPACE before it will accept a message. "
+            "Click 'Add workspace' in its sidebar and pick data/deepseek-workspace "
+            "(the installer creates it, with a README saying what it is). That opens "
+            "macOS's own folder chooser, launched by dsh itself — if it does not come "
+            "forward, click the Harness icon in the Dock. There is nothing we can seed "
+            "instead: a workspace record lives in a package-private store whose own "
+            "docs say a hand-made mismatch \"fails loud\". Ledger U67",
+            "It also shows an 'Internal Testing Notice' modal once, upstream's own. "
+            "Click Continue",
+        ],
     }
     if name not in plans:
         raise HTTPException(404, "unknown component")
@@ -1084,20 +1186,28 @@ def install_plan(name: str) -> dict:
 def install(name: str) -> JSONResponse:
     """Execute the install after the panel's approve step."""
     if name not in ("hermes", "odysseus", "searxng", "voicestudio", "voicebox",
-                    "comfyui", "unsloth", "opencode"):
+                    "comfyui", "unsloth", "opencode", "deepseek"):
         raise HTTPException(404, "unknown component")
     # opencode is a BINARY download, not a clone+venv, so it has its own installer —
-    # the same shape searxng's exception already has.
+    # the same shape searxng's exception already has. deepseek is a third shape again
+    # (an npm dependency tree into a private prefix), so it has its own too.
     script = {"searxng": "install_searxng.sh",
-              "opencode": "install_opencode.sh"}.get(name, "install_component.sh")
-    args = () if name in ("searxng", "opencode") else (name, "--yes")
+              "opencode": "install_opencode.sh",
+              "deepseek": "install_deepseek.sh"}.get(name,
+                                                             "install_component.sh")
+    args = () if name in ("searxng", "opencode", "deepseek") else (name, "--yes")
     # voicestudio pulls ~5-8GB of wheels (torch/whisperx/mlx) + a bun SPA build, which
     # can outrun the default 30-minute budget on a slow link — give it 2h and surface a
     # timeout as a readable message instead of an unhandled 500. voicebox is the same
     # class (torch + kokoro + git-sourced engines, several GB) plus a bun build.
     # comfyui (torch + diffusion stack) and unsloth (its studio extra + a bun SPA build)
     # are the same class again.
-    timeout = 7200 if name in ("voicestudio", "voicebox", "comfyui", "unsloth") else 1800
+    # deepseek joins them: MEASURED 6m0s for its npm resolve on a WARM cache, which is
+    # inside the 30-minute default — but a cold npm cache on a slow link is exactly the
+    # case where 455 packages outruns it, and a timeout here reads to the user as "the
+    # install failed" rather than "we stopped waiting".
+    timeout = 7200 if name in ("voicestudio", "voicebox", "comfyui", "unsloth",
+                               "deepseek") else 1800
     try:
         r = _script(script, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -1132,6 +1242,16 @@ _NOTES = {
                  "model picker lists YOUR models (if it offers Big Pickle instead, the "
                  "config did not reach it — the log says so). "
                  "Needs a TOOL-CALLING model — look for the green 'tools' pill."),
+    # OPTIONAL, MIT, pre-1.0. Its own SPA + API on one loopback port, no auth. The
+    # tools warning is appended per-request by start_plan (it depends on the LIVE
+    # model), the same way OpenCode's is.
+    "deepseek": ("DeepSeek Harness on :3080 — loopback only (by its own policy), no "
+                 "auth. Start seeds the 'MOT Deck (local)' provider -> the harness "
+                 "runner, and it re-reads that file per request, so a model switch "
+                 "reaches it with no restart. FIRST RUN asks you to pick a WORKSPACE "
+                 "before it will take a message: 'Add workspace' -> "
+                 "data/deepseek-workspace. Needs a TOOL-CALLING model, like the other "
+                 "agent lanes."),
 }
 
 
@@ -1142,11 +1262,15 @@ async def start_plan(name: str) -> dict:
     steps = []
     for n in _closure(name, c, []):
         note = _NOTES.get(n, "")
-        # OpenCode is the one component whose usefulness depends on the LOADED
-        # MODEL, so the plan says so before anything starts. A warning, never a
+        # OpenCode and DeepSeek are the components whose usefulness depends on the
+        # LOADED MODEL, so the plan says so before anything starts. A warning, never a
         # refusal (see opencode_tools_warning).
-        if n == "opencode":
-            warn = _opencode_live_warning(c)
+        # ⚠️ The wording of that warning names OpenCode by product; it is reused here
+        # verbatim rather than duplicated per component because the FACT it reports —
+        # "the loaded model cannot emit a tool call" — is one fact about the runner,
+        # not a claim about either lane. A second copy is a second answer.
+        if n in ("opencode", "deepseek"):
+            warn = _opencode_live_warning(c, _needs_title(n))
             if warn:
                 note = (note + " · " + warn) if note else warn
         steps.append({"name": n, "running": await _running(n, c), "note": note})
@@ -1154,15 +1278,18 @@ async def start_plan(name: str) -> dict:
             "to_start": [s["name"] for s in steps if not s["running"]]}
 
 
-def _opencode_live_warning(c: dict) -> str:
+def _opencode_live_warning(c: dict, who: str = "OpenCode") -> str:
     """The tools warning for whatever the runner is CURRENTLY serving. Never raises
-    (a plan must render even with no registry and no runner)."""
+    (a plan must render even with no registry and no runner).
+
+    `who` names the product the sentence is FOR — see models.live_tools_warning. The
+    default keeps this function's existing single-argument behaviour identical."""
     try:
         port = (c.get("runner", {}) or {}).get("port")
         live = _live_model_id(int(port)) if port else None
         entry = next((m for m in _registry_models() if m.get("id") == live), None) \
             if live else None
-        return opencode_tools_warning(entry)
+        return live_tools_warning(entry, who)
     except Exception:                                            # noqa: BLE001
         return ""
 

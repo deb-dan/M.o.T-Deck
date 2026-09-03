@@ -3110,6 +3110,7 @@ const NAV_ENTRIES = [
   { id:'comfyui',     label:'Comfyui',     ico:null, kind:'component', view:null, tab:'ComfyUI',     prefersTab:true },
   { id:'unsloth',     label:'Unsloth',     ico:null, kind:'component', view:null, tab:'Unsloth',     prefersTab:true },
   { id:'opencode',    label:'Opencode',    ico:null, kind:'component', view:null, tab:'OpenCode',    prefersTab:true },
+  { id:'deepseek',    label:'DeepSeek',    ico:null, kind:'component', view:null, tab:'DeepSeek',    prefersTab:true },
 ];
 // Which bars an entry may appear on — the capability half, mirroring nav.py's `bars`.
 // Logs has no solo surface, so it is sidebar-only; Help has a view but deliberately no
@@ -3136,7 +3137,7 @@ const NAV_TOPBAR_MRU = 3;
 const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','compose','comfy','aider','goose','gooseui','loffice','caps','logs',
                              'help','api',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
-                             'opencode'];
+                             'opencode','deepseek'];
 /* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
    authority, and from app/main.swift's navDefaultTopbar; test_nav_model.py asserts all
    three agree). Same eleven ids, new reading order. */
@@ -3163,7 +3164,7 @@ const NAV_DEFAULT_TOPBAR_V1 = ['mc','odysseus','hermes','voicestudio','voicebox'
    is why they lead the list rather than being appended to it: they are not waiting for a
    pin, they are the SEED of the last-three window (NAV_DEFAULT_MRU) and are ON the
    default strip. Order mirrors nav.py's DEFAULT_TOPBAR tail exactly. */
-const NAV_TOPBAR_UNPINNED = ['compose','voicebox','chat','models','caps','goose','comfy','gooseui'];
+const NAV_TOPBAR_UNPINNED = ['compose','voicebox','chat','models','caps','goose','comfy','gooseui','deepseek'];
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
@@ -3854,6 +3855,7 @@ const LOG_SOURCES = [
   {n:'aider', label:'aider'}, {n:'aider-install', label:'aider install'},
   {n:'goose', label:'goose'}, {n:'goose-install', label:'goose install'},
   {n:'opencode', label:'opencode'}, {n:'opencode-install', label:'opencode install'},
+  {n:'deepseek', label:'deepseek'}, {n:'deepseek-install', label:'deepseek install'},
   // LOffice's boot beacon — the page phones home at every step of its own boot, and
   // that trace must be readable in-panel because the tab it describes may be blank.
   {n:'loffice-boot', label:'loffice boot'},
@@ -4579,7 +4581,7 @@ function apiKeysHtml(keys, minted, arm, note) {
   const rows = keys.keys || [];
   if (!rows.length) {
     h += '<div class="say">No named keys yet. Create one above, then paste it into an '
-       + 'app\'s own provider form — goose, OpenCode and Odysseus all ask for one.</div>';
+       + 'app\'s own provider form — goose, OpenCode, DeepSeek and Odysseus all ask for one.</div>';
   }
   rows.forEach(r => {
     const armed = arm === r.id;
@@ -9889,7 +9891,7 @@ function srcLabel(src){
    chat template could not be read, and an unknown must be drawn as NOTHING rather
    than as a "no" — the same absent-not-greyed rule the Sampling fields follow.
    One predicate, used by all three render sites, so they cannot disagree. */
-const TOOLS_PILL_TITLE = 'This model&#39;s chat template renders tool calls — required by OpenCode';
+const TOOLS_PILL_TITLE = 'This model&#39;s chat template renders tool calls — required by OpenCode and DeepSeek';
 function modelHasTools(m){
   if (!m) return false;
   if (m.tools === true) return true;
@@ -10306,7 +10308,7 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
     badges.push('<span class="mpill gone" title="The file this entry points at is not '
       + 'on disk (deleted outside MOT Deck — LM Studio?). It is excluded from the chat '
       + 'picker and from every app catalog. RESCAN removes entries like this — and '
-      + 'refreshes OpenCode / goose / Hermes / Odysseus from what is left.'
+      + 'refreshes OpenCode / DeepSeek / goose / Hermes / Odysseus from what is left.'
       + '">file missing</span>');
   }
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');

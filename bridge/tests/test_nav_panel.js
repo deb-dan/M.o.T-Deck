@@ -218,7 +218,8 @@ console.log('defaults');
   ok(ws.join(',') === 'mc,chat,models,compose,comfy,aider,goose,gooseui,loffice,caps,logs,help,api',
      'the workspace rail is today\'s order with ONE Music row: ' + ws.join(','));
   const comps = ids(d, 'sidebar').filter(i => M.navEntry(i).kind === 'component');
-  ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode',
+  // + deepseek at the tail (S34), by the same additive upgrade rule as `api` above.
+  ok(comps.join(',') === 'odysseus,hermes,voicestudio,voicebox,comfyui,unsloth,opencode,deepseek',
      'the components group lists every component that has a tab');
   ok(d.sidebar.every(r => r.pinned), 'nothing starts hidden on the sidebar');
   const top = d.topbar.filter(r => r.pinned).map(r => r.id);
@@ -253,8 +254,11 @@ console.log('defaults');
   // ⚠️ WIDENED A FIFTH TIME AT THE 9+3 SLICE, STILL NOT WEAKENED: `compose` and
   // `voicebox` LEAD the list because they join it for a different reason — they are the
   // window's seed and are ON the strip, not waiting behind ⋯ for a pin.
-  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'compose,voicebox,chat,models,caps,goose,comfy,gooseui',
-     'the window seed + the pinnable VIEWS + goose + comfy + gooseui are unpinned, in order');
+  // ⚠️ WIDENED A SIXTH TIME AT THE DEEPSEEK SLICE (S34), STILL NOT WEAKENED: one more
+  // row at the TAIL, the nine-pin prefix untouched. Pinning it instead would have been
+  // the weakening — there is no tenth pin to spend.
+  ok(d.topbar.filter(r => !r.pinned).map(r => r.id).join(',') === 'compose,voicebox,chat,models,caps,goose,comfy,gooseui,deepseek',
+     'the window seed + the pinnable VIEWS + goose + comfy + gooseui + deepseek are unpinned, in order');
   ok(top.length <= M.NAV_TOPBAR_PINS, 'the default pins are inside the pin cap');
   ok(M.navStrip(d).length <= M.NAV_TOPBAR_MAX, 'and the default strip inside the strip cap');
 }

@@ -113,7 +113,7 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   points the pin at the model already serving. Nothing is loaded, nothing restarts,
   and this app never rewrites your pin on its own: that choice is yours to make.
 - **When you switch models, everything else follows.** Hermes, Odysseus, both Goose
-  lanes and OpenCode are re-pointed at the new model as part of the switch. A choice
+  lanes, OpenCode and DeepSeek are re-pointed at the new model as part of the switch. A choice
   *you* made inside one of those apps is never overwritten — but if one of them is
   still holding a model that no longer exists, a thin banner appears above that tab
   naming both models with the one button that fixes it.
@@ -453,6 +453,32 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   are never created for you.
 
 ---
+
+## DeepSeek — the workspace it asks for first
+
+- **The first thing it shows is a notice, and the second is a question.** DeepSeek
+  Harness opens with an **Internal Testing Notice** — that is DeepSeek's own message
+  about its own software being a preview, not a warning about MOT Deck. Click
+  **Continue** and it does not come back.
+- **Then it will not take a message until you give it a folder to work in.** Its
+  composer reads "Choose a workspace to start". Click **Add workspace** in its sidebar
+  and pick `data/deepseek-workspace` inside MOT Deck's own folder — the installer
+  creates it for exactly this, with a README inside saying what it is. You can point it
+  somewhere else, but that folder is the one DeepSeek is started in, which makes it the
+  boundary on what it edits by default.
+- **The folder chooser is macOS's own, and DeepSeek opens it — not MOT Deck.** So it can
+  appear behind the window instead of in front of it. If clicking **Add workspace**
+  seems to do nothing, click the MOT Deck icon in the Dock and look for the chooser.
+- **Your models are already in it.** Starting DeepSeek writes one provider called
+  **MOT Deck (local)** into its own settings, pointing at your runner, listing the
+  models you actually have. It re-reads that file on every request, so switching models
+  in MOT Deck reaches DeepSeek without restarting it — unlike OpenCode, which reads its
+  configuration once when it starts.
+- **It needs a model that can call tools.** Like OpenCode, every edit it makes is a tool
+  call and there is no fallback, so on a model that cannot emit one it looks broken
+  rather than slow. Look for the green **tools** pill in Models.
+- **It is a developer preview and MOT Deck pins it.** DeepSeek says so itself. MOT Deck
+  installs one fixed version and never updates it behind your back.
 
 ## API — letting other apps use your model
 

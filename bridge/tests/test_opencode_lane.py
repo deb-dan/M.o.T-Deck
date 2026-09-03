@@ -168,7 +168,12 @@ def test_start_clears_the_port_with_the_ownership_check():
     b = branch()
     assert "_clear_port \"$OC_PORT\" opencode" in b, (
         "the listener-scoped, ownership-checked clear — never a bare lsof kill")
-    assert b.index("_clear_port") < b.index("nohup"), "cleared before launch"
+    # ⚠️ `_detached`, NOT `nohup`. This assertion was RED at v1.5.74 and had been
+    # since v1.5.69, when the spawn moved into the _detached wrapper and nohup went
+    # with it: `b.index("nohup")` raised ValueError, so the test failed on a MISSING
+    # SUBSTRING rather than on a wrong order — i.e. it stopped checking anything at
+    # all. Found while landing the DeepSeek lane (S34); not caused by it.
+    assert b.index("_clear_port") < b.index("_detached"), "cleared before launch"
 
 
 def test_start_runs_in_the_workspace():
@@ -272,7 +277,13 @@ def test_the_warning_is_a_warning_not_a_refusal():
     i = APP.index("def _opencode_live_warning")
     body = APP[i:i + 900]
     assert "HTTPException" not in body and "status_code" not in body
-    assert 'if n == "opencode":' in APP and "note = (note" in APP
+    # S34: the same decision table now serves the DeepSeek lane, so the guard reads
+    # `n in ("opencode", "deepseek")`. Asserted as a MEMBERSHIP test rather than by
+    # widening the literal, so adding a fourth agent lane cannot silently drop
+    # OpenCode out of the hook.
+    _hook = 'if n in ("opencode", "deepseek"):'
+    assert _hook in APP and "note = (note" in APP
+    assert '"opencode"' in _hook, "OpenCode must still be in the hook it owns"
 
 
 def test_capabilities_only_carry_an_explicit_true():
@@ -844,13 +855,18 @@ def test_the_probe_budget_is_per_component_and_nobody_elses_moved():
     and the historical 0.5s must remain EXACTLY that for every other component."""
     from bridge import app as A
     assert A.PROBE_TIMEOUT_DEFAULT == 0.5, "the historical budget, unchanged"
-    assert A.PROBE_TIMEOUT_S == {"opencode": 2.0}, (
-        "exactly one exception — a table that grows silently is how every component "
-        "ends up with a different, unexplained probe budget")
+    # S34: TWO entries now, and the fence is unchanged in spirit — the table is still
+    # a closed literal, so it cannot grow without someone editing this line and
+    # writing down why. deepseek is a node process with a 283MB dependency tree and
+    # its own RPC/websocket surface, i.e. the same "our loop, not their port" false
+    # negative opencode's entry exists for.
+    assert A.PROBE_TIMEOUT_S == {"opencode": 2.0, "deepseek": 2.0}, (
+        "exactly two explained exceptions — a table that grows silently is how every "
+        "component ends up with a different, unexplained probe budget")
     assert A._probe_timeout("opencode") == 2.0
     # THE NEGATIVE: every other component (and the runner) is byte-identical.
     for name in list(MANIFEST["components"]) + ["runner", "bridge", "nonsense"]:
-        if name == "opencode":
+        if name in ("opencode", "deepseek"):
             continue
         assert A._probe_timeout(name) == 0.5, f"{name}'s probe budget must not change"
     # …and the wide budget is spent ONLY where it can prevent a false alarm: a
@@ -858,6 +874,8 @@ def test_the_probe_budget_is_per_component_and_nobody_elses_moved():
     # opencode may not make every status poll 1.5s slower.
     assert A._probe_timeout("opencode", False) == 0.5
     assert A._probe_timeout("opencode", True) == 2.0
+    assert A._probe_timeout("deepseek", False) == 0.5
+    assert A._probe_timeout("deepseek", True) == 2.0
 
 
 def test_every_pre_existing_probe_call_site_keeps_its_own_budget():
@@ -1036,7 +1054,9 @@ def test_the_start_annotates_the_password_warning_as_expected():
     # about — not only to stdout, which the panel's Start does not surface.
     i = b.index("OPENCODE_SERVER_PASSWORD")
     assert '>>"$ROOT/data/logs/opencode.log"' in b[i:i + 2000]
-    assert b.index("EXPECTED") < b.index("nohup"), "written before the process starts"
+    # ⚠️ `_detached`, NOT `nohup` — same pre-existing v1.5.69 breakage as the clear
+    # order assertion above, same fix.
+    assert b.index("EXPECTED") < b.index("_detached"), "written before the process starts"
 
 
 def test_the_start_says_the_log_appends_so_n_blocks_is_n_starts():

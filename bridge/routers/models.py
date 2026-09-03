@@ -373,6 +373,25 @@ def opencode_tools_warning(entry) -> str:
     return OPENCODE_TOOLS_UNKNOWN % name
 
 
+def live_tools_warning(entry, who: str = "OpenCode") -> str:
+    """opencode_tools_warning with the PRODUCT NOUN swapped. PURE.
+
+    ⚠️ WHY THIS EXISTS RATHER THAN A SECOND SET OF CONSTANTS (S34). The DeepSeek
+    Harness lane has the identical requirement — every mutation is a native tool call,
+    no text-edit fallback — so start_plan reuses this decision table for it. Reusing it
+    VERBATIM would have printed "OpenCode needs it" on the DeepSeek card: a sentence
+    about a product the user is not starting, which is the LIES-TO-USER class, not a
+    cosmetic slip. Duplicating the four constants per component would instead give the
+    fact two answers, which is how the wording drifts.
+    So: ONE decision table, ONE wording, and the product noun substituted at the edge.
+    The default keeps every existing caller byte-identical.
+    """
+    s = opencode_tools_warning(entry)
+    if not s or not who or who == "OpenCode":
+        return s
+    return s.replace("OpenCode", who)
+
+
 # ── the OpenCode LANDING ─────────────────────────────────────────────────────
 # THE COMPLAINT THIS ANSWERS: the tab opened OpenCode's home screen, which read
 # "Nothing here yet — Create a session to get started" beside a Projects rail whose
@@ -877,6 +896,82 @@ def _rebind_opencode(wire: str) -> str:
     return "; ".join(bits)[:400]
 
 
+def _rebind_deepseek(wire: str) -> str:
+    """Rewrite the DeepSeek lane's provider route + default from the CURRENT registry.
+
+    Same gap, same closure as _rebind_opencode: a config-resident model catalog that
+    only its own Start rewrites is a catalog that goes on advertising models the user
+    deleted days ago, and picking a ghost does not fail — llama.cpp ignores the
+    request's `model` field, so the turn answers under a dead model's name. Lie class.
+    So this lane joins BOTH fan-outs (the model switch and Rescan) from the day it
+    lands, rather than being the one dependent left out the way OpenCode was in
+    v1.5.62.
+
+    ⚠️ AND HERE THE FILE WRITE IS THE WHOLE FIX — the one place this differs from
+    OpenCode, in DeepSeek's favour, and it is upstream's own documented property rather
+    than our hope: dsh's llm-pi-ai adapter "reads its profiles through a thunk ONCE PER
+    OPERATION instead of freezing them at construction", the settings provider watches
+    the document and hot-publishes external edits, and the docs state plainly that
+    "model changes take effect on the next request without restarting the server". So
+    there is NO "restart it to see this" half to append here, and appending one would
+    be a false instruction. That asymmetry is exactly why the note this returns is
+    shorter than OpenCode's, and why it must not be copied from it.
+
+    Never raises; returns a short log line ('' when there is nothing to say)."""
+    root_env = dict(os.environ)
+    ds_home = ROOT / "data" / "deepseek" / "home"
+    settings = ds_home / "settings.yaml"
+    # S23: installed-ness is the existence of the document the lane's own Start wrote.
+    # A lane that has never started here says NOTHING at all rather than reporting a
+    # re-seed of a file nobody asked for.
+    if not settings.is_file():
+        return ""
+    rc = cfg().get("runner", {}) or {}
+    # The key env-var NAME is DERIVED by the seeder, never restated here — the same
+    # rule the shell arm follows. Import by path: this module must not depend on
+    # scripts/ being importable as a package.
+    key_env = "MOT_DECK_LOCAL_API_KEY"
+    try:
+        import importlib.util
+        _p = ROOT / "scripts" / "seed_deepseek_config.py"
+        _s = importlib.util.spec_from_file_location("harness_seed_dsh", str(_p))
+        if _s is not None and _s.loader is not None:
+            _m = importlib.util.module_from_spec(_s)
+            _s.loader.exec_module(_m)
+            key_env = _m.key_env_name()
+    except Exception:                                                # noqa: BLE001
+        pass                    # the fallback IS that function's value for the default
+    root_env.update(
+        HARNESS_ROOT=str(ROOT),
+        DS_SETTINGS=str(settings),
+        DS_BASE=str(rc.get("endpoint") or ""),
+        DS_KEY_ENV=str(key_env),
+        # LIVE OUTRANKS THE PIN — the Start arm can only read harness.yaml, but we know
+        # what is actually serving.
+        DS_MODEL=str(wire or ""))
+    try:
+        r = subprocess.run([sys.executable, "scripts/seed_deepseek_config.py"],
+                           cwd=str(ROOT), env=root_env, capture_output=True,
+                           text=True, timeout=60)
+    except Exception as e:                                           # noqa: BLE001
+        return f"DeepSeek catalog re-seed failed: {str(e)[:80]}"
+    if r.returncode != 0:
+        return (f"DeepSeek catalog re-seed exited {r.returncode}: "
+                f"{(r.stderr or r.stdout)[-160:].strip()}")
+    # Only the REPAIRS travel (a config we rewrote under the user must be visible)…
+    bits = [ln.split("REPAIRED:", 1)[1].strip()
+            for ln in (r.stdout or "").splitlines() if "REPAIRED:" in ln]
+    # …plus the REFUSAL, which is the one line that must never be silent. The seeder
+    # exits 0 when it declines to write (an empty enumeration, an unparseable
+    # document), because a Start must not fail for that — but in the switch/rescan
+    # fan-out the user has just pressed a button, and "we left your models alone and
+    # here is why" is the answer they are owed.
+    for ln in (r.stdout or "").splitlines():
+        if "NOT WRITTEN" in ln:
+            bits.append(ln.split("NOT WRITTEN —", 1)[-1].strip() or "not written")
+    return "; ".join(bits)[:400]
+
+
 def _rebind_hermes_file(wire: str) -> str:
     """The Hermes provider seed WITHOUT a restart — the config half of its Start arm.
 
@@ -932,7 +1027,7 @@ def _rescan_fanout() -> str:
     except Exception:                                                # noqa: BLE001
         n = -1
     said = []
-    # ⚠️ THE THREE SEEDS ALL RETURN '' ON A CLEAN, NO-CHANGE RUN — which is right for
+    # ⚠️ THE FOUR SEEDS ALL RETURN '' ON A CLEAN, NO-CHANGE RUN — which is right for
     # the switch log (silence = nothing to report) and WRONG here, where the user has
     # just pressed a button and is owed an answer. Installed-ness is checked FIRST so
     # a lane that is not on this machine still says nothing at all (S23).
@@ -940,6 +1035,11 @@ def _rescan_fanout() -> str:
             ("OpenCode", _rebind_opencode,
              (ROOT / "data" / "opencode" / "xdg" / "config" / "opencode"
               / "opencode.json").is_file()),
+            # S34: the DeepSeek lane, joined to BOTH fan-outs on the day it landed
+            # rather than a release later. Its presence test is the settings document
+            # its own Start writes — see _rebind_deepseek.
+            ("DeepSeek", _rebind_deepseek,
+             (ROOT / "data" / "deepseek" / "home" / "settings.yaml").is_file()),
             ("Hermes", _rebind_hermes_file,
              os.path.isfile(os.path.expanduser("~/.hermes/config.yaml"))),
             ("goose", _rebind_goose,
@@ -1009,6 +1109,16 @@ def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> 
     onote = _rebind_opencode(wire)
     if onote:
         print(f"[switch] opencode: {onote}", flush=True)
+    # S34 — THE DEEPSEEK LANE JOINS THE FAN-OUT, on the day it landed. It is a
+    # config-resident catalog of exactly the same shape, so leaving it out would have
+    # rebuilt the S29 bug in a new lane and waited for Debi to find it again.
+    # ⚠️ And here the file write really is the whole fix — dsh re-reads its settings
+    # per operation — so unlike OpenCode there is no restart to advise. See
+    # _rebind_deepseek.
+    _switch_log("re-wiring DeepSeek…")
+    dnote = _rebind_deepseek(wire)
+    if dnote:
+        print(f"[switch] deepseek: {dnote}", flush=True)
     return ""
 
 

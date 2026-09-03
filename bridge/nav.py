@@ -166,6 +166,17 @@ NAV_ENTRIES = (
     {"id": "comfyui",     "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "unsloth",     "kind": "component", "bars": ("sidebar", "topbar")},
     {"id": "opencode",    "kind": "component", "bars": ("sidebar", "topbar")},
+    # ⚠️ THE ID IS `deepseek`, LOWERCASE ALPHA ONLY, AND THAT IS A CONSTRAINT RATHER
+    # THAN A PREFERENCE (S34). bridge/tests/test_nav_model.py harvests the panel's
+    # mirror with the regex `\{ id:'([a-z]+)',` and compares the harvest to NAV_IDS, so
+    # an id carrying a digit, a hyphen or an underscore would silently fail to be
+    # captured and the suite would report the panel as MISSING the entry it plainly
+    # has. The component in harness.yaml, the tab in app/main.swift and this id are
+    # therefore all `deepseek` — which is also what makes the dependency banner work at
+    # all: app/main.swift keys it as depNeeds[tabs[idx].id] against /api/deps component
+    # names, so a component named deepseek_harness with a tab named deepseek would have
+    # a banner that never appears.
+    {"id": "deepseek",    "kind": "component", "bars": ("sidebar", "topbar")},
 )
 NAV_IDS = tuple(e["id"] for e in NAV_ENTRIES)
 
@@ -199,6 +210,14 @@ DEFAULT_SIDEBAR = (
     ("api", True),
     ("odysseus", True), ("hermes", True), ("voicestudio", True),
     ("voicebox", True), ("comfyui", True), ("unsloth", True), ("opencode", True),
+    # S34, and it arrives by the SAME upgrade path the `api` row above describes:
+    # `normalize` appends a known id the caller omitted, so an EXISTING nav.json gains
+    # this row at the tail of its sidebar list and renders in the Workspace group with
+    # the other components. No `v` bump, no migration, nothing anybody arranged moves.
+    # It is SHOWN by default in the sidebar (unlike the topbar, below) because a
+    # sidebar row costs no scarce slot and a component with no row anywhere is a
+    # component the user cannot find.
+    ("deepseek", True),
 )
 # …and this is the shell's `tabs` table, in order, followed by the three views that CAN
 # be pinned as solo tabs but are not by default.
@@ -252,6 +271,16 @@ DEFAULT_TOPBAR = (
     # declare a winner between two lanes Debi's ruling says coexist. One sidebar click
     # or one ⋯ away, and the Appearance editor can pin it by choice.
     ("gooseui", False),
+    # ⚠️ AND `deepseek` IS DECLARED-BUT-NOT-PINNED, A FIFTH TIME (S34). Same argument,
+    # and this one is the easiest of the five: the pinned prefix must stay at exactly
+    # NAV_TOPBAR_PINS=9 (validate() REFUSES a tenth, repair() trims it, and
+    # test_nav_model.py hardcodes both the strip length of 11 and the exact strip), so
+    # there is no pin to spend at all — the tenth and eleventh strip slots are the MRU
+    # seed, not pins. It joins the SWAPPABLE set, which is what Debi's 9+3 ruling
+    # created it for: open it once from the sidebar or ⋯ and it takes the first
+    # swappable slot for as long as it is in use. The Appearance editor can pin it by
+    # choice, at the cost of unpinning something else.
+    ("deepseek", False),
 )
 # THE ORDER AS IT SHIPPED BEFORE v1.5.26, frozen. This is not history for its own sake:
 # it is the ONLY way to tell "this user never customised their strip" from "this user

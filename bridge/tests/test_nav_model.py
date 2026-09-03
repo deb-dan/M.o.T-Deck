@@ -207,14 +207,21 @@ def test_normalize():
     # unpinned for their original argument, which the window now also answers — a lane
     # behind ⋯ is one click from a strip slot instead of one click from a pin nobody
     # has spare.
+    # ⚠️ WIDENED A SIXTH TIME AT THE DEEPSEEK SLICE (S34), AND STILL NOT WEAKENED —
+    # same closed, ordered list, one more row at the TAIL for the original argument.
+    # The pinned prefix is untouched at NAV_TOPBAR_PINS=9, so the strip is still eleven
+    # (nine pins + the two-entry window seed) and this lane is one sidebar click or one
+    # ⋯ away, exactly like goose/comfy/gooseui. Adding it to the PINS instead would
+    # have been the weakening: validate() refuses a tenth pin, repair() trims it, and
+    # the strip assertions below hardcode 11 and 12.
     ok(nav.hidden(d, "topbar") == ["compose", "voicebox", "chat", "models", "caps",
-                                   "goose", "comfy", "gooseui"],
-       "the window's seed + the three pinnable views + goose + comfy + gooseui are the "
-       "unpinned rows, in order")
+                                   "goose", "comfy", "gooseui", "deepseek"],
+       "the window's seed + the three pinnable views + goose + comfy + gooseui + "
+       "deepseek are the unpinned rows, in order")
     ok(set(nav.hidden(d, "topbar")) - set(nav.strip(d))
-       == {"chat", "models", "caps", "goose", "comfy", "gooseui"},
-       "…and the ⋯ menu is the unpinned rows MINUS the window: exactly the six that are "
-       "not on the strip at all")
+       == {"chat", "models", "caps", "goose", "comfy", "gooseui", "deepseek"},
+       "…and the ⋯ menu is the unpinned rows MINUS the window: exactly the seven that "
+       "are not on the strip at all")
     ok("goose" not in [i for i, p in nav.DEFAULT_TOPBAR if p]
        and "gooseui" not in [i for i, p in nav.DEFAULT_TOPBAR if p],
        "…and NEITHER goose lane is pinned: the strip does not pick one of the two")

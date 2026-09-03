@@ -363,6 +363,77 @@ components:
     #    start script sets — see start_component.sh — but it IS a floating dependency and
     #    it is why this install is ONLINE-ONLY and cannot ride the fat wheelhouse.
 
+  # ── OPTIONAL THIRD CODING lane — DeepSeek Harness (docs/research/2026-09-02-deepseek-harness.md) ──
+  # `dsh` is DeepSeek AI's own agent harness (Claude-Code-shaped, Cordis plugin
+  # architecture). It is a TAB, not a PTY: `dsh web` serves its own SPA + its own
+  # JSON/websocket API on ONE loopback port, the same shape as OpenCode's `serve`.
+  deepseek:
+    # NOT a git checkout and NOT a prebuilt binary. Upstream publishes a TypeScript
+    # monorepo to npm; the install is `npm install @deepseek-ai/dsh@<pin>` into a
+    # private prefix under data/deepseek/, which resolves ~455 packages (~283MB,
+    # MEASURED 2026-09-03; ~7 min on a warm cache). Hermes/Odysseus weight class, not
+    # OpenCode's one-Mach-O class. `repo` is informational — the PIN IS THE NPM VERSION.
+    repo: https://github.com/deepseek-ai/deepseek-harness.git
+    pin: "0.1.1-rc.2"         # = build.dsh_pin (kept here so the manifest is
+                              # self-describing; the installer reads build.dsh_pin).
+    installed: false         # OPTIONAL — nothing depends on it; bootstrap never installs it
+                              # ⚠️ THIS IS THE SHIPPED DEFAULT AND MUST STAY false HERE.
+                              # Install state is PER MACHINE and lives in the SNAPSHOT's
+                              # copy of this file (ship.sh's manifest merge is additive-only
+                              # and never overwrites an existing value). Running the
+                              # installer against the REPO flips this line to true — which
+                              # is correct behaviour AND a red gate
+                              # (test_seam.py::test_harness_yaml_parses). Flip it back
+                              # before committing; that is not a bug in either half.
+    enabled: false
+    port: 3080                # upstream's OWN default (dsh-host-webserver: `port:
+                              # ctx.webStartup.port ?? 3080`, verified in the composed
+                              # tree at the pin). Passed EXPLICITLY on the launch line
+                              # anyway, and 3080 collides with nothing else in this file.
+    depends_on: []            # NOT [runner]: same reasoning as OpenCode — it is usable
+                              # against any provider it has configured, and our config
+                              # fan-out is best-effort. The SOFT signal lives in
+                              # bridge/routers/components.py::NEEDS_SOFT, which is what
+                              # puts "the Runner is down" on its card without changing
+                              # what a Start brings up.
+    # ⚠️ LICENSE: MIT (root LICENSE, © DeepSeek 2026). THIRD_PARTY_NOTICES' only
+    #    GPL-family entries are dev-only tooling, not linked into any shipped artifact.
+    # ⚠️ PRE-1.0 DEVELOPER PREVIEW, and it says so itself (SAFETY.md: "experimental
+    #    developer-preview software … has not undergone a security audit"). Fifteen npm
+    #    versions to date, ALL 0.0.x/0.1.x with -rc/-alpha suffixes. PIN HARD.
+    #    ⚠️ THE PIN IS UPSTREAM'S OWN `latest` DIST-TAG, NOT THE HIGHEST VERSION NUMBER.
+    #    Measured 2026-09-03: dist-tags were latest=0.1.1-rc.2 (published 2026-08-21),
+    #    next=0.1.2-rc.1 (published THAT MORNING), alpha=0.1.2-alpha.5. `next` and
+    #    `alpha` are pre-release channels upstream has not promoted; taking the highest
+    #    number would be tracking a branch, which is the thing this file's first line
+    #    forbids. When bumping: read `npm view @deepseek-ai/dsh dist-tags` and take
+    #    `latest` — and re-run the compat measurement in scripts/seed_deepseek_config.py.
+    # ⚠️ NEEDS NODE >= 22.19 (or >= 24). The PUBLISHED package declares NO `engines`
+    #    field (the ^22.19.0 || >=24.0.0 range lives in the monorepo root package.json,
+    #    which npm never sees), so npm will NOT enforce it and a too-old Node fails at
+    #    runtime with a confusing error. scripts/ensure_node.sh is what checks it:
+    #    the user's own node ALWAYS wins, else we fetch build.node_pin into data/node.
+    # ⚠️ FENCED HOME: $DSH_HOME = data/deepseek/home, exported at spawn. Upstream's
+    #    default is ~/.dsh (dsh-home-paths::resolveDshHome — explicit config, then
+    #    $DSH_HOME, then ~/.dsh). VERIFIED on a from-scratch walk: after an install,
+    #    a --help, a web boot and eight headless turns, ~/.dsh, ~/.cache/dsh and
+    #    ~/.config/dsh did not exist. Everything lands under $DSH_HOME.
+    # ⚠️ TELEMETRY IS OFF AT THIS PIN BY DEFAULT — VERIFIED, not assumed. The composed
+    #    tree's session-telemetry-otel row reads
+    #    `mode: process.env.DSH_TELEMETRY_MODE || 'DISABLED'` (the brief's
+    #    FEEDBACK_ONLY was the monorepo's older default). We ALSO export
+    #    DSH_TELEMETRY_DISABLED=1 at spawn — upstream's own authoritative pre-load kill
+    #    switch — so the default moving at a future pin cannot switch it on under us.
+    # ⚠️ NO AUTO-UPDATER. Grepped the whole install for autoupdate/self-update/
+    #    update-notifier/`npm install` machinery: nothing. So unlike OpenCode there is
+    #    no in-app upgrade to nail shut — but the same rule applies to `npm update`.
+    # ⚠️ NO pkill/killall ANYWHERE in the 455-package install (grepped). Clean.
+    # ⚠️ LOOPBACK BY POLICY, not merely by default: the CLI refuses --host 0.0.0.0.
+    #    No auth, by design, exactly like OpenCode's server and Hermes's dashboard.
+    # ⚠️ THE FIRST THING IT ASKS FOR IS A WORKSPACE, and its folder picker is macOS's
+    #    own (osascript `choose folder`), opened BY dsh — see ledger U67. The installer
+    #    creates data/deepseek-workspace so there is an obvious answer.
+
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
@@ -634,6 +705,28 @@ build:
   # opencode-darwin-arm64@1.18.23, whose dist.shasum is
   # 3085492a00e566a3d64e781bbc849bc9c8adc33d.
   opencode_pin: "1.18.23"
+  # ── DEEPSEEK HARNESS lane (components.deepseek above carries the reasoning) ──
+  # The npm version of @deepseek-ai/dsh. Read LIVE from registry.npmjs.org 2026-09-03:
+  # `npm view @deepseek-ai/dsh dist-tags` → latest=0.1.1-rc.2, next=0.1.2-rc.1,
+  # alpha=0.1.2-alpha.5. THIS IS `latest` — the channel upstream promotes — not the
+  # highest number. dist.shasum 1a5112369f1c46b13a6e6f21de8af5e6afd45074;
+  # dist.integrity sha512-UP1UIh6q3Gme/yXRn/QL2P8IsVlv8Shpg22TRJIZPsCRWLm4CBiA1MUvXmJAfsOEETBMLAl+xWPtFw6ICsN3wg==.
+  # npm itself verifies that integrity hash on every fetch of the top-level package;
+  # the TRANSITIVE tree is range-resolved on the FIRST install and then frozen into
+  # data/deepseek/npm/package-lock.json (lockfileVersion 3, 513 entries, MEASURED), so
+  # every later repair/reinstall is `npm ci` off that lock and is byte-reproducible.
+  # That is as far as pinning goes in this ecosystem; the ledger row says so out loud.
+  dsh_pin: "0.1.1-rc.2"
+  # Node: the RUNTIME @deepseek-ai/dsh needs (>= 22.19, or >= 24). Same three-step
+  # resolution and single-source-of-truth idiom as bun_pin — the user's own node on
+  # PATH ALWAYS wins and is never shadowed; this pin is only the download fallback
+  # (scripts/ensure_node.sh → data/node, verified against nodejs.org's own
+  # SHASUMS256.txt, no sudo, nothing written outside the tree).
+  # Pin = the newest Node LTS as of 2026-09-03, read live from nodejs.org/dist/index.json
+  # (v24.20.0, "Krypton", released 2026-08-26), which satisfies the >= 24 half of the
+  # range. MEASURED on this machine: the node already on PATH is v22.23.1, which
+  # satisfies the ^22.19 half, so the fallback did not fire on the walk.
+  node_pin: "v24.20.0"
   # ── OFFICE lane (docs/research/2026-08-20-office-lane-recon.md, slice 1: SHEETS) ──
   # Univer, Apache-2.0, vendored as UMD assets our OWN bridge serves — no new process,
   # no port, no component card. Read by scripts/fetch_vendor_assets.sh (awk, same

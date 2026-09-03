@@ -25,12 +25,14 @@ def test_harness_yaml_parses():
     # OPTIONAL — present in the manifest, installed:false by default, depended on by
     # nothing, and never cloned by bootstrap (install_component.sh shallow-clones them
     # itself, the searxng precedent).
+    # deepseek (2026-09-03, S34) joined on exactly the same terms.
     assert set(c["components"]) == {
         "hermes", "odysseus", "searxng", "voicestudio", "voicebox",
-        "comfyui", "unsloth", "opencode"}
+        "comfyui", "unsloth", "opencode", "deepseek"}
     for comp in c["components"].values():
         assert comp["pin"], "every component must be pinned"
-    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode"):
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode",
+                 "deepseek"):
         comp = c["components"][name]
         assert comp["installed"] is False, f"{name} is OPTIONAL — it must ship installed:false"
         assert comp["depends_on"] == [], f"{name} must not be a dependency edge"
@@ -69,6 +71,34 @@ def test_harness_yaml_parses():
     assert "127.0.0.1:8700/opencode" in (ROOT / "app" / "main.swift").read_text(), (
         "the OpenCode tab must open the bridge's landing redirect — :4096/ on its own "
         "IS the empty 'Add project' home screen Debi reported")
+    # ── DeepSeek Harness (S34): the SAME two-places-must-agree rule as OpenCode, and
+    # the same reason — install_deepseek.sh reads build.dsh_pin while the
+    # manifest entry is what a human reads.
+    assert c["build"]["dsh_pin"] == c["components"]["deepseek"]["pin"], (
+        "build.dsh_pin and components.deepseek.pin disagree — the installer reads the "
+        "build key, so a stale manifest pin would silently document the wrong version")
+    # ⚠️ THE PIN IS A PRE-RELEASE npm VERSION AND MUST STAY ONE. Upstream is pre-1.0 and
+    # its `latest` dist-tag is deliberately NOT the highest version number (measured
+    # 2026-09-03: latest=0.1.1-rc.2 while next=0.1.2-rc.1 existed). This is not a
+    # version check — it is a shape check that catches the one wrong move: pinning a
+    # git ref or a floating tag in a field the installer feeds straight to npm.
+    _dsh = str(c["components"]["deepseek"]["pin"])
+    assert _dsh[0].isdigit() and _dsh.count(".") >= 2, (
+        f"components.deepseek.pin ({_dsh!r}) is not an npm version — it must never be "
+        "a git ref, a branch or a dist-tag name; the installer passes it to "
+        "`npm install @deepseek-ai/dsh@<pin>` verbatim")
+    assert _dsh not in ("latest", "next", "alpha"), "a dist-tag name is not a pin"
+    # 3080 is upstream's own default AND the manifest's port AND what the start script
+    # passes explicitly. The TAB hard-codes it, unlike OpenCode's — dsh has no deep
+    # link to build, so there is no bridge redirect to route through, and this
+    # assertion is what keeps the constant in main.swift honest.
+    assert c["components"]["deepseek"]["port"] == 3080
+    assert 'HarnessTab(id: "deepseek", title: "DeepSeek"' in \
+        (ROOT / "app" / "main.swift").read_text(), (
+        "the DeepSeek tab row is missing or renamed — the title must stay byte-identical "
+        "to _NEEDS_TITLES['deepseek'] or its dependency banner names an internal id")
+    assert "127.0.0.1:3080" in (ROOT / "app" / "main.swift").read_text(), (
+        "the DeepSeek tab must point at the port harness.yaml declares")
 
 
 def test_optional_components_are_not_submodules():
@@ -79,7 +109,8 @@ def test_optional_components_are_not_submodules():
     if not gm.exists():
         return
     src = gm.read_text(errors="replace")
-    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode"):
+    for name in ("voicestudio", "voicebox", "comfyui", "unsloth", "opencode",
+                 "deepseek"):
         assert f"vendor/{name}" not in src, (
             f"{name} became a submodule — it must stay a shallow clone made by "
             "install_component.sh, or bootstrap will pull it for everyone")
