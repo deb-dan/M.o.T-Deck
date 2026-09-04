@@ -15,8 +15,8 @@ Facts that changed:
 Ops gotchas learned the hard way since (the expensive ones):
 1. **The fat app serves a provisioned snapshot**, not the repo — a `--fat` rebuild never refreshes
    an existing snapshot. Ship only via `./scripts/ship.sh`.
-2. **The bridge outlives the app.** Quitting the app does not restart the bridge; a pre-existing
-   :8700 listener is adopted and serves stale code forever. Kill the listener by port.
+2. **The bridge outlives the app.** Quitting the app does not restart the bridge; use
+   `./scripts/ship.sh` when code changed so its pidfile/path ownership checks restart the right bridge.
 3. **Every `lsof -ti tcp:` kill MUST carry `-sTCP:LISTEN`** — without it the pattern matches client
    sockets and once SIGTERMed the bridge itself.
 4. **WKWebView never delivers DOM drag events** — file drag-and-drop needs a native `DropOverlay`
@@ -24,8 +24,9 @@ Ops gotchas learned the hard way since (the expensive ones):
    silently no-ops.
 5. **Hermes's default `approvals.mode` is `smart`, not manual** — a guardian LLM can auto-approve
    before the approval card path. Set `manual` in Hermes Config → Security.
-6. Kill the bridge by port (`lsof -ti tcp:8700`), not by name (it shows as `python3.1`);
-   `pkill -x Harness` before relaunching, and remember macOS relaunches the `/Applications` copy.
+6. Never kill the bridge or app by name or by a bare port match. For an app-only cycle use
+   `osascript -e 'tell application id "local.harness.app" to quit'` and then
+   `open -b local.harness.app`; the installed filename may be `Harness.app` or `M.O.T.app`.
 ---
 
 

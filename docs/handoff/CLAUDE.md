@@ -96,7 +96,9 @@
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);
 > component restart `./scripts/ship.sh --restart <name>`; app only: quit with
-> `osascript -e 'quit app "Harness"'` then `open -a Harness`; stale tab = ⌘R in the tab.**
+> `osascript -e 'tell application id "local.harness.app" to quit'` then
+> `open -b local.harness.app`; stale tab = ⌘R in the tab. The installed filename may be
+> `Harness.app` or `M.O.T.app`; lifecycle identity is the bundle id, never either name.**
 
 
 > **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the project is at **v1.5.0** (see `VERSION`).

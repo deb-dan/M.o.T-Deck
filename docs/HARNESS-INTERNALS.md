@@ -565,11 +565,13 @@ Learned the hard way; each one cost real time.
 2. **Stop verifies the port, not just the pid.** Stale pid files made Stop a silent no-op;
    `stop()` (app.py:516) now treats the pid kill as advisory and always checks the port
    (≤1.5s grace) before killing the listener.
-3. **Kill the bridge by port, not by name:** `lsof -ti tcp:8700 | xargs kill -9`.
-   `pkill -f "uvicorn bridge.app"` can MISS it (the process shows as `python3.1`).
-4. **Relaunching the app:** `open dist/Harness.app` only re-focuses a running instance —
-   `pkill -x Harness` first, and remember macOS relaunches the **/Applications** copy if one
-   exists (`rm -rf /Applications/Harness.app && cp -R dist/Harness.app /Applications/`).
+3. **Never kill the bridge by name or by a bare port match.** `ship.sh` uses the bridge
+   pidfile first, re-verifies the full command/path identity, and refuses to touch a
+   stranger listening on :8700.
+4. **Relaunching the installed app:** ask the stable bundle id to quit, then reopen that
+   same identity: `osascript -e 'tell application id "local.harness.app" to quit'` followed
+   by `open -b local.harness.app`. The installed filename may be `Harness.app` or
+   `M.O.T.app`; `ship.sh` validates and selects the actual bundle before changing anything.
 5. **Stale panel:** `rm -rf ~/Library/WebKit/local.harness.app ~/Library/Caches/local.harness.app`
    (bundle id `local.harness.app`).
 6. **The snapshot rule** (§3) — the fat app serves the snapshot, not the repo.

@@ -103,6 +103,9 @@ The current repository recovery slice is an **unshipped candidate after v1.5.76*
   deliberately not touched, so this is not a claim that the live model switch completed.
 - **U69** — Hermes and DeepSeek now share one interpreter resolver that proves PyYAML is
   importable; Odysseus deliberately keeps its own activated environment.
+- **U78** — `ship.sh` now discovers the installed app by its stable bundle identity and
+  validates the executable, accepting either `Harness.app` or `M.O.T.app`; this is still
+  repository-only until the corrected command is shipped and walked on the real stack.
 - The full audit found one unrelated pre-existing red fence: **U77**, the 1,500-line
   app-layer ceiling. It needs extraction, not a raised threshold.
 

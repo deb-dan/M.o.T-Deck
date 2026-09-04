@@ -178,8 +178,10 @@ def test_runner_arms_reap_by_pidfile_not_by_engine_pattern():
 
 def test_ship_quits_the_app_by_apple_event_and_verified_bundle_path():
     code = _code(SHIP)
-    assert "osascript -e 'quit app \"Harness\"'" in code, \
-        "ship.sh must ASK the app to quit, not signal a process called Harness"
+    assert "osascript -e 'tell application id \"local.harness.app\" to quit'" in code, \
+        "ship.sh must ASK the app by stable bundle id, not signal a process by name"
+    assert "osascript -e 'quit app \"Harness\"'" not in code, \
+        "the old filename-based Apple Event quit is back"
     assert '$APP/Contents/MacOS/' in code, \
         "a surviving app pid must be identified by its bundle path"
     assert "REFUSING to ship" in code and "not this harness" in code, \

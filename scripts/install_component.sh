@@ -460,7 +460,9 @@ elif [[ "$NAME" == "voicebox" ]]; then
     # (3) needs no network and no extra tooling, so it is the reliable last resort.
     VB_WHEELS=""
     for _w in "$ROOT/../wheelhouse" /Applications/Harness.app/Contents/Resources/wheelhouse \
-              "$HOME/Applications/Harness.app/Contents/Resources/wheelhouse"; do
+              /Applications/M.O.T.app/Contents/Resources/wheelhouse \
+              "$HOME/Applications/Harness.app/Contents/Resources/wheelhouse" \
+              "$HOME/Applications/M.O.T.app/Contents/Resources/wheelhouse"; do
       [[ -d "$_w" ]] && { VB_WHEELS="$_w"; break; }
     done
     VB_PIPWHL=""

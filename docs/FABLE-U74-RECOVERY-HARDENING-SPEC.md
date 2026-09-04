@@ -21,7 +21,7 @@ API itself answers. Static panel HTML is not health.
 
 This slice changes the repository copy only. It MUST NOT read, copy, edit, start,
 stop, or inspect the installed snapshot under `~/Library/Application Support/Harness`,
-`/Applications/Harness.app`, or any original project/app directory. It must not run
+`/Applications/{Harness,M.O.T}.app`, or any original project/app directory. It must not run
 `scripts/ship.sh`, because that command targets those live locations. Validation uses
 temporary fixtures and repository tests only. Therefore the final report must say
 **implemented and slice-verified, not shipped to the live app**. The full-suite baseline

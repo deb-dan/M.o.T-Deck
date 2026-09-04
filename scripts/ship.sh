@@ -31,7 +31,84 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DST="$HOME/Library/Application Support/Harness"
-APP="/Applications/Harness.app"
+APP=""
+
+# A Finder install may localize the .app filename (M.O.T.app) while preserving this
+# bundle's internal identity.  Resolve the installed bundle by that identity, never by
+# the display name or filename alone.  `--resolve-app-fixtures` below is a test-only
+# seam: production always considers the four accepted installed locations.
+RESOLVE_FIXTURES=0
+RESOLVE_FIXTURE_CANDIDATES=()
+
+_app_plist_value() {   # <bundle> <Info.plist key>
+  /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
+_canonical_bundle_path() {   # <existing bundle directory>
+  (cd -P "$1" 2>/dev/null && pwd -P)
+}
+
+_valid_harness_app() {   # <candidate bundle>
+  local candidate="$1" bundle_id executable
+  [[ -d "$candidate" && -f "$candidate/Contents/Info.plist" ]] || return 1
+  bundle_id="$(_app_plist_value "$candidate" CFBundleIdentifier)"
+  [[ "$bundle_id" == "local.harness.app" ]] || return 1
+  executable="$(_app_plist_value "$candidate" CFBundleExecutable)"
+  [[ "$executable" == "Harness" && -x "$candidate/Contents/MacOS/Harness" ]]
+}
+
+_resolve_installed_app() {
+  local candidate
+  local -a candidates=() valid=()
+
+  if [[ -n "${HARNESS_APP_PATH:-}" ]]; then
+    candidates=("$HARNESS_APP_PATH")
+  elif [[ "$RESOLVE_FIXTURES" -eq 1 ]]; then
+    candidates=("${RESOLVE_FIXTURE_CANDIDATES[@]:-}")
+  else
+    candidates=(
+      "/Applications/Harness.app"
+      "/Applications/M.O.T.app"
+      "$HOME/Applications/Harness.app"
+      "$HOME/Applications/M.O.T.app"
+    )
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    _valid_harness_app "$candidate" || continue
+    candidate="$(_canonical_bundle_path "$candidate")" || continue
+    valid+=("$candidate")
+  done
+
+  if [[ -n "${HARNESS_APP_PATH:-}" && ${#valid[@]} -eq 0 ]]; then
+    echo "[ship] ERROR: HARNESS_APP_PATH '$HARNESS_APP_PATH' is not a valid Harness bundle."
+    echo "[ship]        It must be a directory with CFBundleIdentifier local.harness.app"
+    echo "[ship]        and CFBundleExecutable Harness at Contents/MacOS/Harness (executable)."
+    return 1
+  fi
+
+  if [[ ${#valid[@]} -eq 0 ]]; then
+    echo "[ship] ERROR: no valid installed Harness bundle found. Accepted locations:"
+    echo "[ship]        /Applications/Harness.app"
+    echo "[ship]        /Applications/M.O.T.app"
+    echo "[ship]        $HOME/Applications/Harness.app"
+    echo "[ship]        $HOME/Applications/M.O.T.app"
+    echo "[ship]        Valid bundles require CFBundleIdentifier local.harness.app and"
+    echo "[ship]        executable CFBundleExecutable Harness at Contents/MacOS/Harness."
+    echo "[ship]        Set HARNESS_APP_PATH to an explicit valid bundle path to override."
+    return 1
+  fi
+
+  if [[ -z "${HARNESS_APP_PATH:-}" && ${#valid[@]} -gt 1 ]]; then
+    echo "[ship] ERROR: more than one valid Harness bundle was found; refusing to guess:"
+    for candidate in "${valid[@]}"; do echo "[ship]        $candidate"; done
+    echo "[ship]        Set HARNESS_APP_PATH to the installed bundle that owns your running app."
+    return 1
+  fi
+
+  APP="${valid[0]}"
+  echo "[ship] selected installed app: $APP"
+}
 
 # ── args ──────────────────────────────────────────────────────────────────────
 # --restart <name> is the sanctioned answer to the standing rule "shipping is NOT
@@ -52,10 +129,27 @@ while [[ $# -gt 0 ]]; do
       [[ $# -gt 0 ]] || { echo "[ship] ERROR: --restart needs a component name"; exit 1; }
       _add_restart "$1"; shift ;;
     --restart=*) _add_restart "${1#--restart=}"; shift ;;
+    # Test-only: invokes the real resolver against only these temporary candidates,
+    # then exits before the snapshot or any lifecycle operation is touched.
+    --resolve-app-fixtures)
+      RESOLVE_FIXTURES=1
+      shift
+      while [[ $# -gt 0 ]]; do
+        RESOLVE_FIXTURE_CANDIDATES+=("$1")
+        shift
+      done
+      ;;
     -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "[ship] ERROR: unknown argument '$1' (see ./scripts/ship.sh --help)"; exit 1 ;;
   esac
 done
+
+if ! _resolve_installed_app; then
+  exit 1
+fi
+if [[ "$RESOLVE_FIXTURES" -eq 1 ]]; then
+  exit 0
+fi
 
 # The cowork sandbox cannot unlink files under this mount, so an interrupted git
 # operation there leaves .git/HEAD.lock / .git/index.lock behind and every later
@@ -66,8 +160,6 @@ done
 rm -f "$ROOT/.git/HEAD.lock" "$ROOT/.git/index.lock" 2>/dev/null || true
 
 [[ -d "$DST" ]] || { echo "[ship] ERROR: no snapshot at $DST (fat app not provisioned?)"; exit 1; }
-[[ -d "$APP" ]] || { echo "[ship] ERROR: $APP not found"; exit 1; }
-
 # ── contract gate (runs BEFORE anything is copied) ────────────────────────────
 # The gate used to be a manual step, which means it was a step that could be — and
 # was — skipped. Now the ONLY way past a red gate is to say so out loud.
@@ -255,11 +347,10 @@ fi
 # its CFBundleName even still said "Harness", predating build_app.sh's "MOT Deck" — so
 # the filename won by default and hover read "Harness".
 #
-# ⛔ THE BUNDLE IS *NOT* RENAMED, and that is a decision, not laziness: ship.sh,
-# stop.sh, the pidfiles, the `osascript -e 'quit app "Harness"'` recipe in CLAUDE.md and
-# Debi's own muscle memory all point at /Applications/Harness.app. Renaming the path is
-# a separate slice with its own blast radius. A display name changes what is SHOWN
-# without moving anything.
+# ⛔ THE BUILD OUTPUT IS *NOT* RENAMED: dist/Harness.app remains the artifact name.
+# Finder may install it as Harness.app or M.O.T.app, so ship.sh resolves its installed
+# path by bundle identifier + executable before it touches anything.  A display name
+# changes what is SHOWN without deciding which installed copy belongs to this ship.
 #
 # WHY IT IS HERE AND NOT ONLY IN build_app.sh: same reason as the icon above — ship.sh
 # is THE way code reaches the app, and build_app.sh only runs on a full fat rebuild.
@@ -402,7 +493,7 @@ _ship_app_pids() {   # pids whose executable path IS "$APP" (path evidence, not 
   ps -Ao pid=,command= 2>/dev/null | awk -v p="$APP/Contents/MacOS/" \
     '{ pid=$1; $1=""; sub(/^[[:space:]]+/,""); if (index($0, p) == 1) print pid }'
 }
-osascript -e 'quit app "Harness"' >/dev/null 2>&1 || true
+osascript -e 'tell application id "local.harness.app" to quit' >/dev/null 2>&1 || true
 for _ in $(seq 1 10); do
   [[ -z "$(_ship_app_pids)" ]] && break
   sleep 1

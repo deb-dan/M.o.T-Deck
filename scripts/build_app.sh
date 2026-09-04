@@ -266,7 +266,7 @@ if [[ $FAT -eq 1 ]]; then
   # Full notarization needs an Apple Developer account (out of scope for personal use).
   echo "[harness] ad-hoc codesigning ${APP}…"
   codesign --force --deep --sign - "$APP" \
-    && echo "[harness] ad-hoc signed (Debi's 2nd Mac may still need:  xattr -dr com.apple.quarantine /Applications/Harness.app)" \
+    && echo "[harness] ad-hoc signed (Debi's 2nd Mac may still need:  xattr -dr com.apple.quarantine <installed-app-path>)" \
     || echo "[harness] WARN (fat): ad-hoc codesign failed — the app may show 'damaged' on another Mac; fall back to  xattr -dr com.apple.quarantine <app>"
 
   echo "[harness] === FAT build complete — app payload $(du -sh "$APP" | cut -f1) ==="
