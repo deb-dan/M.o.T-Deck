@@ -491,21 +491,16 @@ echo "[ship] starting the snapshot bridge (own session, detached from this scrip
   # data/bridge.pid as its first act (bridge/core/singleton.py), which is the pid a
   # later ship must reap. A pidfile written from outside could name a wrapper.
 )
-for _ in $(seq 1 60); do
-  curl -sf -m 2 http://127.0.0.1:8700/api/status >/dev/null 2>&1 && break
-  sleep 1
-done
-open "$APP"
-
 # 90s, not 30: a cold snapshot bridge (imports + registry read) can legitimately
-# take longer than 30s, and the old loop then FELL THROUGH and printed "bridge is
-# up" regardless — a false green that reads as a successful ship.
+# take longer than 30s.  GET /api/status is the control API's health truth; a static
+# page response only proves that something can serve HTML and must never turn green.
+# Do not open the app after this fails: that would restart it against a bridge this
+# ship has already proved unhealthy.
 SHIP_WAIT_S=90
 UP=0
 printf "[ship] waiting for the bridge"
 for _ in $(seq 1 "$SHIP_WAIT_S"); do
-  if curl -sf http://127.0.0.1:8700/status >/dev/null 2>&1 || \
-     curl -sf http://127.0.0.1:8700/ >/dev/null 2>&1; then
+  if curl -sf -m 2 http://127.0.0.1:8700/api/status >/dev/null 2>&1; then
     UP=1; break
   fi
   printf "."; sleep 1
@@ -513,7 +508,8 @@ done
 echo
 
 if [[ "$UP" -ne 1 ]]; then
-  echo "[ship] BRIDGE DID NOT COME UP within ${SHIP_WAIT_S}s — check data/logs/bridge.log (tail below)"
+  echo "[ship] BRIDGE CONTROL API DID NOT ANSWER GET /api/status within ${SHIP_WAIT_S}s."
+  echo "[ship] The app was not opened; fix the snapshot bridge, then ship again."
   if [[ -f "$DST/data/logs/bridge.log" ]]; then
     tail -15 "$DST/data/logs/bridge.log" || true
   else
@@ -521,6 +517,8 @@ if [[ "$UP" -ne 1 ]]; then
   fi
   exit 1
 fi
+
+open "$APP"
 
 # An EMPTY curl body still hashes — to da39a3ee (sha1 of nothing). Printing that as
 # a "fingerprint" alongside "bridge is up" is how a half-started bridge looked green.

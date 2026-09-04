@@ -6,6 +6,65 @@ NAME="${1:-}"
 mkdir -p data/logs
 ROOT_ABS="$(pwd)"
 
+# The launcher intentionally uses small awk readers instead of a full YAML parser.  At
+# this boundary YAML's null spellings plus the empty-quoted-scalar tokens `''` and `""`
+# must all mean the shell's "unset": an empty value discovers/generates the appropriate
+# value. Quoted `null` remains real text, whereas unquoted `null` is never an executable
+# or model id. Keep this pure: it is also the seam the fixture-only U74 gate executes.
+_normalize_yaml_scalar() {   # <already-extracted scalar>
+  local value="${1-}"
+  if [[ "$value" =~ ^[[:space:]]*$ ]]; then
+    printf ''
+    return 0
+  fi
+  case "$value" in
+    "~"|"''"|'""'|[Nn][Uu][Ll][Ll]) printf '' ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
+# Return the first Python interpreter that can actually parse the YAML the following
+# seeders write.  A path is always executed as one argv item, so bridge roots with
+# spaces remain valid.  Optional arguments are a fixture-only seam; production callers
+# use the fixed compatibility order below.
+_yaml_python() {   # [candidate ...] -> interpreter path on stdout, 0; else 1
+  local candidate
+  if [[ $# -gt 0 ]]; then
+    for candidate in "$@"; do
+      [[ -n "$candidate" ]] || continue
+      if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  else
+    for candidate in "$ROOT_ABS/data/bridge-venv/bin/python" \
+                     "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" \
+                     python3 python; do
+      if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+# Fixture-only seams: run the real pure helpers without entering a component arm.
+if [[ "$NAME" == "--normalize-yaml-scalar" ]]; then
+  [[ $# -eq 2 ]] || { echo "usage: $0 --normalize-yaml-scalar <scalar>" >&2; exit 2; }
+  _normalize_yaml_scalar "$2"
+  exit 0
+fi
+if [[ "$NAME" == "--yaml-python" ]]; then
+  shift
+  if ! _yaml_python "$@"; then
+    echo "ERROR: no Python interpreter able to import PyYAML" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 # ── PORT OWNERSHIP ────────────────────────────────────────────────────────────
 # A LISTENER-scoped kill is still a kill of SOMEBODY ELSE'S process when the port
 # collides: Debi's STANDALONE Unsloth app listens on :8888 and our own start was
@@ -279,6 +338,7 @@ fi
 case "$NAME" in
   runner)
     R_ADAPTER=$(awk '/^runner:/{f=1} f && /^  adapter:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*adapter:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_ADAPTER="$(_normalize_yaml_scalar "$R_ADAPTER")"
     [[ -n "$R_ADAPTER" ]] || R_ADAPTER=auto
     # jan retired 2026-07-23 (cleanup 3.1d) — the harness owns its own llama-server
     # binary + model files now. Only llamacpp | mlx | auto are valid; anything else
@@ -294,6 +354,8 @@ case "$NAME" in
     R_CTX=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
     R_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
     R_BIN=$(awk '/^runner:/{f=1} f && /^  binary:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*binary:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_MODEL="$(_normalize_yaml_scalar "$R_MODEL")"
+    R_BIN="$(_normalize_yaml_scalar "$R_BIN")"
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
     [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
     # Ensure the registry exists.
@@ -847,6 +909,7 @@ PYRESOLVE
     VS_BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     VS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
     VS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    VS_MODEL="$(_normalize_yaml_scalar "$VS_MODEL")"
     [[ "$VS_MODEL" == \#* ]] && VS_MODEL=""
     # Same WIRE identifier rule as the hermes branch (MLX servers need the PATH).
     if [[ -n "$VS_MODEL" ]]; then
@@ -1223,6 +1286,7 @@ PYWIRE
     DS_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     DS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
     DS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    DS_MODEL="$(_normalize_yaml_scalar "$DS_MODEL")"
     [[ "$DS_MODEL" == \#* ]] && DS_MODEL=""
     DS_SETTINGS="$DS_HOME/settings.yaml"
     # THE KEY IS NAMED, NOT INLINE. dsh's `apiKeyEnv` holds an env var NAME resolved
@@ -1239,25 +1303,21 @@ PYWIRE
     # verbatim in spirit — its manifest merge picks an interpreter the same way and for
     # the same stated reason ("a bare system python3 often does NOT — and skipping
     # silently there would hide a missing component card").
-    # Order: OUR root's venv, then the SNAPSHOT's (a repo checkout on a machine whose
-    # venv lives only in the fat app still seeds), then whatever python3 is around.
-    DS_PY=""
-    for _c in "$ROOT/data/bridge-venv/bin/python" \
-              "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" \
-              python3; do
-      if "$_c" -c "import yaml" >/dev/null 2>&1; then DS_PY="$_c"; break; fi
-    done
+    # _yaml_python owns the compatibility order for every YAML-dependent seeder:
+    # "$ROOT/data/bridge-venv/bin/python" remains its first candidate, followed by
+    # "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" for
+    # compatibility with a repo checkout whose provisioned bridge venv is the only one.
+    DS_PY="$(_yaml_python || true)"
     if [[ -z "$DS_PY" ]]; then
-      # GRACEFUL ABSENCE, said in one sentence with the cure in it. The seeder itself
-      # also refuses safely (it prints a WARNING and exits 0 rather than failing the
-      # Start), so this is the earlier, more informative half of the same refusal.
-      echo "[harness] WARNING: no python with PyYAML found, so the 'MOT Deck (local)'"
-      echo "[harness]   provider CANNOT be written — DeepSeek will start, but its model"
-      echo "[harness]   picker will not list your models. PyYAML is in"
-      echo "[harness]   bridge/requirements.txt, so a bootstrapped bridge venv has it."
-      DS_PY="python3"
+      echo "[harness] WARNING: no python with PyYAML found (no Python interpreter can import it), so the 'MOT Deck"
+      echo "[harness]   (local)' provider will NOT be written. DeepSeek will start, but"
+      echo "[harness]   its model picker will not list your models. Bootstrap the bridge"
+      echo "[harness]   venv (PyYAML is in bridge/requirements.txt), then start DeepSeek again."
     fi
-    DS_KEY_ENV="$("$DS_PY" -c 'import importlib.util;s=importlib.util.spec_from_file_location("s","scripts/seed_deepseek_config.py");m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.key_env_name())' 2>/dev/null || true)"
+    DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY"
+    if [[ -n "$DS_PY" ]]; then
+      DS_KEY_ENV="$("$DS_PY" -c 'import importlib.util;s=importlib.util.spec_from_file_location("s","scripts/seed_deepseek_config.py");m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.key_env_name())' 2>/dev/null || true)"
+    fi
     if [[ -z "$DS_KEY_ENV" ]]; then
       # The seeder could not even be imported. Fall back to the SAME string its pure
       # function returns for the default product name, so the env we export still
@@ -1267,10 +1327,12 @@ PYWIRE
       echo "[harness] note: could not read the derived key env-var name from the seeder;"
       echo "[harness]   using ${DS_KEY_ENV} (its value for the default product name)."
     fi
-    DS_SETTINGS="$DS_SETTINGS" DS_BASE="$DS_BASE" DS_KEY_ENV="$DS_KEY_ENV" \
-      DS_MODEL="$DS_MODEL" HARNESS_ROOT="$ROOT" \
-      "$DS_PY" scripts/seed_deepseek_config.py || \
-      echo "[harness] WARNING: DeepSeek provider seeding failed — its model picker may not list yours"
+    if [[ -n "$DS_PY" ]]; then
+      DS_SETTINGS="$DS_SETTINGS" DS_BASE="$DS_BASE" DS_KEY_ENV="$DS_KEY_ENV" \
+        DS_MODEL="$DS_MODEL" HARNESS_ROOT="$ROOT" \
+        "$DS_PY" scripts/seed_deepseek_config.py || \
+        echo "[harness] WARNING: DeepSeek provider seeding failed — its model picker may not list yours"
+    fi
 
     # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
     # ⚠️ NO name signature is added to _cmd_looks_like_ours for this component, on
@@ -1345,7 +1407,8 @@ PYWIRE
       # What IS decidable is the file we just wrote, read back independently of the
       # writer: the re-read proves the section survived the YAML round trip, and the
       # two refusal branches below are the exact two ways this lane goes quiet.
-      "$DS_PY" - "$DS_SETTINGS" <<'PYDS' || echo "[harness] note: could not verify the seeded provider (harmless; the seed line above is the record)"
+      if [[ -n "$DS_PY" ]]; then
+        "$DS_PY" - "$DS_SETTINGS" <<'PYDS' || echo "[harness] note: could not verify the seeded provider (harmless; the seed line above is the record)"
 import sys
 try:
     import yaml
@@ -1377,6 +1440,10 @@ else:
     print("[harness]   dsh re-reads settings.yaml per request, so a model switch or a "
           "Rescan reaches it with NO restart of this component.")
 PYDS
+      else
+        echo "[harness] provider check: NOT VERIFIED — PyYAML is unavailable, so the"
+        echo "[harness]   provider was not written; bootstrap the bridge venv, then start it again."
+      fi
       echo "[harness] FIRST RUN: it shows an 'Internal Testing Notice' once, then asks you"
       echo "[harness]   to choose a WORKSPACE before it will take a message — click 'Add"
       echo "[harness]   workspace' and pick data/deepseek-workspace. That opens macOS's own"
@@ -1412,6 +1479,7 @@ PYDS
     OC_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     OC_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
     OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    OC_MODEL="$(_normalize_yaml_scalar "$OC_MODEL")"
     [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
     OC_CFG="$OC_HOME/config/opencode/opencode.json"
     # SECOND, REDUNDANT HOME for the same provider block: the PROJECT config.
@@ -1570,12 +1638,14 @@ PYOCCHK
     [[ -d data/hermes-venv ]] || { echo "ERROR: hermes venv missing — click Reinstall first"; exit 1; }
     # shellcheck disable=SC1091
     source data/hermes-venv/bin/activate
+    H_PY="$(_yaml_python || true)"
     # M1: point Hermes at the harness RUNNER endpoint (:6767 + key). Patches ONLY the
     # managed model.* keys, preserving the rest of an existing config; creates minimal if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
     BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
     MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    MODEL="$(_normalize_yaml_scalar "$MODEL")"
     CTXLEN=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
@@ -1633,9 +1703,18 @@ PYWIRE
     # missing PyYAML, and says so.
     # rm FIRST: a verdict left by a PREVIOUS Start must never be read as this one's.
     rm -f data/hermes-provider.json
-    HERMES_CFG="$HCFG" BASE_URL="$BASE_URL" KEY="$KEY" MODEL="$MODEL" CTXLEN="$CTXLEN" \
-      HARNESS_ROOT="$PWD" python3 scripts/seed_hermes_provider.py || \
-      echo "[harness] WARNING: Hermes wiring failed — check ~/.hermes/config.yaml"
+    if [[ -n "$H_PY" ]]; then
+      # This intentionally replaces the old bare Python 3 seeder invocation:
+      # only the resolver proves the selected interpreter can import the YAML dependency.
+      HERMES_CFG="$HCFG" BASE_URL="$BASE_URL" KEY="$KEY" MODEL="$MODEL" CTXLEN="$CTXLEN" \
+        HARNESS_ROOT="$PWD" "$H_PY" scripts/seed_hermes_provider.py || \
+        echo "[harness] WARNING: Hermes wiring failed — check ~/.hermes/config.yaml"
+    else
+      echo "[harness] WARNING: no Python interpreter can import PyYAML, so Hermes's"
+      echo "[harness]   MOT Deck provider and YAML-backed config follow-ups will NOT be"
+      echo "[harness]   written. Hermes will start without that configuration. Bootstrap"
+      echo "[harness]   the bridge venv (PyYAML is in bridge/requirements.txt), then restart."
+    fi
     # The provider slug the seed decided ('custom:<normalized name>', or the user's
     # renamed one) — read back for the post-start picker check below.
     # ⚠️ NO FALLBACK, deliberately. Falling back to bare `custom` would make the check
@@ -1643,7 +1722,9 @@ PYWIRE
     # provider, `custom` among them, with 0 models) — so a Start where the seed refused
     # would print "IS in its own model picker" about a row that is not ours. An empty
     # slug makes the check say the truth instead: it could not verify anything.
-    HPROV=$(python3 - <<'PYSLUG'
+    HPROV=""
+    if [[ -n "$H_PY" ]]; then
+      HPROV=$("$H_PY" - <<'PYSLUG'
 import json, os
 try:
     with open(os.path.join("data", "hermes-provider.json"), encoding="utf-8") as fh:
@@ -1651,7 +1732,8 @@ try:
 except Exception:
     print("")
 PYSLUG
-)
+      )
+    fi
     # Safety floor: warn loudly if approvals are globally disabled (warn-only —
     # 'smart' is a legitimate user choice; we never overwrite the user's mode).
     python3 - "$HCFG" <<'PYAPPR'
@@ -1675,9 +1757,9 @@ PYAPPR
     # repo root; {HERMES_CWD}/{TMPDIR} stay placeholders (resolved at call time).
     HGUARD_SRC="$PWD/guards/harness-path-guard"
     HGUARD_DST="${HERMES_HOME:-$HOME/.hermes}/plugins/harness-path-guard"
-    if [[ -d "$HGUARD_SRC" ]]; then
+    if [[ -d "$HGUARD_SRC" && -n "$H_PY" ]]; then
       HGUARD_SRC="$HGUARD_SRC" HGUARD_DST="$HGUARD_DST" HARNESS_ROOT="$PWD" \
-        HCFG="$HCFG" python3 - <<'PYGUARD'
+        HCFG="$HCFG" "$H_PY" - <<'PYGUARD'
 import os, re, shutil, tempfile
 src, dst = os.environ["HGUARD_SRC"], os.environ["HGUARD_DST"]
 root, cfg = os.environ["HARNESS_ROOT"], os.environ["HCFG"]
@@ -1753,8 +1835,10 @@ if changed: bits.append("seeded " + ", ".join(changed))
 if added: bits.append("enabled in plugins.enabled")
 print("[harness] path-guard plugin: " + ("; ".join(bits) if bits else "up to date"))
 PYGUARD
-    else
+    elif [[ ! -d "$HGUARD_SRC" ]]; then
       echo "[harness] WARNING: guards/harness-path-guard missing — file writes are UNFENCED"
+    else
+      echo "[harness] path-guard config unchanged — PyYAML is unavailable (see warning above)"
     fi
     # ── LOFFICE MCP SERVER (S1): register the bridge-hosted office toolset ────────
     # docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §1. bridge/office_mcp.py mounts the server
@@ -1785,7 +1869,8 @@ PYGUARD
     # or the toolset simply 404s.
     BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
     BR_PORT="${BR_PORT:-8700}"
-    HCFG="$HCFG" BR_PORT="$BR_PORT" python3 - <<'PYLOFFICE'
+    if [[ -n "$H_PY" ]]; then
+      HCFG="$HCFG" BR_PORT="$BR_PORT" "$H_PY" - <<'PYLOFFICE'
 import os, tempfile
 cfg, port = os.environ["HCFG"], os.environ["BR_PORT"]
 try:
@@ -1843,6 +1928,9 @@ print("[harness] LOffice MCP server registered at " + entry["url"]
 for _n in notes:
     print("[harness]   " + _n)
 PYLOFFICE
+    else
+      echo "[harness] LOffice MCP server NOT registered — PyYAML is unavailable (see warning above)"
+    fi
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
     # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in
@@ -1871,6 +1959,7 @@ PYLOFFICE
     # Precedence: harness.yaml components.hermes.dashboard_token override → else
     # generate ONCE into data/hermes.token (chmod 600) and reuse on every start.
     HTOKEN=$(awk '/^  hermes:/{f=1; next} f && /^  [a-z]/{exit} f && /^    dashboard_token:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*dashboard_token:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    HTOKEN="$(_normalize_yaml_scalar "$HTOKEN")"
     if [[ -z "$HTOKEN" ]]; then
       if [[ ! -s data/hermes.token ]]; then
         python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > data/hermes.token

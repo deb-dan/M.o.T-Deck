@@ -96,17 +96,17 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-Two items are being fixed **right now** by another builder, in-flight as this doc is
-written:
+The current repository recovery slice is an **unshipped candidate after v1.5.76**:
 
-- **U56** — the version tile shows `0.1.0` (from `harness.yaml`'s stale `version:` field)
-  while the repo is at v1.5.72 (from the top-level `VERSION` file, which no runtime code
-  reads). Fix picks one field as the source of truth.
-- **U64** — the no-name-kills rule is fenced in shell scripts but not in Python: five
-  `pkill -f` pattern-match calls remain in `bridge/routers/models.py` and
-  `bridge/routers/components.py`, three of them the exact signatures U19 already removed
-  from the shell side. Destination: swap them for the identity-verified primitive already
-  called on the next line.
+- **U74** — repository hardening for the live-state clobber incident and its second
+  `binary: null` failure is implemented and fixture-verified. The installed snapshot was
+  deliberately not touched, so this is not a claim that the live model switch completed.
+- **U69** — Hermes and DeepSeek now share one interpreter resolver that proves PyYAML is
+  importable; Odysseus deliberately keeps its own activated environment.
+- The full audit found one unrelated pre-existing red fence: **U77**, the 1,500-line
+  app-layer ceiling. It needs extraction, not a raised threshold.
+
+The earlier U56 and U64 work is closed in v1.5.74; it is no longer in flight.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:

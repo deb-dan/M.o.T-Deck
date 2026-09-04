@@ -280,12 +280,14 @@ check("ship waits 90s", "SHIP_WAIT_S=90" in SHIP)
 check("ship no longer waits only 30", "seq 1 30" not in SHIP)
 check("ship tracks whether the bridge actually came up", 'UP=1; break' in SHIP)
 check("ship reports the timeout loudly",
-      "BRIDGE DID NOT COME UP within" in SHIP)
+      "BRIDGE CONTROL API DID NOT ANSWER GET /api/status" in SHIP)
 check("ship tails the snapshot bridge.log on timeout",
       'tail -15 "$DST/data/logs/bridge.log"' in SHIP)
-check("ship exits non-zero on timeout",
-      SHIP.index("BRIDGE DID NOT COME UP") < SHIP.index("exit 1",
-                                                        SHIP.index("BRIDGE DID NOT COME UP")))
+_ship_timeout = SHIP.index("BRIDGE CONTROL API DID NOT ANSWER GET /api/status")
+check("ship says the app was not opened before the timeout exit",
+      "The app was not opened" in SHIP
+      and SHIP.index("The app was not opened", _ship_timeout)
+      < SHIP.index("exit 1", _ship_timeout))
 check("ship never claims 'bridge is up' before the UP check",
       SHIP.index('if [[ "$UP" -ne 1 ]]') < SHIP.index("bridge is up"))
 check("empty openapi body is NOT hashed",

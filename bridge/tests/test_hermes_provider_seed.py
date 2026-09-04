@@ -621,10 +621,16 @@ def _hermes_branch() -> str:
 
 def test_start_runs_the_seed_and_writes_the_slug_it_decided():
     b = _hermes_branch()
-    assert "python3 scripts/seed_hermes_provider.py" in b
+    assert 'H_PY="$(_yaml_python || true)"' in b, (
+        "the Hermes YAML seeder must use the shared interpreter resolver")
+    assert '"$H_PY" scripts/seed_hermes_provider.py' in b
+    assert "python3 scripts/seed_hermes_provider.py" not in b, (
+        "a bare python3 can lack PyYAML, leaving the provider unseeded")
     assert "rm -f data/hermes-provider.json" in b, (
         "a slug from a PREVIOUS Start must never be read as this one's answer")
-    assert 'HPROV=$(' in b, "the post-start picker check needs the decided slug"
+    assert 'HPROV=$("$H_PY" - <<\'PYSLUG\'' in b, (
+        "the post-start picker check must read the slug decided by this seed")
+    assert "hermes-provider.json" in b
     assert "PYPATCH" not in b, (
         "the old text patcher re-asserted model.* on every Start (ledger U12) — the "
         "seed is now the ONE writer of that block, marker-guarded")

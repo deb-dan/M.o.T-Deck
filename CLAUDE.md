@@ -1,6 +1,6 @@
 # New Harness — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-02, v1.5.72) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-05, v1.5.76 + unshipped U74 recovery candidate) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -9,10 +9,11 @@
 > (S32); Generate/Compose rebuilt (Patchbay/Spectrum); goose session continuity + a
 > per-chat delete; the process-group detachment fix so components survive an app quit
 > (U52); ⌥⌘Q "Quit Everything" alongside plain ⌘Q (U55); the M.O.T app icon; a runner
-> pidfile fix (U54) and a stale-Failed-card fix (U60). Two rows are being fixed in-flight
-> as this banner is written: U56 (version tile shows 0.1.0) and U64 (Python-side pkill
-> purge). Read `docs/ROADMAP.md` for the full picture before treating the older banners
-> below as current.
+> pidfile fix (U54) and a stale-Failed-card fix (U60). v1.5.74 closed U56 and U64;
+> v1.5.75 added DeepSeek and v1.5.76 recorded the live-state clobber incident. The U74
+> null/interpreter/ship-health hardening is repository-tested but deliberately unshipped:
+> no `VERSION` bump until an authorized `ship.sh` + real-stack walk. Read
+> `docs/ROADMAP.md` for the full picture before treating the older banners below as current.
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
 
