@@ -24,19 +24,23 @@ contracts. No manager is global truth.
 - Ollama is not installed.
 - Hugging Face cache directories exist, but a cache is a download cache—not an
   authoritative list of models a particular application manages or can launch.
-- M.O.T's isolated Unsloth Studio on port 8899 exposes authenticated inventory routes
-  (`/api/models/local`, `/api/models/list`, `/api/inference/models`) and load/validate/
-  unload routes. That makes it a legitimate candidate, unlike scanning its folders.
+- M.O.T's isolated Unsloth Studio on port 8899 exposes authenticated routes named
+  `/api/models/local`, `/api/models/list`, `/api/inference/models` plus load/validate/
+  unload operations. Route names alone are not an inventory contract. Source inspection
+  proves `/api/models/local` composes filesystem walks across Unsloth's models root,
+  Hugging Face caches, LM Studio directories, Ollama directories and user scan folders.
+  It is therefore a useful Unsloth picker, but not authoritative evidence that Unsloth
+  owns or still manages any returned artifact.
 - The same machine also has a standalone Unsloth installation on port 8888. Its
   `~/.unsloth` state is explicitly outside M.O.T authority; an adapter may query only
   M.O.T's isolated `data/unsloth-home` service and may never merge the two by product
   name or a common filesystem shape.
 
-The installed M.O.T Unsloth API currently requires its user-owned bearer session. M.O.T
-has no machine-owned API key or supported server-to-server authentication handoff for
-those inventory routes. Reusing a browser cookie, reading the auth database, or copying
-the user's password would violate the source's ownership boundary. An inventory API
-that the bridge cannot authenticate to safely is not yet an adapter contract.
+The remaining Unsloth routes do have launch semantics, but they do not repair the
+membership gap: an authenticated filesystem aggregation is still a filesystem
+aggregation. The installed API also requires its user-owned bearer session. Reusing a
+browser cookie, reading the auth database, or copying the user's password would violate
+the source boundary. Both deficiencies independently disqualify it as a U91 adapter.
 
 Adding speculative adapters now would advertise found bytes without proving identifier,
 removal, availability and launch semantics. That is the same shortcut U82 rejected.
@@ -59,13 +63,13 @@ For each manager independently:
 
 ## Current decision
 
-No new adapter is added in this wave. Unsloth is now the first evidence-backed candidate
-because it supplies both inventory and launch operations, but it still lacks a safe
-M.O.T-owned machine-auth contract. A future slice must first create an API credential
-through an upstream-supported user-visible action, store it in M.O.T's protected local
-store, prove it is scoped to the isolated :8899 instance, and revoke/rotate it without
-touching the standalone :8888 installation. Only then may the adapter map inventory
-rows to exact Unsloth load semantics and walk import, load, unload, restart and removal.
+No new adapter is added in this wave. Unsloth is rejected as the next manager adapter,
+not merely postponed for authentication: current Studio inventory intentionally merges
+several filesystem sources and does not expose manager membership/removal authority.
+It would qualify only after upstream provides both (a) a stable, manager-owned library
+catalog distinct from filesystem discovery and (b) a supported machine credential for
+the isolated :8899 instance. Only then may an adapter map those exact catalog identities
+to load/unload semantics and walk import, load, unload, restart and manager-level removal.
 
 Jan remains a retired architecture whose empty application-support residue and installed
 CLI do not justify resurrecting a manager adapter. Ollama remains absent. Hugging Face

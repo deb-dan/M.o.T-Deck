@@ -1,7 +1,7 @@
 # U139 — exactly-once Direct Chat transcript insertion
 
 **Date:** 2026-09-05; upstream rechecked 2026-09-06
-**Status:** upstream primitive required; no local implementation is permitted yet.
+**Status:** current-main upstream candidate prepared; not released, pinned or shipped.
 
 ## Proven premise
 
@@ -41,7 +41,8 @@ Odysseus should expose an owner-scoped endpoint such as
 
 1. verifies session ownership and attachment reservations;
 2. inserts the marked user/assistant pair, or returns the previously committed pair;
-3. enforces uniqueness on `(session_id, owner, request_id, direct_role)` in the database;
+3. verifies the owner-scoped session, then enforces uniqueness on
+   `(session_id, request_id, direct_role)` in the database;
 4. updates in-memory history, message count, timestamps, FTS and other normal side
    effects exactly once;
 5. returns stable message ids and an `inserted|already_present` receipt;
@@ -57,3 +58,26 @@ Direct Chat remains **at-least-once with marker read-back and visible uncertaint
 That is materially safer than blind retry but is not mathematically exactly-once. U139
 must stay open until the upstream transaction exists and M.O.T pins/tests it. No local
 code change in this wave can honestly close it.
+
+## Current-main candidate
+
+An isolated patch against Odysseus main `934d23c0…` now implements the required
+`PUT /api/session/{sid}/direct-turn/{request_id}` primitive. It adds a database-enforced
+unique receipt per session/request/role, validates the owner and exact user→assistant
+grammar, preserves attachment reservation and normal message persistence, returns stable
+message IDs, supports partial pair completion, and rejects same-key/different-payload
+retries with HTTP 409. The transaction commits the pair and denormalized session counters
+together; SQLite and non-SQLite migrations create the same uniqueness constraint.
+
+The permanent candidate suite covers identical replay, partial completion, conflicting
+content/metadata, concurrent calls, deleted sessions, missing attachments, attachment
+conflicts, migration idempotence and route behavior. The full upstream run completed
+5,927 passes and four skips with the same ten host/environment failures reproduced on
+clean main; no candidate-only full-suite failure remains.
+
+This does not change the shipped M.O.T claim. The bridge cannot call an unreleased API,
+and adding dead feature detection before a pin exists would be speculative. Closure still
+requires upstream acceptance/release, an Odysseus pin bump, bridge integration, response-
+loss testing through the real network seam, and the human Direct Chat history journey.
+The preserved candidate is
+`docs/upstream-candidates/U139-U142-odysseus-idempotence-managed-endpoints.patch`.

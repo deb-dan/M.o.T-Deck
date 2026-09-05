@@ -1,0 +1,625 @@
+diff --git a/crates/goose/src/config/base.rs b/crates/goose/src/config/base.rs
+index 8e48d19b4cff3ccc75985f4ae5a554e608c8de35..7ce0289390df66e132619e9ef4702c9adaf378bf 100644
+--- a/crates/goose/src/config/base.rs
++++ b/crates/goose/src/config/base.rs
+@@ -796,0 +797,22 @@ impl Config {
++    /// Read-modify-write an existing configuration value without creating it.
++    /// Returns false, without rewriting the file, when the key is absent.
++    pub fn update_param_if_present<T, V, F>(&self, key: &str, f: F) -> Result<bool, ConfigError>
++    where
++        T: for<'de> Deserialize<'de>,
++        V: Serialize,
++        F: FnOnce(T) -> Option<V>,
++    {
++        let _guard = self.guard.lock().unwrap();
++        let mut values = self.load_write_config()?;
++        let Some(raw) = values.get(key) else {
++            return Ok(false);
++        };
++        let current = serde_yaml::from_value::<T>(raw.clone())?;
++        let Some(updated) = f(current) else {
++            return Ok(false);
++        };
++        values.insert(serde_yaml::to_value(key)?, serde_yaml::to_value(updated)?);
++        self.save_values(&values)?;
++        Ok(true)
++    }
++
+@@ -1057,0 +1080,12 @@ impl Config {
++    /// Delete a secret only when it exists, without rewriting unchanged storage.
++    pub fn delete_secret_if_present(&self, key: &str) -> Result<bool, ConfigError> {
++        let _guard = self.guard.lock().unwrap();
++        let _storage_lock = self.lock_secrets_for_mutation()?;
++        let mut values = self.load_secrets_from_storage()?;
++        if values.remove(key).is_none() {
++            return Ok(false);
++        }
++        self.write_all_secrets(&values)?;
++        Ok(true)
++    }
++
+diff --git a/crates/goose/src/config/declarative_providers.rs b/crates/goose/src/config/declarative_providers.rs
+index 0a03122f74c8d4b3eb410480c93961f9714c1942..aed49a6864f20b14cdb6abfc9c207ec5f2f2b6e3 100644
+--- a/crates/goose/src/config/declarative_providers.rs
++++ b/crates/goose/src/config/declarative_providers.rs
+@@ -9,0 +10,3 @@ use crate::providers::openai_def::OpenAiProviderDef;
++use crate::providers::private_file::{
++    create_private_named_temp_file, persist_private_temporary_file,
++};
+@@ -10,0 +14 @@ use anyhow::Result;
++use fs2::FileExt;
+@@ -12,0 +17,3 @@ use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
++use std::fs::OpenOptions;
++use std::io::Write;
+@@ -65,0 +73,11 @@ static ID_GENERATION_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
++static PROVIDER_DELETION_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
++
++#[derive(Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct PendingProviderDeletion {
++    version: u8,
++    provider_id: String,
++    owned_api_key_env: Option<String>,
++    #[serde(default)]
++    completed: bool,
++}
+@@ -89 +107,4 @@ pub fn generate_id(display_name: &str) -> String {
+-    while custom_dir.join(format!("{}.json", candidate_id)).exists() {
++    while custom_dir.join(format!("{}.json", candidate_id)).exists()
++        || provider_deletion_path_in(&provider_deletions_dir(), &candidate_id)
++            .is_ok_and(|path| path.exists())
++    {
+@@ -130,0 +152,151 @@ pub(crate) fn custom_provider_file_path(id: &str) -> Result<PathBuf> {
++fn provider_deletions_dir() -> PathBuf {
++    Paths::config_dir().join("pending_provider_deletions")
++}
++
++fn lock_provider_deletions_in(directory: &std::path::Path) -> Result<std::fs::File> {
++    std::fs::create_dir_all(directory)?;
++    let lock = OpenOptions::new()
++        .read(true)
++        .write(true)
++        .create(true)
++        .truncate(false)
++        .open(directory.join(".lock"))?;
++    lock.lock_exclusive()?;
++    Ok(lock)
++}
++
++fn provider_deletion_path_in(directory: &std::path::Path, id: &str) -> Result<PathBuf> {
++    validate_provider_id(id).or_else(|_| custom_provider_file_path(id).map(|_| ()))?;
++    let digest = crate::utils::bytes_to_hex(Sha256::digest(id.as_bytes()));
++    Ok(directory.join(format!("{digest}.json")))
++}
++
++fn sync_directory(path: &std::path::Path) -> Result<()> {
++    #[cfg(unix)]
++    {
++        let directory = std::fs::File::open(path)?;
++        directory.sync_all()?;
++    }
++    #[cfg(not(unix))]
++    let _ = path;
++    Ok(())
++}
++
++fn persist_pending_provider_deletion(
++    path: &std::path::Path,
++    pending: &PendingProviderDeletion,
++) -> Result<()> {
++    let directory = path
++        .parent()
++        .ok_or_else(|| anyhow::anyhow!("provider deletion journal has no parent"))?;
++    std::fs::create_dir_all(directory)?;
++    let payload = serde_json::to_vec_pretty(pending)?;
++    let mut builder = tempfile::Builder::new();
++    builder.prefix(".provider-deletion-").suffix(".tmp");
++    let mut temporary = create_private_named_temp_file(&mut builder, directory)?;
++    temporary.write_all(&payload)?;
++    temporary.as_file().sync_all()?;
++    persist_private_temporary_file(temporary, path)?;
++    sync_directory(directory)
++}
++
++fn write_pending_provider_deletion_in(
++    directory: &std::path::Path,
++    id: &str,
++    api_key_env: &str,
++) -> Result<PathBuf> {
++    let path = provider_deletion_path_in(directory, id)?;
++    let pending = PendingProviderDeletion {
++        version: 1,
++        provider_id: id.to_string(),
++        owned_api_key_env: (api_key_env == generate_api_key_name(id))
++            .then(|| api_key_env.to_string()),
++        completed: false,
++    };
++    persist_pending_provider_deletion(&path, &pending)?;
++    Ok(path)
++}
++
++fn complete_pending_provider_deletion_in(
++    config: &Config,
++    custom_directory: &std::path::Path,
++    journal_directory: &std::path::Path,
++    path: &std::path::Path,
++) -> Result<()> {
++    let mut pending: PendingProviderDeletion = serde_json::from_slice(&std::fs::read(path)?)?;
++    if pending.version != 1
++        || provider_deletion_path_in(journal_directory, &pending.provider_id)? != path
++    {
++        anyhow::bail!("provider deletion journal identity mismatch");
++    }
++    custom_provider_file_path(&pending.provider_id)?;
++    if pending
++        .owned_api_key_env
++        .as_deref()
++        .is_some_and(|name| name != generate_api_key_name(&pending.provider_id))
++    {
++        anyhow::bail!("provider deletion journal secret ownership mismatch");
++    }
++
++    let definition = custom_directory.join(format!("{}.json", pending.provider_id));
++    if pending.completed {
++        if definition.exists() {
++            anyhow::bail!(
++                "provider id was reused after completed deletion: {}",
++                pending.provider_id
++            );
++        }
++        return Ok(());
++    }
++    match std::fs::remove_file(&definition) {
++        Ok(()) => {}
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++        Err(error) => return Err(error.into()),
++    }
++    sync_directory(custom_directory)?;
++    crate::config::remove_provider_entry(config, &pending.provider_id)?;
++    if let Some(api_key_env) = pending.owned_api_key_env.as_deref() {
++        config.delete_secret_if_present(api_key_env)?;
++    }
++    pending.completed = true;
++    persist_pending_provider_deletion(path, &pending)
++}
++
++fn recover_pending_provider_deletions_in(
++    config: &Config,
++    custom_directory: &std::path::Path,
++    directory: &std::path::Path,
++) -> Result<()> {
++    if !directory.exists() {
++        return Ok(());
++    }
++    let mut journals = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
++    journals.sort_by_key(|entry| entry.file_name());
++    for entry in journals {
++        let path = entry.path();
++        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
++            continue;
++        }
++        let pending: PendingProviderDeletion = serde_json::from_slice(&std::fs::read(&path)?)?;
++        if pending.completed {
++            // A completed receipt is a tombstone, not a delayed delete command.
++            // Keeping it prevents generated IDs from being reused; startup must
++            // never apply it to a manually restored definition with the same ID.
++            continue;
++        }
++        complete_pending_provider_deletion_in(config, custom_directory, directory, &path)?;
++    }
++    Ok(())
++}
++
++pub fn recover_pending_provider_deletions() -> Result<()> {
++    let _guard = PROVIDER_DELETION_LOCK.lock().unwrap();
++    let journal_directory = provider_deletions_dir();
++    let _storage_lock = lock_provider_deletions_in(&journal_directory)?;
++    recover_pending_provider_deletions_in(
++        Config::global(),
++        &custom_providers_dir(),
++        &journal_directory,
++    )
++}
++
+@@ -172,0 +345,5 @@ pub fn create_custom_provider(
++    let _guard = PROVIDER_DELETION_LOCK.lock().unwrap();
++    let journal_directory = provider_deletions_dir();
++    let _storage_lock = lock_provider_deletions_in(&journal_directory)?;
++    let config = Config::global();
++    recover_pending_provider_deletions_in(config, &custom_providers_dir(), &journal_directory)?;
+@@ -194 +370,0 @@ pub fn create_custom_provider(
+-        let config = Config::global();
+@@ -243,0 +420,5 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()>
++    let _guard = PROVIDER_DELETION_LOCK.lock().unwrap();
++    let journal_directory = provider_deletions_dir();
++    let _storage_lock = lock_provider_deletions_in(&journal_directory)?;
++    let config = Config::global();
++    recover_pending_provider_deletions_in(config, &custom_providers_dir(), &journal_directory)?;
+@@ -257 +437,0 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()>
+-    let config = Config::global();
+@@ -358,6 +538,15 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()>
+-pub fn remove_custom_provider(id: &str) -> Result<()> {
+-    let config = Config::global();
+-    let loaded_provider = load_provider(id)?;
+-    let api_key_env = loaded_provider.config.api_key_env;
+-    if api_key_env == generate_api_key_name(id) {
+-        let _ = config.delete_secret(&api_key_env);
++fn remove_custom_provider_in(
++    config: &Config,
++    custom_directory: &std::path::Path,
++    journal_directory: &std::path::Path,
++    id: &str,
++) -> Result<()> {
++    custom_provider_file_path(id)?;
++    let pending = provider_deletion_path_in(journal_directory, id)?;
++    if pending.exists() {
++        return complete_pending_provider_deletion_in(
++            config,
++            custom_directory,
++            journal_directory,
++            &pending,
++        );
+@@ -365,5 +554,5 @@ pub fn remove_custom_provider(id: &str) -> Result<()> {
+-
+-    let file_path = custom_provider_file_path(id)?;
+-
+-    if file_path.exists() {
+-        std::fs::remove_file(file_path)?;
++    let definition = custom_directory.join(format!("{id}.json"));
++    let content = std::fs::read_to_string(&definition)?;
++    let provider = deserialize_provider_config(&content)?;
++    if config.get_goose_provider().ok().as_deref() == Some(id) {
++        anyhow::bail!("Cannot delete active provider: {id}");
+@@ -370,0 +560,3 @@ pub fn remove_custom_provider(id: &str) -> Result<()> {
++    let path = write_pending_provider_deletion_in(journal_directory, id, &provider.api_key_env)?;
++    complete_pending_provider_deletion_in(config, custom_directory, journal_directory, &path)
++}
+@@ -372 +564,15 @@ pub fn remove_custom_provider(id: &str) -> Result<()> {
+-    Ok(())
++pub fn remove_custom_provider(id: &str) -> Result<()> {
++    let _guard = PROVIDER_DELETION_LOCK.lock().unwrap();
++    let custom_directory = custom_providers_dir();
++    let journal_directory = provider_deletions_dir();
++    let _storage_lock = lock_provider_deletions_in(&journal_directory)?;
++    let pending = provider_deletion_path_in(&journal_directory, id)?;
++    if pending.exists() {
++        return complete_pending_provider_deletion_in(
++            Config::global(),
++            &custom_directory,
++            &journal_directory,
++            &pending,
++        );
++    }
++    remove_custom_provider_in(Config::global(), &custom_directory, &journal_directory, id)
+@@ -402,0 +609 @@ pub fn register_declarative_providers(
++    recover_pending_provider_deletions()?;
+@@ -916 +1123,12 @@ mod tests {
+-        remove_custom_provider("custom_z.ai").unwrap();
++        let config = Config::new_with_file_secrets(
++            temp_dir.path().join("config/config.yaml"),
++            temp_dir.path().join("config/secrets.yaml"),
++        )
++        .unwrap();
++        remove_custom_provider_in(
++            &config,
++            &custom_providers_dir(),
++            &provider_deletions_dir(),
++            "custom_z.ai",
++        )
++        .unwrap();
+@@ -919,0 +1138,258 @@ mod tests {
++    fn write_provider_with_key(custom_dir: &std::path::Path, id: &str, api_key_env: &str) {
++        std::fs::create_dir_all(custom_dir).unwrap();
++        let content = serde_json::json!({
++            "name": id,
++            "engine": "openai",
++            "display_name": "Deletion transaction",
++            "description": "test provider",
++            "api_key_env": api_key_env,
++            "base_url": "https://example.invalid/v1/chat/completions",
++            "models": [],
++            "requires_auth": true
++        });
++        std::fs::write(
++            custom_dir.join(format!("{id}.json")),
++            serde_json::to_vec_pretty(&content).unwrap(),
++        )
++        .unwrap();
++    }
++
++    fn deletion_test_config(root: &std::path::Path) -> Config {
++        Config::new_with_file_secrets(
++            root.join("config/config.yaml"),
++            root.join("config/secrets.yaml"),
++        )
++        .unwrap()
++    }
++
++    fn deletion_test_paths(root: &std::path::Path) -> (PathBuf, PathBuf) {
++        (
++            root.join("config/custom_providers"),
++            root.join("config/pending_provider_deletions"),
++        )
++    }
++
++    #[test]
++    fn test_remove_provider_converges_definition_secret_and_config() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_delete_me";
++        let owned_secret = generate_api_key_name(id);
++        write_provider_with_key(&custom_dir, id, &owned_secret);
++        crate::config::set_provider_entry(
++            &config,
++            id,
++            &crate::config::ProviderEntry {
++                enabled: true,
++                model: "model-to-remove".to_string(),
++                configured: true,
++            },
++        )
++        .unwrap();
++        crate::config::set_provider_entry(
++            &config,
++            "keep_me",
++            &crate::config::ProviderEntry {
++                enabled: true,
++                model: "keep-model".to_string(),
++                configured: true,
++            },
++        )
++        .unwrap();
++        config.set_secret(&owned_secret, &"owned-value").unwrap();
++        config
++            .set_secret("UNRELATED_SECRET", &"keep-value")
++            .unwrap();
++
++        remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap();
++        remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap();
++
++        assert!(!custom_dir.join(format!("{id}.json")).exists());
++        assert!(crate::config::get_provider_entry(&config, id).is_none());
++        assert_eq!(
++            crate::config::get_provider_entry(&config, "keep_me")
++                .unwrap()
++                .model,
++            "keep-model"
++        );
++        assert!(config.get_secret::<String>(&owned_secret).is_err());
++        assert_eq!(
++            config.get_secret::<String>("UNRELATED_SECRET").unwrap(),
++            "keep-value"
++        );
++        let journal = provider_deletion_path_in(&journal_dir, id).unwrap();
++        let receipt: PendingProviderDeletion =
++            serde_json::from_slice(&std::fs::read(journal).unwrap()).unwrap();
++        assert!(receipt.completed);
++    }
++
++    #[test]
++    fn test_recovery_rolls_forward_a_crash_after_definition_removal() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_crash_recovery";
++        let owned_secret = generate_api_key_name(id);
++        write_provider_with_key(&custom_dir, id, &owned_secret);
++        crate::config::set_provider_entry(
++            &config,
++            id,
++            &crate::config::ProviderEntry {
++                enabled: false,
++                model: "recovery-model".to_string(),
++                configured: true,
++            },
++        )
++        .unwrap();
++        config.set_secret(&owned_secret, &"recover-me").unwrap();
++        let journal = write_pending_provider_deletion_in(&journal_dir, id, &owned_secret).unwrap();
++        std::fs::remove_file(custom_dir.join(format!("{id}.json"))).unwrap();
++
++        recover_pending_provider_deletions_in(&config, &custom_dir, &journal_dir).unwrap();
++
++        let receipt: PendingProviderDeletion =
++            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
++        assert!(receipt.completed);
++        assert!(crate::config::get_provider_entry(&config, id).is_none());
++        assert!(config.get_secret::<String>(&owned_secret).is_err());
++    }
++
++    #[test]
++    fn test_recovery_rolls_forward_after_each_later_persisted_boundary() {
++        for stage in ["config", "secret"] {
++            let temp_dir = tempfile::tempdir().unwrap();
++            let config = deletion_test_config(temp_dir.path());
++            let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++            let id = format!("custom_recover_{stage}");
++            let owned_secret = generate_api_key_name(&id);
++            write_provider_with_key(&custom_dir, &id, &owned_secret);
++            crate::config::set_provider_entry(
++                &config,
++                &id,
++                &crate::config::ProviderEntry {
++                    enabled: false,
++                    model: "recovery-model".to_string(),
++                    configured: true,
++                },
++            )
++            .unwrap();
++            config.set_secret(&owned_secret, &"recover-me").unwrap();
++            let journal =
++                write_pending_provider_deletion_in(&journal_dir, &id, &owned_secret).unwrap();
++            std::fs::remove_file(custom_dir.join(format!("{id}.json"))).unwrap();
++            crate::config::remove_provider_entry(&config, &id).unwrap();
++            if stage == "secret" {
++                config.delete_secret(&owned_secret).unwrap();
++            }
++            let config_before = std::fs::read(temp_dir.path().join("config/config.yaml")).unwrap();
++            let secrets_before =
++                std::fs::read(temp_dir.path().join("config/secrets.yaml")).unwrap();
++
++            recover_pending_provider_deletions_in(&config, &custom_dir, &journal_dir).unwrap();
++
++            let receipt: PendingProviderDeletion =
++                serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
++            assert!(receipt.completed);
++            assert!(!custom_dir.join(format!("{id}.json")).exists());
++            assert!(crate::config::get_provider_entry(&config, &id).is_none());
++            assert!(config.get_secret::<String>(&owned_secret).is_err());
++            assert_eq!(
++                std::fs::read(temp_dir.path().join("config/config.yaml")).unwrap(),
++                config_before,
++                "recovery must not rewrite an already-clean config"
++            );
++            if stage == "secret" {
++                assert_eq!(
++                    std::fs::read(temp_dir.path().join("config/secrets.yaml")).unwrap(),
++                    secrets_before,
++                    "recovery must not rewrite already-clean secret storage"
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn test_remove_active_provider_fails_before_writing_a_journal() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_active";
++        let owned_secret = generate_api_key_name(id);
++        write_provider_with_key(&custom_dir, id, &owned_secret);
++        crate::config::set_active_provider(&config, id, "active-model").unwrap();
++        config.set_secret(&owned_secret, &"keep-me").unwrap();
++
++        let error = remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap_err();
++
++        assert!(error.to_string().contains("Cannot delete active provider"));
++        assert!(custom_dir.join(format!("{id}.json")).exists());
++        assert_eq!(
++            crate::config::get_provider_entry(&config, id)
++                .unwrap()
++                .model,
++            "active-model"
++        );
++        assert_eq!(
++            config.get_secret::<String>(&owned_secret).unwrap(),
++            "keep-me"
++        );
++        assert!(!provider_deletion_path_in(&journal_dir, id)
++            .unwrap()
++            .exists());
++    }
++
++    #[test]
++    fn test_remove_does_not_delete_a_secret_the_provider_does_not_own() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_external_secret";
++        let generated_name = generate_api_key_name(id);
++        write_provider_with_key(&custom_dir, id, "USER_MANAGED_KEY");
++        config
++            .set_secret(&generated_name, &"not-this-provider's-secret")
++            .unwrap();
++
++        remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap();
++
++        assert_eq!(
++            config.get_secret::<String>(&generated_name).unwrap(),
++            "not-this-provider's-secret"
++        );
++    }
++
++    #[test]
++    fn test_remove_without_provider_stanza_does_not_create_empty_providers_map() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_without_stanza";
++        write_provider_with_key(&custom_dir, id, "");
++
++        remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap();
++
++        assert!(config
++            .get_param::<serde_yaml::Mapping>("providers")
++            .is_err());
++    }
++
++    #[test]
++    fn test_completed_retry_refuses_to_delete_a_reused_legacy_id() {
++        let temp_dir = tempfile::tempdir().unwrap();
++        let config = deletion_test_config(temp_dir.path());
++        let (custom_dir, journal_dir) = deletion_test_paths(temp_dir.path());
++        let id = "custom_reused";
++        write_provider_with_key(&custom_dir, id, "");
++        remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap();
++        write_provider_with_key(&custom_dir, id, "");
++
++        recover_pending_provider_deletions_in(&config, &custom_dir, &journal_dir).unwrap();
++        assert!(custom_dir.join(format!("{id}.json")).exists());
++
++        let error = remove_custom_provider_in(&config, &custom_dir, &journal_dir, id).unwrap_err();
++
++        assert!(error.to_string().contains("id was reused"));
++        assert!(custom_dir.join(format!("{id}.json")).exists());
++    }
++
+diff --git a/crates/goose/src/config/mod.rs b/crates/goose/src/config/mod.rs
+index fcc331e034943a7b192944cd6e5b4e71cf42b3f1..8b38ec11972c26894ce3db52c7571a3df2d306d1 100644
+--- a/crates/goose/src/config/mod.rs
++++ b/crates/goose/src/config/mod.rs
+@@ -34 +34 @@ pub use providers::{
+-    set_active_provider, set_provider_entry, ProviderEntry,
++    remove_provider_entry, set_active_provider, set_provider_entry, ProviderEntry,
+diff --git a/crates/goose/src/config/providers.rs b/crates/goose/src/config/providers.rs
+index c8068bad25597c98367ae53e39230553c9d559fc..31290ce7d9164c1f87d3753c8c580d62d3eea3d0 100644
+--- a/crates/goose/src/config/providers.rs
++++ b/crates/goose/src/config/providers.rs
+@@ -64,0 +65,8 @@ pub fn set_provider_entry(
++pub fn remove_provider_entry(config: &Config, name: &str) -> Result<(), ConfigError> {
++    let name = serde_yaml::Value::String(name.to_string());
++    config.update_param_if_present::<Mapping, _, _>(PROVIDERS_CONFIG_KEY, |mut raw| {
++        raw.remove(&name).map(|_| raw)
++    })?;
++    Ok(())
++}
++
+@@ -135,0 +144,25 @@ mod tests {
++    #[test]
++    fn test_remove_provider_entry_preserves_other_entries() {
++        let config = new_test_config();
++        for (name, model) in [("remove-me", "gone"), ("keep-me", "kept")] {
++            set_provider_entry(
++                &config,
++                name,
++                &ProviderEntry {
++                    enabled: true,
++                    model: model.to_string(),
++                    configured: true,
++                },
++            )
++            .unwrap();
++        }
++
++        remove_provider_entry(&config, "remove-me").unwrap();
++
++        assert!(get_provider_entry(&config, "remove-me").is_none());
++        assert_eq!(
++            get_provider_entry(&config, "keep-me").unwrap().model,
++            "kept"
++        );
++    }
++
+diff --git a/crates/goose/src/providers/private_file.rs b/crates/goose/src/providers/private_file.rs
+index 7dc6252f02524fa80d2675cf2fde7b79f6c154be..5fafd08c828ffcc7520ecfcc1a1023029b4c1826 100644
+--- a/crates/goose/src/providers/private_file.rs
++++ b/crates/goose/src/providers/private_file.rs
+@@ -155 +155 @@ fn create_private_temporary_file(parent: &Path) -> io::Result<tempfile::NamedTem
+-fn persist_private_temporary_file(
++pub(crate) fn persist_private_temporary_file(
+@@ -189 +189 @@ fn persist_private_temporary_file(
+-fn persist_private_temporary_file(
++pub(crate) fn persist_private_temporary_file(

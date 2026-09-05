@@ -1,0 +1,547 @@
+diff --git a/hermes_cli/config_defaults.py b/hermes_cli/config_defaults.py
+index 1f98ab6024624171ca32edf1d32c2fb5db55623f..4c066171e9b353afdbd71bb09f3a9b37dfbdba2c 100644
+--- a/hermes_cli/config_defaults.py
++++ b/hermes_cli/config_defaults.py
+@@ -291,0 +292,7 @@ DEFAULT_CONFIG = {
++        # Optional OS boundary for local terminal and execute_code children. Empty preserves the
++        # normal host-authority behavior. macos-seatbelt allows host reads/process/network but
++        # limits filesystem writes to canonical writable_roots plus Hermes's exact runtime temp.
++        "local_confinement": {
++            "provider": "",
++            "writable_roots": [],
++        },
+diff --git a/tests/tools/test_local_execution_confinement.py b/tests/tools/test_local_execution_confinement.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..68bf2fc66995aefdced2e389861bd4ad9cdc2dbd
+--- /dev/null
++++ b/tests/tools/test_local_execution_confinement.py
+@@ -0,0 +1,168 @@
++"""Real macOS boundary checks for local terminal and execute_code children."""
++
++import json
++import os
++import shlex
++import socket
++import tempfile
++from pathlib import Path
++from unittest.mock import patch
++
++import pytest
++import yaml
++
++import tools.environments.local_confinement as local_confinement
++from hermes_cli.config import get_config_path
++from tools.code_execution_tool import execute_code
++from tools.code_kernel import shutdown_all_kernels
++from tools.environments.local import LocalEnvironment
++from tools.environments.local_confinement import LocalConfinementError
++from tools.process_registry import ProcessRegistry
++
++
++def _config(writable_root: Path, provider: str = "macos-seatbelt") -> dict:
++    return {
++        "terminal": {
++            "local_confinement": {
++                "provider": provider,
++                "writable_roots": [str(writable_root)],
++            }
++        }
++    }
++
++
++def _write_config(writable_root: Path, provider: str = "macos-seatbelt") -> None:
++    path = get_config_path()
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(
++        yaml.safe_dump(_config(writable_root, provider), sort_keys=False),
++        encoding="utf-8",
++    )
++
++
++@pytest.fixture(autouse=True)
++def _fresh_kernels():
++    shutdown_all_kernels()
++    yield
++    shutdown_all_kernels()
++
++
++@pytest.mark.macos_only
++def test_real_boundary_covers_terminal_python_children_and_session_kernel(tmp_path, monkeypatch):
++    allowed = tmp_path / "allowed"
++    protected = tmp_path / "protected"
++    allowed.mkdir()
++    protected.mkdir()
++    protected_file = protected / "original.txt"
++    protected_file.write_text("unchanged", encoding="utf-8")
++    socket_temp = tempfile.TemporaryDirectory(prefix="hermes-confine-", dir="/tmp")
++    unix_socket_path = Path(socket_temp.name) / "escape.sock"
++    unix_listener = socket.socket(socket.AF_UNIX)
++    unix_listener.bind(str(unix_socket_path))
++    unix_listener.listen()
++    tcp_listener = socket.socket()
++    tcp_listener.bind(("127.0.0.1", 0))
++    tcp_listener.listen()
++    monkeypatch.setenv("BOUNDARY_ALLOWED", str(allowed))
++    monkeypatch.setenv("BOUNDARY_PROTECTED", str(protected))
++    monkeypatch.setenv("BOUNDARY_SOCKET", str(unix_socket_path))
++    monkeypatch.setenv("BOUNDARY_TCP_PORT", str(tcp_listener.getsockname()[1]))
++    _write_config(allowed)
++
++    probe = """
++import os
++import pathlib
++import socket
++import subprocess
++
++allowed = pathlib.Path(os.environ["BOUNDARY_ALLOWED"])
++protected = pathlib.Path(os.environ["BOUNDARY_PROTECTED"])
++(allowed / "ordinary.txt").write_text("allowed")
++for action in (
++    lambda: (protected / "python.txt").write_text("blocked"),
++    lambda: ((allowed / "escape").symlink_to(protected), (allowed / "escape" / "link.txt").write_text("blocked")),
++    lambda: os.link(protected / "original.txt", allowed / "hardlink.txt"),
++):
++    try:
++        action()
++    except OSError:
++        pass
++subprocess.run(["/bin/sh", "-c", 'echo blocked > "$BOUNDARY_PROTECTED/subprocess.txt"'], check=False)
++subprocess.run(["/bin/sh", "-c", '(sleep 0.05; echo blocked > "$BOUNDARY_PROTECTED/background.txt") & wait'], check=False)
++unix_client = socket.socket(socket.AF_UNIX)
++try:
++    assert unix_client.connect_ex(os.environ["BOUNDARY_SOCKET"]) != 0
++finally:
++    unix_client.close()
++tcp_client = socket.socket()
++try:
++    assert tcp_client.connect_ex(("127.0.0.1", int(os.environ["BOUNDARY_TCP_PORT"]))) == 0
++finally:
++    tcp_client.close()
++assert not (protected / "python.txt").exists()
++assert not (protected / "link.txt").exists()
++assert not (allowed / "hardlink.txt").exists()
++assert not (protected / "subprocess.txt").exists()
++assert not (protected / "background.txt").exists()
++print("all blocked")
++"""
++
++    try:
++        terminal = LocalEnvironment(cwd=str(allowed), env=dict(os.environ))
++        terminal_result = terminal.execute(f"python3 -c {shlex.quote(probe)}")
++        assert terminal_result["returncode"] == 0, terminal_result
++        assert terminal_result["execution_confinement"] == "macos-seatbelt"
++
++        registry = ProcessRegistry()
++        for use_pty, name in ((False, "background-pipe"), (True, "background-pty")):
++            session = registry.spawn_local(
++                f'echo blocked > "$BOUNDARY_PROTECTED/{name}.txt"; echo settled',
++                cwd=str(allowed),
++                env_vars={
++                    "BOUNDARY_ALLOWED": str(allowed),
++                    "BOUNDARY_PROTECTED": str(protected),
++                },
++                use_pty=use_pty,
++            )
++            settled = registry.wait(session.id, timeout=10)
++            assert settled["status"] == "exited", settled
++            assert settled["execution_confinement"] == "macos-seatbelt"
++            if use_pty:
++                assert session._pty is not None
++
++        with patch(
++            "tools.code_execution_tool._load_config",
++            return_value={"mode": "strict", "kernel_mode": "session", "timeout": 30},
++        ):
++            kernel_result = json.loads(execute_code(
++                'from pathlib import Path\n'
++                'try:\n'
++                f'    (Path({str(protected)!r}) / "kernel.txt").write_text("blocked")\n'
++                'except OSError:\n'
++                '    print("blocked")',
++                task_id="confinement-proof",
++            ))
++    finally:
++        unix_listener.close()
++        tcp_listener.close()
++        socket_temp.cleanup()
++
++    assert kernel_result["status"] == "success", kernel_result
++    assert kernel_result["execution_confinement"] == "macos-seatbelt"
++    assert "blocked" in kernel_result["output"]
++    assert protected_file.read_text(encoding="utf-8") == "unchanged"
++    assert sorted(path.name for path in protected.iterdir()) == ["original.txt"]
++
++
++@pytest.mark.macos_only
++def test_configured_unknown_provider_fails_before_local_child_spawn(tmp_path):
++    _write_config(tmp_path, provider="not-a-provider")
++    with pytest.raises(LocalConfinementError, match="unsupported"):
++        LocalEnvironment(cwd=str(tmp_path))
++
++    _write_config(tmp_path)
++    with (
++        patch.object(local_confinement, "_MACOS_SEATBELT_RUNNER", str(tmp_path / "missing")),
++    ):
++        with pytest.raises(LocalConfinementError, match="runner is unavailable"):
++            LocalEnvironment(cwd=str(tmp_path))
+diff --git a/tools/code_kernel.py b/tools/code_kernel.py
+index 86d9966f8127b05f00619b09dcc1cd6316cb37f4..c87bfcaaec893077f9f17de799026de090310745 100644
+--- a/tools/code_kernel.py
++++ b/tools/code_kernel.py
+@@ -311,0 +312 @@ class SessionKernel:
++        self.execution_confinement: Optional[str] = None
+@@ -583 +584,2 @@ def _spawn(kernel: SessionKernel, *, child_python: str, child_cwd: str,
+-           sandbox_tools: frozenset, max_tool_calls: int, task_id: str = "") -> None:
++           sandbox_tools: frozenset, max_tool_calls: int, task_id: str = "",
++           confinement_policy=None) -> None:
+@@ -608,0 +611,7 @@ def _spawn(kernel: SessionKernel, *, child_python: str, child_cwd: str,
++    argv = [child_python, os.path.join(kernel.tmpdir, "hermes_kernel_runner.py")]
++    if confinement_policy is not None:
++        argv, child_env, kernel.execution_confinement = confinement_policy.prepare_spawn(
++            argv,
++            child_env,
++            runtime_writable_roots=(kernel.tmpdir,),
++        )
+@@ -611 +620 @@ def _spawn(kernel: SessionKernel, *, child_python: str, child_cwd: str,
+-            [child_python, os.path.join(kernel.tmpdir, "hermes_kernel_runner.py")],
++            argv,
+@@ -703,0 +713,2 @@ def _cell_result(kernel: SessionKernel, key: Tuple, status: str, payload: Dict[s
++    if kernel.execution_confinement:
++        result["execution_confinement"] = kernel.execution_confinement
+@@ -751 +762,11 @@ def execute_in_session_kernel(
+-    key = (_resolve_owner(task_id) or "", mode, child_python, child_cwd, tuple(sorted(sandbox_tools)))
++    from tools.environments.local_confinement import load_local_confinement_policy
++    confinement_policy = load_local_confinement_policy()
++    confinement_key = confinement_policy.cache_key if confinement_policy is not None else None
++    key = (
++        _resolve_owner(task_id) or "",
++        mode,
++        child_python,
++        child_cwd,
++        tuple(sorted(sandbox_tools)),
++        confinement_key,
++    )
+@@ -757 +778,2 @@ def execute_in_session_kernel(
+-                         is_interrupted=is_interrupted, exec_start=exec_start, state_reset=state_reset)
++                         is_interrupted=is_interrupted, exec_start=exec_start, state_reset=state_reset,
++                         confinement_policy=confinement_policy)
+@@ -771 +793,2 @@ def _run_cell(kernel: SessionKernel, key: Tuple, code: str, *, task_id: str, chi
+-              is_interrupted, exec_start: float, state_reset: bool) -> str:
++              is_interrupted, exec_start: float, state_reset: bool,
++              confinement_policy=None) -> str:
+@@ -780 +803,2 @@ def _run_cell(kernel: SessionKernel, key: Tuple, code: str, *, task_id: str, chi
+-                       sandbox_tools=sandbox_tools, max_tool_calls=max_tool_calls)
++                       sandbox_tools=sandbox_tools, max_tool_calls=max_tool_calls,
++                       confinement_policy=confinement_policy)
+diff --git a/tools/environments/base.py b/tools/environments/base.py
+index 47998cd27b72bf91437472ee1c8ec99b1dc60fda..28bac506a54ae581219bf31af2dffbe4e82dfa4b 100644
+--- a/tools/environments/base.py
++++ b/tools/environments/base.py
+@@ -563,0 +564,4 @@ class BaseEnvironment(ABC):
++        if proc_holder and (
++            confinement := getattr(proc_holder[0], "_hermes_execution_confinement", None)
++        ):
++            result["execution_confinement"] = confinement
+diff --git a/tools/environments/local.py b/tools/environments/local.py
+index 1e9ef7e977d60cdcf894cec9df80aee51e585c4b..03edd20769ce9b47949fddb69f3acd926e52f22f 100644
+--- a/tools/environments/local.py
++++ b/tools/environments/local.py
+@@ -713,0 +714,5 @@ class LocalEnvironment(BaseEnvironment):
++    @staticmethod
++    def _confinement_temp_dir() -> Path:
++        from tools.environments.local_confinement import terminal_confinement_runtime_dir
++        return terminal_confinement_runtime_dir()
++
+@@ -720,0 +726,3 @@ class LocalEnvironment(BaseEnvironment):
++        from tools.environments.local_confinement import load_local_confinement_policy
++        if load_local_confinement_policy() is not None:
++            return str(self._confinement_temp_dir())
+@@ -785,0 +794,10 @@ class LocalEnvironment(BaseEnvironment):
++        run_env = _make_run_env(self.env)
++        from tools.environments.local_confinement import load_local_confinement_policy
++        policy = load_local_confinement_policy()
++        confinement = None
++        if policy is not None:
++            args, run_env, confinement = policy.prepare_spawn(
++                args,
++                run_env,
++                runtime_writable_roots=(str(self._confinement_temp_dir()),),
++            )
+@@ -787 +805 @@ class LocalEnvironment(BaseEnvironment):
+-            args, text=True, env=_make_run_env(self.env), encoding="utf-8", errors="replace",
++            args, text=True, env=run_env, encoding="utf-8", errors="replace",
+@@ -790 +808 @@ class LocalEnvironment(BaseEnvironment):
+-            start_new_session=True, cwd=self.cwd,
++            start_new_session=True, cwd=self.cwd, close_fds=True,
+@@ -791,0 +810 @@ class LocalEnvironment(BaseEnvironment):
++        proc._hermes_execution_confinement = confinement
+diff --git a/tools/environments/local_confinement.py b/tools/environments/local_confinement.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce0434115125cc106597c9ee568117b98efcc8fa
+--- /dev/null
++++ b/tools/environments/local_confinement.py
+@@ -0,0 +1,136 @@
++"""Optional OS-enforced write confinement for local terminal and Python children."""
++
++from __future__ import annotations
++
++import os
++import platform
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Iterable, Mapping, Sequence
++
++_MACOS_SEATBELT_RUNNER = "/usr/bin/sandbox-exec"
++
++
++class LocalConfinementError(RuntimeError):
++    """The configured local execution boundary cannot be established safely."""
++
++
++def terminal_confinement_runtime_dir() -> Path:
++    """Private temp root shared by confined local terminal spawn shapes."""
++    from hermes_constants import get_hermes_home
++
++    root = get_hermes_home() / "cache" / "terminal" / "confined"
++    root.mkdir(parents=True, exist_ok=True, mode=0o700)
++    try:
++        root.chmod(0o700)
++    except OSError:
++        pass
++    return root
++
++
++def _scheme_literal(value: str) -> str:
++    if any(ord(char) < 32 for char in value):
++        raise LocalConfinementError("writable roots cannot contain control characters")
++    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
++
++
++def _canonical_root(raw: object) -> str:
++    if not isinstance(raw, str) or not raw.strip():
++        raise LocalConfinementError("each writable root must be a non-empty path")
++    expanded = os.path.expanduser(raw.strip())
++    if not os.path.isabs(expanded):
++        raise LocalConfinementError(f"writable root must be absolute: {raw!r}")
++    resolved = os.path.realpath(expanded)
++    if resolved == os.path.sep:
++        raise LocalConfinementError("filesystem root cannot be a writable root")
++    if not os.path.isdir(resolved):
++        raise LocalConfinementError(f"writable root is not an existing directory: {raw!r}")
++    return resolved
++
++
++@dataclass(frozen=True)
++class LocalConfinementPolicy:
++    provider: str
++    writable_roots: tuple[str, ...]
++    runner: str
++
++    @property
++    def cache_key(self) -> tuple[str, tuple[str, ...], str]:
++        return self.provider, self.writable_roots, self.runner
++
++    def prepare_spawn(
++        self,
++        argv: Sequence[str],
++        env: Mapping[str, str],
++        *,
++        runtime_writable_roots: Iterable[str] = (),
++    ) -> tuple[list[str], dict[str, str], str]:
++        roots = tuple(dict.fromkeys(
++            (*self.writable_roots, *(_canonical_root(root) for root in runtime_writable_roots))
++        ))
++        if not roots:
++            raise LocalConfinementError("local confinement requires at least one writable root")
++
++        write_filters = " ".join(
++            f"(subpath {_scheme_literal(root)})" for root in roots
++        )
++        profile = " ".join((
++            "(version 1)",
++            "(deny default)",
++            "(allow process*)",
++            "(allow sysctl-read)",
++            "(allow mach-lookup)",
++            "(allow signal)",
++            "(allow file-read*)",
++            "(allow network-outbound (remote ip) "
++            "(literal \"/private/var/run/mDNSResponder\"))",
++            "(allow network-inbound)",
++            "(allow ipc-posix*)",
++            "(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") "
++            f"{write_filters})",
++        ))
++        child_env = dict(env)
++        runtime_roots = tuple(_canonical_root(root) for root in runtime_writable_roots)
++        if runtime_roots:
++            child_env.update({name: runtime_roots[0] for name in ("TMPDIR", "TMP", "TEMP")})
++        return [self.runner, "-p", profile, *argv], child_env, self.provider
++
++
++def load_local_confinement_policy() -> LocalConfinementPolicy | None:
++    """Resolve the configured provider once for one child-spawn decision."""
++    from hermes_cli import managed_scope
++    from hermes_cli.config import get_config_path, load_config
++
++    user_config = get_config_path()
++    managed_dir = managed_scope.get_managed_dir()
++    managed_config = managed_dir / "config.yaml" if managed_dir else None
++    if not user_config.is_file() and not (
++        managed_config is not None and managed_config.is_file()
++    ):
++        # The default policy is disabled. Avoid making a previously side-effect-free
++        # child spawn create HERMES_HOME merely to rediscover that default.
++        return None
++
++    config = load_config() or {}
++    terminal = config.get("terminal") if isinstance(config, dict) else None
++    raw = terminal.get("local_confinement") if isinstance(terminal, dict) else None
++    if not isinstance(raw, dict):
++        return None
++    provider = str(raw.get("provider") or "").strip()
++    if not provider:
++        return None
++    if provider != "macos-seatbelt":
++        raise LocalConfinementError(f"unsupported local confinement provider: {provider}")
++    if platform.system() != "Darwin":
++        raise LocalConfinementError("macos-seatbelt local confinement requires macOS")
++    runner = _MACOS_SEATBELT_RUNNER
++    if not os.path.isfile(runner) or not os.access(runner, os.X_OK):
++        raise LocalConfinementError(f"configured confinement runner is unavailable: {runner}")
++    roots = raw.get("writable_roots")
++    if not isinstance(roots, list):
++        raise LocalConfinementError("local confinement writable_roots must be a list")
++    return LocalConfinementPolicy(
++        provider=provider,
++        writable_roots=tuple(dict.fromkeys(_canonical_root(root) for root in roots)),
++        runner=runner,
++    )
+diff --git a/tools/process_registry.py b/tools/process_registry.py
+index afdd52a0e7ff445d39d668e75331e89c8ee8f0f5..99f9b140a51802927c08a51d0b8b9657f0b390db 100644
+--- a/tools/process_registry.py
++++ b/tools/process_registry.py
+@@ -325,0 +326 @@ class ProcessSession:
++    execution_confinement: str = ""              # OS boundary applied at local spawn, if any
+@@ -376,0 +378 @@ _CHECKPOINT_FIELDS = (
++    "execution_confinement",
+@@ -785,0 +788,17 @@ class ProcessRegistry:
++    @staticmethod
++    def _prepare_local_spawn(argv: List[str], env: dict) -> tuple[List[str], dict, str]:
++        from tools.environments.local_confinement import (
++            load_local_confinement_policy,
++            terminal_confinement_runtime_dir,
++        )
++
++        policy = load_local_confinement_policy()
++        if policy is None:
++            return argv, env, ""
++        runtime_root = terminal_confinement_runtime_dir()
++        return policy.prepare_spawn(
++            argv,
++            env,
++            runtime_writable_roots=(str(runtime_root),),
++        )
++
+@@ -809,0 +829,3 @@ class ProcessRegistry:
++        pty_argv, pty_env, session.execution_confinement = self._prepare_local_spawn(
++            pty_argv, pty_env
++        )
+@@ -850,0 +873,4 @@ class ProcessRegistry:
++        spawn_env = self._spawn_env(env_vars)
++        spawn_argv, spawn_env, session.execution_confinement = self._prepare_local_spawn(
++            spawn_argv, spawn_env
++        )
+@@ -857 +883 @@ class ProcessRegistry:
+-            spawn_argv, text=True, cwd=session.cwd, env=self._spawn_env(env_vars), encoding="utf-8",
++            spawn_argv, text=True, cwd=session.cwd, env=spawn_env, encoding="utf-8",
+@@ -859 +885 @@ class ProcessRegistry:
+-            start_new_session=True, **_popen_kwargs)
++            start_new_session=True, close_fds=True, **_popen_kwargs)
+@@ -1197 +1223 @@ class ProcessRegistry:
+-        return {
++        fields = {
+@@ -1201,0 +1228,3 @@ class ProcessRegistry:
++        if session.execution_confinement:
++            fields["execution_confinement"] = session.execution_confinement
++        return fields
+@@ -1476 +1505,8 @@ class ProcessRegistry:
+-        return {"session_id": session.id, "command": session.command, "status": "exited" if session.exited else "running"}
++        result = {
++            "session_id": session.id,
++            "command": session.command,
++            "status": "exited" if session.exited else "running",
++        }
++        if session.execution_confinement:
++            result["execution_confinement"] = session.execution_confinement
++        return result
+@@ -1802,0 +1839,2 @@ class ProcessRegistry:
++            if s.execution_confinement:
++                entry["execution_confinement"] = s.execution_confinement
+diff --git a/website/docs/user-guide/configuration.md b/website/docs/user-guide/configuration.md
+index 4d21bc3df8d71c420e9f744b8814123a43ad6660..1dc061937ff1268d78179a10c9fe7b57679405bc 100644
+--- a/website/docs/user-guide/configuration.md
++++ b/website/docs/user-guide/configuration.md
+@@ -182,0 +183,3 @@ terminal:
++  local_confinement: # optional macOS write boundary for local terminal/execute_code children
++    provider: ""    # empty | macos-seatbelt
++    writable_roots: []
+@@ -277,0 +281,30 @@ The agent has the same filesystem access as your user account. Use `hermes tools
++#### Optional macOS local write confinement
++
++On macOS, the local backend can place the child processes created by `terminal`
++(foreground, background pipe, and PTY forms) and `execute_code` inside the same
++Seatbelt write boundary:
++
++```yaml
++terminal:
++  backend: local
++  local_confinement:
++    provider: macos-seatbelt
++    writable_roots:
++      - /absolute/path/to/workspace
++```
++
++Every writable root must already exist, resolve to an absolute canonical directory,
++and may not be `/`. Hermes also grants the exact private runtime directory needed for
++temporary process and kernel files. Child processes may read host files, use IP
++networking, listen on sockets, and start descendants, but outbound Unix-domain socket
++connections and filesystem writes outside those roots are denied; descendants inherit
++the boundary. Pair this with `HERMES_WRITE_SAFE_ROOT` when the
++declarative `write_file` and `patch` tools must follow the same workspace policy.
++
++The provider is opt-in and macOS-only. When configured, an unknown provider, missing
++`/usr/bin/sandbox-exec`, invalid root, or policy setup failure aborts the child spawn;
++Hermes does not retry it without confinement. Changing the policy starts a fresh
++`execute_code` session kernel. Apple has deprecated `sandbox-exec`, so deployments that
++need a long-term cross-platform security boundary should continue to use an isolated
++backend such as Docker, Modal, Daytona, or Vercel Sandbox.
++
+diff --git a/website/docs/user-guide/security.md b/website/docs/user-guide/security.md
+index a5f619d4fff1c824b4e224fe96be5edd83af9a83..80004c57c8c5cd7f68804861194b189955006285 100644
+--- a/website/docs/user-guide/security.md
++++ b/website/docs/user-guide/security.md
+@@ -17 +17 @@ The security model has eight layers:
+-3. **File write safety** — denylist and optional write sandbox for `write_file`/`patch`
++3. **File write safety** — denylist and optional write boundaries for file tools and local child processes
+@@ -332,0 +333,20 @@ Write guards apply to `write_file` and `patch` only. The `terminal` tool runs as
++### macOS local child write boundary
++
++The optional `terminal.local_confinement.provider: macos-seatbelt` setting addresses
++the shell/interpreter bypass above for local `terminal` and `execute_code` children.
++It applies at all four local child-spawn shapes—foreground shell, background pipe,
++background PTY, and persistent Python kernel—and descendants inherit the policy.
++Writes are limited to canonical `writable_roots` plus Hermes's exact private runtime
++directory. The active provider is included in tool/process results as
++`execution_confinement` so callers can distinguish enforced from ordinary local runs.
++
++This is a **direct-filesystem-write boundary**, not complete isolation: host reads, IP
++network access, inbound sockets, process creation, IPC, and signals remain available
++(outbound Unix-domain sockets are denied except for macOS DNS resolution). A process
++can therefore read or exfiltrate material visible to the Hermes OS account, or ask a
++reachable HTTP service to mutate state. It is macOS-only, relies on the
++deprecated `/usr/bin/sandbox-exec` interface, and is disabled by default. Use a
++container or remote sandbox when reads, network, process visibility, portability, or
++stronger long-term isolation are part of the threat model. Configuration and failure
++semantics are documented under [Optional macOS local write confinement](./configuration.md#optional-macos-local-write-confinement).
++

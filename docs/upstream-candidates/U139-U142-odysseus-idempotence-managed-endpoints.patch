@@ -1,0 +1,1333 @@
+diff --git a/core/database.py b/core/database.py
+index 65ad403162e7920b9b24d557fc5cfc446ae0f960..fc3d65e149c1b5cc38cbc5131c53bce32985c452 100644
+--- a/core/database.py
++++ b/core/database.py
+@@ -270,0 +271 @@ class ChatMessage(Base):
++    client_request_id = Column(String, nullable=True)
+@@ -280,0 +282,5 @@ class ChatMessage(Base):
++        Index(
++            'ux_messages_session_client_request_role',
++            'session_id', 'client_request_id', 'role',
++            unique=True,
++        ),
+@@ -282,0 +289,48 @@ class ChatMessage(Base):
++
++def _migrate_add_chat_message_request_id():
++    """Add the request receipt used by idempotent external transcript writes."""
++    if engine.dialect.name != "sqlite":
++        try:
++            with engine.begin() as conn:
++                if not inspect(conn).has_table(ChatMessage.__tablename__):
++                    return
++                columns = {
++                    column["name"]
++                    for column in inspect(conn).get_columns(ChatMessage.__tablename__)
++                }
++                if "client_request_id" not in columns:
++                    conn.execute(text(
++                        "ALTER TABLE chat_messages "
++                        "ADD COLUMN client_request_id VARCHAR"
++                    ))
++                next(
++                    index
++                    for index in ChatMessage.__table__.indexes
++                    if index.name == "ux_messages_session_client_request_role"
++                ).create(bind=conn, checkfirst=True)
++        except Exception as exc:
++            logger.warning("chat message request-id migration failed: %s", exc)
++        return
++
++    db_path = DATABASE_URL.replace("sqlite:///", "")
++    if not os.path.exists(db_path):
++        return
++    conn = None
++    try:
++        conn = sqlite3.connect(db_path)
++        columns = [row[1] for row in conn.execute("PRAGMA table_info(chat_messages)")]
++        if "client_request_id" not in columns:
++            conn.execute("ALTER TABLE chat_messages ADD COLUMN client_request_id VARCHAR")
++        conn.execute(
++            "CREATE UNIQUE INDEX IF NOT EXISTS "
++            "ux_messages_session_client_request_role "
++            "ON chat_messages(session_id, client_request_id, role) "
++            "WHERE client_request_id IS NOT NULL"
++        )
++        conn.commit()
++    except Exception as exc:
++        logger.warning("chat message request-id migration failed: %s", exc)
++    finally:
++        if conn is not None:
++            conn.close()
++
+@@ -553,0 +608,50 @@ class ModelEndpoint(TimestampMixin, Base):
++    # External integrations may manage an endpoint only through an opaque
++    # management token. User-created/legacy rows leave all four fields NULL.
++    managed_by = Column(String, nullable=True, index=True)
++    managed_resource = Column(String, nullable=True)
++    management_token_hash = Column(String, nullable=True)
++    management_revision = Column(Integer, nullable=False, default=0)
++
++    __table_args__ = (
++        Index(
++            "ux_model_endpoints_manager_resource",
++            "managed_by",
++            "managed_resource",
++            unique=True,
++        ),
++    )
++
++
++class ModelEndpointMutationLock(Base):
++    """Portable mutex row for endpoint claim/create/update races."""
++    __tablename__ = "model_endpoint_mutation_locks"
++
++    lock_key = Column(String, primary_key=True)
++
++
++def lock_model_endpoint_mutations(db) -> None:
++    """Serialize endpoint mutations across processes and database backends."""
++    from sqlalchemy.exc import IntegrityError
++
++    if db.get_bind().dialect.name == "sqlite":
++        db.execute(text("BEGIN IMMEDIATE"))
++        return
++
++    lock_key = "global"
++    row = db.get(ModelEndpointMutationLock, lock_key, with_for_update=True)
++    if row is None:
++        inserted = False
++        try:
++            with db.begin_nested():
++                db.add(ModelEndpointMutationLock(lock_key=lock_key))
++                db.flush()
++                inserted = True
++        except IntegrityError:
++            pass
++        if not inserted:
++            (
++                db.query(ModelEndpointMutationLock)
++                .filter(ModelEndpointMutationLock.lock_key == lock_key)
++                .with_for_update()
++                .one()
++            )
+@@ -1063,0 +1168,62 @@ def _migrate_add_provider_auth_id_column():
++def _migrate_add_model_endpoint_management_columns():
++    """Add manager claims without inferring ownership for any legacy row."""
++    if engine.dialect.name != "sqlite":
++        try:
++            with engine.begin() as conn:
++                if not inspect(conn).has_table(ModelEndpoint.__tablename__):
++                    return
++                columns = {
++                    column["name"]
++                    for column in inspect(conn).get_columns(ModelEndpoint.__tablename__)
++                }
++                for name, declaration in (
++                    ("managed_by", "VARCHAR"),
++                    ("managed_resource", "VARCHAR"),
++                    ("management_token_hash", "VARCHAR"),
++                    ("management_revision", "INTEGER NOT NULL DEFAULT 0"),
++                ):
++                    if name not in columns:
++                        conn.execute(text(
++                            f"ALTER TABLE model_endpoints ADD COLUMN {name} {declaration}"
++                        ))
++                next(
++                    index
++                    for index in ModelEndpoint.__table__.indexes
++                    if index.name == "ux_model_endpoints_manager_resource"
++                ).create(bind=conn, checkfirst=True)
++        except Exception as exc:
++            logger.warning("model endpoint management migration failed: %s", exc)
++        return
++
++    db_path = DATABASE_URL.replace("sqlite:///", "")
++    if not os.path.exists(db_path):
++        return
++    conn = None
++    try:
++        conn = sqlite3.connect(db_path)
++        columns = {
++            row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)")
++        }
++        for name, declaration in (
++            ("managed_by", "VARCHAR"),
++            ("managed_resource", "VARCHAR"),
++            ("management_token_hash", "VARCHAR"),
++            ("management_revision", "INTEGER NOT NULL DEFAULT 0"),
++        ):
++            if columns and name not in columns:
++                conn.execute(
++                    f"ALTER TABLE model_endpoints ADD COLUMN {name} {declaration}"
++                )
++        conn.execute(
++            "CREATE UNIQUE INDEX IF NOT EXISTS "
++            "ux_model_endpoints_manager_resource "
++            "ON model_endpoints(managed_by, managed_resource)"
++        )
++        conn.commit()
++    except Exception as exc:
++        logger.warning("model endpoint management migration failed: %s", exc)
++    finally:
++        if conn is not None:
++            conn.close()
++
++
+@@ -2110,0 +2277 @@ def init_db():
++    _migrate_add_model_endpoint_management_columns()
+@@ -2115,0 +2283 @@ def init_db():
++    _migrate_add_chat_message_request_id()
+diff --git a/core/session_manager.py b/core/session_manager.py
+index eeb9c2a164e878b355fd296dbfc1c0cb9af10d3e..270973dcbfb0160d598b3794fac98b5d9fd9ac62 100644
+--- a/core/session_manager.py
++++ b/core/session_manager.py
+@@ -17,0 +18 @@ from sqlalchemy import func
++from sqlalchemy.exc import IntegrityError
+@@ -29,0 +31,8 @@ logger = logging.getLogger(__name__)
++class IdempotentMessageConflict(ValueError):
++    pass
++
++
++class IdempotentMessageUploadMissing(ValueError):
++    pass
++
++
+@@ -310,0 +320,93 @@ class SessionManager:
++    def put_idempotent_messages(
++        self,
++        session_id: str,
++        request_id: str,
++        messages: list[ChatMessage],
++    ) -> dict:
++        """Insert each requested role once and return its stable database receipt."""
++        self.get_session(session_id)
++        desired = {message.role: message for message in messages}
++        if len(desired) != len(messages):
++            raise ValueError("each role may appear only once")
++
++        for attempt in range(2):
++            db = SessionLocal()
++            try:
++                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
++                if db_session is None:
++                    self.sessions.pop(session_id, None)
++                    raise KeyError(session_id)
++
++                rows = db.query(DbChatMessage).filter(
++                    DbChatMessage.session_id == session_id,
++                    DbChatMessage.client_request_id == request_id,
++                ).all()
++                existing = {row.role: row for row in rows}
++                receipts = []
++                now = utcnow_naive()
++
++                for offset, message in enumerate(messages):
++                    metadata = dict(message.metadata or {})
++                    content = persistable_message_content(message.content, metadata)
++                    row = existing.get(message.role)
++                    if row is not None:
++                        try:
++                            stored_metadata = json.loads(row.meta_data) if row.meta_data else {}
++                        except (TypeError, ValueError):
++                            stored_metadata = None
++                        if row.content != content or stored_metadata != metadata:
++                            raise IdempotentMessageConflict(
++                                f"request id already has different {message.role} content"
++                            )
++                        receipts.append({"role": message.role, "id": row.id, "inserted": False})
++                        continue
++
++                    missing_upload_id = reserve_message_upload_references(
++                        getattr(self, "upload_handler", None),
++                        getattr(db_session, "owner", None),
++                        message.content,
++                        metadata,
++                    )
++                    if missing_upload_id:
++                        raise IdempotentMessageUploadMissing(missing_upload_id)
++
++                    row = DbChatMessage(
++                        id=str(uuid.uuid4()),
++                        session_id=session_id,
++                        role=message.role,
++                        content=content,
++                        meta_data=json.dumps(metadata) if metadata else None,
++                        client_request_id=request_id,
++                        timestamp=now + timedelta(microseconds=offset),
++                    )
++                    db.add(row)
++                    receipts.append({"role": message.role, "id": row.id, "inserted": True})
++
++                inserted = sum(1 for receipt in receipts if receipt["inserted"])
++                if inserted:
++                    db.flush()
++                    db_session.message_count = db.query(func.count(DbChatMessage.id)).filter(
++                        DbChatMessage.session_id == session_id
++                    ).scalar()
++                    db_session.last_accessed = now
++                    db_session.last_message_at = now
++                    db_session.updated_at = now
++                db.commit()
++                self._load_session_from_db(session_id)
++                return {
++                    "request_id": request_id,
++                    "status": "inserted" if inserted else "already_present",
++                    "messages": receipts,
++                }
++            except IntegrityError:
++                db.rollback()
++                if attempt:
++                    raise
++            except Exception:
++                db.rollback()
++                raise
++            finally:
++                db.close()
++
++        raise RuntimeError("idempotent message insertion did not resolve")
++
+diff --git a/routes/model_routes.py b/routes/model_routes.py
+index fcf9e16341dd9d4fd093636b20db096e8f6b6f9b..6094684b6f7a5063e166c2ded119dc0741a301bf 100644
+--- a/routes/model_routes.py
++++ b/routes/model_routes.py
+@@ -4,0 +5 @@ import re
++import hmac
+@@ -19 +20,6 @@ from fastapi.responses import StreamingResponse
+-from core.database import SessionLocal, ModelEndpoint, Session as DbSession
++from core.database import (
++    SessionLocal,
++    ModelEndpoint,
++    Session as DbSession,
++    lock_model_endpoint_mutations,
++)
+@@ -35,0 +42,36 @@ logger = logging.getLogger(__name__)
++_MANAGER_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
++
++
++def _management_token_hash(token: str) -> str:
++    return hashlib.sha256(("odysseus:model-endpoint-manager:v1\0" + token).encode()).hexdigest()
++
++
++def _managed_key_fingerprint(api_key: Optional[str]) -> str:
++    """Collision-resistant credential identity for managed endpoint CAS."""
++    key = (api_key or "").strip()
++    if not key:
++        return ""
++    return hashlib.sha256(("odysseus:model-endpoint-key:v1\0" + key).encode()).hexdigest()
++
++
++def _managed_endpoint_credentials(body: dict) -> tuple[str, str, str, str]:
++    manager = str(body.get("manager_id") or "").strip()
++    resource = str(body.get("resource_id") or "").strip()
++    token = str(body.get("management_token") or "")
++    if not _MANAGER_ID_RE.fullmatch(manager):
++        raise HTTPException(400, "invalid manager id")
++    if not _MANAGER_ID_RE.fullmatch(resource):
++        raise HTTPException(400, "invalid managed resource id")
++    if not 32 <= len(token) <= 512:
++        raise HTTPException(400, "management token must contain 32 to 512 characters")
++    return manager, resource, token, _management_token_hash(token)
++
++
++def _verify_managed_endpoint(ep, manager: str, resource: str, token_hash: str) -> None:
++    if ep is None or ep.managed_by != manager or ep.managed_resource != resource:
++        raise HTTPException(404, "Managed endpoint not found")
++    if not ep.management_token_hash or not hmac.compare_digest(
++        ep.management_token_hash, token_hash
++    ):
++        raise HTTPException(404, "Managed endpoint not found")
++
+@@ -1980,0 +2023,3 @@ def setup_model_routes(model_discovery):
++                    "managed_by": getattr(r, "managed_by", None),
++                    "managed_resource": getattr(r, "managed_resource", None),
++                    "management_revision": getattr(r, "management_revision", None),
+@@ -1988,0 +2034,184 @@ def setup_model_routes(model_discovery):
++    @router.post("/model-endpoints/managed")
++    async def provision_managed_model_endpoint(request: Request):
++        """Exclusively provision an endpoint controlled by an external manager."""
++        require_admin(request)
++        try:
++            body = await request.json()
++        except Exception as exc:
++            raise HTTPException(400, "invalid JSON body") from exc
++        if not isinstance(body, dict):
++            raise HTTPException(400, "invalid JSON body")
++        manager, resource, _token, token_hash = _managed_endpoint_credentials(body)
++        base_url = _normalize_base(str(body.get("base_url") or ""))
++        if not base_url:
++            raise HTTPException(400, "Base URL is required")
++        from src.endpoint_resolver import resolve_url
++        base_url = resolve_url(base_url)
++        name = str(body.get("name") or "").strip()
++        if not name:
++            name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
++        api_key = str(body.get("api_key") or "").strip()
++        pinned = _normalize_model_ids(body.get("pinned_models"))
++        owner = effective_user(request) or None
++
++        db = SessionLocal()
++        try:
++            lock_model_endpoint_mutations(db)
++            existing_claim = db.query(ModelEndpoint).filter(
++                ModelEndpoint.managed_by == manager,
++                ModelEndpoint.managed_resource == resource,
++            ).first()
++            if existing_claim is not None:
++                _verify_managed_endpoint(existing_claim, manager, resource, token_hash)
++                if _normalize_base(existing_claim.base_url) != base_url:
++                    raise HTTPException(409, "Managed endpoint already exists at a different URL")
++                if _managed_key_fingerprint(existing_claim.api_key) != _managed_key_fingerprint(api_key):
++                    raise HTTPException(
++                        409,
++                        "Managed endpoint already exists with different key material; use key update",
++                    )
++                return {
++                    "id": existing_claim.id,
++                    "managed_by": manager,
++                    "managed_resource": resource,
++                    "base_url": existing_claim.base_url,
++                    "api_key_fingerprint": _managed_key_fingerprint(existing_claim.api_key),
++                    "management_revision": existing_claim.management_revision or 1,
++                    "status": "already_present",
++                }
++            if db.query(ModelEndpoint.id).filter(ModelEndpoint.base_url == base_url).first():
++                raise HTTPException(
++                    409,
++                    "Base URL already belongs to an unclaimed or differently managed endpoint",
++                )
++            endpoint = ModelEndpoint(
++                id=str(uuid.uuid4())[:8],
++                name=name,
++                base_url=base_url,
++                api_key=api_key or None,
++                is_enabled=True,
++                model_type="llm",
++                endpoint_kind="local",
++                model_refresh_mode="manual",
++                cached_models=json.dumps(pinned) if pinned else None,
++                pinned_models=json.dumps(pinned) if pinned else None,
++                owner=owner,
++                managed_by=manager,
++                managed_resource=resource,
++                management_token_hash=token_hash,
++                management_revision=1,
++            )
++            db.add(endpoint)
++            db.commit()
++            _invalidate_models_cache()
++            _local_probe_cache["data"] = None
++            return {
++                "id": endpoint.id,
++                "managed_by": manager,
++                "managed_resource": resource,
++                "base_url": endpoint.base_url,
++                "api_key_fingerprint": _managed_key_fingerprint(endpoint.api_key),
++                "management_revision": endpoint.management_revision,
++                "status": "created",
++            }
++        except HTTPException:
++            db.rollback()
++            raise
++        except Exception:
++            db.rollback()
++            raise
++        finally:
++            db.close()
++
++    @router.post("/model-endpoints/managed/resolve")
++    async def resolve_managed_model_endpoint(request: Request):
++        require_admin(request)
++        try:
++            body = await request.json()
++        except Exception as exc:
++            raise HTTPException(400, "invalid JSON body") from exc
++        if not isinstance(body, dict):
++            raise HTTPException(400, "invalid JSON body")
++        manager, resource, _token, token_hash = _managed_endpoint_credentials(body)
++        db = SessionLocal()
++        try:
++            endpoint = db.query(ModelEndpoint).filter(
++                ModelEndpoint.managed_by == manager,
++                ModelEndpoint.managed_resource == resource,
++            ).first()
++            _verify_managed_endpoint(endpoint, manager, resource, token_hash)
++            return {
++                "id": endpoint.id,
++                "managed_by": manager,
++                "managed_resource": resource,
++                "base_url": endpoint.base_url,
++                "api_key_fingerprint": _managed_key_fingerprint(endpoint.api_key),
++                "management_revision": endpoint.management_revision or 1,
++            }
++        finally:
++            db.close()
++
++    @router.put("/model-endpoints/managed/key")
++    async def update_managed_model_endpoint_key(request: Request):
++        """Compare-and-swap one manager-owned endpoint key without returning secrets."""
++        require_admin(request)
++        try:
++            body = await request.json()
++        except Exception as exc:
++            raise HTTPException(400, "invalid JSON body") from exc
++        if not isinstance(body, dict):
++            raise HTTPException(400, "invalid JSON body")
++        manager, resource, _token, token_hash = _managed_endpoint_credentials(body)
++        endpoint_id = str(body.get("endpoint_id") or "").strip()
++        expected_fingerprint = str(body.get("expected_fingerprint") or "").strip()
++        new_key = body.get("api_key")
++        try:
++            expected_revision = int(body.get("expected_revision"))
++        except (TypeError, ValueError) as exc:
++            raise HTTPException(400, "expected revision must be an integer") from exc
++        if not endpoint_id or not isinstance(new_key, str) or not new_key.strip():
++            raise HTTPException(400, "endpoint id and non-empty API key are required")
++        new_key = new_key.strip()
++        new_fingerprint = _managed_key_fingerprint(new_key)
++
++        db = SessionLocal()
++        try:
++            lock_model_endpoint_mutations(db)
++            endpoint = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
++            _verify_managed_endpoint(endpoint, manager, resource, token_hash)
++            current_revision = endpoint.management_revision or 1
++            current_fingerprint = _managed_key_fingerprint(endpoint.api_key)
++            if (
++                current_revision == expected_revision + 1
++                and current_fingerprint == new_fingerprint
++            ):
++                return {
++                    "id": endpoint.id,
++                    "api_key_fingerprint": current_fingerprint,
++                    "management_revision": current_revision,
++                    "status": "already_present",
++                }
++            if (
++                current_revision != expected_revision
++                or current_fingerprint != expected_fingerprint
++            ):
++                raise HTTPException(409, "Managed endpoint revision or key fingerprint changed")
++            endpoint.api_key = new_key
++            endpoint.management_revision = current_revision + 1
++            db.commit()
++            _invalidate_models_cache()
++            return {
++                "id": endpoint.id,
++                "api_key_fingerprint": new_fingerprint,
++                "management_revision": endpoint.management_revision,
++                "status": "updated",
++            }
++        except HTTPException:
++            db.rollback()
++            raise
++        except Exception:
++            db.rollback()
++            raise
++        finally:
++            db.close()
++
+@@ -2054,0 +2284,2 @@ def setup_model_routes(model_discovery):
++                if getattr(_candidate, "managed_by", None):
++                    continue
+@@ -2148,0 +2380,9 @@ def setup_model_routes(model_discovery):
++            lock_model_endpoint_mutations(db)
++            if db.query(ModelEndpoint.id).filter(
++                ModelEndpoint.base_url == base_url,
++                ModelEndpoint.managed_by.is_not(None),
++            ).first():
++                raise HTTPException(
++                    409,
++                    "Base URL belongs to an externally managed endpoint",
++                )
+@@ -2511,0 +2752,5 @@ def setup_model_routes(model_discovery):
++            if getattr(ep, "managed_by", None):
++                raise HTTPException(
++                    409,
++                    "Externally managed endpoints must be changed through their manager",
++                )
+@@ -2669,0 +2915,5 @@ def setup_model_routes(model_discovery):
++            if getattr(ep, "managed_by", None):
++                raise HTTPException(
++                    409,
++                    "Externally managed endpoints must be released through their manager",
++                )
+diff --git a/routes/session_routes.py b/routes/session_routes.py
+index 895d80b2cbf28792758a111c0e23982597539872..114863dc4656bad420501b0a0e2af453be066f0f 100644
+--- a/routes/session_routes.py
++++ b/routes/session_routes.py
+@@ -10 +10,5 @@ import logging
+-from core.session_manager import SessionManager
++from core.session_manager import (
++    IdempotentMessageConflict,
++    IdempotentMessageUploadMissing,
++    SessionManager,
++)
+@@ -608,0 +613,42 @@ def setup_session_routes(
++    @router.put("/session/{sid}/direct-turn/{request_id}")
++    async def put_direct_turn(request: Request, sid: str, request_id: str):
++        """Idempotently add the user and/or assistant side of one external turn."""
++        _verify_session_owner(request, sid)
++        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", request_id or ""):
++            raise HTTPException(400, "invalid request id")
++        try:
++            body = await request.json()
++            raw_messages = body.get("messages")
++            if not isinstance(raw_messages, list) or not 1 <= len(raw_messages) <= 2:
++                raise ValueError("messages must contain one or two rows")
++            messages = []
++            roles = []
++            for raw in raw_messages:
++                if not isinstance(raw, dict):
++                    raise ValueError("a message is not an object")
++                role = raw.get("role")
++                content = raw.get("content")
++                if role not in ("user", "assistant") or not isinstance(content, str) or not content:
++                    raise ValueError("messages require a non-empty user or assistant content")
++                metadata = sanitize_client_message_metadata(raw.get("metadata"))
++                roles.append(role)
++                messages.append(ChatMessage(role, content, metadata=metadata))
++            if len(set(roles)) != len(roles) or roles != sorted(roles, key=("user", "assistant").index):
++                raise ValueError("messages must contain user then assistant, without duplicate roles")
++        except HTTPException:
++            raise
++        except (AttributeError, TypeError, ValueError) as exc:
++            raise HTTPException(400, str(exc)) from exc
++
++        try:
++            receipt = session_manager.put_idempotent_messages(sid, request_id, messages)
++        except KeyError:
++            raise HTTPException(404, f"Session {sid} not found")
++        except IdempotentMessageConflict as exc:
++            raise HTTPException(409, str(exc)) from exc
++        except IdempotentMessageUploadMissing as exc:
++            raise HTTPException(
++                409, f"Referenced upload is no longer available: {exc}"
++            ) from exc
++        return {"ok": True, **receipt}
++
+diff --git a/tests/test_idempotent_direct_turn.py b/tests/test_idempotent_direct_turn.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..abfab64ff15720b3a9b88ac616c0def1c2f27383
+--- /dev/null
++++ b/tests/test_idempotent_direct_turn.py
+@@ -0,0 +1,394 @@
++"""Exactly-once storage receipts for externally generated chat turns."""
++
++import concurrent.futures
++import asyncio
++import json
++import os
++import sqlite3
++import uuid
++
++import pytest
++
++import core.database as cdb
++import core.session_manager as session_manager_module
++from core.models import ChatMessage
++from tests.helpers.sqlite_db import make_temp_sqlite
++
++
++@pytest.fixture
++def direct_turn_db(monkeypatch):
++    SessionLocal, engine, tmpfile = make_temp_sqlite(cdb.Base.metadata)
++    monkeypatch.setattr(session_manager_module, "SessionLocal", SessionLocal)
++    try:
++        yield SessionLocal
++    finally:
++        engine.dispose()
++        tmpfile.close()
++        try:
++            os.unlink(tmpfile.name)
++        except OSError:
++            pass
++
++
++def _manager():
++    manager = session_manager_module.SessionManager.__new__(
++        session_manager_module.SessionManager
++    )
++    manager.sessions = {}
++    manager.upload_handler = None
++    return manager
++
++
++def _seed_session(SessionLocal, *, owner="alice"):
++    session_id = "direct-" + uuid.uuid4().hex
++    db = SessionLocal()
++    try:
++        db.add(cdb.Session(
++            id=session_id,
++            owner=owner,
++            name="External direct turn",
++            model="test-model",
++            endpoint_url="http://localhost:11434",
++            archived=False,
++            message_count=0,
++        ))
++        db.commit()
++    finally:
++        db.close()
++    return session_id
++
++
++def _rows(SessionLocal, session_id):
++    db = SessionLocal()
++    try:
++        return [
++            {
++                "id": row.id,
++                "role": row.role,
++                "content": row.content,
++                "metadata": json.loads(row.meta_data) if row.meta_data else {},
++                "request_id": row.client_request_id,
++            }
++            for row in db.query(cdb.ChatMessage)
++            .filter(cdb.ChatMessage.session_id == session_id)
++            .order_by(cdb.ChatMessage.timestamp, cdb.ChatMessage.id)
++            .all()
++        ]
++    finally:
++        db.close()
++
++
++def test_identical_replay_returns_the_original_receipt(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-replay"
++    message = ChatMessage("user", "Keep this once", {"source": "mot-direct"})
++
++    first = _manager().put_idempotent_messages(session_id, request_id, [message])
++    replay = _manager().put_idempotent_messages(session_id, request_id, [message])
++
++    assert first["status"] == "inserted"
++    assert replay["status"] == "already_present"
++    assert first["messages"][0]["id"] == replay["messages"][0]["id"]
++    assert first["messages"][0]["inserted"] is True
++    assert replay["messages"][0]["inserted"] is False
++    assert _rows(SessionLocal, session_id) == [{
++        "id": first["messages"][0]["id"],
++        "role": "user",
++        "content": "Keep this once",
++        "metadata": {"source": "mot-direct"},
++        "request_id": request_id,
++    }]
++
++
++def test_partial_retry_adds_only_the_missing_role(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-partial"
++    user = ChatMessage("user", "Question", {"sequence": 1})
++    assistant = ChatMessage("assistant", "Answer", {"sequence": 2})
++
++    user_receipt = _manager().put_idempotent_messages(
++        session_id, request_id, [user]
++    )
++    completed = _manager().put_idempotent_messages(
++        session_id, request_id, [user, assistant]
++    )
++    replay = _manager().put_idempotent_messages(
++        session_id, request_id, [user, assistant]
++    )
++
++    assert completed["status"] == "inserted"
++    assert [row["inserted"] for row in completed["messages"]] == [False, True]
++    assert replay["status"] == "already_present"
++    assert [row["inserted"] for row in replay["messages"]] == [False, False]
++    assert completed["messages"][0]["id"] == user_receipt["messages"][0]["id"]
++    assert len(_rows(SessionLocal, session_id)) == 2
++
++
++@pytest.mark.parametrize(
++    "replacement",
++    [
++        ChatMessage("user", "Different text", {"sequence": 1}),
++        ChatMessage("user", "Question", {"sequence": 999}),
++    ],
++)
++def test_conflicting_replay_is_rejected_without_mutation(
++    direct_turn_db,
++    replacement,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-conflict"
++    original = ChatMessage("user", "Question", {"sequence": 1})
++    manager = _manager()
++    manager.put_idempotent_messages(session_id, request_id, [original])
++    before = _rows(SessionLocal, session_id)
++
++    with pytest.raises(
++        session_manager_module.IdempotentMessageConflict,
++        match="different user content",
++    ):
++        manager.put_idempotent_messages(session_id, request_id, [replacement])
++
++    assert _rows(SessionLocal, session_id) == before
++
++
++def test_conflicting_replay_does_not_touch_attachment_reservations(
++    direct_turn_db,
++    monkeypatch,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-attachment-conflict"
++    manager = _manager()
++    calls = []
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        lambda *_args: calls.append(_args) or None,
++    )
++    manager.put_idempotent_messages(
++        session_id,
++        request_id,
++        [ChatMessage("user", "Original")],
++    )
++    calls.clear()
++
++    with pytest.raises(session_manager_module.IdempotentMessageConflict):
++        manager.put_idempotent_messages(
++            session_id,
++            request_id,
++            [ChatMessage("user", "Conflicting")],
++        )
++
++    assert calls == []
++
++
++def test_missing_attachment_aborts_before_any_message_row(direct_turn_db, monkeypatch):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        lambda *_args: "missing-upload",
++    )
++
++    with pytest.raises(
++        session_manager_module.IdempotentMessageUploadMissing,
++        match="missing-upload",
++    ):
++        _manager().put_idempotent_messages(
++            session_id,
++            "mot-direct:test-missing-upload",
++            [ChatMessage("user", "Attachment")],
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++
++
++def test_concurrent_identical_writers_commit_one_row(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-race"
++    message = ChatMessage("user", "Race me once", {"source": "mot-direct"})
++
++    def write_once():
++        return _manager().put_idempotent_messages(
++            session_id, request_id, [message]
++        )
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        receipts = list(pool.map(lambda _index: write_once(), range(2)))
++
++    assert sorted(receipt["status"] for receipt in receipts) == [
++        "already_present",
++        "inserted",
++    ]
++    rows = _rows(SessionLocal, session_id)
++    assert len(rows) == 1
++    assert {
++        receipt["messages"][0]["id"] for receipt in receipts
++    } == {rows[0]["id"]}
++
++
++def test_deleted_session_cannot_receive_orphaned_messages(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    manager = _manager()
++    manager.get_session(session_id)
++    db = SessionLocal()
++    try:
++        db.query(cdb.Session).filter(cdb.Session.id == session_id).delete()
++        db.commit()
++    finally:
++        db.close()
++
++    with pytest.raises(KeyError):
++        manager.put_idempotent_messages(
++            session_id,
++            "mot-direct:test-deleted",
++            [ChatMessage("user", "Must not survive")],
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++
++
++def test_legacy_sqlite_migration_adds_column_and_uniqueness(monkeypatch, tmp_path):
++    database_path = tmp_path / "legacy.db"
++    conn = sqlite3.connect(database_path)
++    try:
++        conn.execute(
++            "CREATE TABLE chat_messages ("
++            "id VARCHAR PRIMARY KEY, session_id VARCHAR NOT NULL, "
++            "role VARCHAR NOT NULL, content TEXT NOT NULL)"
++        )
++        conn.commit()
++    finally:
++        conn.close()
++
++    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{database_path}")
++    cdb._migrate_add_chat_message_request_id()
++    cdb._migrate_add_chat_message_request_id()
++
++    conn = sqlite3.connect(database_path)
++    try:
++        columns = {row[1] for row in conn.execute("PRAGMA table_info(chat_messages)")}
++        indexes = {row[1] for row in conn.execute("PRAGMA index_list(chat_messages)")}
++        assert "client_request_id" in columns
++        assert "ux_messages_session_client_request_role" in indexes
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('one', 'session', 'user', 'first', 'request')"
++        )
++        with pytest.raises(sqlite3.IntegrityError):
++            conn.execute(
++                "INSERT INTO chat_messages "
++                "(id, session_id, role, content, client_request_id) "
++                "VALUES ('two', 'session', 'user', 'second', 'request')"
++            )
++        conn.rollback()
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('null-one', 'session', 'user', 'legacy one', NULL)"
++        )
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('null-two', 'session', 'user', 'legacy two', NULL)"
++        )
++        conn.commit()
++    finally:
++        conn.close()
++
++
++def test_route_validates_shape_and_returns_manager_receipt(monkeypatch):
++    import routes.session_routes as session_routes
++
++    class RequestStub:
++        def __init__(self, payload):
++            self._payload = payload
++
++        async def json(self):
++            return self._payload
++
++    class ManagerStub:
++        def __init__(self):
++            self.calls = []
++
++        def put_idempotent_messages(self, session_id, request_id, messages):
++            self.calls.append((session_id, request_id, messages))
++            return {
++                "request_id": request_id,
++                "status": "already_present",
++                "messages": [{"role": "user", "id": "stable", "inserted": False}],
++            }
++
++    monkeypatch.setattr(session_routes, "_verify_session_owner", lambda *_args: None)
++    monkeypatch.setattr(session_routes, "effective_user", lambda _request: "alice")
++    manager = ManagerStub()
++    configured = session_routes.setup_session_routes(manager, {})
++    endpoint = [
++        route.endpoint
++        for route in configured.routes
++        if getattr(route, "path", "") == "/api/session/{sid}/direct-turn/{request_id}"
++    ][-1]
++
++    result = asyncio.run(endpoint(
++        RequestStub({
++            "messages": [{
++                "role": "user",
++                "content": "Keep once",
++                "metadata": {"source": "mot-direct", "tool_events": ["forged"]},
++            }]
++        }),
++        sid="session",
++        request_id="mot-direct:route-proof",
++    ))
++
++    assert result["status"] == "already_present"
++    assert result["messages"][0]["id"] == "stable"
++    _sid, _request_id, messages = manager.calls[0]
++    assert _sid == "session"
++    assert _request_id == "mot-direct:route-proof"
++    assert messages[0].metadata == {"source": "mot-direct"}
++
++
++@pytest.mark.parametrize(
++    "request_id,payload",
++    [
++        ("contains a space", {"messages": [{"role": "user", "content": "x"}]}),
++        ("valid", {"messages": []}),
++        ("valid", {"messages": [{"role": "system", "content": "x"}]}),
++        ("valid", {"messages": [{"role": "user", "content": ""}]}),
++        ("valid", {"messages": [
++            {"role": "assistant", "content": "answer"},
++            {"role": "user", "content": "question"},
++        ]}),
++    ],
++)
++def test_route_rejects_ambiguous_or_unstable_receipts(
++    monkeypatch,
++    request_id,
++    payload,
++):
++    import routes.session_routes as session_routes
++    from fastapi import HTTPException
++
++    class RequestStub:
++        async def json(self):
++            return payload
++
++    monkeypatch.setattr(session_routes, "_verify_session_owner", lambda *_args: None)
++    configured = session_routes.setup_session_routes(_manager(), {})
++    endpoint = [
++        route.endpoint
++        for route in configured.routes
++        if getattr(route, "path", "") == "/api/session/{sid}/direct-turn/{request_id}"
++    ][-1]
++
++    with pytest.raises(HTTPException) as failure:
++        asyncio.run(endpoint(RequestStub(), sid="session", request_id=request_id))
++    assert failure.value.status_code == 400
+diff --git a/tests/test_managed_model_endpoints.py b/tests/test_managed_model_endpoints.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d8775d4df9dfaea4ec24406c73fcf1dfecc01f63
+--- /dev/null
++++ b/tests/test_managed_model_endpoints.py
+@@ -0,0 +1,297 @@
++"""External endpoint managers need cryptographic ownership, not URL guesses."""
++
++import asyncio
++import concurrent.futures
++import os
++import sqlite3
++from types import SimpleNamespace
++
++import pytest
++from fastapi import HTTPException
++
++import core.database as cdb
++import routes.model_routes as model_routes
++from tests.helpers.sqlite_db import make_temp_sqlite
++
++
++class RequestStub:
++    def __init__(self, body=None, headers=None):
++        self._body = body if body is not None else {}
++        self.headers = headers or {}
++        self.state = SimpleNamespace(current_user="alice")
++
++    async def json(self):
++        return self._body
++
++
++def _route(router, path, method):
++    return next(
++        item.endpoint
++        for item in router.routes
++        if getattr(item, "path", "") == path
++        and method in getattr(item, "methods", set())
++    )
++
++
++@pytest.fixture
++def managed_routes(monkeypatch):
++    SessionLocal, engine, tmpfile = make_temp_sqlite(cdb.Base.metadata)
++    monkeypatch.setattr(model_routes, "SessionLocal", SessionLocal)
++    monkeypatch.setattr(model_routes, "require_admin", lambda _request: None)
++    monkeypatch.setattr(model_routes, "effective_user", lambda _request: "alice")
++    monkeypatch.setattr(
++        "src.endpoint_resolver.resolve_url", lambda value: value
++    )
++    router = model_routes.setup_model_routes(model_discovery=None)
++    try:
++        yield router, SessionLocal
++    finally:
++        engine.dispose()
++        tmpfile.close()
++        try:
++            os.unlink(tmpfile.name)
++        except OSError:
++            pass
++
++
++def _provision_body(**overrides):
++    body = {
++        "manager_id": "mot",
++        "resource_id": "aux",
++        "management_token": "m" * 48,
++        "name": "M.O.T Aux",
++        "base_url": "http://127.0.0.1:6768/v1",
++        "api_key": "old-aux-key",
++        "pinned_models": ["small-model"],
++    }
++    body.update(overrides)
++    return body
++
++
++def test_provision_is_exclusive_and_retryable_without_storing_token(managed_routes):
++    router, SessionLocal = managed_routes
++    provision = _route(router, "/api/model-endpoints/managed", "POST")
++    body = _provision_body()
++
++    first = asyncio.run(provision(RequestStub(body)))
++    retry = asyncio.run(provision(RequestStub(body)))
++
++    assert first["status"] == "created"
++    assert retry["status"] == "already_present"
++    assert retry["id"] == first["id"]
++    assert retry["api_key_fingerprint"] == first["api_key_fingerprint"]
++    assert len(first["api_key_fingerprint"]) == 64
++    with pytest.raises(HTTPException) as changed_retry:
++        asyncio.run(provision(RequestStub(_provision_body(api_key="changed-on-retry"))))
++    assert changed_retry.value.status_code == 409
++    db = SessionLocal()
++    try:
++        rows = db.query(cdb.ModelEndpoint).all()
++        assert len(rows) == 1
++        row = rows[0]
++        assert row.managed_by == "mot"
++        assert row.managed_resource == "aux"
++        assert row.management_token_hash == model_routes._management_token_hash("m" * 48)
++        assert "m" * 48 not in row.management_token_hash
++    finally:
++        db.close()
++
++
++def test_provision_refuses_to_adopt_an_existing_url(managed_routes):
++    router, SessionLocal = managed_routes
++    db = SessionLocal()
++    try:
++        db.add(cdb.ModelEndpoint(
++            id="user-row",
++            name="My endpoint",
++            base_url="http://127.0.0.1:6768/v1",
++            api_key=None,
++            owner="alice",
++        ))
++        db.commit()
++    finally:
++        db.close()
++
++    provision = _route(router, "/api/model-endpoints/managed", "POST")
++    with pytest.raises(HTTPException) as failure:
++        asyncio.run(provision(RequestStub(_provision_body())))
++    assert failure.value.status_code == 409
++
++    db = SessionLocal()
++    try:
++        row = db.query(cdb.ModelEndpoint).one()
++        assert row.id == "user-row"
++        assert row.managed_by is None
++        assert row.api_key is None
++    finally:
++        db.close()
++
++
++def test_management_token_and_compare_and_swap_bound_key_rotation(managed_routes):
++    router, _SessionLocal = managed_routes
++    provision = _route(router, "/api/model-endpoints/managed", "POST")
++    resolve = _route(router, "/api/model-endpoints/managed/resolve", "POST")
++    update = _route(router, "/api/model-endpoints/managed/key", "PUT")
++    body = _provision_body()
++    created = asyncio.run(provision(RequestStub(body)))
++    resolved = asyncio.run(resolve(RequestStub({
++        "manager_id": "mot",
++        "resource_id": "aux",
++        "management_token": "m" * 48,
++    })))
++    assert resolved["id"] == created["id"]
++
++    rotation = {
++        "manager_id": "mot",
++        "resource_id": "aux",
++        "management_token": "m" * 48,
++        "endpoint_id": created["id"],
++        "expected_revision": created["management_revision"],
++        "expected_fingerprint": created["api_key_fingerprint"],
++        "api_key": "new-aux-key",
++    }
++    changed = asyncio.run(update(RequestStub(rotation)))
++    replay = asyncio.run(update(RequestStub(rotation)))
++    assert changed["status"] == "updated"
++    assert replay["status"] == "already_present"
++    assert replay["management_revision"] == changed["management_revision"]
++    assert replay["api_key_fingerprint"] == changed["api_key_fingerprint"]
++
++    conflicting = dict(rotation, api_key="third-key")
++    with pytest.raises(HTTPException) as failure:
++        asyncio.run(update(RequestStub(conflicting)))
++    assert failure.value.status_code == 409
++
++    wrong_token = dict(rotation, management_token="x" * 48)
++    with pytest.raises(HTTPException) as hidden:
++        asyncio.run(update(RequestStub(wrong_token)))
++    assert hidden.value.status_code == 404
++
++    rollback = dict(
++        rotation,
++        expected_revision=changed["management_revision"],
++        expected_fingerprint=changed["api_key_fingerprint"],
++        api_key="old-aux-key",
++    )
++    restored = asyncio.run(update(RequestStub(rollback)))
++    assert restored["status"] == "updated"
++    assert restored["management_revision"] == changed["management_revision"] + 1
++    assert restored["api_key_fingerprint"] == created["api_key_fingerprint"]
++
++
++def test_generic_routes_cannot_mutate_or_duplicate_a_managed_endpoint(managed_routes):
++    router, SessionLocal = managed_routes
++    provision = _route(router, "/api/model-endpoints/managed", "POST")
++    created = asyncio.run(provision(RequestStub(_provision_body())))
++
++    patch = _route(router, "/api/model-endpoints/{ep_id}", "PATCH")
++    with pytest.raises(HTTPException) as patch_failure:
++        asyncio.run(patch(
++            created["id"],
++            RequestStub({"api_key": "bypass"}, {"content-length": "20"}),
++        ))
++    assert patch_failure.value.status_code == 409
++
++    delete = _route(router, "/api/model-endpoints/{ep_id}", "DELETE")
++    with pytest.raises(HTTPException) as delete_failure:
++        delete(created["id"], RequestStub())
++    assert delete_failure.value.status_code == 409
++
++    create = _route(router, "/api/model-endpoints", "POST")
++    with pytest.raises(HTTPException) as create_failure:
++        create(
++            RequestStub(),
++            name="Duplicate",
++            base_url="http://127.0.0.1:6768/v1",
++            api_key="different",
++            skip_probe="true",
++            require_models="false",
++            model_type="llm",
++            endpoint_kind="auto",
++            model_refresh_mode="",
++            model_refresh_interval="",
++            model_refresh_timeout="",
++            supports_tools="",
++            pinned_models="",
++            container_local="false",
++            shared="true",
++        )
++    assert create_failure.value.status_code == 409
++
++    db = SessionLocal()
++    try:
++        assert db.query(cdb.ModelEndpoint).count() == 1
++    finally:
++        db.close()
++
++
++def test_concurrent_identical_provision_creates_one_claim(managed_routes):
++    router, SessionLocal = managed_routes
++    provision = _route(router, "/api/model-endpoints/managed", "POST")
++
++    def call():
++        return asyncio.run(provision(RequestStub(_provision_body())))
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        results = list(pool.map(lambda _index: call(), range(2)))
++
++    assert sorted(result["status"] for result in results) == [
++        "already_present",
++        "created",
++    ]
++    assert len({result["id"] for result in results}) == 1
++    db = SessionLocal()
++    try:
++        assert db.query(cdb.ModelEndpoint).count() == 1
++    finally:
++        db.close()
++
++
++def test_legacy_sqlite_migration_adds_claim_columns_and_uniqueness(monkeypatch, tmp_path):
++    database_path = tmp_path / "legacy-endpoints.db"
++    conn = sqlite3.connect(database_path)
++    try:
++        conn.execute(
++            "CREATE TABLE model_endpoints ("
++            "id VARCHAR PRIMARY KEY, base_url VARCHAR NOT NULL)"
++        )
++        conn.commit()
++    finally:
++        conn.close()
++
++    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{database_path}")
++    cdb._migrate_add_model_endpoint_management_columns()
++    cdb._migrate_add_model_endpoint_management_columns()
++
++    conn = sqlite3.connect(database_path)
++    try:
++        columns = {row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)")}
++        assert {
++            "managed_by",
++            "managed_resource",
++            "management_token_hash",
++            "management_revision",
++        }.issubset(columns)
++        indexes = {row[1] for row in conn.execute("PRAGMA index_list(model_endpoints)")}
++        assert "ux_model_endpoints_manager_resource" in indexes
++        conn.execute(
++            "INSERT INTO model_endpoints "
++            "(id, base_url, managed_by, managed_resource) "
++            "VALUES ('one', 'http://one', 'mot', 'aux')"
++        )
++        with pytest.raises(sqlite3.IntegrityError):
++            conn.execute(
++                "INSERT INTO model_endpoints "
++                "(id, base_url, managed_by, managed_resource) "
++                "VALUES ('two', 'http://two', 'mot', 'aux')"
++            )
++        conn.rollback()
++        conn.execute(
++            "INSERT INTO model_endpoints (id, base_url) VALUES ('legacy-one', 'http://legacy-one')"
++        )
++        conn.execute(
++            "INSERT INTO model_endpoints (id, base_url) VALUES ('legacy-two', 'http://legacy-two')"
++        )
++        conn.commit()
++    finally:
++        conn.close()
+diff --git a/tests/test_model_routes.py b/tests/test_model_routes.py
+index d5a5b0fdea19c0fadc107def8f0be65a53432c6e..4e390148d63f8d29111eea0c87d1a54b9db2d0b4 100644
+--- a/tests/test_model_routes.py
++++ b/tests/test_model_routes.py
+@@ -942,0 +943,3 @@ class _RouteColumn:
++    def is_not(self, value):
++        return _RouteCondition("not", self.name, value)
++
+@@ -957,0 +961 @@ class _RouteModelEndpoint:
++    managed_by = _RouteColumn("managed_by")
+@@ -1277,0 +1282 @@ def _patch_create_deps(monkeypatch, db, settings=None):
++    monkeypatch.setattr(model_routes, "lock_model_endpoint_mutations", lambda _db: None)
+@@ -1583,0 +1589,2 @@ class _RouteQuery:
++            elif isinstance(condition, _RouteCondition) and condition.op == "not":
++                self.rows = [row for row in self.rows if getattr(row, condition.field, None) != condition.value]
+@@ -2018,0 +2026 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
++    monkeypatch.setattr(model_routes, "lock_model_endpoint_mutations", lambda _db: None)
+diff --git a/tests/test_review_regressions.py b/tests/test_review_regressions.py
+index b808676df139ba59766808441241df6f57b8aae6..26eebadf063b349427d312cebfc1775fd7f70195 100644
+--- a/tests/test_review_regressions.py
++++ b/tests/test_review_regressions.py
+@@ -86,0 +87 @@ def _install_model_route_import_stubs(monkeypatch):
++    db_mod.lock_model_endpoint_mutations = lambda _db: None

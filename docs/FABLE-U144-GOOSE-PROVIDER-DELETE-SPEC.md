@@ -1,7 +1,7 @@
 # U144 — Goose provider deletion must be one owner transaction
 
 **Date:** 2026-09-06
-**Status:** upstream deletion seam required; no local heuristic cleanup is permitted.
+**Status:** current-main upstream candidate prepared; not released, pinned or shipped.
 
 ## Proven premise
 
@@ -36,8 +36,10 @@ Goose's own delete operation should transact over the exact provider id and:
 
 1. capture the provider definition, owned secret reference and provider config stanza;
 2. remove all three only after revalidating that the secret belongs to that provider;
-3. restore the preimage if any write fails before commit;
-4. return an exact receipt naming which resources were removed or already absent;
+3. durably commit an exact deletion intent before the first destructive write, then
+   roll forward after any post-commit interruption (or leave every resource unchanged if
+   intent persistence fails);
+4. retain an idempotency receipt so a delayed retry cannot target a newly reused id;
 5. preserve unrelated providers, secrets and configuration byte-for-byte; and
 6. remain idempotent across retry after an ambiguous response.
 
@@ -64,3 +66,29 @@ U144 remains open. M.O.T 1.5.81 cleaned the one temporary QA provider exactly an
 no residue on this installation, but that one named cleanup is not a general product
 fix. Neither Goose 1.49.0 nor current main closes the upstream gap, so no upgrade or
 local watcher is shipped under this issue.
+
+## Current-main candidate
+
+An isolated Goose-main patch now makes the provider's own delete operation converge the
+definition, generated provider-owned secret and exact `providers.<id>` stanza under an
+in-process mutex plus cross-process file lock. Before deleting anything it atomically
+persists a private, fsynced intent. Startup rolls incomplete intents forward; completed
+receipts remain as tombstones so generated IDs are never reused and a delayed explicit
+retry fails closed if a legacy/manual definition reuses the old ID. Recovery skips completed
+tombstones—they are receipts, not delayed delete commands. User-supplied secret references
+and unrelated providers/secrets are preserved. Already-clean config and secret files are not
+rewritten during recovery.
+
+The first candidate was rejected during review because deleting the journal after success
+made a late retry capable of deleting a new provider with the same ID. The tombstone design
+replaces it. Focused deletion/config tests now pass 33 checks; the broader provider run is
+491 passes plus the same four crypto-provider failures on clean main, and strict Rust clippy
+passes with warnings denied.
+
+This candidate uses journal persistence as the transaction commit point: no resource changes
+before that point; deterministic roll-forward after it. Goose's existing ACP response schema
+returns the exact provider ID but not per-file deletion details, so the candidate does not
+pretend the UI has a richer receipt. M.O.T still requires upstream acceptance/release, a pin
+bump, and the real Goose UI delete→restart→re-list journey before U144 can close.
+The candidate is preserved at
+`docs/upstream-candidates/U144-goose-provider-delete.patch`.
