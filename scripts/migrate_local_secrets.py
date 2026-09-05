@@ -8,11 +8,25 @@ installed Odysseus cannot authenticate with either side of the intended cutover.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
-import httpx
-import yaml
+try:
+    import httpx
+    import yaml
+except ModuleNotFoundError:
+    # The operator-facing executable must work on a stock macOS shell. Re-enter with
+    # this exact root's bridge interpreter rather than requiring a global dependency
+    # or accidentally borrowing another Harness copy's environment.
+    _root = Path(__file__).resolve().parents[1]
+    _python = _root / "data" / "bridge-venv" / "bin" / "python"
+    if _python.is_file() and os.access(_python, os.X_OK) \
+            and Path(sys.executable).resolve() != _python.resolve():
+        os.execv(str(_python), [str(_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    raise SystemExit(
+        "ERROR: httpx is unavailable and this root has no runnable bridge Python; "
+        "bootstrap data/bridge-venv before migrating secrets")
 
 
 # These services read runner.api_key into their launch environment or seed an endpoint
@@ -76,25 +90,30 @@ def _login(client: httpx.Client, user: str, password: str) -> bool:
     raise RuntimeError(f"Odysseus login preflight returned HTTP {response.status_code}")
 
 
-def plan(root: Path, *, rotate: bool) -> dict:
+def plan(root: Path, *, rotate: bool,
+         rotate_active_managed: bool = False) -> dict:
     from bridge.core import localsecrets
 
     data = _load(root)
     manifest_values = localsecrets.manifest_secret_values(root)
     stored = localsecrets.read(root)
+    if rotate_active_managed and not stored:
+        raise ValueError("--rotate-active-managed requires an existing protected store")
     # An existing protected store is already the effective source read by the bridge
     # and launchers; the scrubbed YAML being blank is not a credential change. On an
     # initial provision, rotation always changes the runner key, while preservation
     # changes it only when no manifest key existed and a new one must be generated.
-    runner_key_changed = bool(not stored and (
-        rotate or not manifest_values["MOT_RUNNER_API_KEY"]))
+    runner_key_changed = bool(rotate_active_managed or (not stored and (
+        rotate or not manifest_values["MOT_RUNNER_API_KEY"])))
     aux_existing = bool(manifest_values["MOT_AUX_API_KEY"] or
                         (stored or {}).get("MOT_AUX_API_KEY"))
     return {
         "store": "already-provisioned" if stored else "will-create",
         "yaml": "will-scrub" if any(manifest_values.values()) else "already-scrubbed",
-        "rotate": bool(rotate and not stored),
-        "aux_key": ("already-provisioned" if stored else
+        "rotate": bool(rotate_active_managed or (rotate and not stored)),
+        "aux_key": ("preserve-active: external Background Tasks consumers are not "
+                    "transactionally managed" if rotate_active_managed else
+                    "already-provisioned" if stored else
                     "preserve-existing: external Background Tasks consumers are not "
                     "transactionally managed" if rotate and not stored and aux_existing
                     else "generate-on-first-provision"),
@@ -104,6 +123,7 @@ def plan(root: Path, *, rotate: bool) -> dict:
 
 
 def apply_migration(root: Path, *, rotate: bool,
+                    rotate_active_managed: bool = False,
                     client_factory=httpx.Client) -> dict:
     from bridge.core import localsecrets
 
@@ -111,7 +131,15 @@ def apply_migration(root: Path, *, rotate: bool,
     data = _load(root)
     before = localsecrets.manifest_secret_values(root)
     existing = localsecrets.read(root)
-    if existing:
+    if rotate_active_managed and not existing:
+        raise ValueError("--rotate-active-managed requires an existing protected store")
+    if existing and rotate_active_managed:
+        desired = localsecrets.generate()
+        # Rotating active managed credentials must not silently change account
+        # identity or the externally consumed auxiliary key.
+        desired["MOT_ODYSSEUS_ADMIN_USER"] = existing["MOT_ODYSSEUS_ADMIN_USER"]
+        desired["MOT_AUX_API_KEY"] = existing["MOT_AUX_API_KEY"]
+    elif existing:
         desired = existing
     elif rotate:
         desired = localsecrets.generate()
@@ -136,7 +164,8 @@ def apply_migration(root: Path, *, rotate: bool,
 
     client = None
     authenticated = "not-installed"
-    old_password = before["MOT_ODYSSEUS_ADMIN_PASSWORD"]
+    effective_before = existing or before
+    old_password = effective_before["MOT_ODYSSEUS_ADMIN_PASSWORD"]
     new_password = desired["MOT_ODYSSEUS_ADMIN_PASSWORD"]
     user = desired["MOT_ODYSSEUS_ADMIN_USER"]
     password_needs_change = False
@@ -156,9 +185,10 @@ def apply_migration(root: Path, *, rotate: bool,
             raise RuntimeError("Odysseus is installed but unavailable; start it before migration") from exc
 
     created_store = not bool(existing)
+    replaced_store = bool(existing and rotate_active_managed)
     password_changed = False
     try:
-        if created_store:
+        if created_store or replaced_store:
             localsecrets.write(root, desired)
         if client is not None and password_needs_change:
             response = client.post("/api/auth/change-password", json={
@@ -182,8 +212,11 @@ def apply_migration(root: Path, *, rotate: bool,
         # Before a successful password cutover, removing only the file created by this
         # invocation restores the original YAML-owned state. After a cutover, keep the
         # verified new store: deleting it would deliberately lock the bridge out.
-        if created_store and not password_changed:
-            (root / "data" / ".env.local").unlink(missing_ok=True)
+        if (created_store or replaced_store) and not password_changed:
+            if replaced_store:
+                localsecrets.write(root, existing)
+            else:
+                (root / "data" / ".env.local").unlink(missing_ok=True)
         raise
     finally:
         if client is not None:
@@ -193,15 +226,19 @@ def apply_migration(root: Path, *, rotate: bool,
     # protected store exists it is already the effective credential, even though YAML
     # is intentionally blank. Comparing that store back to blank YAML would create a
     # false rotation and an unnecessary restart loop on every idempotent rerun.
-    runner_key_changed = bool(created_store and
-        desired["MOT_RUNNER_API_KEY"] != before["MOT_RUNNER_API_KEY"])
-    aux_preserved = bool(before["MOT_AUX_API_KEY"] and
-                         desired["MOT_AUX_API_KEY"] == before["MOT_AUX_API_KEY"])
+    runner_key_changed = bool(desired["MOT_RUNNER_API_KEY"] !=
+                              effective_before["MOT_RUNNER_API_KEY"])
+    aux_preserved = bool(effective_before["MOT_AUX_API_KEY"] and
+                         desired["MOT_AUX_API_KEY"] ==
+                         effective_before["MOT_AUX_API_KEY"])
     return {
         "ok": True,
-        "credentials": ("rotated-managed-secrets; aux-preserved" if rotate and created_store and aux_preserved
+        "credentials": ("rotated-managed-secrets; aux-preserved"
+                        if (rotate and created_store or rotate_active_managed) and aux_preserved
                         else "rotated" if rotate and created_store else "preserved"),
-        "aux_key": ("already-provisioned" if existing else
+        "aux_key": ("preserved: Background Tasks endpoint remains valid"
+                    if rotate_active_managed and aux_preserved else
+                    "already-provisioned" if existing else
                     "preserved: Background Tasks endpoint remains valid" if aux_preserved
                     else "new: no legacy auxiliary credential existed"),
         "odysseus": authenticated,
@@ -224,12 +261,19 @@ def main() -> int:
     parser.add_argument("root", type=Path)
     parser.add_argument("--rotate", action="store_true",
                         help="generate new API keys/password on the initial migration")
+    parser.add_argument("--rotate-active-managed", action="store_true",
+                        help="rotate the active runner key and Odysseus password; preserve aux/user")
     args = parser.parse_args()
     root = args.root.resolve()
     sys.path.insert(0, str(root))
     try:
-        result = plan(root, rotate=args.rotate) if args.command == "plan" else \
-            apply_migration(root, rotate=args.rotate)
+        if args.rotate and args.rotate_active_managed:
+            parser.error("choose either --rotate or --rotate-active-managed")
+        result = plan(root, rotate=args.rotate,
+                      rotate_active_managed=args.rotate_active_managed) \
+            if args.command == "plan" else apply_migration(
+                root, rotate=args.rotate,
+                rotate_active_managed=args.rotate_active_managed)
         _print_redacted(result)
         if args.command == "apply":
             names = ",".join(result["restart_required"])

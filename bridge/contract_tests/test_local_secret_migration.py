@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 import yaml
@@ -146,3 +147,48 @@ def test_completed_migration_is_idempotent_and_recommends_no_restarts(
     assert second["credentials"] == "preserved"
     assert second["aux_key"] == "already-provisioned"
     assert second["restart_required"] == []
+
+
+def test_active_managed_rotation_preserves_aux_and_identity(monkeypatch, tmp_path):
+    make_manifest(tmp_path)
+    monkeypatch.setattr(localsecrets, "generate", generated)
+    state = AuthState()
+    migration.apply_migration(tmp_path, rotate=False,
+                               client_factory=clients(state))
+    before = localsecrets.read(tmp_path)
+    assert before["MOT_AUX_API_KEY"] == "harness-aux"
+
+    result = migration.apply_migration(
+        tmp_path, rotate=False, rotate_active_managed=True,
+        client_factory=clients(state))
+    after = localsecrets.read(tmp_path)
+    assert after["MOT_RUNNER_API_KEY"] == "runner.new!$key"
+    assert after["MOT_ODYSSEUS_ADMIN_PASSWORD"] == "new$password!"
+    assert after["MOT_AUX_API_KEY"] == before["MOT_AUX_API_KEY"]
+    assert after["MOT_ODYSSEUS_ADMIN_USER"] == before["MOT_ODYSSEUS_ADMIN_USER"]
+    assert result["credentials"] == "rotated-managed-secrets; aux-preserved"
+    assert result["restart_required"] == ["runner", "odysseus", "hermes"]
+
+
+def test_failed_active_rotation_restores_existing_store(monkeypatch, tmp_path):
+    make_manifest(tmp_path)
+    state = AuthState()
+    migration.apply_migration(tmp_path, rotate=False,
+                               client_factory=clients(state))
+    before = localsecrets.read(tmp_path)
+    monkeypatch.setattr(localsecrets, "generate", generated)
+    state.fail_change = True
+    with pytest.raises(RuntimeError, match="password cutover"):
+        migration.apply_migration(
+            tmp_path, rotate=False, rotate_active_managed=True,
+            client_factory=clients(state))
+    assert localsecrets.read(tmp_path) == before
+    assert state.password == "admin123"
+
+
+def test_operator_entrypoint_bootstraps_its_root_python():
+    script = Path(migration.__file__).resolve()
+    result = subprocess.run([str(script), "--help"], text=True,
+                            capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "--rotate-active-managed" in result.stdout
