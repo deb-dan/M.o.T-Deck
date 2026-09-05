@@ -329,6 +329,81 @@ lms = sr.merge([], [], [{"id": "x", "source": "lmstudio-import"}],
 check("lmstudio -lms suffix on collision still works",
       sorted(m["id"] for m in lms) == ["x", "x-lms"])
 
+# ── audio artifact identity wins over a rediscovered local row ─────────────────
+# A rescan knows files; a completed download additionally knows provenance and user
+# choices.  It must therefore keep the existing row when both spellings name one
+# artifact, but never lose separately stored copies that happen to share an id.
+identity_root = os.path.join(tmp, "artifact-identity")
+download_dir = os.path.join(identity_root, "downloaded-parakeet")
+local_dir = os.path.join(identity_root, "separate-local-parakeet")
+third_dir = os.path.join(identity_root, "third-parakeet")
+for d in (download_dir, local_dir, third_dir):
+    os.makedirs(d, exist_ok=True)
+
+
+def audio_row(model_id, path, source, **extra):
+    return {"id": model_id, "name": "Parakeet for people", "kind": "audio",
+            "format": "stt-mlx-audio", "path": path, "source": source, **extra}
+
+
+downloaded = audio_row("parakeet-tdt-0.6b-v3", download_dir, "download",
+                       voice="Debi", ref_audio="/clips/reference.wav", verified="sha256")
+same_local = audio_row("parakeet-tdt-0.6b-v3", download_dir, "local")
+same = sr.merge([downloaded], [], [], [same_local])
+check("local rescan of a downloaded Parakeet directory keeps one untouched download row",
+      same == [downloaded])
+
+alias_dir = os.path.join(identity_root, "parakeet-symlink-alias")
+os.symlink(download_dir, alias_dir)
+alias = sr.merge([downloaded], [], [], [audio_row("parakeet-tdt-0.6b-v3", alias_dir, "local")])
+check("a symlink alias of a downloaded audio directory stays one row", alias == [downloaded])
+
+different_id_same_path = sr.merge([downloaded], [], [],
+                                  [audio_row("parakeet-renamed-by-scan", download_dir, "local")])
+check("the same audio path with different ids still keeps its authoritative row",
+      different_id_same_path == [downloaded])
+
+separate = sr.merge([downloaded], [], [],
+                    [audio_row("parakeet-tdt-0.6b-v3", local_dir, "local")])
+check("same audio id at two real directories keeps both with a local suffix",
+      [m["id"] for m in separate] == ["parakeet-tdt-0.6b-v3", "parakeet-tdt-0.6b-v3-local"]
+      and separate[1]["name"] == "Parakeet for people")
+check("a repeated identical audio merge is stable and never adds a third row",
+      sr.merge(separate, [], [], [audio_row("parakeet-tdt-0.6b-v3", local_dir, "local")])
+      == separate)
+occupied_suffix = audio_row("parakeet-tdt-0.6b-v3-local", third_dir, "download")
+extended = sr.merge([downloaded, occupied_suffix], [], [],
+                    [audio_row("parakeet-tdt-0.6b-v3", local_dir, "local")])
+check("a pre-existing local suffix extends deterministically instead of overwriting",
+      [m["id"] for m in extended] == ["parakeet-tdt-0.6b-v3",
+                                      "parakeet-tdt-0.6b-v3-local",
+                                      "parakeet-tdt-0.6b-v3-local-2"])
+
+# The opposite journey belongs to the completed-download writer: its same-id replace
+# upgrades a local scan to the richer download row without asking the scanner to infer it.
+from bridge.routers import downloads as downloads_router  # noqa: E402
+
+registry_root = Path(tempfile.mkdtemp(prefix="audio-download-registry-"))
+(registry_root / "data").mkdir()
+(registry_root / "data" / "models.json").write_text(json.dumps({"models": [same_local]}))
+saved_download_root = downloads_router.ROOT
+downloads_router.ROOT = registry_root
+try:
+    downloads_router._registry_add(downloaded)
+finally:
+    downloads_router.ROOT = saved_download_root
+reverse = json.loads((registry_root / "data" / "models.json").read_text())["models"]
+check("completed download replaces a same-id local audio row with one download row",
+      reverse == [downloaded])
+shutil.rmtree(registry_root, ignore_errors=True)
+
+# This change is audio-only: chat-local collisions and HF-cache audio precedence retain
+# their existing rules (the HF collision is also exercised above against `collide`).
+chat_collision = sr.merge([{"id": "same-chat", "source": "download", "format": "gguf"}],
+                          [], [], [{"id": "same-chat", "source": "local", "format": "gguf"}])
+check("audio identity handling leaves chat local merge behavior unchanged",
+      [m["id"] for m in chat_collision] == ["same-chat", "same-chat"])
+
 # ══ 6. THE INVARIANT — audio never reaches the chat `installed` list ════════════
 # Against the REAL /api/models handler with a temp ROOT (not a source read).
 from bridge import app  # noqa: E402

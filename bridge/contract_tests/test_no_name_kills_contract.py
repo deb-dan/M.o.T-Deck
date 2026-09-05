@@ -353,7 +353,7 @@ def test_switch_cancel_stops_the_script_we_launched_by_pidfile():
 def test_component_stop_routes_the_pid_kill_through_the_verified_reaper():
     """The sixth site. It signalled data/<name>.pid unverified, and its
     PermissionError branch signalled a pid it had just proven belonged to someone else."""
-    code = _code(os.path.join(BRIDGE, "routers", "components.py"))
+    code = _code(os.path.join(BRIDGE, "routers", "component_lifecycle.py"))
     assert "reap_pidfile(name)" in code, "the generic component stop is unverified again"
     assert 'subprocess.run(["kill", str(pid)]' not in code, \
         "the unverified pid signal is back in the generic stop"

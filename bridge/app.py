@@ -182,12 +182,14 @@ _LANES = (
     "core.modelreg",
     "core.health",
     "routers.components",
+    "routers.component_lifecycle",
     "routers.ody",
     "core.analytics",
     "routers.sidecars",
     "routers.version",
     "routers.odychat",
     "core.yamlset",
+    "routers.model_visibility",
     "routers.models",
     # routers.aux — the aux-runner lane, split out of routers.models by the U64 slice
     # (models.py had reached the app layer's 1,500-line limit). It IMPORTS from
@@ -288,14 +290,27 @@ _PRE_ROUTES = len(app.router.routes)
 
 _FACADE_MODULES = tuple(_lane(_n) for _n in _LANES)
 
+# U77 — compatibility forwarders stay in components.py, while the facade exposes the
+# lifecycle owner's actual callable after all lanes have loaded.
+_FACADE_OWNERS = {
+    "start_plan": "routers.component_lifecycle",
+    "_opencode_live_warning": "routers.component_lifecycle",
+    "start": "routers.component_lifecycle",
+    "stop": "routers.component_lifecycle",
+    "restart": "routers.component_lifecycle",
+    "update": "routers.component_lifecycle",
+    "_prov_set": "routers.component_lifecycle",
+    "_provision": "routers.component_lifecycle",
+}
+
 # ── ROUTE ORDER, RESTORED ────────────────────────────────────────────────────
 # ⚠️ THE ONE THING THE SPLIT CHANGED THAT HAD TO BE CHANGED BACK, AND IT IS NOT
 # COSMETIC. In one file, a route was registered when the interpreter reached its
 # decorator, so app.routes came out in reading order. Across modules, a route is
 # registered when its module is first IMPORTED — and a lane that imports another lane
-# drags it in early. routers/components.py needs opencode_tools_warning from
-# routers/models.py, so importing the components lane registered all 24 models routes
-# ahead of /api/status. The route SET was identical and no request would have been
+# drags it in early. routers/component_lifecycle.py needs live_tools_warning from
+# routers/models.py, so importing the lifecycle lane registers models routes before
+# its own routes. The route SET is identical and no request is
 # matched differently (no two paths in this app are ambiguous — checked), but the order
 # is visible on the wire in /openapi.json and in /docs, and "identical payloads" is the
 # bar for this refactor. So the tail is stable-sorted back into lane order: stable, so
@@ -346,6 +361,11 @@ class _Facade(_ModuleType):
     """
 
     def __getattr__(self, name: str):
+        owner = _FACADE_OWNERS.get(name)
+        if owner:
+            for _m in _FACADE_MODULES:
+                if _m.__name__.split(".", 1)[-1] == owner:
+                    return getattr(_m, name)
         for _m in _FACADE_MODULES:
             try:
                 return getattr(_m, name)

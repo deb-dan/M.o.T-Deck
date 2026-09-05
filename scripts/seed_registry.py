@@ -600,6 +600,36 @@ def _keep_user(entry, existing_user):
     return dict(entry, **add) if add else entry
 
 
+def _audio_artifact_identity(entry):
+    """Canonical primary-artifact path, or None when it cannot prove identity.
+
+    This is deliberately an identity check only: resolving a symlink lets a rescan
+    recognise one artifact under two spellings, but never authorizes a caller to
+    alter either target. A missing or unresolvable path is unknown, not equal.
+    """
+    if not isinstance(entry, dict) or entry.get("kind") != "audio":
+        return None
+    path = entry.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        if not os.path.exists(path):
+            return None
+        return os.path.realpath(os.path.abspath(path))
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _local_collision_id(model_id, used):
+    """A deterministic local-row suffix which never overwrites a real artifact."""
+    base = f"{model_id}-local"
+    candidate, number = base, 2
+    while candidate in used:
+        candidate = f"{base}-{number}"
+        number += 1
+    return candidate
+
+
 def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
           audio_cache_entries=None):
     """Keep every existing entry whose source is not one we re-scan ('jan-import',
@@ -613,10 +643,13 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     forward any non-null ctx already recorded for that id in the existing registry
     (e.g. the 35B's 95536 that came from Jan's router.preset.ini).
 
-    On id collision, suffix the lmstudio entry's id with '-lms'. HF-cache audio
-    entries instead DROP on collision: the same weights already reached the registry
-    by a path we trust more (a download entry, or a copy under data/models/), and a
-    suffixed duplicate would offer the user two rows for one model."""
+    On id collision, suffix the lmstudio entry's id with '-lms'. A fresh local AUDIO
+    row first compares its canonical primary-artifact path with kept audio rows: a
+    matching path is the same artifact, so the richer kept row wins; a different path
+    keeps both via a deterministic '-local' suffix. HF-cache audio entries instead
+    DROP on collision: the same weights already reached the registry by a path we
+    trust more (a download entry, or a copy under data/models/), and a suffixed
+    duplicate would offer the user two rows for one model."""
     lmstudio_entries = lmstudio_entries or []
     local_entries = local_entries or []
     audio_cache_entries = audio_cache_entries or []
@@ -644,8 +677,20 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         m = _keep_user(m, existing_user)
         local_filled.append(m)
     kept = [m for m in existing if m.get("source") not in RESCANNED_SOURCES]
-    result = kept + list(jan_entries) + local_filled
+    kept_audio_paths = {_audio_artifact_identity(m) for m in kept}
+    kept_audio_paths.discard(None)
+    result = kept + list(jan_entries)
     used = {m.get("id") for m in result}
+    for m in local_filled:
+        if m.get("kind") == "audio":
+            artifact = _audio_artifact_identity(m)
+            if artifact is not None and artifact in kept_audio_paths:
+                continue
+            if m.get("id") in used:
+                m = dict(m)
+                m["id"] = _local_collision_id(m["id"], used)
+        used.add(m.get("id"))
+        result.append(m)
     for m in lmstudio_entries:
         if m.get("id") in used:
             m = dict(m)

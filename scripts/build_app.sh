@@ -43,9 +43,11 @@ echo "[harness] compiling Swift app..."
 swiftc -O app/main.swift app/Config.swift -o "$APP/Contents/MacOS/Harness"
 
 # ── THE APP'S NAME IS "M.O.T" (Debi, 2026-09-02) ──────────────────────────────
-# The BUNDLE stays Harness.app — every recipe, pidfile and quit script points at that
-# path — but what the user SEES is M.O.T: CFBundleDisplayName is what the Dock's hover
-# label and Finder read, CFBundleName is what the menu bar reads, and they must agree.
+# dist/Harness.app is only the build artifact. Normal lifecycle work resolves the
+# installed bundle by CFBundleIdentifier local.harness.app, and it may be named either
+# Harness.app or M.O.T.app. What the user SEES is M.O.T: CFBundleDisplayName is what the
+# Dock's hover label and Finder read, CFBundleName is what the menu bar reads, and they
+# must agree.
 # A fresh fat install gets it from here; an existing install gets it from ship.sh's
 # bundle step (which also writes the localized name — see the long note there on why
 # CFBundleDisplayName alone is not reliably honoured when it differs from the filename).

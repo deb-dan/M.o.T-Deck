@@ -88,6 +88,17 @@
 > ledger at QA time.
 
 
+> **🏠 CANONICAL-ROOT RULE (Debi, 2026-09-05, U81):** the sole source project is
+> `/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/harness`.
+> The older `/Users/debik/Claude Proj Rootz/New Harness/harness` tree is a retained,
+> read-only archive: never edit/delete it, copy state or dependencies from it, execute
+> against it, or allow a generated link/config/process to depend on it. The installed
+> fat app runs from `~/Library/Application Support/Harness`; repository work and release
+> inputs come only from the canonical source above. Historical prose may name the archive
+> as history. Registered Claude worktrees are preserved until their branches are audited;
+> they are never pruned or deleted merely to make a path search look clean.
+
+
 > **⛔ LIVE-STATE FILES RULE (bitten once: harness.yaml clobber, 2026-09-03, U74):** the
 > snapshot's `harness.yaml` and everything under the snapshot's `data/` are LIVE STATE —
 > installed flags, pins, registries, sessions. The repo's `harness.yaml` is a TEMPLATE.

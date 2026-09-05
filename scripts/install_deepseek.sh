@@ -249,6 +249,15 @@ post_install() {
   # Start has somewhere to write; DSH_HOME in start_component.sh is what actually
   # points dsh at this one instead of ~/.dsh.
   mkdir -p "$DSH_HOME_DIR" "$PREFIX"
+  # A dsh profile is generated state, not source: an old checkout can leave its
+  # node_modules links pointing outside this prefix. Repair only that generated tree;
+  # the helper refuses unexpected entry types and restores its explicit backup on a
+  # failed rematerialization rather than guessing or touching another checkout.
+  local py_repair
+  py_repair="$(resolve_py)" || die "no python3 found to verify DeepSeek profile links"
+  "$py_repair" "$ROOT/scripts/repair_deepseek_profiles.py" \
+    --prefix "$PREFIX" --home "$DSH_HOME_DIR" --node "$node" \
+    || die "DeepSeek profile links were not repaired — see the error above; rerun this installer after fixing the named dsh profile problem."
   seed_workspace_dir
 
   # ── THE MANIFEST FLAG. Mission Control's card reads components.deepseek.installed

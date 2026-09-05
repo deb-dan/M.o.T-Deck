@@ -387,7 +387,7 @@ def test_the_bridge_stops_repeating_an_exit_code_it_can_check():
     src = _APP_SOURCE
     ok("def runner_serving(" in src,
        "the bridge has an AUTHENTICATED way to ask what the runner is serving")
-    prov = src[src.index("def _provision("):]
+    prov = src[src.index("def _provision(", src.index("appsrc: bridge/routers/component_lifecycle.py")):]
     ok("served = runner_serving(c)" in prov,
        "…and _provision asks it before believing a non-zero exit for the runner")
     ok("served and want and served == want" in prov,
@@ -746,7 +746,7 @@ def test_a_flapping_component_keeps_the_sentence_that_explains_it():
 
 def test_every_start_path_clears_it_and_the_read_is_the_backstop():
     src = _APP_SOURCE
-    prov = src[src.index("def _provision("):]
+    prov = src[src.index("def _provision(", src.index("appsrc: bridge/routers/component_lifecycle.py")):]
     ok(prov.count("clear_start_failure(") >= 2,
        "BOTH of _provision's success arms clear the record — including the "
        "`already running` short-circuit, the arm the live bug came through")

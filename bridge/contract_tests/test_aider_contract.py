@@ -53,6 +53,28 @@ skip_if_absent = pytest.mark.skipif(HELP is None,
                                     reason="aider not installed (or not runnable here)")
 
 
+def _assert_edit_format_parser(binary):
+    """Prove the parser accepts our format and rejects a control value."""
+    sentinel = "__harness_invalid_format__"
+    try:
+        valid = subprocess.run([str(binary), "--edit-format", "whole", "--help"],
+                               capture_output=True, text=True, timeout=120)
+        invalid = subprocess.run([str(binary), "--edit-format", sentinel, "--help"],
+                                 capture_output=True, text=True, timeout=120)
+    except Exception as exc:                                      # noqa: BLE001
+        raise AssertionError(
+            f"aider parser probe could not run for {binary}; its --help was runnable"
+        ) from exc
+
+    valid_text = (valid.stdout or "") + (valid.stderr or "")
+    assert valid.returncode == 0, valid_text
+    assert "usage" in valid_text.lower(), valid_text
+
+    invalid_text = (invalid.stdout or "") + (invalid.stderr or "")
+    assert invalid.returncode != 0, invalid_text
+    assert sentinel in invalid_text, invalid_text
+
+
 @skip_if_absent
 def test_launch_flags_still_exist():
     """Every flag bridge/pty_aider.py puts on the line."""
@@ -65,7 +87,24 @@ def test_launch_flags_still_exist():
 def test_edit_format_whole_is_still_offered():
     """`whole` is the only format a 4B reliably produces (recon §2.1). If upstream ever
     removes it, the lane needs a new default, not a silent fallback."""
-    assert "whole" in HELP
+    _assert_edit_format_parser(BIN)
+
+
+def test_edit_format_parser_fixture_exercises_valid_and_invalid_branches(tmp_path):
+    """The optional runtime probe must reject a bad format as well as accept ``whole``."""
+    fixture = tmp_path / "aider"
+    fixture.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$2\" = whole ]; then\n"
+        "    echo 'usage: aider'\n"
+        "    exit 0\n"
+        "fi\n"
+        "echo \"error: invalid edit format $2\" >&2\n"
+        "exit 2\n"
+    )
+    fixture.chmod(0o755)
+
+    _assert_edit_format_parser(fixture)
 
 
 @skip_if_absent

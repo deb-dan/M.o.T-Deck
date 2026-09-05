@@ -65,12 +65,14 @@ FILES: tuple[str, ...] = (
     "core/modelreg.py",
     "core/health.py",
     "routers/components.py",
+    "routers/component_lifecycle.py",
     "routers/ody.py",
     "core/analytics.py",
     "routers/sidecars.py",
     "routers/version.py",
     "routers/odychat.py",
     "core/yamlset.py",
+    "routers/model_visibility.py",
     "routers/models.py",
     # routers/aux.py sits immediately after models.py because that is where its code
     # sat until the U64 slice split it out — the aux routes were the LAST thing in

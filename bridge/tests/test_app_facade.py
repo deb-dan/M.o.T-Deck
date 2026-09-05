@@ -37,6 +37,7 @@ import ast
 import os
 import re
 import sys
+import typing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -249,6 +250,41 @@ if bad:
     print("       out of order:", bad[:5])
 check("…and there really are the routes this harness serves (141 at the split)",
       len(A.app.routes) >= 140)
+_hint_errors = []
+for _route in A.app.routes:
+    _endpoint = getattr(_route, "endpoint", None)
+    if _endpoint is None:
+        continue
+    try:
+        typing.get_type_hints(_endpoint)
+    except Exception as _e:                                      # noqa: BLE001
+        _hint_errors.append(f"{getattr(_route, 'path', '?')}: {_e}")
+check("every APIRoute endpoint's postponed annotations resolve after lane extraction",
+      not _hint_errors)
+if _hint_errors:
+    print("       unresolved annotations:", _hint_errors[:5])
+
+# ── 5b. extracted owners remain the one public truth ───────────────────────
+print("\n── 5b. extracted owners remain the one public truth ──")
+import bridge.routers.component_lifecycle as _lifecycle             # noqa: E402
+import bridge.routers.components as _components                     # noqa: E402
+import bridge.routers.model_visibility as _visibility               # noqa: E402
+import bridge.routers.models as _models                              # noqa: E402
+
+check("components.stop remains callable for historic imports through a lazy forwarder",
+      "from .component_lifecycle import stop as _owner" in SRC["routers/components.py"]
+      and callable(_components.stop))
+check("bridge.app.stop resolves the lifecycle owner rather than the compatibility wrapper",
+      A.stop is _lifecycle.stop)
+check("models._is_hidden is the exact visibility implementation it re-exports",
+      _models._is_hidden is _visibility._is_hidden)
+check("the Models hide route is declared exactly once, by the visibility owner",
+      appsrc.APP_SOURCE.count('@app.post("/api/models/hide")') == 1
+      and '@app.post("/api/models/hide")' in SRC["routers/model_visibility.py"])
+for _added in ("routers/component_lifecycle.py", "routers/model_visibility.py"):
+    check(f"{_added} is in both source and route-order manifests",
+          _added in appsrc.FILES
+          and _added[:-3].replace("/", ".") in A._LANES)
 
 # ── 6. the ops path ships the lanes ──────────────────────────────────────────
 # ⚠️ THE HIGHEST-CONSEQUENCE CHECK IN THIS FILE, AND THE ONE MOST LIKELY TO ROT.
