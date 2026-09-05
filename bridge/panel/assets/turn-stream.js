@@ -338,6 +338,7 @@
     think.id = 'thinking'; think.textContent = 'reconnecting…'; think.hidden = false;
     holder.insertBefore(think, body);
     const turn = {id:record.id, lane:lane, session:session, instance:record.instance || '',
+      stage:'reconnecting',
       ctl:new AbortController(), holder:holder, ended:false, detached:false,
       timer:null, stopArmed:false, lastSeq:0, recovered:true};
     chatPane.curTurn = turn; chatPane.busy = true; sendPaint('Stop');
@@ -349,7 +350,9 @@
         + '/events?after=0', {signal:turn.ctl.signal});
       await consume(response, {turn:turn, holder:holder, body:body, think:think});
     } catch (error) {
-      if (!turn.detached)
+      // An explicit Stop force-ends the recovered view and aborts this fetch on
+      // purpose.  That is an interrupted turn, not a recovery/transport failure.
+      if (!turn.detached && !turn.ended)
         chatStatus(holder, '⚠', 'the bridge could not recover this turn — reload to retry');
     } finally {
       clearTimeout(turn.timer);
@@ -403,6 +406,7 @@
     think.id = 'thinking'; think.textContent = 'reconnecting…'; think.hidden = false;
     holder.insertBefore(think, body);
     const turn = {id:String(record.id), lane:'hermes', session:String(record.stored_id || ''),
+      stage:'reconnecting',
       hermesSid:String(record.session_id || ''), ctl:new AbortController(), holder:holder,
       ended:false, detached:false, timer:null, stopArmed:false, lastSeq:0, recovered:true};
     chatPane.hermesSid = turn.hermesSid || chatPane.hermesSid;
@@ -434,7 +438,9 @@
         + '/events?after=0', {signal:turn.ctl.signal});
       await consume(response, {turn:turn, holder:holder, body:body, think:think});
     } catch (error) {
-      if (!turn.detached)
+      // forceEndTurn() aborts the subscription after an explicit Stop.  Preserve
+      // its interrupted stamp instead of overwriting it with a false recovery error.
+      if (!turn.detached && !turn.ended)
         chatStatus(holder, '⚠', 'the bridge could not recover this Hermes turn — reopen the session');
     } finally {
       clearTimeout(turn.timer);
