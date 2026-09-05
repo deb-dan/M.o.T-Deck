@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.72** (see `VERSION`). Written 2026-09-02.
+Current version: **v1.5.77** (see `VERSION`). Written 2026-09-05.
 
 ---
 
@@ -16,9 +16,9 @@ Current version: **v1.5.72** (see `VERSION`). Written 2026-09-02.
 Grouped by theme, with the version range where the shape landed. "Done" means shipped,
 gated by tests, and walked live on the real stack — not merely coded.
 
-**The app shell (MOT Deck / MOT Main).** Nine live components on Mission Control —
-Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, and the
-runner — plus Goose CLI and Goose UI as a coexisting pair, LOffice (ONLYOFFICE), and the
+**The app shell (MOT Deck / MOT Main).** Ten live components on Mission Control —
+Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, DeepSeek,
+and the runner — plus Goose CLI and Goose UI as a coexisting pair, LOffice (ONLYOFFICE), and the
 Music/Compose surfaces. Sidebar and tab strip are customizable with saved layouts,
 9 stable pins + a 3-slot MRU window (v1.5.49), and neighbour-append placement for new
 rows so a customized machine doesn't dump new entries at the tail (A8, v1.5.49). Six
@@ -83,6 +83,16 @@ sentence entirely (U60, v1.5.72). The whole family of kills is pidfile-scoped an
 identity-verified in shell scripts (U19, v1.5.58) — see Next below for the Python-side
 half of that rule.
 
+**Recovery and canonical-root independence.** v1.5.77 makes shipping resolve the app by
+its stable bundle identity rather than assuming its Finder filename; protects live YAML
+empty values from shell misinterpretation; extracts both oversized app-layer routers
+below the 1,500-line ceiling without changing route ownership; repairs copied virtual
+environment pointers and DeepSeek's generated profile links with validation and rollback;
+and regenerates the native root config from the executing checkout. The real-stack walk
+proved 10/10 components green, exact 11-model catalog parity across dependent apps, a
+real authenticated runner turn, the installed Aider parser and pin, and zero active
+runtime references to the retained Claude archive (U69/U74/U77–U81).
+
 **API adherence and trust boundaries.** Every LLM-facing surface (office MCP catalog,
 lane routes, vision captions) was audited against 17 AI-friendly-API principles; the two
 content channels that relay untrusted transcribed/user text now carry an explicit trust
@@ -96,20 +106,18 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-The current repository recovery slice is an **unshipped candidate after v1.5.76**:
+The v1.5.77 recovery wave is closed. The next two model-registry changes are deliberately
+separate releases because each changes what the app may call a usable or absent model:
 
-- **U74** — repository hardening for the live-state clobber incident and its second
-  `binary: null` failure is implemented and fixture-verified. The installed snapshot was
-  deliberately not touched, so this is not a claim that the live model switch completed.
-- **U69** — Hermes and DeepSeek now share one interpreter resolver that proves PyYAML is
-  importable; Odysseus deliberately keeps its own activated environment.
-- **U78** — `ship.sh` now discovers the installed app by its stable bundle identity and
-  validates the executable, accepting either `Harness.app` or `M.O.T.app`; this is still
-  repository-only until the corrected command is shipped and walked on the real stack.
-- The full audit found one unrelated pre-existing red fence: **U77**, the 1,500-line
-  app-layer ceiling. It needs extraction, not a raised threshold.
+- **U75** — one shared, cheap artifact-integrity predicate for MLX model directories,
+  used by scan, offerability, and launch; config-only or deleted-shard directories must
+  never remain selectable.
+- **U76** — retain the unplugged-volume guard while persisting enough source/device
+  evidence to distinguish a missing mount from a deliberate mass deletion. Legacy
+  all-missing evidence must ask for explicit confirmation rather than guessing.
 
-The earlier U56 and U64 work is closed in v1.5.74; it is no longer in flight.
+The earlier U56/U64 work is closed in v1.5.74, and U69/U74/U77–U81 are closed in
+v1.5.77; none of those remains in flight.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
