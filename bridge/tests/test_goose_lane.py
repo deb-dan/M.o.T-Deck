@@ -1098,14 +1098,16 @@ def test_the_startup_sweep_reaps_only_what_is_provably_ours():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         ok(G.reap_orphan(td) == "none", "no pidfile → nothing to do")
-        # a pidfile naming a pid that is gone: withdraw the row, kill nothing
+        # A pidfile naming a pid that is gone authorizes nothing. Preserve even stale
+        # legacy evidence: startup may replace it only when publishing a new complete
+        # owner record, while the migration command remains able to explain it.
         os.makedirs(os.path.join(td, "data"), exist_ok=True)
         open(G.pidfile_path(td), "w").write("999999")
         ok(G.reap_orphan(td) == "stale", "a dead pid is a stale ROW, not a kill")
-        ok(not os.path.exists(G.pidfile_path(td)), "…and the row is withdrawn")
+        ok(os.path.exists(G.pidfile_path(td)), "…and the legacy evidence is retained")
         open(G.pidfile_path(td), "w").write("0")
-        ok(G.reap_orphan(td) == "stale" and not os.path.exists(G.pidfile_path(td)),
-           "a junk pidfile is withdrawn, never signalled")
+        ok(G.reap_orphan(td) == "stale" and os.path.exists(G.pidfile_path(td)),
+           "a junk pidfile is retained for explicit resolution, never signalled")
 
         # ⚠️ THE ONE THAT MATTERS: a LIVE pid that is NOT our goose binary must be left
         # completely alone. This is Debi's own standalone goose, or any recycled pid.
@@ -1122,8 +1124,8 @@ def test_the_startup_sweep_reaps_only_what_is_provably_ours():
                "…and it is STILL RUNNING — identity is verified before any signal, "
                "which is the rule that closed Debi's goose Desktop twice when it was "
                "not followed")
-            ok(not os.path.exists(G.pidfile_path(td)),
-               "…while OUR pidfile — which is ours — is withdrawn")
+            ok(os.path.exists(G.pidfile_path(td)),
+               "…and the unverified PID report is retained as migration evidence")
         finally:
             victim.kill()               # our own child, spawned four lines up
             victim.wait(timeout=5)

@@ -27,7 +27,7 @@ def test_plain_pid_path_cwd_and_engine_name_never_establish_ownership(tmp_path, 
         notes = procs.reap_pidfile("runner", force=True)
         assert notes and "no matching M.O.T launch record" in notes[0]
         assert _alive(foreign), "path/CWD/name plus a planted PID file authorized a signal"
-        assert not (tmp_path / "data" / "runner.pid").exists()
+        assert (tmp_path / "data" / "runner.pid").read_text() == str(foreign.pid)
     finally:
         foreign.terminate(); foreign.wait()
 
@@ -152,7 +152,8 @@ def test_symlinked_pid_report_is_never_read_as_process_evidence(tmp_path, monkey
     notes = procs.reap_pidfile("runner", force=True)
     assert notes and "no complete" in notes[0]
     assert outside.read_text() == str(os.getpid())
-    assert not (data / "runner.pid").exists()
+    assert (data / "runner.pid").is_symlink(), \
+        "even unsafe evidence is retained; the explicit migration path must resolve it"
 
 
 def test_symlinked_ownership_lock_refuses_before_signal(tmp_path, monkeypatch):

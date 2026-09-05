@@ -988,8 +988,9 @@ def reap_orphan(root, base_env=None) -> str:
     if not claim:
         if pid is None and not os.path.lexists(pidfile_path(root)):
             return "none"
-        # An empty expected birth can clean legacy bookkeeping but can never match a
-        # complete claim, so a concurrent launch is neither signalled nor erased.
+        # An empty expected birth can never match a complete claim. It also deliberately
+        # retains legacy/malformed bookkeeping for the explicit migration command; a
+        # failed authority check must not erase the evidence needed to recover it.
         _ownership.signal_owned(
             Path(root), "goose", expected_pid=pid or 0, expected_birth="", force=True)
         return "stale"

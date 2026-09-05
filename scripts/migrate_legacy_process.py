@@ -48,14 +48,34 @@ def _evidence(pid: int) -> tuple[str, str, list[str]]:
     return command, cwd, listeners
 
 
-def inspect(component: str) -> int:
+def inspect(component: str, explicit_pid: int | None = None) -> int:
+    owner, pidfile, _lockfile = ownership._paths(ROOT, component)
     if ownership.read_claim(ROOT, component):
         print(f"[migration] {component} already has an authoritative launch record.")
         print(f"[migration] Use: ./scripts/stop.sh {component}")
         return 3
+    if ownership._path_present(owner):
+        print(f"[migration] {owner} exists but is malformed, unreadable, or non-regular;")
+        print("[migration] resolve it explicitly; signalled nothing")
+        return 3
     pid = ownership.read_pid_report(ROOT, component)
-    if not pid:
-        print(f"[migration] no regular legacy PID report for {component}; nothing to migrate")
+    missing_report = False
+    if pid:
+        if explicit_pid is not None and explicit_pid != pid:
+            print(f"[migration] supplied pid {explicit_pid} disagrees with the retained "
+                  f"legacy report {pid}; signalled nothing")
+            return 3
+    elif ownership._path_present(pidfile):
+        print(f"[migration] {pidfile} exists but is malformed, unreadable, or non-regular;")
+        print("[migration] it cannot be bypassed; signalled nothing")
+        return 3
+    elif explicit_pid is not None and explicit_pid > 0:
+        pid = explicit_pid
+        missing_report = True
+    else:
+        print(f"[migration] no legacy PID report remains for {component}.")
+        print("[migration] If an earlier tool erased it, re-run inspect with the exact")
+        print("[migration] listener PID as --pid; no name, path, cwd, or port proves ownership.")
         return 3
     birth = ownership.process_birth(pid)
     if not birth:
@@ -70,9 +90,13 @@ def inspect(component: str) -> int:
     print(f"[migration] listeners: {', '.join(listeners) if listeners else '(none observed)'}")
     print("[migration] The command, cwd and ports are corroborating evidence only; they do")
     print("[migration] not prove M.O.T ownership. Review them, then explicitly name this")
+    if missing_report:
+        print("[migration] WARNING: the legacy PID report is absent. This is a stricter")
+        print("[migration] recovery path and requires a second explicit acknowledgement.")
     print("[migration] exact process if you authorize one SIGTERM (never SIGKILL):")
+    missing_ack = " --acknowledge-missing-pid-report" if missing_report else ""
     print(f"  ./scripts/migrate_legacy_process.py terminate {component} --pid {pid} "
-          f"--birth {birth} --acknowledge-unowned-process")
+          f"--birth {birth} --acknowledge-unowned-process{missing_ack}")
     return 0
 
 
@@ -83,23 +107,24 @@ def main() -> int:
     parser.add_argument("--pid", type=int)
     parser.add_argument("--birth")
     parser.add_argument("--acknowledge-unowned-process", action="store_true")
+    parser.add_argument("--acknowledge-missing-pid-report", action="store_true")
     args = parser.parse_args()
     try:
         ownership._paths(ROOT, args.component)  # validation only; grants no authority
     except ValueError as exc:
         parser.error(str(exc))
     if args.action == "inspect":
-        return inspect(args.component)
+        return inspect(args.component, args.pid)
     if not args.acknowledge_unowned_process:
         parser.error("terminate requires --acknowledge-unowned-process")
     if args.pid is None or not args.birth:
         parser.error("terminate requires the exact --pid and --birth printed by inspect")
     ok, detail = ownership.terminate_legacy(
-        ROOT, args.component, args.pid, args.birth)
+        ROOT, args.component, args.pid, args.birth,
+        allow_missing_pid_report=args.acknowledge_missing_pid_report)
     print(f"[migration] {detail}")
     return 0 if ok else 3
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -311,7 +311,8 @@ fi
 # The ONLY sanctioned way to stop a PREVIOUS instance of one of our components: the
 # pid WE recorded, whose identity is re-verified before any signal. Pids are recycled,
 # so a stale pidfile must never become a stranger's death warrant — a pid that is not
-# provably ours gets NO signal, just a printed line and a discarded pidfile. This is
+# provably ours gets NO signal. Its unverifiable evidence is retained for the explicit
+# migration command; deleting it would make safe recovery harder. This is
 # what replaced the `pkill -f "<product name>"` lines (U19): a name match is not
 # identity, and Debi runs standalone copies of the very apps we embed.
 _reap_pidfile() {   # <component> [force]

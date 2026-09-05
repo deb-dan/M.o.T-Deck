@@ -89,9 +89,59 @@ def test_ambiguous_owner_record_fails_closed(tmp_path):
         child.wait(timeout=3)
 
 
+def test_signal_without_valid_claim_preserves_legacy_evidence(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    pidfile = data / "legacy.pid"
+    owner = data / "legacy.owner"
+    pidfile.write_text("12345\n")
+    owner.write_text("not-a-claim\n")
+    sent, detail = ownership.signal_owned(tmp_path, "legacy", expected_pid=0)
+    assert not sent and "retained" in detail
+    assert pidfile.read_text() == "12345\n"
+    assert owner.read_text() == "not-a-claim\n"
+
+
+def test_missing_report_requires_second_acknowledgement(tmp_path):
+    child = _child()
+    try:
+        birth = ownership.process_birth(child.pid)
+        ok, detail = ownership.terminate_legacy(
+            tmp_path, "legacy", child.pid, birth, timeout=3)
+        assert not ok and "additional missing-report" in detail
+        assert child.poll() is None
+        ok, detail = ownership.terminate_legacy(
+            tmp_path, "legacy", child.pid, birth, timeout=3,
+            allow_missing_pid_report=True)
+        assert ok, detail
+        child.wait(timeout=3)
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=3)
+
+
+def test_missing_report_ack_cannot_bypass_existing_mismatch(tmp_path):
+    child = _child()
+    try:
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "legacy.pid").write_text(f"{child.pid + 1}\n")
+        birth = ownership.process_birth(child.pid)
+        ok, detail = ownership.terminate_legacy(
+            tmp_path, "legacy", child.pid, birth, timeout=0,
+            allow_missing_pid_report=True)
+        assert not ok and "changed" in detail
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=3)
+
+
 def test_operator_command_requires_the_explicit_acknowledgement():
     src = (Path(__file__).resolve().parents[2] / "scripts"
            / "migrate_legacy_process.py").read_text()
     assert "--acknowledge-unowned-process" in src
+    assert "--acknowledge-missing-pid-report" in src
     assert "os.killpg(" not in src and "signal.SIGKILL" not in src
     assert "corroborating evidence only" in src

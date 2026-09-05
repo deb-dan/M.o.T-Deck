@@ -392,7 +392,7 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
         assert notes and "no matching M.O.T launch record" in notes[0], \
             f"a foreign pid was not refused: {notes}"
         assert foreign.poll() is None, "IT KILLED A PROCESS THAT WAS NOT OURS"
-        assert not os.path.exists(pf), "the stale pidfile should be discarded"
+        assert os.path.exists(pf), "unverified migration evidence must be retained"
     finally:
         foreign.kill()                      # our own child handle, no name, no pattern
         foreign.wait()

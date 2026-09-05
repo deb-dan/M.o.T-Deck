@@ -243,18 +243,17 @@ def signal_owned(root: Path, component: str, *, expected_pid: int | None = None,
                  retire: bool = True, group: bool = False) -> tuple[bool, str]:
     """Verify and signal one exact child while holding the claim's exclusive lock.
 
-    Returns ``(signalled, detail)``. A dead/malformed/mismatched claim is cleaned only
-    while the lock proves no cooperating relaunch has replaced it.
+    Returns ``(signalled, detail)``. A valid-but-stale claim is cleaned only while the
+    lock proves no cooperating relaunch has replaced it. Missing or malformed owner
+    evidence and legacy PID reports are retained for explicit operator inspection;
+    inability to prove authority must never destroy the evidence needed to recover it.
     """
     with _locked(root, component) as (owner, pidfile):
         claim_raw = _read(owner)
         claim = _parse(claim_raw)
         if not claim:
-            # A legacy PID file has no authority and may be discarded under the same
-            # lock used by every new writer.
-            pidfile.unlink(missing_ok=True)
-            owner.unlink(missing_ok=True)
-            return False, "no complete M.O.T launch record; signalled nothing"
+            return False, ("no complete M.O.T launch record; signalled nothing; "
+                           "unverifiable owner/PID evidence was retained")
         pid, birth = claim
         if expected_pid is not None and pid != int(expected_pid):
             return False, f"launch record names pid {pid}, not observed pid {int(expected_pid)}"
@@ -322,14 +321,18 @@ def retire_owned(root: Path, component: str, pid: int, birth: str) -> bool:
 
 
 def terminate_legacy(root: Path, component: str, pid: int, birth: str,
-                     *, timeout: float = 5.0) -> tuple[bool, str]:
+                     *, timeout: float = 5.0,
+                     allow_missing_pid_report: bool = False) -> tuple[bool, str]:
     """Terminate one explicitly acknowledged pre-provenance process.
 
     This is intentionally *not* ownership inference.  The operator must supply the
     exact PID and kernel birth value printed by the separate inspection command.  We
     then hold the normal ownership lock while rechecking the legacy PID report, the
     absence of a valid owner claim, and the birth identity immediately before one
-    SIGTERM.  There is no name/path/port match and no SIGKILL escalation.
+    SIGTERM. If an earlier unsafe stop already erased the report, a *second* explicit
+    acknowledgement can permit the exact inspected PID + birth pair. An existing
+    malformed or mismatched report can never be bypassed. There is no name/path/port
+    match and no SIGKILL escalation.
     """
     pid = int(pid)
     birth = str(birth or "")
@@ -342,8 +345,12 @@ def terminate_legacy(root: Path, component: str, pid: int, birth: str,
                                "scripts/stop.sh instead")
             return False, ("an owner record exists but is malformed, unreadable, or "
                            "non-regular; resolve it explicitly; signalled nothing")
-        if not _pid_report_matches(pidfile, pid):
+        report_present = _path_present(pidfile)
+        if report_present and not _pid_report_matches(pidfile, pid):
             return False, "the legacy PID report changed; inspect again; signalled nothing"
+        if not report_present and not allow_missing_pid_report:
+            return False, ("the legacy PID report is absent; the additional missing-report "
+                           "acknowledgement is required; signalled nothing")
         if process_birth(pid) != birth:
             return False, "the process birth identity changed; inspect again; signalled nothing"
         try:
