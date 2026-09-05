@@ -33,7 +33,7 @@ plan_hermes="PLAN (hermes):
 plan_odysseus="PLAN (odysseus):
   - create venv data/odysseus-venv
   - pip install -r vendor/odysseus/requirements.txt (+ ddgs for Docker-free web search)
-  - run setup.py, seeding admin account (user 'admin', password 'admin123' — CHANGE after first login)
+  - run setup.py with generated local credentials from data/.env.local (never printed)
   - connect: register the local Jan endpoint (:1337) as the default chat model
   - serve natively on port 7860 when started"
 
@@ -740,11 +740,28 @@ else
   source data/odysseus-venv/bin/activate
   uv pip install -r vendor/odysseus/requirements.txt
   uv pip install ddgs || true          # Docker-free web search provider
-  # Deterministic admin (works both interactively and with --yes): setup.py uses these
-  # env creds and skips the prompt / random-password path. 8-char minimum enforced by Odysseus.
-  ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER=admin ODYSSEUS_ADMIN_PASSWORD=admin123 python setup.py )
+  # Generate once, then pass the same hidden values to setup.py and the bridge proxy.
+  SECRET_PY="$ROOT/data/bridge-venv/bin/python"
+  [[ -x "$SECRET_PY" ]] || SECRET_PY="${PY:-python3}"
+  # Existing installs must preserve their current runner key until the explicit
+  # coordinated migration rotates every consumer. Fresh bootstrap already used
+  # --fresh before any process existed.
+  "$SECRET_PY" "$ROOT/scripts/local_secrets.py" ensure "$ROOT" >/dev/null
+  ODY_USER="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_ODYSSEUS_ADMIN_USER)"
+  ODY_PASSWORD="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_ODYSSEUS_ADMIN_PASSWORD)"
+  ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER="$ODY_USER" \
+      ODYSSEUS_ADMIN_PASSWORD="$ODY_PASSWORD" python setup.py )
   # Connect step (one-switch): wire Odysseus to the local Jan endpoint as default model.
-  ( cd vendor/odysseus && python "$ROOT/scripts/seed_odysseus_jan.py" ) || \
+  RUNNER_ENDPOINT="$("$SECRET_PY" "$ROOT/scripts/read_manifest.py" \
+    "$ROOT" runner.endpoint str)"
+  RUNNER_KEY="$("$SECRET_PY" "$ROOT/scripts/read_manifest.py" \
+    "$ROOT" runner.api_key str)"
+  [[ -n "$RUNNER_KEY" ]] || {
+    echo "[harness] ERROR: runner.api_key is not provisioned; Odysseus was not seeded." >&2
+    exit 1
+  }
+  ( cd vendor/odysseus && JAN_BASE_URL="$RUNNER_ENDPOINT" JAN_API_KEY="$RUNNER_KEY" \
+      python "$ROOT/scripts/seed_odysseus_jan.py" ) || \
     echo "[harness] note: Jan not reachable yet — endpoint seeded; model auto-discovers on Start"
   deactivate
 fi

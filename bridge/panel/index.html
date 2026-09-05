@@ -9569,11 +9569,25 @@ async function selectHermesSession(storedId){
         }
       }
       scrollChat(true);
+      if (r.active_turn && window.HarnessTurnStream
+          && typeof HarnessTurnStream.recoverHermes === 'function') {
+        await HarnessTurnStream.recoverHermes(r.active_turn, r.history || []);
+      } else if (r.inflight && window.HarnessTurnStream
+                 && typeof HarnessTurnStream.renderHermesSnapshot === 'function') {
+        HarnessTurnStream.renderHermesSnapshot(r, r.history || []);
+      } else if (r.inflight) {
+        const note = document.getElementById('chat-note');
+        if (note) note.textContent = 'Hermes is still processing, but the recovery renderer did not load — reload M.O.T';
+      }
     } else {
       const note = document.getElementById('chat-note');
       if (note) note.textContent = 'could not open that Hermes session' + (r && r.error ? ' — ' + String(r.error).slice(0,120) : '');
     }
-  } catch {}
+  } catch (error) {
+    const note = document.getElementById('chat-note');
+    if (note) note.textContent = 'could not open that Hermes session — '
+      + String(error && error.message || error).slice(0, 120);
+  }
 }
 
 function renderOdyHistory(snapshot){
@@ -13576,13 +13590,30 @@ async function sendChat() {
   // three lanes.
   const streamApi = window.HarnessTurnStream;
   const streamReady = streamApi && typeof streamApi.consume === 'function'
-    && (chatPane.mode === 'hermes' || (typeof streamApi.create === 'function'
-      && typeof streamApi.remember === 'function'));
+    && (chatPane.mode === 'hermes'
+      ? (typeof streamApi.requestId === 'function'
+        && typeof streamApi.prepareHermesSession === 'function'
+        && typeof streamApi.postHermes === 'function')
+      : (typeof streamApi.create === 'function'
+        && typeof streamApi.remember === 'function'));
   if (!streamReady){
     const why = 'message not sent — the Chat renderer did not load; reload M.O.T and try again';
     attachNote(why);
     try { feed('chat', why); } catch (_) {}
     return;
+  }
+  // First-send is deliberately two-phase. Persist the Hermes live/stored address
+  // before clearing the composer or POSTing the prompt, so a response abort before
+  // the old hermes_session frame can never leave a running turn with no return path.
+  if (chatPane.mode === 'hermes' && !chatPane.hermesSid) {
+    try {
+      await streamApi.prepareHermesSession();
+    } catch (error) {
+      const why = 'message not sent — could not create a Hermes session: '
+        + String(error && error.message || error);
+      attachNote(why); try { feed('chat', why); } catch (_) {}
+      return;
+    }
   }
   inp.value = '';
   growInput(inp);             // cleared → shrink back to the two-row base
@@ -13657,6 +13688,7 @@ async function sendChat() {
     const reqBody = chatPane.mode === 'hermes'
       ? {session_id: chatPane.hermesSid || '', message: text,
          stored_sid: chatPane.hermesStoredSid || '',   // durable id → guard audit's "Chat" jump
+         request_id: streamApi.requestId(),
          ...(img ? {image: img.data, image_name: img.name} : {})}
       : {session:chatPane.sid, message:text, mode:chatPane.mode,
          allow_web_search:true, allow_bash:false,
@@ -13669,8 +13701,7 @@ async function sendChat() {
       streamApi.remember(turn);
       resp = await fetch('/api/turns/' + encodeURIComponent(turn.id) + '/events?after=0',
                          {signal:turn.ctl.signal});
-    } else resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(reqBody), signal: turn.ctl.signal});
+    } else resp = await streamApi.postHermes(reqBody, turn.ctl.signal);
     turnStage('waiting for the first frame');
     // Live delivery and replay deliberately share this complete renderer.
     return await streamApi.consume(resp, {turn, holder, body, think});

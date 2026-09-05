@@ -3,13 +3,13 @@ request log behind the API page.
 
 WHY THIS EXISTS. Every app we embed asks for a key in its own Add-Provider form — goose
 UI, Odysseus and OpenCode were all screenshot-confirmed doing exactly that — and until
-now the only key that existed was `runner.api_key` in harness.yaml: one shared secret,
-copied by hand out of a config file, with no way to tell which app is using it and no
+now the only key that existed was the built-in `runner.api_key`: one shared secret,
+stored in the mode-0600 local secret overlay, with no way to tell which app is using it and no
 way to take it back from one app without taking it back from all of them. Debi's brief:
 "apps' Add-Provider forms should have real keys to consume — an additional route, no
 need to remove the existing routes."
 
-So this is ADDITIVE in the strictest sense. `runner.api_key` stays exactly what it was:
+So this is ADDITIVE in the strictest sense. The built-in `runner.api_key` stays:
 it is still passed as `--api-key`, it is still what `start_component.sh`'s readiness
 poll sends, it is still what every bridge-internal caller uses, and nothing in the tree
 had to learn a new name. What is new is a SECOND source of accepted keys.

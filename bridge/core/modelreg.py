@@ -31,6 +31,7 @@ rule core/health.py's two-strike debounce enforces one layer up, for the same in
 from __future__ import annotations
 
 import copy
+import base64
 import json
 import os
 import re
@@ -157,15 +158,46 @@ def write_registry(path: str, data: dict) -> bool:
         return True
 
 
-def opencode_model_key(model_id) -> str:
-    """The current OpenCode address key for one M.O.T registry id.
+_OPENCODE_KEY_PREFIX = "mot1_"
+_OPENCODE_PLAIN_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
-    Kept here so the seeder and the running-process drift probe cannot silently use
-    different normalizations. Collision-free escaping is a separate migration: the
-    legacy slash-to-underscore contract is preserved until existing saved defaults
-    and live catalogs can be migrated coherently.
-    """
+
+def opencode_legacy_model_key(model_id) -> str:
+    """The pre-U94 key, retained only to migrate an unambiguous saved selection."""
     return str(model_id or "").replace("/", "_")
+
+
+def opencode_model_key(model_id) -> str:
+    """Return OpenCode's collision-free, slash-free address for a registry id.
+
+    OpenCode splits ``provider/model`` at ``/``, so its map key cannot contain a
+    slash. Existing plain ASCII ids keep their old address. Everything else, and
+    every id beginning with our reserved prefix, is UTF-8/base64url encoded without
+    padding. Reserving and escaping the prefix makes the mapping injective: a raw id
+    can never impersonate another id's encoded key.
+    """
+    model_id = str(model_id or "")
+    if (_OPENCODE_PLAIN_KEY_RE.fullmatch(model_id)
+            and not model_id.startswith(_OPENCODE_KEY_PREFIX)):
+        return model_id
+    encoded = base64.urlsafe_b64encode(model_id.encode("utf-8")).decode("ascii")
+    return _OPENCODE_KEY_PREFIX + encoded.rstrip("=")
+
+
+def opencode_model_id_from_key(key) -> str | None:
+    """Reverse an encoded U94 key; return ``None`` for malformed/reserved input."""
+    key = str(key or "")
+    if not key.startswith(_OPENCODE_KEY_PREFIX):
+        return None
+    payload = key[len(_OPENCODE_KEY_PREFIX):]
+    if not payload or not re.fullmatch(r"[A-Za-z0-9_-]+", payload):
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        model_id = raw.decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return model_id if opencode_model_key(model_id) == key else None
 
 # Registry formats whose artifact is a DIRECTORY rather than a single file. Byte for
 # byte the rule scripts/start_component.sh resolves with, widened to the audio kinds

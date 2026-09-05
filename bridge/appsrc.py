@@ -142,6 +142,11 @@ FILES: tuple[str, ...] = (
     "core/ownership.py",
     "routers/turns.py",
     "routers/hermeschannels.py",
+    # U106 bridge-lifetime Hermes relay ownership. Route-less and appended by the
+    # same new-module rule; routers/hermes.py imports its singleton directly.
+    "core/hermesturn.py",
+    "core/hermesreplay.py",
+    "core/localsecrets.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

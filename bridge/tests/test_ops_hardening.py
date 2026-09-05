@@ -170,6 +170,10 @@ check("the override is named in both refusal messages",
 # ══ 2. ship.sh --restart ══════════════════════════════════════════════════════
 check("--restart is parsed", "--restart)" in SHIP)
 check("--restart=<name> form also parsed", "--restart=*)" in SHIP)
+check("a requested restart failure makes ship incomplete instead of printing green",
+      'RESTART_FAILURES+=("$_c")' in SHIP
+      and 'if [[ ${#RESTART_FAILURES[@]} -gt 0 ]]' in SHIP
+      and "requested component restart(s) failed" in SHIP)
 check("comma lists are accepted", "_add_restart" in SHIP and "IFS=','" in SHIP)
 check("--restart with no value errors instead of eating the next flag",
       "--restart needs a component name" in SHIP)
@@ -331,9 +335,11 @@ def _fake_llama(name, version_line):
 def _rungate(binp, owner, env=None):
     e = dict(os.environ)
     e.pop("HARNESS_ALLOW_FOREIGN_RUNNER", None)
+    e["MOT_TEST_LLAMA_PIN"] = PIN
     e.update(env or {})
     return subprocess.run(
-        ["bash", "-c", 'set -uo pipefail\nBIN="$1"\nBIN_OWNER="$2"\n' + GATE, "_",
+        ["bash", "-c", 'set -uo pipefail\nBIN="$1"\nBIN_OWNER="$2"\n'
+         '_manifest_value(){ printf "%s" "$MOT_TEST_LLAMA_PIN"; }\n' + GATE, "_",
          binp, owner],
         capture_output=True, text=True, cwd=str(ROOT), env=e)
 

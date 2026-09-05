@@ -38,9 +38,19 @@ def _runner_fixture(tmp_path, model):
     root = tmp_path / "fixture"
     (root / "scripts").mkdir(parents=True)
     shutil.copy2(START, root / "scripts" / "start_component.sh")
+    shutil.copy2(os.path.join(ROOT, "scripts", "read_manifest.py"),
+                 root / "scripts" / "read_manifest.py")
+    (root / "data" / "bridge-venv" / "bin").mkdir(parents=True)
+    manifest_python = root / "data" / "bridge-venv" / "bin" / "python"
+    manifest_python.write_text(f"#!/bin/sh\nexec '{sys.executable}' \"$@\"\n")
+    manifest_python.chmod(manifest_python.stat().st_mode | stat.S_IXUSR)
     (root / "bridge" / "core").mkdir(parents=True)
     shutil.copy2(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
                  root / "bridge" / "core" / "modelreg.py")
+    shutil.copy2(os.path.join(ROOT, "bridge", "core", "localsecrets.py"),
+                 root / "bridge" / "core" / "localsecrets.py")
+    shutil.copy2(os.path.join(ROOT, "bridge", "yamlfile.py"),
+                 root / "bridge" / "yamlfile.py")
     (root / "data" / "logs").mkdir(parents=True)
     (root / "data" / "fake.gguf").write_bytes(gguf_bytes())
     (root / "data" / "models.json").write_text(
@@ -120,3 +130,7 @@ def test_ship_green_health_is_control_api_only_and_failure_precedes_app_open():
     assert 'http://127.0.0.1:8700/"' not in wait
     assert 'if [[ "$UP" -ne 1 ]]' in wait
     assert "BRIDGE CONTROL API DID NOT ANSWER GET /api/status" in wait
+    assert "SHIP_NONCE" in src
+    assert 'value.get("launch_nonce") == expected_nonce' in wait
+    assert 'value.get("bridge_schema") == 1' in wait
+    assert "_served_after" in wait and "SHIP_BRIDGE_PID" in wait

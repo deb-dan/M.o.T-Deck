@@ -232,7 +232,14 @@ def test_env_fence_survives_a_hostile_environment():
     ok(env["GOOSE_MODE"] != G.FORBIDDEN_MODE,
        "A4: `auto` must never be on the line, inherited or set")
     hostile2 = dict(hostile); hostile2["GOOSE_MODE"] = "auto"
-    ok(G.serve_env(hostile2, "/r", "t", "", "", "m")["GOOSE_MODE"] == "smart_approve",
+    try:
+        G.serve_env(hostile2, "/r", "t", "", "", "m")
+    except ValueError as exc:
+        ok("not provisioned" in str(exc), "an empty runner key is refused")
+    else:
+        ok(False, "an empty runner key must not restore a retired repository default")
+    ok(G.serve_env(hostile2, "/r", "t", "", "rotated-key", "m")["GOOSE_MODE"]
+       == "smart_approve",
        "…and an operator shell exporting GOOSE_MODE=auto cannot win either")
 
 

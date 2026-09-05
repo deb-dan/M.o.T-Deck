@@ -102,11 +102,108 @@ def test_real_absent_writer_uses_the_same_durable_transaction(tmp_path, monkeypa
     assert not list(data.glob(".models-*.tmp"))
 
 
+def _child(code: str, *args: object) -> subprocess.Popen:
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    return subprocess.Popen(
+        [sys.executable, "-c", code, *(str(arg) for arg in args)],
+        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def _finish(*children: subprocess.Popen) -> None:
+    failures = []
+    for child in children:
+        out, err = child.communicate(timeout=15)
+        if child.returncode:
+            failures.append(out + err)
+    assert not failures, "\n".join(failures)
+
+
+def test_delete_and_download_transactions_cannot_lose_each_other(tmp_path):
+    """Exercise two real writer families in separate processes behind one held lock."""
+    data = tmp_path / "data"
+    target = data / "models" / "old"
+    target.mkdir(parents=True)
+    artifact = target / "model.gguf"
+    artifact.write_bytes(gguf_bytes())
+    registry = data / "models.json"
+    registry.write_text(json.dumps({"models": [{
+        "id": "old", "format": "gguf", "path": str(artifact), "source": "download",
+    }]}) + "\n")
+    downloaded = {"id": "new", "format": "gguf", "path": str(tmp_path / "new.gguf"),
+                  "source": "download"}
+
+    delete_code = """
+import sys
+from pathlib import Path
+from bridge.core.modeldelete import delete_owned_model_transaction
+error = delete_owned_model_transaction(root=Path(sys.argv[1]), mid='old',
+    expected_target=sys.argv[2], assignments=[])
+raise SystemExit(error or 0)
+"""
+    download_code = """
+import json, sys
+from pathlib import Path
+from bridge.routers import downloads
+downloads.ROOT = Path(sys.argv[1])
+downloads._registry_add(json.loads(sys.argv[2]))
+"""
+    # Holding the production lock ensures both children reach the same contention
+    # point before either transaction can commit. The kernel may choose either order.
+    with modelreg.registry_lock(str(registry)):
+        deleting = _child(delete_code, tmp_path, target)
+        adding = _child(download_code, tmp_path, json.dumps(downloaded))
+    _finish(deleting, adding)
+
+    saved = json.loads(registry.read_text())
+    assert {row["id"] for row in saved["models"]} == {"new"}
+    assert not target.exists()
+    assert not list(data.glob(".models-*.tmp"))
+
+
+def test_absent_and_download_transactions_cannot_lose_each_other(tmp_path):
+    """A polled absent transition cannot overwrite a simultaneous new download."""
+    data = tmp_path / "data"
+    data.mkdir()
+    registry = data / "models.json"
+    registry.write_text(json.dumps({"models": [{
+        "id": "gone", "format": "gguf", "path": "/missing/model.gguf",
+    }]}) + "\n")
+    downloaded = {"id": "new", "format": "gguf", "path": str(tmp_path / "new.gguf"),
+                  "source": "download"}
+    absent_code = """
+import sys
+from pathlib import Path
+from bridge.routers import models
+models.ROOT = Path(sys.argv[1])
+models.artifact_probe = lambda row: {'state': 'missing'}
+models.source_availability = lambda row, probe: {'state': 'available'}
+models._persist_absent({'gone': 'gone'})
+"""
+    download_code = """
+import json, sys
+from pathlib import Path
+from bridge.routers import downloads
+downloads.ROOT = Path(sys.argv[1])
+downloads._registry_add(json.loads(sys.argv[2]))
+"""
+    with modelreg.registry_lock(str(registry)):
+        marking = _child(absent_code, tmp_path)
+        adding = _child(download_code, tmp_path, json.dumps(downloaded))
+    _finish(marking, adding)
+
+    saved = {row["id"]: row for row in json.loads(registry.read_text())["models"]}
+    assert set(saved) == {"gone", "new"}
+    assert saved["gone"][modelreg.ABSENT_KEY] is True
+    assert not list(data.glob(".models-*.tmp"))
+
+
 def test_all_production_registry_writers_delegate_to_shared_writer():
     locations = [
         ROOT / "scripts" / "seed_registry.py",
         ROOT / "bridge" / "routers" / "downloads.py",
         ROOT / "bridge" / "routers" / "models.py",
+        ROOT / "bridge" / "core" / "modeldelete.py",
     ]
     for path in locations:
         text = path.read_text()

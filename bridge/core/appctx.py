@@ -50,6 +50,11 @@ from fastapi.staticfiles import StaticFiles
 # and answered every route as though nothing were installed.
 ROOT = Path(__file__).resolve().parents[2]
 PANEL = Path(__file__).resolve().parents[1] / "panel"
+# Per-process launch evidence used by ship.sh. It is not persisted or an auth key:
+# a stale bridge cannot echo a fresh ship's nonce, while an app-spawned bridge simply
+# reports an empty value.
+BRIDGE_SCHEMA_VERSION = 1
+BRIDGE_LAUNCH_NONCE = os.environ.get("HARNESS_LAUNCH_NONCE", "")
 
 # ── THE BRIDGE SINGLETON (2026-08-30 incident, second find) ───────────────────
 # Runs HERE, at import, deliberately BEFORE uvicorn binds its socket: a bridge that

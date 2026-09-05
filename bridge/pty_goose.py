@@ -345,8 +345,9 @@ def goose_env(base_env: dict, root, endpoint: str, api_key: str,
 
     ⚠️ A REAL KEY, NOT A DUMMY. The recon's `OPENAI_API_KEY=dummy` got
     `401 Invalid API Key` from our own runner: llama.cpp b10662 validates the bearer
-    token. The caller passes runner.api_key; the fallback matches harness.yaml's
-    shipped value so a manifest with the key omitted still works.
+    token. The caller passes the provisioned runner.api_key overlay; an absent key
+    is refused because inventing the retired repository default would split clients
+    from a rotated runner.
 
     COLUMNS/LINES are deliberately REMOVED: the winsize ioctl owns the size, and a
     stale inherited COLUMNS would fight it.
@@ -371,7 +372,9 @@ def goose_env(base_env: dict, root, endpoint: str, api_key: str,
     # returns "" when the choice is theirs — and the MODEL travels with the provider,
     # because forcing GOOSE_MODEL onto somebody else's provider is the same override
     # wearing a different name.
-    key = (api_key or "").strip() or "harness-local"
+    key = (api_key or "").strip()
+    if not key:
+        raise ValueError("runner API key is not provisioned — run scripts/local_secrets.py ensure")
     chosen, _migrate = _prov.provider_choice(config_text)
     if chosen:
         env["GOOSE_PROVIDER"] = chosen

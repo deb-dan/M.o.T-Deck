@@ -26,9 +26,13 @@ _ody = httpx.AsyncClient(base_url=ODY_BASE, timeout=httpx.Timeout(30, read=None)
 
 async def _ody_login() -> bool:
     comp = cfg().get("components", {}).get("odysseus", {})
+    username = str(comp.get("admin_user") or "").strip()
+    password = str(comp.get("admin_password") or "").strip()
+    if not username or not password:
+        return False
     r = await _ody.post("/api/auth/login", json={
-        "username": comp.get("admin_user", "admin"),
-        "password": comp.get("admin_password", "admin123"),
+        "username": username,
+        "password": password,
         "remember": True, "totp_code": None})
     return r.status_code == 200 and r.json().get("ok") is True
 

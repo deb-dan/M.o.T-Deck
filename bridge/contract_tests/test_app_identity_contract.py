@@ -92,6 +92,14 @@ def _resolve_fixture_apps(*apps, override=None):
                           cwd=ROOT, env=env, capture_output=True, text=True)
 
 
+def _resolve_fixture_roots(*roots):
+    env = os.environ.copy()
+    env.pop("HARNESS_APP_PATH", None)
+    return subprocess.run(["bash", SHIP, "--resolve-app-root-fixtures",
+                           *map(str, roots)], cwd=ROOT, env=env,
+                          capture_output=True, text=True)
+
+
 def test_ship_sets_the_display_name_the_menu_name_and_the_localized_name():
     code = _code(SHIP)
     assert f'_APP_NAME="{NAME}"' in code, "ship.sh no longer names the app"
@@ -146,7 +154,8 @@ def test_ship_resolves_installed_bundle_by_identity_and_opens_that_exact_path():
     assert 'CFBundleExecutable' in code and '"$executable" == "Harness"' in code
     assert 'Contents/MacOS/Harness' in code
     assert 'cd -P "$1"' in code and 'pwd -P' in code
-    assert '/Applications/*.app' in code and '"$HOME"/Applications/*.app' in code
+    assert '_discover_app_bundles' in code and '/usr/bin/find' in code
+    assert 'roots=(/Applications "$HOME/Applications")' in code
     assert "_valid_harness_app" in code, \
         "every filename candidate must still pass bundle id + executable validation"
     assert 'open "$APP"' in code, "ship must open the precise resolved app, not LS selection"
@@ -157,6 +166,13 @@ def test_resolver_accepts_a_valid_spaced_path_without_splitting_it(tmp_path):
     result = _resolve_fixture_apps(app)
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"selected installed app: {app}" in result.stdout
+
+
+def test_production_discovery_finds_nested_renamed_bundle_by_identity(tmp_path):
+    app = _fixture_app(tmp_path / "Nested" / "Tools", "Whatever the user named it.app")
+    result = _resolve_fixture_roots(tmp_path)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"selected installed app: {app.resolve()}" in result.stdout
 
 
 def test_relative_explicit_override_selects_the_canonical_absolute_bundle_path(tmp_path):

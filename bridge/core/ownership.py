@@ -23,6 +23,7 @@ import signal
 import stat
 import sys
 import tempfile
+import time
 
 
 class ClaimConflict(RuntimeError):
@@ -133,6 +134,21 @@ def _pid_report_matches(path: Path, pid: int) -> bool:
         return int((_read(path) or b"").decode("ascii").strip()) == int(pid)
     except (UnicodeError, ValueError):
         return False
+
+
+def _path_present(path: Path) -> bool:
+    """Return whether a directory entry exists without following a symlink.
+
+    Errors other than a proven absence are deliberately treated as presence so a
+    caller cannot turn unreadable ownership evidence into signal authority.
+    """
+    try:
+        os.lstat(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
 
 
 def read_pid_report(root: Path, component: str) -> int | None:
@@ -303,6 +319,49 @@ def retire_owned(root: Path, component: str, pid: int, birth: str) -> bool:
         if _pid_report_matches(pidfile, pid):
             pidfile.unlink(missing_ok=True)
         return True
+
+
+def terminate_legacy(root: Path, component: str, pid: int, birth: str,
+                     *, timeout: float = 5.0) -> tuple[bool, str]:
+    """Terminate one explicitly acknowledged pre-provenance process.
+
+    This is intentionally *not* ownership inference.  The operator must supply the
+    exact PID and kernel birth value printed by the separate inspection command.  We
+    then hold the normal ownership lock while rechecking the legacy PID report, the
+    absence of a valid owner claim, and the birth identity immediately before one
+    SIGTERM.  There is no name/path/port match and no SIGKILL escalation.
+    """
+    pid = int(pid)
+    birth = str(birth or "")
+    if pid <= 0 or not birth:
+        return False, "an exact positive PID and kernel birth identity are required"
+    with _locked(Path(root), component) as (owner, pidfile):
+        if _path_present(owner):
+            if _parse(_read(owner)):
+                return False, ("an authoritative M.O.T launch record now exists; use "
+                               "scripts/stop.sh instead")
+            return False, ("an owner record exists but is malformed, unreadable, or "
+                           "non-regular; resolve it explicitly; signalled nothing")
+        if not _pid_report_matches(pidfile, pid):
+            return False, "the legacy PID report changed; inspect again; signalled nothing"
+        if process_birth(pid) != birth:
+            return False, "the process birth identity changed; inspect again; signalled nothing"
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            if _pid_report_matches(pidfile, pid):
+                pidfile.unlink(missing_ok=True)
+            return True, f"legacy pid {pid} had already exited; retired its matching report"
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while time.monotonic() < deadline and process_birth(pid) == birth:
+            time.sleep(0.05)
+        if process_birth(pid) == birth:
+            return False, (f"legacy pid {pid} survived SIGTERM; its report was retained; "
+                           "no escalation was attempted")
+        if _pid_report_matches(pidfile, pid):
+            pidfile.unlink(missing_ok=True)
+        owner.unlink(missing_ok=True)
+        return True, f"terminated explicitly acknowledged legacy {component} pid {pid}"
 
 
 def main() -> int:

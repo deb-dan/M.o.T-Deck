@@ -7,11 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import yaml
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ..core.appctx import ROOT, _office_ops, app
 from ..core.hermescfg import _hermes_port, _hermes_token
+from ..core.hermesreplay import (ResumeFollowPolicy, follow_resumed_turn,
+                                 hermes_attach_error, hermes_sessions_normalize,
+                                 safe_replay_event, HermesGapCache, HermesLiveQueue,
+                                 HERMES_QUEUE_OVERFLOW_ERROR)
+from ..core.hermesturn import HERMES_TURNS
 from ..core.procs import cfg
 from .hermestools import HERMES_SESSION_SOURCE
 
@@ -358,7 +364,9 @@ class _HermesWS:
         self._ws = None
         self._lock = asyncio.Lock()
         self._pending: dict = {}      # rpc id → Future
-        self._queues: dict = {}       # session_id → asyncio.Queue
+        self._queues: dict = {}       # session_id → bounded HermesLiveQueue
+        self._replay = HermesGapCache()
+        self._wire_seq = 0
         self._next_id = 1
         self._backoff = 0.5
 
@@ -401,17 +409,22 @@ class _HermesWS:
                         obj = _json.loads(line)
                     except Exception:
                         continue
+                    self._wire_seq += 1
                     if obj.get("method") == "event":
                         prm = obj.get("params") or {}
-                        q = self._queues.get(prm.get("session_id") or "")
+                        sid = prm.get("session_id") or ""
+                        event = {"type": prm.get("type"), "session_id": sid,
+                                 "payload": prm.get("payload")}
+                        safe = safe_replay_event(event)
+                        if sid and safe is not None:
+                            self._replay.append(sid, self._wire_seq, safe)
+                        q = self._queues.get(sid)
                         if q is not None:
-                            q.put_nowait({"type": prm.get("type"),
-                                          "session_id": prm.get("session_id"),
-                                          "payload": prm.get("payload")})
+                            q.offer(event)
                     elif obj.get("id") is not None:
                         fut = self._pending.pop(obj.get("id"), None)
                         if fut is not None and not fut.done():
-                            fut.set_result(obj)
+                            fut.set_result((obj, self._wire_seq))
         except Exception:
             pass
         finally:
@@ -421,12 +434,10 @@ class _HermesWS:
                     fut.set_exception(RuntimeError("Hermes connection lost"))
             self._pending.clear()
             for q in list(self._queues.values()):
-                try:
-                    q.put_nowait({"type": "_ws_closed"})
-                except Exception:
-                    pass
+                q.connection_lost()
 
-    async def rpc(self, method: str, params: dict, timeout: float = 30.0) -> dict:
+    async def rpc_marked(self, method: str, params: dict,
+                         timeout: float = 30.0) -> tuple[dict, int]:
         import json as _json
         await self._ensure()
         rid = self._next_id
@@ -436,22 +447,34 @@ class _HermesWS:
         try:
             await self._ws.send(_json.dumps({"jsonrpc": "2.0", "id": rid,
                                              "method": method, "params": params}))
-            resp = await asyncio.wait_for(fut, timeout)
+            resp, boundary = await asyncio.wait_for(fut, timeout)
         except Exception:
             self._pending.pop(rid, None)
             raise
         if resp.get("error"):
             raise RuntimeError(str((resp.get("error") or {}).get("message")
                                    or "hermes rpc error"))
-        return resp.get("result") or {}
+        return resp.get("result") or {}, boundary
 
-    def open_queue(self, sid: str) -> "asyncio.Queue":
-        q: asyncio.Queue = asyncio.Queue()
+    async def rpc(self, method: str, params: dict, timeout: float = 30.0) -> dict:
+        result, _boundary = await self.rpc_marked(method, params, timeout)
+        return result
+
+    def open_queue(self, sid: str, after_seq: int | None = None) -> HermesLiveQueue:
+        if sid in self._queues:
+            raise RuntimeError("Hermes delivery queue is still open for this session")
+        q = HermesLiveQueue()
         self._queues[sid] = q
+        if after_seq is not None:
+            for event in self._replay.after(sid, after_seq):
+                if not q.offer(event):
+                    break
         return q
 
     def close_queue(self, sid: str) -> None:
-        self._queues.pop(sid, None)
+        q = self._queues.pop(sid, None)
+        if q is not None:
+            q.close()
 
 
 _HERMES = _HermesWS()
@@ -575,6 +598,16 @@ async def _hermes_kill_segment(sid: str, spent_s: float, budget_s: float) -> Non
         print(f"[hermes] session.interrupt FAILED: {str(e)[:200]}", flush=True)
 
 
+async def _hermes_interrupt_queue_overflow(sid: str) -> None:
+    """Best-effort overflow stop, deliberately run by the relay not the WS reader."""
+    print(f"[hermes] queue safety bound exceeded — sending session.interrupt for {sid}",
+          flush=True)
+    try:
+        await _HERMES.rpc("session.interrupt", {"session_id": sid}, timeout=10.0)
+    except Exception as e:
+        print(f"[hermes] overflow session.interrupt FAILED: {str(e)[:200]}", flush=True)
+
+
 async def _hermes_session_working(sid: str) -> bool:
     """Best-effort probe: is this gateway session still running a turn?
 
@@ -600,46 +633,15 @@ async def _hermes_session_working(sid: str) -> bool:
         return True
 
 
-# ── HERMES-LANE IMAGE ATTACH (2026-08-28, the capability-affordance audit) ───
-# Hermes's gateway takes an image as BASE64 over the same WebSocket we already
-# hold: `image.attach_bytes {session_id, content_base64, filename}` writes the
-# bytes into the gateway's own images dir and queues the path on the SESSION
-# (tui_gateway/methods_prompt.py:801). The very next `prompt.submit` drains
-# `session["attached_images"]` (server.py:9780) and routes it either as native
-# image_url parts (vision model) or through vision_analyze for a text-only one
-# (agent/image_routing.py). So the panel's data URL crosses UNCHANGED — the helper
-# below only fences shape and size before we spend the round trip.
-#
-# ORDERING IS LOAD-BEARING: the attach must land on the session that is about to be
-# prompted, so it happens AFTER session.create — and AGAIN after the stale-sid retry
-# mints a NEW session, whose attached_images list is empty.
-HERMES_IMAGE_MAX_CHARS = 12 * 1024 * 1024   # dataURL chars (~9MB of image bytes);
-                                            # upstream's own cap is 25MB of bytes
-
-
-def hermes_attach_error(image) -> str:
-    """PURE: why this image cannot ride the Hermes lane, or "" when it can.
-
-    Same vocabulary as the other two lanes. No vision clause: Hermes decides
-    pixels-vs-description per turn from the active model's own capabilities.
-    """
-    if not image:
-        return ""
-    if not isinstance(image, str) or not image.startswith("data:image/"):
-        return "attachment is not an image data URL — attach removed"
-    if len(image) > HERMES_IMAGE_MAX_CHARS:
-        return "image too large — attach removed"
-    return ""
-
-
 @app.post("/api/hermes/chat")
 async def hermes_chat(req: Request) -> StreamingResponse:
     """Stream one Hermes turn to the panel as SSE (same protocol as the other lanes).
 
     Body: {"session_id": <sid or empty>, "message": <text>, "image": <dataURL>}.
-    No sid → session.create first, and the NEW sid is announced early via
-    {"type":"hermes_session","id":…} so the panel can persist it before any tokens
-    arrive. One stale-sid retry.
+    The relay is bridge-owned rather than response-owned: closing this HTTP response
+    detaches one viewer but does not cancel Hermes, the event mapper, or M.O.T's
+    watchdogs. A repeated request_id reattaches to that same relay and never submits
+    the prompt twice.
     """
     body = await req.json()
     sid = (body.get("session_id") or "").strip()
@@ -647,9 +649,53 @@ async def hermes_chat(req: Request) -> StreamingResponse:
     stored_sid = (body.get("stored_sid") or "").strip()   # durable id, for the guard audit
     image = body.get("image") or ""
     image_name = (body.get("image_name") or "")[:200]
+    request_id = str(body.get("request_id") or "").strip()[:200] \
+        or secrets.token_hex(16)
+
+    import json as _json
+
+    async def _single_error(message: str):
+        yield f'data: {_json.dumps({"type": "proxy_error", "error": message})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    if not msg:
+        return StreamingResponse(_single_error("empty message"),
+                                 media_type="text/event-stream")
+    image_error = hermes_attach_error(image)
+    if image_error:
+        return StreamingResponse(_single_error(image_error),
+                                 media_type="text/event-stream")
+
+    # Network retry idempotency is scoped to this bridge lifetime. Hermes remains the
+    # durable transcript authority; this record only prevents a duplicate submit and
+    # lets another browser subscription follow the already-running relay.
+    repeated = HERMES_TURNS.find(request_id=request_id) if request_id else None
+    if repeated is not None:
+        return StreamingResponse(repeated.subscribe(0), media_type="text/event-stream",
+                                 headers={"X-MOT-Hermes-Turn": repeated.id})
+
+    created = False
+    if not sid:
+        try:
+            res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
+            sid = str(res.get("session_id") or "")
+            stored_sid = stored_sid or str(res.get("stored_session_id") or "")
+            created = True
+        except Exception as exc:  # noqa: BLE001
+            return StreamingResponse(_single_error(str(exc)[:300]),
+                                     media_type="text/event-stream")
+        if not sid or not stored_sid:
+            return StreamingResponse(_single_error(
+                "session.create returned no durable live/stored identity"),
+                                     media_type="text/event-stream")
+    active = HERMES_TURNS.find(sid=sid, active_only=True)
+    if active is not None:
+        return JSONResponse({"error": "that Hermes session already has a running turn",
+                             "turn_id": active.id}, status_code=409)
+
+    turn_ref = None
 
     async def gen():
-        import json as _json
         nonlocal sid, stored_sid
 
         async def _attach_image(target_sid: str) -> str:
@@ -674,21 +720,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
 
         q = None
         try:
-            if not msg:
-                yield 'data: {"type":"proxy_error","error":"empty message"}\n\n'
-                return
-            _imgerr = hermes_attach_error(image)
-            if _imgerr:      # shape/size — refuse before creating a session for it
-                yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
-                return
-            if not sid:
-                res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
-                sid = str(res.get("session_id") or "")
-                if not sid:
-                    yield 'data: {"type":"proxy_error","error":"session.create returned no id"}\n\n'
-                    return
-                # stored_id (Phase 3): lets the rail mark the matching stored row.
-                stored_sid = stored_sid or str(res.get("stored_session_id") or "")
+            if created:
                 yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
             # ⚠️ WHO IS THE OFFICE CHANGESET FOR. An MCP tools/call carries the MCP
             # TRANSPORT's session id, and Hermes keeps ONE MCP client per process, so
@@ -713,15 +745,25 @@ async def hermes_chat(req: Request) -> StreamingResponse:
             except RuntimeError as e:
                 if not _hermes_stale_sid(e):
                     raise
-                # ONE retry: the persisted sid points at a dead gateway session
-                # (dashboard restarted) — mint a fresh one and resubmit.
+                # ONE retry: the live sid died with the dashboard. Resume its durable
+                # conversation when possible; only a session without a stored address
+                # may mint a new one. Retarget every turn-store alias before submit.
                 _HERMES.close_queue(sid)
-                res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
-                sid = str(res.get("session_id") or "")
-                if not sid:
-                    raise RuntimeError("session.create returned no id")
-                stored_sid = stored_sid or str(res.get("stored_session_id") or "")
-                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
+                if stored_sid:
+                    res = await _HERMES.rpc("session.resume", {
+                        "session_id": stored_sid, "source": HERMES_SESSION_SOURCE})
+                    sid = str(res.get("session_id") or "")
+                    stored_sid = str(res.get("session_key") or res.get("resumed")
+                                     or stored_sid)
+                else:
+                    res = await _HERMES.rpc("session.create", {
+                        "source": HERMES_SESSION_SOURCE})
+                    sid = str(res.get("session_id") or "")
+                    stored_sid = str(res.get("stored_session_id") or "")
+                if not sid or not stored_sid:
+                    raise RuntimeError("Hermes retry returned no durable live/stored identity")
+                HERMES_TURNS.rebind(turn_ref, sid=sid, stored_sid=stored_sid)
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": stored_sid})}\n\n'
                 if _office_ops is not None:
                     try:
                         _office_ops.mark_session(sid)     # the sid changed under us
@@ -852,6 +894,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     if stop_at is None:
                         stop_at = asyncio.get_running_loop().time() + 3.0
                     continue
+                if (ev or {}).get("type") == "_queue_overflow":
+                    yield f'data: {_json.dumps({"type": "proxy_error", "error": HERMES_QUEUE_OVERFLOW_ERROR})}\n\n'
+                    await _hermes_interrupt_queue_overflow(sid)
+                    break
                 # An approval.request OR a clarify.request opens a pending card;
                 # ANY other event means the wait resolved (post-decision tool/turn
                 # events only flow once resolve_gateway_approval / clarify.respond
@@ -918,7 +964,28 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 _HERMES.close_queue(sid)
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    try:
+        turn = HERMES_TURNS.start(
+            sid=sid, stored_sid=stored_sid, request_id=request_id, user=msg,
+            image_name=image_name, producer=gen())
+        turn_ref = turn
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    return StreamingResponse(turn.subscribe(0), media_type="text/event-stream",
+                             headers={"X-MOT-Hermes-Turn": turn.id})
+
+
+@app.get("/api/hermes/turns/{turn_id}/events")
+async def hermes_turn_events(turn_id: str, request: Request):
+    """Replay/follow one bridge-owned Hermes relay without resubmitting its prompt."""
+    turn = HERMES_TURNS.find(turn_id=str(turn_id or "").strip())
+    if turn is None:
+        return JSONResponse({"error": "Hermes turn not found"}, status_code=404)
+    try:
+        after = max(0, int(request.query_params.get("after") or 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "after must be a non-negative integer"}, status_code=400)
+    return StreamingResponse(turn.subscribe(after), media_type="text/event-stream")
 
 
 @app.post("/api/hermes/stop")
@@ -938,7 +1005,7 @@ async def hermes_stop(req: Request) -> JSONResponse:
     q = _HERMES._queues.get(sid)
     if q is not None:
         try:
-            q.put_nowait({"type": "_stop_requested"})
+            q.request_stop()
         except Exception:
             pass
     try:
@@ -1032,51 +1099,6 @@ async def hermes_answer(req: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "status": res.get("status") or "ok"})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=502)
-
-
-def hermes_sessions_normalize(rows):
-    """PURE (unit-tested standalone): gateway session.list rows → the panel
-    rail shape [{id, name, updated_at, message_count, source}].
-
-    session.list rows (methods_session.py:196-206): {id, title, preview,
-    started_at, message_count, source}. NOTE the WS projection forwards
-    started_at ONLY — list_sessions_rich's last_active is dropped upstream —
-    so the rail's relative time is the session START time; the ORDERING from
-    the gateway IS by last activity. ⚠ PENDING FABLE QA (honest-but-odd stamp).
-    started_at may be epoch seconds or ms; both → ISO-8601 UTC ('' if absent).
-    Untitled rows fall back to the preview snippet (Hermes's own picker does
-    the same). Malformed rows are dropped, never raise."""
-    out = []
-    if not isinstance(rows, list):
-        return out
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        rid = str(r.get("id") or "").strip()
-        if not rid:
-            continue
-        iso = ""
-        try:
-            ts = float(r.get("started_at") or 0)
-            if ts > 1e12:          # milliseconds epoch
-                ts = ts / 1000.0
-            if ts > 0:
-                from datetime import datetime, timezone
-                iso = datetime.fromtimestamp(ts, timezone.utc).isoformat()
-        except Exception:
-            iso = ""
-        try:
-            mc = int(r.get("message_count") or 0)
-        except Exception:
-            mc = 0
-        title = str(r.get("title") or "").strip()
-        preview = str(r.get("preview") or "").strip()
-        out.append({"id": rid,
-                    "name": title or preview or "Untitled",
-                    "updated_at": iso,
-                    "message_count": mc,
-                    "source": str(r.get("source") or "")})
-    return out
 
 
 def hermes_messages_to_panel(messages):
@@ -1202,8 +1224,12 @@ async def hermes_sessions() -> JSONResponse:
 async def hermes_session_new() -> JSONResponse:
     try:
         res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
-        return JSONResponse({"id": res.get("session_id"),
-                             "stored_id": res.get("stored_session_id")})
+        live = str(res.get("session_id") or "")
+        stored = str(res.get("stored_session_id") or "")
+        if not live or not stored:
+            return JSONResponse({"error": "Hermes created no durable live/stored identity"},
+                                status_code=502)
+        return JSONResponse({"id": live, "stored_id": stored})
     except Exception as e:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)
 
@@ -1226,15 +1252,87 @@ async def hermes_session_resume(req: Request) -> JSONResponse:
     if not stored:
         return JSONResponse({"error": "id required"}, status_code=400)
     try:
-        res = await _HERMES.rpc("session.resume",
-                                {"session_id": stored, "source": HERMES_SESSION_SOURCE},
-                                timeout=30.0)
-        return JSONResponse({
+        res, boundary = await _HERMES.rpc_marked(
+            "session.resume", {"session_id": stored, "source": HERMES_SESSION_SOURCE},
+            timeout=30.0)
+        live_sid = str(res.get("session_id") or "")
+        turn = HERMES_TURNS.find(sid=live_sid, active_only=True) \
+            or HERMES_TURNS.find(stored_sid=stored, active_only=True)
+        payload = {
             "id": res.get("session_id") or "",
             "stored_id": str(res.get("session_key") or res.get("resumed") or stored),
             "history": hermes_messages_to_panel(res.get("messages") or []),
-            "running": bool(res.get("running")),
-        })
+            "running": bool(res.get("running")) or turn is not None,
+            "status": str(res.get("status") or ""),
+            # Upstream can reconstruct the transcript and current pending state.
+            # It cannot replay already-past ephemeral tool/progress/thinking frames.
+            "recovery_scope": "transcript_and_current_state",
+        }
+        if turn is not None:
+            payload["active_turn"] = turn.panel_record()
+        elif isinstance(res.get("inflight"), dict):
+            # Hermes owns this snapshot and already strips transports/raw tool
+            # payloads. It is the bridge-restart recovery path: paint exactly what
+            # upstream says is in flight, but do not pretend a new prompt was sent.
+            inflight = res["inflight"]
+            payload["inflight"] = {
+                key: inflight.get(key) for key in (
+                    "user", "assistant", "streaming", "corrections",
+                    "correction_offsets", "error", "status", "recoverable")
+                if key in inflight
+            }
+        if isinstance(res.get("queued"), dict):
+            queued = res["queued"]
+            payload["queued"] = {key: queued.get(key) for key in ("text", "queued_at")
+                                   if key in queued}
+        if isinstance(res.get("pending_approval"), dict):
+            pending = res["pending_approval"]
+            payload["pending_approval"] = {
+                key: pending.get(key) for key in ("command", "description", "choices")
+                if key in pending
+            }
+        if isinstance(res.get("pending_clarify"), dict):
+            pending = res["pending_clarify"]
+            payload["pending_clarify"] = {
+                key: pending.get(key) for key in (
+                    "request_id", "question", "choices", "multi_select")
+                if key in pending
+            }
+        if turn is None and payload["running"] and live_sid:
+            seed = {key: payload[key] for key in
+                    ("inflight", "queued", "pending_approval", "pending_clarify")
+                    if key in payload}
+            seed["recovery_scope"] = payload["recovery_scope"]
+            user = str((payload.get("inflight") or {}).get("user") or "")
+            try:
+                try:
+                    max_turn = hermes_max_turn_s(cfg())
+                except Exception:
+                    max_turn = HERMES_MAX_TURN_S_DEFAULT
+                turn = HERMES_TURNS.start(
+                    sid=live_sid, stored_sid=payload["stored_id"], request_id="",
+                    user=user, image_name="",
+                    producer=follow_resumed_turn(
+                        live_sid, boundary,
+                        bool(payload.get("pending_approval") or payload.get("pending_clarify")),
+                        ResumeFollowPolicy(
+                            gateway=_HERMES, max_turn=max_turn,
+                            segment_spent=hermes_segment_spent,
+                            segment_overrun=hermes_segment_overrun,
+                            overrun_error=hermes_overrun_error,
+                            kill_segment=_hermes_kill_segment,
+                            session_working=_hermes_session_working,
+                            segment_resets=hermes_segment_resets,
+                            event_to_frames=hermes_event_to_frames,
+                            guard_audit=_guard_audit,
+                            interrupt_overflow=_hermes_interrupt_queue_overflow,
+                            stored_sid=payload["stored_id"])),
+                    seed=seed)
+            except RuntimeError:
+                turn = HERMES_TURNS.find(sid=live_sid, active_only=True)
+            if turn is not None:
+                payload["active_turn"] = turn.panel_record()
+        return JSONResponse(payload)
     except Exception as e:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)
 

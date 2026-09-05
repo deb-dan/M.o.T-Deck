@@ -66,5 +66,7 @@ def test_unsloth_port_is_never_8888():
 
 def test_port_is_read_from_the_manifest_not_hardcoded():
     for name, fallback in (("comfyui", "CU_PORT=8188"), ("unsloth", "US_PORT=8899")):
-        assert f"/^  {name}:/" in START, f"{name}'s port is no longer read from harness.yaml"
+        var = "CU_PORT" if name == "comfyui" else "US_PORT"
+        assert f"{var}=$(_manifest_value components.{name}.port int)" in START, \
+            f"{name}'s port is no longer read through the typed harness.yaml boundary"
         assert fallback in START

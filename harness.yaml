@@ -143,8 +143,8 @@ components:
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
     depends_on: [runner, searxng]   # model endpoint + private search (one-switch closure)
-    admin_user: admin         # used by the Bridge's chat-pane proxy (server-side login)
-    admin_password: admin123  # keep in sync if you change the Odysseus account
+    admin_user:               # generated into data/.env.local on first bootstrap
+    admin_password:           # generated into data/.env.local; never committed
   searxng:
     repo: https://github.com/searxng/searxng.git
     pin: main                 # shallow clone; source-only project (not on PyPI)
@@ -499,7 +499,7 @@ runner:
   mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
   port: 6767                 # canonical headless endpoint (jan serve --port)
   endpoint: http://127.0.0.1:6767/v1
-  api_key: harness-local     # headless jan requires a key; fanned out to components in M1-B
+  api_key:                   # generated into data/.env.local on first bootstrap
   model: gemma-4-31B-it-uncensored-biproj-q4_k_m
   ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
   spec_mtp: auto             # MTP speculative decoding: auto = detect from the model id OR its
@@ -512,11 +512,11 @@ runner:
 # they stop contending with the main runner's single slot. Pick the model via
 # "Set aux" in the Models pane; start/stop from the same pane. To wire it in:
 # Odysseus admin settings → Background Tasks → endpoint http://127.0.0.1:6768/v1,
-# api key harness-aux, and the aux model name.
+# the generated local aux API key, and the aux model name.
 aux:
   port: 6768
   endpoint: http://127.0.0.1:6768/v1
-  api_key: harness-aux
+  api_key:                   # generated into data/.env.local on first bootstrap
   model:                      # empty = not configured; set from the Models pane
 
 # Harness-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B).

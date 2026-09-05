@@ -365,9 +365,152 @@
     return turn;
   }
 
+  async function recoverHermes(record, history){
+    if (!record || !record.id || chatPane.busy) return null;
+    if (chatPane.mode !== 'hermes'
+        || String(record.stored_id || '') !== String(chatPane.hermesStoredSid || '')) return null;
+    const transcript = Array.isArray(history) ? history : [];
+    const last = transcript.length ? transcript[transcript.length - 1] : null;
+    const seed = record.seed || {}, inflight = seed.inflight || null;
+    const user = String((inflight && inflight.user) || record.user || '');
+    if (user && !(last && last.role === 'user'
+                  && String(last.content || '') === user)) addMsg('user', user);
+    let holder;
+    if (inflight) {
+      const answer = String(inflight.assistant || '');
+      const corrections = Array.isArray(inflight.corrections) ? inflight.corrections : [];
+      const offsets = Array.isArray(inflight.correction_offsets)
+        && inflight.correction_offsets.length === corrections.length
+        && inflight.correction_offsets.every((n, i) => Number.isInteger(n) && n >= 0
+          && n <= answer.length && (i === 0 || n >= inflight.correction_offsets[i - 1]))
+          ? inflight.correction_offsets : [];
+      if (offsets.length) {
+        let at = 0;
+        for (let i = 0; i < corrections.length; i++) {
+          if (offsets[i] > at) addMsg('assistant', answer.slice(at, offsets[i]));
+          addMsg('user', String(corrections[i]));
+          at = offsets[i];
+        }
+        holder = addMsg('assistant', answer.slice(at));
+      } else {
+        holder = addMsg('assistant', answer);
+        for (const correction of corrections) addMsg('user', String(correction));
+        if (corrections.length) holder = addMsg('assistant', '');
+      }
+    } else holder = addMsg('assistant', '');
+    const body = holder.querySelector('.body');
+    const think = document.createElement('div');
+    think.id = 'thinking'; think.textContent = 'reconnecting…'; think.hidden = false;
+    holder.insertBefore(think, body);
+    const turn = {id:String(record.id), lane:'hermes', session:String(record.stored_id || ''),
+      hermesSid:String(record.session_id || ''), ctl:new AbortController(), holder:holder,
+      ended:false, detached:false, timer:null, stopArmed:false, lastSeq:0, recovered:true};
+    chatPane.hermesSid = turn.hermesSid || chatPane.hermesSid;
+    if (turn.hermesSid) localStorage.setItem('harness-hermes-sid', turn.hermesSid);
+    chatPane.curTurn = turn; chatPane.busy = true; sendPaint('Stop');
+    if (seed.pending_approval) {
+      turnStage('awaiting approval');
+      chatApproval(holder, seed.pending_approval, turn.hermesSid);
+    } else if (seed.pending_clarify) {
+      turnStage('awaiting an answer');
+      chatAsk(holder, Object.assign({allows_free_text:true}, seed.pending_clarify),
+              turn.hermesSid);
+    }
+    if (seed.queued && seed.queued.text)
+      chatStatus(holder, '▸', 'another message is queued in Hermes');
+    if (inflight && inflight.error) chatStatus(holder, '⚠', String(inflight.error));
+    if (seed.recovery_scope === 'transcript_and_current_state')
+      chatStatus(holder, '▸',
+        'after a bridge restart, prior transient tool/progress cards may not replay');
+    if (seed.recovery_truncated)
+      chatStatus(holder, '⚠',
+        'Hermes recovery state exceeded M.O.T’s memory bound — reopen this session to read its stored transcript');
+    const button = document.getElementById('chat-send');
+    if (button) { button.title = 'Stop this Hermes turn';
+      button.setAttribute('aria-label', button.title); }
+    turnArm(TURN_STALL_MS, 'reconnect');
+    try {
+      const response = await fetch('/api/hermes/turns/' + encodeURIComponent(turn.id)
+        + '/events?after=0', {signal:turn.ctl.signal});
+      await consume(response, {turn:turn, holder:holder, body:body, think:think});
+    } catch (error) {
+      if (!turn.detached)
+        chatStatus(holder, '⚠', 'the bridge could not recover this Hermes turn — reopen the session');
+    } finally {
+      clearTimeout(turn.timer);
+      if (chatPane.curTurn === turn) {
+        chatPane.curTurn = null; chatPane.busy = false; sendPaint('Send');
+        if (button) { button.disabled = false; button.title = 'Send message (Enter)';
+          button.setAttribute('aria-label', button.title); }
+      }
+      think.remove(); scrollChat(); loadSessions();
+    }
+    return turn;
+  }
+
+  async function prepareHermesSession(){
+    if (chatPane.hermesSid) return {id:chatPane.hermesSid,
+      stored_id:chatPane.hermesStoredSid || ''};
+    const response = await fetch('/api/hermes/session/new', {method:'POST'});
+    const made = await response.json();
+    if (!response.ok || !made.id || !made.stored_id)
+      throw new Error(made.error || 'Hermes created no durable live/stored identity');
+    chatPane.hermesSid = made.id;
+    localStorage.setItem('harness-hermes-sid', made.id);
+    chatPane.hermesStoredSid = made.stored_id || null;
+    if (chatPane.hermesStoredSid)
+      localStorage.setItem('harness-hermes-stored', chatPane.hermesStoredSid);
+    else localStorage.removeItem('harness-hermes-stored');
+    return made;
+  }
+
+  function renderHermesSnapshot(response, history){
+    const inflight = response && response.inflight;
+    if (!inflight) return null;
+    const transcript = Array.isArray(history) ? history : [];
+    const last = transcript.length ? transcript[transcript.length - 1] : null;
+    if (inflight.user && !(last && last.role === 'user'
+                           && String(last.content || '') === String(inflight.user)))
+      addMsg('user', String(inflight.user));
+    const holder = addMsg('assistant', String(inflight.assistant || ''));
+    if (inflight.error) chatStatus(holder, '⚠', String(inflight.error));
+    else if (inflight.streaming) chatStatus(holder, '▸',
+      'Hermes is still processing; this bridge reattached after a restart');
+    if (response.recovery_scope === 'transcript_and_current_state')
+      chatStatus(holder, '▸',
+        'after a bridge restart, prior transient tool/progress cards may not replay');
+    if (inflight.corrections && inflight.corrections.length)
+      for (const correction of inflight.corrections) addMsg('user', String(correction));
+    if (response.pending_approval)
+      chatApproval(holder, response.pending_approval, String(response.id || chatPane.hermesSid || ''));
+    else if (response.pending_clarify)
+      chatAsk(holder, Object.assign({allows_free_text:true}, response.pending_clarify),
+              String(response.id || chatPane.hermesSid || ''));
+    if (response.queued && response.queued.text)
+      chatStatus(holder, '▸', 'another message is queued in Hermes');
+    scrollChat(true);
+    return holder;
+  }
+
+  async function postHermes(body, signal){
+    // If the POST reached the bridge but its response was lost, retry the exact body
+    // once. Its request_id then attaches to the existing relay instead of resubmitting.
+    const send = () => fetch('/api/hermes/chat', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:signal});
+    try { return await send(); }
+    catch (error) {
+      if (signal && signal.aborted) throw error;
+      await new Promise(resolve => setTimeout(resolve, 180));
+      return send();
+    }
+  }
+
   window.HarnessTurnStream = {create:create, active:active, metadata:metadata,
     reconcile:reconcile, remember:remember, forget:forget,
-    stop:stop, consume:consume, recover:recover};
+    stop:stop, consume:consume, recover:recover, recoverHermes:recoverHermes,
+    prepareHermesSession:prepareHermesSession, renderHermesSnapshot:renderHermesSnapshot,
+    postHermes:postHermes,
+    requestId:requestId};
 }());
 
 function turnHardRelease(turn){

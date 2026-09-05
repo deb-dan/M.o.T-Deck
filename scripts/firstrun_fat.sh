@@ -147,6 +147,8 @@ pipi_try() { # pipi_try <venv> <logfile> <pip args…>  — NON-fatal; returns p
 BLOG="$LOGDIR/firstrun_bridge.log"; : >"$BLOG"
 mkvenv data/bridge-venv bridge "$BLOG"
 pipi data/bridge-venv bridge "$BLOG" -r bridge/requirements.txt
+"$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py ensure "$DEST" --fresh \
+  >>"$BLOG" 2>&1 || fail "bridge: local secret provisioning failed — see $BLOG"
 
 # ---------- 4. hermes venv (editable install of the vendored source; web_dist prebuilt) ----------
 HLOG="$LOGDIR/firstrun_hermes.log"; : >"$HLOG"
@@ -164,8 +166,10 @@ OLOG="$LOGDIR/firstrun_odysseus.log"; : >"$OLOG"
 mkvenv data/odysseus-venv odysseus "$OLOG"
 pipi data/odysseus-venv odysseus "$OLOG" -r vendor/odysseus/requirements.txt
 pipi_try data/odysseus-venv "$OLOG" ddgs || say "note: ddgs not in wheelhouse — DDG web-search fallback unavailable until installed."
-# setup.py seeds the admin account + DB (fully local, no network).
-( cd vendor/odysseus && ODYSSEUS_ADMIN_USER=admin ODYSSEUS_ADMIN_PASSWORD=admin123 \
+# setup.py seeds the generated admin account + DB (fully local, no network).
+ODY_USER="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_ODYSSEUS_ADMIN_USER)"
+ODY_PASSWORD="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_ODYSSEUS_ADMIN_PASSWORD)"
+( cd vendor/odysseus && ODYSSEUS_ADMIN_USER="$ODY_USER" ODYSSEUS_ADMIN_PASSWORD="$ODY_PASSWORD" \
     "$DEST/data/odysseus-venv/bin/python" setup.py ) >>"$OLOG" 2>&1 \
   || fail "odysseus: setup.py failed — see $OLOG"
 # connect step: seed the runner endpoint (runner isn't up yet — endpoint is seeded, model

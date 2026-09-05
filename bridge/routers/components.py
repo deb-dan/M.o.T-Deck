@@ -9,7 +9,7 @@ import threading
 import time
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from ..core.appctx import ROOT, app
+from ..core.appctx import (BRIDGE_LAUNCH_NONCE, BRIDGE_SCHEMA_VERSION, ROOT, app)
 from ..core.events import publish
 from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
@@ -279,6 +279,8 @@ async def status() -> dict:
     du = shutil.disk_usage(ROOT)
     out = {
         "bridge": "ok",
+        "bridge_schema": BRIDGE_SCHEMA_VERSION,
+        "launch_nonce": BRIDGE_LAUNCH_NONCE,
         "disk": {"free_gb": round(du.free / 1e9, 1), "total_gb": round(du.total / 1e9, 1)},
         # How many times WE have changed Hermes's configuration this process. The
         # Swift shell records it when the Hermes webview loads and reloads that

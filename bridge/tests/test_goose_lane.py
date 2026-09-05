@@ -141,9 +141,15 @@ def test_env_fence():
        "inherited (upstream's default is `auto`, which asks nothing)")
     ok(env["GOOSE_MODE"] != G.FORBIDDEN_MODE,
        "…and never `auto`, in either direction — inherited or set")
-    ok(G.goose_env({"GOOSE_MODE": "auto"}, ROOT, "", "", "m")["GOOSE_MODE"]
+    try:
+        G.goose_env({"GOOSE_MODE": "auto"}, ROOT, "", "", "m")
+    except ValueError as exc:
+        ok("not provisioned" in str(exc), "an empty runner key is refused")
+    else:
+        ok(False, "an empty runner key must not restore a retired default")
+    ok(G.goose_env({"GOOSE_MODE": "auto"}, ROOT, "", "rotated-key", "m")["GOOSE_MODE"]
        == "smart_approve",
-       "an inherited GOOSE_MODE=auto is OVERWRITTEN, not respected")
+       "an inherited GOOSE_MODE=auto is OVERWRITTEN when credentials are valid")
     # nothing that would reroute tool calls to a backend that cannot reach our runner
     for k in G.FORBIDDEN_ENV:
         ok(k not in env, f"{k} is never on this lane's launch (and is stripped if inherited)")
@@ -159,10 +165,13 @@ def test_env_fence():
     ok(env["OPENAI_HOST"] == "http://127.0.0.1:6767", "host is the ORIGIN, not the base")
     ok(env["OPENAI_BASE_PATH"] == "v1/chat/completions", "…and the path is written out")
     ok(env["OPENAI_API_KEY"] == "harness-local", "the runner's REAL key, not a dummy")
-    ok(G.goose_env({}, ROOT, "", "", "m")["OPENAI_API_KEY"] == "harness-local",
-       "an omitted key falls back to harness.yaml's shipped value, never to empty "
-       "(an empty Bearer fails before it reaches the runner)")
-    ok(G.goose_env({}, ROOT, "", "", "  /abs/path/to/mlx-model  ")["GOOSE_MODEL"]
+    try:
+        G.goose_env({}, ROOT, "", "", "m")
+    except ValueError as exc:
+        ok("not provisioned" in str(exc), "an omitted key is refused, never invented")
+    else:
+        ok(False, "an omitted key must not restore a retired repository default")
+    ok(G.goose_env({}, ROOT, "", "rotated-key", "  /abs/path/to/mlx-model  ")["GOOSE_MODEL"]
        == "/abs/path/to/mlx-model",
        "an MLX absolute-path wire id survives verbatim (goose does not split on '/')")
 
@@ -862,7 +871,8 @@ def test_the_cli_lane_gets_the_named_provider_too():
 
         # A provider the USER chose is not overridden — the pre-existing violation.
         open(p, "a").write("active_provider: anthropic\n")
-        env = G.goose_env({}, td, "", "", "wire", 6767, config_text=open(p).read())
+        env = G.goose_env({}, td, "", "rotated-key", "wire", 6767,
+                          config_text=open(p).read())
         ok("GOOSE_PROVIDER" not in env and "GOOSE_MODEL" not in env,
            "…and their provider choice is not silently undone at the next session "
            "(env GOOSE_PROVIDER BEATS config active_provider — measured)")

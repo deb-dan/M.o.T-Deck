@@ -285,7 +285,8 @@ def test_start_passes_the_port_and_the_loopback_host_explicitly():
     assert 'web --host 127.0.0.1 --port "$DS_PORT" --no-open' in b, (
         "the tab's URL is a constant, so the port must not depend on a default we do "
         "not own — and --no-open stops a browser window popping behind our native tab")
-    assert 'DS_PORT=$(awk' in b and "harness.yaml" in b, "the port is read, not repeated"
+    assert 'DS_PORT=$(_manifest_value components.deepseek.port int)' in b, (
+        "the port must come through the shared typed YAML reader, not a repeated value")
     assert "--host 0.0.0.0" not in _acts(b), (
         "…and never widened. The log line that says dsh REFUSES 0.0.0.0 is the "
         "sentence this lane wants on the record, so only commands are read here")

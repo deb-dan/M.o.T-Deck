@@ -1529,7 +1529,7 @@ check("…in the hermes branch specifically, so it runs on every Hermes start an
 if m:
     GEN = m.group(1)
     check("…and it reads the bridge port out of harness.yaml rather than hardcoding it",
-          "BR_PORT=$(awk '/^bridge:/" in SCRIPT)
+          "BR_PORT=$(_manifest_value bridge.port int)" in SCRIPT)
     check("…with the trust key, without which the write tools would have NO approval "
           "card", '"trust": "untrusted"' in GEN)
     genpy = Path(tempfile.mkdtemp(prefix="harness-loffice-gen-")) / "gen.py"

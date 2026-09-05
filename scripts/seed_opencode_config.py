@@ -27,6 +27,7 @@ stdlib only.
 import json
 import os
 import sys
+import base64
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 try:
@@ -35,6 +36,26 @@ except Exception:                                              # noqa: BLE001
     MR = None
 
 PID = "llama.cpp"          # our provider id, everywhere — never spelled twice
+
+
+def _key(model_id):
+    """The shared U94 grammar, with a stdlib-only recovery fallback."""
+    if MR is not None:
+        return MR.opencode_model_key(model_id)
+    model_id = str(model_id or "")
+    plain = (model_id and all(c.isascii() and (c.isalnum() or c in "._-")
+                              for c in model_id)
+             and not model_id.startswith("mot1_"))
+    if plain:
+        return model_id
+    return "mot1_" + base64.urlsafe_b64encode(
+        model_id.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _legacy_key(model_id):
+    if MR is not None:
+        return MR.opencode_legacy_model_key(model_id)
+    return str(model_id or "").replace("/", "_")
 
 
 # ── the catalog ──────────────────────────────────────────────────────────────
@@ -65,7 +86,7 @@ def catalog(registry):
         wire = (MR.wire_id(m) if MR is not None else
                 (((m.get("path") or "").strip() or mid)
                  if str(m.get("format") or "gguf").strip().lower() == "mlx" else mid))
-        key = MR.opencode_model_key(mid) if MR is not None else str(mid).replace("/", "_")
+        key = _key(mid)
         key_of[mid] = key
         entry = {"name": mid, "id": wire}
         # tool_call is declared only when we actually know (bridge/modeltools.py is
@@ -138,8 +159,7 @@ def plan_default(cur, want, key_of, model_keys):
     with no key, upstream falls through to the providers named in cfg.provider — i.e.
     ours — and takes its first model (:2002-2007).
     """
-    fallback_key = (MR.opencode_model_key(want) if MR is not None
-                    else str(want or "").replace("/", "_"))
+    fallback_key = _key(want)
     want_key = key_of.get(want, fallback_key)
     if want_key not in model_keys:
         # not in the registry -> deterministic first model of ours, or nothing at all
@@ -152,6 +172,22 @@ def plan_default(cur, want, key_of, model_keys):
     if stale:
         # ours, dangling, and we have nothing valid to offer: unset beats dangling.
         return None, "cleared a default model that named no existing model"
+    return KEEP, ""
+
+
+def migrate_saved_default(cur, key_of, model_keys):
+    """PURE. Migrate one pre-U94 selection without guessing through a collision."""
+    if not isinstance(cur, str) or not cur.startswith(PID + "/"):
+        return KEEP, ""
+    old = cur.split("/", 1)[1]
+    matches = [mid for mid in key_of if _legacy_key(mid) == old]
+    if old in model_keys and len(matches) <= 1:
+        return KEEP, ""
+    if len(matches) == 1:
+        return PID + "/" + key_of[matches[0]], "migrated legacy OpenCode model key"
+    if len(matches) > 1:
+        return None, ("discarded an ambiguous legacy OpenCode preference; the current "
+                      "valid fallback is not presented as the prior choice")
     return KEEP, ""
 
 
@@ -224,6 +260,14 @@ def main() -> int:
     # differs), so it is a candidate, never an answer. When the bridge calls this from
     # the switch/rescan fan-out it passes the LIVE wire id instead (U18's rule).
     want = os.environ.get("OC_MODEL") or ""
+    migrated, migration_note = migrate_saved_default(
+        cfg.get("model"), key_of, MODEL_KEYS)
+    if migration_note:
+        repairs.append(migration_note)
+    if migrated is None:
+        cfg.pop("model", None)
+    elif migrated is not KEEP:
+        cfg["model"] = migrated
     new, note = plan_default(cfg.get("model"), want, key_of, MODEL_KEYS)
     if note:
         repairs.append(note)
@@ -250,6 +294,16 @@ def main() -> int:
         pprovider[PID] = PROVIDER
         pcfg["provider"] = pprovider
         pcfg["$schema"] = "https://opencode.ai/config.json"
+        # We never seed a project model, but an older OpenCode/user may have stored
+        # one. Project config merges last, so leaving a legacy value here would undo
+        # the global migration. Ambiguity is cleared visibly, never assigned by order.
+        pnew, pnote = migrate_saved_default(pcfg.get("model"), key_of, MODEL_KEYS)
+        if pnote:
+            print("[harness]   REPAIRED: project %s" % pnote)
+        if pnew is None:
+            pcfg.pop("model", None)
+        elif pnew is not KEEP:
+            pcfg["model"] = pnew
         save(pcfg_path, pcfg)
         print("[harness] opencode config -> %s (project copy, provider only)" % pcfg_path)
     print("[harness] opencode config -> %s" % cfg_path)

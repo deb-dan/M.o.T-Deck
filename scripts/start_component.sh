@@ -6,11 +6,8 @@ NAME="${1:-}"
 mkdir -p data/logs
 ROOT_ABS="$(pwd)"
 
-# The launcher intentionally uses small awk readers instead of a full YAML parser.  At
-# this boundary YAML's null spellings plus the empty-quoted-scalar tokens `''` and `""`
-# must all mean the shell's "unset": an empty value discovers/generates the appropriate
-# value. Quoted `null` remains real text, whereas unquoted `null` is never an executable
-# or model id. Keep this pure: it is also the seam the fixture-only U74 gate executes.
+# Compatibility seam retained for old snapshots/tests. Production launch values now
+# cross the typed PyYAML boundary below; text normalization cannot implement YAML.
 _normalize_yaml_scalar() {   # <already-extracted scalar>
   local value="${1-}"
   if [[ "$value" =~ ^[[:space:]]*$ ]]; then
@@ -64,6 +61,20 @@ if [[ "$NAME" == "--yaml-python" ]]; then
   fi
   exit 0
 fi
+
+MANIFEST_PY="$(_yaml_python)" || {
+  echo "ERROR: no Python interpreter able to parse harness.yaml with PyYAML." >&2
+  echo "       Bootstrap the bridge venv, then retry; no component was started." >&2
+  exit 1
+}
+_manifest_value() { # <dotted.path> <str|int|bool>
+  "$MANIFEST_PY" "$ROOT_ABS/scripts/read_manifest.py" "$ROOT_ABS" "$1" "$2"
+}
+_require_secret() { # <value> <dotted.path>
+  [[ -n "${1:-}" ]] && return 0
+  echo "ERROR: $2 is not provisioned; run scripts/local_secrets.py ensure '$ROOT_ABS'." >&2
+  return 1
+}
 
 # ── PORT OWNERSHIP ────────────────────────────────────────────────────────────
 # A LISTENER-scoped kill is still a kill of SOMEBODY ELSE'S process when the port
@@ -416,7 +427,7 @@ fi
 
 case "$NAME" in
   runner)
-    R_ADAPTER=$(awk '/^runner:/{f=1} f && /^  adapter:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*adapter:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_ADAPTER=$(_manifest_value runner.adapter str)
     R_ADAPTER="$(_normalize_yaml_scalar "$R_ADAPTER")"
     [[ -n "$R_ADAPTER" ]] || R_ADAPTER=auto
     # jan retired 2026-07-23 (cleanup 3.1d) — the harness owns its own llama-server
@@ -428,14 +439,15 @@ case "$NAME" in
     esac
     # adapter is llamacpp | mlx | auto — all consult OUR registry. Resolve the active
     # model's path / mmproj / ctx / format / vision FIRST, then pick the engine.
-    R_PORT=$(awk '/^runner:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
-    R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
-    R_CTX=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
-    R_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
-    R_BIN=$(awk '/^runner:/{f=1} f && /^  binary:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*binary:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_PORT=$(_manifest_value runner.port int)
+    R_KEY=$(_manifest_value runner.api_key str)
+    R_CTX=$(_manifest_value runner.ctx_size int)
+    R_MODEL=$(_manifest_value runner.model str)
+    R_BIN=$(_manifest_value runner.binary str)
     R_MODEL="$(_normalize_yaml_scalar "$R_MODEL")"
     R_BIN="$(_normalize_yaml_scalar "$R_BIN")"
     R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
+    _require_secret "$R_KEY" runner.api_key || exit 1
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
     [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
     # Ensure the registry exists.
@@ -572,7 +584,7 @@ PYRESOLVE
     # to find. Silently starting a stranger's binary of unknown vintage re-opens it.
     # An EXPLICIT runner.binary is exempt: that is a person naming a binary on purpose.
     if [[ -n "${BIN_OWNER:-}" ]]; then
-      L_PIN=$(awk '/^runner:/{f=1} f && /^  llamacpp_pin:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_pin:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      L_PIN=$(_manifest_value runner.llamacpp_pin str)
       L_BUILD=$("$BIN" --version 2>&1 | sed -n 's/.*build \([0-9][0-9]*\).*/\1/p' | head -1)
       echo "[harness] ⚠️  THE RUNNER BINARY IS NOT OURS. It belongs to ${BIN_OWNER}:"
       echo "[harness]      $BIN"
@@ -614,7 +626,7 @@ PYRESOLVE
     if [[ -n "$MMPROJ_PATH" ]]; then ARGS+=(--mmproj "$MMPROJ_PATH"); fi
     if grep -q -- "--api-key" data/llama-server.help.txt; then ARGS+=(--api-key "$R_KEY"); fi
     # ── NAMED API KEYS (ledger S32) ────────────────────────────────────────────
-    # The harness-local key above is UNCHANGED and stays the built-in: it is what the
+    # The generated built-in key above stays the internal key: it is what the
     # readiness poll below sends and what every internal caller uses. This adds the
     # SECOND source — the keys Debi mints in MOT Deck → API and pastes into an app's own
     # Add-Provider form (goose UI, Odysseus, OpenCode all ask for one).
@@ -734,7 +746,7 @@ PYRESOLVE
     # us MTP-without-acceleration. `runner.spec_mtp` (auto|on|off) overrides.
     # Kept in a SEPARATE array so a misdetection can be retried without them.
     SPEC_ARGS=()
-    R_SPEC=$(awk '/^runner:/{f=1} f && /^  spec_mtp:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*spec_mtp:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    R_SPEC=$(_manifest_value runner.spec_mtp str)
     [[ -n "$R_SPEC" ]] || R_SPEC=auto
     MTP_HIT=0
     case "$R_SPEC" in
@@ -925,10 +937,11 @@ PYRESOLVE
     sleep 1
     # Connect (idempotent): (re)wire Odysseus to the harness RUNNER endpoint (:6767 + key)
     # as default model. Runs before the server boots.
-    R_ENDPOINT=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
-    R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    R_ENDPOINT=$(_manifest_value runner.endpoint str)
+    R_KEY=$(_manifest_value runner.api_key str)
     R_ENDPOINT="$(_normalize_yaml_scalar "$R_ENDPOINT")"
     R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
+    _require_secret "$R_KEY" runner.api_key || exit 1
     [[ -n "$R_ENDPOINT" ]] || R_ENDPOINT="http://127.0.0.1:6767/v1"
     ( cd vendor/odysseus && JAN_BASE_URL="$R_ENDPOINT" JAN_API_KEY="$R_KEY" python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
     # Start server. cd applies to the whole subshell (Odysseus expects cwd=vendor/odysseus);
@@ -940,7 +953,7 @@ PYRESOLVE
     )
     sleep 2
     if kill -0 "$(cat data/odysseus.pid)" 2>/dev/null; then
-      echo "[harness] odysseus starting → http://127.0.0.1:7860 (login: admin / admin123 — change it)"
+      echo "[harness] odysseus starting → http://127.0.0.1:7860 (M.O.T uses the generated local login; values are never logged)"
     else
       echo "ERROR: odysseus exited immediately. Last log lines:"; tail -15 data/logs/odysseus.log; exit 1
     fi
@@ -974,7 +987,7 @@ PYRESOLVE
     ROOT="$(pwd)"
     VSPY="$ROOT/data/voicestudio-venv/bin/python"
     [[ -x "$VSPY" ]] || { echo "ERROR: $VSPY not executable — reinstall voicestudio"; exit 1; }
-    VS_PORT=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    VS_PORT=$(_manifest_value components.voicestudio.port int)
     [[ "$VS_PORT" =~ ^[0-9]+$ ]] || VS_PORT=3900
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
@@ -1008,17 +1021,18 @@ PYRESOLVE
     # LLM_DEFAULT_PROVIDER: a lone TRANSLATE_BASE_URL only makes our runner the
     # DEFAULT, while an explicit provider chosen in VoiceStudio's own Settings still
     # wins.  ⚠️ PENDING FABLE QA.
-    VS_BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
-    VS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    VS_BASE_URL=$(_manifest_value runner.endpoint str)
+    VS_KEY=$(_manifest_value runner.api_key str)
     VS_MODEL=$(_runner_active_model 2>/dev/null || true)
     VS_MODEL_SOURCE="live runner launch provenance"
     if [[ -z "$VS_MODEL" ]]; then
-      VS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      VS_MODEL=$(_manifest_value runner.model str)
       VS_MODEL_SOURCE="saved runner pin (no live launch provenance)"
     fi
     VS_MODEL="$(_normalize_yaml_scalar "$VS_MODEL")"
     VS_BASE_URL="$(_normalize_yaml_scalar "$VS_BASE_URL")"
     VS_KEY="$(_normalize_yaml_scalar "$VS_KEY")"
+    _require_secret "$VS_KEY" runner.api_key || exit 1
     [[ -n "$VS_BASE_URL" ]] || VS_BASE_URL="http://127.0.0.1:6767/v1"
     [[ "$VS_MODEL" == \#* ]] && VS_MODEL=""
     # Same WIRE identifier rule as the hermes branch (MLX servers need the PATH).
@@ -1087,7 +1101,7 @@ PYWIRE
     ROOT="$(pwd)"
     VBPY="$ROOT/data/voicebox-venv/bin/python"
     [[ -x "$VBPY" ]] || { echo "ERROR: $VBPY not executable — reinstall voicebox"; exit 1; }
-    VB_PORT=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    VB_PORT=$(_manifest_value components.voicebox.port int)
     [[ "$VB_PORT" =~ ^[0-9]+$ ]] || VB_PORT=17493
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
@@ -1151,7 +1165,7 @@ PYWIRE
     ROOT="$(pwd)"
     CUPY="$ROOT/data/comfyui-venv/bin/python"
     [[ -x "$CUPY" ]] || { echo "ERROR: $CUPY not executable — reinstall comfyui"; exit 1; }
-    CU_PORT=$(awk '/^  comfyui:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    CU_PORT=$(_manifest_value components.comfyui.port int)
     [[ "$CU_PORT" =~ ^[0-9]+$ ]] || CU_PORT=8188
     # Clear the port FIRST — LISTENER-scoped only (standing ops rule: a bare
     # `lsof -ti tcp:PORT` also matches CLIENT sockets and once killed the bridge).
@@ -1261,7 +1275,7 @@ PYWIRE
     [[ -f vendor/unsloth/studio/backend/run.py ]] || { echo "ERROR: vendor/unsloth missing — click Install first"; exit 1; }
     USPY="$US_VENV/bin/python"
     [[ -x "$USPY" ]] || { echo "ERROR: $USPY not executable — reinstall unsloth"; exit 1; }
-    US_PORT=$(awk '/^  unsloth:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    US_PORT=$(_manifest_value components.unsloth.port int)
     # Fallback mirrors harness.yaml's 8899 — deliberately NOT upstream's 8888, which is
     # the port Debi's STANDALONE Unsloth app listens on (the port clear below would kill it).
     [[ "$US_PORT" =~ ^[0-9]+$ ]] || US_PORT=8899
@@ -1359,7 +1373,7 @@ PYWIRE
     DS_PREFIX="$ROOT/data/deepseek/npm"
     DS_BIN="$DS_PREFIX/node_modules/.bin/dsh"
     [[ -x "$DS_BIN" ]] || { echo "ERROR: deepseek is not installed ($DS_BIN missing) — click Install first"; exit 1; }
-    DS_PORT=$(awk '/^  deepseek:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    DS_PORT=$(_manifest_value components.deepseek.port int)
     # Upstream's own default IS 3080 (dsh-host-webserver: `port: ctx.webStartup.port ??
     # 3080`), so unlike OpenCode this fallback is belt-and-braces rather than
     # load-bearing — but the port is still passed EXPLICITLY below, because a tab whose
@@ -1393,15 +1407,16 @@ PYWIRE
     # what makes this file the one it reads. We never write ~/.dsh.
     # MERGE, never overwrite: only the two sections we own are replaced, so anything
     # the user adds in that file (theme, permission presets, other providers) survives.
-    DS_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
-    DS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    DS_BASE=$(_manifest_value runner.endpoint str)
+    DS_KEY=$(_manifest_value runner.api_key str)
     DS_MODEL=$(_runner_active_model 2>/dev/null || true)
     if [[ -z "$DS_MODEL" ]]; then
-      DS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      DS_MODEL=$(_manifest_value runner.model str)
     fi
     DS_MODEL="$(_normalize_yaml_scalar "$DS_MODEL")"
     DS_BASE="$(_normalize_yaml_scalar "$DS_BASE")"
     DS_KEY="$(_normalize_yaml_scalar "$DS_KEY")"
+    _require_secret "$DS_KEY" runner.api_key || exit 1
     [[ -n "$DS_BASE" ]] || DS_BASE="http://127.0.0.1:6767/v1"
     [[ "$DS_MODEL" == \#* ]] && DS_MODEL=""
     DS_SETTINGS="$DS_HOME/settings.yaml"
@@ -1578,7 +1593,7 @@ PYDS
     ROOT="$(pwd)"
     OC_BIN="$ROOT/data/opencode/bin/opencode"
     [[ -x "$OC_BIN" ]] || { echo "ERROR: opencode is not installed ($OC_BIN missing) — click Install first"; exit 1; }
-    OC_PORT=$(awk '/^  opencode:/{f=1; next} f && /^  [a-z]/{exit} f && /^    port:/{print $2; exit}' harness.yaml)
+    OC_PORT=$(_manifest_value components.opencode.port int)
     # ⚠️ upstream's OWN --port default is 0 (an ephemeral port), so this fallback is not
     # cosmetic: without an explicit --port the tab would point at a port nothing holds.
     [[ "$OC_PORT" =~ ^[0-9]+$ ]] || OC_PORT=4096
@@ -1592,15 +1607,16 @@ PYDS
     # this file the one it reads — we never write to ~/.config.
     # MERGE, never overwrite: only the keys we own are replaced, so anything the user adds
     # in that file (permissions, themes, other providers) survives a restart.
-    OC_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
-    OC_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    OC_BASE=$(_manifest_value runner.endpoint str)
+    OC_KEY=$(_manifest_value runner.api_key str)
     OC_MODEL=$(_runner_active_model 2>/dev/null || true)
     if [[ -z "$OC_MODEL" ]]; then
-      OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      OC_MODEL=$(_manifest_value runner.model str)
     fi
     OC_MODEL="$(_normalize_yaml_scalar "$OC_MODEL")"
     OC_BASE="$(_normalize_yaml_scalar "$OC_BASE")"
     OC_KEY="$(_normalize_yaml_scalar "$OC_KEY")"
+    _require_secret "$OC_KEY" runner.api_key || exit 1
     [[ -n "$OC_BASE" ]] || OC_BASE="http://127.0.0.1:6767/v1"
     [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
     OC_CFG="$OC_HOME/config/opencode/opencode.json"
@@ -1813,20 +1829,21 @@ PYOCCHK
     # M1: point Hermes at the harness RUNNER endpoint (:6767 + key). Patches ONLY the
     # managed model.* keys, preserving the rest of an existing config; creates minimal if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
-    BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
-    KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    BASE_URL=$(_manifest_value runner.endpoint str)
+    KEY=$(_manifest_value runner.api_key str)
     MODEL=$(_runner_active_model 2>/dev/null || true)
     if [[ -n "$MODEL" ]]; then
       MSRC="live runner launch provenance"
     else
-      MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      MODEL=$(_manifest_value runner.model str)
       MSRC="saved runner pin (no live launch provenance)"
     fi
     MODEL="$(_normalize_yaml_scalar "$MODEL")"
     BASE_URL="$(_normalize_yaml_scalar "$BASE_URL")"
     KEY="$(_normalize_yaml_scalar "$KEY")"
+    _require_secret "$KEY" runner.api_key || exit 1
     [[ -n "$BASE_URL" ]] || BASE_URL="http://127.0.0.1:6767/v1"
-    CTXLEN=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
+    CTXLEN=$(_manifest_value runner.ctx_size int)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
     # Launch provenance outranks harness.yaml intent. A first-row `/v1/models` probe
@@ -2037,7 +2054,7 @@ PYGUARD
     # says we did it (a user who really wants it trusted can say so and not Start).
     # `url` is ours too: it must point at the bridge port this harness is running on,
     # or the toolset simply 404s.
-    BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml)
+    BR_PORT=$(_manifest_value bridge.port int)
     BR_PORT="${BR_PORT:-8700}"
     if [[ -n "$H_PY" ]]; then
       HCFG="$HCFG" BR_PORT="$BR_PORT" "$H_PY" - <<'PYLOFFICE'
@@ -2143,7 +2160,7 @@ PYLOFFICE
     # own desktop shell uses), so the Bridge can auth the /api/ws?token=<...> gateway.
     # Precedence: harness.yaml components.hermes.dashboard_token override → else
     # generate ONCE into data/hermes.token (chmod 600) and reuse on every start.
-    HTOKEN=$(awk '/^  hermes:/{f=1; next} f && /^  [a-z]/{exit} f && /^    dashboard_token:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*dashboard_token:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    HTOKEN=$(_manifest_value components.hermes.dashboard_token str)
     HTOKEN="$(_normalize_yaml_scalar "$HTOKEN")"
     if [[ -z "$HTOKEN" ]]; then
       if [[ ! -s data/hermes.token ]]; then

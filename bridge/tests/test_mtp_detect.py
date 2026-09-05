@@ -105,7 +105,7 @@ for needle, why in [
     ("MODEL_REPO=", "the repo must be captured into a shell var"),
     ('MODEL_REPO" =~ [Mm][Tt][Pp]', "the gate must match MTP in the repo"),
     ('R_MODEL" =~ [Mm][Tt][Pp]', "the gate must still match MTP in the id"),
-    ("spec_mtp:", "runner.spec_mtp override must be read"),
+    ("_manifest_value runner.spec_mtp str", "runner.spec_mtp override must be read"),
     ("SPEC_ARGS=()", "spec flags must live in a separate array (retry-able)"),
     ("--spec-type draft-mtp", "the MTP flag set must be present"),
     ("Retrying without them", "a failed spec launch must self-heal"),

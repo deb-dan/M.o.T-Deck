@@ -90,6 +90,9 @@ fi
 source data/bridge-venv/bin/activate
 uv pip install -q -r bridge/requirements.txt
 deactivate
+# Generate launch/admin credentials before any component installer can consume them.
+# Values stay in data/.env.local (0600) and are never printed.
+data/bridge-venv/bin/python scripts/local_secrets.py ensure "$HARNESS_ROOT" --fresh
 
 # ---------- 4. first commit ----------
 if ! git rev-parse HEAD >/dev/null 2>&1; then

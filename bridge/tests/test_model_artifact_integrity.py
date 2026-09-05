@@ -362,7 +362,8 @@ def test_switch_and_aux_refuse_broken_before_side_effects(tmp_path, monkeypatch)
     root = tmp_path / "aux-root"; (root / "data").mkdir(parents=True)
     (root / "data" / "models.json").write_text(json.dumps({"models": [broken]}))
     monkeypatch.setattr(aux, "ROOT", root)
-    monkeypatch.setattr(aux, "cfg", lambda: {"aux": {"model": "broken", "port": 6768}})
+    monkeypatch.setattr(aux, "cfg", lambda: {"aux": {
+        "model": "broken", "port": 6768, "api_key": "fixture-key"}})
     monkeypatch.setattr(aux, "_aux_kill", lambda *_: pytest.fail("port cleared"))
     class AuxRequest: query_params = {}
     assert aux.aux_start(AuxRequest()).status_code == 400
@@ -427,8 +428,14 @@ def test_main_resolver_refuses_the_same_broken_artifact_before_launch(tmp_path):
     (root / "data").mkdir()
     shutil.copy2(os.path.join(ROOT, "scripts", "start_component.sh"),
                  root / "scripts" / "start_component.sh")
+    shutil.copy2(os.path.join(ROOT, "scripts", "read_manifest.py"),
+                 root / "scripts" / "read_manifest.py")
     shutil.copy2(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
                  root / "bridge" / "core" / "modelreg.py")
+    shutil.copy2(os.path.join(ROOT, "bridge", "core", "localsecrets.py"),
+                 root / "bridge" / "core" / "localsecrets.py")
+    shutil.copy2(os.path.join(ROOT, "bridge", "yamlfile.py"),
+                 root / "bridge" / "yamlfile.py")
     (root / "data" / "broken.gguf").write_bytes(b"")
     (root / "data" / "models.json").write_text(json.dumps({"models": [{
         "id": "broken", "format": "gguf", "path": "data/broken.gguf"}]}))

@@ -293,6 +293,10 @@ _LANES = (
     "routers.turns",
     # M.O.T-owned reconciliation around Hermes's split WhatsApp enablement state.
     "routers.hermeschannels",
+    # U106 bridge-lifetime Hermes relay ownership (route-less, appended).
+    "core.hermesturn",
+    "core.hermesreplay",
+    "core.localsecrets",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

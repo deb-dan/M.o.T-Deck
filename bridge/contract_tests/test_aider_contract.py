@@ -54,7 +54,7 @@ skip_if_absent = pytest.mark.skipif(HELP is None,
                                     reason="aider not installed (or not runnable here)")
 
 
-def _assert_edit_format_parser(python):
+def _assert_edit_format_parser(python, edit_format):
     """Invoke Aider's actual parser without starting a session or using ``--help``."""
     sentinel = "__harness_invalid_format__"
     program = (
@@ -63,7 +63,7 @@ def _assert_edit_format_parser(python):
         "print(parsed.edit_format)"
     )
     try:
-        valid = subprocess.run([str(python), "-c", program, "whole"],
+        valid = subprocess.run([str(python), "-c", program, edit_format],
                                capture_output=True, text=True, timeout=120)
         invalid = subprocess.run([str(python), "-c", program, sentinel],
                                  capture_output=True, text=True, timeout=120)
@@ -74,7 +74,7 @@ def _assert_edit_format_parser(python):
 
     valid_text = (valid.stdout or "") + (valid.stderr or "")
     assert valid.returncode == 0, valid_text
-    assert valid.stdout.strip().splitlines()[-1] == "whole", valid_text
+    assert valid.stdout.strip().splitlines()[-1] == edit_format, valid_text
 
     invalid_text = (invalid.stdout or "") + (invalid.stderr or "")
     assert invalid.returncode != 0, invalid_text
@@ -93,8 +93,13 @@ def test_launch_flags_still_exist():
 def test_edit_format_whole_is_still_offered():
     """`whole` is the only format a 4B reliably produces (recon §2.1). If upstream ever
     removes it, the lane needs a new default, not a silent fallback."""
+    from bridge import pty_aider as P
     assert PYTHON.is_file(), "aider launcher exists but its venv python is missing"
-    _assert_edit_format_parser(PYTHON)
+    argv = P.aider_argv(ROOT, "contract-wire-model")
+    at = argv.index("--edit-format")
+    launch_value = argv[at + 1]
+    assert launch_value == P.DEFAULT_EDIT_FORMAT
+    _assert_edit_format_parser(PYTHON, launch_value)
 
 
 def test_edit_format_parser_fixture_exercises_valid_and_invalid_branches(tmp_path):
@@ -111,7 +116,7 @@ def test_edit_format_parser_fixture_exercises_valid_and_invalid_branches(tmp_pat
     )
     fixture.chmod(0o755)
 
-    _assert_edit_format_parser(fixture)
+    _assert_edit_format_parser(fixture, "whole")
 
 
 @skip_if_absent

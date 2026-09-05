@@ -608,7 +608,9 @@ def serve_env(base_env: dict, root, token: str, endpoint: str = "",
     # therefore undid, at every spawn, whatever provider the user had picked inside the
     # UI — after the UI had told them "Successfully switched models". provider_choice()
     # returns "" when the choice is theirs, and the MODEL travels with the provider.
-    key = (api_key or "").strip() or "harness-local"
+    key = (api_key or "").strip()
+    if not key:
+        raise ValueError("runner API key is not provisioned — run scripts/local_secrets.py ensure")
     chosen, _migrate = _prov.provider_choice(config_text)
     if chosen:
         env["GOOSE_PROVIDER"] = chosen

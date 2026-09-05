@@ -320,9 +320,10 @@ ok(sels.some(x => x.includes('#chrome-chip')),
      + 'affordance is readable without a seventh symbol');
   ok(!/\bsb\.textContent = 'Send'\b/.test(panelCode) && !/sendBtn\.textContent = 'Stop'/.test(panelCode),
      'every Send/Stop label site funnels through sendPaint()');
-  ok((panelCode.match(/sendPaint\('Send'\)/g) || []).length === 4
-     && (panelCode.match(/sendPaint\('Stop'\)/g) || []).length === 2,
-     'all resting/recovery label sites are converted (4x Send release, 2x Stop)');
+  ok((panelCode.match(/sendPaint\('Send'\)/g) || []).length === 5
+     && (panelCode.match(/sendPaint\('Stop'\)/g) || []).length === 3,
+     'all resting/recovery label sites are converted (5x Send release, 3x Stop, '
+     + 'including durable Chat/Agent and Hermes recovery)');
 }
 
 // ---------------------------------------------------------------------------

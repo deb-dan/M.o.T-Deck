@@ -228,7 +228,7 @@ check("the 20s heartbeat still fires on every tick",
 check("the fail-safe liveness probe is unchanged",
       "_hermes_session_working(sid)" in relay)
 check("panel Stop path untouched",
-      '{"type": "_stop_requested"}' in SRC and "stop_at = " in relay)
+      "q.request_stop()" in SRC and '"_stop_requested"' in SRC and "stop_at = " in relay)
 
 kill = between("async def _hermes_kill_segment", "async def _hermes_session_working")
 check("kill uses session.interrupt, not a stream close",

@@ -66,7 +66,9 @@ def aux_start(req: Request) -> JSONResponse:
     note = ""                    # the W-04 line about a foreign binary, "" when ours
     ax = cfg().get("aux", {}) or {}
     model, port = ax.get("model") or "", int(ax.get("port") or 6768)
-    key = ax.get("api_key", "harness-aux")
+    key = str(ax.get("api_key") or "")
+    if not key:
+        return JSONResponse({"error": "aux API key is not provisioned"}, status_code=503)
     if not model:
         return JSONResponse({"ok": False, "log": "no aux model set — use 'Set aux' on an installed model"}, status_code=400)
     try:

@@ -359,7 +359,10 @@ def aider_env(base_env: dict, endpoint: str, api_key: str) -> dict:
     """
     env = dict(base_env or {})
     env["OPENAI_API_BASE"] = (endpoint or "").strip()
-    env["OPENAI_API_KEY"] = (api_key or "").strip() or "harness-local"
+    key = (api_key or "").strip()
+    if not key:
+        raise ValueError("runner API key is not provisioned — run scripts/local_secrets.py ensure")
+    env["OPENAI_API_KEY"] = key
     env["TERM"] = "xterm-256color"
     env["PYTHONUNBUFFERED"] = "1"
     env.pop("COLUMNS", None)

@@ -582,6 +582,50 @@ def test_a_model_key_is_never_a_path_and_the_wire_id_always_is():
         "the default-model string is split with a bare `.split('/')` destructure")
 
 
+def test_u94_keys_are_reversible_slash_free_and_collision_free():
+    from bridge.core.modelreg import opencode_model_id_from_key, opencode_model_key
+    ids = ["a/b", "a_b", "mot1_YS9i", "50%", "模型/四位", "x" * 2048]
+    keys = [opencode_model_key(mid) for mid in ids]
+    assert len(set(keys)) == len(ids), "distinct registry ids must never share a key"
+    assert all("/" not in key for key in keys)
+    for mid, key in zip(ids, keys):
+        if key.startswith("mot1_"):
+            assert opencode_model_id_from_key(key) == mid
+
+
+def test_u94_catalog_keeps_colliding_legacy_ids_as_distinct_rows():
+    slash = dict(GGUF, id="a/b")
+    underscore = dict(GGUF, id="a_b")
+    g, _ = _run_seed([slash, underscore], want="a/b")
+    rows = g["provider"]["llama.cpp"]["models"]
+    assert len(rows) == 2
+    assert {row["name"] for row in rows.values()} == {"a/b", "a_b"}
+    assert rows[_default_key(g)]["name"] == "a/b"
+
+
+def test_u94_unambiguous_legacy_defaults_migrate_in_global_and_project_files():
+    legacy = "llama.cpp/mlx-community_Qwen3-8B-4bit"
+    g, p = _run_seed(
+        [MLX], want=MLX["id"],
+        extra_global={"model": legacy}, extra_project={"model": legacy})
+    expected = "llama.cpp/" + next(iter(g["provider"]["llama.cpp"]["models"]))
+    assert g["model"] == expected
+    assert p["model"] == expected
+    assert expected != legacy
+
+
+def test_u94_ambiguous_legacy_default_is_never_silently_assigned():
+    rows = [dict(GGUF, id="a/b"), dict(GGUF, id="a_b")]
+    g, p = _run_seed(
+        rows, want="",
+        extra_global={"model": "llama.cpp/a_b"},
+        extra_project={"model": "llama.cpp/a_b"})
+    # The global seeder may choose a current fallback after clearing the old value;
+    # the project override must disappear so it cannot silently choose either row.
+    assert _default_key(g) in g["provider"]["llama.cpp"]["models"]
+    assert "model" not in p
+
+
 def test_a_gguf_model_keeps_its_registry_id_on_both_sides():
     g, _ = _run_seed([GGUF], want=GGUF["id"])
     m = g["provider"]["llama.cpp"]["models"][GGUF["id"]]

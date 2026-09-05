@@ -216,7 +216,10 @@ const sendEnd = html.indexOf('/* ====', sendAt);
 const send = html.slice(sendAt, sendEnd > 0 ? sendEnd : sendAt + 20000);
 check('the extracted stream renderer is a fail-closed dependency for EVERY lane',
   /const streamReady = streamApi && typeof streamApi\.consume === 'function'/.test(send)
-  && /chatPane\.mode === 'hermes' \|\| \(typeof streamApi\.create === 'function'/.test(send)
+  && /chatPane\.mode === 'hermes'[\s\S]{0,180}typeof streamApi\.requestId === 'function'/.test(send)
+  && /typeof streamApi\.prepareHermesSession === 'function'/.test(send)
+  && /typeof streamApi\.postHermes === 'function'/.test(send)
+  && /typeof streamApi\.create === 'function'/.test(send)
   && /typeof streamApi\.remember === 'function'/.test(send));
 check('a missing renderer says the prompt was not sent and returns before mutating it',
   /message not sent — the Chat renderer did not load; reload M\.O\.T and try again/.test(send));
@@ -231,7 +234,8 @@ check('after that one guard, the send path uses the captured API consistently',
 check('sendChat creates the turn (lane + AbortController + stage) before fetching',
   /const turn = \{lane: chatPane\.mode, session: chatPane\.sid, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
 check('the fetch carries the abort signal — without it nothing can cancel a read',
-  /signal: turn\.ctl\.signal/.test(send));
+  /\{signal:\s*turn\.ctl\.signal\}/.test(send)
+  && /postHermes\(reqBody, turn\.ctl\.signal\)/.test(send));
 check('the finally clears the timer AND the turn handle (a stale curTurn would '
     + 'let the next Stop abort nothing)',
   /finally \{\s*clearTimeout\(turn\.timer\);\s*const ownsPane = chatPane\.curTurn === turn;\s*if \(ownsPane\) chatPane\.curTurn = null;/.test(send));

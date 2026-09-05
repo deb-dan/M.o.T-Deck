@@ -38,6 +38,7 @@ APP=""
 # roots by that identity, never by display name or an allowlist of filenames.
 RESOLVE_FIXTURES=0
 RESOLVE_FIXTURE_CANDIDATES=()
+RESOLVE_FIXTURE_ROOTS=()
 CONFIG_FIXTURES=0
 CONFIG_FIXTURE_ROOT=""
 CONFIG_FIXTURE_PATH=""
@@ -94,17 +95,30 @@ _valid_harness_app() {   # <candidate bundle>
   [[ "$executable" == "Harness" && -x "$candidate/Contents/MacOS/Harness" ]]
 }
 
+_discover_app_bundles() { # <installation root>; one NUL-delimited path per bundle
+  local root="$1"
+  [[ -d "$root" ]] || return 0
+  # Recurse through installation folders, but never descend into an .app bundle.
+  # Validation below—not the filename or location—decides whether it is M.O.T.
+  /usr/bin/find "$root" -type d -name '*.app' -prune -print0 2>/dev/null
+}
+
 _resolve_installed_app() {
   local candidate
   local -a candidates=() valid=()
 
   if [[ -n "${HARNESS_APP_PATH:-}" ]]; then
     candidates=("$HARNESS_APP_PATH")
-  elif [[ "$RESOLVE_FIXTURES" -eq 1 ]]; then
+  elif [[ "$RESOLVE_FIXTURES" -eq 1 && ${#RESOLVE_FIXTURE_ROOTS[@]} -eq 0 ]]; then
     candidates=("${RESOLVE_FIXTURE_CANDIDATES[@]:-}")
   else
-    for candidate in /Applications/*.app "$HOME"/Applications/*.app; do
-      [[ -d "$candidate" ]] && candidates+=("$candidate")
+    local -a roots=(/Applications "$HOME/Applications")
+    [[ ${#RESOLVE_FIXTURE_ROOTS[@]} -gt 0 ]] && roots=("${RESOLVE_FIXTURE_ROOTS[@]}")
+    local install_root
+    for install_root in "${roots[@]}"; do
+      while IFS= read -r -d '' candidate; do
+        candidates+=("$candidate")
+      done < <(_discover_app_bundles "$install_root")
     done
   fi
 
@@ -170,6 +184,15 @@ while [[ $# -gt 0 ]]; do
       shift
       while [[ $# -gt 0 ]]; do
         RESOLVE_FIXTURE_CANDIDATES+=("$1")
+        shift
+      done
+      ;;
+    # Test-only: exercises the production recursive discovery beneath temporary roots.
+    --resolve-app-root-fixtures)
+      RESOLVE_FIXTURES=1
+      shift
+      while [[ $# -gt 0 ]]; do
+        RESOLVE_FIXTURE_ROOTS+=("$1")
         shift
       done
       ;;
@@ -653,9 +676,10 @@ sleep 1
 #     path and the singleton guard keeps exactly one of them alive: the app always
 #     ends up with a working :8700 either way.
 echo "[ship] starting the snapshot bridge (own session, detached from this script)"
+SHIP_NONCE="$("$DST/data/bridge-venv/bin/python" -c 'import secrets; print(secrets.token_hex(32))')"
 (
   cd "$DST"
-  nohup perl -MPOSIX -e '
+  HARNESS_LAUNCH_NONCE="$SHIP_NONCE" nohup perl -MPOSIX -e '
     my $s = POSIX::setsid();
     if (!defined($s) || $s < 0) {
       die "[ship] detach: setsid failed ($!) - refusing unsafe bridge launch\n";
@@ -669,6 +693,11 @@ echo "[ship] starting the snapshot bridge (own session, detached from this scrip
   # by this launch site, recorded before the bridge finishes its guarded import.
   bash "$DST/scripts/start_component.sh" --record-child bridge "$_bridge_child"
 )
+SHIP_CLAIM="$(_ownership_cli claim "$DST" bridge)" || {
+  echo "[ship] REFUSING to open: the bridge launch did not publish an ownership claim."
+  exit 1
+}
+SHIP_BRIDGE_PID="${SHIP_CLAIM%%$'\t'*}"
 # 90s, not 30: a cold snapshot bridge (imports + registry read) can legitimately
 # take longer than 30s.  GET /api/status is the control API's health truth; a static
 # page response only proves that something can serve HTML and must never turn green.
@@ -699,17 +728,28 @@ fi
 # A 2xx alone is not proof that OUR newly launched bridge answered. Bind the response
 # to the exact recorded child and validate the control-API shape before opening M.O.T.
 _served_pid="$(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null | head -1)"
-if [[ -z "$_served_pid" ]] || ! _bridge_owner_ok "$_served_pid"; then
+if [[ -z "$_served_pid" || "$_served_pid" != "$SHIP_BRIDGE_PID" ]] \
+   || ! _bridge_owner_ok "$_served_pid"; then
   echo "[ship] REFUSING to open: /api/status answered, but :8700 is not the exact bridge child this ship launched."
   exit 1
 fi
 STATUS_JSON="$(curl -sf -m 3 http://127.0.0.1:8700/api/status)"
+_served_after="$(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null | head -1)"
+if [[ "$_served_after" != "$SHIP_BRIDGE_PID" ]] \
+   || ! _ownership_cli matches "$DST" bridge "$SHIP_BRIDGE_PID" >/dev/null 2>&1; then
+  echo "[ship] REFUSING to open: :8700 changed owner while /api/status was read."
+  exit 1
+fi
 if ! printf '%s' "$STATUS_JSON" | "$DST/data/bridge-venv/bin/python" -c '
 import json, sys
+expected_nonce = sys.argv[1]
 value = json.load(sys.stdin)
-ok = isinstance(value, dict) and value.get("bridge") == "ok" and isinstance(value.get("components"), dict)
+ok = (isinstance(value, dict) and value.get("bridge") == "ok"
+      and value.get("bridge_schema") == 1
+      and value.get("launch_nonce") == expected_nonce
+      and isinstance(value.get("components"), dict))
 raise SystemExit(0 if ok else 1)
-'; then
+' "$SHIP_NONCE"; then
   echo "[ship] REFUSING to open: /api/status did not return the M.O.T control-API contract."
   exit 1
 fi
@@ -742,6 +782,7 @@ fi
 # is a different install. start_component.sh is a full restart by construction (stop
 # → listener-scoped port clear → re-seed guards → relaunch), so it does strictly more
 # than the panel's Stop/Start buttons.
+RESTART_FAILURES=()
 if [[ ${#RESTART[@]} -gt 0 ]]; then
   for _c in ${RESTART[@]+"${RESTART[@]}"}; do
     echo "[ship] restarting component '${_c}' FROM THE SNAPSHOT (${DST})"
@@ -749,8 +790,15 @@ if [[ ${#RESTART[@]} -gt 0 ]]; then
       echo "[ship] restarted: ${_c}"
     else
       echo "[ship] WARN: restart of '${_c}' FAILED (output above) — check ${DST}/data/logs/${_c}.log"
+      RESTART_FAILURES+=("$_c")
     fi
   done
+fi
+
+if [[ ${#RESTART_FAILURES[@]} -gt 0 ]]; then
+  echo "[ship] INCOMPLETE: the snapshot/app/bridge were shipped, but requested component restart(s) failed: ${RESTART_FAILURES[*]}"
+  echo "[ship] Resolve the named component logs and rerun the exact --restart request."
+  exit 1
 fi
 
 echo "[ship] REMINDER: components stay up - a vendored upgrade needs: ./scripts/ship.sh --restart <name>"

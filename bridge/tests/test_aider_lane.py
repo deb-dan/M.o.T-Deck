@@ -154,11 +154,15 @@ def test_env():
     ok("COLUMNS" not in env and "LINES" not in env,
        "COLUMNS/LINES removed — the winsize ioctl owns the size")
     ok(env["PATH"] == "/usr/bin", "the rest of the environment is inherited")
-    # A DUMMY KEY IS MANDATORY: an empty Bearer token fails the request before it
-    # reaches our runner (upstream states this for the LM Studio lane, same client).
+    # A provisioned key is mandatory: silently restoring the retired repository
+    # default would make the lane disagree with the runner after secret rotation.
     for empty in ("", "   ", None):
-        ok(P.aider_env({}, "u", empty)["OPENAI_API_KEY"] == "harness-local",
-           f"empty key backfilled: {empty!r}")
+        try:
+            P.aider_env({}, "u", empty)
+        except ValueError as exc:
+            ok("not provisioned" in str(exc), f"empty key refused: {empty!r}")
+        else:
+            ok(False, f"empty key must be refused: {empty!r}")
     ok(P.aider_env(None, "u", "k")["OPENAI_API_KEY"] == "k", "None base env is fine")
 
 

@@ -19,11 +19,15 @@ import time
 import yaml
 from .appctx import ROOT
 from . import ownership as _ownership
+from .localsecrets import overlay_config
 
 
 
 def cfg() -> dict:
-    return yaml.safe_load((ROOT / "harness.yaml").read_text())
+    data = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    if not isinstance(data, dict):
+        raise ValueError("harness.yaml root must be a mapping")
+    return overlay_config(data, ROOT)
 
 
 # ── THE RELEASE VERSION: ONE FILE, AND IT IS `VERSION` (U56, 2026-09-02) ──────
