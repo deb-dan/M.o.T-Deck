@@ -212,11 +212,24 @@ not merely the modified functions. Each row names and executes:
 4. reload, app restart and component restart behavior where state persists; and
 5. the visible refusal/recovery path when the downstream authority is unavailable.
 
-An HTTP/title smoke matrix is useful but cannot close a row. A login API test does not
-close a native login journey; a green component card does not close a prompt, generate,
-train, edit or delete journey; a DMG that mounts does not close clean-machine first run.
-Anything not executed is named as an unwalked assurance gap in UNFORGET and the release
-report. It is never silently promoted to “works” by test volume.
+**Affected is a hard scope boundary, not an invitation to re-qualify every vendored
+product on every release.** A healthy third-party surface whose M.O.T integration,
+credential handoff, route, lifecycle, configuration and UI entry were untouched is not
+required to run a fresh prompt, render, training job, edit or onboarding ceremony. Its
+own health and focused contracts remain the appropriate evidence for that release.
+User-owned authentication, optional configuration (including an unset Aux model), and
+an upstream first-use screen are not defects merely because the whole-app audit sees
+them. A full upstream workflow becomes mandatory only when M.O.T changed or claims the
+handoff that makes that workflow reachable, or when a concrete counterexample reopens
+it.
+
+An HTTP/title smoke matrix is useful but cannot close an **affected** row. A login API
+test does not close an affected native login journey; a green component card does not
+close an affected prompt, generate, train, edit or delete journey; a DMG that mounts
+does not close an affected clean-machine first run. Anything required by the slice but
+not executed is named as an unwalked assurance gap in UNFORGET and the release report.
+Unaffected third-party workflows are out of scope, not hidden gaps and not inferred
+product claims.
 
 **The incident (example, not the rule):** v1.5.81 correctly generated, stored, rotated
 and backend-verified Odysseus's protected admin password. The native tab still opened

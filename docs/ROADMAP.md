@@ -76,8 +76,10 @@ restored, printed, placed in a URL, or injected into browser JavaScript.
 The incident also made backend correctness and human reachability separate release
 contracts. Every affected native/sidebar/overlay entry now requires an installed-shell
 walk through its first meaningful action; health, HTTP 200, backend login and stored
-configuration remain smoke evidence only. The current whole-app boundary—including
-walked, conditional, visible-only and reproduced rows—is recorded in
+configuration remain smoke evidence only for that affected handoff. Untouched
+third-party workflows retain their own health/contracts and do not require a ceremonial
+prompt, render, training job or user-owned login on every release. The current whole-app
+boundary—including walked, unaffected, conditional and reproduced rows—is recorded in
 `docs/research/2026-09-06-human-entry-journey-audit.md` (U146).
 
 **Component isolation ladder.** Odysseus, Hermes, Goose (CLI + UI), and OpenCode each

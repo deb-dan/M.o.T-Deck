@@ -177,8 +177,11 @@
 > authoritative backend transition and the real installed-shell journey through every
 > affected native/sidebar/overlay entry to its first meaningful action. HTTP 200,
 > component health, a successful login API, or a mounted DMG is only a smoke check.
-> Unwalked human surfaces are explicit UNFORGET/report limits, never inferred green from
-> suite volume. Full matrix and the v1.5.81→v1.5.82 Odysseus incident are in
+> **Affected is the hard boundary:** do not demand a new prompt/render/train/edit inside
+> an untouched third-party app, and do not label user-owned login, optional unset state
+> (including Aux), or upstream onboarding as an M.O.T defect. Required-but-unwalked
+> affected surfaces are explicit UNFORGET/report limits, never inferred green from suite
+> volume. Full matrix and the v1.5.81→v1.5.82 Odysseus incident are in
 > docs/DOCTRINE-PROACTIVE-BUILD.md §12.**
 
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
