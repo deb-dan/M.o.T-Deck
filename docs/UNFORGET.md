@@ -354,6 +354,9 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 
 | # | Target | Finding | Urgency | Risk: Fix | Risk: No Fix | ROI | Blast Radius | Fix Effort | Status |
 |---|---|---|---|---|---|---|---|---|---|
+| U143 | 🧪 VERIFY | **v1.5.81 REMAINING-RELIABILITY RELEASE CANDIDATE.** Closure overlay for U51, U59, U71, U73, U87–U90, U94/U95, U106 and U130: real Goose minted-key provider journey with exact cleanup; clean/dirty-aware FAT provenance; protected managed secrets and argv removal; measured no-change cache decision; shared general bundle resolver; launched-bridge identity plus typed YAML boundary; one durable registry transaction; installed Aider parser proof; reversible OpenCode keys; suite-level pytest collection; bridge-owned Hermes recovery; and explicit operator-named legacy-process migration. | 🔴 CRITICAL | 🟡 High | 🔴 Critical | 🟠 Excellent | 🔴 16+ files | Large | `@status:release-candidate` installed journeys and a clean FAT control passed; final v1.5.81 ship, clean final seed inspection, complete gate rerun, and push remain. **Honest open limits:** U72, U91, U139 and U142. |
+| U142 | 🟡 LATER | **AUXILIARY RUNNER-KEY ROTATION NEEDS AN OWNER-AWARE ENDPOINT TRANSACTION.** U71 safely relocates the existing Aux key into the protected local store but deliberately does not rotate it: the consuming Odysseus Background Tasks endpoint can be user-created, M.O.T has no owner marker/update receipt/rollback adapter for it, and starting an intentionally stopped Aux model merely to prove a credential would violate lifecycle intent. Destination: classify only a positively M.O.T-managed endpoint, update its secret through Odysseus's API, verify new success + old rejection without starting stopped work, and roll back both sides on any inconclusive result. | 🟢 MEDIUM | 🟡 High | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:open` split explicitly from completed U71; never rotate a possibly user-owned endpoint by inference. |
+| U141 | ✅ CLOSED | **A RECOVERED TURN'S EXPLICIT STOP WAS MISLABELLED AS A RECOVERY FAILURE.** The first real U106 bridge-restart walk recovered the prompt and live Stop handle, and the bridge replayed `· interrupted` + `[DONE]`; however, the recovered-client catch block handled its own intentional AbortController cancellation as a broken transport and overwrote `interrupted (forced)` with “the bridge could not recover”. The same predicate existed in Direct/Agent recovery. Both recovered-turn constructors now carry a `reconnecting` diagnostic stage, and both catches suppress the error only when that exact turn is already explicitly ended/detached. Genuine reader failures remain visible. | 🟡 HIGH | ⚪ Low | 🟡 High | 🟠 Excellent | 🟢 2-5 files | Small | `@status:done-verified` commit `bc21f4d`; executable four-control test plus corrected installed walk: bridge replaced mid-Hermes turn, same prompt/partial thinking recovered, one durable user row, post-restart Stop rendered interrupted, no false recovery error, 10/10 healthy. |
 | U140 | ✅ CLOSED | **v1.5.80 CORRECTIVE RELIABILITY/PRESERVATION RELEASE CHECKPOINT.** This is the authoritative closure overlay for the candidate incident trail U82–U138: source-specific model membership without a second registry; semantic structure checks and row-bound confirmation; legacy audio dedupe; explicit-owned-root relocation repair; PID+kernel-birth launch provenance and signal-time revalidation; transactional WhatsApp disable; atomic YAML/registry state; bridge PID release; cross-site mutation fencing; Goose empty-session cleanup; read-only visible LOffice history; historical Odysseus unavailable-model labels; live model/OpenCode runtime truth; crash-recoverable app-owned model deletion; bounded durable Chat/Agent turns; selected-lane reload; full SSE grammar; asset-failure refusal; cold-status single flight; canonical snapshot root; and conflict-safe LOffice naming. The live U31 proof switched Chat→Hermes→Chat, reloaded mid-turn, restored the prompt/partial state, completed integers 1–80, and stored exactly one marked user/assistant pair. The full panel preservation audit found zero removed IDs, aria-labels or titled affordances since v1.5.76; the sessions divider retains its 8px hit target, `col-resize`, hover line, pointer capture and saved 120–560px width. U120 was crash-walked using only an app-owned scratch model and restored the registry byte-for-byte before a successful API delete. Full gate and real-stack evidence is in the v1.5.80 commit. | 🔴 CRITICAL | 🟡 High | 🔴 Critical | 🟠 Excellent | 🔴 16+ files | Large | `@status:done-verified` v1.5.80. **Honest limits intentionally not closed:** U87–U91, U94/U95, U106, U130 and U139 remain open; U51/U59/U71–U73 remain backlog. The U82–U138 rows below preserve the adversarial sequence and their former `candidate-unshipped` wording as historical checkpoints; this row supersedes those candidate labels for release status, not their lessons. |
 | U1 | 🟡 LATER | Odysseus vision ROOT CAUSE upstream (Debi ruling 2026-08-29): name-keyword detection + hard-coded 120s VL timeout; our pre-caption is a bridge, retire it when upstream fixes | 🟡 HIGH | 🟢 Medium | 🟢 Medium | 🟠 Excellent | 🟢 2-5 files | Medium | `@status:blocked` upstream issue/PR needs Debi's word (publishes under her account) |
 | U2 | 🟡 LATER | ~/.hermes shared-home ruling pending (component isolation vs standalone app, same class as the Unsloth ~/.unsloth fence) | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` awaiting Debi's ruling |
@@ -498,24 +501,24 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 
 ### 2026-09-05 implementation-candidate checkpoint (overrides stale “verify-still-open” prose above)
 
-Nothing in this checkpoint is `done-verified` until the installed-app journeys pass.
-The old row text remains as the historical defect report; these are the current
-candidate states:
+U140 is the authoritative v1.5.80 closure overlay. U143 is the current v1.5.81
+release-candidate overlay. The old row text remains as the historical defect report;
+do not run a historical `verify-still-open` command and infer that a released fix has
+regressed without first reading the applicable closure row.
 
-- Built and repository-gated: U24/U25/U66 plus U92 (locked launch provenance), U27,
-  U30, U31, U35, U37, U38, U59, U61, U62, U63, U82/U83/U84/U85, U86/U87/U88/U89/U90,
-  and U93 (WhatsApp quiescence). Their former “verify-still-open” commands are expected
-  to change on this working tree; that does not make them closed.
+- Done-verified in the installed v1.5.81 candidate: U51, U71, U73, U87–U90,
+  U94/U95, U106 and U130. U59's mechanism has both dirty-tree and clean FAT evidence;
+  final release packaging is still named in U143.
 - U75 remains useful *structural* validation, not proof a model will load. U83 adds
   GGUF/safetensors/MLX format structure but still reserves runnability for an engine
   load journey. U76 remains filesystem/mount availability; U82 separately adds manager
   membership only for LM Studio-owned rows.
-- U71 remains open: moving live credentials is a coordinated migration, not a safe
-  opportunistic edit. U72 remains open: a lightweight shell-string parser is rejected
+- U72 remains open: a lightweight shell-string parser is rejected
   because substitutions, heredocs, interpreters and subprocesses bypass it; a real OS
-  execution boundary or tool-owned structured target contract is required. U73 remains
-  measure-first. U51 still requires the user's explicit UI key-paste journey. U91,
-  U94 and U95 remain explicit follow-ups rather than implied coverage.
+  execution boundary or tool-owned structured target contract is required. U91 remains
+  conditional on a source inventory plus launch contract. U139 remains at-least-once
+  until Odysseus adds idempotent insertion. U142 owns the deliberately separate Aux-key
+  rotation transaction.
 - Hermes v2026.8.16 is the only conservative update candidate. The newer v2026.8.27
   remains blocked by the recorded incompatibility, and v2026.8.16 does not itself fix
   WhatsApp disable persistence.

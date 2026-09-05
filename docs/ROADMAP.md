@@ -7,7 +7,8 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.80** (see `VERSION`). Written 2026-09-05.
+Release candidate: **v1.5.81** (see `VERSION`). Written 2026-09-05. The version becomes
+the shipped current version only after the final clean ship/FAT journey below passes.
 
 ---
 
@@ -61,6 +62,13 @@ consume (`--api-key-file`, unions with the built-in key) plus an Unsloth-style A
 base URL, status, loaded model, route catalogue, honest request log split by lane — both
 sidebar-only like Help (S32, v1.5.68). A Help/USER-EXPLAINERS §API section documents it
 (v1.5.72).
+v1.5.81 moves M.O.T-managed launch credentials into one strict, atomic `0600` local
+secret store and blanks their live-YAML fields. Rotation is transactional across the
+managed Odysseus endpoint and every installed consumer; the runner key is no longer
+visible in process arguments. The real Goose Add Provider journey used one temporary
+minted key for a real 27B prompt, then removed only that key/provider and restored the
+original managed provider. Auxiliary-key rotation remains separate because its existing
+Odysseus Background Tasks endpoint may be user-owned (U142).
 
 **Component isolation ladder.** Odysseus, Hermes, Goose (CLI + UI), and OpenCode each
 gained a named local provider/config entry mirroring the full model registry, so picking
@@ -114,6 +122,13 @@ an older conflicting `loffice` history. Hermes WhatsApp disable now reconciles Y
 environment and owned process state transactionally while keeping credential deletion a
 separate explicit action. Goose empty-session cleanup, historical Odysseus unavailable-
 model labels, live-model reporting, and OpenCode runtime-catalog drift are also closed.
+v1.5.81 extends the same ownership principle to Hermes without creating another
+transcript: Hermes remains durable-session authority while the bridge owns bounded,
+redacted in-flight replay and Stop handles. Lane changes and page reloads detach viewers;
+a bridge restart reattaches to Hermes's current transcript/state and names the transient
+tool-card boundary. The installed journey recovered one live prompt/partial state across
+a real `ship.sh` bridge replacement, preserved one submission, and kept post-restart
+Stop honest.
 
 **Recovery and canonical-root independence.** v1.5.77 makes shipping resolve the app by
 its stable bundle identity rather than assuming its Finder filename; protects live YAML
@@ -124,6 +139,16 @@ and regenerates the native root config from the executing checkout. The real-sta
 proved 10/10 components green, exact 11-model catalog parity across dependent apps, a
 real authenticated runner turn, the installed Aider parser and pin, and zero active
 runtime references to the retained Claude archive (U69/U74/U77–U81).
+v1.5.81 replaces the remaining four-name compatibility list with one shared bundle-
+identity resolver used by shipping and VoiceBox wheelhouse discovery. It scans standard
+application roots, accepts renamed/nested/symlinked bundles only after canonical
+deduplication and id+executable validation, and fails closed on ambiguity. The launched
+bridge is bound to a nonce/schema/fingerprint, nullable manifest values cross one typed
+reader boundary, all registry writers use the same crash-durable transaction, installed
+Aider is checked through its real parser, OpenCode keys are reversible and collision-
+free, legacy standalone suites collect under pytest as suite-level cases, and the
+pre-provenance migration command requires an operator-named PID rather than inferring
+ownership.
 
 **API adherence and trust boundaries.** Every LLM-facing surface (office MCP catalog,
 lane routes, vision captions) was audited against 17 AI-friendly-API principles; the two
@@ -141,6 +166,10 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the ledger;
 the U82–U138 rows remain the adversarial incident trail explaining why each first
 candidate was rejected or narrowed, not unfinished release blockers.
+
+The v1.5.81 remaining-reliability wave has passed its repository and installed-stack
+journeys. U143 records the release candidate; the final clean ship, FAT seed check, and
+push are the only release mechanics still in progress.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
@@ -184,18 +213,18 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   the two remaining sighted call sites.
 - **Contrast:** `studio-light` under a dark theme pack drops sidebar text to ~2.3-2.5:1
   (A9) — a reachable but rare combination.
-- **Known reliability limits:** Direct Chat history persistence is at-least-once until
-  Odysseus exposes an idempotent insert primitive (U139); Hermes-lane generation is still
-  owned by the upstream browser request and does not yet inherit U31 durability (U106);
-  old pre-provenance installs need an explicit operator-visible migration command (U130).
-- **Security and breadth:** move static/plaintext secrets out of live YAML (U71); extend
-  the path guard to real shell execution boundaries rather than command-string parsing
-  (U72); add model-manager adapters only when M.O.T gains a launch/import contract for
-  them (U91). U73 remains measure-first prompt-cache performance work.
-- **Harness/product cleanup:** modernize the legacy standalone tests coherently (U95),
-  resolve possible OpenCode normalized-key collisions (U94), complete the manual Goose
-  minted-key Add Provider walk (U51), and prove dirty-tree seed stamping in the next fat
-  installer build (U59).
+- **Known reliability limit:** Direct Chat history persistence is at-least-once until
+  Odysseus exposes an idempotent insertion primitive (U139). M.O.T's request marker and
+  read-back close ordinary retries, but cannot make an independent database commit atomic.
+- **Security and breadth:** extend the path guard to a real shell execution boundary
+  rather than command-string parsing (U72); add a model-manager adapter only when M.O.T
+  has both an authoritative inventory and a launch contract for it (U91); design an
+  update/verify/rollback transaction before rotating a user-owned auxiliary endpoint key
+  (U142).
+- **Measured no-change:** the pinned runner retained two hostile, oversized prompt
+  prefixes with four-token warm evaluations; adding parallel/cache slots would add
+  memory/state without a reproduced benefit (U73). Re-measure on runner/cache-policy
+  change, not by calendar.
 - Digest-pinning the remaining tag-only installers (A13); Hermes v0.20.x update retry,
   parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office bump, parked on upstream's
   next release (P2).

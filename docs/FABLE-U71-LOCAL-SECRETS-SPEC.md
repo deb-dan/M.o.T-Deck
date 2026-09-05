@@ -1,7 +1,7 @@
 # U71 — local secret storage and explicit existing-install cutover
 
 **Date:** 2026-09-05  
-**Status:** implementation candidate; not shipped or versioned.
+**Status:** done-verified for M.O.T-managed credentials; auxiliary rotation is U142.
 
 ## Proven premise
 
@@ -87,3 +87,19 @@ U71 closes only after the canonical installed snapshot is migrated explicitly, a
 installed consumers restart through their proven ownership paths, old credentials are
 rejected, new credentials work, the YAML contains no secret, and a second migration is
 idempotent.
+
+## Installed-stack closure evidence
+
+The canonical snapshot was migrated explicitly. The four live manifest secret fields
+are blank, `data/.env.local` is a no-follow `0600` store, the runner secret no longer
+appears in its process arguments, and the migration is idempotent. Old managed runner
+credentials were rejected after restart; the protected key completed real Hermes-tool,
+Odysseus Agent, OpenCode, DeepSeek, VoiceStudio, and Goose UI requests. The Goose control
+used one newly minted temporary key/provider, received exactly `U51-GOOSE-KEY-OK`, then
+removed only that provider/key, restarted the runner, and proved zero remaining minted
+keys while restoring `MOT Deck (local)` on the original live model.
+
+The preserved auxiliary key was relocated, not rotated. M.O.T does not own the user's
+Odysseus Background Tasks endpoint row, so rotating that key without an update/verify/
+rollback adapter would be another partial transaction. That separate, explicit scope is
+recorded as U142; it does not reopen the completed M.O.T-managed secret migration.

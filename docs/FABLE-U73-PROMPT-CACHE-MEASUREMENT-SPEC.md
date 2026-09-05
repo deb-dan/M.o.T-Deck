@@ -1,7 +1,7 @@
 # U73 — measure prompt-cache behavior before reserving slots
 
 **Date:** 2026-09-05  
-**Status:** measured/no-change candidate; no launch-flag change is justified.
+**Status:** done-verified as measured/no-change; no launch flag was changed.
 
 ## Question
 

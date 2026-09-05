@@ -1,7 +1,7 @@
 # U106 — bridge-owned Hermes turns without a second transcript
 
 **Date:** 2026-09-05  
-**Status:** implementation candidate; not shipped or versioned.
+**Status:** done-verified on the installed stack; v1.5.81 release packaging pending.
 
 ## Proven premise
 
@@ -71,3 +71,20 @@ Focused tests may claim only bounded in-memory detach/reconnect behavior. U106 c
 only after the real installed Hermes journey completes without duplicate submission,
 the prompt and eventual answer survive lane switches, explicit Stop still works, and a
 bridge restart displays the exact stated persistence boundary.
+
+## Installed-stack closure evidence
+
+The first bridge-restart control deliberately found one remaining client bug: after
+the recovered Stop succeeded upstream, the recovery catch block overwrote the correct
+forced-interrupt stamp with a false transport-failure sentence. The backend replay was
+inspected directly and contained both `· interrupted` and `[DONE]`; Hermes was idle and
+the stored session contained one user row. The shared Chat/Agent and Hermes recovery
+predicates now suppress a recovery error only when their own turn is already explicitly
+ended, while a genuine reader failure remains visible. A permanent executable browser-
+logic test covers all four controls.
+
+The corrected live journey then sent one long Hermes prompt, ran the complete ship gate,
+replaced the bridge, reloaded M.O.T, and recovered the same prompt plus Hermes's partial
+thinking with the documented transient-card boundary. Stop remained available after
+adoption and ended the turn as `interrupted (forced)` with no recovery error. The stored
+session had exactly one user message and the full 10/10 component stack stayed healthy.
