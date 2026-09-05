@@ -172,6 +172,27 @@ def test_unreadable_frames_fail_visibly_without_killing_the_buffer():
     asyncio.run(journey())
 
 
+def test_named_upstream_error_is_the_terminal_reason_not_a_generic_eof():
+    async def journey():
+        store = TurnStore()
+
+        async def producer():
+            yield ('event: error\n'
+                   'data: {"status":502,"text":"generation repeated tokens",'
+                   '"error":"generation repeated tokens"}\n\n')
+
+        record, _ = await store.create(body())
+        await store.start(record["id"], producer)
+        final = await wait_terminal(store, record["id"])
+        assert final["state"] == "failed"
+        assert final["error"] == "generation repeated tokens"
+        events = await replay(store, record["id"])
+        assert events == [{"seq": 1, "type": "terminal", "state": "failed",
+                           "error": "generation repeated tokens"}]
+
+    asyncio.run(journey())
+
+
 def test_overflow_becomes_an_honest_terminal_failure(monkeypatch):
     async def journey():
         store = TurnStore()

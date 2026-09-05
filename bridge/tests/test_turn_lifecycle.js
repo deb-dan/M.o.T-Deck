@@ -316,6 +316,22 @@ for (const k of ['id', 'sid', 'mode', 'busy', 'model', 'stampModel', 'hermesSid'
     new RegExp('^\\s*' + k + ':', 'm').test(paneDecl));
 }
 
+/* U31 live journey, 2026-09-05: the producer survived a direct-Chat reload, but
+ * the document reset its chip to Agent and therefore never reconciled the active
+ * Chat turn until the user changed lanes manually.  Lane state is a whitelisted
+ * UI preference (no prompt/event content) and must be painted before first use. */
+const storedMode = grab('storedChatMode'), setMode = grab('setMode');
+check('reload restores only one of the three real chat lanes',
+  /localStorage\.getItem\('harness-chat-mode'\)/.test(storedMode)
+  && /\['agent', 'chat', 'hermes'\]\.includes\(value\)/.test(storedMode)
+  && /\? value : 'agent'/.test(storedMode));
+check('the pane starts from the validated persisted lane',
+  /mode: storedChatMode\(\)/.test(paneDecl));
+check('every lane switch persists the selected lane without making storage fatal',
+  /try \{ localStorage\.setItem\('harness-chat-mode', m\); \} catch \(_\) \{\}/.test(setMode));
+check('boot paints the restored lane before the Chat view is first opened',
+  /setMode\(chatPane\.mode\);[^\n]*U31/.test(html));
+
 /* NEGATIVE — no orphan remnants. The draft forbids compatibility shims by name:
  * "a shim is exactly how a missed call site stays silently wrong". A surviving
  * `let chatBusy` (aliased or not) would let a rethread miss go unnoticed. */

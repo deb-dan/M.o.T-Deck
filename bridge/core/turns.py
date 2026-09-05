@@ -194,6 +194,7 @@ class TurnStore:
     async def _run(self, turn_id: str,
                    factory: Callable[[], AsyncIterator[str | bytes]]) -> None:
         saw_done = False
+        upstream_error = ""
         buffer = ""
         try:
             async for raw in factory():
@@ -201,6 +202,9 @@ class TurnStore:
                 frames = buffer.split("\n\n")
                 buffer = frames.pop()
                 for frame in frames:
+                    event_name = next(
+                        (line[6:].strip() for line in frame.splitlines()
+                         if line.startswith("event:")), "")
                     for line in frame.splitlines():
                         if not line.startswith("data: "):
                             continue
@@ -215,13 +219,22 @@ class TurnStore:
                         except (json.JSONDecodeError, ValueError):
                             payload = {"type": "proxy_error",
                                        "error": "the producer emitted an unreadable event"}
-                        await self._append(turn_id, payload)
+                        if event_name == "error":
+                            # Odysseus uses a named SSE error event and then closes
+                            # without [DONE].  Retain its actual reason as terminal
+                            # state instead of replacing it with a generic EOF lie.
+                            reason = payload.get("error") or payload.get("text")
+                            upstream_error = str(reason or "the upstream agent failed")[:2000]
+                        else:
+                            await self._append(turn_id, payload)
                     if saw_done:
                         break
                 if saw_done:
                     break
             if saw_done:
                 await self._terminal(turn_id, "completed")
+            elif upstream_error:
+                await self._terminal(turn_id, "failed", upstream_error)
             else:
                 await self._terminal(turn_id, "failed",
                                      "the producer ended without a completion frame")

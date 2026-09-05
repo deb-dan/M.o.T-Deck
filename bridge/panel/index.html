@@ -4015,10 +4015,20 @@ async function clearLog(btn) {
    narrate a past bug now name the field rather than the global it used to be
    (`chatPane.busy` where the 2026-08-14 report says `chatBusy`, `chatPane.sid`
    for `chatSid`, and so on). One name to grep, one place to change. */
+/* The selected lane is UI state, not conversation content.  Persisting this one
+   whitelist value is what lets a reload return to the lane whose bridge-owned
+   turn is still running.  A missing/corrupt value keeps the product's original
+   Agent default; storage failure must never stop the panel boot. */
+function storedChatMode(){
+  let value = '';
+  try { value = localStorage.getItem('harness-chat-mode') || ''; } catch (_) {}
+  return ['agent', 'chat', 'hermes'].includes(value) ? value : 'agent';
+}
+
 const chatPane = {
   id: 'main',                  // the one instance; a second column would be 'b'
   sid: null,                   // Odysseus session id (what the rail selects)
-  mode: 'agent',               // lane: 'agent' | 'chat' | 'hermes'
+  mode: storedChatMode(),      // lane: 'agent' | 'chat' | 'hermes'
   busy: false,                 // a turn is in flight and owns this composer
   model: '',                   // last model echo seen on THIS pane's stream
   stampModel: '',              // last session model handed to stampFor()
@@ -5486,6 +5496,10 @@ function laneNote(m){
 }
 
 async function setMode(m) {
+  // Every caller is first-party, but keep persisted state on the same explicit
+  // whitelist as boot so a malformed/injected value can never create a fourth,
+  // half-rendered lane.
+  if (!['agent', 'chat', 'hermes'].includes(m)) m = 'agent';
   const prev = chatPane.mode;
   // U31: a Chat/Agent lane switch detaches only this pane's SSE subscription; the
   // bridge-owned producer continues and is reconciled when its lane/session is
@@ -5494,6 +5508,7 @@ async function setMode(m) {
   // path here that cancels upstream work.
   if (chatPane.busy && m !== prev) await detachTurnNow('lane switch');
   chatPane.mode = m;
+  try { localStorage.setItem('harness-chat-mode', m); } catch (_) {}
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
@@ -15631,6 +15646,7 @@ applySessionsRail();   // PHASE 1: restore persisted sessions-rail preference
 loadArtifactSplit();   // TASK A: restore persisted artifact split (default half)
 loadSessionsWidth();   // TASK A: restore persisted sessions-rail width
 loadCanvasSplit();     // CANVAS: restore persisted editor/preview split (default half)
+setMode(chatPane.mode); // U31: paint the persisted lane before Chat is first opened
 loadVoiceCfg();        // PHASE C: the composer's AUDIO chip reads the configured voice
 loadMusicView();       // MUSIC DECK: restore the persisted per-page view (classic default)
 renderSidebar();       // NAV: draw both rails from the INSTANT (localStorage) copy…
