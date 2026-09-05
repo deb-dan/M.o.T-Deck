@@ -80,6 +80,10 @@ def inspect(component: str, explicit_pid: int | None = None) -> int:
     birth = ownership.process_birth(pid)
     if not birth:
         print(f"[migration] pid {pid} is gone or its kernel birth cannot be proven; signalled nothing")
+        if not missing_report:
+            print("[migration] To retire only this exact dead report after a locked recheck:")
+            print(f"  ./scripts/migrate_legacy_process.py retire-stale-report {component} "
+                  f"--pid {pid} --acknowledge-stale-report")
         return 3
     command, cwd, listeners = _evidence(pid)
     print(f"[migration] component: {component}")
@@ -102,12 +106,13 @@ def inspect(component: str, explicit_pid: int | None = None) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("inspect", "terminate"))
+    parser.add_argument("action", choices=("inspect", "terminate", "retire-stale-report"))
     parser.add_argument("component")
     parser.add_argument("--pid", type=int)
     parser.add_argument("--birth")
     parser.add_argument("--acknowledge-unowned-process", action="store_true")
     parser.add_argument("--acknowledge-missing-pid-report", action="store_true")
+    parser.add_argument("--acknowledge-stale-report", action="store_true")
     args = parser.parse_args()
     try:
         ownership._paths(ROOT, args.component)  # validation only; grants no authority
@@ -115,6 +120,14 @@ def main() -> int:
         parser.error(str(exc))
     if args.action == "inspect":
         return inspect(args.component, args.pid)
+    if args.action == "retire-stale-report":
+        if not args.acknowledge_stale_report:
+            parser.error("retire-stale-report requires --acknowledge-stale-report")
+        if args.pid is None:
+            parser.error("retire-stale-report requires the exact --pid printed by inspect")
+        ok, detail = ownership.retire_stale_legacy_report(ROOT, args.component, args.pid)
+        print(f"[migration] {detail}")
+        return 0 if ok else 3
     if not args.acknowledge_unowned_process:
         parser.error("terminate requires --acknowledge-unowned-process")
     if args.pid is None or not args.birth:

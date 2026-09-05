@@ -138,10 +138,45 @@ def test_missing_report_ack_cannot_bypass_existing_mismatch(tmp_path):
         child.wait(timeout=3)
 
 
+def test_exact_dead_legacy_report_can_be_retired_without_signal(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "legacy.pid").write_text("999999\n")
+    ok, detail = ownership.retire_stale_legacy_report(tmp_path, "legacy", 999999)
+    assert ok and "signalled nothing" in detail
+    assert not (data / "legacy.pid").exists()
+
+
+def test_stale_report_retirement_refuses_live_mismatch_and_any_owner(tmp_path):
+    child = _child()
+    try:
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "legacy.pid").write_text(f"{child.pid}\n")
+        ok, detail = ownership.retire_stale_legacy_report(
+            tmp_path, "legacy", child.pid + 1)
+        assert not ok and "changed" in detail
+        ok, detail = ownership.retire_stale_legacy_report(
+            tmp_path, "legacy", child.pid)
+        assert not ok and "alive" in detail
+        (data / "legacy.owner").write_text("not-a-claim\n")
+        child.terminate()
+        child.wait(timeout=3)
+        ok, detail = ownership.retire_stale_legacy_report(
+            tmp_path, "legacy", child.pid)
+        assert not ok and "owner record exists" in detail
+        assert (data / "legacy.pid").exists()
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=3)
+
+
 def test_operator_command_requires_the_explicit_acknowledgement():
     src = (Path(__file__).resolve().parents[2] / "scripts"
            / "migrate_legacy_process.py").read_text()
     assert "--acknowledge-unowned-process" in src
     assert "--acknowledge-missing-pid-report" in src
+    assert "--acknowledge-stale-report" in src
     assert "os.killpg(" not in src and "signal.SIGKILL" not in src
     assert "corroborating evidence only" in src

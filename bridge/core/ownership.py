@@ -371,6 +371,31 @@ def terminate_legacy(root: Path, component: str, pid: int, birth: str,
         return True, f"terminated explicitly acknowledged legacy {component} pid {pid}"
 
 
+def retire_stale_legacy_report(root: Path, component: str,
+                               pid: int) -> tuple[bool, str]:
+    """Retire one exact dead legacy PID report without signalling any process.
+
+    This is deliberately separate from ``signal_owned`` and ``terminate_legacy``.
+    The report is removed only while the ownership lock proves that no owner entry
+    exists, the report still names the operator-inspected PID, and the kernel says no
+    process currently has that PID. A malformed owner/report or PID reuse fails closed.
+    """
+    pid = int(pid)
+    if pid <= 0:
+        return False, "an exact positive legacy PID is required"
+    with _locked(Path(root), component) as (owner, pidfile):
+        if _path_present(owner):
+            return False, ("an owner record exists; resolve it explicitly; retained the "
+                           "legacy PID report")
+        if not _pid_report_matches(pidfile, pid):
+            return False, "the legacy PID report changed; inspect again; retained it"
+        if process_birth(pid):
+            return False, (f"pid {pid} is alive or has been reused; inspect again; "
+                           "retained the legacy PID report")
+        pidfile.unlink(missing_ok=True)
+        return True, f"retired dead legacy {component} PID report {pid}; signalled nothing"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("claim", "record", "matches", "signal",
