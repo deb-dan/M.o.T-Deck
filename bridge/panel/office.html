@@ -8545,9 +8545,13 @@ function agentFrame(j, turn, held, steps) {
     // The bridge minted (or replaced) the gateway session and announced it BEFORE any
     // token — persist it here so the next question continues the same conversation,
     // and so does the next page load.
+    const nextStored = String((j && j.stored_id) || agentStored || '');
+    // Naming success belongs to one exact durable row. A reconnect can mint a new
+    // stored id even when this page carried an older one.
+    if (nextStored && nextStored !== agentStored) agentNamed = false;
     held.sid = String((j && j.id) || '');
     agentSid = held.sid;
-    agentStored = String((j && j.stored_id) || agentStored || '');
+    agentStored = nextStored;
     try { localStorage.setItem(LS_AGENT_SID, agentSid);
           localStorage.setItem(LS_AGENT_STORED, agentStored); } catch (e) { /* private */ }
     bx('agent-session', agentSid + ' stored=' + (agentStored || 'none'));
@@ -8623,7 +8627,9 @@ async function agentName() {
       body: JSON.stringify({ name: AGENT_SESSION_NAME }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || ('the bridge answered ' + r.status));
+    if (!r.ok || j.ok !== true) {
+      throw new Error(j.error || 'the bridge refused the session name');
+    }
     agentNamed = true;
     bx('agent-named', AGENT_SESSION_NAME + ' ' + agentStored);
   } catch (e) {
@@ -10114,7 +10120,9 @@ async function boot() {
     if (localStorage.getItem(LS_LANE) === LANE_AGENT) laneWant = LANE_AGENT;
     agentSid = localStorage.getItem(LS_AGENT_SID) || '';
     agentStored = localStorage.getItem(LS_AGENT_STORED) || '';
-    agentNamed = !!agentStored;   // an id we already had was already named
+    // An id proves continuity, not its title. Rename is idempotent after the next
+    // durable turn, and only its accepted response establishes naming success.
+    agentNamed = false;
   } catch (e) { /* private mode: the defaults stand */ }
   railSetOpen(railWant, 'boot');
   // The AI panel is OPEN unless it was closed on purpose. A capability nobody can see

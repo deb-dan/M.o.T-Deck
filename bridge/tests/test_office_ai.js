@@ -2177,7 +2177,7 @@ check('…renamed through the EXISTING rename route, on the DURABLE id (the gate
 check('…once, and never load-bearing: a rename that fails costs a beacon and remains '
       + 'retryable rather than being logged as success',
       /if \(agentNamed \|\| agentNaming \|\| !agentStored\) return;/.test(grab('agentName'))
-      && /if \(!r\.ok\) throw new Error/.test(grab('agentName'))
+      && /if \(!r\.ok \|\| j\.ok !== true\)/.test(grab('agentName'))
       && /agentNamed = false/.test(grab('agentName'))
       && /agent-name-fail/.test(code));
 check('…only after the durable turn work completes, so first-turn auto-title cannot '
@@ -2209,13 +2209,15 @@ check('…and `clear` forgets it, because on this lane the history is not only o
       + '— Hermes is holding it',
       /agentSid = ''; agentStored = ''; agentNamed = false;/.test(code)
       && /removeItem\(LS_AGENT_SID\)/.test(code));
+check('a restored durable id never masquerades as evidence that its title is right',
+      /agentStored = localStorage\.getItem\(LS_AGENT_STORED\) \|\| '';[\s\S]*agentNamed = false;/.test(grab('boot')));
 
 // THE FRAME VOCABULARY, EXECUTED against the exact frames bridge/app.py's
 // hermes_event_to_frames emits. A frame this page silently dropped would be a turn that
 // looked dead.
 {
   let named = 0, cards = [], status = '', beacons = [];
-  let agentSid = '', agentStored = '';         // the fn assigns to these
+  let agentSid = '', agentStored = '', agentNamed = false; // the fn assigns to these
   const store = {};
   const localStorage = { setItem: (k, v) => { store[k] = v; }, getItem: k => store[k] };
   const bx = (s, d) => beacons.push(s + ':' + d);
@@ -2236,10 +2238,14 @@ check('…and `clear` forgets it, because on this lane the history is not only o
   eq('the hermes_session frame is where the sid comes from — announced BEFORE any token',
      [held.sid, store.k1, store.k2], ['S9', 'S9', 'D9']);
   eq('…and it does NOT rename before the first turn is durable', named, 0);
+  agentNamed = true;
+  agentFrame({ type: 'hermes_session', id: 'S10', stored_id: 'D10' }, turn, held, steps);
+  eq('a replacement durable id invalidates naming success from the previous row',
+     [agentStored, agentNamed], ['D10', false]);
   agentFrame({ type: 'approval', request: { command: 'c', choices: ['once', 'deny'] } },
              turn, held, steps);
   eq('an approval frame draws a card, in the session THAT TURN owns',
-     [cards.length, cards[0].sid], [1, 'S9']);
+     [cards.length, cards[0].sid], [1, 'S10']);
   agentFrame({ type: 'tool_start', tool: 'office_read' }, turn, held, steps);
   eq('a tool_start is recorded as a step and said on the status line',
      [steps.slice(), /office_read/.test(status)], [['office_read'], true]);
