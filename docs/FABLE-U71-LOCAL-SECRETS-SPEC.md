@@ -103,3 +103,10 @@ The preserved auxiliary key was relocated, not rotated. M.O.T does not own the u
 Odysseus Background Tasks endpoint row, so rotating that key without an update/verify/
 rollback adapter would be another partial transaction. That separate, explicit scope is
 recorded as U142; it does not reopen the completed M.O.T-managed secret migration.
+
+Post-journey cleanup found one non-secret upstream Goose residue: its confirmed provider
+deletion removed the temporary provider definition but left that provider's inert
+enable/model stanza in Goose's own `config.yaml`. The exact temporary stanza was removed;
+the original provider/model remained active, its definition remained intact, Goose's
+secret store was empty, and M.O.T still reported zero minted keys. The repeatable
+upstream cleanup gap is recorded separately as U144 rather than hidden beneath U51.

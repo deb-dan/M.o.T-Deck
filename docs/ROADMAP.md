@@ -7,8 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Release candidate: **v1.5.81** (see `VERSION`). Written 2026-09-05. The version becomes
-the shipped current version only after the final clean ship/FAT journey below passes.
+Current version: **v1.5.81** (see `VERSION`). Written 2026-09-05.
 
 ---
 
@@ -167,9 +166,9 @@ The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the le
 the U82–U138 rows remain the adversarial incident trail explaining why each first
 candidate was rejected or narrowed, not unfinished release blockers.
 
-The v1.5.81 remaining-reliability wave has passed its repository and installed-stack
-journeys. U143 records the release candidate; the final clean ship, FAT seed check, and
-push are the only release mechanics still in progress.
+The v1.5.81 remaining-reliability wave is shipped. U143 records its full repository,
+installed-stack, Goose UI, and clean FAT evidence. No open item below is concealed by
+that release claim.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
@@ -220,7 +219,8 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   rather than command-string parsing (U72); add a model-manager adapter only when M.O.T
   has both an authoritative inventory and a launch contract for it (U91); design an
   update/verify/rollback transaction before rotating a user-owned auxiliary endpoint key
-  (U142).
+  (U142); and make Goose provider deletion remove its inert config stanza through an
+  upstream-supported transaction (U144).
 - **Measured no-change:** the pinned runner retained two hostile, oversized prompt
   prefixes with four-token warm evaluations; adding parallel/cache slots would add
   memory/state without a reproduced benefit (U73). Re-measure on runner/cache-policy

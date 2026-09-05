@@ -1,7 +1,7 @@
 # U106 — bridge-owned Hermes turns without a second transcript
 
 **Date:** 2026-09-05  
-**Status:** done-verified on the installed stack; v1.5.81 release packaging pending.
+**Status:** done-verified in v1.5.81.
 
 ## Proven premise
 
@@ -88,3 +88,18 @@ replaced the bridge, reloaded M.O.T, and recovered the same prompt plus Hermes's
 thinking with the documented transient-card boundary. Stop remained available after
 adoption and ended the turn as `interrupted (forced)` with no recovery error. The stored
 session had exactly one user message and the full 10/10 component stack stayed healthy.
+
+## Why Unsloth does not have this client defect
+
+The comparison was made against Unsloth `main` commit
+`ecb20837374c52db082bab179bb90f815d68322f` (2026-09-05), not against its product
+description. `unsloth start hermes` builds a native `hermes` command, gives that child a
+private `HERMES_HOME`, and waits on it with `subprocess.run`; its Studio UI is a launcher
+and inference server, not an embedded Hermes transcript client. It therefore has no
+counterpart to M.O.T's recovery fetch or browser `AbortController` and cannot exhibit
+this exact false client-side recovery label.
+
+M.O.T deliberately provides a unified in-app Hermes lane, so M.O.T owns that additional
+client lifecycle. The v1.5.81 change is a correction to that owned adapter—not a patch
+to Hermes, a fork of Hermes, or a substitute transcript. `vendor/hermes` remains
+unmodified; Hermes remains the durable session and interrupt authority.

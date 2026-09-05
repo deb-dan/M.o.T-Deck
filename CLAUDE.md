@@ -1,6 +1,6 @@
 # New Harness — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-05, v1.5.81 remaining-reliability wave in final release QA) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-05, v1.5.81 remaining-reliability wave shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -33,7 +33,8 @@
 > explicit legacy-process migration; a measured no-change decision for prompt-cache slots;
 > and the real Goose minted-key journey. Exact-once Direct-history writes remain U139;
 > shell execution confinement remains U72; non-LM-Studio source adapters remain conditional
-> on an inventory plus launch contract (U91); and auxiliary-key rotation remains U142. Read
+> on an inventory plus launch contract (U91); auxiliary-key rotation remains U142; and
+> Goose's upstream provider deletion may leave an inert config stanza (U144). Read
 > `docs/ROADMAP.md` for the full picture before treating the older banners below as current.
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
