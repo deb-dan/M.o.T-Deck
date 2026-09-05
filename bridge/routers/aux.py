@@ -21,7 +21,7 @@ import time
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
-from ..core.modelreg import artifact_probe
+from ..core.modelreg import artifact_probe, is_source_unlisted
 from ..core.procs import NO_PIDFILE_NOTE, _port_alive_sync, cfg, write_pidfile
 from ..core.yamlset import _set_yaml_model
 from .models import _aux_kill, _fit_advice, _reject_if_audio, foreign_runner_gate
@@ -42,6 +42,10 @@ async def aux_set(req: Request) -> JSONResponse:
     entry = next((m for m in models if m.get("id") == new_id), None)
     if entry is None:
         return JSONResponse({"ok": False, "log": f"aux model '{new_id}' not in registry"}, status_code=400)
+    if is_source_unlisted(entry):
+        return JSONResponse({"ok": False,
+                             "log": f"aux model '{new_id}' is no longer listed by its source manager. Rescan or pick another model"},
+                            status_code=409)
     probe = artifact_probe(entry)
     if probe["state"] != "ready":
         status = 400 if probe["state"] == "missing" else 409
@@ -72,6 +76,10 @@ def aux_start(req: Request) -> JSONResponse:
     m = next((x for x in models if x.get("id") == model), None)
     if not m or not m.get("path"):
         return JSONResponse({"ok": False, "log": f"aux model '{model}' not in registry"}, status_code=400)
+    if is_source_unlisted(m):
+        return JSONResponse({"ok": False,
+                             "log": f"aux model '{model}' is no longer listed by its source manager. Rescan or pick another model"},
+                            status_code=409)
     probe = artifact_probe(m)
     if probe["state"] != "ready":
         return JSONResponse(

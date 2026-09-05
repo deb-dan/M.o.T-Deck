@@ -19,19 +19,30 @@ SR = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(SR)
 
 
-def gguf(tmp_path, name="model.gguf", data=b"x", **extra):
+def gguf_bytes(version=3):
+    return b"GGUF" + int(version).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2
+
+
+def safetensors_bytes():
+    header = json.dumps({"weight": {
+        "dtype": "F32", "shape": [1], "data_offsets": [0, 4],
+    }}, separators=(",", ":")).encode()
+    return len(header).to_bytes(8, "little") + header + b"\0\0\0\0"
+
+
+def gguf(tmp_path, name="model.gguf", data=None, **extra):
     p = tmp_path / name
-    p.write_bytes(data)
+    p.write_bytes(gguf_bytes() if data is None else data)
     return {"id": p.stem, "format": "gguf", "path": str(p), **extra}
 
 
-def mlx(tmp_path, *, config="{}", weights=("model.safetensors",)):
+def mlx(tmp_path, *, config='{"model_type":"unit-test"}', weights=("model.safetensors",)):
     d = tmp_path / "model-mlx"
     d.mkdir()
     if config is not None:
         (d / "config.json").write_text(config)
     for name in weights:
-        (d / name).write_bytes(b"x")
+        (d / name).write_bytes(safetensors_bytes())
     return {"id": "mlx", "format": "mlx", "path": str(d)}
 
 
@@ -41,7 +52,7 @@ def test_gguf_single_split_projection_and_lmstudio_grouping(tmp_path):
     assert single["evidence"]["manifest"] == {"kind": "gguf", "files": ["model.gguf"]}
     assert MR.artifact_probe(gguf(tmp_path, "zero.gguf", b""))["state"] == "incomplete"
     d = tmp_path / "split"; d.mkdir()
-    for n in (1, 2, 3): (d / f"q-0000{n}-of-00003.gguf").write_bytes(b"x")
+    for n in (1, 2, 3): (d / f"q-0000{n}-of-00003.gguf").write_bytes(gguf_bytes())
     split = {"id": "q", "format": "gguf", "path": str(d / "q-00001-of-00003.gguf")}
     assert MR.artifact_probe(split)["state"] == "ready"
     (d / "q-00002-of-00003.gguf").unlink()
@@ -53,20 +64,38 @@ def test_gguf_single_split_projection_and_lmstudio_grouping(tmp_path):
     assert MR.artifact_probe(projected)["reason"] == "missing-mmproj"
     projection.write_bytes(b"")
     assert MR.artifact_probe(projected)["reason"] == "invalid-mmproj"
-    projection.write_bytes(b"x")
+    projection.write_bytes(gguf_bytes())
     assert MR.artifact_probe(projected)["state"] == "ready"
     for invalid in (True, [], {}):
         assert MR.artifact_probe(gguf(tmp_path, f"bad-{type(invalid).__name__}.gguf", mmproj=invalid))["reason"] == "invalid-mmproj"
     lms = tmp_path / "lms" / "pub" / "q"; lms.mkdir(parents=True)
-    for n in (1, 2): (lms / f"q-0000{n}-of-00002.gguf").write_bytes(b"x")
+    for n in (1, 2): (lms / f"q-0000{n}-of-00002.gguf").write_bytes(gguf_bytes())
     rows = SR.scan_lmstudio(str(tmp_path / "lms"))
-    assert [(r["id"], r["size_bytes"]) for r in rows] == [("q", 2)]
+    assert [(r["id"], r["size_bytes"]) for r in rows] == [("q", len(gguf_bytes()) * 2)]
+
+
+def test_structural_probe_rejects_nonempty_garbage_and_malformed_headers(tmp_path):
+    assert MR.artifact_probe(gguf(tmp_path, "one-byte.gguf", b"x"))["reason"] == "invalid-header"
+    assert MR.artifact_probe(gguf(tmp_path, "bad-magic.gguf", b"NOPE" + gguf_bytes()[4:]))["reason"] == "invalid-header"
+    assert MR.artifact_probe(gguf(tmp_path, "future.gguf", gguf_bytes(99)))["reason"] == "invalid-header"
+
+    bad_weight = mlx(tmp_path)
+    weight = tmp_path / "model-mlx" / "model.safetensors"
+    weight.write_bytes(b"x")
+    assert MR.artifact_probe(bad_weight)["reason"] == "invalid-weight"
+    weight.write_bytes((999).to_bytes(8, "little") + b"{}")
+    assert MR.artifact_probe(bad_weight)["reason"] == "invalid-weight"
+    weight.write_bytes(safetensors_bytes())
+    (tmp_path / "model-mlx" / "config.json").write_text("{}")
+    assert MR.artifact_probe(bad_weight)["reason"] == "invalid-config"
 
 
 @pytest.mark.parametrize("config,weights,reason", [
     (None, (), "missing-config"), ("", ("model.safetensors",), "invalid-config"),
     ("[]", ("model.safetensors",), "invalid-config"), ("{", ("model.safetensors",), "invalid-config"),
-    ("{}", (), "missing-weight"), ("{}", ("model.safetensors",), "ready"),
+    ("{}", (), "invalid-config"), ("{}", ("model.safetensors",), "invalid-config"),
+    ('{"model_type":"unit-test"}', (), "missing-weight"),
+    ('{"model_type":"unit-test"}', ("model.safetensors",), "structurally-ready"),
 ])
 def test_mlx_config_and_weight_matrix(tmp_path, config, weights, reason):
     assert MR.artifact_probe(mlx(tmp_path, config=config, weights=weights))["reason"] == reason
@@ -86,7 +115,7 @@ def test_mlx_indexes_shards_and_ordinary_multifile(tmp_path):
     assert MR.artifact_probe(row)["reason"] == "missing-indexed-shard"
     (d / "b.safetensors").write_bytes(b"")
     assert MR.artifact_probe(row)["reason"] == "invalid-indexed-shard"
-    (d / "b.safetensors").write_bytes(b"x")
+    (d / "b.safetensors").write_bytes(safetensors_bytes())
     (d / "model.safetensors.index.json").write_text("{")
     assert MR.artifact_probe(row)["reason"] == "invalid-index"
     (d / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {}}))
@@ -102,7 +131,7 @@ def test_mlx_indexes_shards_and_ordinary_multifile(tmp_path):
         assert MR.artifact_probe(row)["reason"] == "invalid-index-target"
     (d / "model.safetensors.index.json").unlink()
     (d / "a.safetensors").unlink(); (d / "b.safetensors").unlink()
-    for n in (1, 2): (d / f"w-0000{n}-of-00002.safetensors").write_bytes(b"x")
+    for n in (1, 2): (d / f"w-0000{n}-of-00002.safetensors").write_bytes(safetensors_bytes())
     assert MR.artifact_probe(row)["state"] == "ready"
     (d / "w-00002-of-00002.safetensors").write_bytes(b"")
     assert MR.artifact_probe(row)["reason"] == "invalid-shard"
@@ -117,12 +146,12 @@ def test_mlx_zero_weight_is_incomplete(tmp_path):
 def test_wrong_root_kind_invalid_shard_names_and_unreadable_metadata(tmp_path, monkeypatch):
     wrong_gguf = tmp_path / "wrong.gguf"; wrong_gguf.mkdir()
     assert MR.artifact_probe({"format": "gguf", "path": str(wrong_gguf)})["reason"] == "wrong-kind"
-    wrong_mlx = tmp_path / "wrong-mlx"; wrong_mlx.write_bytes(b"x")
+    wrong_mlx = tmp_path / "wrong-mlx"; wrong_mlx.write_bytes(safetensors_bytes())
     assert MR.artifact_probe({"format": "mlx", "path": str(wrong_mlx)})["reason"] == "wrong-kind"
     for name in ("q-00000-of-00003.gguf", "q-00004-of-00003.gguf", "q-00001-of-00000.gguf"):
         assert MR.artifact_probe(gguf(tmp_path, name))["reason"] == "invalid-shard-name"
     invalid_lms = tmp_path / "lms" / "pub" / "bad"; invalid_lms.mkdir(parents=True)
-    (invalid_lms / "q-00000-of-00003.gguf").write_bytes(b"x")
+    (invalid_lms / "q-00000-of-00003.gguf").write_bytes(gguf_bytes())
     assert SR.scan_lmstudio(str(tmp_path / "lms")) == []
     row = mlx(tmp_path)
     real_stat = MR.os.stat

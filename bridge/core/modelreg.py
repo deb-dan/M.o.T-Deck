@@ -34,6 +34,7 @@ import json
 import os
 import re
 import stat as _stat
+import struct
 import threading
 from contextlib import contextmanager
 import fcntl
@@ -95,7 +96,7 @@ def _verdict(state, reason, detail, evidence=None):
 
 
 def _stat_required(path, label, *, missing_reason, invalid_reason):
-    """A cheap regular/non-empty direct-file check for the shared probe."""
+    """A regular/non-empty direct-file check used before format validation."""
     try:
         st = os.stat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -107,6 +108,76 @@ def _stat_required(path, label, *, missing_reason, invalid_reason):
     if not _stat.S_ISREG(st.st_mode) or st.st_size <= 0:
         return None, _verdict("incomplete", invalid_reason, f"{label} is empty or not a file")
     return st, None
+
+
+def _gguf_header(path, label, *, invalid_reason):
+    """Validate the fixed GGUF prefix without parsing or loading tensor data."""
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(24)
+    except OSError:
+        return _verdict("unknown", "unreadable", f"could not read {label}")
+    if len(header) < 24 or header[:4] != b"GGUF":
+        return _verdict("incomplete", invalid_reason, f"{label} has no valid GGUF header")
+    version = int.from_bytes(header[4:8], "little")
+    if version not in (1, 2, 3):
+        return _verdict("incomplete", invalid_reason,
+                        f"{label} uses an unsupported GGUF version")
+    return None
+
+
+def _safetensors_header(path, label, *, invalid_reason):
+    """Validate a safetensors header and each tensor's declared byte interval."""
+    try:
+        size = os.stat(path).st_size
+        with open(path, "rb") as fh:
+            prefix = fh.read(8)
+            if len(prefix) != 8:
+                raise ValueError("truncated length")
+            header_len = struct.unpack("<Q", prefix)[0]
+            if header_len < 2 or header_len > 100_000_000 or header_len > size - 8:
+                raise ValueError("header length is outside the file")
+            raw = fh.read(header_len)
+        header = json.loads(raw.decode("utf-8"))
+        if not isinstance(header, dict):
+            raise ValueError("header is not an object")
+        tensors = [(name, spec) for name, spec in header.items() if name != "__metadata__"]
+        if not tensors:
+            raise ValueError("header has no tensors")
+        payload = size - 8 - header_len
+        for name, spec in tensors:
+            if not isinstance(name, str) or not name or not isinstance(spec, dict):
+                raise ValueError("tensor entry is malformed")
+            dtype, shape, offsets = spec.get("dtype"), spec.get("shape"), spec.get("data_offsets")
+            if not isinstance(dtype, str) or not dtype:
+                raise ValueError("tensor dtype is absent")
+            if (not isinstance(shape, list)
+                    or any(isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in shape)):
+                raise ValueError("tensor shape is malformed")
+            if (not isinstance(offsets, list) or len(offsets) != 2
+                    or any(isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in offsets)
+                    or offsets[0] > offsets[1] or offsets[1] > payload):
+                raise ValueError("tensor byte interval is malformed")
+    except OSError:
+        return _verdict("unknown", "unreadable", f"could not read {label}")
+    except (UnicodeError, ValueError, TypeError, struct.error):
+        return _verdict("incomplete", invalid_reason,
+                        f"{label} has no valid safetensors header")
+    return None
+
+
+def _mlx_config_has_identity(config):
+    """Require an architecture signal, not merely a syntactically valid JSON object."""
+    if not isinstance(config, dict) or not config:
+        return False
+    if isinstance(config.get("model_type"), str) and config["model_type"].strip():
+        return True
+    architectures = config.get("architectures")
+    if (isinstance(architectures, list) and architectures
+            and all(isinstance(item, str) and item.strip() for item in architectures)):
+        return True
+    text = config.get("text_config")
+    return isinstance(text, dict) and _mlx_config_has_identity(text)
 
 
 def split_gguf_group(name: str):
@@ -138,10 +209,11 @@ def _audio_type_present(path, fmt):
 
 
 def artifact_probe(entry: dict) -> dict:
-    """Cheap, read-only integrity verdict for one chat GGUF or MLX artifact.
+    """Read-only structural verdict for one chat GGUF or MLX artifact.
 
-    The probe intentionally reads only direct metadata: one directory listing, tiny JSON
-    manifests and direct stats. It never hashes or recursively sizes model weights.
+    This verifies required files plus GGUF/safetensors headers and an MLX architecture
+    declaration. It deliberately does not claim semantic correctness or runnability:
+    only the serving engine can establish those by loading the full artifact.
     """
     if not isinstance(entry, dict):
         return _verdict("unknown", "invalid-entry", "model entry is not readable")
@@ -181,8 +253,9 @@ def artifact_probe(entry: dict) -> dict:
             return _verdict("unknown", "unreadable", "could not read config.json")
         except (ValueError, TypeError):
             return _verdict("incomplete", "invalid-config", "config.json is not valid JSON")
-        if not isinstance(cfg, dict):
-            return _verdict("incomplete", "invalid-config", "config.json is not a JSON object")
+        if not _mlx_config_has_identity(cfg):
+            return _verdict("incomplete", "invalid-config",
+                            "config.json has no model architecture identity")
         names = sorted(names)
         weights = [n for n in names if n.endswith(".safetensors")]
         if not weights:
@@ -194,7 +267,9 @@ def artifact_probe(entry: dict) -> dict:
             for n in weights:
                 st, _ = _stat_required(os.path.join(path, n), n, missing_reason="missing-weight",
                                        invalid_reason="invalid-weight")
-                valid_weight = valid_weight or st is not None
+                if st is not None and _safetensors_header(
+                        os.path.join(path, n), n, invalid_reason="invalid-weight") is None:
+                    valid_weight = True
             if not valid_weight:
                 return _verdict("incomplete", "invalid-weight", "MLX model has no usable weight file")
             for n in indexes:
@@ -222,9 +297,14 @@ def artifact_probe(entry: dict) -> dict:
                                         f"{n} names an invalid weight path")
                     targets.append(target)
                 for target in sorted(set(targets)):
-                    _, bad = _stat_required(os.path.join(path, target), target,
+                    target_path = os.path.join(path, target)
+                    _, bad = _stat_required(target_path, target,
                                             missing_reason="missing-indexed-shard",
                                             invalid_reason="invalid-indexed-shard")
+                    if bad:
+                        return bad
+                    bad = _safetensors_header(target_path, target,
+                                              invalid_reason="invalid-indexed-shard")
                     if bad:
                         return bad
                     required.add(target)
@@ -242,19 +322,28 @@ def artifact_probe(entry: dict) -> dict:
             for n in weights:
                 if n in grouped:
                     continue
-                _, bad = _stat_required(os.path.join(path, n), n, missing_reason="missing-weight",
+                weight_path = os.path.join(path, n)
+                _, bad = _stat_required(weight_path, n, missing_reason="missing-weight",
                                         invalid_reason="invalid-weight")
+                if bad:
+                    return bad
+                bad = _safetensors_header(weight_path, n, invalid_reason="invalid-weight")
                 if bad:
                     return bad
                 required.add(n)
             for (prefix, total) in groups:
                 for shard in _shard_names(prefix, total, ".safetensors"):
-                    _, bad = _stat_required(os.path.join(path, shard), shard,
+                    shard_path = os.path.join(path, shard)
+                    _, bad = _stat_required(shard_path, shard,
                                             missing_reason="missing-shard", invalid_reason="invalid-shard")
                     if bad:
                         return bad
+                    bad = _safetensors_header(shard_path, shard,
+                                              invalid_reason="invalid-shard")
+                    if bad:
+                        return bad
                     required.add(shard)
-        return _verdict("ready", "ready", "model artifact is ready", {
+        return _verdict("ready", "structurally-ready", "model artifact is structurally ready", {
             "v": 1, "real_path": os.path.realpath(path), "device": root.st_dev,
             "manifest": {"kind": "mlx", "files": sorted(required)}})
     if not _stat.S_ISREG(root.st_mode):
@@ -269,12 +358,20 @@ def artifact_probe(entry: dict) -> dict:
         required = _shard_names(group[0], group[1], ".gguf")
         parent = os.path.dirname(path)
         for shard in required:
-            _, bad = _stat_required(os.path.join(parent, shard), shard,
+            shard_path = os.path.join(parent, shard)
+            _, bad = _stat_required(shard_path, shard,
                                     missing_reason="missing-shard", invalid_reason="invalid-shard")
+            if bad:
+                return bad
+            bad = _gguf_header(shard_path, shard, invalid_reason="invalid-shard")
             if bad:
                 return bad
     elif root.st_size <= 0:
         return _verdict("incomplete", "empty-file", "GGUF model file is empty")
+    else:
+        bad = _gguf_header(path, name, invalid_reason="invalid-header")
+        if bad:
+            return bad
     mmproj = entry.get("mmproj")
     if mmproj not in (None, "") and not isinstance(mmproj, str):
         return _verdict("incomplete", "invalid-mmproj", "projection file path is invalid")
@@ -283,8 +380,11 @@ def artifact_probe(entry: dict) -> dict:
                                 invalid_reason="invalid-mmproj")
         if bad:
             return bad
+        bad = _gguf_header(mmproj, "projection file", invalid_reason="invalid-mmproj")
+        if bad:
+            return bad
         required.append(os.path.basename(mmproj))
-    return _verdict("ready", "ready", "model artifact is ready", {
+    return _verdict("ready", "structurally-ready", "model artifact is structurally ready", {
         "v": 1, "real_path": os.path.realpath(path), "device": root.st_dev,
         "manifest": {"kind": "gguf", "files": required}})
 
@@ -414,6 +514,16 @@ def is_absent(m: dict) -> bool:
     return isinstance(m, dict) and m.get(ABSENT_KEY) is True
 
 
+def source_membership(m: dict) -> str:
+    """Validated external-manager membership carried by the registry row."""
+    value = m.get("source_membership") if isinstance(m, dict) else None
+    return value if value in ("listed", "unlisted") else "unknown"
+
+
+def is_source_unlisted(m: dict) -> bool:
+    return source_membership(m) == "unlisted"
+
+
 def is_audio(m: dict) -> bool:
     """Audio (voice) rows are not chat models. Two spellings exist in the registry —
     `kind: "audio"` (what seed_registry writes) and a tts-/stt- `format` (what a
@@ -464,7 +574,7 @@ def offerable(registry, require_file: bool = True) -> list:
             continue
         if not str(m.get("id") or "").strip():
             continue
-        if is_audio(m) or m.get("hidden") or is_absent(m):
+        if is_audio(m) or m.get("hidden") or is_absent(m) or is_source_unlisted(m):
             continue
         if require_file:
             probe = artifact_probe(m)
@@ -472,6 +582,8 @@ def offerable(registry, require_file: bool = True) -> list:
             if state == "incomplete":
                 continue
             if state == "missing":
+                if source_membership(m) == "listed":
+                    continue
                 if source_availability(m, probe).get("state") == "available":
                     continue
         out.append(m)

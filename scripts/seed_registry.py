@@ -22,6 +22,7 @@ import json
 import configparser
 import importlib.util
 import argparse
+import hashlib
 import sys
 import tempfile
 
@@ -71,6 +72,23 @@ def _load_modelreg():
 MODELREG = _load_modelreg()
 
 
+def _load_model_sources():
+    """Load external-manager membership adapters without making scripts a package."""
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_sources.py")
+        spec = importlib.util.spec_from_file_location("harness_model_sources", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+MODEL_SOURCES = _load_model_sources()
+
+
 def _ready_chat(entry):
     """Discovery accepts only the shared, structurally ready chat-artifact verdict."""
     if MODELREG is None:
@@ -80,12 +98,11 @@ def _ready_chat(entry):
     except Exception:
         return False
 
-# ⚠️ The IMPORT SOURCE DIRS. merge() replaces each of these scans WHOLESALE, which is
-# what makes a deletion made in LM Studio (or Jan) propagate on the next rescan — the
-# models arrived through this walk and they leave through it. The env overrides exist so
-# the suite can walk the whole rescan journey against a temp tree rather than against
-# whatever happens to be in the tester's own library (the "already on disk is never
-# evidence" rule, doctrine 2b, applied to a scan instead of an install).
+# ⚠️ The IMPORT SOURCE DIRS. Jan and M.O.T-local entries are filesystem sources.
+# LM Studio is different: its public CLI owns membership, while this directory walk
+# independently supplies artifact structure and byte metadata for CLI-listed rows.
+# The env overrides let suites exercise both signals against a temp tree rather than
+# mistaking whatever happens to be on the tester's machine for evidence.
 JAN_MODELS_DIR = os.environ.get("HARNESS_JAN_MODELS_DIR") or os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/models")
 JAN_PRESET_INI = os.environ.get("HARNESS_JAN_PRESET_INI") or os.path.expanduser(
@@ -589,6 +606,91 @@ def scan_lmstudio(lms_dir):
     return entries
 
 
+def _source_identity(entry):
+    """Canonical chat-artifact identity shared by scans and manager membership."""
+    if not isinstance(entry, dict):
+        return None
+    path = entry.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    fmt = "mlx" if str(entry.get("format") or "").lower() == "mlx" else "gguf"
+    try:
+        return fmt, os.path.realpath(os.path.abspath(path))
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _lmstudio_member_entry(member, root):
+    """A catalog-listed row even when its bytes are missing or malformed."""
+    path, fmt = member["path"], member["format"]
+    base = os.path.basename(path.rstrip(os.sep))
+    model_id = os.path.splitext(base)[0] if fmt == "gguf" else base
+    entry = {
+        "id": model_id, "name": member.get("display_name") or model_id,
+        "format": fmt, "path": path, "mmproj": None,
+        "size_bytes": member.get("size_bytes"), "ctx": member.get("ctx"),
+        "vision": member.get("vision") is True, "source": "lmstudio-import",
+        "source_membership": "listed",
+        "source_observation": MODEL_SOURCES.source_observation(member, root),
+    }
+    if isinstance(member.get("tools"), bool):
+        entry["tools"] = member["tools"]
+    return entry
+
+
+def reconcile_lmstudio(existing, scanned, inventory, protect=()):
+    """Combine manager membership and filesystem structure without conflating them.
+
+    Only an ``available`` whole-catalog observation may remove a manager row. A listed
+    artifact is retained even when its bytes fail the format probe, so the Models pane
+    can explain the actual state. A no-longer-listed protected row remains visible only
+    to explain/eject the live or pinned model; it is never offerable downstream.
+    """
+    if (not isinstance(inventory, dict) or inventory.get("state") != "available"
+            or MODEL_SOURCES is None):
+        return None, [], []
+    root = inventory["root"]
+    scanned_by = {_source_identity(row): row for row in scanned or []
+                  if _source_identity(row) is not None}
+    old_rows = [row for row in existing or []
+                if isinstance(row, dict) and row.get("source") == "lmstudio-import"]
+    old_by = {}
+    for row in old_rows:
+        identity = _source_identity(row)
+        if identity is not None and identity not in old_by:
+            old_by[identity] = row
+    listed, current = [], set()
+    for member in inventory.get("members") or []:
+        identity = (member["format"], member["path"])
+        current.add(identity)
+        old, scanned_row = old_by.get(identity), scanned_by.get(identity)
+        row = dict(scanned_row) if scanned_row else _lmstudio_member_entry(member, root)
+        if scanned_row and member.get("display_name"):
+            row["name"] = member["display_name"]
+        if scanned_row and isinstance(member.get("ctx"), int):
+            row["ctx"] = member["ctx"]
+        if old:
+            # Registry ids are public references used by pins and transcripts. A
+            # manager display-name change must not silently retarget those references.
+            row["id"] = old.get("id") or row["id"]
+            row["name"] = old.get("name") or row["name"]
+        row["source_membership"] = "listed"
+        row["source_observation"] = MODEL_SOURCES.source_observation(member, root)
+        listed.append(row)
+    protected = {str(item).strip() for item in protect if str(item or "").strip()}
+    removed, unlisted = [], []
+    for old in old_rows:
+        if _source_identity(old) in current:
+            continue
+        mid = str(old.get("id") or "")
+        if mid in protected:
+            listed.append(dict(old, source_membership="unlisted"))
+            unlisted.append(mid)
+        elif mid:
+            removed.append(mid)
+    return listed, sorted(set(removed)), sorted(set(unlisted))
+
+
 def load_existing(path):
     """Return the existing registry's model list (or [] if none/invalid)."""
     if not os.path.isfile(path):
@@ -651,7 +753,10 @@ def _audio_artifact_identity(entry):
     recognise one artifact under two spellings, but never authorizes a caller to
     alter either target. A missing or unresolvable path is unknown, not equal.
     """
-    if not isinstance(entry, dict) or entry.get("kind") != "audio":
+    if not isinstance(entry, dict):
+        return None
+    fmt = str(entry.get("format") or "").strip().lower()
+    if entry.get("kind") != "audio" and not fmt.startswith(("tts-", "stt-")):
         return None
     path = entry.get("path")
     if not isinstance(path, str) or not path:
@@ -662,6 +767,17 @@ def _audio_artifact_identity(entry):
         return os.path.realpath(os.path.abspath(path))
     except (OSError, TypeError, ValueError):
         return None
+
+
+def _is_audio_entry(entry):
+    """The shared modern + legacy audio spelling, safe if modelreg did not load."""
+    if MODELREG is not None:
+        try:
+            return MODELREG.is_audio(entry)
+        except Exception:
+            pass
+    return (isinstance(entry, dict) and (entry.get("kind") == "audio"
+            or str(entry.get("format") or "").strip().lower().startswith(("tts-", "stt-"))))
 
 
 def _local_collision_id(model_id, used):
@@ -675,7 +791,7 @@ def _local_collision_id(model_id, used):
 
 
 def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
-          audio_cache_entries=None):
+          audio_cache_entries=None, refreshed_sources=None, authoritative_sources=()):
     """Keep every existing entry whose source is not one we re-scan ('jan-import',
     'lmstudio-import', 'local', 'audio-hf-cache'); replace each re-scanned set with
     its fresh scan. Entries with other sources (e.g. 'download') are preserved
@@ -697,6 +813,9 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     lmstudio_entries = lmstudio_entries or []
     local_entries = local_entries or []
     audio_cache_entries = audio_cache_entries or []
+    refreshed = (set(RESCANNED_SOURCES) if refreshed_sources is None
+                 else set(refreshed_sources))
+    authoritative = set(authoritative_sources or ())
     # id -> ctx from the current registry (any source), for the preservation rule.
     existing_ctx = {m.get("id"): m.get("ctx")
                     for m in existing if m.get("ctx") not in (None, "")}
@@ -744,6 +863,13 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     def preserve_unavailable(m):
         if not isinstance(m, dict) or m.get("source") not in RESCANNED_SOURCES or MODELREG is None:
             return isinstance(m, dict) and m.get("source") not in RESCANNED_SOURCES
+        if m.get("source") not in refreshed:
+            return True
+        # A manager adapter that successfully returned one validated whole catalog
+        # owns membership for its source. Protected unlisted rows were put into the
+        # fresh plan explicitly; no stale row may re-enter via a filesystem fallback.
+        if m.get("source") in authoritative:
+            return False
         # U75 owns chat-model artifacts only. Audio's engine validators and wholesale
         # cache/local scan semantics remain authoritative, including a cache row whose
         # directory is no longer there; never preserve it through the chat probe.
@@ -764,7 +890,7 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     result = kept + [carry_evidence(_keep_user(m, existing_user)) for m in jan_entries]
     used = {m.get("id") for m in result}
     for m in local_filled:
-        if m.get("kind") == "audio":
+        if _is_audio_entry(m):
             artifact = _audio_artifact_identity(m)
             if artifact is not None and artifact in kept_audio_paths:
                 continue
@@ -776,7 +902,11 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     for m in lmstudio_entries:
         if m.get("id") in used:
             m = dict(m)
-            m["id"] = f"{m['id']}-lms"
+            base, number = f"{m['id']}-lms", 2
+            m["id"] = base
+            while m["id"] in used:
+                m["id"] = f"{base}-{number}"
+                number += 1
         used.add(m.get("id"))
         result.append(carry_evidence(_keep_user(m, existing_user)))
     for m in audio_cache_entries:
@@ -789,13 +919,11 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
 
 # ══ RESCAN IS THE PRUNE (Debi, 2026-08-29: "isn't there a way to make the apps scan?")
 #
-# THE INCIDENT: she deleted the muse/glimmer family and gemma-4 days ago. merge() above
-# already re-walks the IMPORT SOURCE DIRS — 'lmstudio-import', 'jan-import', 'local' are
-# replaced wholesale by a fresh scan, so a deletion made in LM Studio propagates on the
-# next rescan, which is exactly how those models arrived and how they leave. What merge()
-# CANNOT prune is the other half of a real registry: source 'download' rows, which it
-# preserves untouched by design (nothing on disk can re-derive a download's metadata).
-# Those rows outlive their files forever, and every seeded app catalog is built from them.
+# THE INCIDENT: manager-level removal can leave model bytes in LM Studio's storage.
+# U82 therefore reconciles `lmstudio-import` membership through the validated CLI
+# adapter above; a filesystem walk alone has no authority to re-add or remove those
+# rows. `prune_absent` handles the separate physical-file class, including source
+# `download` rows whose metadata cannot be reconstructed from a directory scan.
 #
 # So the rescan gets a second, source-blind pass — one stat per row, three outcomes:
 #
@@ -851,6 +979,12 @@ def prune_absent(models, protect=(), present_of=None, confirm_missing=(), detail
                 kept.append(m)
                 continue
             if state == "missing":
+                if m.get("source_membership") == "listed":
+                    # The manager still owns this row; filesystem absence is a
+                    # readiness problem, not evidence that the user removed it from
+                    # their library. Keep it visible and non-offerable.
+                    kept.append(m)
+                    continue
                 availability = MODELREG.source_availability(m, probe).get("state")
                 if availability == "unavailable":
                     kept.append(m)
@@ -903,6 +1037,27 @@ def apply_artifact_evidence(models):
             evidence = None
         out.append(dict(m, artifact_evidence=evidence) if evidence else m)
     return out
+
+
+def missing_confirmation_token(models, ambiguous_ids):
+    """Bind consent to the registry revision and exact observed missing rows.
+
+    IDs remain display text only. The token changes when a path, format, source,
+    evidence record, symlink target, or any concurrently-written registry field
+    changes between preview and confirmation.
+    """
+    ids = sorted({str(item) for item in ambiguous_ids if str(item)})
+    observed = []
+    for row in models or []:
+        if not isinstance(row, dict) or str(row.get("id") or "") not in ids:
+            continue
+        raw_path = row.get("path") if isinstance(row.get("path"), str) else ""
+        observed.append({"row": row, "real_path": os.path.realpath(raw_path) if raw_path else ""})
+    payload = {"v": 1, "ambiguous_ids": ids, "observed": observed,
+               "registry": list(models or [])}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def write(path, models):
@@ -963,8 +1118,14 @@ def main(argv=None):
         argv = []
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--json", action="store_true", dest="json_mode")
-    parser.add_argument("--confirm-missing", action="append", default=[])
+    parser.add_argument("--confirm-missing-token", default="")
     args = parser.parse_args(argv)
+    token = str(args.confirm_missing_token or "").strip().lower()
+    if token and (len(token) != 64 or any(ch not in "0123456789abcdef" for ch in token)):
+        if args.json_mode:
+            print(json.dumps({"ok": False, "error": "invalid missing-entry confirmation token"}))
+            return 1
+        raise SystemExit("ERROR: invalid missing-entry confirmation token")
     if MODELREG is None:
         if args.json_mode:
             print(json.dumps({"ok": False, "error": "model integrity helper unavailable"}))
@@ -974,15 +1135,36 @@ def main(argv=None):
     audio_local = [m for m in local_entries if m.get("kind") == "audio"]
     audio_cache = scan_audio_hf_cache(AUDIO_HF_CACHE_DIR)
     jan_entries = scan_jan(JAN_MODELS_DIR)
-    lmstudio_entries = scan_lmstudio(LMSTUDIO_MODELS_DIR)
+    refresh_lmstudio = args.json_mode or not os.path.isfile(REGISTRY_PATH)
+    lmstudio_inventory = None
+    if refresh_lmstudio and MODEL_SOURCES is not None:
+        lmstudio_inventory = MODEL_SOURCES.lmstudio_inventory(LMSTUDIO_MODELS_DIR)
+    elif refresh_lmstudio:
+        lmstudio_inventory = {"state": "unavailable", "members": [],
+                              "detail": "model-source adapter could not be loaded"}
+    source_warnings, manager_removed, unlisted = [], [], []
     # All registry writers share this lock: the evidence/confirmation plan must be
     # computed from the same bytes it atomically replaces.
     with MODELREG.registry_lock(REGISTRY_PATH):
         existing = load_existing(REGISTRY_PATH)
+        protect = MODELREG.protected_ids(".")
+        refreshed = {"jan-import", "local", "audio-hf-cache"}
+        authoritative = set()
+        lmstudio_entries = []
+        if refresh_lmstudio and lmstudio_inventory.get("state") == "available":
+            lmstudio_entries, manager_removed, unlisted = reconcile_lmstudio(
+                existing, scan_lmstudio(LMSTUDIO_MODELS_DIR), lmstudio_inventory,
+                protect=protect)
+            refreshed.add("lmstudio-import")
+            authoritative.add("lmstudio-import")
+        elif refresh_lmstudio:
+            source_warnings.append(lmstudio_inventory.get("detail")
+                                   or "LM Studio membership could not be refreshed")
         merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
-                       audio_cache)
+                       audio_cache, refreshed_sources=refreshed,
+                       authoritative_sources=authoritative)
         merged = annotate_tools(merged)
-        explicit = args.json_mode or bool(args.confirm_missing)
+        explicit = args.json_mode or bool(token)
         if explicit:
             merged = apply_artifact_evidence(merged)
         # RESCAN IS THE PRUNE (see prune_absent). Protected = harness.yaml's pin plus
@@ -990,32 +1172,40 @@ def main(argv=None):
         # HARNESS_PROTECT_MODELS); those are flagged, never removed, so the runner card's
         # honest "pinned model missing" keeps the row it is talking about.
         removed, flagged, ambiguous = [], [], []
-        merged, removed, flagged, ambiguous = prune_absent(
-            merged, protect=MODELREG.protected_ids("."),
-            confirm_missing=args.confirm_missing, details=True)
-        supplied = {str(x).strip() for x in args.confirm_missing if str(x).strip()}
-        # Consent is bound to the exact re-probed ambiguity set, never merely a row name.
-        # If an artifact reappeared or a source changed after preview, the old consent is
-        # stale and the whole transaction refuses without writing or fanning out.
-        if supplied and supplied != set(ambiguous):
+        planned, removed, flagged, ambiguous = prune_absent(
+            merged, protect=protect, details=True)
+        expected_token = missing_confirmation_token(merged, ambiguous) if ambiguous else ""
+        # Consent is a digest of the whole current registry revision plus the exact
+        # missing row/path/format/source/evidence observations. An id match alone has
+        # no authority: U84 proved a different same-id row could otherwise be removed.
+        if token and token != expected_token:
             if args.json_mode:
-                print(json.dumps({"ok": False, "error": "confirmation ids changed", "ambiguous_missing": ambiguous}))
+                print(json.dumps({"ok": False, "error": "missing-entry confirmation changed",
+                                  "ambiguous_missing": ambiguous}))
                 return 1
-            raise SystemExit("ERROR: confirmation ids changed; registry left unchanged")
-        if ambiguous and not supplied:
+            raise SystemExit("ERROR: missing-entry confirmation changed; registry left unchanged")
+        if ambiguous and not token:
             if args.json_mode:
-                print(json.dumps({"ok": False, "count": len(merged), "pruned": removed,
+                print(json.dumps({"ok": False, "count": len(planned), "pruned": removed,
                                   "flagged": flagged, "requires_confirmation": True,
                                   "ambiguous_missing": ambiguous,
+                                  "confirmation_token": expected_token,
                                   "log": "missing entries could be an unavailable model library"}))
                 return 3
             # Non-explicit startup seeding must never turn legacy uncertainty into authority.
             return 0
+        if token:
+            merged, removed, flagged, ambiguous = prune_absent(
+                merged, protect=protect, confirm_missing=ambiguous, details=True)
+        else:
+            merged = planned
         write(REGISTRY_PATH, merged)
     if args.json_mode:
         print(json.dumps({"ok": True, "count": len(merged), "pruned": removed,
                           "flagged": flagged, "requires_confirmation": False,
-                          "ambiguous_missing": []}))
+                          "ambiguous_missing": [], "manager_removed": manager_removed,
+                          "unlisted": unlisted, "source_warnings": source_warnings,
+                          "partial": bool(source_warnings)}))
         return 0
     print(f"seeded {len(merged)} models "
           f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "

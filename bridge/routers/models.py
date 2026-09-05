@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
 from ..core.health import file_state_track
-from ..core.modelreg import artifact_probe, registry_lock, source_availability
+from ..core.modelreg import artifact_probe, is_source_unlisted, registry_lock, source_availability
 from ..core.modelid import _live_model_id
 from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
@@ -489,6 +489,9 @@ def api_models() -> JSONResponse:
                 "tools": (m.get("tools") if isinstance(m.get("tools"), bool) else None),
                 "format": m.get("format", "gguf"),
                 "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path"),
+                "source_membership": (m.get("source_membership")
+                                      if m.get("source_membership") in ("listed", "unlisted")
+                                      else "unknown"),
                 # U15 — IS THE FILE STILL THERE? One stat(), debounced two-strikes
                 # (health.file_state_track), so a sleeping network mount cannot make
                 # the pane accuse the user of deleting a model they still have. Values:
@@ -1086,6 +1089,11 @@ async def api_switch_model(req: Request) -> JSONResponse:
     entry = next((m for m in _registry_models() if m.get("id") == new_id), None)
     if entry is None:
         return JSONResponse({"ok": False, "log": f"model '{new_id}' not in registry"}, status_code=400)
+    if is_source_unlisted(entry):
+        return JSONResponse(
+            {"ok": False, "log": f"model '{new_id}' is no longer listed by its source manager. "
+                                  "Eject it if it is live, or Rescan after restoring it there"},
+            status_code=409)
     probe = artifact_probe(entry)
     if probe["state"] != "ready":
         status = 400 if probe["state"] == "missing" else 409
@@ -1178,6 +1186,12 @@ async def api_pin_model(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False,
                              "log": "nothing is loaded — there is no served model to pin"},
                             status_code=409)
+    live_entry = next((m for m in _registry_models() if m.get("id") == live), None)
+    if is_source_unlisted(live_entry):
+        return JSONResponse(
+            {"ok": False, "live": live,
+             "log": f"'{live}' is no longer listed by its source manager and cannot be newly pinned. "
+                    "Eject it or restore it in that manager, then Rescan."}, status_code=409)
     if want and want != live:
         return JSONResponse(
             {"ok": False, "live": live,

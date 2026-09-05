@@ -172,8 +172,8 @@ const rescanBtn = {textContent:'RESCAN',disabled:false}, rescanStamp = {_text:''
   get textContent(){return this._text}, set textContent(v){this._text=v;this.innerHTML='';}};
 const rescanDoc = {getElementById:id=>id==='models-rescan'?rescanBtn:rescanStamp};
 const rescanCalls = [], rescanReplies = [
-  {ok:false,json:async()=>({ok:false,requires_confirmation:true,ambiguous_missing:['a','b']})},
-  {ok:false,json:async()=>({ok:false,error:'confirmation ids changed'})},
+  {ok:false,json:async()=>({ok:false,requires_confirmation:true,ambiguous_missing:['a','b'],confirmation_token:'a'.repeat(64)})},
+  {ok:false,json:async()=>({ok:false,error:'missing-entry confirmation changed'})},
 ];
 const rescanRun = new Function('document','fetch','esc','initModels',
   "let rescanConsent=null;async " + grab('rescanModels') + ';return {run:rescanModels,consent:()=>rescanConsent};')(
@@ -204,10 +204,10 @@ async function finish(){
     !rejected.ok && refusedStamp.textContent==='AUX: MODEL INCOMPLETE');
   check('an Aux preflight refusal never claims Aux ✓ locally',
     popFail.id()==='old' && refusedChip.textContent==='Aux refused' && refusedChip.title==='model incomplete');
-  check('rescan preview renders exact ids, sends only them on confirmation, and clears stale consent',
+  check('rescan preview renders ids, sends the exact observation token, and clears stale consent',
     rescanPreview.includes('a, b') && rescanPreview.includes('Remove missing entries')
     && rescanStamp.textContent.indexOf('RESCAN FAILED')===0 && rescanStamp.innerHTML===''
-    && rescanCalls[1][1].body==='{"confirm_missing":true,"ids":["a","b"]}' && rescanRun.consent()===null);
+    && rescanCalls[1][1].body==='{"confirm_missing":true,"token":"'+('a'.repeat(64))+'"}' && rescanRun.consent()===null);
   console.log('');
   console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
   process.exit(fails.length ? 1 : 0);

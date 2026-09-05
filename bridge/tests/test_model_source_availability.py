@@ -21,7 +21,7 @@ _spec.loader.exec_module(SR)
 
 def row(tmp_path, name="model.gguf"):
     p = tmp_path / name
-    p.write_bytes(b"x")
+    p.write_bytes(b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
     return {"id": p.stem, "format": "gguf", "path": str(p), "source": "download"}
 
 
@@ -113,10 +113,13 @@ def test_11_legacy_unknown_preview_has_no_write_and_exact_ids(tmp_path, monkeypa
     monkeypatch.setattr(SR, "scan_lmstudio", lambda _: [])
     monkeypatch.setattr(SR, "local_entries_for", lambda _: [])
     monkeypatch.setattr(SR, "scan_audio_hf_cache", lambda _: [])
+    monkeypatch.setattr(SR, "MODEL_SOURCES", None)
     assert SR.main([]) == 0                 # ordinary startup cannot grant evidence authority
     assert SR.main(["--json"]) == 3
     lines = [x for x in capsys.readouterr().out.splitlines() if x]
-    assert len(lines) == 1 and __import__("json").loads(lines[0])["ambiguous_missing"] == ["legacy"]
+    preview = __import__("json").loads(lines[0])
+    assert len(lines) == 1 and preview["ambiguous_missing"] == ["legacy"]
+    assert len(preview["confirmation_token"]) == 64
     assert registry.read_bytes() == before
 
 
@@ -126,6 +129,27 @@ def test_12_confirmation_requires_exact_reprobed_legacy_ids(tmp_path):
     assert kept == [r] and ambiguous == ["legacy"]
     kept, removed, _, ambiguous = SR.prune_absent([r], confirm_missing=["legacy"], details=True)
     assert kept == [] and removed == ["legacy"] and ambiguous == ["legacy"]
+
+
+def test_12b_confirmation_token_rejects_same_id_with_a_different_path(tmp_path, monkeypatch, capsys):
+    registry = tmp_path / "models.json"
+    original = {"id": "same", "format": "gguf", "path": str(tmp_path / "missing-a.gguf"),
+                "source": "download"}
+    registry.write_text(json.dumps({"models": [original]}) + "\n")
+    monkeypatch.setattr(SR, "REGISTRY_PATH", str(registry))
+    monkeypatch.setattr(SR, "scan_jan", lambda _: [])
+    monkeypatch.setattr(SR, "scan_lmstudio", lambda _: [])
+    monkeypatch.setattr(SR, "local_entries_for", lambda _: [])
+    monkeypatch.setattr(SR, "scan_audio_hf_cache", lambda _: [])
+    monkeypatch.setattr(SR, "MODEL_SOURCES", None)
+    assert SR.main(["--json"]) == 3
+    token = json.loads(capsys.readouterr().out)["confirmation_token"]
+    replacement = dict(original, path=str(tmp_path / "missing-b.gguf"))
+    registry.write_text(json.dumps({"models": [replacement]}) + "\n")
+    before = registry.read_bytes()
+    assert SR.main(["--json", "--confirm-missing-token", token]) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "missing-entry confirmation changed"
+    assert registry.read_bytes() == before
 
 
 def test_13_audio_is_outside_the_chat_artifact_planner_even_with_confirmation(tmp_path):
@@ -148,23 +172,27 @@ def test_13b_json_rescan_keeps_missing_download_audio_out_of_preview_and_confirm
     monkeypatch.setattr(SR, "scan_lmstudio", lambda _: [])
     monkeypatch.setattr(SR, "local_entries_for", lambda _: [])
     monkeypatch.setattr(SR, "scan_audio_hf_cache", lambda _: [])
+    monkeypatch.setattr(SR, "MODEL_SOURCES", None)
     assert SR.main(["--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ambiguous_missing"] == [] and json.loads(registry.read_text())["models"] == [audio]
     before = registry.read_bytes()
-    assert SR.main(["--json", "--confirm-missing", "voice"]) == 1
-    assert json.loads(capsys.readouterr().out)["error"] == "confirmation ids changed"
+    assert SR.main(["--json", "--confirm-missing-token", "0" * 64]) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "missing-entry confirmation changed"
     assert registry.read_bytes() == before
 
 
-def test_14_confirmation_body_is_exact_and_rejects_read_errors_normalized_duplicates_or_extra_keys():
+def test_14_confirmation_body_is_exact_token_and_rejects_read_errors_or_extra_keys():
     from bridge.routers import model_rescan as R
     class Req:
         def __init__(self, raw): self.raw = raw
         async def body(self): return self.raw
-    assert asyncio.run(R._rescan_body(Req(b'{"confirm_missing":true,"ids":["a"]}')))[0] == ["a"]
-    for raw in (b'{"confirm_missing":true,"ids":["a","a"]}', b'{"confirm_missing":true,"ids":["a"," a"]}',
-                b'{"confirm_missing":true,"ids":["a"],"extra":1}'):
+    token = "a" * 64
+    assert asyncio.run(R._rescan_body(Req(
+        ('{"confirm_missing":true,"token":"' + token + '"}').encode())))[0] == token
+    for raw in (b'{"confirm_missing":true,"token":"a"}',
+                b'{"confirm_missing":true,"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","extra":1}',
+                b'{"confirm_missing":true,"ids":["a"]}'):
         assert asyncio.run(R._rescan_body(Req(raw)))[1].status_code == 400
     class BrokenReq:
         async def body(self): raise OSError("body unavailable")
@@ -177,7 +205,8 @@ def test_14b_router_only_maps_a_valid_preview_or_changed_confirmation_to_409(mon
         async def body(self): return b""
     monkeypatch.setattr(R, "_rescan_fanout", lambda: pytest.fail("preview fanned out"))
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **k: SimpleNamespace(
-        returncode=3, stdout='{"ok":false,"requires_confirmation":true,"ambiguous_missing":["a"]}', stderr=""))
+        returncode=3, stdout='{"ok":false,"requires_confirmation":true,"ambiguous_missing":["a"],'
+        '"confirmation_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}', stderr=""))
     assert asyncio.run(R.api_models_rescan(Req())).status_code == 409
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=3, stdout="not json", stderr=""))
     assert asyncio.run(R.api_models_rescan(Req())).status_code == 500
@@ -224,7 +253,7 @@ def test_14c_rescan_subprocess_does_not_block_the_asgi_event_loop(monkeypatch):
         return await pending
     assert asyncio.run(journey()).status_code == 200
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **k: SimpleNamespace(
-        returncode=1, stdout='{"ok":false,"error":"confirmation ids changed"}', stderr=""))
+        returncode=1, stdout='{"ok":false,"error":"missing-entry confirmation changed"}', stderr=""))
     assert asyncio.run(R.api_models_rescan(Req())).status_code == 409
     monkeypatch.setattr(R.subprocess, "run", lambda *a, **k: SimpleNamespace(
         returncode=0, stdout='{"ok":true}', stderr=""))
@@ -233,12 +262,14 @@ def test_14c_rescan_subprocess_does_not_block_the_asgi_event_loop(monkeypatch):
 
 def test_15_panel_confirmation_is_exact_second_action_and_clears_stale_state():
     panel = open(os.path.join(ROOT, "bridge", "panel", "index.html")).read()
-    assert "Remove missing entries" in panel and "JSON.stringify({confirm_missing:true,ids:consent})" in panel
+    assert "Remove missing entries" in panel and "JSON.stringify({confirm_missing:true,token:consent.token})" in panel
     assert "if(!confirm)rescanConsent=null" in panel and "rescanConsent=null;" in panel
 
 
 def test_16_mlx_evidence_and_root_device_rules(tmp_path, monkeypatch):
-    d = tmp_path / "mlx"; d.mkdir(); (d / "config.json").write_text("{}"); (d / "model.safetensors").write_bytes(b"x")
+    d = tmp_path / "mlx"; d.mkdir(); (d / "config.json").write_text('{"model_type":"unit-test"}')
+    header = json.dumps({"w": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}).encode()
+    (d / "model.safetensors").write_bytes(len(header).to_bytes(8, "little") + header + b"\0" * 4)
     r = {"id": "mlx", "format": "mlx", "path": str(d)}
     ev = evidence(r)
     assert ev["manifest"] == {"kind": "mlx", "files": ["config.json", "model.safetensors"]}

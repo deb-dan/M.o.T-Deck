@@ -54,6 +54,13 @@ def touch(path, size=0):
         f.write(b"\0" * size)
 
 
+def touch_gguf(path, size=24):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    header = b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2
+    with open(path, "wb") as f:
+        f.write(header + b"\0" * max(0, size - len(header)))
+
+
 # ══ 1. voice.audio_download_entry — the download→registry builder ═══════════════
 # What _gguf_registry_entry produces for the Qwen3-TTS pair (backbone + mmproj
 # requested together, so both land in ONE DOWNLOADS entry → ONE registry entry).
@@ -162,9 +169,9 @@ touch(os.path.join(models, "Kokoro-82M-bf16", "config.json"), 10)
 touch(os.path.join(models, "Kokoro-82M-bf16", "model.safetensors"), 400)
 touch(os.path.join(models, "Qwen3-TTS-Q4_K_M", "Qwen3-TTS-Q4_K_M.gguf"), 900)
 touch(os.path.join(models, "Qwen3-TTS-Q4_K_M", "mmproj-Qwen3-TTS-Q8_0.gguf"), 100)
-touch(os.path.join(models, "qwen-35b-chat", "model.gguf"), 700)      # scan_local shape
-touch(os.path.join(models, "gemma-vision", "model.gguf"), 600)       # chat + vision
-touch(os.path.join(models, "gemma-vision", "mmproj.gguf"), 60)
+touch_gguf(os.path.join(models, "qwen-35b-chat", "model.gguf"), 700)  # scan_local shape
+touch_gguf(os.path.join(models, "gemma-vision", "model.gguf"), 600)   # chat + vision
+touch_gguf(os.path.join(models, "gemma-vision", "mmproj.gguf"), 60)
 
 au = sr.scan_audio_local(models)
 by_id = {m["id"]: m for m in au}
@@ -362,6 +369,15 @@ different_id_same_path = sr.merge([downloaded], [], [],
                                   [audio_row("parakeet-renamed-by-scan", download_dir, "local")])
 check("the same audio path with different ids still keeps its authoritative row",
       different_id_same_path == [downloaded])
+
+legacy_downloaded = {k: v for k, v in downloaded.items() if k != "kind"}
+legacy_existing = sr.merge([legacy_downloaded], [], [], [same_local])
+check("a legacy format-only download row dedupes against a modern local row",
+      legacy_existing == [legacy_downloaded])
+legacy_local = {k: v for k, v in same_local.items() if k != "kind"}
+legacy_fresh = sr.merge([downloaded], [], [], [legacy_local])
+check("a legacy format-only fresh row dedupes against a modern download row",
+      legacy_fresh == [downloaded])
 
 separate = sr.merge([downloaded], [], [],
                     [audio_row("parakeet-tdt-0.6b-v3", local_dir, "local")])

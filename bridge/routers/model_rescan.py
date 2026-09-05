@@ -30,22 +30,21 @@ async def _rescan_body(request):
     try:
         raw = await request.body()
     except Exception:
-        return [], JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
+        return "", JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
     if not raw:
-        return [], None
+        return "", None
     try:
         body = json.loads(raw)
     except (TypeError, ValueError):
         body = None
-    if not isinstance(body, dict) or set(body) != {"confirm_missing", "ids"} or body.get("confirm_missing") is not True:
-        return [], JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
-    ids = body.get("ids")
-    if not isinstance(ids, list) or not ids or any(not isinstance(x, str) or not x.strip() for x in ids):
-        return [], JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
-    normalized = [x.strip() for x in ids]
-    if len(normalized) != len(set(normalized)):
-        return [], JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
-    return sorted(normalized), None
+    if (not isinstance(body, dict) or set(body) != {"confirm_missing", "token"}
+            or body.get("confirm_missing") is not True):
+        return "", JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
+    token = body.get("token")
+    if (not isinstance(token, str) or len(token) != 64
+            or any(ch not in "0123456789abcdef" for ch in token.lower())):
+        return "", JSONResponse({"ok": False, "error": "invalid rescan confirmation"}, status_code=400)
+    return token.lower(), None
 
 
 def _success_result(result):
@@ -54,15 +53,22 @@ def _success_result(result):
             and isinstance(result.get("count"), int) and not isinstance(result["count"], bool)
             and isinstance(result.get("pruned"), list) and all(isinstance(x, str) for x in result["pruned"])
             and isinstance(result.get("flagged"), list) and all(isinstance(x, str) for x in result["flagged"])
+            and isinstance(result.get("manager_removed", []), list)
+            and all(isinstance(x, str) for x in result.get("manager_removed", []))
+            and isinstance(result.get("unlisted", []), list)
+            and all(isinstance(x, str) for x in result.get("unlisted", []))
+            and isinstance(result.get("source_warnings", []), list)
+            and all(isinstance(x, str) for x in result.get("source_warnings", []))
+            and isinstance(result.get("partial", False), bool)
             and result.get("requires_confirmation") is False
             and result.get("ambiguous_missing") == [])
 
 
-def _run_seed(ids):
+def _run_seed(token):
     """Blocking protection lookup + subprocess protocol, isolated from the ASGI loop."""
     cmd = ["python3", "scripts/seed_registry.py", "--json"]
-    for mid in ids:
-        cmd.extend(["--confirm-missing", mid])
+    if token:
+        cmd.extend(["--confirm-missing-token", token])
     env = dict(os.environ, HARNESS_PROTECT_MODELS="\n".join(_protect_ids()))
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=120,
                           check=False, env=env)
@@ -71,11 +77,11 @@ def _run_seed(ids):
 @app.post("/api/models/rescan")
 async def api_models_rescan(request: Request):
     """Run the only evidence-writing registry transaction; preview never fans out."""
-    ids, refusal = await _rescan_body(request)
+    token, refusal = await _rescan_body(request)
     if refusal:
         return refusal
     try:
-        run = await asyncio.to_thread(_run_seed, ids)
+        run = await asyncio.to_thread(_run_seed, token)
         try:
             result = json.loads(run.stdout or "{}")
         except (TypeError, ValueError):
@@ -84,14 +90,16 @@ async def api_models_rescan(request: Request):
             preview = (result.get("ok") is False and result.get("requires_confirmation") is True
                        and isinstance(result.get("ambiguous_missing"), list)
                        and result["ambiguous_missing"] == sorted(set(result["ambiguous_missing"]))
-                       and all(isinstance(x, str) and x for x in result["ambiguous_missing"]))
+                       and all(isinstance(x, str) and x for x in result["ambiguous_missing"])
+                       and isinstance(result.get("confirmation_token"), str)
+                       and len(result["confirmation_token"]) == 64)
             if preview:
                 return JSONResponse(result, status_code=409)
             return JSONResponse({"ok": False, "error": "invalid rescan preview"}, status_code=500)
         if run.returncode != 0 or not _success_result(result):
             error = result.get("error") or (run.stderr or run.stdout or "seed failed")[:300]
             return JSONResponse({"ok": False, "error": error},
-                                status_code=409 if error == "confirmation ids changed" else 500)
+                                status_code=409 if error == "missing-entry confirmation changed" else 500)
         file_state_forget()
         try:
             result["apps"] = await asyncio.to_thread(_rescan_fanout)

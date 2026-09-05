@@ -60,15 +60,16 @@ DEAD = ["Muse-Glimmer-30B-Heretic-Q4_K_S",
 
 def _alive(tmp_path, name="alive.gguf"):
     p = tmp_path / name
-    p.write_bytes(b"x")
+    p.write_bytes(b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
     return str(p)
 
 
 def _mlx(tmp_path, name="mlx-model"):
     p = tmp_path / name
     p.mkdir()
-    (p / "config.json").write_text("{}")
-    (p / "model.safetensors").write_bytes(b"x")
+    (p / "config.json").write_text('{"model_type":"unit-test"}')
+    header = json.dumps({"w": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}).encode()
+    (p / "model.safetensors").write_bytes(len(header).to_bytes(8, "little") + header + b"\0" * 4)
     return p
 
 
@@ -115,7 +116,7 @@ def test_absence_is_not_information(tmp_path):
     because a cable is out is the same lie class, one direction over."""
     assert MR.path_present("", "gguf") is None
     assert MR.path_present(None) is None
-    assert MR.path_present("/etc/hosts") is True
+    assert MR.path_present(_alive(tmp_path)) is True
     assert MR.path_present("/definitely/not/here.gguf") is False
     # kind matters: a FILE is not an mlx model dir, and a DIR is not a gguf
     assert MR.path_present(str(_mlx(tmp_path)), "mlx") is True
@@ -267,13 +268,11 @@ def test_the_user_decision_keys_survive_a_prune(tmp_path):
     assert kept[0] == row
 
 
-def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path):
+def test_rescan_end_to_end_uses_manager_membership_not_leftover_files(tmp_path):
     """★ THE WHOLE JOURNEY, on the real script, over a real temp tree.
 
-    Two halves, and BOTH were needed: merge() re-walks the import dirs (so a deletion
-    made in LM Studio propagates — that is how these models arrived and how they leave)
-    and prune_absent stats every row source-blind (so a source 'download' row, which
-    merge preserves untouched by design, cannot outlive its weights forever)."""
+    LM Studio membership and filesystem structure are independent evidence. Removing
+    a manager row must propagate even when the manager leaves the bytes behind."""
     import shutil
     root = tmp_path / "root"
     (root / "data").mkdir(parents=True)
@@ -281,7 +280,21 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
     for pub, fname in (("Parable-4B", "Parable-4B.gguf"),
                        ("Muse-Glimmer-30B", DEAD[0] + ".gguf")):
         (lms / "pub" / pub).mkdir(parents=True)
-        (lms / "pub" / pub / fname).write_bytes(b"x")
+        (lms / "pub" / pub / fname).write_bytes(
+            b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
+    catalog = tmp_path / "catalog.json"
+    fake_lms = tmp_path / "fake-lms"
+    fake_lms.write_text('#!/bin/sh\ncat "$FAKE_LMS_CATALOG"\n')
+    fake_lms.chmod(0o755)
+
+    def set_catalog(items):
+        catalog.write_text(json.dumps([
+            {"type": "llm", "format": "gguf", "modelKey": model_dir,
+             "displayName": model_dir, "path": f"pub/{model_dir}/{filename}"}
+            for model_dir, filename in items]))
+
+    set_catalog([("Parable-4B", "Parable-4B.gguf"),
+                 ("Muse-Glimmer-30B", DEAD[0] + ".gguf")])
     (root / "harness.yaml").write_text("runner:\n  model: Parable-4B\n  port: 6767\n")
     # A source 'download' row whose weights are long gone — the class merge() preserves
     # untouched by design and therefore can never prune on its own.
@@ -295,6 +308,7 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
             [sys.executable, str(ROOT / "scripts" / "seed_registry.py"), "--json"],
             cwd=str(root), capture_output=True, text=True, timeout=120,
             env=dict(os.environ, HARNESS_LMSTUDIO_DIR=str(lms),
+                     HARNESS_LMS_BIN=str(fake_lms), FAKE_LMS_CATALOG=str(catalog),
                      HARNESS_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
                      HARNESS_PROTECT_MODELS=protect))
         assert r.returncode == 0, r.stderr
@@ -306,16 +320,17 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
     assert "old-download" in out["pruned"], (
         "the stat pass prunes the source 'download' row merge() preserves — and SAYS SO")
 
-    # NOW: Debi deletes the muse model in LM Studio. She clicks RESCAN.
-    shutil.rmtree(lms / "pub" / "Muse-Glimmer-30B")
+    # Manager removal is authoritative even though its storage directory remains.
+    set_catalog([("Parable-4B", "Parable-4B.gguf")])
     out, ids = rescan()
     assert ids == {"Parable-4B"}, (
-        "a deletion made in LM Studio propagates through the import re-walk — that is "
-        "how these models arrived and how they leave")
+        "manager-level removal propagates without guessing from leftover files")
+    assert (lms / "pub" / "Muse-Glimmer-30B" / (DEAD[0] + ".gguf")).exists()
 
     # And the PIN's own row is flagged, never removed, so the runner card keeps its
     # subject: delete Parable's weights too and rescan protecting it.
     shutil.rmtree(lms / "pub" / "Parable-4B")
+    set_catalog([])
     (root / "data" / "models.json").write_text(json.dumps({"models": [
         {"id": "Parable-4B", "source": "download", "format": "gguf",
              "path": str(lms / "pub" / "Parable-4B" / "Parable-4B.gguf"),

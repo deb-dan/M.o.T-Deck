@@ -7794,7 +7794,7 @@ function renderModelPop(){
      bad news; every place that offers a CHOICE offers only real ones.
      ⚠️ `file === 'checking'` (one missed stat, which a sleeping network volume
      produces) is deliberately NOT filtered — same two-strike discipline as the chip. */
-  const pickable=modelEntries.filter(m=>(modelLiveId&&m.id===modelLiveId)||!(m.absent||m.file === 'gone'||m.file === 'incomplete'));
+  const pickable=modelEntries.filter(m=>m.source_membership!=='unlisted'&&((modelLiveId&&m.id===modelLiveId)||!(m.absent||m.file === 'gone'||m.file === 'incomplete')));
   if (!pickable.length){
     const e = document.createElement('div');
     e.className = 'mp-empty';
@@ -9740,8 +9740,9 @@ async function initModels(){
   refreshMemory();      // ledger + a verdict per row; degrades silently on its own
 }
 
-// Re-scan the model folders → prune models deleted in LM Studio/Jan, pick up new
-// ones. seed_registry.merge() preserves source "download" entries + known ctx.
+// Re-scan every supported source adapter. Manager membership and filesystem
+// structure are separate evidence; no manager's private folder is treated as its
+// catalog merely because bytes remain there.
 let rescanConsent=null;
 async function rescanModels(confirm){
   const btn = document.getElementById('models-rescan');
@@ -9752,11 +9753,11 @@ async function rescanModels(confirm){
   const consent=confirm&&rescanConsent;
   if(!confirm)rescanConsent=null;
   try {
-    const res = await fetch('/api/models/rescan', consent?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_missing:true,ids:consent})}:{method:'POST'});
+    const res = await fetch('/api/models/rescan', consent?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_missing:true,token:consent.token})}:{method:'POST'});
     const j = await res.json().catch(() => ({}));
     if(j.requires_confirmation){
       const ids=Array.isArray(j.ambiguous_missing)?j.ambiguous_missing:[];
-      rescanConsent=ids;
+      rescanConsent={ids:ids,token:String(j.confirmation_token||'')};
       if(stamp)stamp.innerHTML='RESCAN PAUSED — missing entries could be an unavailable library: '+ids.map(esc).join(', ')+' <button onclick="rescanModels(true)">Remove missing entries</button>';
       return;
     }
@@ -9774,6 +9775,13 @@ async function rescanModels(confirm){
                   + (j2.pruned.length > 3 ? ' +' + (j2.pruned.length - 3) + ' more' : ''));
       if ((j2.flagged || []).length)
         bits.push('KEPT + FLAGGED (pinned/live): ' + j2.flagged.join(', '));
+      if ((j2.manager_removed || []).length)
+        bits.push('REMOVED FROM MANAGER CATALOG: ' + j2.manager_removed.slice(0,3).join(', ')
+                  + (j2.manager_removed.length > 3 ? ' +' + (j2.manager_removed.length-3) + ' more' : ''));
+      if ((j2.unlisted || []).length)
+        bits.push('STILL VISIBLE (PINNED/LIVE, NO LONGER LISTED): ' + j2.unlisted.join(', '));
+      if ((j2.source_warnings || []).length)
+        bits.push('PARTIAL — ' + j2.source_warnings.join('; '));
       if (j2.apps) bits.push('APP CATALOGS · ' + j2.apps);
       if (bits.length && stamp) stamp.textContent += ' · ' + bits.join(' · ');
     }
@@ -9889,7 +9897,7 @@ function modelAction(isActive, runnerUp, anyLive){
   if (isActive && runnerUp) return 'Eject';
   return anyLive ? 'Switch' : 'Load';
 }
-function modelActionState(m,isLive){const i=m&&m.file==='incomplete';return [i,i&&!isLive,i];}
+function modelActionState(m,isLive){const i=m&&(m.file==='incomplete'||m.source_membership==='unlisted');return [i,i&&!isLive,i];}
 
 function quantOf(id){
   const m = (id || '').match(/IQ\d_\w+|Q\d_K_\w+|Q\d_0|\d+bit/i);
@@ -10335,6 +10343,8 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
       + 'refreshes OpenCode / DeepSeek / goose / Hermes / Odysseus from what is left.'
       + '">file missing</span>');
   }
+  if (m.source_membership === 'unlisted')
+    badges.push('<span class="mpill gone" title="This model remains on disk but its source manager no longer lists it. It is shown only because it is live or pinned.">not in manager catalog</span>');
   if (m.size_bytes) badges.push('<span class="msize">' + fmtGB(m.size_bytes) + '</span>');
   if (isActive && runnerUp) badges.push('<span class="mpill live">live</span>');
   if (isAux) badges.push('<span class="mpill aux">aux</span>');
@@ -10358,7 +10368,7 @@ function renderList(r){
      user the bad news, and the only pane that offers RESCAN), but they stop occupying
      the top of a list of things you might load. STABLE: everything else keeps the
      bridge's order exactly, so a rescan never appears to shuffle the library. */
-  const rows=(r.installed||[]).slice().sort((a,b)=>+(a.absent||a.file === 'gone'||a.file === 'incomplete')-+(b.absent||b.file === 'gone'||b.file === 'incomplete'));
+  const rows=(r.installed||[]).slice().sort((a,b)=>+(a.absent||a.file === 'gone'||a.file === 'incomplete'||a.source_membership==='unlisted')-+(b.absent||b.file === 'gone'||b.file === 'incomplete'||b.source_membership==='unlisted'));
   for (const m of rows){
     // "live" = the model the RUNNER actually reports serving (ISSUE C), not merely the
     // harness.yaml intent — so the pill matches MC and post-eject reality.
@@ -11986,6 +11996,7 @@ function renderDetail(){
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       ${caps.length ? `<div class="mbadges" style="margin-top:6px">${caps.join('')}</div>` : ''}
+      ${m.source_membership === 'unlisted' ? '<div class="md-loaderr">No longer listed by LM Studio — kept visible only because it is live or pinned. Eject it, or restore it in LM Studio and Rescan.</div>' : ''}
       ${fitDetailHtml(m.id)}
       <div class="md-actions" id="md-actions"></div>
       ${(!incomplete && fitConsent && fitConsent.id === m.id) ? fitConsentHtml() : ''}
@@ -12006,7 +12017,7 @@ function renderDetail(){
       primary.textContent = 'Loading…'; primary.disabled = true;
     } else {
       primary.textContent = label;
-      if (primaryUnavailable){ primary.disabled=true; primary.title=m.file_detail||'Model incomplete'; }
+      if (primaryUnavailable){ primary.disabled=true; primary.title=m.source_membership==='unlisted'?'No longer listed by the source manager':(m.file_detail||'Model incomplete'); }
       else if (label === 'Eject'){ primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
       else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
     }
