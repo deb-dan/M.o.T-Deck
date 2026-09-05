@@ -8076,6 +8076,11 @@ function aiGrow() {
 
 const LANE_QUICK = 'quick', LANE_AGENT = 'agent';
 const AGENT_SESSION_NAME = 'loffice';          // spec §4: ONE dedicated session
+// Persisted Hermes history contains the model-facing grounding because that is the
+// actual user-role message Hermes receives. This stable delimiter lets the read-only
+// LOffice projection recover the human question without guessing where a workbook dump
+// ends. The bridge separately fences legacy sessions created before this marker.
+const AGENT_USER_MARKER = '\n\n--- M.O.T LOffice user question ---\n\n';
 const LS_LANE = 'harness-office-lane';
 const LS_AGENT_SID = 'harness-office-agent-sid';
 const LS_AGENT_STORED = 'harness-office-agent-stored';
@@ -8088,7 +8093,7 @@ const LS_AGENT_STORED = 'harness-office-agent-stored';
 // what is in effect and never what was asked for, and lanePaint re-adopts the wanted
 // lane the moment the gate opens.
 let aiLane = LANE_QUICK, laneWant = LANE_QUICK;
-let agentSid = '', agentStored = '', agentNamed = false;
+let agentSid = '', agentStored = '', agentNamed = false, agentNaming = false;
 let agentHistoryLoading = false, agentHistoryRestoredFor = '';
 // What the last probe found. `tools` is TRUE / FALSE / NULL and the third value is the
 // point — see agentGate.
@@ -8177,7 +8182,8 @@ async function agentRestoreHistory() {
   aiStatus('Restoring the saved Agent transcript…');
   aiPaint(false);
   try {
-    const r = await fetch('/api/hermes/session/' + encodeURIComponent(stored) + '/history');
+    const r = await fetch('/api/hermes/session/' + encodeURIComponent(stored)
+                          + '/history?view=loffice');
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('the bridge answered ' + r.status));
     const rows = Array.isArray(j.history) ? j.history : [];
@@ -8426,7 +8432,7 @@ async function agentSend() {
   csLines = [];
   const message = csPrefix(carried) + grounding + '\n\n'
                 + ((ctx && ctx.text) ? (ctx.text + '\n\n') : '')
-                + '---\n\n' + q;
+                + AGENT_USER_MARKER + q;
   if (carried.length) bx('cs-lines-sent', String(carried.length));
   const shown = { text: message,
                   label: (ctx && ctx.text)
@@ -8517,6 +8523,9 @@ async function agentSend() {
   // whether the turn "succeeded" or not — a model that staged a change and then errored
   // out mid-sentence still staged it, and Debi is owed the card.
   await csAfterTurn(turn);
+  // First-turn auto-title happens as Hermes commits this exchange. Rename only now:
+  // the stored row exists and the automatic title cannot race in behind our label.
+  await agentName();
   aiPaint(true);
   el('ai-log').scrollTop = el('ai-log').scrollHeight;
   // Nothing on this lane writes a workbook any more, so the file only moves when SHE
@@ -8542,7 +8551,6 @@ function agentFrame(j, turn, held, steps) {
     try { localStorage.setItem(LS_AGENT_SID, agentSid);
           localStorage.setItem(LS_AGENT_STORED, agentStored); } catch (e) { /* private */ }
     bx('agent-session', agentSid + ' stored=' + (agentStored || 'none'));
-    agentName();
     return {};
   }
   if (t === 'approval') {
@@ -8601,19 +8609,27 @@ function agentFrame(j, turn, held, steps) {
   return {};                       // hermes_ping, file_card, guard_flag, ask_expire
 }
 
-// Name the session `loffice` (spec §4) — once, best effort, and never load-bearing.
+// Name the session `loffice` (spec §4) after a turn is durable. The old path fired on
+// the first session frame, ignored an HTTP refusal, and permanently set agentNamed=true
+// while first-turn auto-title could still win the race.
 // The rename is a stored-session title, so it needs the DURABLE id; the gateway has no
 // live-session rename for a session it does not own.
 async function agentName() {
-  if (agentNamed || !agentStored) return;
-  agentNamed = true;
+  if (agentNamed || agentNaming || !agentStored) return;
+  agentNaming = true;
   try {
-    await fetch('/api/hermes/session/' + encodeURIComponent(agentStored) + '/rename', {
+    const r = await fetch('/api/hermes/session/' + encodeURIComponent(agentStored) + '/rename', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: AGENT_SESSION_NAME }),
     });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('the bridge answered ' + r.status));
+    agentNamed = true;
     bx('agent-named', AGENT_SESSION_NAME + ' ' + agentStored);
-  } catch (e) { bx('agent-name-fail', String((e && e.message) || e).slice(0, 120)); }
+  } catch (e) {
+    agentNamed = false; // the next completed turn may retry
+    bx('agent-name-fail', String((e && e.message) || e).slice(0, 120));
+  } finally { agentNaming = false; }
 }
 
 // ── the approval card ────────────────────────────────────────────────────────

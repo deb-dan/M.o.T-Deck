@@ -166,6 +166,33 @@ introduced a second persisted catalog before surveying other model managers or t
 installed Unsloth inventory. Debi's challenge exposed the mismatch. This rule exists so
 that the builder and QA must expose it first next time.
 
+## 11. A FIX MAY NOT SPEND EXISTING PRODUCT INTENT (Debi, 2026-09-05)
+
+Fixing reliability, security, maintainability, or a test ceiling is not permission to
+remove or weaken an intentional feature, interaction, visual affordance, label,
+shortcut, layout decision, fallback, or user-owned state. Existing behavior is part of
+the specification even when the current task does not mention it. Refactoring and file
+extraction carry the same obligation: code that moved must remain reachable, and a new
+asset or service boundary must preserve the old boundary's failure behavior or replace
+it with an explicit fail-closed experience before any action occurs.
+
+Before accepting a change to a user-facing surface, QA compares it with the last shipped
+baseline and the relevant introducing commit, accounting for moves rather than treating
+raw deleted lines as removals. It inventories controls, labels, keyboard/pointer paths,
+hover/focus/disabled states, stored preferences, event grammar, and reload/restart
+behavior. Every intentional difference names the user outcome that authorized it;
+anything unexplained is a regression or is recorded in UNFORGET as an unresolved risk,
+never silently absorbed into the fix. Browser-level interaction and computed-state
+checks are required where source equality cannot prove what a user sees.
+
+**The incident (example, not the rule):** while checking the U31 extraction, Debi
+reported that the sessions divider's left/right resize cursor appeared to be gone. The
+divider itself proved byte-identical to its Claude-era implementation and the live page
+still computed `col-resize`, but the wider audit found a different preservation failure:
+if the newly external turn-stream asset failed to load, the panel could post a prompt
+and then lose its renderer. A green normal-path stream suite had not tested the new
+boundary's failure mode. The correction is both the code fix and this standing audit.
+
 ### 2b. The install path is a journey too (Debi, 2026-08-29)
 
 Self-provisioning is a golden journey, not plumbing: every installer/provisioner must be

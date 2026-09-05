@@ -89,6 +89,20 @@ def test_ship_config_and_build_kind_contracts_remain_explicit():
     assert "may be named either" in build and "M.O.T.app" in build
 
 
+def test_ship_mirrors_generated_config_into_snapshot_without_copying_app_tree():
+    ship = open(SHIP, encoding="utf-8").read()
+    sync = ship[ship.index("# Config.swift is generated source"):]
+    assert '[[ ! -L "$DST/app" ]]' in sync
+    assert '! -L "$DST/app/Config.swift"' in sync
+    assert 'mktemp "$DST/app/.Config.swift.ship.XXXXXX"' in sync
+    assert 'cp "$ROOT/app/Config.swift" "$_swift_tmp"' in sync
+    assert 'mv -f "$_swift_tmp" "$DST/app/Config.swift"' in sync
+    assert 'cmp -s "$ROOT/app/Config.swift" "$DST/app/Config.swift"' in sync
+    assert 'cp -R "$ROOT/app' not in ship, (
+        "app sources are not a ship-owned tree; only the generated root pointer is mirrored"
+    )
+
+
 def _fixture(tmp_path, *, stale=False, nested=False, regular=False, backup=False,
              materializer="local"):
     prefix = tmp_path / "prefix"

@@ -13566,6 +13566,24 @@ async function sendChat() {
     if (chatPane.attachedImage) attachNote('add a message to send with this image');
     return;
   }
+  // turn-stream.js is an execution dependency, not progressive decoration.  The
+  // old inline renderer could not disappear independently from this page; after
+  // U31 extracted it, continuing without the asset could POST a real prompt and
+  // then throw at `HarnessTurnStream.consume`, leaving the user with an action
+  // that happened but no visible stream.  Refuse before clearing the composer,
+  // staging bubbles, or touching the network.  Hermes uses the same renderer even
+  // though its producer route differs, so this guard deliberately covers all
+  // three lanes.
+  const streamApi = window.HarnessTurnStream;
+  const streamReady = streamApi && typeof streamApi.consume === 'function'
+    && (chatPane.mode === 'hermes' || (typeof streamApi.create === 'function'
+      && typeof streamApi.remember === 'function'));
+  if (!streamReady){
+    const why = 'message not sent — the Chat renderer did not load; reload M.O.T and try again';
+    attachNote(why);
+    try { feed('chat', why); } catch (_) {}
+    return;
+  }
   inp.value = '';
   growInput(inp);             // cleared → shrink back to the two-row base
   chatPane.busy = true;
@@ -13645,17 +13663,17 @@ async function sendChat() {
          tz_offset:-new Date().getTimezoneOffset(),
          ...(img ? {image: img.data, image_name: img.name} : {})};
     let resp;
-    if (turn.lane !== 'hermes' && window.HarnessTurnStream){
-      const made = await HarnessTurnStream.create(turn.lane, reqBody);
+    if (turn.lane !== 'hermes'){
+      const made = await streamApi.create(turn.lane, reqBody);
       turn.id = made.id; turn.instance = made.instance || ''; turn.lastSeq = 0;
-      HarnessTurnStream.remember(turn);
+      streamApi.remember(turn);
       resp = await fetch('/api/turns/' + encodeURIComponent(turn.id) + '/events?after=0',
                          {signal:turn.ctl.signal});
     } else resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(reqBody), signal: turn.ctl.signal});
     turnStage('waiting for the first frame');
     // Live delivery and replay deliberately share this complete renderer.
-    return await HarnessTurnStream.consume(resp, {turn, holder, body, think});
+    return await streamApi.consume(resp, {turn, holder, body, think});
   } catch (e) {
     // A force-end aborts the fetch on purpose — reporting that as a stream error
     // would blame the transport for a deliberate stop.

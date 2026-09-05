@@ -2174,9 +2174,15 @@ eq('the dedicated session is named exactly `loffice`',
 check('…renamed through the EXISTING rename route, on the DURABLE id (the gateway has '
       + 'no rename for a live session it does not own)',
       /'\/api\/hermes\/session\/' \+ encodeURIComponent\(agentStored\)/.test(grab('agentName')));
-check('…once, and never load-bearing: a rename that fails costs a beacon, not the lane',
-      /if \(agentNamed \|\| !agentStored\) return;/.test(grab('agentName'))
+check('…once, and never load-bearing: a rename that fails costs a beacon and remains '
+      + 'retryable rather than being logged as success',
+      /if \(agentNamed \|\| agentNaming \|\| !agentStored\) return;/.test(grab('agentName'))
+      && /if \(!r\.ok\) throw new Error/.test(grab('agentName'))
+      && /agentNamed = false/.test(grab('agentName'))
       && /agent-name-fail/.test(code));
+check('…only after the durable turn work completes, so first-turn auto-title cannot '
+      + 'win behind it',
+      asend.indexOf('await csAfterTurn(turn);') < asend.indexOf('await agentName();'));
 check('the session id is persisted, so the next question — and the next page load — '
       + 'continue the same conversation',
       /localStorage\.setItem\(LS_AGENT_SID/.test(code)
@@ -2185,7 +2191,11 @@ const restore = grab('agentRestoreHistory');
 check('U30: boot restores the durable Agent transcript through the read-only history '
       + 'route before landing',
       /agentRestoreHistory\(\)/.test(grab('boot'))
-      && /\/api\/hermes\/session\//.test(restore) && /\/history/.test(restore));
+      && /\/api\/hermes\/session\//.test(restore) && /\/history\?view=loffice/.test(restore));
+check('U30: new stored turns carry an explicit projection marker rather than making '
+      + 'reload guess where internal spreadsheet grounding ends',
+      /AGENT_USER_MARKER = '\\n\\n--- M\.O\.T LOffice user question ---\\n\\n'/.test(code)
+      && /\+ AGENT_USER_MARKER \+ q/.test(asend));
 check('U30: repaint never resumes or creates a live Hermes gateway session',
       !/session\/resume|session\/new/.test(restore));
 check('U30: restored user and assistant rows use the existing transcript renderer',
@@ -2225,7 +2235,7 @@ check('…and `clear` forgets it, because on this lane the history is not only o
   agentFrame({ type: 'hermes_session', id: 'S9', stored_id: 'D9' }, turn, held, steps);
   eq('the hermes_session frame is where the sid comes from — announced BEFORE any token',
      [held.sid, store.k1, store.k2], ['S9', 'S9', 'D9']);
-  eq('…and it is what triggers the one rename', named, 1);
+  eq('…and it does NOT rename before the first turn is durable', named, 0);
   agentFrame({ type: 'approval', request: { command: 'c', choices: ['once', 'deny'] } },
              turn, held, steps);
   eq('an approval frame draws a card, in the session THAT TURN owns',

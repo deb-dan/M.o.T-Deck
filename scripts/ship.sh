@@ -344,6 +344,31 @@ for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
 
+# Config.swift is generated source, but a fat snapshot carries a copy beside its app
+# sources.  Recompiling the installed binary from the canonical repo is not enough:
+# leaving that copy behind made a forensic root-severance scan truthfully report the
+# archived Claude checkout even while the binary itself used this checkout.  Mirror
+# only this generated file (never the app directory wholesale), refuse symlink-shaped
+# destinations, replace atomically, and fence the bytes.  It is not live state.
+[[ ! -L "$DST/app" ]] || {
+  echo "[ship] ERROR: snapshot app directory is a symlink; refusing Config.swift sync"
+  exit 1
+}
+mkdir -p "$DST/app"
+[[ ! -e "$DST/app/Config.swift" || ( -f "$DST/app/Config.swift" && ! -L "$DST/app/Config.swift" ) ]] || {
+  echo "[ship] ERROR: snapshot app/Config.swift is not a regular no-follow file"
+  exit 1
+}
+if ! cmp -s "$ROOT/app/Config.swift" "$DST/app/Config.swift"; then
+  _swift_tmp="$(mktemp "$DST/app/.Config.swift.ship.XXXXXX")" || exit 1
+  cp "$ROOT/app/Config.swift" "$_swift_tmp" || { rm -f "$_swift_tmp"; exit 1; }
+  mv -f "$_swift_tmp" "$DST/app/Config.swift" || { rm -f "$_swift_tmp"; exit 1; }
+fi
+cmp -s "$ROOT/app/Config.swift" "$DST/app/Config.swift" || {
+  echo "[ship] ERROR: generated Config.swift did not reach the snapshot"
+  exit 1
+}
+
 # The snapshot retains its own generated venvs while code is copied around them. Run
 # the same narrow repair after the helper itself has reached the snapshot and before a
 # bridge/component can be restarted; a healthy snapshot is simply an idempotent no-op.

@@ -65,6 +65,51 @@ def test_stored_history_is_read_only_and_normalized(monkeypatch):
     )]
 
 
+def test_loffice_view_projects_only_the_human_question(monkeypatch):
+    import httpx
+    marker = hermes._LOFFICE_USER_MARKER
+    legacy = hermes._LOFFICE_LEGACY_MARKER
+    new_question = f"one{legacy}two"  # a user's own legacy-looking text must survive.
+    _Client.response = _Response(payload={
+        "messages": [
+            {"role": "user", "content": "private grounding" + marker + new_question},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": (
+                "Open workbook: \"Budget.xlsx\" — tools take this exact name."
+                + legacy + "legacy question")},
+            # A generic Hermes message containing a horizontal rule is not LOffice
+            # grounding and must not be truncated even in this explicitly projected view.
+            {"role": "user", "content": "ordinary note" + legacy + "keep all of me"},
+        ],
+        "pagination": {"returned": 4},
+    })
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(hermes, "_hermes_token", lambda: "secret")
+    response = TestClient(facade.app).get(
+        "/api/hermes/session/stored-loffice/history?view=loffice")
+    assert response.status_code == 200
+    assert response.json()["history"] == [
+        {"role": "user", "content": new_question},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "legacy question"},
+        {"role": "user", "content": "ordinary note" + legacy + "keep all of me"},
+    ]
+
+
+def test_generic_history_never_applies_loffice_projection(monkeypatch):
+    import httpx
+    raw = "grounding" + hermes._LOFFICE_USER_MARKER + "question"
+    _Client.response = _Response(payload={
+        "messages": [{"role": "user", "content": raw}],
+        "pagination": {"returned": 1},
+    })
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(hermes, "_hermes_token", lambda: "secret")
+    response = TestClient(facade.app).get("/api/hermes/session/generic/history")
+    assert response.status_code == 200
+    assert response.json()["history"] == [{"role": "user", "content": raw}]
+
+
 def test_limit_is_reported_as_possible_not_certain_truncation(monkeypatch):
     import httpx
     _Client.response = _Response(payload={"messages": [], "pagination": {"returned": 500}})

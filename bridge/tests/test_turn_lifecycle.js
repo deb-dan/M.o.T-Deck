@@ -214,6 +214,20 @@ const sendAt = html.indexOf('async function sendChat()');
 if (sendAt < 0) throw new Error('sendChat not found in the panel');
 const sendEnd = html.indexOf('/* ====', sendAt);
 const send = html.slice(sendAt, sendEnd > 0 ? sendEnd : sendAt + 20000);
+check('the extracted stream renderer is a fail-closed dependency for EVERY lane',
+  /const streamReady = streamApi && typeof streamApi\.consume === 'function'/.test(send)
+  && /chatPane\.mode === 'hermes' \|\| \(typeof streamApi\.create === 'function'/.test(send)
+  && /typeof streamApi\.remember === 'function'/.test(send));
+check('a missing renderer says the prompt was not sent and returns before mutating it',
+  /message not sent — the Chat renderer did not load; reload M\.O\.T and try again/.test(send));
+before(send, 'if (!streamReady){', "inp.value = '';",
+  '…the renderer guard runs before the composer is cleared');
+before(send, 'if (!streamReady){', "const url = chatPane.mode === 'hermes'",
+  '…and before any producer route is selected or contacted');
+check('after that one guard, the send path uses the captured API consistently',
+  /streamApi\.create\(turn\.lane, reqBody\)/.test(send)
+  && /streamApi\.remember\(turn\)/.test(send)
+  && /streamApi\.consume\(resp, \{turn, holder, body, think\}\)/.test(send));
 check('sendChat creates the turn (lane + AbortController + stage) before fetching',
   /const turn = \{lane: chatPane\.mode, session: chatPane\.sid, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
 check('the fetch carries the abort signal — without it nothing can cancel a read',

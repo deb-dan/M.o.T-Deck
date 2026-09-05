@@ -1147,6 +1147,41 @@ def hermes_messages_to_panel(messages):
     return out
 
 
+_LOFFICE_USER_MARKER = "\n\n--- M.O.T LOffice user question ---\n\n"
+_LOFFICE_LEGACY_MARKER = "\n\n---\n\n"
+
+
+def loffice_messages_to_panel(messages):
+    """Project stored model-facing LOffice turns into the visible transcript.
+
+    Hermes correctly persists the complete user-role message it processed. LOffice's
+    version contains implementation instructions and workbook grounding ahead of the
+    human question, while the live panel shows only that question. New turns use an
+    explicit stable delimiter. The legacy branch is deliberately narrow: it runs only
+    for the explicit LOffice view and only when the prefix proves one of LOffice's
+    generated grounding shapes. Generic Hermes history remains unchanged.
+    """
+    rows = hermes_messages_to_panel(messages)
+    for row in rows:
+        if row.get("role") != "user":
+            continue
+        content = row.get("content") or ""
+        if _LOFFICE_USER_MARKER in content:
+            row["content"] = content.split(_LOFFICE_USER_MARKER, 1)[1]
+            continue
+        if _LOFFICE_LEGACY_MARKER not in content:
+            continue
+        prefix, question = content.rsplit(_LOFFICE_LEGACY_MARKER, 1)
+        generated = (
+            "You are the assistant built into LOffice" in prefix
+            or ("Open workbook:" in prefix and "tools take this exact name" in prefix)
+            or ("No workbook is open right now" in prefix and "loffice" in prefix.lower())
+        )
+        if generated:
+            row["content"] = question
+    return rows
+
+
 @app.get("/api/hermes/sessions")
 async def hermes_sessions() -> JSONResponse:
     """Stored Hermes sessions for the rail (Phase 3; WS-based, no REST token dance).
@@ -1279,7 +1314,7 @@ async def hermes_history(sid: str) -> JSONResponse:
 
 
 @app.get("/api/hermes/session/{sid}/history")
-async def hermes_stored_history(sid: str) -> JSONResponse:
+async def hermes_stored_history(sid: str, request: Request) -> JSONResponse:
     """Read a stored transcript without creating or rebinding a live session.
 
     Hermes's dashboard endpoint opens the session database through its read path and
@@ -1314,7 +1349,9 @@ async def hermes_stored_history(sid: str) -> JSONResponse:
                 {"error": "stored history returned an unsupported response shape"},
                 status_code=502)
         raw = payload["messages"]
-        history = hermes_messages_to_panel(raw)
+        view = str(request.query_params.get("view") or "").strip().lower()
+        history = (loffice_messages_to_panel(raw) if view == "loffice"
+                   else hermes_messages_to_panel(raw))
         pagination = payload.get("pagination") if isinstance(payload, dict) else {}
         returned = pagination.get("returned") if isinstance(pagination, dict) else None
         try:

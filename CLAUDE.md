@@ -148,6 +148,15 @@
 > symptom-specific deletions cannot close a user-visible bug. Full binding and the
 > U75/U76 incident are in docs/DOCTRINE-PROACTIVE-BUILD.md §10.**
 
+> **🛡️ A FIX MAY NOT SPEND EXISTING PRODUCT INTENT (Debi standing order,
+> 2026-09-05):** every fix/refactor preserves intentional features, visual and pointer
+> affordances, controls, labels, shortcuts, layouts, fallbacks and user state unless
+> Debi explicitly authorizes the change. UI QA compares the shipped baseline and the
+> feature's introducing commit, accounts for moved code, and walks hover/focus/disabled,
+> keyboard/pointer, reload/restart and dependency-failure paths. Any unexplained delta
+> is a regression or an explicit UNFORGET row—not an acceptable cost of fixing something
+> else. Full binding and incident are in docs/DOCTRINE-PROACTIVE-BUILD.md §11.**
+
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);

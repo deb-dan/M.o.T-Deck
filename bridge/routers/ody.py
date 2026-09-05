@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Request
@@ -113,9 +114,9 @@ def historical_model_availability(raw_model, endpoint_url, registry, config) -> 
     not "deleted" (the bytes may remain or the source manager may have withdrawn it).
     """
     model = str(raw_model or "").strip()
-    endpoint = str(endpoint_url or "").strip().rstrip("/")
-    expected = str(((config or {}).get("runner") or {}).get("endpoint") or "") \
-        .strip().rstrip("/")
+    endpoint = _endpoint_base_identity(endpoint_url)
+    expected = _endpoint_base_identity(
+        ((config or {}).get("runner") or {}).get("endpoint"))
     if not model or not endpoint or not expected or endpoint != expected:
         return {"status": "", "note": ""}
     try:
@@ -133,6 +134,35 @@ def historical_model_availability(raw_model, endpoint_url, registry, config) -> 
         "note": ("This historical chat names a model that is not available in "
                  "M.O.T's current model inventory."),
     }
+
+
+def _endpoint_base_identity(raw_url) -> tuple | None:
+    """Return a conservative identity for an OpenAI-compatible endpoint.
+
+    Odysseus persists the concrete chat route while M.O.T config stores its API
+    base. Strip only its documented terminal chat path; never equate aliases,
+    different hosts/ports, URLs with credentials, or URLs with query/fragment data.
+    """
+    value = str(raw_url or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment):
+            return None
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    path = (parsed.path or "").rstrip("/")
+    # U35 needs exactly Odysseus's OpenAI chat URL shape. Treating models,
+    # completions, Responses or Anthropic routes as equivalent would make a claim
+    # about sessions whose provider semantics this bridge has not proved.
+    suffix = "/chat/completions"
+    if path.endswith(suffix):
+        path = path[:-len(suffix)].rstrip("/")
+    return (parsed.scheme.lower(), parsed.hostname.lower(), port, path or "/")
 
 
 @app.post("/api/ody/session/new")
