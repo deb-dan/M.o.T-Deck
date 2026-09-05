@@ -57,6 +57,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 BASE_URL = os.environ.get("JAN_BASE_URL", "http://127.0.0.1:6767/v1")
@@ -116,6 +117,26 @@ def looks_like_our_runner_url(url) -> bool:
     is honoured; a port change between Starts (:1337 → :6767) passes and is refreshed.
     """
     return bool(_OUR_URL_RE.match(str(url or "").strip()))
+
+
+def runner_key_accepted(base_url, api_key):
+    """Return True/False for an authoritative auth result, else None.
+
+    A custom key that still works is user intent and survives every seed. A 401/403
+    from the exact loopback runner is authoritative evidence that the stored key can
+    no longer serve this M.O.T-owned endpoint; only then may the stable ``local-jan``
+    row be repaired. Network failures grant no write authority.
+    """
+    try:
+        req = urllib.request.Request(str(base_url or "").rstrip("/") + "/models")
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=3) as response:  # noqa: S310
+            return True if response.status == 200 else None
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (401, 403) else None
+    except Exception:  # noqa: BLE001 -- absence of evidence authorizes no write
+        return None
 
 
 def registry_wire_models(models, active: str = "") -> list:
@@ -221,13 +242,20 @@ def endpoint_plan(row, marker, want) -> tuple:
         else:
             notes.append(f"base_url: honoured your address ({cur_url}) — not repointed")
 
-    # ── api_key: fill an empty one, rotate ours, never overwrite theirs ──────────
+    # ── api_key: fill empty, rotate ours, repair only a PROVEN-REJECTED local key ─
     cur_key = row.get("api_key") or ""
     if cur_key != (want.get("api_key") or ""):
-        if not cur_key or cur_key == (marker.get("api_key") or "\0"):
+        rejected_local = (want.get("current_key_accepted") is False
+                          and str(row.get("id") or "") == ENDPOINT_ID
+                          and looks_like_our_runner_url(row.get("base_url")))
+        if not cur_key or cur_key == (marker.get("api_key") or "\0") or rejected_local:
             ch["api_key"] = want.get("api_key")
+            if rejected_local and cur_key != (marker.get("api_key") or "\0"):
+                notes.append("api_key: replaced only after the M.O.T runner rejected it")
         else:
-            notes.append("api_key: honoured your key — not replaced")
+            verdict = want.get("current_key_accepted")
+            reason = "accepted by the runner" if verdict is True else "not proven invalid"
+            notes.append(f"api_key: honoured your key ({reason}) — not replaced")
 
     # ── is_enabled: NEVER. Not once, not on a restart, not on a reinstall. ───────
     if not row.get("is_enabled"):
@@ -548,6 +576,9 @@ def main() -> int:
             "pinned_models": _as_list(ep.pinned_models),
             "hidden_models": _as_list(ep.hidden_models),
         }
+        if row is not None:
+            want["current_key_accepted"] = runner_key_accepted(
+                row.get("base_url"), row.get("api_key"))
         changes, notes = endpoint_plan(row, marker, want)
         created = row is None
         if created:

@@ -138,9 +138,20 @@ def test_is_enabled_is_written_exactly_once_in_the_whole_script():
         "the update branch may only READ is_enabled (to say it is off), never write it")
 
 
-def test_user_api_key_is_never_replaced_but_ours_rotates():
-    ch, notes = seed.endpoint_plan(row(api_key="sk-debis-own"), MARKER, WANT)
+def test_working_or_unverifiable_user_key_survives_but_rejected_managed_key_rotates():
+    ch, notes = seed.endpoint_plan(
+        row(api_key="sk-debis-own"), MARKER,
+        dict(WANT, current_key_accepted=True))
     assert "api_key" not in ch and any("honoured your key" in n for n in notes)
+    ch, notes = seed.endpoint_plan(
+        row(api_key="sk-debis-own"), MARKER,
+        dict(WANT, current_key_accepted=None))
+    assert "api_key" not in ch and any("not proven invalid" in n for n in notes)
+    ch, notes = seed.endpoint_plan(
+        row(api_key="stale-custom"), MARKER,
+        dict(WANT, current_key_accepted=False))
+    assert ch["api_key"] == "harness-local"
+    assert any("runner rejected" in n for n in notes)
     # ours, gone stale (harness.yaml key changed) → rotated
     stale = dict(MARKER, api_key="old-key")
     ch, _ = seed.endpoint_plan(row(api_key="old-key"), stale, WANT)
@@ -148,6 +159,17 @@ def test_user_api_key_is_never_replaced_but_ours_rotates():
     # empty → filled
     ch, _ = seed.endpoint_plan(row(api_key=None), MARKER, WANT)
     assert ch["api_key"] == "harness-local"
+
+
+def test_rejected_key_never_authorizes_changes_to_adopted_or_remote_rows():
+    adopted = row(id="user-row", api_key="stale-custom")
+    ch, _ = seed.endpoint_plan(adopted, {},
+                               dict(WANT, current_key_accepted=False))
+    assert "api_key" not in ch
+    remote = row(base_url="https://user.example/v1", api_key="stale-custom")
+    ch, _ = seed.endpoint_plan(remote, {},
+                               dict(WANT, current_key_accepted=False))
+    assert "api_key" not in ch
 
 
 def test_base_url_refreshes_only_when_it_is_ours():
