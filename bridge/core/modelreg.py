@@ -30,6 +30,7 @@ rule core/health.py's two-strike debounce enforces one layer up, for the same in
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -48,6 +49,8 @@ import fcntl
 ABSENT_KEY = "absent"
 EVIDENCE_KEY = "artifact_evidence"
 _REGISTRY_LOCKS, _REGISTRY_LOCKS_GUARD, _REGISTRY_LOCK_STATE = {}, threading.Lock(), threading.local()
+_PROBE_CACHE, _PROBE_FLIGHTS, _PROBE_CACHE_LOCK = {}, {}, threading.Lock()
+_PROBE_CACHE_MAX = 128
 
 
 def _require_regular(path, *, absent_ok=False):
@@ -449,7 +452,7 @@ def _audio_type_present(path, fmt):
     return bool(_stat.S_ISDIR(st.st_mode) if wants_dir(fmt) else _stat.S_ISREG(st.st_mode))
 
 
-def artifact_probe(entry: dict) -> dict:
+def _artifact_probe_uncached(entry: dict) -> dict:
     """Read-only structural verdict for one chat GGUF or MLX artifact.
 
     This verifies required files plus GGUF/safetensors headers and an MLX architecture
@@ -628,6 +631,131 @@ def artifact_probe(entry: dict) -> dict:
     return _verdict("ready", "structurally-ready", "model artifact is structurally ready", {
         "v": 1, "real_path": os.path.realpath(path), "device": root.st_dev,
         "manifest": {"kind": "gguf", "files": required}})
+
+
+def _probe_stat(path):
+    """Cheap content-identity input, or ``None`` when it cannot prove one.
+
+    ``ctime`` is included as well as caller-settable ``mtime`` so replacing bytes and
+    restoring a timestamp cannot accidentally reuse an earlier structural verdict.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (int(st.st_dev), int(st.st_ino), int(st.st_mode), int(st.st_size),
+            int(st.st_mtime_ns), int(st.st_ctime_ns))
+
+
+def _probe_cache_key(entry):
+    """Identity of every byte-bearing member the structural validator may read.
+
+    This intentionally does not cache a missing/unreadable primary path. Negative
+    filesystem observations must remain live. For MLX, listing names plus statting
+    config, indexes and weights detects membership and in-place changes without
+    reopening tensor headers. GGUF shard/projector members receive the same treatment.
+    """
+    if not isinstance(entry, dict):
+        return None
+    path = entry.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    fmt = str(entry.get("format") or "gguf").strip().lower()
+    primary = _probe_stat(path)
+    if primary is None:
+        return None
+    if is_audio(entry):
+        return ("audio", fmt, os.path.abspath(path), primary)
+    members = []
+    if fmt == "mlx":
+        try:
+            names = sorted(os.listdir(path))
+        except OSError:
+            return None
+        relevant = [n for n in names if (n == "config.json"
+                    or n.endswith(".safetensors")
+                    or n.endswith(".safetensors.index.json"))]
+        for name in relevant:
+            fingerprint = _probe_stat(os.path.join(path, name))
+            if fingerprint is None:
+                return None
+            members.append((name, fingerprint))
+        return ("mlx", os.path.abspath(path), primary, tuple(names), tuple(members))
+    name = os.path.basename(path)
+    group = split_gguf_group(name)
+    if group:
+        parent = os.path.dirname(path)
+        for shard in _shard_names(group[0], group[1], ".gguf"):
+            fingerprint = _probe_stat(os.path.join(parent, shard))
+            if fingerprint is None:
+                return None
+            members.append((shard, fingerprint))
+    mmproj = entry.get("mmproj")
+    projector_identity = ""
+    if isinstance(mmproj, str) and mmproj:
+        fingerprint = _probe_stat(mmproj)
+        if fingerprint is None:
+            return None
+        projector_identity = os.path.abspath(mmproj)
+        members.append(("mmproj:" + projector_identity, fingerprint))
+    elif mmproj not in (None, ""):
+        # Invalid values are part of the verdict and therefore part of its identity.
+        # Never let ``mmproj=True`` reuse the ready result for the same model with no
+        # projector declared.
+        projector_identity = (type(mmproj).__name__, repr(mmproj))
+    return ("gguf", os.path.abspath(path), primary, projector_identity, tuple(members))
+
+
+def artifact_probe(entry: dict) -> dict:
+    """Cached, single-flight structural verdict for one chat or audio artifact.
+
+    Full GGUF/safetensors validation is deliberately expensive. Status, model lists,
+    fit advice and component launch may ask the same question concurrently after a
+    bridge restart. The first caller validates; peers wait and reuse that exact
+    verdict. Any relevant filesystem identity change creates a different key.
+    """
+    key = _probe_cache_key(entry)
+    if key is None:
+        return _artifact_probe_uncached(entry)
+    while True:
+        with _PROBE_CACHE_LOCK:
+            hit = _PROBE_CACHE.get(key)
+            if hit is not None:
+                return copy.deepcopy(hit)
+            flight = _PROBE_FLIGHTS.get(key)
+            owns_flight = flight is None
+            if owns_flight:
+                flight = threading.Event()
+                _PROBE_FLIGHTS[key] = flight
+        if not owns_flight:
+            # Only the SAME stat identity can make us wait. Different models and a
+            # newer generation of this path remain independently checkable.
+            flight.wait()
+            key = _probe_cache_key(entry)
+            if key is None:
+                return _artifact_probe_uncached(entry)
+            continue
+        try:
+            verdict = _artifact_probe_uncached(entry)
+            # Do not bind a verdict to the preflight identity if any member changed
+            # while its header was being walked. A later caller may retry against
+            # stable bytes; this caller gets unknown, never a mixed-generation claim.
+            if _probe_cache_key(entry) != key:
+                return _verdict("unknown", "changed-during-probe",
+                                "model artifact changed while it was being checked")
+            # Unknown means the validator could not observe a stable truth. Never make
+            # a transient permission/I/O failure sticky merely because stat succeeded.
+            if verdict.get("state") != "unknown":
+                with _PROBE_CACHE_LOCK:
+                    if len(_PROBE_CACHE) >= _PROBE_CACHE_MAX:
+                        _PROBE_CACHE.clear()
+                    _PROBE_CACHE[key] = copy.deepcopy(verdict)
+            return verdict
+        finally:
+            with _PROBE_CACHE_LOCK:
+                if _PROBE_FLIGHTS.get(key) is flight:
+                    _PROBE_FLIGHTS.pop(key, None)
+                flight.set()
 
 
 def _mount_root(real_path: str, device: int) -> str | None:

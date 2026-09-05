@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -105,6 +107,118 @@ def test_structural_probe_rejects_nonempty_garbage_and_malformed_headers(tmp_pat
     weight.write_bytes(safetensors_bytes())
     (tmp_path / "model-mlx" / "config.json").write_text("{}")
     assert MR.artifact_probe(bad_weight)["reason"] == "invalid-config"
+
+
+def test_structural_probe_is_single_flight_and_invalidates_on_identity_change(tmp_path, monkeypatch):
+    row = gguf(tmp_path, "shared.gguf")
+    MR._PROBE_CACHE.clear()
+    real = MR._artifact_probe_uncached
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def slow(entry):
+        calls.append(entry["path"])
+        entered.set()
+        assert release.wait(2)
+        return real(entry)
+
+    monkeypatch.setattr(MR, "_artifact_probe_uncached", slow)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(MR.artifact_probe(row)))
+               for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    assert entered.wait(1)
+    time.sleep(0.05)  # give every peer time to reach the guarded cache lookup
+    release.set()
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    assert len(calls) == 1
+    assert [result["state"] for result in results] == ["ready"] * 8
+
+    # A cached result is a copy: a caller cannot poison every later consumer.
+    results[0]["evidence"]["manifest"]["files"].append("poison")
+    assert MR.artifact_probe(row)["evidence"]["manifest"]["files"] == ["shared.gguf"]
+
+    # Same path, new bytes, caller-restored mtime: ctime/size/inode identity still
+    # invalidates the ready verdict and the real validator sees the corruption.
+    before = os.stat(row["path"])
+    with open(row["path"], "r+b") as fh:
+        fh.seek(0)
+        fh.write(b"NOPE")
+    os.utime(row["path"], ns=(before.st_atime_ns, before.st_mtime_ns))
+    release.set()
+    assert MR.artifact_probe(row)["reason"] == "invalid-header"
+    assert len(calls) == 2
+
+
+def test_structural_probe_mlx_manifest_change_invalidates_cache(tmp_path):
+    row = mlx(tmp_path)
+    MR._PROBE_CACHE.clear()
+    assert MR.artifact_probe(row)["state"] == "ready"
+    weight = tmp_path / "model-mlx" / "model.safetensors"
+    weight.write_bytes(b"x")
+    assert MR.artifact_probe(row)["reason"] == "invalid-weight"
+    weight.write_bytes(safetensors_bytes())
+    extra = tmp_path / "model-mlx" / "extra.safetensors"
+    extra.write_bytes(b"x")
+    assert MR.artifact_probe(row)["reason"] == "invalid-weight"
+
+
+def test_structural_probe_cache_separates_projector_semantics_and_unstable_bytes(tmp_path, monkeypatch):
+    row = gguf(tmp_path, "projected.gguf")
+    MR._PROBE_CACHE.clear()
+    assert MR.artifact_probe(row)["state"] == "ready"
+    assert MR.artifact_probe(dict(row, mmproj=True))["reason"] == "invalid-mmproj"
+
+    real = MR._artifact_probe_uncached
+    changed = False
+
+    def mutate_during_probe(entry):
+        nonlocal changed
+        verdict = real(entry)
+        if not changed:
+            changed = True
+            with open(entry["path"], "r+b") as fh:
+                fh.seek(0)
+                fh.write(b"NOPE")
+        return verdict
+
+    other = gguf(tmp_path, "moving.gguf")
+    monkeypatch.setattr(MR, "_artifact_probe_uncached", mutate_during_probe)
+    assert MR.artifact_probe(other)["reason"] == "changed-during-probe"
+    assert MR.artifact_probe(other)["reason"] == "invalid-header"
+
+
+def test_structural_probe_different_artifacts_do_not_share_a_flight(tmp_path, monkeypatch):
+    first = gguf(tmp_path, "first.gguf")
+    second = gguf(tmp_path, "second.gguf")
+    MR._PROBE_CACHE.clear()
+    real = MR._artifact_probe_uncached
+    first_entered = threading.Event()
+    release_first = threading.Event()
+
+    def slow_first(entry):
+        if entry["path"] == first["path"]:
+            first_entered.set()
+            assert release_first.wait(2)
+        return real(entry)
+
+    monkeypatch.setattr(MR, "_artifact_probe_uncached", slow_first)
+    one = threading.Thread(target=lambda: MR.artifact_probe(first))
+    one.start()
+    assert first_entered.wait(1)
+    # The second model must complete while the first model's validator is deliberately
+    # suspended. A global lock would turn one slow external source into app-wide pain.
+    two = threading.Thread(target=lambda: MR.artifact_probe(second))
+    two.start()
+    two.join(1)
+    assert not two.is_alive()
+    release_first.set()
+    one.join(2)
+    assert not one.is_alive()
 
 
 @pytest.mark.parametrize("dtype,shape,payload_bytes", [
