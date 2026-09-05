@@ -9,7 +9,9 @@ claiming that a task can survive the process that owns its network connection.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -21,6 +23,14 @@ MAX_TERMINAL_TURNS = 500
 MAX_TERMINAL_AGE = 7 * 86400
 MAX_EVENTS_PER_TURN = 20_000
 MAX_EVENT_BYTES_PER_TURN = 8 * 1024 * 1024
+MAX_STORE_EVENT_BYTES = 32 * 1024 * 1024
+MAX_ACTIVE_TURNS = 8
+TERMINAL_RESERVE_BYTES = 4096
+# Two SSE line endings, without misreading one CRLF as CR + LF. The explicit mixed
+# cases matter when a proxy normalizes only one side of the blank line.
+SSE_BOUNDARY = re.compile(
+    r"\r\n\r\n|\r\n\n|\r\n\r|\n\r\n|\n\n|\n\r|\r\r\n|\r\r")
+SSE_LINE = re.compile(r"\r\n|\r|\n")
 
 
 class TurnConflict(RuntimeError):
@@ -60,6 +70,7 @@ class TurnStore:
         self._changed = asyncio.Condition()
         self._turns: dict[str, Turn] = {}
         self._requests: dict[tuple[str, str, str], str] = {}
+        self._event_bytes = 0
         # A browser marker may outlive this process. It can call a missing turn an
         # interruption only when this nonce changed; a record pruned by the same
         # process is not evidence of a restart.
@@ -70,7 +81,14 @@ class TurnStore:
         return {name: getattr(turn, name) for name in (
             "id", "state", "lane", "session", "created_at", "updated_at", "error")}
 
-    def _prune_locked(self) -> None:
+    def _drop_locked(self, turn: Turn) -> None:
+        removed = self._turns.pop(turn.id, None)
+        if removed is not None:
+            self._event_bytes = max(0, self._event_bytes - removed.event_bytes)
+        self._requests.pop((turn.request_id, turn.lane, turn.session), None)
+
+    def _prune_locked(self, *, required_bytes: int = 0,
+                      active_delta: int = 0) -> bool:
         now = time.time()
         terminal = sorted(
             (turn for turn in self._turns.values() if turn.state in TERMINAL),
@@ -89,8 +107,27 @@ class TurnStore:
         for turn in terminal:
             if turn.id in keep:
                 continue
-            self._turns.pop(turn.id, None)
-            self._requests.pop((turn.request_id, turn.lane, turn.session), None)
+            self._drop_locked(turn)
+
+        # Per-turn limits alone still permitted hundreds of multi-megabyte replay
+        # buffers. Keep one process-wide encoded-payload budget as well. Active
+        # producers and subscriber-leased terminal rows are never evicted: older,
+        # unattached terminal rows go first, and a new/expanding turn is refused if
+        # those safe evictions cannot make room.
+        active_count = sum(turn.state not in TERMINAL for turn in self._turns.values())
+        active_count += active_delta
+        if active_count > MAX_ACTIVE_TURNS:
+            return False
+        budget = MAX_STORE_EVENT_BYTES - active_count * TERMINAL_RESERVE_BYTES
+        evictable = sorted(
+            (turn for turn in self._turns.values()
+             if turn.state in TERMINAL and not turn.subscribers),
+            key=lambda turn: turn.updated_at,
+        )
+        while self._event_bytes + required_bytes > budget and evictable:
+            stale = evictable.pop(0)
+            self._drop_locked(stale)
+        return self._event_bytes + required_bytes <= budget
 
     @staticmethod
     def _validate(body: dict[str, Any]) -> tuple[str, str, str]:
@@ -118,6 +155,9 @@ class TurnStore:
                            and turn.state not in TERMINAL), None)
             if active:
                 raise TurnConflict(active.id)
+            if not self._prune_locked(active_delta=1):
+                raise TurnOverflow(
+                    "the bridge replay store is full; wait for another turn to finish and try again")
             now = time.time()
             turn = Turn(secrets.token_urlsafe(24), request_id, lane, session,
                         "queued", now, now)
@@ -165,9 +205,12 @@ class TurnStore:
             if (len(turn.events) >= MAX_EVENTS_PER_TURN
                     or turn.event_bytes + size > MAX_EVENT_BYTES_PER_TURN):
                 raise TurnOverflow("the turn exceeded the bridge replay limit")
+            if not self._prune_locked(required_bytes=size):
+                raise TurnOverflow("the bridge replay store reached its process-wide limit")
             turn.events.append((turn.next_seq, public))
             turn.next_seq += 1
             turn.event_bytes += size
+            self._event_bytes += size
             turn.updated_at = time.time()
             self._changed.notify_all()
 
@@ -181,11 +224,30 @@ class TurnStore:
             payload: dict[str, Any] = {"type": "terminal", "state": state}
             if error:
                 payload["error"] = error
+            encoded_size = len(json.dumps(payload, separators=(",", ":")).encode())
+            # Every active turn reserves enough room for this terminal record when it
+            # is created. This capacity check may evict only unattached old terminals;
+            # it can never spend a connected subscriber's final frame.
+            if (encoded_size > TERMINAL_RESERVE_BYTES
+                    or not self._prune_locked(required_bytes=encoded_size,
+                                              active_delta=-1)):
+                payload = {"type": "terminal", "state": "failed",
+                           "error": "the bridge replay store exhausted its terminal reserve"}
+                encoded_size = len(json.dumps(payload, separators=(",", ":")).encode())
+                # The production reserve is deliberately larger than the bounded
+                # fallback. Re-check the accounting invariant rather than appending a
+                # terminal record that the store has no capacity to retain.
+                if (encoded_size > TERMINAL_RESERVE_BYTES
+                        or not self._prune_locked(required_bytes=encoded_size,
+                                                  active_delta=-1)):
+                    raise RuntimeError("the bridge terminal reserve invariant failed")
+                state = "failed"
             turn.events.append((turn.next_seq, payload))
             turn.next_seq += 1
-            turn.event_bytes += len(json.dumps(payload, separators=(",", ":")).encode())
-            turn.state = state
-            turn.error = error
+            turn.event_bytes += encoded_size
+            self._event_bytes += encoded_size
+            turn.state = str(payload["state"])
+            turn.error = str(payload.get("error") or "")
             turn.updated_at = time.time()
             self._prune_locked()
             self._changed.notify_all()
@@ -195,46 +257,81 @@ class TurnStore:
                    factory: Callable[[], AsyncIterator[str | bytes]]) -> None:
         saw_done = False
         upstream_error = ""
+        unreadable_event = False
         buffer = ""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+
+        async def consume_frame(frame: str) -> None:
+            nonlocal saw_done, upstream_error, unreadable_event
+            event_name = ""
+            data_lines = []
+            for line in SSE_LINE.split(frame):
+                if not line or line.startswith(":"):
+                    continue
+                field, colon, value = line.partition(":")
+                if colon and value.startswith(" "):
+                    value = value[1:]
+                if field == "event":
+                    event_name = value.strip()
+                elif field == "data":
+                    data_lines.append(value)
+            if not data_lines:
+                return
+            value = "\n".join(data_lines)
+            if value.strip() == "[DONE]":
+                if event_name == "error":
+                    upstream_error = "the upstream agent ended with an error sentinel"
+                else:
+                    saw_done = True
+                return
+            try:
+                payload = json.loads(value)
+                if not isinstance(payload, dict):
+                    raise ValueError("event is not an object")
+            except (json.JSONDecodeError, ValueError):
+                unreadable_event = True
+                await self._append(turn_id, {
+                    "type": "proxy_error",
+                    "error": "the producer emitted an unreadable event",
+                })
+                return
+            if event_name == "error":
+                # A named upstream failure wins over any later [DONE] marker.
+                reason = payload.get("error") or payload.get("text")
+                upstream_error = str(reason or "the upstream agent failed")[:2000]
+            else:
+                await self._append(turn_id, payload)
+
         try:
             async for raw in factory():
-                buffer += raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
-                frames = buffer.split("\n\n")
+                if isinstance(raw, bytes):
+                    buffer += decoder.decode(raw, final=False)
+                else:
+                    # Producers in this app use bytes or text consistently. Refuse a
+                    # text chunk if it would skip an incomplete buffered UTF-8 codepoint.
+                    pending, _flag = decoder.getstate()
+                    if pending:
+                        raise UnicodeDecodeError("utf-8", pending, 0, len(pending),
+                                                 "text arrived mid-codepoint")
+                    buffer += raw
+                frames = SSE_BOUNDARY.split(buffer)
                 buffer = frames.pop()
                 for frame in frames:
-                    event_name = next(
-                        (line[6:].strip() for line in frame.splitlines()
-                         if line.startswith("event:")), "")
-                    for line in frame.splitlines():
-                        if not line.startswith("data: "):
-                            continue
-                        value = line[6:].strip()
-                        if value == "[DONE]":
-                            saw_done = True
-                            break
-                        try:
-                            payload = json.loads(value)
-                            if not isinstance(payload, dict):
-                                raise ValueError("event is not an object")
-                        except (json.JSONDecodeError, ValueError):
-                            payload = {"type": "proxy_error",
-                                       "error": "the producer emitted an unreadable event"}
-                        if event_name == "error":
-                            # Odysseus uses a named SSE error event and then closes
-                            # without [DONE].  Retain its actual reason as terminal
-                            # state instead of replacing it with a generic EOF lie.
-                            reason = payload.get("error") or payload.get("text")
-                            upstream_error = str(reason or "the upstream agent failed")[:2000]
-                        else:
-                            await self._append(turn_id, payload)
+                    await consume_frame(frame)
                     if saw_done:
                         break
                 if saw_done:
                     break
-            if saw_done:
-                await self._terminal(turn_id, "completed")
-            elif upstream_error:
+            buffer += decoder.decode(b"", final=True)
+            if buffer:
+                await consume_frame(buffer)
+            if upstream_error:
                 await self._terminal(turn_id, "failed", upstream_error)
+            elif saw_done:
+                await self._terminal(turn_id, "completed")
+            elif unreadable_event:
+                await self._terminal(turn_id, "failed",
+                                     "the producer ended with an unreadable event")
             else:
                 await self._terminal(turn_id, "failed",
                                      "the producer ended without a completion frame")

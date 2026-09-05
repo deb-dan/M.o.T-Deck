@@ -271,34 +271,60 @@
   async function consume(response, ctx){
     if (!response.ok || !response.body) throw new Error('stream refused with HTTP ' + response.status);
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder('utf-8', {fatal:true});
     let buffer = '';
+    function consumeFrame(frame){
+      let eventName = '', data = [];
+      for (const line of frame.split(/\r\n|\r|\n/)) {
+        if (!line || line.startsWith(':')) continue;
+        const at = line.indexOf(':');
+        const field = at < 0 ? line : line.slice(0, at);
+        let value = at < 0 ? '' : line.slice(at + 1);
+        if (value.startsWith(' ')) value = value.slice(1);
+        if (field === 'event') eventName = value.trim();
+        else if (field === 'data') data.push(value);
+      }
+      if (!data.length) return false;
+      const payload = data.join('\n');
+      if (payload.trim() === '[DONE]') {
+        if (eventName === 'error')
+          complete(ctx, 'failed', 'the upstream turn ended with an error sentinel');
+        else complete(ctx, 'completed', '');
+        return true;
+      }
+      let parsed;
+      try { parsed = JSON.parse(payload); }
+      catch (_) { throw new Error('the turn stream emitted an unreadable event'); }
+      if (eventName === 'error') {
+        complete(ctx, 'failed', parsed.error || parsed.text || 'the upstream turn failed');
+        return true;
+      }
+      if (parsed.seq !== undefined) {
+        if (parsed.seq <= (ctx.turn.lastSeq || 0)) return false;
+        ctx.turn.lastSeq = parsed.seq;
+      }
+      if (parsed.type === 'terminal') {
+        complete(ctx, parsed.state || 'failed', parsed.error || '');
+        return true;
+      }
+      event(ctx, parsed);
+      return false;
+    }
     while (true) {
       const got = await reader.read();
       if (got.done) break;
       ctx.turn.lastByte = Date.now();
       if (ctx.turn.lane === 'hermes') turnArm(TURN_STALL_MS, 'stall');
       buffer += decoder.decode(got.value, {stream:true});
-      const frames = buffer.split('\n\n'); buffer = frames.pop();
+      const frames = buffer.split(/\r\n\r\n|\r\n\n|\r\n\r|\n\r\n|\n\n|\n\r|\r\r\n|\r\r/);
+      buffer = frames.pop();
       for (const frame of frames) {
-        for (const line of frame.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6);
-          if (payload === '[DONE]') { complete(ctx, 'completed', ''); return; }
-          let parsed; try { parsed = JSON.parse(payload); } catch (_) { continue; }
-          if (parsed.seq !== undefined) {
-            if (parsed.seq <= (ctx.turn.lastSeq || 0)) continue;
-            ctx.turn.lastSeq = parsed.seq;
-          }
-          if (parsed.type === 'terminal') {
-            complete(ctx, parsed.state || 'failed', parsed.error || '');
-            return;
-          }
-          event(ctx, parsed);
-        }
+        if (consumeFrame(frame)) return;
       }
       scrollChat();
     }
+    buffer += decoder.decode();
+    if (buffer && consumeFrame(buffer)) return;
     if (!ctx.turn.detached && !ctx.turn.done)
       throw new Error('the turn stream ended without a completion frame');
   }

@@ -31,9 +31,19 @@ stream which has no independent owner.
 - Tool, approval, source, vision, prompt, image, and hidden-system payloads are not
   copied to a new on-disk journal.
 
-The in-memory replay limit is 20,000 events or 8 MiB per turn. Terminal records are
+The in-memory replay limit is 20,000 events or 8 MiB per turn, eight simultaneously
+active turns, and 32 MiB of encoded event payload across the bridge process. Each
+admitted active turn reserves 4 KiB for its terminal record. Terminal records are
 retained for no more than the newest 500 and seven days while the same bridge process
-continues to run. Overflow is a visible failed terminal state, never silent eviction.
+continues to run, but unattached old terminals are evicted first under global pressure.
+Active turns and subscriber-leased terminal rows are never evicted. Admission or
+mid-turn overflow is a visible refusal/failed terminal state, never silent eviction.
+
+Those process limits were checked against the real Mac before release: the idle live
+bridge was about 96 MiB RSS, and an 8 MiB representative encoded replay occupied about
+9.3 MiB as retained Python objects. A 32 MiB encoded ceiling therefore adds roughly
+37 MiB for the measured payload shape, rather than the roughly 4 GiB that 500 full
+per-turn buffers could retain before the adversarial review.
 
 ## API and lifecycle
 
@@ -51,18 +61,28 @@ subscriber cannot consume another's wake-up.
 - `GET /api/turns/{id}/events?after=N` — committed replay plus live follow.
 - `POST /api/turns/{id}/stop` — scoped, idempotent cancellation.
 
-Only one turn may run per `(lane,session)`; other lanes and sessions remain
-independent. Disconnecting an event response closes only that subscriber.
+Only one local turn may write one Odysseus session across Chat and Agent; other
+sessions remain independent. Disconnecting an event response closes only that
+subscriber.
 
 The historical `/api/chat/direct` and `/api/ody/chat` routes remain request-compatible.
 This matters for LOffice Quick AI, which legitimately calls Direct Chat with an empty
 session. Only the M.O.T panel uses `/api/turns` and therefore requires a session.
 
 Direct Chat builds history first, then best-effort persists the user message before
-waiting on the runner. If Odysseus is unavailable, Direct Chat still degrades as it did
-before and cannot honestly claim durable transcript storage. Assistant text, reasoning,
-metrics, image sidecar behavior, title generation, and final persistence keep their
-existing owners.
+waiting on the runner. A write is acknowledged only by Odysseus's proved
+`{ok:true,count:N}` receipt; every durable panel turn also stamps an opaque request
+marker into user/assistant metadata and reads it back after an ambiguous response before
+retrying. Sidecars and title work run only after their owning message is confirmed.
+If neither receipt nor read-back can prove storage, the visible stream says the history
+save is unconfirmed. If Odysseus is unavailable, Direct Chat still degrades as it did
+before and cannot honestly claim durable transcript storage.
+
+This is not exactly-once persistence: Odysseus has no idempotency-key contract, so a
+write that commits after an inconclusive read-back but before the fallback POST can
+still duplicate a prompt. Removing that final race requires an upstream idempotent
+write primitive; this release claims at-least-once retry plus explicit uncertainty, not
+exactly-once transcript delivery.
 
 ## One renderer, live and replay
 
@@ -77,6 +97,12 @@ Its `consume()` function is the only SSE grammar for both initial delivery and r
 - produced-file and path-guard provenance;
 - web sources and vision provenance;
 - proxy and terminal errors.
+
+Both the bridge parser and browser renderer accept LF, CRLF, and bare-CR framing,
+including mixed/chunk-split boundaries, incremental UTF-8, comments, `data:` with or
+without one space, multiline data, and a complete final event without a blank line.
+Malformed EOF/UTF-8 fails visibly. A named upstream error always outranks a later DONE
+marker or an error-labelled DONE sentinel.
 
 The former inline parser is removed, not retained as a fallback. This extraction lowers
 `index.html` by roughly 12 KiB instead of raising or gaming its byte ceiling.
@@ -101,6 +127,9 @@ The backend contract suite executes:
 - independent lane/session concurrency;
 - scoped, idempotent Stop;
 - malformed producer events and bounded overflow;
+- process-wide admission, terminal-reserve accounting, and subscriber-safe eviction;
+- LF/CRLF/bare-CR, one-byte chunking, UTF-8 and named-error SSE vectors;
+- exact persistence receipts, non-2xx fallback, and request-marker read-back;
 - continuous terminal pruning;
 - proof that the store creates no disk artifacts.
 

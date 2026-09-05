@@ -13,6 +13,40 @@ from .sampling import IMAGE_MAX_CHARS, _RUNNER, _vision_capable, build_user_cont
 from .sidecars import log_attachment, log_thinking, parse_data_url, user_key
 
 
+_DIRECT_REQUEST_META = "mot_direct_request_id"
+
+
+def _inject_acknowledged(response, expected_count: int) -> bool:
+    """Accept only Odysseus's proved bulk-injection receipt."""
+    if not 200 <= getattr(response, "status_code", 0) < 300:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return (isinstance(body, dict) and body.get("ok") is True
+            and body.get("count") == expected_count)
+
+
+async def _persisted_direct_roles(sid: str, request_id: str) -> set[str]:
+    """Read back the exact request marker after an ambiguous write response."""
+    if not sid or not request_id:
+        return set()
+    try:
+        history = await _ody_req("GET", f"/api/history/{sid}")
+        if history.status_code != 200:
+            return set()
+        rows = history.json().get("history") or []
+        return {
+            str(row.get("role")) for row in rows if isinstance(row, dict)
+            and isinstance(row.get("metadata"), dict)
+            and row["metadata"].get(_DIRECT_REQUEST_META) == request_id
+            and row.get("role") in {"user", "assistant"}
+        }
+    except Exception:
+        return set()
+
+
 def _runner_error_sentence(status, model: str = "") -> str:
     """PURE: what the panel (and the transcript) is told when the runner refuses a
     direct-lane turn. A SENTENCE with the cause and the next step in it — never a
@@ -67,6 +101,7 @@ async def direct_events(body: dict):
     SSE shape.
     """
     sid = body.get("session", "")
+    request_id = str(body.get("request_id") or "")[:200]
     user_msg = (body.get("message") or "").strip()
     image = body.get("image") or ""
     image_name = (body.get("image_name") or "")[:200]
@@ -146,22 +181,30 @@ async def direct_events(body: dict):
         # itself into the model prompt, and before any network wait, so a reload or
         # lane detach never silently loses an attempted message.
         user_persisted = False
+        image_logged = False
+        user_record = {"role": "user", "content": user_msg +
+                       ("\n[image attached]" if image else "")}
+        if request_id:
+            user_record["metadata"] = {_DIRECT_REQUEST_META: request_id}
         if sid and user_msg:
             try:
-                await _ody_req("POST", f"/api/session/{sid}/inject_messages", json={
-                    "messages": [{"role": "user", "content": user_msg +
-                                  ("\n[image attached]" if image else "")}],
+                stored = await _ody_req("POST", f"/api/session/{sid}/inject_messages", json={
+                    "messages": [user_record],
                 })
-                user_persisted = True
+                user_persisted = _inject_acknowledged(stored, 1)
+                if not user_persisted and request_id:
+                    user_persisted = "user" in await _persisted_direct_roles(sid, request_id)
                 if image:
                     _mime, _raw = parse_data_url(image, IMAGE_MAX_CHARS)
-                    if _raw:
+                    if _raw and user_persisted:
                         log_attachment(sid, user_key(user_msg), image_name, _mime, _raw)
+                        image_logged = True
             except Exception:
                 # Odysseus absence remains a graceful direct-lane degradation.  The
                 # durable journal still records the attempted prompt; the final path
                 # below makes one more best-effort transcript write.
-                pass
+                if request_id:
+                    user_persisted = "user" in await _persisted_direct_roles(sid, request_id)
         if cerr:   # never call the runner with an attachment it can't use
             yield f'data: {_json.dumps({"type": "proxy_error", "error": cerr})}\n\n'
             yield "data: [DONE]\n\n"
@@ -261,14 +304,17 @@ async def direct_events(body: dict):
             answer = "".join(full).strip()
             if sid and user_msg:
                 persisted = injected = False
+                assistant_persisted = False
                 try:
+                    if request_id and not user_persisted:
+                        user_persisted = "user" in await _persisted_direct_roles(
+                            sid, request_id)
                     # New Odysseus main removed POST /api/session/{sid}/message;
                     # append via the bulk inject_messages endpoint (user before assistant).
                     # TEXT only: the store (and the thinking sidecar's answer-hash
                     # join) stay string-shaped; the attachment is recorded as a marker
                     # so a reopened transcript still shows an image was sent.
-                    msgs = [] if user_persisted else [{"role": "user",
-                             "content": user_msg + ("\n[image attached]" if image else "")}]
+                    msgs = [] if user_persisted else [user_record]
                     if answer:
                         am = {"role": "assistant", "content": answer}
                         # per-reply stats (tok/s · tokens · time) so a reopened
@@ -283,16 +329,30 @@ async def direct_events(body: dict):
                                 am["metadata"] = meta
                         except Exception:
                             pass
+                        if request_id:
+                            am.setdefault("metadata", {})[_DIRECT_REQUEST_META] = request_id
                         msgs.append(am)
                     if msgs:
-                        await _ody_req("POST", f"/api/session/{sid}/inject_messages",
-                                       json={"messages": msgs})
-                    injected = user_persisted or bool(msgs)
-                    if answer:
-                        persisted = True
+                        stored = await _ody_req(
+                            "POST", f"/api/session/{sid}/inject_messages",
+                            json={"messages": msgs})
+                        acknowledged = _inject_acknowledged(stored, len(msgs))
+                        if acknowledged:
+                            user_persisted = True
+                            assistant_persisted = bool(answer)
+                        elif request_id:
+                            roles = await _persisted_direct_roles(sid, request_id)
+                            user_persisted = "user" in roles
+                            assistant_persisted = "assistant" in roles
+                    injected = user_persisted
+                    persisted = assistant_persisted
                 except Exception:
-                    pass
-                if injected and image and not user_persisted:
+                    if request_id:
+                        roles = await _persisted_direct_roles(sid, request_id)
+                        user_persisted = "user" in roles
+                        assistant_persisted = "assistant" in roles
+                        injected, persisted = user_persisted, assistant_persisted
+                if injected and image and not image_logged:
                     # Image sidecar: keep the BYTES locally, keyed by (sid, user
                     # text hash), so reopening the session rehydrates the same
                     # thumbnail instead of just the marker line. A malformed or
@@ -326,6 +386,13 @@ async def direct_events(body: dict):
                                                data={"name": t})
                     except Exception:
                         pass
+                if not user_persisted or (answer and not assistant_persisted):
+                    missing = "prompt and reply" if not user_persisted else "reply"
+                    yield ("data: " + _json.dumps({
+                        "type": "proxy_error",
+                        "error": (f"the {missing} could not be confirmed in this session's "
+                                  "history; the reply above may be partial, so copy it before "
+                                  "leaving this session")}) + "\n\n")
             try:   # best-effort usage analytics (never breaks the turn)
                 u = stats.get("usage") or {}; tm = stats.get("timings") or {}
                 cached = ((u.get("prompt_tokens_details") or {}).get("cached_tokens")

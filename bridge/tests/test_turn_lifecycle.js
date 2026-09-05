@@ -256,10 +256,12 @@ check('the watchdog is re-armed on EVERY received chunk',
   /if \(ctx\.turn\.lane === 'hermes'\) turnArm\(TURN_STALL_MS, 'stall'\);/.test(turnStream));
 check('the first-byte watchdog is armed at send time',
   /if \(turn\.lane === 'hermes'\) turnArm\(TURN_FIRSTBYTE_MS, 'first-byte'\);/.test(send));
-check('the re-arm happens on the RAW chunk, before any JSON.parse — a heartbeat '
+const rawArmAt = turnStream.indexOf("turnArm(TURN_STALL_MS, 'stall')");
+const decodeAt = turnStream.indexOf('buffer += decoder.decode');
+const dispatchAt = turnStream.indexOf('if (consumeFrame(frame))');
+check('the re-arm happens on the RAW chunk, before decoding or dispatch — a heartbeat '
     + 'that failed to parse must still prove the relay is alive',
-  turnStream.indexOf("turnArm(TURN_STALL_MS, 'stall')")
-    < turnStream.indexOf('JSON.parse(payload)'));
+  rawArmAt >= 0 && rawArmAt < decodeAt && decodeAt < dispatchAt);
 check('every chunk stamps lastByte, so the diagnostic can report real silence',
   /ctx\.turn\.lastByte = Date\.now\(\);/.test(turnStream));
 check('a watchdog that fires SAYS which timer it was and how long the relay was '

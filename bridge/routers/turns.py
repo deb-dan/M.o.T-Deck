@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from ..core.appctx import app
-from ..core.turns import TurnConflict, turns
+from ..core.turns import TurnConflict, TurnOverflow, turns
 
 
 def _body_for_lane(body: dict, lane: str) -> dict:
@@ -51,6 +51,8 @@ async def create_turn(req: Request):
             "id": exc.turn_id,
             "error": "a turn is already running for this session; return to its lane or press Stop",
         })
+    except TurnOverflow as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)})
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if created:

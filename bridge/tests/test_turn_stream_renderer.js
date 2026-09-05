@@ -56,12 +56,28 @@ global.TURN_STALL_MS = 75000;
 const source = fs.readFileSync(path.join(__dirname, '..', 'panel', 'assets', 'turn-stream.js'), 'utf8');
 vm.runInThisContext(source, {filename:'turn-stream.js'});
 
-function response(events){
+function response(events, separator='\n\n', chunkSizes=[]){
   const bytes = new TextEncoder().encode(events.map(value =>
-    'data: ' + JSON.stringify(value) + '\n\n').join(''));
-  let read = false;
+    'data: ' + JSON.stringify(value) + separator).join(''));
+  let offset = 0, chunk = 0;
   return {ok:true, status:200, body:{getReader(){ return {async read(){
-    if (read) return {done:true}; read = true; return {done:false, value:bytes};
+    if (offset >= bytes.length) return {done:true};
+    const size = chunkSizes[chunk++] || bytes.length;
+    const value = bytes.slice(offset, Math.min(bytes.length, offset + size));
+    offset += value.length;
+    return {done:false, value};
+  }}; }}};
+}
+
+function rawResponse(wire, chunkSizes=[]){
+  const bytes = new TextEncoder().encode(wire);
+  let offset = 0, chunk = 0;
+  return {ok:true, status:200, body:{getReader(){ return {async read(){
+    if (offset >= bytes.length) return {done:true};
+    const size = chunkSizes[chunk++] || bytes.length;
+    const value = bytes.slice(offset, Math.min(bytes.length, offset + size));
+    offset += value.length;
+    return {done:false, value};
   }}; }}};
 }
 
@@ -105,6 +121,65 @@ async function main(){
   if (body.textContent !== 'answer\n[proxy error: upstream]')
     throw new Error('delta/proxy text changed: ' + JSON.stringify(body.textContent));
   if (!turn.done || turn.lastSeq !== 17) throw new Error('terminal/cursor state was not committed');
+
+  const crlfHolder = new El('article'), crlfBody = new El('div'), crlfThink = new El('div');
+  const crlfTurn = {lane:'chat', lastSeq:0, timer:null, done:false};
+  chatPane.curTurn = crlfTurn; chatPane.busy = true;
+  await window.HarnessTurnStream.consume(
+    response([{seq:1, delta:'crlf'}, {seq:2, type:'terminal', state:'completed'}],
+             '\r\n\r\n', [19, 1, 2, 7]),
+    {turn:crlfTurn, holder:crlfHolder, body:crlfBody, think:crlfThink});
+  if (crlfBody.textContent !== 'crlf' || !crlfTurn.done || crlfTurn.lastSeq !== 2)
+    throw new Error('CRLF/chunk-split SSE framing did not complete');
+
+  const byteHolder = new El('article'), byteBody = new El('div'), byteThink = new El('div');
+  const byteTurn = {lane:'chat', lastSeq:0, timer:null, done:false};
+  chatPane.curTurn = byteTurn; chatPane.busy = true;
+  const byteWire = ': keepalive\rdata:{"seq":1,"delta":"héllo",\r'
+    + 'data:"thinking":false}\r\rdata:{"seq":2,"type":"terminal","state":"completed"}';
+  await window.HarnessTurnStream.consume(
+    rawResponse(byteWire, Array(new TextEncoder().encode(byteWire).length).fill(1)),
+    {turn:byteTurn, holder:byteHolder, body:byteBody, think:byteThink});
+  if (byteBody.textContent !== 'héllo' || !byteTurn.done || byteTurn.lastSeq !== 2)
+    throw new Error('bare-CR/data-without-space/multiline/UTF-8 SSE grammar changed');
+
+  const errHolder = new El('article'), errBody = new El('div'), errThink = new El('div');
+  const errTurn = {lane:'hermes', lastSeq:0, timer:null, done:false};
+  chatPane.curTurn = errTurn; chatPane.busy = true;
+  await window.HarnessTurnStream.consume(
+    rawResponse('event: error\r\ndata:{"error":"upstream won"}\r\n\r\ndata: [DONE]\r\n\r\n'),
+    {turn:errTurn, holder:errHolder, body:errBody, think:errThink});
+  if (!errTurn.done || !errBody.textContent.includes('upstream won'))
+    throw new Error('named upstream error did not win over a later DONE frame');
+
+  const sentinelBody = new El('div'), sentinelTurn = {lane:'hermes', lastSeq:0,
+    timer:null, done:false};
+  chatPane.curTurn = sentinelTurn; chatPane.busy = true;
+  await window.HarnessTurnStream.consume(rawResponse('event: error\ndata:[DONE]\n\n'),
+    {turn:sentinelTurn, holder:new El('article'), body:sentinelBody, think:new El('div')});
+  if (!sentinelTurn.done || !sentinelBody.textContent.includes('error sentinel'))
+    throw new Error('named error sentinel was reported as successful completion');
+
+  const badTurn = {lane:'chat', lastSeq:0, timer:null, done:false};
+  chatPane.curTurn = badTurn; chatPane.busy = true;
+  let malformedFailed = false;
+  try {
+    await window.HarnessTurnStream.consume(rawResponse('data: {"seq":1,"delta":'),
+      {turn:badTurn, holder:new El('article'), body:new El('div'), think:new El('div')});
+  } catch (error) { malformedFailed = /unreadable event/.test(error.message); }
+  if (!malformedFailed) throw new Error('malformed final SSE event was silently accepted');
+
+  const utf8 = new Uint8Array([100,97,116,97,58,32,0xe2,0x82]);
+  const utf8Response = {ok:true, status:200, body:{getReader(){ let sent=false; return {
+    async read(){ if (sent) return {done:true}; sent=true; return {done:false,value:utf8}; }
+  }; }}};
+  let utf8Failed = false;
+  try {
+    await window.HarnessTurnStream.consume(utf8Response,
+      {turn:{lane:'chat',lastSeq:0,timer:null,done:false}, holder:new El('article'),
+       body:new El('div'), think:new El('div')});
+  } catch (error) { utf8Failed = /encoding|encoded data|utf-8/i.test(error.message); }
+  if (!utf8Failed) throw new Error('incomplete UTF-8 was silently accepted');
   console.log('OK — M.O.T-supported Agent event grammar survives the shared live/replay renderer');
 }
 
