@@ -144,4 +144,5 @@ def test_completed_migration_is_idempotent_and_recommends_no_restarts(
     second = migration.apply_migration(
         tmp_path, rotate=True, client_factory=clients(state))
     assert second["credentials"] == "preserved"
+    assert second["aux_key"] == "already-provisioned"
     assert second["restart_required"] == []

@@ -201,7 +201,8 @@ def apply_migration(root: Path, *, rotate: bool,
         "ok": True,
         "credentials": ("rotated-managed-secrets; aux-preserved" if rotate and created_store and aux_preserved
                         else "rotated" if rotate and created_store else "preserved"),
-        "aux_key": ("preserved: Background Tasks endpoint remains valid" if aux_preserved
+        "aux_key": ("already-provisioned" if existing else
+                    "preserved: Background Tasks endpoint remains valid" if aux_preserved
                     else "new: no legacy auxiliary credential existed"),
         "odysseus": authenticated,
         "restart_required": restart_components(data, runner_key_changed=runner_key_changed),
