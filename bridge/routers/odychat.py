@@ -45,10 +45,8 @@ def ody_attach_error(image) -> str:
     return ""
 
 
-@app.post("/api/ody/chat")
-async def ody_chat(req: Request) -> StreamingResponse:
-    """Stream a chat turn: re-emit Odysseus's SSE (delta / tool events / [DONE]) to the panel."""
-    body = await req.json()
+async def agent_events(body: dict):
+    """Produce upstream Agent SSE frames independently of a browser response."""
     image = body.get("image") or ""
     image_name = (body.get("image_name") or "")[:200]
     fields = {
@@ -146,4 +144,11 @@ async def ody_chat(req: Request) -> StreamingResponse:
         finally:
             _log_ody_metrics(tail, fields.get("mode", "agent"))
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return gen()
+
+
+@app.post("/api/ody/chat")
+async def ody_chat(req: Request) -> StreamingResponse:
+    """Historical Agent SSE endpoint; panel resilience lives at /api/turns."""
+    return StreamingResponse(await agent_events(await req.json()),
+                             media_type="text/event-stream")

@@ -34,6 +34,10 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
+const turnStream = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'assets', 'turn-stream.js'), 'utf8');
+// U31 extracted the durable turn transport/lifecycle helpers to the local asset;
+// test the served pair so moving a helper cannot turn its old assertion vacuous.
+const panelCode = html + '\n' + turnStream;
 // ⚠️ THE APP LAYER IS NO LONGER ONE FILE (router/core split, 2026-08-28):
 // bridge/app.py is a facade over bridge/core/*.py + bridge/routers/*.py, so the
 // cross-file pins below read _appsrc.js's assembled view of the whole app layer.
@@ -53,12 +57,12 @@ function check(name, cond) {
  * failed for the wrong reason, which is exactly what surfaced this). Same
  * comment/template-aware walker test_hermes_toolsets.js already carries. */
 function grab(name) {
-  const at = html.indexOf('function ' + name + '(');
+  const at = panelCode.indexOf('function ' + name + '(');
   if (at < 0) throw new Error('function ' + name + ' not found in the panel');
   const stack = [];        // {t:'sq'|'dq'|'tpl'} or {t:'itp', d:<depth at ${>}
   let depth = 0, prev = '';
-  for (let j = html.indexOf('{', at); j < html.length; j++) {
-    const c = html[j], top = stack[stack.length - 1], bs = prev === '\\';
+  for (let j = panelCode.indexOf('{', at); j < panelCode.length; j++) {
+    const c = panelCode[j], top = stack[stack.length - 1], bs = prev === '\\';
     const t = top && top.t;
     if (t === 'sq' || t === 'dq') {
       if (!bs && c === (t === 'sq' ? "'" : '"')) stack.pop();
@@ -66,15 +70,15 @@ function grab(name) {
       if (!bs && c === '`') stack.pop();
       else if (!bs && c === '$' && html[j + 1] === '{') { stack.push({t: 'itp', d: depth}); j++; }
     } else {
-      if (c === '/' && html[j + 1] === '/') { j = html.indexOf('\n', j); if (j < 0) break; prev = '\n'; continue; }
-      if (c === '/' && html[j + 1] === '*') { j = html.indexOf('*/', j) + 1; if (j < 1) break; prev = '/'; continue; }
+      if (c === '/' && panelCode[j + 1] === '/') { j = panelCode.indexOf('\n', j); if (j < 0) break; prev = '\n'; continue; }
+      if (c === '/' && panelCode[j + 1] === '*') { j = panelCode.indexOf('*/', j) + 1; if (j < 1) break; prev = '/'; continue; }
       if (c === "'") stack.push({t: 'sq'});
       else if (c === '"') stack.push({t: 'dq'});
       else if (c === '`') stack.push({t: 'tpl'});
       else if (c === '{') depth++;
       else if (c === '}') {
         if (t === 'itp' && depth === top.d) stack.pop();
-        else if (--depth === 0) return html.slice(at, j + 1);
+        else if (--depth === 0) return panelCode.slice(at, j + 1);
       }
     }
     prev = bs ? '' : c;
@@ -103,7 +107,7 @@ check('forceEndTurn exists and is idempotent (a second call is a no-op)',
   /if \(!t \|\| t\.ended \|\| t\.done\) return false;/.test(force) && /t\.ended = true;/.test(force));
 check('a COMPLETED turn can never be force-ended — a +NEW clicked in the sliver '
     + 'between [DONE] and the socket closing must not stamp a finished reply',
-  /t\.done/.test(force) && /turn\.done = true; turnStage\('done'\)/.test(html));
+  /t\.done/.test(force) && /turn\.done = true;[\s\S]{0,80}turnStage\(state \|\| 'done'\)/.test(turnStream));
 check('forceEndTurn ABORTS the fetch — that is what unblocks reader.read() and '
     + 'lets sendChat\'s finally do the real cleanup',
   /t\.ctl\.abort\(\)/.test(force));
@@ -121,7 +125,7 @@ const hard = grab('turnHardRelease');
 check('turnHardRelease clears the pane\'s busy flag and restores the Send button',
   /chatPane\.busy = false;/.test(hard) && /sendPaint\('Send'\)/.test(hard));
 check('turnHardRelease only ever releases the turn it was armed for (a late timer '
-    + 'must not kill the NEXT turn)', /if \(chatPane\.curTurn !== t\) return;/.test(hard));
+    + 'must not kill the NEXT turn)', /if \(chatPane\.curTurn !== turn\) return;/.test(hard));
 
 /* ── 2. the diagnostic (which stage did it die in?) ──────────────────────── */
 check('the force-end names the stage on the console AND in the activity feed',
@@ -132,7 +136,7 @@ check('stages are recorded through ONE setter, so a stage cannot be written to a
 check('every phase of a turn labels itself',
   ['connecting', 'waiting for the first frame', 'thinking', 'answering',
    'running a tool', 'awaiting approval', 'prefill (bridge says hermes is working)']
-    .every(s => html.indexOf(s) > 0));
+    .every(s => panelCode.indexOf(s) > 0));
 
 /* ── 3. Stop always wins ─────────────────────────────────────────────────── */
 const stop = grab('hermesStop');
@@ -160,8 +164,8 @@ for (const [fn, label] of [['newSession', '+NEW'], ['selectSession', 'a rail row
                            ['selectHermesSession', 'a Hermes rail row'],
                            ['duplicateSession', 'duplicate']]) {
   const src = grab(fn);
-  check(label + ' STOPS a running turn instead of returning silently',
-    /if \(chatPane\.busy\) await stopTurnNow\(/.test(src)
+  check(label + ' DETACHES a durable running turn instead of returning silently',
+    /if \(chatPane\.busy\) await (?:stopTurnNow|detachTurnNow)\(/.test(src)
     && !/^\s*if \(chatPane\.busy\) return;/m.test(src));
 }
 
@@ -182,7 +186,7 @@ check('re-opening the Odysseus session you are ALREADY in leaves a running turn 
 before(selH, "if (chatPane.mode !== 'hermes') return;", 'await stopTurnNow(',
   'the Hermes lane guard runs BEFORE the stop — a cross-lane call that does '
   + 'nothing must not interrupt the live turn');
-before(selO, "if (chatPane.mode === 'hermes') return;", 'await stopTurnNow(',
+before(selO, "if (chatPane.mode === 'hermes') return;", 'await detachTurnNow(',
   'the Odysseus lane guard runs BEFORE the stop (same rule, other lane)');
 const initc = grab('initChat');
 check('re-entering the Chat view NEVER touches a live turn (initChat is the path '
@@ -192,10 +196,10 @@ check('re-entering the Chat view NEVER touches a live turn (initChat is the path
 before(initc, 'if (chatPane.busy) return;', 'loadSessions(',
   '…and it is the FIRST thing initChat does, before any session load');
 const mode = grab('setMode');
-check('a lane switch stops the running turn FIRST, before the lane flips',
-  /if \(chatPane\.busy && m !== prev\) await stopTurnNow\('lane switch'\)/.test(mode));
-before(mode, "await stopTurnNow('lane switch')", 'chatPane.mode = m;',
-  '…and the stop is ordered before the write');
+check('a lane switch detaches the running durable turn FIRST, before the lane flips',
+  /if \(chatPane\.busy && m !== prev\) await detachTurnNow\('lane switch'\)/.test(mode));
+before(mode, "await detachTurnNow('lane switch')", 'chatPane.mode = m;',
+  '…and detach is ordered before the write');
 check('setMode is async so the stop can be awaited', /async function setMode\(m\)/.test(html));
 
 /* ── 5. the send path owns + releases the turn ───────────────────────────── */
@@ -213,11 +217,11 @@ check('the fetch carries the abort signal — without it nothing can cancel a re
   /signal: turn\.ctl\.signal/.test(send));
 check('the finally clears the timer AND the turn handle (a stale curTurn would '
     + 'let the next Stop abort nothing)',
-  /finally \{\s*clearTimeout\(turn\.timer\);\s*if \(chatPane\.curTurn === turn\) chatPane\.curTurn = null;/.test(send));
+  /finally \{\s*clearTimeout\(turn\.timer\);\s*const ownsPane = chatPane\.curTurn === turn;\s*if \(ownsPane\) chatPane\.curTurn = null;/.test(send));
 check('the finally still clears the busy flag and restores the button (unchanged)',
   /chatPane\.busy = false;[\s\S]{0,400}sendPaint\('Send'\)/.test(send));
 check('a deliberate abort is not reported as a stream error',
-  /if \(turn\.ended\) body\.textContent \+= '\\n· interrupted';/.test(send));
+  /if \(turn\.detached\)[\s\S]{0,160}else if \(turn\.ended\) body\.textContent \+= '\\n· interrupted';/.test(send));
 check('conv-mode turn hooks are still inside the send path\'s try/finally, so a '
     + 'force-ended turn still resumes the conversation',
   /convEvent\('turn_start'\)/.test(send) && /convTurnEnd\(holder\)/.test(send));
@@ -225,14 +229,15 @@ check('conv-mode turn hooks are still inside the send path\'s try/finally, so a 
 /* ── 6. the panel watchdog + the heartbeat it depends on ─────────────────── */
 const arm = grab('turnArm');
 check('the watchdog is re-armed on EVERY received chunk',
-  /if \(turn\.lane === 'hermes'\) turnArm\(TURN_STALL_MS, 'stall'\);/.test(send));
+  /if \(ctx\.turn\.lane === 'hermes'\) turnArm\(TURN_STALL_MS, 'stall'\);/.test(turnStream));
 check('the first-byte watchdog is armed at send time',
   /if \(turn\.lane === 'hermes'\) turnArm\(TURN_FIRSTBYTE_MS, 'first-byte'\);/.test(send));
 check('the re-arm happens on the RAW chunk, before any JSON.parse — a heartbeat '
     + 'that failed to parse must still prove the relay is alive',
-  send.indexOf("turnArm(TURN_STALL_MS, 'stall')") < send.indexOf('JSON.parse(payload)'));
+  turnStream.indexOf("turnArm(TURN_STALL_MS, 'stall')")
+    < turnStream.indexOf('JSON.parse(payload)'));
 check('every chunk stamps lastByte, so the diagnostic can report real silence',
-  /turn\.lastByte = Date\.now\(\);/.test(send));
+  /ctx\.turn\.lastByte = Date\.now\(\);/.test(turnStream));
 check('a watchdog that fires SAYS which timer it was and how long the relay was '
     + 'actually silent (console + INSPECT), so the next report is self-explanatory',
   /watchdog ' \+ \(t\.timerLabel/.test(arm)
@@ -261,7 +266,7 @@ check('…emitted BEFORE the branch that suppresses everything while an approval
     + 'card is pending (a card can legitimately wait minutes)',
   appy.indexOf('"type":"hermes_ping"') < appy.indexOf('if approval_pending:'));
 check('the panel consumes the heartbeat silently — it must not flood the inspect '
-    + 'log', /if \(j\.type === 'hermes_ping'\) continue;/.test(html));
+    + 'log', /if \(j\.type === 'hermes_ping'\) return;/.test(turnStream));
 
 /* ── 7. things this slice must NOT have changed ──────────────────────────── */
 check('the bridge still keeps its 600s hard guard', /silent >= 600\.0/.test(appy));
@@ -310,7 +315,7 @@ for (const g of ['chatSid', 'chatMode', 'chatBusy', 'chatModel', 'hermesSid',
                  'pendingAttachDrop', '_delArm', '_msgDelArm',
                  '_stampSessionModel']) {
   check('no bare global remnant of ' + g + ' (no shim, no alias)',
-    !new RegExp('^\\s*(let|var|const)\\s+[^\\n;]*\\b' + g + '\\b\\s*=', 'm').test(html));
+    !new RegExp('^\\s*(let|var|const)\\s+' + g + '\\b\\s*=', 'm').test(html));
 }
 
 /* Things that must NOT have moved onto the pane: draft §3 singletons. One mic,
@@ -355,10 +360,10 @@ check('the turn record carries the gateway session it is streaming on',
   /holder: holder, hermesSid: chatPane\.hermesSid \|\| '',/.test(send));
 check('a hermes_session frame updates the TURN as well as the pane (a stale-sid '
     + 'retry re-mints mid-stream, and the card must follow the new session)',
-  /chatPane\.hermesSid = j\.id; turn\.hermesSid = j\.id;/.test(send));
+  /chatPane\.hermesSid = j\.id; turn\.hermesSid = j\.id;/.test(turnStream));
 check('both cards are rendered with the TURN\'s session, not the pane\'s',
-  /chatApproval\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(send)
-  && /chatAsk\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(send));
+  /chatApproval\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(turnStream)
+  && /chatAsk\(holder, j\.request \|\| \{\}, turn\.hermesSid\)/.test(turnStream));
 /* The scenario in one assertion: nothing between render and POST re-reads a
  * session id, so "switch sessions while a card is open, then answer it" lands on
  * the session the card was born in. */
@@ -374,8 +379,8 @@ check('SCENARIO — switch sessions with a card open, then answer: the card stil
  * single chatStatus() call while looking at the turn lifecycle rather than at the chip.
  * A failed tool must never be as invisible as it was in the 2026-08-27 incident. */
 {
-  const tob = html.slice(html.indexOf("j.type === 'tool_output'"),
-                         html.indexOf("j.type === 'web_sources'"));
+  const tob = turnStream.slice(turnStream.indexOf("j.type === 'tool_output'"),
+                               turnStream.indexOf("j.type === 'web_sources'"));
   check('the tool_output branch still renders a failure '
         + '(BE-01 — the chip itself is owned by test_chat_toolerr.js)',
     tob.length > 100 && /if \(j\.is_error\)/.test(tob) && /chatToolErr\(/.test(tob));

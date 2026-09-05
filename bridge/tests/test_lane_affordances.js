@@ -24,6 +24,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
+const turnStream = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'assets', 'turn-stream.js'), 'utf8');
 const sd = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'assets', 'studio-design.css'), 'utf8');
 
 let fails = [];
@@ -156,8 +157,8 @@ check('…and .ainfo is a real, themed class rather than an inline colour (ALL-D
       /#chat-attachstrip \.ainfo \{ color:var\(--faint\); \}/.test(html));
 
 // THE ANTI-LIE LINE: the turn itself says how the model got at the picture.
-const visLine = html.slice(html.indexOf("j.type === 'vision'"),
-                           html.indexOf("j.type === 'vision'") + 1400);
+const visLine = turnStream.slice(turnStream.indexOf("j.type === 'vision'"),
+                                 turnStream.indexOf("j.type === 'vision'") + 1400);
 check('a `vision` stream event renders a statusline (the turn states its provenance)',
       /className = 'statusline'/.test(visLine));
 check('…a PRE-CAPTIONED image is never presented as directly seen',

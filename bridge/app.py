@@ -282,6 +282,10 @@ _LANES = (
     # routers.components — the ONE identity-verified stop path, which it must never
     # reimplement — so it stays AFTER that lane here as well as on disk.
     "routers.quitall",
+    # U31 durable local Chat/Agent turns. Appended: new modules may not separate
+    # source-view neighbours which encode the old monolith's route positions.
+    "core.turns",
+    "routers.turns",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

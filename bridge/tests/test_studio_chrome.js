@@ -19,6 +19,8 @@ const fs = require('fs');
 const path = require('path');
 const P = path.join(__dirname, '..', 'panel', 'index.html');
 const html = fs.readFileSync(P, 'utf8');
+const turnStream = fs.readFileSync(path.join(__dirname, '..', 'panel', 'assets', 'turn-stream.js'), 'utf8');
+const panelCode = html + '\n' + turnStream;
 
 let fails = 0, checks = 0;
 function ok(cond, msg) {
@@ -316,11 +318,11 @@ ok(sels.some(x => x.includes('#chrome-chip')),
   ok(/label === 'Send' \? '' : label/.test(sb),
      'a non-resting label (Stop) is shown as the status word, so the Hermes stop '
      + 'affordance is readable without a seventh symbol');
-  ok(!/\bsb\.textContent = 'Send'\b/.test(html) && !/sendBtn\.textContent = 'Stop'/.test(html),
+  ok(!/\bsb\.textContent = 'Send'\b/.test(panelCode) && !/sendBtn\.textContent = 'Stop'/.test(panelCode),
      'every Send/Stop label site funnels through sendPaint()');
-  ok((html.match(/sendPaint\('Send'\)/g) || []).length === 2
-     && (html.match(/sendPaint\('Stop'\)/g) || []).length === 1,
-     'all three former label sites are converted (2x Send release, 1x Stop)');
+  ok((panelCode.match(/sendPaint\('Send'\)/g) || []).length === 4
+     && (panelCode.match(/sendPaint\('Stop'\)/g) || []).length === 2,
+     'all resting/recovery label sites are converted (4x Send release, 2x Stop)');
 }
 
 // ---------------------------------------------------------------------------

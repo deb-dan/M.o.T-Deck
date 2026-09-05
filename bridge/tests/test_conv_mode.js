@@ -406,7 +406,7 @@ check('a turn STARTING gates the mic (a hand-typed message counts as a turn)',
   /if \(typeof convOn === 'function' && convOn\(\)\) convEvent\('turn_start'\)/.test(html));
 check('a turn ENDING is hooked in sendChat\'s finally — so a user-clicked Stop '
     + 'still resumes the conversation',
-  /if \(typeof convOn === 'function' && convOn\(\)\) convTurnEnd\(holder\)/.test(html));
+  /if \(!turn\.detached && typeof convOn === 'function' && convOn\(\)\) convTurnEnd\(holder\)/.test(html));
 check('the reply is spoken through the EXISTING ▶ speak path (same endpoint, same '
     + 'replay cache, same speakText stripping)',
   /function convSpeak\([\s\S]{0,700}?msgSpeak\(wrap, btn, \(\) => convEvent\('speak_ok'\)\)/.test(html));

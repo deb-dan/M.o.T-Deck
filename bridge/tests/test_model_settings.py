@@ -320,8 +320,8 @@ keptwhole = sr.merge([{"id": "dl", "source": "download", "settings": {"min_p": 0
 check("download entry keeps its settings", keptwhole[0]["settings"], {"min_p": 0.02})
 
 # ── 12. wiring: the direct lane, the read side, the endpoint ────────────────
-i_direct = src.index('@app.post("/api/chat/direct")')
-relay = src[i_direct:i_direct + 6000]
+i_direct = src.index('async def direct_events(')
+relay = src[i_direct:src.index('@app.post("/api/chat/direct")', i_direct)]
 ok("direct lane computes the fragment", "sampling_merge(" in relay)
 ok("direct lane merges it into the request body", "**sampling}" in relay)
 ok("the fragment is built from the REGISTRY entry",

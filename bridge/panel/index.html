@@ -2699,6 +2699,7 @@
   <div class="nv-body" id="nv-body"></div>
 </dialog>
 
+<script src="/assets/turn-stream.js"></script>
 <script>
 const dlg = document.getElementById('dlg');
 const logdlg = document.getElementById('logdlg');
@@ -5470,7 +5471,7 @@ async function setMode(m) {
   // AND make Send-becomes-Stop unreachable (the busy branch keyed off the NEW
   // chip). Stop the turn FIRST — before chatPane.mode flips — so the stop routes on
   // the lane that is actually streaming.
-  if (chatPane.busy && m !== prev) await stopTurnNow('lane switch');
+  if (chatPane.busy && m !== prev) await detachTurnNow('lane switch');
   chatPane.mode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
@@ -9534,6 +9535,26 @@ async function selectHermesSession(storedId){
   } catch {}
 }
 
+function renderOdyHistory(snapshot){
+  document.getElementById('chat-msgs').innerHTML = '';
+  for (const m of (snapshot.history || []).slice(-30)){
+    if (m.role === 'user'){
+      // …and .attachment {id,name} from the image sidecar (data/attachments.db).
+      // With a thumbnail to render, the stored "[image attached]" marker line is
+      // redundant — hide it from the BUBBLE while `_raw` keeps the stored text.
+      const raw = m.content || '';
+      const uw = addMsg('user', m.attachment ? stripAttachMarker(raw) : raw);
+      if (m.attachment){ uw._raw = raw; addRestoredAttachment(uw, m.attachment); }
+      stampMsg(uw, m.metadata);
+    } else if (m.role === 'assistant'){
+      const w = addMsg('assistant', m.content || '');
+      if (m.reasoning) addRehydratedThinking(w, m.reasoning);
+      stampMsg(w, m.metadata);
+    }
+  }
+  scrollChat(true);
+}
+
 async function selectSession(sid){
   maybeCloseArtifact();   // artifact follows its conversation unless pinned
   if (chatPane.mode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
@@ -9544,7 +9565,7 @@ async function selectSession(sid){
                                        // running HERMES turn and then return.
   if (chatPane.busy && sid && sid === chatPane.sid) return;      // re-opening the session
                                        // you are already in is not a switch
-  if (chatPane.busy) await stopTurnNow('session switch');   // never a silent no-op
+  if (chatPane.busy) await detachTurnNow('session switch');
   chatPane.sid = sid;
   const s = chatPane.sessions.find(x => x.id === sid);
   // Keep the session's stored model VERBATIM as the fallback echo — laneModelLabel
@@ -9556,31 +9577,41 @@ async function selectSession(sid){
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
   try {
+    // Snapshot the active turn BEFORE loading durable history.  If the producer
+    // completes during that fetch, the metadata check below tells us not to paint
+    // a second assistant bubble over the answer Odysseus has just persisted.
+    const lane = chatPane.mode === 'chat' ? 'chat' : 'agent';
+    const activePromise = window.HarnessTurnStream
+      ? HarnessTurnStream.active(lane, sid).catch(() => null) : Promise.resolve(null);
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
-    for (const m of (h.history || []).slice(-30)){
-      if (m.role === 'user'){
-        // …and .attachment {id,name} from the image sidecar (data/attachments.db).
-        // With a thumbnail to render, the stored "[image attached]" marker line is
-        // redundant — hide it from the BUBBLE while `_raw` keeps the stored text.
-        const raw = m.content || '';
-        const uw = addMsg('user', m.attachment ? stripAttachMarker(raw) : raw);
-        if (m.attachment){ uw._raw = raw; addRestoredAttachment(uw, m.attachment); }
-        stampMsg(uw, m.metadata);   // db id → edit/fork/delete; `edited` mark
-      }
-      else if (m.role === 'assistant'){
-        const w = addMsg('assistant', m.content || '');
-        // Direct-lane turns carry .reasoning from the bridge's thinking sidecar
-        // (data/thinking.db) — same collapsed disclosure as the Hermes lane.
-        if (m.reasoning) addRehydratedThinking(w, m.reasoning);
-        stampMsg(w, m.metadata);    // …plus the per-reply tok/s · tokens · time stamp
+    if (chatPane.sid !== sid || chatPane.mode !== lane) return;
+    renderOdyHistory(h);
+    const active = await activePromise;
+    if (!active && chatPane.sid === sid && chatPane.mode === lane) {
+      // `/active` and Odysseus history are separate local authorities. They can be
+      // served in either order: a turn may commit after the first history snapshot
+      // but before `/active` observes it as terminal. One post-observation refetch
+      // closes that race. It is local and read-only; no resume/rebind side effect.
+      const settledHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
+      if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(settledHistory);
+    } else if (window.HarnessTurnStream && chatPane.sid === sid
+               && chatPane.mode === lane) {
+      const fresh = await HarnessTurnStream.metadata(active.id).catch(() => null);
+      if (fresh && ['completed','failed','stopped','interrupted'].includes(fresh.state)) {
+        // The producer crossed its terminal boundary while the first history request
+        // was in flight. Refetch once; otherwise that perfectly legal ordering can
+        // leave the just-finished answer invisible until a second reload.
+        const finalHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
+        if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(finalHistory);
+      } else if (fresh) {
+        await HarnessTurnStream.recover(fresh, lane, sid);
       }
     }
-    scrollChat(true);   // opening a session snaps to its latest message
   } catch {}
 }
 
 async function duplicateSession(sid){
-  if (chatPane.busy) await stopTurnNow('session duplicate');
+  if (chatPane.busy) await detachTurnNow('session duplicate');
   const s = chatPane.sessions.find(x => x.id === sid);
   const name = ((s && s.name) || 'Chat') + ' (copy)';
   try {
@@ -9598,7 +9629,7 @@ async function newSession(){
   // a wedged turn never ended, so the button was simply dead until an app
   // restart. A new chat now STOPS the running turn first (Fable design: stop
   // then proceed) and says so in the activity feed.
-  if (chatPane.busy) await stopTurnNow('new chat');
+  if (chatPane.busy) await detachTurnNow('new chat');
   if (chatPane.mode === 'hermes'){
     // Hermes lane: fresh gateway session + clear the pane + refresh the rail
     // (Phase 3). NOTE: the gateway defers the DB row to the first prompt
@@ -13403,18 +13434,6 @@ function turnArm(ms, label){
   }, ms);
 }
 
-function turnHardRelease(t){
-  // The abort did not unblock the reader (should not happen) → release the
-  // composer directly so the UI can never be held hostage by a stream.
-  if (chatPane.curTurn !== t) return;
-  chatPane.curTurn = null;
-  chatPane.busy = false;
-  const sb = document.getElementById('chat-send');
-  if (sb){ sb.disabled = false; sendPaint('Send');
-    sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message'); }
-  const th = document.getElementById('thinking'); if (th) th.remove();
-}
-
 function forceEndTurn(reason){
   const t = chatPane.curTurn;
   if (!t || t.ended || t.done) return false;   // never "force-end" a completed turn
@@ -13429,20 +13448,6 @@ function forceEndTurn(reason){
   if (t.holder){ try { chatStatus(t.holder, '✓', 'interrupted (forced) · ' + where); } catch (_) {} }
   try { t.ctl.abort(); } catch (_) {}
   setTimeout(() => turnHardRelease(t), 400);
-  return true;
-}
-
-async function stopTurnNow(reason){
-  // ONE path out of a running turn, reached by Stop, +NEW, a lane switch and a
-  // session click. The gateway interrupt is best-effort and deliberately NOT
-  // awaited (session.interrupt can itself stall for its 10s RPC timeout) — the
-  // local force-end is the guarantee.
-  if (!chatPane.curTurn && !chatPane.busy) return false;
-  const t = chatPane.curTurn;
-  if (t && t.lane === 'hermes') hermesStop(reason);
-  forceEndTurn(reason);
-  if (!chatPane.curTurn && !chatPane.busy) return true;
-  await new Promise(r => setTimeout(r, 80));   // let sendChat's finally run
   return true;
 }
 
@@ -13546,8 +13551,9 @@ async function sendChat() {
   holder.insertBefore(think, body);
   scrollChat();
 
-  // The panel now OWNS this turn: an AbortController is the kill switch every
-  // escape hatch pulls, and `stage` is what the diagnostic prints.
+  // The bridge owns Chat/Agent generation; this AbortController owns only this
+  // pane's subscription.  A lane/session switch detaches the view without
+  // cancelling that producer. Hermes retains its established gateway ownership.
   // `hermesSid` on the TURN is what an approval/ask card born in this stream
   // answers (see chatApproval/chatAsk). Seeded from the pane for a continuation
   // turn and overwritten by the bridge's `hermes_session` frame for a new (or
@@ -13578,234 +13584,46 @@ async function sendChat() {
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset(),
          ...(img ? {image: img.data, image_name: img.name} : {})};
-    const resp = await fetch(url, {method:'POST',
-      headers:{'Content-Type':'application/json'},
+    let resp;
+    if (turn.lane !== 'hermes' && window.HarnessTurnStream){
+      const made = await HarnessTurnStream.create(turn.lane, reqBody);
+      turn.id = made.id; turn.lastSeq = 0;
+      resp = await fetch('/api/turns/' + encodeURIComponent(turn.id) + '/events?after=0',
+                         {signal:turn.ctl.signal});
+    } else resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(reqBody), signal: turn.ctl.signal});
     turnStage('waiting for the first frame');
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      // Any byte at all = the relay is alive → re-arm the last-resort watchdog.
-      // This runs BEFORE any parsing, so the bridge's {"type":"hermes_ping"}
-      // heartbeat re-arms even if it were ever malformed — the re-arm can never
-      // depend on JSON.parse succeeding.
-      turn.lastByte = Date.now();
-      if (turn.lane === 'hermes') turnArm(TURN_STALL_MS, 'stall');
-      buf += dec.decode(value, {stream:true});
-      const parts = buf.split('\n\n'); buf = parts.pop();
-      for (const part of parts) {
-        for (const line of part.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6);
-          if (payload === '[DONE]') {
-            // The turn is COMPLETE. Marking it here means a +NEW / lane switch
-            // clicked in the sliver between [DONE] and the socket closing cannot
-            // stamp a finished reply "interrupted (forced)".
-            turn.done = true; turnStage('done'); clearTimeout(turn.timer);
-            think.remove(); chatPane.busy = false;
-            chatSummary(holder);                          // §B: finalize step summary
-            const od = holder.querySelector('details.think'); if (od) od.open = false;
-            holder._raw = body.textContent;   // keep the raw answer BEFORE it becomes cards (Copy reads this)
-            renderChatBody(body, body.textContent);   // PHASE 3: render md + card artifact fenced blocks
-            chatToolErrsRedraw(holder);   // BE-01: the ✗ chips outlive the re-render
-            break;
-          }
-          let j; try { j = JSON.parse(payload); } catch { continue; }
-          // Bridge heartbeat (Hermes relay, ~20s while it is alive and waiting):
-          // its ONLY job is to have reset the watchdog above. Not rendered, not
-          // logged — an inspect line every 20s would drown the real events.
-          if (j.type === 'hermes_ping') continue;
-          if (j.delta === undefined) chatInspect(holder, j);   // §B: raw-event log (skip token deltas)
-          if (j.delta !== undefined) {
-            turnStage(j.thinking ? 'thinking' : 'answering');
-            if (j.thinking) {
-              // Live thought stream: disclosure appears ONLY if the model actually thinks,
-              // stays OPEN while reasoning streams, auto-collapses when the answer begins.
-              think.hidden = false;
-              if (!holder._thinkStart) holder._thinkStart = Date.now();   // §D: for elapsed stamp
-              let det = holder.querySelector('details.think');
-              if (!det) {
-                det = document.createElement('details'); det.className = 'think'; det.open = true;
-                det.innerHTML = '<summary>thinking</summary><div class="tbody"></div>';
-                holder.insertBefore(det, body);
-              }
-              const tb = det.querySelector('.tbody');
-              tb.textContent += j.delta;
-              tb.scrollTop = tb.scrollHeight;   // follow the thought stream
-            } else {
-              think.hidden = true;
-              const det = holder.querySelector('details.think');
-              if (det && det.open) det.open = false;   // answer starting → tuck thoughts away
-              // §D: stamp elapsed thinking time on the summary (once), when > 2s
-              if (det && holder._thinkStart && !holder._thinkDone) {
-                holder._thinkDone = true;
-                const secs = (Date.now() - holder._thinkStart) / 1000;
-                if (secs > 2) { const sm = det.querySelector('summary'); if (sm) sm.textContent = 'thinking · ' + secs.toFixed(1) + 's'; }
-              }
-              chatSummary(holder);                      // §B: collapse steps into ✓ summary
-              body.textContent += j.delta;
-            }
-          } else if (j.type === 'model_info' || j.type === 'model_actual') {
-            // The lane's echo is only a FALLBACK now (see laneModelLabel): Odysseus
-            // reports the session's stored wire id, which survives a runner switch
-            // and — for MLX — is an absolute path. The live runner wins.
-            chatPane.model = j.model || chatPane.model;
-            holder.querySelector('.who').textContent =
-              liveModelLabel(chatPane.model) || 'Assistant';
-          } else if (j.type === 'hermes_session') {
-            // Hermes lane: the bridge minted (or re-minted after a stale sid) a
-            // gateway session — persist it so follow-up turns continue it.
-            if (j.id){ chatPane.hermesSid = j.id; turn.hermesSid = j.id;
-                       localStorage.setItem('harness-hermes-sid', j.id); }
-            // Phase 3: the stored id keys the rail's active row.
-            if (j.stored_id){ chatPane.hermesStoredSid = j.stored_id; localStorage.setItem('harness-hermes-stored', j.stored_id); }
-          } else if (j.type === 'hermes_status') {
-            turnStage('prefill (bridge says hermes is working)');
-            // Bridge liveness note (20s of mid-turn silence): visible reassurance
-            // that a long local-model prefill is slow, not dead.
-            chatStatus(holder, '▸', j.text || 'hermes is working…');
-          } else if (j.type === 'approval') {
-            // Hermes Phase 2: interactive approval card at stream position.
-            turnStage('awaiting approval');
-            chatApproval(holder, j.request || {}, turn.hermesSid);
-          } else if (j.type === 'ask') {
-            // Hermes `clarify` tool: an interactive question at stream position.
-            // NOT auto-answered anywhere — including conversation mode, where the
-            // mic stays gated because the turn never ends (no turn_end fires).
-            turnStage('awaiting an answer');
-            chatAsk(holder, j.request || {}, turn.hermesSid);
-          } else if (j.type === 'ask_expire') {
-            expireAskCard(holder, String(j.request_id || ''));
-          } else if (j.type === 'file_card') {
-            // §F auto-trigger (Hermes lane): the bridge saw a successful
-            // write_file/patch → render the existing produced-file card.
-            // Appended to the holder (after .body) like post-prose approval
-            // cards; deduped per turn; only absolute-under-/Users or ~ paths
-            // render (anything else is skipped ⚠ PENDING FABLE QA). Cards do
-            // NOT survive a session reload — Phase-3 transcripts can't
-            // reconstruct them (known limit).
-            const fp = String(j.path || '');
-            if (fp.startsWith('/Users/') || fp.startsWith('~')) {
-              holder._fileCards = holder._fileCards || new Set();
-              if (!holder._fileCards.has(fp)) {
-                holder._fileCards.add(fp);
-                try { fileCard(holder, {path: fp}); } catch {}
-              }
-            }
-          } else if (j.type === 'guard_flag') {
-            // Path-guard audit tier (C): a completed write landed OUTSIDE the
-            // allowlist. Detect-only notice (the plugin is the enforcement) —
-            // rendered with the existing statusline tokens, no new surface,
-            // deduped per turn, appended next to the file card.
-            const gp = String(j.path || '');
-            holder._guardFlags = holder._guardFlags || new Set();
-            if (gp && !holder._guardFlags.has(gp)) {
-              holder._guardFlags.add(gp);
-              const g = document.createElement('div'); g.className = 'statusline';
-              g.innerHTML = '<span class="r">⚠</span> wrote outside workspace: '
-                          + '<span class="dim">' + esc(gp) + '</span>';
-              holder.appendChild(g);
-            }
-          } else if (j.type === 'tool_start') {
-            turnStage('running a tool');
-            const raw = j.tool || 'tool';
-            const isWeb = /search|web|fetch|browse|url|http/i.test(raw);
-            (holder._steps = holder._steps || []).push({tool: raw});
-            chatStatus(holder, '▸', isWeb ? 'searching the web…' : ('running ' + raw + '…'));
-          } else if (j.type === 'tool_output' || j.type === 'agent_step') {
-            // ⚠️ BE-01 — A TOOL THAT FAILED MUST NOT ARRIVE LOOKING LIKE A TOOL THAT
-            // WORKED. This ONE handler is every lane's tool_output in this page
-            // (Hermes / Odysseus-agent / direct all share the stream renderer above),
-            // so the branch fixes the class rather than one lane: whichever lane the
-            // bridge marks `is_error` on gets the chip. See chatToolErr().
-            if (j.is_error) {
-              const etool = String(j.tool || 'tool');
-              const ewhy  = String(j.error || '').trim();
-              // A tool_output with no tool_start before it (a frame lost to a
-              // reconnect) starts its OWN step rather than marking step -1.
-              const steps = (holder._steps = holder._steps || []);
-              const last  = steps[steps.length - 1];
-              if (last && !last.error) last.error = ewhy || 'refused';
-              else steps.push({tool: etool, error: ewhy || 'refused'});
-              chatToolErr(holder, etool, ewhy);
-              // If the ✓-summary is ALREADY on screen it is now a lie — redo it.
-              if (holder._summarized) { holder._summarized = false; chatSummary(holder); }
-              turnStage('a tool failed');
-            } else if (!holder._summarized) {
-              // …and once the summary exists, "reading results…" must not clobber it
-              // (that would erase the ✗ this handler just drew into it).
-              chatStatus(holder, '▸', 'reading results…');
-            }
-          } else if (j.type === 'web_sources') {
-            const items = j.data || [];
-            const det = document.createElement('details'); det.className = 'sources';
-            det.innerHTML = `<summary>${items.length} web sources</summary><div class="slist"></div>`;
-            const list = det.querySelector('.slist');
-            for (const s of items) {
-              const url = s.url || s.link || '';
-              let host = ''; try { host = new URL(url).hostname.replace('www.',''); } catch {}
-              const title = (s.title || host || 'source').slice(0, 60);
-              const it = document.createElement('div'); it.className = 'sitem';
-              it.innerHTML = `<a href="${escAttr(url)}" onclick="openExt(event, this.href)">${esc(title)}</a><span class="host">${esc(host)}</span>`;
-              list.appendChild(it);
-            }
-            holder.appendChild(det);
-          } else if (j.type === 'vision') {
-            // HOW THE MODEL GOT AT THE PICTURE (v1.5.32). The Agent lane never
-            // hands the main model pixels — Odysseus injects a DESCRIPTION — so an
-            // answer about an image must carry its own provenance or it reads
-            // exactly like direct sight (the LIES-TO-USER class). One statusline,
-            // once per turn, in the tokens the tool statuslines already use.
-            if (!holder._visionLine){
-              holder._visionLine = true;
-              const s = document.createElement('div'); s.className = 'statusline';
-              const mdl = esc(String(j.model || 'the vision model'));
-              if (j.source === 'native')
-                s.innerHTML = '<span class="dim">👁</span> the model reads this image '
-                            + 'directly — <span class="dim">' + mdl + '</span>';
-              else if (j.source === 'precaption')
-                s.innerHTML = '<span class="dim">👁</span> image described by '
-                            + '<span class="dim">' + mdl + '</span> — the agent answers '
-                            + 'from that description, not from the picture';
-              else
-                s.innerHTML = '<span class="r">⚠</span> the image was not described here'
-                            + (j.note ? ': <span class="dim">' + esc(String(j.note)) + '</span>' : '')
-                            + ' — the agent may not be able to see it';
-              holder.appendChild(s);
-            }
-          } else if (j.type === 'proxy_error') {
-            body.textContent += `\n[proxy error: ${j.error}]`;
-          }
-        }
-      }
-      scrollChat();
-    }
+    // Live delivery and replay deliberately share this complete renderer.
+    return await HarnessTurnStream.consume(resp, {turn, holder, body, think});
   } catch (e) {
     // A force-end aborts the fetch on purpose — reporting that as a stream error
     // would blame the transport for a deliberate stop.
-    if (turn.ended) body.textContent += '\n· interrupted';
+    if (turn.detached) { /* the producer continues; this pane intentionally left */ }
+    else if (turn.ended) body.textContent += '\n· interrupted';
     else body.textContent += `\n[stream error: ${e}]`;
   } finally {
     clearTimeout(turn.timer);
-    if (chatPane.curTurn === turn) chatPane.curTurn = null;
+    const ownsPane = chatPane.curTurn === turn;
+    if (ownsPane) chatPane.curTurn = null;
     think.remove?.();
-    chatPane.busy = false;
+    if (ownsPane) chatPane.busy = false;
     expireApprovals(holder);   // Phase 2: freeze any still-open approval cards
     const sb = document.getElementById('chat-send');
-    sb.disabled = false; sendPaint('Send');
-    sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');
+    if (ownsPane) {
+      sb.disabled = false; sendPaint('Send');
+      sb.title = 'Send message (Enter)'; sb.setAttribute('aria-label', 'Send message');
+    }
     scrollChat();
     // Refresh rail: Odysseus auto-titles a new chat + reorders by recency;
     // the Hermes rail (Phase 3) gains the row for a first-turn session and
     // updates titles/counts — loadSessions() branches per lane.
-    loadSessions();
+    if (!turn.detached) loadSessions();
     // …and light up this turn's per-message actions + stats stamp (one silent
     // history refetch; never awaited, never allowed to throw into the send path).
-    if (holder._raw === undefined) holder._raw = body.textContent;
-    stampLiveTurn(userWrap, holder, text);
+    if (!turn.detached) {
+      if (holder._raw === undefined) holder._raw = body.textContent;
+      stampLiveTurn(userWrap, holder, text);
+    }
     // …and honour a ✕ that was clicked on this turn's image while it streamed:
     // the sidecar row only exists now, so the delete is issued here (once).
     if (chatPane.pendingAttachDrop && chatPane.pendingAttachDrop.wrap === userWrap){
@@ -13814,7 +13632,7 @@ async function sendChat() {
     }
     // CONVERSATION MODE: THE turn ended — any lane, any outcome, including a
     // user-clicked Stop (this finally always runs). Speak the reply, then listen.
-    if (typeof convOn === 'function' && convOn()) convTurnEnd(holder);
+    if (!turn.detached && typeof convOn === 'function' && convOn()) convTurnEnd(holder);
   }
 }
 

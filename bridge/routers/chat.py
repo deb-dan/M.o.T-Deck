@@ -59,9 +59,13 @@ def _runner_error_sentence(status, model: str = "") -> str:
             f"the turn could not start. {tail}")
 
 
-@app.post("/api/chat/direct")
-async def chat_direct(req: Request) -> StreamingResponse:
-    body = await req.json()
+async def direct_events(body: dict):
+    """Produce the legacy direct SSE frames without binding them to a response.
+
+    ``routers.turns`` owns this iterator in the durable API.  Keeping the old
+    endpoint as a thin subscriber preserves callers that still expect its original
+    SSE shape.
+    """
     sid = body.get("session", "")
     user_msg = (body.get("message") or "").strip()
     image = body.get("image") or ""
@@ -137,6 +141,27 @@ async def chat_direct(req: Request) -> StreamingResponse:
 
     async def gen():
         import json as _json, time as _t
+        # A direct turn's prompt belongs to the session before the runner sees it.
+        # This is deliberately after history construction above, so it cannot echo
+        # itself into the model prompt, and before any network wait, so a reload or
+        # lane detach never silently loses an attempted message.
+        user_persisted = False
+        if sid and user_msg:
+            try:
+                await _ody_req("POST", f"/api/session/{sid}/inject_messages", json={
+                    "messages": [{"role": "user", "content": user_msg +
+                                  ("\n[image attached]" if image else "")}],
+                })
+                user_persisted = True
+                if image:
+                    _mime, _raw = parse_data_url(image, IMAGE_MAX_CHARS)
+                    if _raw:
+                        log_attachment(sid, user_key(user_msg), image_name, _mime, _raw)
+            except Exception:
+                # Odysseus absence remains a graceful direct-lane degradation.  The
+                # durable journal still records the attempted prompt; the final path
+                # below makes one more best-effort transcript write.
+                pass
         if cerr:   # never call the runner with an attachment it can't use
             yield f'data: {_json.dumps({"type": "proxy_error", "error": cerr})}\n\n'
             yield "data: [DONE]\n\n"
@@ -242,7 +267,7 @@ async def chat_direct(req: Request) -> StreamingResponse:
                     # TEXT only: the store (and the thinking sidecar's answer-hash
                     # join) stay string-shaped; the attachment is recorded as a marker
                     # so a reopened transcript still shows an image was sent.
-                    msgs = [{"role": "user",
+                    msgs = [] if user_persisted else [{"role": "user",
                              "content": user_msg + ("\n[image attached]" if image else "")}]
                     if answer:
                         am = {"role": "assistant", "content": answer}
@@ -259,14 +284,15 @@ async def chat_direct(req: Request) -> StreamingResponse:
                         except Exception:
                             pass
                         msgs.append(am)
-                    await _ody_req("POST", f"/api/session/{sid}/inject_messages",
-                                   json={"messages": msgs})
-                    injected = True
+                    if msgs:
+                        await _ody_req("POST", f"/api/session/{sid}/inject_messages",
+                                       json={"messages": msgs})
+                    injected = user_persisted or bool(msgs)
                     if answer:
                         persisted = True
                 except Exception:
                     pass
-                if injected and image:
+                if injected and image and not user_persisted:
                     # Image sidecar: keep the BYTES locally, keyed by (sid, user
                     # text hash), so reopening the session rehydrates the same
                     # thumbnail instead of just the marker line. A malformed or
@@ -312,4 +338,13 @@ async def chat_direct(req: Request) -> StreamingResponse:
                 pass
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return gen()
+
+
+@app.post("/api/chat/direct")
+async def chat_direct(req: Request) -> StreamingResponse:
+    # Compatibility callers such as LOffice Quick AI legitimately have no Odysseus
+    # session. Keep the historical endpoint and request contract exact; the panel uses
+    # /api/turns when it has a session and needs disconnect resilience.
+    return StreamingResponse(await direct_events(await req.json()),
+                             media_type="text/event-stream")

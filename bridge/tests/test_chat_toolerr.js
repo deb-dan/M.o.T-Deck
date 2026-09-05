@@ -33,6 +33,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
 const P = f => path.join(ROOT, 'bridge', f);
 const html = fs.readFileSync(P('panel/index.html'), 'utf8');
+const turnStream = fs.readFileSync(P('panel/assets/turn-stream.js'), 'utf8');
 const office = fs.readFileSync(P('panel/office.html'), 'utf8');
 const hermes = fs.readFileSync(P('routers/hermes.py'), 'utf8');
 const studio = fs.readFileSync(P('panel/assets/studio-design.css'), 'utf8');
@@ -162,14 +163,14 @@ console.log('\n2. the ✓ summary never stamps a tool that failed');
 // ── 3. the handler ──────────────────────────────────────────────────────────
 console.log('\n3. the frame handler');
 {
-  ok((html.match(/j\.type === 'tool_output'/g) || []).length === 1,
+  ok((turnStream.match(/j\.type === 'tool_output'/g) || []).length === 1,
      'there is exactly ONE tool_output handler in this page — so the fix covers every '
      + 'lane that shares the stream renderer (Hermes, Odysseus-agent, direct), not one');
-  const h = html.slice(html.indexOf("j.type === 'tool_output'"),
-                       html.indexOf("j.type === 'web_sources'"));
+  const h = turnStream.slice(turnStream.indexOf("j.type === 'tool_output'"),
+                             turnStream.indexOf("j.type === 'web_sources'"));
   ok(/if \(j\.is_error\)/.test(h), 'it branches on is_error — BE-01\'s missing branch');
-  ok(/chatToolErr\(holder, etool, ewhy\)/.test(h), '…and draws the chip');
-  ok(/steps\.push\(\{tool: etool, error:/.test(h) && /last\.error = ewhy/.test(h),
+  ok(/chatToolErr\(holder, tool, why\)/.test(h), '…and draws the chip');
+  ok(/steps\.push\(\{tool:tool, error:/.test(h) && /last\.error = why/.test(h),
      '…and marks the step, so the summary above can render ✗');
   ok(/if \(last && !last\.error\)/.test(h),
      'a tool_output with no tool_start before it (a frame lost to a reconnect) starts '
@@ -179,8 +180,8 @@ console.log('\n3. the frame handler');
      + 'tick standing over a red chip');
   ok(/\} else if \(!holder\._summarized\) \{[\s\S]{0,300}reading results…/.test(h),
      '"reading results…" no longer clobbers a rendered summary (it would erase the ✗)');
-  const done = html.slice(html.indexOf("if (payload === '[DONE]')"),
-                          html.indexOf("let j; try { j = JSON.parse(payload)"));
+  const done = turnStream.slice(turnStream.indexOf('function complete('),
+                                turnStream.indexOf('function event('));
   ok(done.indexOf('renderChatBody(body, body.textContent)')
        < done.indexOf('chatToolErrsRedraw(holder)'),
      'and the re-assert runs AFTER the end-of-turn render, which is the only order '

@@ -135,6 +135,10 @@ FILES: tuple[str, ...] = (
     # implementation of a stop), and a module missing from this view makes every one of
     # them pass vacuously, forever, on the one route in the app that ends processes.
     "routers/quitall.py",
+    # U31 durable local Chat/Agent turns. A route-less core still belongs in the
+    # source view and facade; both files are appended by the new-module rule.
+    "core/turns.py",
+    "routers/turns.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the
