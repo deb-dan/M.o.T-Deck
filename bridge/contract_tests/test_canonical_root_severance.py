@@ -365,6 +365,8 @@ def test_relocated_venv_repair_covers_every_observed_generated_console_shape(tmp
         "uv-single": f"'''exec' '{old}/bin/python3' \"$0\" \"$@\"\n",
         "uv-double": f"'''exec' \"{old}/bin/python3\" \"$0\" \"$@\"\n",
         "activate": f"VIRTUAL_ENV='{old}'\n",
+        "activate-export": f"export VIRTUAL_ENV='{old}'\n",
+        "activate-cygpath": f"VIRTUAL_ENV=$(cygpath '{old}')\n",
         "activate.csh": f"setenv VIRTUAL_ENV '{old}'\n",
         "activate.fish": f"set -gx VIRTUAL_ENV '{old}'\n",
         "activate.nu": f"    let virtual_env = '{old}'\n",

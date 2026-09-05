@@ -107,7 +107,8 @@ def _generated_console_line(line: str, match: re.Match[str]) -> bool:
     shapes = (
         rf"^#!{old}/bin/python(?:3(?:\.\d+)?)?\s*$",
         rf"^'''exec'\s+['\"]{old}/bin/python(?:3(?:\.\d+)?)?['\"]\s+\"\$0\"\s+\"\$@\"\s*$",
-        rf"^\s*VIRTUAL_ENV\s*=\s*(['\"]){old}\1\s*$",
+        rf"^\s*(?:export\s+)?VIRTUAL_ENV\s*=\s*(['\"]){old}\1\s*$",
+        rf"^\s*VIRTUAL_ENV\s*=\s*\$\(cygpath\s+(['\"]){old}\1\)\s*$",
         rf"^\s*setenv\s+VIRTUAL_ENV\s+(['\"]){old}\1\s*$",
         rf"^\s*set\s+-gx\s+VIRTUAL_ENV\s+(['\"]){old}\1\s*$",
         rf"^\s*let\s+virtual_env\s*=\s*(['\"]){old}\1\s*$",
@@ -206,7 +207,10 @@ def _console_changes(name: str, venv: str) -> List[Change]:
             if not stat.S_ISREG(mode):
                 raise RepairError(f"refusing non-regular console entry: {entry.path}")
             text, raw, info = _text(entry.path, "console script")
-            rewritten = _replace_console(text, name, venv)
+            try:
+                rewritten = _replace_console(text, name, venv)
+            except RepairError as exc:
+                raise RepairError(f"{entry.path}: {exc}") from exc
             if rewritten != text:
                 changes.append(Change(entry.path, raw, rewritten.encode("utf-8"),
                                       stat.S_IMODE(info.st_mode), "console"))
