@@ -50,4 +50,8 @@ def test_symlink_manifest_is_refused(tmp_path):
 def test_start_script_has_one_semantic_reader_boundary():
     src = (ROOT / "scripts" / "start_component.sh").read_text()
     assert "_manifest_value" in src and "scripts/read_manifest.py" in src
-
+    production = src.split("# ── PORT OWNERSHIP", 1)[1]
+    assert "_normalize_yaml_scalar" not in production, (
+        "a typed YAML value was sent back through the legacy text normalizer; "
+        "that collapses the explicit string 'null' and creates a second parser boundary"
+    )

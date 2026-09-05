@@ -32,6 +32,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DST="$HOME/Library/Application Support/Harness"
 APP=""
+. "$ROOT/scripts/app_bundle_identity.sh"
 
 # A Finder install may localize the .app filename (M.O.T.app) while preserving this
 # bundle's internal identity. Resolve every immediate .app in the two installation
@@ -78,83 +79,16 @@ _prepare_swift_config() {   # <Config.swift path> <harness root>
   fi
 }
 
-_app_plist_value() {   # <bundle> <Info.plist key>
-  /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null || true
-}
-
-_canonical_bundle_path() {   # <existing bundle directory>
-  (cd -P "$1" 2>/dev/null && pwd -P)
-}
-
-_valid_harness_app() {   # <candidate bundle>
-  local candidate="$1" bundle_id executable
-  [[ -d "$candidate" && -f "$candidate/Contents/Info.plist" ]] || return 1
-  bundle_id="$(_app_plist_value "$candidate" CFBundleIdentifier)"
-  [[ "$bundle_id" == "local.harness.app" ]] || return 1
-  executable="$(_app_plist_value "$candidate" CFBundleExecutable)"
-  [[ "$executable" == "Harness" && -x "$candidate/Contents/MacOS/Harness" ]]
-}
-
-_discover_app_bundles() { # <installation root>; one NUL-delimited path per bundle
-  local root="$1"
-  [[ -d "$root" ]] || return 0
-  # Recurse through installation folders, but never descend into an .app bundle.
-  # Validation below—not the filename or location—decides whether it is M.O.T.
-  /usr/bin/find "$root" -type d -name '*.app' -prune -print0 2>/dev/null
-}
-
 _resolve_installed_app() {
-  local candidate
-  local -a candidates=() valid=()
-
-  if [[ -n "${HARNESS_APP_PATH:-}" ]]; then
-    candidates=("$HARNESS_APP_PATH")
-  elif [[ "$RESOLVE_FIXTURES" -eq 1 && ${#RESOLVE_FIXTURE_ROOTS[@]} -eq 0 ]]; then
-    candidates=("${RESOLVE_FIXTURE_CANDIDATES[@]:-}")
+  HARNESS_APP_RESOLVE_PREFIX="[ship]"
+  if [[ "$RESOLVE_FIXTURES" -eq 1 && ${#RESOLVE_FIXTURE_ROOTS[@]} -eq 0 ]]; then
+    harness_resolve_installed_app --candidates "${RESOLVE_FIXTURE_CANDIDATES[@]:-}" || return
+  elif [[ ${#RESOLVE_FIXTURE_ROOTS[@]} -gt 0 ]]; then
+    harness_resolve_installed_app --roots "${RESOLVE_FIXTURE_ROOTS[@]}" || return
   else
-    local -a roots=(/Applications "$HOME/Applications")
-    [[ ${#RESOLVE_FIXTURE_ROOTS[@]} -gt 0 ]] && roots=("${RESOLVE_FIXTURE_ROOTS[@]}")
-    local install_root
-    for install_root in "${roots[@]}"; do
-      while IFS= read -r -d '' candidate; do
-        candidates+=("$candidate")
-      done < <(_discover_app_bundles "$install_root")
-    done
+    harness_resolve_installed_app || return
   fi
-
-  for candidate in "${candidates[@]}"; do
-    _valid_harness_app "$candidate" || continue
-    candidate="$(_canonical_bundle_path "$candidate")" || continue
-    local seen=0 existing
-    for existing in "${valid[@]:-}"; do
-      [[ "$existing" == "$candidate" ]] && { seen=1; break; }
-    done
-    [[ "$seen" -eq 1 ]] || valid+=("$candidate")
-  done
-
-  if [[ -n "${HARNESS_APP_PATH:-}" && ${#valid[@]} -eq 0 ]]; then
-    echo "[ship] ERROR: HARNESS_APP_PATH '$HARNESS_APP_PATH' is not a valid Harness bundle."
-    echo "[ship]        It must be a directory with CFBundleIdentifier local.harness.app"
-    echo "[ship]        and CFBundleExecutable Harness at Contents/MacOS/Harness (executable)."
-    return 1
-  fi
-
-  if [[ ${#valid[@]} -eq 0 ]]; then
-    echo "[ship] ERROR: no valid installed Harness bundle found under /Applications or $HOME/Applications."
-    echo "[ship]        Valid bundles require CFBundleIdentifier local.harness.app and"
-    echo "[ship]        executable CFBundleExecutable Harness at Contents/MacOS/Harness."
-    echo "[ship]        Set HARNESS_APP_PATH to an explicit valid bundle path to override."
-    return 1
-  fi
-
-  if [[ -z "${HARNESS_APP_PATH:-}" && ${#valid[@]} -gt 1 ]]; then
-    echo "[ship] ERROR: more than one valid Harness bundle was found; refusing to guess:"
-    for candidate in "${valid[@]}"; do echo "[ship]        $candidate"; done
-    echo "[ship]        Set HARNESS_APP_PATH to the installed bundle that owns your running app."
-    return 1
-  fi
-
-  APP="${valid[0]}"
+  APP="$HARNESS_RESOLVED_APP"
   echo "[ship] selected installed app: $APP"
 }
 

@@ -429,7 +429,6 @@ fi
 case "$NAME" in
   runner)
     R_ADAPTER=$(_manifest_value runner.adapter str)
-    R_ADAPTER="$(_normalize_yaml_scalar "$R_ADAPTER")"
     [[ -n "$R_ADAPTER" ]] || R_ADAPTER=auto
     # jan retired 2026-07-23 (cleanup 3.1d) — the harness owns its own llama-server
     # binary + model files now. Only llamacpp | mlx | auto are valid; anything else
@@ -445,9 +444,6 @@ case "$NAME" in
     R_CTX=$(_manifest_value runner.ctx_size int)
     R_MODEL=$(_manifest_value runner.model str)
     R_BIN=$(_manifest_value runner.binary str)
-    R_MODEL="$(_normalize_yaml_scalar "$R_MODEL")"
-    R_BIN="$(_normalize_yaml_scalar "$R_BIN")"
-    R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
     _require_secret "$R_KEY" runner.api_key || exit 1
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
     [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
@@ -967,8 +963,6 @@ PYRESOLVE
     # as default model. Runs before the server boots.
     R_ENDPOINT=$(_manifest_value runner.endpoint str)
     R_KEY=$(_manifest_value runner.api_key str)
-    R_ENDPOINT="$(_normalize_yaml_scalar "$R_ENDPOINT")"
-    R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
     _require_secret "$R_KEY" runner.api_key || exit 1
     [[ -n "$R_ENDPOINT" ]] || R_ENDPOINT="http://127.0.0.1:6767/v1"
     ( cd vendor/odysseus && JAN_BASE_URL="$R_ENDPOINT" JAN_API_KEY="$R_KEY" python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
@@ -1057,9 +1051,6 @@ PYRESOLVE
       VS_MODEL=$(_manifest_value runner.model str)
       VS_MODEL_SOURCE="saved runner pin (no live launch provenance)"
     fi
-    VS_MODEL="$(_normalize_yaml_scalar "$VS_MODEL")"
-    VS_BASE_URL="$(_normalize_yaml_scalar "$VS_BASE_URL")"
-    VS_KEY="$(_normalize_yaml_scalar "$VS_KEY")"
     _require_secret "$VS_KEY" runner.api_key || exit 1
     [[ -n "$VS_BASE_URL" ]] || VS_BASE_URL="http://127.0.0.1:6767/v1"
     [[ "$VS_MODEL" == \#* ]] && VS_MODEL=""
@@ -1441,9 +1432,6 @@ PYWIRE
     if [[ -z "$DS_MODEL" ]]; then
       DS_MODEL=$(_manifest_value runner.model str)
     fi
-    DS_MODEL="$(_normalize_yaml_scalar "$DS_MODEL")"
-    DS_BASE="$(_normalize_yaml_scalar "$DS_BASE")"
-    DS_KEY="$(_normalize_yaml_scalar "$DS_KEY")"
     _require_secret "$DS_KEY" runner.api_key || exit 1
     [[ -n "$DS_BASE" ]] || DS_BASE="http://127.0.0.1:6767/v1"
     [[ "$DS_MODEL" == \#* ]] && DS_MODEL=""
@@ -1641,9 +1629,6 @@ PYDS
     if [[ -z "$OC_MODEL" ]]; then
       OC_MODEL=$(_manifest_value runner.model str)
     fi
-    OC_MODEL="$(_normalize_yaml_scalar "$OC_MODEL")"
-    OC_BASE="$(_normalize_yaml_scalar "$OC_BASE")"
-    OC_KEY="$(_normalize_yaml_scalar "$OC_KEY")"
     _require_secret "$OC_KEY" runner.api_key || exit 1
     [[ -n "$OC_BASE" ]] || OC_BASE="http://127.0.0.1:6767/v1"
     [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
@@ -1866,9 +1851,6 @@ PYOCCHK
       MODEL=$(_manifest_value runner.model str)
       MSRC="saved runner pin (no live launch provenance)"
     fi
-    MODEL="$(_normalize_yaml_scalar "$MODEL")"
-    BASE_URL="$(_normalize_yaml_scalar "$BASE_URL")"
-    KEY="$(_normalize_yaml_scalar "$KEY")"
     _require_secret "$KEY" runner.api_key || exit 1
     [[ -n "$BASE_URL" ]] || BASE_URL="http://127.0.0.1:6767/v1"
     CTXLEN=$(_manifest_value runner.ctx_size int)
@@ -2189,7 +2171,6 @@ PYLOFFICE
     # Precedence: harness.yaml components.hermes.dashboard_token override → else
     # generate ONCE into data/hermes.token (chmod 600) and reuse on every start.
     HTOKEN=$(_manifest_value components.hermes.dashboard_token str)
-    HTOKEN="$(_normalize_yaml_scalar "$HTOKEN")"
     if [[ -z "$HTOKEN" ]]; then
       if [[ ! -s data/hermes.token ]]; then
         python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > data/hermes.token

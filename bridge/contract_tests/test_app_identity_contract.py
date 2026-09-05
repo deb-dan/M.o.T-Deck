@@ -49,6 +49,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHIP = os.path.join(ROOT, "scripts", "ship.sh")
 BUILD = os.path.join(ROOT, "scripts", "build_app.sh")
 INSTALL_COMPONENT = os.path.join(ROOT, "scripts", "install_component.sh")
+APP_IDENTITY = os.path.join(ROOT, "scripts", "app_bundle_identity.sh")
 SWIFT = os.path.join(ROOT, "app", "main.swift")
 
 NAME = "M.O.T"
@@ -149,14 +150,14 @@ def test_the_menu_bar_quit_item_agrees_with_the_display_name():
 
 
 def test_ship_resolves_installed_bundle_by_identity_and_opens_that_exact_path():
-    code = _code(SHIP)
+    code = _code(SHIP) + "\n" + _code(APP_IDENTITY)
     assert 'CFBundleIdentifier' in code and 'local.harness.app' in code
     assert 'CFBundleExecutable' in code and '"$executable" == "Harness"' in code
     assert 'Contents/MacOS/Harness' in code
     assert 'cd -P "$1"' in code and 'pwd -P' in code
-    assert '_discover_app_bundles' in code and '/usr/bin/find' in code
-    assert 'roots=(/Applications "$HOME/Applications")' in code
-    assert "_valid_harness_app" in code, \
+    assert '_harness_discover_app_bundles' in code and '/usr/bin/find' in code
+    assert 'inputs=(/Applications "$HOME/Applications")' in code
+    assert "_harness_valid_app" in code, \
         "every filename candidate must still pass bundle id + executable validation"
     assert 'open "$APP"' in code, "ship must open the precise resolved app, not LS selection"
 
@@ -224,6 +225,17 @@ def test_resolver_deduplicates_two_aliases_of_the_same_canonical_bundle(tmp_path
     assert f"selected installed app: {app.resolve()}" in result.stdout
 
 
+def test_production_discovery_accepts_and_canonicalizes_a_symlinked_bundle(tmp_path):
+    real = _fixture_app(tmp_path / "Cellar" / "mot", "Arbitrary upstream name.app")
+    install_root = tmp_path / "Applications"
+    install_root.mkdir()
+    alias = install_root / "Renamed by the user.app"
+    alias.symlink_to(real, target_is_directory=True)
+    result = _resolve_fixture_roots(install_root)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"selected installed app: {real.resolve()}" in result.stdout
+
+
 def test_explicit_override_selects_only_its_valid_candidate_and_never_falls_back(tmp_path):
     chosen = _fixture_app(tmp_path, "chosen.app")
     other = _fixture_app(tmp_path, "other.app")
@@ -263,15 +275,13 @@ def test_ship_never_promotes_bundle_path_evidence_into_signal_authority():
         "signalled merely because its executable path matches")
 
 
-def test_component_wheelhouse_discovery_covers_both_installed_bundle_names():
+def test_component_wheelhouse_discovery_uses_the_shared_identity_resolver():
     code = _code(INSTALL_COMPONENT)
-    for path in (
-        "/Applications/Harness.app/Contents/Resources/wheelhouse",
-        "/Applications/M.O.T.app/Contents/Resources/wheelhouse",
-        '"$HOME/Applications/Harness.app/Contents/Resources/wheelhouse"',
-        '"$HOME/Applications/M.O.T.app/Contents/Resources/wheelhouse"',
-    ):
-        assert path in code, f"installed wheelhouse location missing: {path}"
+    assert '. "$ROOT/scripts/app_bundle_identity.sh"' in code
+    assert "harness_resolve_installed_app" in code
+    assert '$HARNESS_RESOLVED_APP/Contents/Resources/wheelhouse' in code
+    assert "/Applications/Harness.app/Contents/Resources/wheelhouse" not in code
+    assert "/Applications/M.O.T.app/Contents/Resources/wheelhouse" not in code
 
 
 def test_build_quarantine_advice_never_assumes_the_installed_bundle_filename():

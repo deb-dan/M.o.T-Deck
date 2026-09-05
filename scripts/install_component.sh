@@ -459,10 +459,18 @@ elif [[ "$NAME" == "voicebox" ]]; then
     # executable, which is exactly how a python that ships no ensurepip gets seeded.
     # (3) needs no network and no extra tooling, so it is the reliable last resort.
     VB_WHEELS=""
-    for _w in "$ROOT/../wheelhouse" /Applications/Harness.app/Contents/Resources/wheelhouse \
-              /Applications/M.O.T.app/Contents/Resources/wheelhouse \
-              "$HOME/Applications/Harness.app/Contents/Resources/wheelhouse" \
-              "$HOME/Applications/M.O.T.app/Contents/Resources/wheelhouse"; do
+    _installed_wheels=""
+    # Use shipping's exact bundle-id + executable predicate. A renamed app that ship.sh
+    # can update must not become invisible when this offline recovery path needs pip.
+    if [[ -f "$ROOT/scripts/app_bundle_identity.sh" ]]; then
+      . "$ROOT/scripts/app_bundle_identity.sh"
+      HARNESS_APP_RESOLVE_QUIET=1
+      if harness_resolve_installed_app; then
+        _installed_wheels="$HARNESS_RESOLVED_APP/Contents/Resources/wheelhouse"
+      fi
+      unset HARNESS_APP_RESOLVE_QUIET
+    fi
+    for _w in "$ROOT/../wheelhouse" "$_installed_wheels"; do
       [[ -d "$_w" ]] && { VB_WHEELS="$_w"; break; }
     done
     VB_PIPWHL=""
