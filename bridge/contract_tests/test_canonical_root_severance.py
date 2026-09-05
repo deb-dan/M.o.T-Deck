@@ -311,6 +311,12 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
     nested = root / "data" / "nested" / "bridge-venv"
     nested.mkdir(parents=True)
     (nested / "pyvenv.cfg").write_text("ignored", encoding="utf-8")
+    bin_cache = hermes / "bin" / "__pycache__"
+    bin_cache.mkdir()
+    poisoned = bin_cache / "old-root.pyc"
+    poisoned.write_text("/archive root with spaces/data/hermes-venv/bin/python\n",
+                        encoding="utf-8")
+    poisoned_before = poisoned.read_bytes()
     mode = stat.S_IMODE(hermes_console.stat().st_mode)
 
     result = _repair_venvs(root)
@@ -326,6 +332,7 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
         hermes_finder.read_text(encoding="utf-8")
     assert stat.S_IMODE(hermes_console.stat().st_mode) == mode
     assert "/archive/data/hermes-venv" in ignored_script.read_text(encoding="utf-8")
+    assert poisoned.read_bytes() == poisoned_before
 
     repaired_bytes = (hermes_console.read_bytes(), hermes_finder.read_bytes(),
                       searx_console.read_bytes(), searx_finder.read_bytes())
@@ -336,13 +343,15 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
                               searx_console.read_bytes(), searx_finder.read_bytes())
 
 
-@pytest.mark.parametrize("kind", ("binary", "symlink", "other-venv"))
+@pytest.mark.parametrize("kind", ("binary", "symlink", "other-venv", "fifo"))
 def test_relocated_venv_repair_refuses_unsafe_or_ambiguous_console_inputs(tmp_path, kind):
     root = tmp_path / kind
     kwargs = {"binary": kind == "binary", "symlink": kind == "symlink",
               "other_venv": "bridge-venv" if kind == "other-venv" else None}
     _venv, console, finder = _venv_fixture(root, "hermes-venv", "hermes_cli", "hermes",
                                             **kwargs)
+    if kind == "fifo":
+        os.mkfifo(root / "data" / "hermes-venv" / "bin" / "not-a-console")
     before = (console.read_bytes(), finder.read_bytes())
     result = _repair_venvs(root)
     assert result.returncode != 0

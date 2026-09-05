@@ -157,6 +157,10 @@ def _console_changes(name: str, venv: str) -> List[Change]:
                 if not _STANDARD_PYTHON_LINK.fullmatch(entry.name):
                     raise RepairError(f"refusing symlink console entry: {entry.path}")
                 continue
+            if stat.S_ISDIR(mode):
+                # Some venvs keep __pycache__ directly in bin. It is not a console
+                # script and this repair is deliberately non-recursive there.
+                continue
             if not stat.S_ISREG(mode):
                 raise RepairError(f"refusing non-regular console entry: {entry.path}")
             text, raw, info = _text(entry.path, "console script")
