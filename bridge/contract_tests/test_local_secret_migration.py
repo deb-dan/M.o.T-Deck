@@ -123,3 +123,25 @@ def test_plan_only_names_installed_managed_consumers(tmp_path):
 
     assert result["restart_required"] == ["runner", "deepseek", "hermes"]
     assert result["aux_key"].startswith("preserve-existing:")
+
+
+def test_completed_migration_is_idempotent_and_recommends_no_restarts(
+        monkeypatch, tmp_path):
+    make_manifest(tmp_path)
+    monkeypatch.setattr(localsecrets, "generate", generated)
+    state = AuthState()
+    first = migration.apply_migration(
+        tmp_path, rotate=True, client_factory=clients(state))
+    assert first["restart_required"] == ["runner", "odysseus", "hermes"]
+
+    second_plan = migration.plan(tmp_path, rotate=True)
+    assert second_plan["store"] == "already-provisioned"
+    assert second_plan["yaml"] == "already-scrubbed"
+    assert second_plan["rotate"] is False
+    assert second_plan["aux_key"] == "already-provisioned"
+    assert second_plan["restart_required"] == []
+
+    second = migration.apply_migration(
+        tmp_path, rotate=True, client_factory=clients(state))
+    assert second["credentials"] == "preserved"
+    assert second["restart_required"] == []

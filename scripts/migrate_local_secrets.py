@@ -50,8 +50,10 @@ def restart_components(data: dict, *, runner_key_changed: bool) -> list[str]:
     normal component would either start a deliberately stopped model or rotate a
     credential we cannot transactionally update in Odysseus.  See ``apply_migration``.
     """
+    if not runner_key_changed:
+        return []
     components = data.get("components") or {}
-    result: list[str] = ["runner"] if runner_key_changed else []
+    result: list[str] = ["runner"]
     for name in RUNNER_CONSUMERS:
         row = components.get(name) or {}
         if row.get("installed") is True:
@@ -80,15 +82,20 @@ def plan(root: Path, *, rotate: bool) -> dict:
     data = _load(root)
     manifest_values = localsecrets.manifest_secret_values(root)
     stored = localsecrets.read(root)
-    runner_key_changed = bool(rotate and not stored and manifest_values[
-        "MOT_RUNNER_API_KEY"])
+    # An existing protected store is already the effective source read by the bridge
+    # and launchers; the scrubbed YAML being blank is not a credential change. On an
+    # initial provision, rotation always changes the runner key, while preservation
+    # changes it only when no manifest key existed and a new one must be generated.
+    runner_key_changed = bool(not stored and (
+        rotate or not manifest_values["MOT_RUNNER_API_KEY"]))
     aux_existing = bool(manifest_values["MOT_AUX_API_KEY"] or
                         (stored or {}).get("MOT_AUX_API_KEY"))
     return {
         "store": "already-provisioned" if stored else "will-create",
         "yaml": "will-scrub" if any(manifest_values.values()) else "already-scrubbed",
         "rotate": bool(rotate and not stored),
-        "aux_key": ("preserve-existing: external Background Tasks consumers are not "
+        "aux_key": ("already-provisioned" if stored else
+                    "preserve-existing: external Background Tasks consumers are not "
                     "transactionally managed" if rotate and not stored and aux_existing
                     else "generate-on-first-provision"),
         "odysseus_auth_preflight": _installed_odysseus(data),
@@ -182,7 +189,12 @@ def apply_migration(root: Path, *, rotate: bool,
         if client is not None:
             client.close()
 
-    runner_key_changed = desired["MOT_RUNNER_API_KEY"] != before["MOT_RUNNER_API_KEY"]
+    # ``before`` is the YAML staging source only on the first migration. Once the
+    # protected store exists it is already the effective credential, even though YAML
+    # is intentionally blank. Comparing that store back to blank YAML would create a
+    # false rotation and an unnecessary restart loop on every idempotent rerun.
+    runner_key_changed = bool(created_store and
+        desired["MOT_RUNNER_API_KEY"] != before["MOT_RUNNER_API_KEY"])
     aux_preserved = bool(before["MOT_AUX_API_KEY"] and
                          desired["MOT_AUX_API_KEY"] == before["MOT_AUX_API_KEY"])
     return {
