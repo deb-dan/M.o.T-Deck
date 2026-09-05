@@ -137,6 +137,17 @@
 > example — a narrowly-worded lesson is how "every lane must land on something usable"
 > failed to prevent the sum-over-text incident.
 
+> **🧪 PROVE THE PREMISE, NOT THE PATCH (Debi standing order, 2026-09-05) — BINDING
+> ANTI-SHORTCUT RULE:** a green suite never validates an unchallenged abstraction or
+> source of truth. Before accepting any fix, reproduce the user's exact counterexample,
+> identify and compare every plausible authority (filesystem, manager catalog, live
+> process, persisted registry, UI), attack the predicate with realistic hostile controls,
+> trace adjacent consumers and alternate entry points, and narrow every code/doc/release
+> claim to exactly what was proved. Tests that mirror the implementation, one-byte
+> "model" fixtures, source-string assertions, ceiling bumps, duplicate caches, and
+> symptom-specific deletions cannot close a user-visible bug. Full binding and the
+> U75/U76 incident are in docs/DOCTRINE-PROACTIVE-BUILD.md §10.**
+
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);

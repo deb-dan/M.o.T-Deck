@@ -121,6 +121,51 @@ destination. Hours spent; the fork ("CLI has no UI; the project ships a desktop 
 terminal lane or embed work?") was never put to them. The backend work (pins, telemetry
 kill, isolation, runner wiring) survives; the shape didn't.
 
+## 10. PROVE THE PREMISE, NOT THE PATCH (Debi, 2026-09-05 — anti-shortcut rule)
+
+A green test suite is evidence only for what its tests actually challenge. It is never
+permission to accept the implementation's chosen abstraction, vocabulary, authority, or
+source of truth without proving each of them independently. Before a fix is accepted,
+Fable and the builder must write the original user-visible failure as a falsifiable
+counterexample, identify every plausible authority for the state involved, and attempt
+to disprove the proposed design with neighboring integrations and failure paths. Tests
+must not merely construct the weak artifact or state that the new predicate accepts and
+then call that acceptance proof.
+
+For every fix, the permanent gate and report must answer all of these:
+
+1. **What exact user counterexample now fails before the fix and passes after it?** A
+   source-string assertion, a fixture copied from the implementation, or a happy-path
+   status code does not answer this.
+2. **Why is this source authoritative?** Filesystem, manager catalog, live process,
+   persisted registry, and UI state are different truths. If ownership is plural, use
+   explicit source adapters and reconciliation semantics; do not crown the first source
+   inspected or create a second registry as a convenience.
+3. **What would make this predicate lie?** Use minimally realistic artifacts and hostile
+   controls. A one-byte file proves only presence, not GGUF or safetensors integrity; a
+   directory scan proves bytes exist, not that a manager still lists the model.
+4. **Which adjacent consumers and alternate entry points were exercised?** Trace and
+   test the full fan-out, including reload, restart, interleaving, missing dependencies,
+   external managers, and existing live state.
+5. **Is the claim no broader than the evidence?** Names in code, docs, ledger rows,
+   release notes, and UI must state the narrow truth. Structural completeness must not
+   be called artifact integrity; filesystem availability must not be called deletion
+   detection unless logical deletion is proven too.
+
+QA rejects the slice when any answer is missing, even if every existing gate is green.
+The response is a broader investigation and corrected specification before more code —
+never a ceiling bump, exception, duplicate cache, symptom-specific deletion, or test
+relaxation whose main virtue is making the current gate pass.
+
+**The incident (example, not the rule):** U75 accepted one-byte GGUF/safetensors fixtures
+while reporting unified artifact integrity; U76 distinguished missing bytes on an
+available mount from an unavailable source, but its release wording implied that it
+also distinguished models removed from LM Studio while their files remained. The first
+post-screenshot proposal then elevated one `lms` catalog comparison into a design and
+introduced a second persisted catalog before surveying other model managers or the
+installed Unsloth inventory. Debi's challenge exposed the mismatch. This rule exists so
+that the builder and QA must expose it first next time.
+
 ### 2b. The install path is a journey too (Debi, 2026-08-29)
 
 Self-provisioning is a golden journey, not plumbing: every installer/provisioner must be
