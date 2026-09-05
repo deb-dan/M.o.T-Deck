@@ -1,6 +1,6 @@
 # U139 — exactly-once Direct Chat transcript insertion
 
-**Date:** 2026-09-05  
+**Date:** 2026-09-05; upstream rechecked 2026-09-06
 **Status:** upstream primitive required; no local implementation is permitted yet.
 
 ## Proven premise
@@ -10,6 +10,12 @@ current `POST /api/session/{session_id}/message` and bulk-inject routes append a
 generated database id on every accepted request. They accept metadata but expose no
 idempotency key, uniqueness constraint, or receipt query guaranteed to be atomic with
 the insert.
+
+This was rechecked against upstream Odysseus main at `934d23c0…` on 2026-09-06, not
+only against M.O.T's older pin. The latest `POST /session/{sid}/inject_messages` and
+`POST /api/session/{session_id}/message` implementations still append ordinary
+`ChatMessage` rows and expose no idempotency key, unique request constraint or stable
+already-committed receipt. An upstream update therefore does not yet unblock U139.
 
 The bridge reads back `mot_direct_request_id` before retrying, which prevents ordinary
 duplicates. One unavoidable race remains: Odysseus can commit after the bridge's

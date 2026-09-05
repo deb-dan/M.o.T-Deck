@@ -1,6 +1,6 @@
 # U72 — an OS execution boundary, not command-string theatre
 
-**Date:** 2026-09-05  
+**Date:** 2026-09-05; upstream rechecked 2026-09-06
 **Status:** upstream execution seam required; no local implementation is permitted yet.
 
 ## Proven premise
@@ -65,3 +65,15 @@ U72 remains open. The current file-tool guard is valuable but is not a shell exe
 boundary. A local patch to vendored Hermes would violate the zero-fork doctrine; the
 correct next action is an upstream confinement-provider contribution, followed by a
 pinned update and the matrix above.
+
+The upstream recheck did not change that result. M.O.T's pinned Hermes tag resolves to
+`bbc20510676c…`; upstream main resolved to `ee5b5ec21e…` on 2026-09-06. Both expose
+`pre_tool_call` policy hooks and `check_execute_code_guard`, but those are approval and
+policy decisions—not an OS boundary. `LocalEnvironment._run_bash` and the local
+`execute_code` child still spawn with the Hermes process's host authority. The terminal
+environment registry still offers only local, Docker, Singularity, Modal, Daytona,
+Vercel Sandbox and SSH; it has no supported macOS local-confinement provider seam.
+
+Therefore there is no code-only M.O.T fix to ship without either forking Hermes or
+pretending command filtering is confinement. This row is blocked on that exact upstream
+seam, not on missing implementation effort.

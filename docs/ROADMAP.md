@@ -73,6 +73,12 @@ enters through M.O.T's bridge, reuses a valid browser session or logs in server-
 with the protected credential, transfers only Odysseus's HttpOnly session cookie, and
 redirects into the unmodified upstream workspace. The weak repository password is not
 restored, printed, placed in a URL, or injected into browser JavaScript.
+The incident also made backend correctness and human reachability separate release
+contracts. Every affected native/sidebar/overlay entry now requires an installed-shell
+walk through its first meaningful action; health, HTTP 200, backend login and stored
+configuration remain smoke evidence only. The current whole-app boundary—including
+walked, conditional, visible-only and reproduced rows—is recorded in
+`docs/research/2026-09-06-human-entry-journey-audit.md` (U146).
 
 **Component isolation ladder.** Odysseus, Hermes, Goose (CLI + UI), and OpenCode each
 gained a named local provider/config entry mirroring the full model registry, so picking

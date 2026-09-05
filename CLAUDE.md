@@ -172,6 +172,15 @@
 > is a regression or an explicit UNFORGET row—not an acceptable cost of fixing something
 > else. Full binding and incident are in docs/DOCTRINE-PROACTIVE-BUILD.md §11.**
 
+> **🚪 BACKEND TRUTH ≠ HUMAN REACHABILITY (Debi standing order, 2026-09-06):**
+> credentials, state, routes and lifecycle changes require two independent proofs: the
+> authoritative backend transition and the real installed-shell journey through every
+> affected native/sidebar/overlay entry to its first meaningful action. HTTP 200,
+> component health, a successful login API, or a mounted DMG is only a smoke check.
+> Unwalked human surfaces are explicit UNFORGET/report limits, never inferred green from
+> suite volume. Full matrix and the v1.5.81→v1.5.82 Odysseus incident are in
+> docs/DOCTRINE-PROACTIVE-BUILD.md §12.**
+
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);

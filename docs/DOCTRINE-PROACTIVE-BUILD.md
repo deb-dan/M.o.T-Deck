@@ -193,6 +193,40 @@ if the newly external turn-stream asset failed to load, the panel could post a p
 and then lose its renderer. A green normal-path stream suite had not tested the new
 boundary's failure mode. The correction is both the code fix and this standing audit.
 
+## 12. BACKEND TRUTH AND HUMAN REACHABILITY ARE TWO SEPARATE CONTRACTS (Debi, 2026-09-06)
+
+A backend accepting a credential, a component answering its health probe, a route
+returning HTTP 200, or a stored value matching the intended value does not prove that a
+person can reach and use the capability from M.O.T. Every change to credentials,
+sessions, routes, ownership, configuration, or lifecycle state must prove both sides:
+the state transition is correct at its authority **and** every affected product entry
+point carries the user into the usable post-transition state.
+
+Before release, the slice owns a written journey matrix whose rows are the affected
+human surfaces (native tab, sidebar page, overlay, menu/shortcut and recovery entry),
+not merely the modified functions. Each row names and executes:
+
+1. the real entry action from the installed M.O.T shell;
+2. the first meaningful user action after entry, not just page load;
+3. the credential/session/config handoff the user cannot perform manually;
+4. reload, app restart and component restart behavior where state persists; and
+5. the visible refusal/recovery path when the downstream authority is unavailable.
+
+An HTTP/title smoke matrix is useful but cannot close a row. A login API test does not
+close a native login journey; a green component card does not close a prompt, generate,
+train, edit or delete journey; a DMG that mounts does not close clean-machine first run.
+Anything not executed is named as an unwalked assurance gap in UNFORGET and the release
+report. It is never silently promoted to “works” by test volume.
+
+**The incident (example, not the rule):** v1.5.81 correctly generated, stored, rotated
+and backend-verified Odysseus's protected admin password. The native tab still opened
+upstream's ordinary login form, where the remembered weak password had stopped working
+and the protected replacement was intentionally unavailable. The missing test was not
+another credential unit test; it was “open Odysseus from the installed tab and reach the
+authenticated workspace.” v1.5.82 added the server-side cookie handoff and walked that
+exact human journey. This rule makes the same echo mandatory for every future state or
+credential migration.
+
 ### 2b. The install path is a journey too (Debi, 2026-08-29)
 
 Self-provisioning is a golden journey, not plumbing: every installer/provisioner must be
