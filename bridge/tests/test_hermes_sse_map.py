@@ -328,10 +328,13 @@ check("expired status surfaced to the panel, not swallowed",
 check("a pending clarify suppresses the working-note/probe like an approval",
       'in ("approval.request", "clarify.request")' in _APP)
 _PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
+_PANEL_STREAM = (ROOT / "bridge" / "panel" / "assets" / "turn-stream.js").read_text()
 check("panel renders the ask frame", "j.type === 'ask'" in _PANEL
-      and "chatAsk(holder" in _PANEL)
+      or ("j.type === 'ask'" in _PANEL_STREAM and "chatAsk(holder" in _PANEL_STREAM))
 check("panel handles ask_expire per request_id",
-      "j.type === 'ask_expire'" in _PANEL and "expireAskCard(holder" in _PANEL)
+      (("j.type === 'ask_expire'" in _PANEL and "expireAskCard(holder" in _PANEL)
+       or ("j.type === 'ask_expire'" in _PANEL_STREAM
+           and "expireAskCard(holder" in _PANEL_STREAM)))
 check("ask cards reuse the approval grammar (so expireApprovals freezes them)",
       "className = 'approval ask'" in _PANEL
       and "querySelectorAll('.approval')" in _PANEL)

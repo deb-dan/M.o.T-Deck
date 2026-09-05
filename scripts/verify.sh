@@ -50,7 +50,26 @@ fi
 
 echo "[verify] python: ${PY}"
 echo "[verify] suite : ${SUITE}"
+_manifest_digest() {
+  if [[ -f "$ROOT/harness.yaml" ]]; then
+    shasum -a 256 "$ROOT/harness.yaml" | awk '{print $1}'
+  else
+    printf 'absent'
+  fi
+}
+MANIFEST_BEFORE="$(_manifest_digest)"
+TEST_RC=1
 if ( cd "$ROOT" && "$PY" -m pytest bridge/contract_tests/ -q ); then
+  TEST_RC=0
+fi
+MANIFEST_AFTER="$(_manifest_digest)"
+if [[ "$MANIFEST_AFTER" != "$MANIFEST_BEFORE" ]]; then
+  echo "[verify] FAIL - the contract suite modified the tracked harness.yaml."
+  echo "[verify]   Tests must redirect every state writer to a fixture; the changed"
+  echo "[verify]   manifest has been left visible for forensic review, not concealed."
+  exit 1
+fi
+if [[ "$TEST_RC" -eq 0 ]]; then
   echo "[verify] PASS - the contract gate is green."
   exit 0
 fi

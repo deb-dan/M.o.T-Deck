@@ -207,7 +207,9 @@ def test_flip_never_round_trips_yaml():
         ok(bad not in called,
            f"flip_installed.py CALLS {bad} — a yaml round-trip writes an empty key as "
            f"`null`, which the shell readers take as a real path (2026-08-07 incident)")
-    ok("replace" in called, "the write must be atomic (os.replace)")
+    shared = open(os.path.join(ROOT, "bridge", "yamlfile.py"), encoding="utf-8").read()
+    ok("transform_file" in called and "os.replace" in shared,
+       "the flip must use the shared atomic transaction writer (os.replace)")
 
 
 def test_flip_defaults_to_its_own_root():

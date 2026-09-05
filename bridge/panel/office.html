@@ -6117,6 +6117,10 @@ let aiBusy = false, aiSel = '', aiModel = '', aiCtxOn = true;
 // own voice (aiStatus, not the document message strip: it is the panel's action).
 let aiBusyAt = 0;
 function aiBusyBlock() {
+  if (agentHistoryLoading) {
+    aiStatus('The saved Agent transcript is still being restored…');
+    return true;
+  }
   if (!aiBusy) return false;
   const secs = Math.round((Date.now() - (aiBusyAt || Date.now())) / 1000);
   bx('ai-busy-block', String(secs) + 's');
@@ -6186,8 +6190,8 @@ function aiPaint(recount) {
   pill.className = 'pill' + (aiModel ? ' on' : '');
   pill.title = aiModel ? ('the live model on the harness runner: ' + aiModel)
                        : 'Load a model in Models (MOT Deck) to use this';
-  el('ai-send').disabled = aiBusy || !aiModel;
-  el('ai-in').disabled = aiBusy;
+  el('ai-send').disabled = aiBusy || agentHistoryLoading || !aiModel;
+  el('ai-in').disabled = aiBusy || agentHistoryLoading;
   el('ai-ctx').classList.toggle('on', aiCtxOn);
   el('ai-ctx').title = aiCtxOn
     ? 'The open sheet is sent with your question — click to ask without it. '
@@ -8085,6 +8089,7 @@ const LS_AGENT_STORED = 'harness-office-agent-stored';
 // lane the moment the gate opens.
 let aiLane = LANE_QUICK, laneWant = LANE_QUICK;
 let agentSid = '', agentStored = '', agentNamed = false;
+let agentHistoryLoading = false, agentHistoryRestoredFor = '';
 // What the last probe found. `tools` is TRUE / FALSE / NULL and the third value is the
 // point — see agentGate.
 let agentEnv = { hermes: false, mcpRegistered: false, mcpInSync: false,
@@ -8162,6 +8167,57 @@ function agentGate(g) {
 // in this lane (the null verdict above) can still get work done through the block, and
 // a block that does arrive is rendered by the Quick lane's own preview card — one
 // click, one preview, one Undo. Two engines, one grammar (spec §4).
+// Read-only repaint of the dedicated stored session. This never calls session.resume,
+// never mints a live gateway id, and never changes the stored conversation. Hermes's
+// REST history page is capped at 500; reaching that cap is stated rather than hidden.
+async function agentRestoreHistory() {
+  const stored = String(agentStored || '').trim();
+  if (!stored || agentHistoryRestoredFor === stored) return;
+  agentHistoryLoading = true;
+  aiStatus('Restoring the saved Agent transcript…');
+  aiPaint(false);
+  try {
+    const r = await fetch('/api/hermes/session/' + encodeURIComponent(stored) + '/history');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('the bridge answered ' + r.status));
+    const rows = Array.isArray(j.history) ? j.history : [];
+    [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
+    rows.forEach(row => {
+      if (!row || (row.role !== 'user' && row.role !== 'assistant')) return;
+      const turn = aiAdd(row.role, String(row.content || ''), null);
+      if (row.role === 'assistant') {
+        aiRenderBody(turn.body.parentNode, String(row.content || ''));
+        if (row.reasoning) {
+          const det = document.createElement('details');
+          det.className = 'aidet';
+          const sum = document.createElement('summary');
+          sum.textContent = 'thinking';
+          const pre = document.createElement('pre');
+          pre.textContent = String(row.reasoning);
+          det.appendChild(sum); det.appendChild(pre); turn.wrap.appendChild(det);
+        }
+      }
+    });
+    agentHistoryRestoredFor = stored;
+    aiEmpty();
+    if (j.limit_reached) {
+      aiStatus('Showing the latest ' + String(j.page_limit || 500)
+               + ' stored messages; older messages may exist.');
+    } else {
+      aiStatus('');
+    }
+    bx('agent-history', 'stored=' + stored + ' rows=' + rows.length
+       + (j.limit_reached ? ' limit-reached' : ''));
+  } catch (e) {
+    aiStatus('The saved Agent transcript could not be restored: '
+             + String((e && e.message) || e), true);
+    bx('agent-history-fail', String((e && e.message) || e).slice(0, 160));
+  } finally {
+    agentHistoryLoading = false;
+    aiPaint(false);
+  }
+}
+
 function agentToolNote(file) {
   const f = String(file == null ? '' : file).trim();
   return '\n\nYOU ALSO HAVE REAL TOOLS on this workspace, from the `loffice` tool '
@@ -9600,6 +9656,7 @@ el('ai-clear').onclick = () => {
   [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
   aiEmpty(); aiStatus('');
   agentSid = ''; agentStored = ''; agentNamed = false;
+  agentHistoryRestoredFor = '';
   try { localStorage.removeItem(LS_AGENT_SID); localStorage.removeItem(LS_AGENT_STORED); }
   catch (e) { /* private mode */ }
   bx('agent-session-cleared', '');
@@ -10056,7 +10113,7 @@ async function boot() {
   // page that does not yet know whether ONLYOFFICE is installed would show an
   // INTERACTIVE grid for a beat and then take it away — i.e. offer an edit it was
   // about to discard.
-  await Promise.all([loadFiles(), ooProbe()]);
+  await Promise.all([loadFiles(), ooProbe(), agentRestoreHistory()]);
   bx('tier1-ready', 'files=' + files.length
      + ' editor=' + (ooInstalled ? 'installed' : 'no'));
   await autoOpen();

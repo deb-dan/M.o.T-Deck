@@ -323,7 +323,8 @@ check('with no model loaded it SAYS so and names where to fix it',
       /No model is loaded/.test(grab('aiRefreshModel'))
       && /Models/.test(grab('aiRefreshModel')));
 check('…and Ask is disabled rather than failing on click',
-      /el\('ai-send'\)\.disabled = aiBusy \|\| !aiModel/.test(grab('aiPaint')));
+      /el\('ai-send'\)\.disabled = aiBusy \|\| agentHistoryLoading \|\| !aiModel/
+        .test(grab('aiPaint')));
 check('a status fetch that throws leaves the model UNKNOWN rather than claiming one',
       /catch[\s\S]{0,200}aiModel = ''/.test(grab('aiRefreshModel')));
 
@@ -2180,6 +2181,20 @@ check('the session id is persisted, so the next question — and the next page l
       + 'continue the same conversation',
       /localStorage\.setItem\(LS_AGENT_SID/.test(code)
       && /getItem\(LS_AGENT_SID\)/.test(grab('boot')));
+const restore = grab('agentRestoreHistory');
+check('U30: boot restores the durable Agent transcript through the read-only history '
+      + 'route before landing',
+      /agentRestoreHistory\(\)/.test(grab('boot'))
+      && /\/api\/hermes\/session\//.test(restore) && /\/history/.test(restore));
+check('U30: repaint never resumes or creates a live Hermes gateway session',
+      !/session\/resume|session\/new/.test(restore));
+check('U30: restored user and assistant rows use the existing transcript renderer',
+      /aiAdd\(row\.role/.test(restore) && /aiRenderBody\(/.test(restore));
+check('U30: the 500-row boundary is visible and explicitly uncertain',
+      /limit_reached/.test(restore) && /older messages may exist/.test(restore));
+check('U30: sends are blocked while history is loading, preventing reordered rows',
+      /agentHistoryLoading/.test(grab('aiBusyBlock'))
+      && /agentHistoryLoading/.test(grab('aiPaint')));
 check('…and `clear` forgets it, because on this lane the history is not only on screen '
       + '— Hermes is holding it',
       /agentSid = ''; agentStored = ''; agentNamed = false;/.test(code)

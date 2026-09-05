@@ -943,15 +943,16 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           && /await create\(\)/.test(grab('newBlank'))
           && !/create\(['"]/.test(grab('newBlank')));
     // ⚠️ WIDENED AT loffice-2026-08-28a, AND THE REASON IS THE POINT OF THE WIDENING:
-    // the file list and the "is the editor installed?" probe are now asked TOGETHER
-    // (one Promise.all — two small GETs on the same loopback bridge, neither needing
-    // the other's answer), and BOTH are awaited before the landing. The second half is
+    // the file list, the "is the editor installed?" probe, and the read-only stored
+    // Agent-history repaint are now asked TOGETHER (one Promise.all — three small GETs
+    // on the same loopback bridge, none needing another's answer), and ALL are awaited
+    // before the landing. The second half is
     // not a nicety: autoOpen → showWorkbook decides whether the grid is an interactive
     // editor or a read-only interstitial, and a page that did not yet know would offer
     // an edit it was about to discard.
-    check('boot() runs the landing, and only AFTER the file list AND the editor probe '
-          + 'are both in',
-          /await Promise\.all\(\[loadFiles\(\), ooProbe\(\)\]\);[\s\S]{0,400}await autoOpen\(\);/
+    check('boot() runs the landing, and only AFTER the file list, editor probe, and '
+          + 'stored Agent-history repaint are all in',
+          /await Promise\.all\(\[loadFiles\(\), ooProbe\(\), agentRestoreHistory\(\)\]\);[\s\S]{0,400}await autoOpen\(\);/
             .test(grab('boot')));
 
     // ── create(): the empty name used to be a silent no-op ──
@@ -2709,4 +2710,3 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     console.log(`loffice tier-1 grid OK — ${pass} checks passed`);
   })();
 })();
-

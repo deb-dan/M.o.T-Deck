@@ -293,6 +293,7 @@
     <span class="slab">Sessions</span>
     <span class="grow"></span>
     <span class="smeta" id="s-store"></span>
+    <button class="link" id="s-prune" style="display:none">remove empty</button>
     <button class="link" id="s-refresh">refresh</button>
   </div>
   <div class="srow" id="s-row"></div>
@@ -536,6 +537,7 @@ function paint() {
 // the measured flags) — we do not read its database to build it, so a schema change
 // upstream cannot silently show the wrong history.
 let sessions = [], armed = null, liveId = '', showEmpty = false;
+let emptyIds = [], pruneArmed = false;
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -591,6 +593,12 @@ function renderSessions(err) {
   const shown = showEmpty ? sessions : sessions.filter(
     s => s.messages > 0 || (liveId && s.id === liveId));
   const hidden = sessions.length - shown.length;
+  emptyIds = sessions.filter(s => !s.messages && (!liveId || s.id !== liveId))
+                     .map(s => s.id).sort();
+  const prune = el('s-prune');
+  prune.style.display = emptyIds.length ? '' : 'none';
+  prune.textContent = pruneArmed
+    ? ('confirm remove ' + emptyIds.length) : ('remove ' + emptyIds.length + ' empty');
   for (const s of shown) {
     const live = liveId && s.id === liveId;
     const chip = document.createElement('div');
@@ -646,7 +654,34 @@ function renderSessions(err) {
 function arm(chip, id) { disarm(); armed = id; chip.classList.add('armed'); }
 function disarm() {
   armed = null;
+  pruneArmed = false;
+  if (el('s-prune')) el('s-prune').textContent = emptyIds.length
+    ? ('remove ' + emptyIds.length + ' empty') : 'remove empty';
   for (const c of document.querySelectorAll('.schip.armed')) c.classList.remove('armed');
+}
+
+async function pruneEmptySessions() {
+  if (!emptyIds.length) return;
+  if (!pruneArmed) {
+    disarm(); armed = '__empty__'; pruneArmed = true;
+    el('s-prune').textContent = 'confirm remove ' + emptyIds.length;
+    say('This removes exactly ' + emptyIds.length
+        + ' zero-message session(s) through Goose. Click confirm again.', 'info');
+    return;
+  }
+  const ids = emptyIds.slice();
+  disarm();
+  say('removing ' + ids.length + ' empty session(s)…', 'info');
+  try {
+    const j = await jfetch('/api/goose/sessions/prune-empty',
+                           { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify({ ids: ids }) });
+    say((j && j.message) || ('Removed ' + ids.length + ' empty session(s).'), 'info');
+  } catch (e) {
+    say('The empty-session cleanup did not fully complete. ' + String(e.message || ''),
+        'warn', e.raw || '');
+  }
+  await loadSessions();
 }
 
 async function openSession(s, live) {
@@ -695,6 +730,7 @@ async function removeSession(id) {
 }
 
 el('s-refresh').onclick = () => { disarm(); loadSessions(); };
+el('s-prune').onclick = pruneEmptySessions;
 // Esc disarms — an armed destructive control must always have a way out that is not
 // clicking something.
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && armed) disarm(); });

@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bridge.core import modelreg as MR                          # noqa: E402
+from bridge.tests.model_fixture import gguf_bytes               # noqa: E402
 
 PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text(errors="replace")
 START = (ROOT / "scripts" / "start_component.sh").read_text(errors="replace")
@@ -60,7 +61,7 @@ DEAD = ["Muse-Glimmer-30B-Heretic-Q4_K_S",
 
 def _alive(tmp_path, name="alive.gguf"):
     p = tmp_path / name
-    p.write_bytes(b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
+    p.write_bytes(gguf_bytes())
     return str(p)
 
 
@@ -280,8 +281,7 @@ def test_rescan_end_to_end_uses_manager_membership_not_leftover_files(tmp_path):
     for pub, fname in (("Parable-4B", "Parable-4B.gguf"),
                        ("Muse-Glimmer-30B", DEAD[0] + ".gguf")):
         (lms / "pub" / pub).mkdir(parents=True)
-        (lms / "pub" / pub / fname).write_bytes(
-            b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
+        (lms / "pub" / pub / fname).write_bytes(gguf_bytes())
     catalog = tmp_path / "catalog.json"
     fake_lms = tmp_path / "fake-lms"
     fake_lms.write_text('#!/bin/sh\ncat "$FAKE_LMS_CATALOG"\n')

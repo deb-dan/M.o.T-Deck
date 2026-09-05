@@ -71,6 +71,9 @@ check("verify.sh selects a python by IMPORTING pytest, not by existence",
       '-c "import pytest"' in VERIFY)
 check("verify.sh does NOT use set -e (it must report, not die)",
       "set -uo pipefail" in VERIFY and "set -euo" not in VERIFY)
+check("verify.sh fails if its own suite mutates the repository manifest",
+      "MANIFEST_BEFORE" in VERIFY and "MANIFEST_AFTER" in VERIFY
+      and "the contract suite modified the tracked harness.yaml" in VERIFY)
 check("cannot-run message names the uv install one-liner (python -m pip cannot work "
       "in a uv-created venv)",
       "uv pip install pytest" in VERIFY and "CANNOT RUN" in VERIFY)
@@ -392,8 +395,15 @@ check("…and it knows WHOSE binary it picked, which the old flat `or` could not
 # ══ 3. build stamp + backwards-seeding guard ══════════════════════════════════
 check("build_app.sh writes a SEED_STAMP into the staged seed",
       '> "$STAGE/SEED_STAMP"' in BUILD)
+check("a fat seed built from working-tree bytes marks its commit stamp dirty",
+      'SEED_GIT_SHA="${SEED_GIT_SHA}-dirty"' in BUILD
+      and 'status --porcelain=v1 --untracked-files=normal' in BUILD)
+check("…and records the number of paths that made the tree dirty",
+      'echo "dirty_files=${SEED_DIRTY_FILES}"' in BUILD)
 check("the stamp carries a build date", "date=$(date -u" in BUILD)
-check("the stamp carries the git sha", "git_sha=$(git -C" in BUILD)
+check("the stamp carries the git sha",
+      'SEED_GIT_SHA="$(git -C "$ROOT" rev-parse --short HEAD' in BUILD
+      and 'echo "git_sha=${SEED_GIT_SHA}"' in BUILD)
 check("the stamp carries the component count", "components=$(awk" in BUILD)
 check("the stamp is written INSIDE the fat branch only",
       BUILD.index('> "$STAGE/SEED_STAMP"') > BUILD.index("if [[ $FAT -eq 1 ]]"))
@@ -514,14 +524,14 @@ check("shell: a vendor/ path is OURS",
       owns("comfyui", f"{R}/vendor/comfyui/main.py --port 8188"))
 check("shell: our pinned llama-server is OURS (path)",
       owns("runner", f"{R}/data/llamacpp/build/bin/llama-server --port 6767"))
-check("shell: the LM Studio backend fallback is still OURS (engine signature) — a "
-      "legitimate stale-runner kill must keep working",
-      owns("runner", "/Users/x/.lmstudio/extensions/backends/b1/llama-server --port 6767"))
-check("shell: an MLX runner outside the tree is OURS (engine signature)",
-      owns("runner", "/usr/bin/python -m mlx_lm.server --port 6767"))
-check("shell: an mlx-vlm runner is OURS", owns("runner", "python -m mlx_vlm.server --port 6767"))
-check("shell: the aux slot uses the same engine signatures",
-      owns("aux", "/opt/x/llama-server --port 6768"))
+check("shell: an external LM Studio backend path is not launch provenance",
+      not owns("runner", "/Users/x/.lmstudio/extensions/backends/b1/llama-server --port 6767"))
+check("shell: an external MLX engine name is not launch provenance",
+      not owns("runner", "/usr/bin/python -m mlx_lm.server --port 6767"))
+check("shell: an mlx-vlm name is not launch provenance",
+      not owns("runner", "python -m mlx_vlm.server --port 6767"))
+check("shell: the aux slot grants no engine-name exception",
+      not owns("aux", "/opt/x/llama-server --port 6768"))
 # U19 (2026-08-29): hermes lost its NAME signature. It used to answer "ours" to any
 # command line containing "hermes dashboard"/"hermes serve" — which is precisely Debi's
 # STANDALONE Hermes (~/.hermes/hermes-agent/venv). The evidence is a PATH now, widened
@@ -536,8 +546,8 @@ check("shell: any non-harness hermes is FOREIGN",
       not owns("hermes", "/usr/local/bin/hermes dashboard --port 9119"))
 check("shell: 'hermes dashboard' is never a signature by itself",
       not owns("hermes", "hermes dashboard") and not owns("hermes", "hermes serve"))
-check("shell: a process that already vanished is not treated as foreign",
-      owns("unsloth", ""))
+check("shell: an empty command is no ownership evidence",
+      not owns("unsloth", ""))
 # the refusals — the whole point of the slice
 check("shell: Debi's STANDALONE Unsloth is FOREIGN (the reported collision)",
       not owns("unsloth", "/opt/homebrew/bin/python3.12 -m unsloth.studio --port 8899"))
@@ -575,16 +585,16 @@ check("odysseus/searxng/voice*/comfy/unsloth/opencode/deepseek keep plain SIGTER
           if c in {"odysseus", "searxng", "voicestudio", "voicebox", "comfyui",
                    "unsloth", "opencode", "deepseek"}))
 check("_clear_port is still LISTENER-scoped", "-sTCP:LISTEN" in START)
-check("a foreign listener refuses with the exact message",
-      "does not look like ours — refusing to kill it." in START)
-check("the refusal names the override",
-      "set HARNESS_PORT_TAKEOVER=1 to override" in START)
-check("the refusal exits non-zero", "refusing to kill it." in START
-      and "exit 1" in START.split("refusing to kill it.")[1][:400])
-check("HARNESS_PORT_TAKEOVER=1 restores the old unconditional kill",
-      '"${HARNESS_PORT_TAKEOVER:-0}" == "1"' in START)
-check("the pid file is an ownership proof in its own right",
-      'pf="data/${comp}.pid"' in START)
+check("a foreign listener refuses for lack of a launch record",
+      "without a matching M.O.T launch record" in START)
+check("the refusal gives an explicit non-destructive recovery",
+      "stop that application explicitly, then retry" in START)
+check("the refusal exits non-zero", "stop that application explicitly, then retry" in START
+      and "exit 1" in START.split("stop that application explicitly, then retry")[1][:120])
+check("there is no environment takeover escape hatch",
+      "HARNESS_PORT_TAKEOVER" not in START)
+check("pid and birth-record files are both required",
+      '${comp}.pid' in START and '${comp}.owner' in START and "_ownership_matches" in START)
 check("no component name is used as a signature for the standalone-app components",
       "*unsloth*" not in START and "*comfyui*" not in START)
 # --- 4b-bis. U19: no kill by name survives, and the replacement is pidfile-scoped.
@@ -601,89 +611,73 @@ check("`hermes dashboard --stop` is gone (it kills every hermes on the machine)"
       "dashboard --stop" not in START_CODE)
 check("_reap_pidfile exists and re-verifies identity before signalling",
       "_reap_pidfile() {" in START
-      and START.split("_reap_pidfile() {")[1].index("_cmd_looks_like_ours")
-          < START.split("_reap_pidfile() {")[1].index("kill \"$sig\""))
+      and "_ownership_cli signal" in
+          START.split("_reap_pidfile() {")[1].split("_clear_port() {")[0])
 check("the hermes arm reaps by pidfile, force, before clearing the port",
       "_reap_pidfile hermes force" in START
       and START.index("_reap_pidfile hermes force") < START.index('_clear_port "$PORT" hermes force'))
 check("the runner arms reap by pidfile (3 sites: llamacpp, spec-retry, mlx)",
       START.count("_reap_pidfile runner force") == 3)
 check("a pidfile pid that is NOT ours gets no signal, just a line",
-      "leaving it alone and discarding the stale pidfile." in START)
+      "but has no matching M.O.T launch record" in START
+      and "leaving it alone." in START)
 
-# --- 4c. the bridge half
-check("bridge: our own tree is OURS",
-      app._port_owner_verdict(f"{R}/data/llamacpp/build/bin/llama-server --port 6767", R, "runner"))
-check("bridge: a vendor path is OURS",
-      app._port_owner_verdict(f"{R}/vendor/comfyui/main.py", R, "comfyui"))
-check("bridge: the runner engine signature holds outside the tree",
-      app._port_owner_verdict("/opt/lm/llama-server --port 6767", R, "runner"))
-check("bridge: the aux slot shares the runner signatures",
-      app._port_owner_verdict("/opt/lm/mlx_lm.server --port 6768", R, "aux"))
-check("bridge: hermes signature",
-      app._port_owner_verdict("/usr/local/bin/hermes dashboard", R, "hermes"))
-check("bridge: a foreign standalone app is NOT ours",
-      not app._port_owner_verdict("/opt/homebrew/bin/python -m unsloth.studio", R, "unsloth"))
-check("bridge: an unknown component gets no name signature",
-      not app._port_owner_verdict("/opt/homebrew/bin/whatever", R, "unsloth"))
-check("bridge: no component at all still applies the path rule",
-      app._port_owner_verdict(f"{R}/data/x/y", R, None)
-      and not app._port_owner_verdict("/opt/other/y", R, None))
-check("bridge: a vanished process ('' cmd) is not treated as foreign",
-      app._port_owner_verdict("", R, "unsloth"))
+# --- 4c. the bridge half: path is diagnostic corroboration, never authorization
+check("bridge: our own tree is recognizable as corroborating path evidence",
+      app._cmd_is_under_root(f"{R}/data/llamacpp/build/bin/llama-server --port 6767", R))
+check("bridge: a vendor path is recognizable",
+      app._cmd_is_under_root(f"{R}/vendor/comfyui/main.py", R))
+check("bridge: an external engine name grants no path evidence",
+      not app._cmd_is_under_root("/opt/lm/llama-server --port 6767", R))
+check("bridge: an empty command grants no evidence",
+      not app._cmd_is_under_root("", R))
 check("bridge: a trailing slash on root does not break matching",
-      app._port_owner_verdict(f"{R}/data/z", R + "/", "runner"))
-check("bridge: /data/ must be a real path segment, not a bare substring",
-      not app._port_owner_verdict("/somewhere/else/data/x", R, "unsloth"))
-check("bridge: verdict is pure (no subprocess, no kill)", True)
+      app._cmd_is_under_root(f"{R}/data/z", R + "/"))
+check("bridge: /data/ under another root is not our path evidence",
+      not app._cmd_is_under_root("/somewhere/else/data/x", R))
 
 # _kill_port_listener: kills what is ours, refuses what is not — subprocess faked
 _orig_run = app.subprocess.run
 _orig_pids = app._port_listener_pids
 _orig_cmd = app._proc_cmdline
+_orig_signal_owned = app._ownership.signal_owned
 killed = []
 try:
     app._port_listener_pids = lambda p: ["4242"]
     app._proc_cmdline = lambda pid: "/opt/homebrew/bin/python -m unsloth.studio --port 8899"
-    app.subprocess.run = lambda *a, **k: killed.append(a) or None
+    app._ownership.signal_owned = lambda *a, **k: (False, "no matching claim")
     out = app._kill_port_listener(8899, component="unsloth")
     check("bridge: a foreign listener is REFUSED, not killed", killed == [] and len(out) == 1)
     check("bridge: the refusal message names the pid and the command",
           "4242" in out[0] and "unsloth.studio" in out[0])
-    check("bridge: the refusal names the override",
-          "HARNESS_PORT_TAKEOVER=1" in out[0])
+    check("bridge: the refusal names the missing launch record",
+          "matching M.O.T launch record" in out[0])
 
     killed.clear()
     app._proc_cmdline = lambda pid: f"{R}/data/llamacpp/build/bin/llama-server --port 6767"
+    def _accepted(root, component, **kwargs):
+        killed.append((root, component, kwargs))
+        return True, "signalled"
+    app._ownership.signal_owned = _accepted
     out = app._kill_port_listener(6767, force=True, component="runner")
     check("bridge: our own listener IS killed", len(killed) == 1 and out == [])
-    check("bridge: force uses -9", "-9" in killed[0][0])
-    check("bridge: the kill is argv, not a shell string", isinstance(killed[0][0], list))
+    check("bridge: force reaches the shared ownership authority", killed[0][2]["force"] is True)
+    check("bridge: observed pid is reverified by the shared ownership authority",
+          killed[0][2]["expected_pid"] == 4242)
 
-    killed.clear()
-    app._proc_cmdline = lambda pid: "/opt/homebrew/bin/python -m unsloth.studio"
-    os.environ["HARNESS_PORT_TAKEOVER"] = "1"
-    out = app._kill_port_listener(8899, component="unsloth")
-    check("bridge: HARNESS_PORT_TAKEOVER=1 kills unconditionally",
-          len(killed) == 1 and out == [])
-    # U64: the override no longer builds its own `lsof … | xargs kill` shell string — it
-    # signals the pid the LISTENER-SCOPED probe (`_port_listener_pids`, faked here to
-    # return 4242) already handed every other path. Listener scope is now a property of
-    # where the pid came from rather than of a string this branch assembled itself.
-    check("bridge: takeover signals the listener pid as argv, never a shell string",
-          killed[0][0] == ["kill", "4242"])
-    os.environ.pop("HARNESS_PORT_TAKEOVER", None)
 finally:
     app.subprocess.run = _orig_run
     app._port_listener_pids = _orig_pids
     app._proc_cmdline = _orig_cmd
+    app._ownership.signal_owned = _orig_signal_owned
 
 # U64: `_port_kill_cmd` — the `lsof … | xargs kill` string the takeover branch ran — is
 # DELETED. bridge/tests/test_port_kill.py now exercises that override on the CALL rather
 # than on a string, so what is asserted here is that the escape hatch still exists and
 # that the unowned pipeline does not.
-check("bridge: the port-takeover override survives, the unowned pipeline does not",
-      "HARNESS_PORT_TAKEOVER" in _APP_SOURCE and not hasattr(app, "_port_kill_cmd"))
+check("bridge: neither a port takeover override nor an unowned pipeline survives",
+      'os.environ.get("HARNESS_PORT_TAKEOVER")' not in _APP_SOURCE
+      and not hasattr(app, "_port_kill_cmd"))
 BR = _APP_SOURCE
 check("bridge: every _kill_port_listener call site names its component",
       BR.count("_kill_port_listener(") - 1
@@ -694,7 +688,7 @@ check("bridge: every _kill_port_listener call site names its component",
 check("bridge: stop() surfaces a refusal instead of claiming success",
       'JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)' in BR)
 check("bridge: the generic stop path reports the refusal in its notes",
-      '"; ".join(refused) if refused' in BR)
+      'return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)' in BR)
 
 print(f"\n{PASS} checks passed" + (f", {len(FAIL)} FAILED: {FAIL}" if FAIL else ""))
 sys.exit(1 if FAIL else 0)

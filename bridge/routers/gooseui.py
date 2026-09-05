@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import threading
 import time
@@ -37,6 +36,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 
 from ..core.appctx import ROOT, app
+from ..core import ownership as _ownership
 from ..core.modelid import _live_model_id, wire_model_id
 from ..core.procs import _registry_models, _script, cfg
 
@@ -59,6 +59,7 @@ except Exception as _e:                                              # noqa: BLE
 # goosed on one sqlite session store is a corruption story rather than a feature.
 _LOCK = threading.Lock()
 _PROC: subprocess.Popen | None = None
+_PROC_BIRTH = ""
 _TOKEN = ""
 _PORT = 0
 _START_ERR = ""
@@ -155,24 +156,15 @@ def _free_port(preferred: int) -> int:
     return int(preferred)
 
 
-def _write_pidfile(pid: int) -> None:
+def _write_pidfile(pid: int) -> tuple[int, str]:
     """THE MEMORY LEDGER'S HANDLE. core/memory.py builds one row per data/<name>.pid, so
     this is what makes the embedded goosed appear BY NAME with its real footprint — and
     what makes ./scripts/stop.sh stop it. Removed on exit, so never a ghost row."""
-    try:
-        p = _ui.pidfile_path(ROOT)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as fh:
-            fh.write(str(int(pid)))
-    except (OSError, TypeError, ValueError):                         # noqa: BLE001
-        pass
+    return _ownership.record_child(ROOT, "goose-ui", int(pid))
 
 
-def _clear_pidfile() -> None:
-    try:
-        os.unlink(_ui.pidfile_path(ROOT))
-    except OSError:
-        pass
+def _clear_pidfile(pid: int, birth: str) -> bool:
+    return _ownership.retire_owned(ROOT, "goose-ui", int(pid), str(birth or ""))
 
 
 def _reap_orphan() -> bool:
@@ -185,28 +177,28 @@ def _reap_orphan() -> bool:
 
     The bridge restarts far more often than a supervised child needs to, and without
     this the old one keeps its port and its sqlite session store while the new one opens
-    a second store — two writers, one DB. So: read our own pidfile, and act ONLY if
-    is_ours() confirms the pid is our fenced goosed. Anything else (recycled pid, a
-    stale file, Debi's Desktop) gets the pidfile deleted and NOT A SIGNAL.
+    a second store — two writers, one DB. So: read our own pidfile, and act ONLY if its
+    exact PID+kernel-birth launch claim still matches. Anything else (recycled pid, a
+    legacy/stale file, Debi's Desktop) gets no signal.
     """
-    try:
-        with open(_ui.pidfile_path(ROOT)) as fh:
-            pid = int((fh.read() or "0").strip() or 0)
-    except (OSError, ValueError):
+    claim = _ownership.read_claim(ROOT, "goose-ui")
+    pid = _ownership.read_pid_report(ROOT, "goose-ui")
+    if not claim:
+        if pid is None and not os.path.lexists(_ui.pidfile_path(ROOT)):
+            return False
+        _ownership.signal_owned(
+            ROOT, "goose-ui", expected_pid=pid or 0, expected_birth="", force=True)
+        _log(f"legacy/stale pidfile for pid {pid or '?'} had no launch claim — cleared, not signalled")
         return False
-    if not is_ours(pid):
-        _log(f"stale pidfile for pid {pid} (not provably ours) — cleared, not signalled")
-        _clear_pidfile()
-        return False
-    done = False
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-        _log(f"reaped our orphaned goosed pid={pid}")
-        done = True
-    except (OSError, ProcessLookupError):
-        pass
-    _clear_pidfile()
-    return done
+    pid = claim[0]
+    sent, detail = _ownership.signal_owned(
+        ROOT, "goose-ui", expected_pid=pid, expected_birth=claim[1],
+        group=True)
+    if sent:
+        _log(f"reaped our launch-recorded orphaned goosed pid={pid}")
+    else:
+        _log(f"refused orphan signal for pid={pid}: {detail}")
+    return sent
 
 
 def _ensure() -> tuple:
@@ -219,7 +211,7 @@ def _ensure() -> tuple:
     "not installed", "no port", "did not become ready" are worded — and exactly one seam
     for the tests to substitute.
     """
-    global _PROC, _TOKEN, _PORT, _START_ERR
+    global _PROC, _PROC_BIRTH, _TOKEN, _PORT, _START_ERR
     if _ui is None:
         return "", f"the goose UI module failed to load: {_UI_ERR}"
     with _LOCK:
@@ -271,13 +263,31 @@ def _ensure() -> tuple:
         env = _ui.serve_env(os.environ, ROOT, _TOKEN, endpoint, api_key, wire, rport,
                             config_text=before)
         logp = ROOT / "data" / "logs" / "gooseui-serve.log"
+        fh = None
         try:
             logp.parent.mkdir(parents=True, exist_ok=True)
             fh = open(logp, "ab")
             _PROC = subprocess.Popen(argv, cwd=workspace, env=env, stdin=subprocess.DEVNULL,
                                      stdout=fh, stderr=fh, start_new_session=True)
+            fh.close()
+            fh = None
+            try:
+                _, _PROC_BIRTH = _write_pidfile(_PROC.pid)
+            except Exception as exc:
+                _PROC.terminate()              # exact child handle
+                try:
+                    _PROC.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    _PROC.kill()
+                    _PROC.wait(timeout=3)
+                _PROC = None
+                _PROC_BIRTH = ""
+                raise RuntimeError(f"could not record goose UI launch ownership: {exc}") from exc
         except Exception as e:                                       # noqa: BLE001
+            if fh is not None:
+                fh.close()
             _PROC = None
+            _PROC_BIRTH = ""
             _START_ERR = f"could not start goose serve: {e}"
             _log(_START_ERR)
             return "", _START_ERR
@@ -285,13 +295,14 @@ def _ensure() -> tuple:
         deadline = time.time() + _READY_TIMEOUT_S
         while time.time() < deadline:
             if _PROC.poll() is not None:
+                _clear_pidfile(_PROC.pid, _PROC_BIRTH)
                 _START_ERR = (f"goose serve exited immediately (code {_PROC.returncode}) "
                               "— see data/logs/gooseui-serve.log")
                 _log(_START_ERR)
                 _PROC = None
+                _PROC_BIRTH = ""
                 return "", _START_ERR
             if _probe(_PORT):
-                _write_pidfile(_PROC.pid)
                 _START_ERR = ""
                 _log(f"serve ready pid={_PROC.pid} port={_PORT} model={wire or '(none)'} "
                      f"path_root={_ui.path_root(ROOT)}")
@@ -306,7 +317,7 @@ def _ensure() -> tuple:
 
 
 def is_ours(pid) -> bool:
-    """⚠️ READ IDENTITY BEFORE KILL. THE RULE, AND WHY IT IS A FUNCTION AND NOT A HABIT.
+    """Exact launch provenance—not path/env/name evidence—for the current goosed.
 
     Debi runs the STANDALONE goose Desktop app on this same Mac, and it spawns its own
     `goose serve --platform desktop` child on a port it picks at runtime. Anything that
@@ -317,30 +328,14 @@ def is_ours(pid) -> bool:
     Unsloth one, and the general lesson is the one in the name: a process is only ours
     if its IDENTITY says so — never if a port, a name, or a pattern says so.
 
-    Identity here is two facts read off the live process with `ps -Eww` (which prints
-    the environment): the executable is OUR pinned binary under this ROOT, and its
-    GOOSE_PATH_ROOT is OUR fenced home. Debi's app satisfies neither — it runs the copy
-    inside Goose.app (an App-Translocated path) and carries no GOOSE_PATH_ROOT at all.
-
-    False on ANY doubt: a pid we cannot positively identify is a pid we do not kill.
-    Losing our own orphan costs a port; killing hers costs her work.
+    Older path+GOOSE_PATH_ROOT checks were corroboration dressed as authority: a user
+    can manually launch the same command with the same environment. The shared record
+    is written only from M.O.T's real Popen child handle and reverified under lock.
     """
     try:
-        pid = int(pid)
+        return _ownership.ownership_matches(ROOT, "goose-ui", int(pid))
     except (TypeError, ValueError):
         return False
-    if pid <= 1:
-        return False
-    try:
-        out = subprocess.run(["ps", "-Eww", "-o", "command=", "-p", str(pid)],
-                             capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if not out.strip():
-        return False
-    return (_ui is not None
-            and _ui.goose_bin(ROOT) in out
-            and f"GOOSE_PATH_ROOT={_ui.path_root(ROOT)}" in out)
 
 
 def _stop_locked(why: str) -> str:
@@ -352,7 +347,7 @@ def _stop_locked(why: str) -> str:
     recycled pid's GROUP is about the widest-blast-radius mistake available. See the
     docstring above for the incident this exists after.
     """
-    global _PROC
+    global _PROC, _PROC_BIRTH
     p = _PROC
     _PROC = None
     if p is None or p.poll() is not None:
@@ -365,27 +360,42 @@ def _stop_locked(why: str) -> str:
         # handle, so "no handle in memory" must consult it BEFORE erasing it — and
         # _reap_orphan is already the identity-verified way to do exactly that.
         return "reaped" if _reap_orphan() else "gone"
-    _clear_pidfile()
-    if not is_ours(p.pid):
+    birth = _PROC_BIRTH
+    _PROC_BIRTH = ""
+    if not birth or not is_ours(p.pid):
         _log(f"REFUSED to signal pid {p.pid}: it is not provably our goosed "
-             f"(no {_ui.path_root(ROOT) if _ui else '?'} in its env). Left running.")
+             "(no matching PID+kernel-birth launch record). Left running.")
         return "not-ours"
     try:
-        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-    except (OSError, ProcessLookupError):
-        pass
+        sent, detail = _ownership.signal_owned(
+            ROOT, "goose-ui", expected_pid=p.pid, expected_birth=birth,
+            retire=False, group=True)
+        if not sent:
+            _log(f"REFUSED to signal pid {p.pid}: {detail}")
+            return "not-ours"
+    except Exception as exc:                                      # noqa: BLE001
+        _log(f"REFUSED to signal pid {p.pid}: {exc}")
+        return "not-ours"
     try:
         p.wait(timeout=5)
+        _clear_pidfile(p.pid, birth)
         _log(f"serve stopped ({why}, SIGTERM)")
         return "term"
     except subprocess.TimeoutExpired:
         pass
-    if not is_ours(p.pid):
+    if _ownership.process_birth(p.pid) != birth:
+        _clear_pidfile(p.pid, birth)
         return "term"
     try:
-        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        pass
+        sent, detail = _ownership.signal_owned(
+            ROOT, "goose-ui", expected_pid=p.pid, expected_birth=birth,
+            force=True, group=True)
+        if not sent:
+            _log(f"REFUSED SIGKILL for pid {p.pid}: {detail}")
+            return "not-ours"
+    except Exception as exc:                                      # noqa: BLE001
+        _log(f"REFUSED SIGKILL for pid {p.pid}: {exc}")
+        return "not-ours"
     _log(f"serve stopped ({why}, SIGKILL)")
     return "kill"
 

@@ -1128,6 +1128,8 @@ def hermes_messages_to_panel(messages):
         if role not in ("user", "assistant"):
             continue
         txt = m.get("text")
+        if not isinstance(txt, str):
+            txt = m.get("content")
         txt = txt if isinstance(txt, str) else ""
         reasoning = ""
         if role == "assistant":
@@ -1274,3 +1276,58 @@ async def hermes_history(sid: str) -> JSONResponse:
                              "count": res.get("count") or 0})
     except Exception as e:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)
+
+
+@app.get("/api/hermes/session/{sid}/history")
+async def hermes_stored_history(sid: str) -> JSONResponse:
+    """Read a stored transcript without creating or rebinding a live session.
+
+    Hermes's dashboard endpoint opens the session database through its read path and
+    returns the latest page in chronological order. This route deliberately does not
+    call ``session.resume``: reloading LOffice must not create gateway state merely to
+    repaint text already stored on disk.
+    """
+    stored = str(sid or "").strip()
+    if not stored:
+        return JSONResponse({"error": "id required"}, status_code=400)
+    tok = _hermes_token()
+    if not tok:
+        return JSONResponse({"error": "no Hermes dashboard token"}, status_code=502)
+    page_limit = 500
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"http://127.0.0.1:{_hermes_port()}/api/sessions/{stored}/messages",
+                params={"limit": page_limit, "offset": 0, "order": "latest",
+                        "include_compacted": "true"},
+                headers={"X-Hermes-Session-Token": tok})
+        if response.status_code == 404:
+            return JSONResponse({"error": "stored Hermes session not found"}, status_code=404)
+        if response.status_code >= 400:
+            return JSONResponse(
+                {"error": f"stored history failed ({response.status_code})"},
+                status_code=502)
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
+            return JSONResponse(
+                {"error": "stored history returned an unsupported response shape"},
+                status_code=502)
+        raw = payload["messages"]
+        history = hermes_messages_to_panel(raw)
+        pagination = payload.get("pagination") if isinstance(payload, dict) else {}
+        returned = pagination.get("returned") if isinstance(pagination, dict) else None
+        try:
+            returned = int(returned)
+        except (TypeError, ValueError):
+            returned = len(raw) if isinstance(raw, list) else 0
+        return JSONResponse({
+            "history": history,
+            "count": len(history),
+            # Hermes does not publish a total here. Equality means older rows MAY
+            # exist; calling it definitely truncated would be another overclaim.
+            "limit_reached": returned >= page_limit,
+            "page_limit": page_limit,
+        })
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)[:300]}, status_code=502)

@@ -8,6 +8,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+from bridge.tests.model_fixture import gguf_bytes
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,7 +26,7 @@ SR = _load("u82_seed", "scripts/seed_registry.py")
 
 def _gguf(path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
+    path.write_bytes(gguf_bytes())
 
 
 def _catalog_row(relative, key="model", **extra):
@@ -171,6 +172,35 @@ def test_new_same_basename_members_receive_unique_stable_registry_ids(tmp_path):
     merged = SR.merge([], [], listed, [], [], refreshed_sources={"lmstudio-import"},
                       authoritative_sources={"lmstudio-import"})
     assert [row["id"] for row in merged] == ["same", "same-lms", "same-lms-2"]
+
+
+def test_manager_key_preserves_identity_when_path_moves_and_old_path_is_reused(tmp_path):
+    old_path = tmp_path / "old" / "same.gguf"; _gguf(old_path)
+    old_member = {"format": "gguf", "path": os.path.realpath(old_path),
+                  "relative_path": "old/same.gguf", "member_key": "stable-key",
+                  "display_name": "Original", "size_bytes": 24, "ctx": None,
+                  "vision": False, "tools": None}
+    first_inventory = {"state": "available", "root": os.path.realpath(tmp_path),
+                       "members": [old_member]}
+    first, _, _ = SR.reconcile_lmstudio([], [], first_inventory)
+    first[0]["id"] = "public-id"
+    first[0]["hidden"] = True
+
+    moved_path = tmp_path / "moved" / "renamed.gguf"; _gguf(moved_path)
+    moved = dict(old_member, path=os.path.realpath(moved_path),
+                 relative_path="moved/renamed.gguf")
+    replacement = dict(old_member, member_key="different-key", display_name="New",
+                       path=os.path.realpath(old_path), relative_path="old/same.gguf")
+    second_inventory = {"state": "available", "root": os.path.realpath(tmp_path),
+                        "members": [replacement, moved]}
+    scanned = [dict(first[0], id="renamed", path=str(moved_path), hidden=False),
+               dict(first[0], id="same", path=str(old_path), hidden=False)]
+    second, removed, _ = SR.reconcile_lmstudio(first, scanned, second_inventory)
+    stable = next(row for row in second if row["source_observation"]["member_key"] == "stable-key")
+    new = next(row for row in second if row["source_observation"]["member_key"] == "different-key")
+    assert stable["id"] == "public-id" and stable["path"] == os.path.realpath(moved_path)
+    assert new["id"] != "public-id", "path reuse did not steal the stable manager identity"
+    assert removed == []
 
 
 def test_nonexplicit_existing_registry_never_queries_or_resurrects_manager(tmp_path, monkeypatch):

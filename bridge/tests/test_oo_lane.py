@@ -660,7 +660,7 @@ check("opening a workbook always goes through the ONE tier decision point, which
       "ooStart(name, 'open');" in PAGE.split("function showWorkbook(")[1].split("\n}")[0])
 check("the editor is probed ONCE and the answer is awaited BEFORE the first open, so "
       "the page never offers an interactive grid it is about to take away",
-      "Promise.all([loadFiles(), ooProbe()])" in PAGE
+      "Promise.all([loadFiles(), ooProbe(), agentRestoreHistory()])" in PAGE
       and PAGE.count("async function ooProbe()") == 1)
 
 # ── the AI panel's Apply ──

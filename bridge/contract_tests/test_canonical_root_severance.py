@@ -248,7 +248,7 @@ def test_installer_calls_the_profile_repair_before_it_claims_success():
 
 
 def _venv_fixture(root, name, package, vendor_dir, *, fail_import=False,
-                  binary=False, symlink=False, other_venv=None):
+                  binary=False, symlink=False, other_venv=None, ambiguous=False):
     """Small copied venv with a console script and an editable PEP 660 map."""
     venv = root / "data" / name
     bindir = venv / "bin"
@@ -259,6 +259,12 @@ def _venv_fixture(root, name, package, vendor_dir, *, fail_import=False,
     console = bindir / "fixture-console"
     console.write_text(f"#!{old_root}/data/{mapped_name}/bin/python\nprint('ok')\n",
                        encoding="utf-8")
+    if ambiguous:
+        console.write_text(
+            console.read_text(encoding="utf-8")
+            + f"print('{old_root}/data/{mapped_name}')\n",
+            encoding="utf-8",
+        )
     console.chmod(0o751)
     if binary:
         (bindir / "binary-launcher").write_bytes(b"\0not text")
@@ -294,7 +300,9 @@ def _venv_fixture(root, name, package, vendor_dir, *, fail_import=False,
 
 
 def _repair_venvs(root):
-    return subprocess.run([sys.executable, VENV_REPAIR, "--root", str(root)],
+    return subprocess.run([sys.executable, VENV_REPAIR, "--root", str(root),
+                           "--owned-venv", "hermes-venv",
+                           "--owned-venv", "searxng-venv"],
                           cwd=ROOT, capture_output=True, text=True, timeout=30)
 
 
@@ -317,6 +325,9 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
     poisoned.write_text("/archive root with spaces/data/hermes-venv/bin/python\n",
                         encoding="utf-8")
     poisoned_before = poisoned.read_bytes()
+    unrelated, unrelated_console, unrelated_finder = _venv_fixture(
+        root, "user-venv", "user_package", "user-vendor")
+    unrelated_before = (unrelated_console.read_bytes(), unrelated_finder.read_bytes())
     mode = stat.S_IMODE(hermes_console.stat().st_mode)
 
     result = _repair_venvs(root)
@@ -333,6 +344,8 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
     assert stat.S_IMODE(hermes_console.stat().st_mode) == mode
     assert "/archive/data/hermes-venv" in ignored_script.read_text(encoding="utf-8")
     assert poisoned.read_bytes() == poisoned_before
+    assert unrelated_before == (unrelated_console.read_bytes(), unrelated_finder.read_bytes()), \
+        "a valid but undeclared user venv was rewritten"
 
     repaired_bytes = (hermes_console.read_bytes(), hermes_finder.read_bytes(),
                       searx_console.read_bytes(), searx_finder.read_bytes())
@@ -343,11 +356,38 @@ def test_relocated_venv_repair_is_narrow_idempotent_and_preserves_mode(tmp_path)
                               searx_console.read_bytes(), searx_finder.read_bytes())
 
 
-@pytest.mark.parametrize("kind", ("binary", "symlink", "other-venv", "fifo"))
+def test_relocated_venv_repair_covers_every_observed_generated_console_shape(tmp_path):
+    root = tmp_path / "canonical root with spaces"
+    venv, _console, _finder = _venv_fixture(
+        root, "hermes-venv", "hermes_cli", "hermes")
+    old = "/archive root with spaces/harness/data/hermes-venv"
+    shapes = {
+        "uv-single": f"'''exec' '{old}/bin/python3' \"$0\" \"$@\"\n",
+        "uv-double": f"'''exec' \"{old}/bin/python3\" \"$0\" \"$@\"\n",
+        "activate": f"VIRTUAL_ENV='{old}'\n",
+        "activate.csh": f"setenv VIRTUAL_ENV '{old}'\n",
+        "activate.fish": f"set -gx VIRTUAL_ENV '{old}'\n",
+        "activate.nu": f"    let virtual_env = '{old}'\n",
+        "activate.bat": f'@for %%i in ("{old}") do @set "VIRTUAL_ENV=%%~fi"\r\n',
+    }
+    for name, payload in shapes.items():
+        (venv / "bin" / name).write_text(payload, encoding="utf-8", newline="")
+
+    result = _repair_venvs(root)
+    assert result.returncode == 0, result.stderr + result.stdout
+    for name in shapes:
+        text = (venv / "bin" / name).read_text(encoding="utf-8")
+        assert old not in text
+        assert str(venv) in text
+
+
+@pytest.mark.parametrize("kind", ("binary", "symlink", "other-venv", "fifo",
+                                  "ambiguous-text"))
 def test_relocated_venv_repair_refuses_unsafe_or_ambiguous_console_inputs(tmp_path, kind):
     root = tmp_path / kind
     kwargs = {"binary": kind == "binary", "symlink": kind == "symlink",
-              "other_venv": "bridge-venv" if kind == "other-venv" else None}
+              "other_venv": "bridge-venv" if kind == "other-venv" else None,
+              "ambiguous": kind == "ambiguous-text"}
     _venv, console, finder = _venv_fixture(root, "hermes-venv", "hermes_cli", "hermes",
                                             **kwargs)
     if kind == "fifo":
@@ -437,10 +477,16 @@ def test_relocated_venv_repair_rolls_back_every_changed_file_after_import_failur
 
 def test_ship_repairs_repo_before_gate_and_snapshot_after_scripts_copy():
     ship = open(SHIP, encoding="utf-8").read()
-    repo_call = '"$VENV_REPAIR_PY" "$ROOT/scripts/repair_relocated_venvs.py" --root "$ROOT"'
+    repo_call = '"$VENV_REPAIR_PY" "$ROOT/scripts/repair_relocated_venvs.py" --root "$ROOT" "${OWNED_VENV_ARGS[@]}"'
     snapshot_call = ('"$VENV_REPAIR_PY" "$DST/scripts/repair_relocated_venvs.py" '
-                     '--root "$DST"')
+                     '--root "$DST" "${OWNED_VENV_ARGS[@]}"')
     assert repo_call in ship and snapshot_call in ship
     assert ship.index(repo_call) < ship.index('bash "$ROOT/scripts/verify.sh"')
     assert ship.index('cp -R "$ROOT/$d/." "$DST/$d/"') < ship.index(snapshot_call)
     assert ship.index(snapshot_call) < ship.index('echo "[ship] restarting app + bridge')
+    repo_profiles = '_repair_deepseek_root "$ROOT" "$ROOT/scripts/repair_deepseek_profiles.py"'
+    snapshot_profiles = '_repair_deepseek_root "$DST" "$DST/scripts/repair_deepseek_profiles.py"'
+    assert repo_profiles in ship and snapshot_profiles in ship
+    assert ship.index(repo_profiles) < ship.index('bash "$ROOT/scripts/verify.sh"')
+    assert ship.index('cp -R "$ROOT/$d/." "$DST/$d/"') < ship.index(snapshot_profiles)
+    assert ship.index(snapshot_profiles) < ship.index('echo "[ship] restarting app + bridge')

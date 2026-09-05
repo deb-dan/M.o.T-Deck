@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, _modeltools, _voice, app
 from ..core.events import publish
 from ..core.hfclient import _HF
-from ..core.modelreg import registry_lock
+from ..core.modelreg import registry_lock, write_registry
 
 # ── SSE (2026-08-28): how often a running download is allowed to push ────────
 # ⚠️ THE ONE EMITTER THAT NEEDS A THROTTLE, AND THE NUMBER IS NOT ARBITRARY. The read
@@ -82,16 +82,12 @@ def _registry_add(entry: dict) -> None:
         models = [m for m in data.get("models", []) if m.get("id") != entry.get("id")]
         models.append(entry)
         data["models"] = models
-        reg.parent.mkdir(parents=True, exist_ok=True)
-        tmp = str(reg) + ".harness-tmp"
-        with open(tmp, "w") as f:
-            _json.dump(data, f, indent=2)
-        _os.replace(tmp, reg)
+        write_registry(str(reg), data)
 
 
 def _registry_update(mid: str, patch: dict) -> "dict | None":
-    """Read data/models.json, merge `patch` into the entry with id `mid`, atomic
-    write (tmp + os.replace — the SAME shape as _registry_add/_registry_drop).
+    """Read data/models.json, merge `patch` into the entry with id `mid`, then use
+    the one deterministic locked/fsynced registry writer shared by every mutator.
     Returns the updated entry, or None when the id is not in the registry.
 
     A key whose patch value is None is REMOVED rather than stored as null: the
@@ -117,31 +113,8 @@ def _registry_update(mid: str, patch: dict) -> "dict | None":
                 break
         if out is None:
             return None
-        tmp = str(reg) + ".harness-tmp"
-        with open(tmp, "w") as f:
-            _json.dump(data, f, indent=2)
-        _os.replace(tmp, reg)
+        write_registry(str(reg), data)
         return out
-
-
-def _registry_drop(mid: str) -> None:
-    """Read data/models.json, drop the model with id `mid`, atomic write. Used by the
-    delete endpoint — note re-seeding would NOT remove a source="download" entry
-    (merge preserves non-rescanned sources), so we drop it explicitly here."""
-    import json as _json, os as _os
-    reg = ROOT / "data" / "models.json"
-    with registry_lock(str(reg)):
-        try:
-            data = _json.loads(reg.read_text())
-            if not isinstance(data, dict) or "models" not in data:
-                return
-        except Exception:
-            return
-        data["models"] = [m for m in data.get("models", []) if m.get("id") != mid]
-        tmp = str(reg) + ".harness-tmp"
-        with open(tmp, "w") as f:
-            _json.dump(data, f, indent=2)
-        _os.replace(tmp, reg)
 
 
 def _mlx_registry_entry(e: dict) -> dict:

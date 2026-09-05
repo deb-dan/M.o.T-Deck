@@ -13,8 +13,8 @@ from ..core.appctx import ROOT, app
 from ..core.events import publish
 from ..core.health import _health_track, _probe_timeout, file_state_track
 from ..core.hermescfg import hermes_cfg_gen
-from ..core.modelid import _live_model_id, _runner_engine
-from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile
+from ..core.modelid import _live_model_id, _read_regular_json, _runner_engine
+from ..core.procs import PROV, _clear_expected, _closure, _expected_path, _kill_port_listener, _mark_expected, _ownership_matches, _pid_alive, _port_alive, _port_alive_sync, _port_listener_pids, _read_ownership, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile
 from .nav import nav_gen
 from .sampling import _record_load_launch
 
@@ -551,6 +551,13 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
                         f"Restart {who} to rebind.",
                 "action": "restart", "target": comp,
                 "action_label": f"Restart {who}"}
+    if state == "catalog-stale":
+        return {"dep": dep, "state": state,
+                "text": f"{who} is still using {detail.get('bound') or 'an older catalog'}; "
+                        f"M.O.T now has {detail.get('live') or 'a different catalog'}. "
+                        f"Restart {who} to load the current model list.",
+                "action": "restart", "target": comp,
+                "action_label": f"Restart {who}"}
     if state == "moved":
         return {"dep": dep, "state": state,
                 "text": f"{who} is still wired to {detail.get('bound') or '?'} — "
@@ -628,6 +635,11 @@ def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
                     needs.append(needs_message(name, dep, "no-model", {}))
                     continue
                 b = bindings.get(name) or {}
+                catalog, live_catalog = b.get("catalog"), b.get("live_catalog")
+                if catalog and live_catalog and catalog != live_catalog:
+                    needs.append(needs_message(name, dep, "catalog-stale",
+                                               {"bound": catalog, "live": live_catalog}))
+                    continue
                 bound, live = b.get("model"), b.get("live_model")
                 if bound and live and bound != live:
                     needs.append(needs_message(name, dep, "swapped",
@@ -724,17 +736,25 @@ def bind_confirmed(prev, bound, live, at: int = BIND_MISS_ACCUSE) -> tuple:
 
 
 def _bind_track(name: str, b: dict) -> dict:
-    """Apply the two-strike gate to one binding dict. Returns the binding unchanged
-    once confirmed, or with its model comparison REMOVED while it is still a first
-    strike (the endpoint half is left alone — a moved port is not a torn write)."""
-    state, say = bind_confirmed(_BIND_MISS.get(name), b.get("model"), b.get("live_model"))
+    """Apply the two-strike gate to a model or runtime-catalog comparison.
+
+    Returns the binding unchanged once confirmed, or suppresses the mismatched half
+    on the first observation. Endpoint drift is left alone: it is not sourced from a
+    seeder rewrite and therefore is not vulnerable to a torn-read window.
+    """
+    bound = b.get("model") or b.get("catalog")
+    live = b.get("live_model") or b.get("live_catalog")
+    state, say = bind_confirmed(_BIND_MISS.get(name), bound, live)
     if state is None:
         _BIND_MISS.pop(name, None)
     else:
         _BIND_MISS[name] = state
     if state is not None and not say:
         b = dict(b)
-        b["model"] = None            # seen once — not yet something we will say aloud
+        if b.get("model"):
+            b["model"] = None        # seen once — not yet something we will say aloud
+        if b.get("catalog"):
+            b["catalog"] = None
     return b
 
 
@@ -749,7 +769,8 @@ def _bind_track(name: str, b: dict) -> dict:
 #               (marker); a value it has decided to honour is exempted, above.
 #   gooseui   — `providers.<slug>.model` is goose's own key and we repair it only when
 #               it DANGLES, so only a dangling value may be reported.
-#   opencode  — same three-state rule in its own Start arm; same gate.
+#   opencode  — its live `/provider` catalog is recorded after Start and compared to
+#               the current offerable registry; Restart necessarily refreshes it.
 def _dangling_only(cur: str, live_wire: str) -> bool:
     """Is `cur` a name that points at nothing real (so a rebind may repair it)?
     ONE definition, shared with the seeders: bridge/gooseprov.dangles."""
@@ -818,23 +839,46 @@ def _goose_binding(live_wire: str) -> dict:
 
 
 def _opencode_binding(live_wire: str) -> dict:
-    """OpenCode's binding: opencode.json `model`, which is `<provider>/<model id>`.
-    Only OUR provider block is compared — a model on somebody else's provider is not
-    a claim about our runner."""
-    import json as _json
+    """OpenCode's live catalog, bound to the exact child that reported it.
+
+    The config on disk may already be fresh while an older process still holds its
+    boot-time catalog. ``start_component.sh`` records the real ``/provider`` response
+    after launch and binds it to the process ownership stamp; that is the evidence a
+    Restart can actually change.
+    """
     try:
-        d = _json.loads((ROOT / "data" / "opencode" / "xdg" / "config" / "opencode"
-                         / "opencode.json").read_text())
+        d = _read_regular_json(ROOT / "data" / "opencode.runtime-catalog.json")
     except Exception:                                                # noqa: BLE001
         return {}
-    m = str((d or {}).get("model") or "").strip()
-    prefix = "llama.cpp/"
-    if not m.startswith(prefix):
+    owner = _read_ownership("opencode")
+    if (not isinstance(d, dict) or d.get("v") != 1
+            or isinstance(d.get("pid"), bool) or not isinstance(d.get("pid"), int)
+            or not isinstance(d.get("birth"), str)
+            or not owner or (d["pid"], d["birth"]) != owner
+            or not _ownership_matches(d["pid"], "opencode")
+            or not isinstance(d.get("models"), list)
+            or any(not isinstance(k, str) for k in d["models"])):
         return {}
-    cur = m[len(prefix):]
-    if not _dangling_only(cur, live_wire):
-        return {}                     # DANGLING ONLY — the invariant above
-    return {"model": cur or None, "live_model": live_wire or None}
+    try:
+        from ..core.modelreg import offerable, opencode_model_key
+        expected = sorted(opencode_model_key(m.get("id"))
+                          for m in offerable(_registry_models()))
+    except Exception:                                                # noqa: BLE001
+        return {}
+    if not expected:
+        expected = ["harness-runner"]
+    actual = sorted(set(d["models"]))
+    connected = d.get("connected") is True
+    if connected and actual == expected:
+        return {}
+    missing = sorted(set(expected) - set(actual))
+    stale = sorted(set(actual) - set(expected))
+    return {
+        "catalog": "OpenCode runtime " + ("connected" if connected else "disconnected")
+                   + f" · {len(actual)} model(s)",
+        "live_catalog": f"M.O.T registry · {len(expected)} model(s)",
+        "catalog_missing": missing[:3], "catalog_stale": stale[:3],
+    }
 
 
 @app.get("/api/deps")
@@ -862,8 +906,9 @@ async def deps() -> dict:
     hb = _hermes_binding(c, live if loaded else None)
     if hb:
         bindings["hermes"] = hb
-    # The other three, S28. Each is a file read; each is two-strike gated; each returns
-    # {} rather than a guess when it cannot read or when the app is wired elsewhere.
+    # The other three, S28/U38. Odysseus and Goose read their own persisted bindings;
+    # OpenCode reads its exact-child `/provider` observation. Each is two-strike gated
+    # and returns {} rather than guessing when its evidence cannot be validated.
     live_wire = ""
     if loaded and live:
         from ..core.modelid import wire_model_id

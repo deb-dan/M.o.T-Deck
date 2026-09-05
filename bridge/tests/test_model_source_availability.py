@@ -13,6 +13,7 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bridge.core import modelreg as MR
+from bridge.tests.model_fixture import gguf_bytes
 
 _spec = importlib.util.spec_from_file_location("u76_seed", os.path.join(ROOT, "scripts", "seed_registry.py"))
 SR = importlib.util.module_from_spec(_spec)
@@ -21,7 +22,7 @@ _spec.loader.exec_module(SR)
 
 def row(tmp_path, name="model.gguf"):
     p = tmp_path / name
-    p.write_bytes(b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2)
+    p.write_bytes(gguf_bytes())
     return {"id": p.stem, "format": "gguf", "path": str(p), "source": "download"}
 
 

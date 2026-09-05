@@ -4,6 +4,44 @@
 (function () {
   'use strict';
   let requestCounter = 0;
+  const MARKER_KEY = 'harness-active-turns-v1';
+
+  function markerKey(lane, session){ return lane + '\n' + session; }
+
+  function markers(){
+    try {
+      const value = JSON.parse(localStorage.getItem(MARKER_KEY) || '{}');
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    } catch (_) { return {}; }
+  }
+
+  function remember(turn){
+    if (!turn || !turn.id || !turn.lane || !turn.session) return;
+    try {
+      const value = markers();
+      value[markerKey(turn.lane, turn.session)] = {
+        id:String(turn.id), lane:String(turn.lane), session:String(turn.session),
+        instance:String(turn.instance || ''), updated_at:Date.now()
+      };
+      // Browser metadata is bounded too. This is not transcript storage; retaining the
+      // newest 64 lane/session handles is enough to diagnose an interrupted return.
+      const ordered = Object.keys(value).sort((a, b) =>
+        Number(value[b].updated_at || 0) - Number(value[a].updated_at || 0));
+      for (const stale of ordered.slice(64)) delete value[stale];
+      localStorage.setItem(MARKER_KEY, JSON.stringify(value));
+    } catch (_) {}
+  }
+
+  function forget(turn){
+    if (!turn || !turn.lane || !turn.session) return;
+    try {
+      const value = markers(), key = markerKey(turn.lane, turn.session);
+      if (!value[key] || (turn.id && value[key].id !== turn.id)) return;
+      delete value[key];
+      if (Object.keys(value).length) localStorage.setItem(MARKER_KEY, JSON.stringify(value));
+      else localStorage.removeItem(MARKER_KEY);
+    } catch (_) {}
+  }
 
   function requestId(){
     requestCounter += 1;
@@ -14,7 +52,12 @@
   async function jsonFetch(url, options){
     const response = await fetch(url, options);
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || data.detail || 'the bridge refused the turn request');
+    if (!response.ok) {
+      const error = new Error(data.error || data.detail || 'the bridge refused the turn request');
+      error.status = response.status;
+      error.payload = data;
+      throw error;
+    }
     return data;
   }
 
@@ -32,8 +75,41 @@
     return data.turn || null;
   }
 
+  async function activeState(lane, session){
+    if (!session) return {turn:null, instance:''};
+    const query = '?lane=' + encodeURIComponent(lane) + '&session=' + encodeURIComponent(session);
+    return jsonFetch('/api/turns/active' + query);
+  }
+
   async function metadata(id){
     return jsonFetch('/api/turns/' + encodeURIComponent(id));
+  }
+
+  async function reconcile(lane, session){
+    if (!session) return {active:null, interrupted:false};
+    const state = await activeState(lane, session);
+    const running = state.turn || null;
+    const marker = markers()[markerKey(lane, session)] || null;
+    if (running) {
+      running.instance = state.instance || '';
+      remember(running);
+      return {active:running, interrupted:false};
+    }
+    if (!marker || !marker.id) return {active:null, interrupted:false};
+    try {
+      const record = await metadata(marker.id);
+      if (['completed','failed','stopped','interrupted'].includes(record.state)) forget(marker);
+      return {active:null, interrupted:false};
+    } catch (error) {
+      // A 404 is the precise bridge-restart signature: the browser remembers a turn
+      // that this bridge process has never owned. Transport failure is not evidence
+      // and must remain retryable instead of manufacturing an interruption.
+      if (error && error.status === 404) {
+        forget(marker);
+        return {active:null, interrupted:!!marker.instance && marker.instance !== state.instance};
+      }
+      throw error;
+    }
   }
 
   async function stop(turn){
@@ -46,6 +122,7 @@
     const turn = ctx.turn, holder = ctx.holder, body = ctx.body, think = ctx.think;
     if (turn.done) return;
     turn.done = true;
+    forget(turn);
     turnStage(state || 'done');
     clearTimeout(turn.timer);
     if (state && state !== 'completed' && error) body.textContent += '\n· ' + error;
@@ -234,10 +311,11 @@
     const think = document.createElement('div');
     think.id = 'thinking'; think.textContent = 'reconnecting…'; think.hidden = false;
     holder.insertBefore(think, body);
-    const turn = {id:record.id, lane:lane, stage:'reconnecting',
+    const turn = {id:record.id, lane:lane, session:session, instance:record.instance || '',
       ctl:new AbortController(), holder:holder, ended:false, detached:false,
       timer:null, stopArmed:false, lastSeq:0, recovered:true};
     chatPane.curTurn = turn; chatPane.busy = true; sendPaint('Stop');
+    remember(turn);
     const button = document.getElementById('chat-send');
     if (button) { button.title = 'Stop this reply'; button.setAttribute('aria-label', button.title); }
     try {
@@ -246,7 +324,7 @@
       await consume(response, {turn:turn, holder:holder, body:body, think:think});
     } catch (error) {
       if (!turn.detached)
-        chatStatus(holder, '✓', 'the bridge could not recover this turn — reload to retry');
+        chatStatus(holder, '⚠', 'the bridge could not recover this turn — reload to retry');
     } finally {
       clearTimeout(turn.timer);
       if (chatPane.curTurn === turn) {
@@ -262,6 +340,7 @@
   }
 
   window.HarnessTurnStream = {create:create, active:active, metadata:metadata,
+    reconcile:reconcile, remember:remember, forget:forget,
     stop:stop, consume:consume, recover:recover};
 }());
 

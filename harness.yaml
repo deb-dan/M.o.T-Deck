@@ -14,7 +14,11 @@
 components:
   hermes:
     repo: https://github.com/NousResearch/hermes-agent.git
-    pin: v2026.8.13           # release tag — never track a branch.
+    pin: v2026.8.16           # release tag — never track a branch.
+                              # 2026-09-05: conservative v0.20.2 bump after isolated dashboard build,
+                              # 70/70 M.O.T Hermes contracts, and upstream WhatsApp/gateway probes.
+                              # It does NOT fix the WhatsApp disable transaction; M.O.T owns that
+                              # reconciliation separately without patching vendored Hermes code.
                               # ⚠️⚠️ 2026-08-28: THE v2026.8.27 (v0.20.6) BUMP WAS ATTEMPTED, PROVEN
                               # UNSHIPPABLE AND ROLLED BACK. Do not retry above v2026.8.16 without
                               # reading docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md first — the

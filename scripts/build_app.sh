@@ -247,9 +247,17 @@ if [[ $FAT -eq 1 ]]; then
   # firstrun_fat.sh compares it against an existing snapshot's .seed_stamp and refuses
   # to seed BACKWARDS (2026-08-20 incident: an early-August /Applications bundle rolled
   # a live 6-component install back to a 3-component, pre-voice manifest).
+  SEED_GIT_SHA="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  SEED_DIRTY_FILES="$(git -C "$ROOT" status --porcelain=v1 --untracked-files=normal \
+    2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$SEED_DIRTY_FILES" =~ ^[0-9]+$ ]] || SEED_DIRTY_FILES=0
+  if [[ "$SEED_DIRTY_FILES" -gt 0 && "$SEED_GIT_SHA" != "unknown" ]]; then
+    SEED_GIT_SHA="${SEED_GIT_SHA}-dirty"
+  fi
   {
     echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "git_sha=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "git_sha=${SEED_GIT_SHA}"
+    echo "dirty_files=${SEED_DIRTY_FILES}"
     echo "components=$(awk '/^components:/{f=1;next} f && /^[^ ]/{exit} f && /^  [A-Za-z0-9_-]+:/{n++} END{print n+0}' harness.yaml)"
   } > "$STAGE/SEED_STAMP"
   echo "[harness] seed stamp: $(tr '\n' ' ' < "$STAGE/SEED_STAMP")"

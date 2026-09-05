@@ -164,8 +164,14 @@ def test_ship_starts_the_bridge_detached_and_reaps_by_pidfile():
         "ship.sh's bridge launch lost --timeout-graceful-shutdown: uvicorn then waits "
         "forever on the infinite /api/events stream and the process never exits")
     assert "data/bridge.pid" in code, "ship.sh must reap the bridge by its pidfile first"
-    assert "_bridge_cmd_is_ours" in code, (
-        "ship.sh must identity-verify a bridge pid before signalling it")
+    assert "_bridge_owner_ok" in code and "bridge/core/ownership.py" in code, (
+        "ship.sh must use the shared locked PID+birth signal primitive")
+    assert '_ownership_cli signal "$DST" bridge "$pid"' in code, \
+        "the graceful TERM must use the shared ownership transaction"
+    bridge_stop = code.split('_bridge_stop() {', 1)[1].split('\n}', 1)[0]
+    assert '--birth "$birth" --keep-claim' in bridge_stop, (
+        "the graceful TERM must bind the observed birth and retain its claim for "
+        "exact escalation")
 
 
 def test_app_launches_the_bridge_with_a_graceful_shutdown_deadline():
@@ -307,26 +313,19 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
             pass
 
 
-def test_the_perl_fallback_is_dependency_free():
-    """The fallback exists BECAUSE the environment is already missing something it
-    should have, so it must not lean on a second external binary. It once read
-    `exec nohup "$@"`; with nohup also absent that died as `exec: nohup: not found`,
-    leaving a dead pid in the component's pidfile and a component that never started
-    — a graceful-absence path that fails silently is worse than none."""
+def test_missing_perl_and_failed_setsid_refuse_unsafe_launches():
+    """Detachment is a safety postcondition; no fallback may recreate the incident."""
     code = "\n".join(_code(START))
     assert "command -v perl" in code, "the detach helper no longer checks for perl"
-    assert "trap '' HUP" in code, (
-        "the perl-absent fallback must ignore SIGHUP itself rather than shelling out "
-        "to nohup — that is the one thing nohup was doing for it")
     fb = code[code.index("command -v perl"):code.index("exec nohup perl")]
-    assert "nohup" not in fb, "the perl-absent fallback depends on nohup again"
+    assert "return 127" in fb and "refusing to launch" in fb
+    assert "exec \"$@\"" not in fb and "trap '' HUP" not in fb
+    assert "refusing unsafe launch" in code and "die " in code
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="the incident is macOS-specific")
-def test_a_missing_perl_still_starts_the_component_and_says_what_was_lost(tmp_path):
-    """GRACEFUL ABSENCE (walked, not asserted from source). With perl gone the
-    component must still start — un-detached — and the log must say so in sentences.
-    Refusing to start would be a worse regression than starting unprotected."""
+def test_a_missing_perl_refuses_instead_of_recreating_the_unsafe_group(tmp_path):
+    """Executed missing-dependency path: no requested component may survive."""
     binp = tmp_path / "bin"
     binp.mkdir()
     needed = ["bash", "dirname", "mkdir", "ps", "tr", "cat", "sleep",
@@ -355,26 +354,18 @@ def test_a_missing_perl_still_starts_the_component_and_says_what_was_lost(tmp_pa
                               capture_output=True, text=True).stdout.strip()
 
     try:
-        # ⚠️ POLLED, NOT READ ONCE. The helper's sentences are written by the
-        # BACKGROUND subshell while the parent shell is already running `echo $!;
-        # exit 0`, so subprocess.run can return with only the first two lines on
-        # disk. Reading once made this test pass alone and fail in the full suite —
-        # the classic shape of a flake nobody trusts.
+        # The helper runs in a background subshell, so poll for its refusal and exit.
         err = ""
         for _ in range(50):
             err = errfile.read_text()
-            if "2026-08-30" in err:
+            if "refusing to launch" in err and not _cmd(pid):
                 break
             time.sleep(0.1)
-        assert "perl is not on PATH" in err, f"the fallback said nothing useful: {err!r}"
-        assert "2026-08-30" in err, (
-            f"the sentence must name the incident it re-opens; got {err!r}")
-        for _ in range(50):
-            if marker in _cmd(pid):
-                break
-            time.sleep(0.1)
-        assert marker in _cmd(pid), (
-            f"with perl absent the component did not start at all: {err!r}")
+        assert "perl is not on PATH" in err and "refusing to launch" in err, (
+            f"the refusal said nothing useful: {err!r}")
+        assert marker not in _cmd(pid), (
+            "the missing-Perl path executed the requested component without a "
+            f"private session: {_cmd(pid)!r}")
     finally:
         if marker in _cmd(pid):
             try:
@@ -403,9 +394,14 @@ def _as_bridge_boot(monkeypatch, port="8700"):
         ["uvicorn", "bridge.app:app", "--host", "127.0.0.1", "--port", port])
 
 
-def test_identity_is_path_evidence_not_a_name():
-    """`python` or `uvicorn` in a command line is evidence of nothing — Debi runs
-    standalone copies of what we embed. Only THIS root's venv python counts."""
+def _write_claim(root, pid, birth="STAMP"):
+    (root / "data").mkdir(exist_ok=True)
+    (root / "data" / "bridge.pid").write_text(f"{pid}\n")
+    (root / "data" / "bridge.owner").write_text(f"v1\t{pid}\t{birth}\n")
+
+
+def test_path_evidence_is_diagnostic_not_ownership():
+    """Even the exact executable/root/app/port tuple does not prove who spawned it."""
     root = Path("/tmp/h")
     ours = "/tmp/h/data/bridge-venv/bin/python -m uvicorn bridge.app:app --host 127.0.0.1 --port 8700"
     assert S.is_our_bridge(ours, root, "8700")
@@ -414,55 +410,46 @@ def test_identity_is_path_evidence_not_a_name():
     assert not S.is_our_bridge("/usr/bin/python3 -m uvicorn other.app:app --port 8700",
                                root, "8700"), "a stranger's uvicorn matched"
     assert not S.is_our_bridge("", root, "8700")
+    assert not S.ownership_matches(root, os.getpid()), \
+        "a perfect path match without a launch record became ownership"
 
 
-def test_second_boot_against_a_live_pidfile_stands_down_with_a_sentence(tmp_path, monkeypatch):
+def test_second_boot_against_a_live_launch_record_stands_down(tmp_path, monkeypatch):
     _as_bridge_boot(monkeypatch)
     (tmp_path / "data").mkdir()
-    # A pid that IS alive and whose command line verifies as ours: this test process,
-    # with _cmdline stubbed. Nothing is spawned and nothing is ever signalled.
     other = os.getpid() + 1
-    monkeypatch.setattr(S, "_alive", lambda p: True)
-    monkeypatch.setattr(
-        S, "_cmdline",
-        lambda p: f"{tmp_path}/data/bridge-venv/bin/python -m uvicorn bridge.app:app --port 8700")
-    (tmp_path / "data" / "bridge.pid").write_text(str(other))
+    _write_claim(tmp_path, other)
+    monkeypatch.setattr(S._ownership, "process_birth",
+                        lambda p: "STAMP" if p == other else "SELF")
 
     with pytest.raises(_Stood) as ei:
-        S.claim_or_exit(tmp_path, _exit=_exit_probe)
+        S.claim_or_exit(tmp_path, _exit=_exit_probe, _wait_seconds=0)
     assert ei.value.args[0] == 0, "standing down in favour of a working bridge is exit 0, not 1"
     # the incumbent's claim is untouched — we never overwrite or delete it
-    assert (tmp_path / "data" / "bridge.pid").read_text() == str(other)
+    assert (tmp_path / "data" / "bridge.pid").read_text() == f"{other}\n"
+    assert (tmp_path / "data" / "bridge.owner").exists()
 
 
-def test_a_dead_pid_in_the_pidfile_is_ignored_and_overwritten(tmp_path, monkeypatch, capsys):
+def test_own_spawner_record_is_accepted_but_never_self_written(tmp_path, monkeypatch):
     _as_bridge_boot(monkeypatch)
     (tmp_path / "data").mkdir()
-    monkeypatch.setattr(S, "_alive", lambda p: False)
-    monkeypatch.setattr(S, "_listener_pid", lambda port: 0)
-    (tmp_path / "data" / "bridge.pid").write_text("999999")
-
-    msg = S.claim_or_exit(tmp_path, _exit=_exit_probe)
-    assert "claimed" in msg
-    assert (tmp_path / "data" / "bridge.pid").read_text() == str(os.getpid())
-    assert "not running" in capsys.readouterr().out, "a stale pidfile must be explained, not silently dropped"
+    _write_claim(tmp_path, os.getpid())
+    monkeypatch.setattr(S._ownership, "process_birth", lambda p: "STAMP")
+    msg = S.claim_or_exit(tmp_path, _exit=_exit_probe, _wait_seconds=0)
+    assert "accepted its launcher-owned claim" in msg
+    assert (tmp_path / "data" / "bridge.pid").read_text() == f"{os.getpid()}\n"
 
 
-def test_a_live_pid_that_is_not_our_bridge_is_ignored_and_never_signalled(tmp_path, monkeypatch, capsys):
-    """The PROCESS-KILL RULE in the singleton: a recycled pid belonging to somebody
-    else's process must be left completely alone — not signalled, not deferred to."""
+def test_stale_or_path_matching_record_is_refused_not_adopted(tmp_path, monkeypatch):
     _as_bridge_boot(monkeypatch)
     (tmp_path / "data").mkdir()
-    monkeypatch.setattr(S, "_alive", lambda p: True)
-    monkeypatch.setattr(S, "_cmdline", lambda p: "/Applications/Some.app/Contents/MacOS/Some")
-    monkeypatch.setattr(S, "_listener_pid", lambda port: 0)
-    (tmp_path / "data" / "bridge.pid").write_text("4242")
-
-    msg = S.claim_or_exit(tmp_path, _exit=_exit_probe)
-    assert "claimed" in msg
-    assert (tmp_path / "data" / "bridge.pid").read_text() == str(os.getpid())
-    out = capsys.readouterr().out
-    assert "leaving that process alone" in out
+    _write_claim(tmp_path, 4242, "OLD")
+    monkeypatch.setattr(S._ownership, "process_birth", lambda p: "NEW")
+    with pytest.raises(_Stood) as ei:
+        S.claim_or_exit(tmp_path, _exit=_exit_probe, _wait_seconds=0)
+    assert ei.value.args[0] == 1
+    assert (tmp_path / "data" / "bridge.pid").read_text() == "4242\n"
+    assert (tmp_path / "data" / "bridge.owner").read_text() == "v1\t4242\tOLD\n"
 
 
 def test_the_guard_never_fires_on_a_plain_import(tmp_path, monkeypatch):
@@ -490,10 +477,12 @@ def test_singleton_contains_no_kill_of_any_kind():
                 and isinstance(body[0].value.value, str):
             body.pop(0)
     code = ast.unparse(tree)
-    for banned in ("os.kill(", "killpg", "pkill", "SIGTERM", "SIGKILL", "terminate("):
-        if banned == "os.kill(":
-            # os.kill(pid, 0) is a liveness PROBE, not a signal — allowed, pinned here.
-            assert "os.kill(pid, 0)" in code
-            assert code.count("os.kill(") == 1, "a real signal appeared in the singleton"
-            continue
+    kill_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Attribute)
+                  and isinstance(n.func.value, ast.Name) and n.func.value.id == "os"
+                  and n.func.attr == "kill"]
+    assert len(kill_calls) == 1
+    assert isinstance(kill_calls[0].args[1], ast.Constant) \
+        and kill_calls[0].args[1].value == 0, "singleton may only perform kill(pid, 0)"
+    for banned in ("killpg", "pkill", "SIGTERM", "SIGKILL", "terminate("):
         assert banned not in code, f"{banned} appeared in the bridge singleton"

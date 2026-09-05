@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import os
 import subprocess
 # ⚠️ `sys` WAS NEVER IMPORTED HERE, and the S28 rebind has referenced `sys.executable`
@@ -16,14 +17,50 @@ from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
 from ..core.health import file_state_track
-from ..core.modelreg import artifact_probe, is_source_unlisted, registry_lock, source_availability
+from ..core.modeldelete import (delete_owned_model_transaction,
+                                delete_target_collisions as _delete_target_collisions,
+                                deletable_target as _deletable_target,
+                                recover_owned_model_transaction)
+from ..core.modelreg import (artifact_probe, is_source_unlisted, registry_lock,
+                             source_availability, write_registry)
 from ..core.modelid import _live_model_id
-from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile
+from ..core.procs import NO_PIDFILE_NOTE, PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile, stop_owned_component
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
-from .downloads import _registry_drop, _registry_update
+from .downloads import _registry_update
 from .model_visibility import (HIDEABLE_SOURCES, _hidden_view, _hideable,
                                _is_hidden, api_models_hide)
 from .sampling import _LOAD_AT_LAUNCH, _record_load_launch, launch_view, load_view, sampling_view
+
+
+_MODEL_DELETE_RECOVERY_ERROR = ""
+
+
+def _delete_assignment_resolver(label: str, old: str):
+    if label == "runner.model":
+        return (lambda: _set_runner_model(""), lambda: _set_runner_model(old))
+    if label == "aux.model":
+        return (lambda: _set_yaml_model("aux", ""),
+                lambda: _set_yaml_model("aux", old))
+    if label in {"voice.tts_model", "voice.stt_model"}:
+        field = label.split(".", 1)[1]
+        return (lambda: _set_yaml_scalar("voice", field, ""),
+                lambda: _set_yaml_scalar("voice", field, old))
+    raise ValueError(f"unknown saved model assignment: {label}")
+
+
+async def _recover_interrupted_model_delete() -> None:
+    global _MODEL_DELETE_RECOVERY_ERROR
+    _MODEL_DELETE_RECOVERY_ERROR = await asyncio.to_thread(
+        recover_owned_model_transaction,
+        root=ROOT, assignment_resolver=_delete_assignment_resolver) or ""
+    if _MODEL_DELETE_RECOVERY_ERROR:
+        print(f"[delete] ATTENTION: {_MODEL_DELETE_RECOVERY_ERROR}", flush=True)
+
+
+# An interrupted destructive operation is reconciled before the first request. The
+# error remains visible in /api/models instead of taking the whole bridge down or being
+# hidden in a log line.
+app.router.on_startup.append(_recover_interrupted_model_delete)
 
 
 # ── A FOREIGN APP'S llama-server IS NOT OUR PINNED CONTRACT (bug-echo W-04) ─────
@@ -421,9 +458,7 @@ def _persist_absent(states: dict) -> None:
                     dirty = True
             if not dirty:
                 return
-            tmp = reg.with_suffix(".json.tmp")
-            tmp.write_text(_json.dumps(data, indent=2) + "\n")
-            os.replace(str(tmp), str(reg))
+            write_registry(str(reg), data)
     except Exception:                                          # noqa: BLE001
         pass                              # a registry we cannot rewrite is not an alarm
 
@@ -540,6 +575,7 @@ def api_models() -> JSONResponse:
         "installed": installed, "active": rc.get("model"),
         "runner_up": bool(live_id), "live_id": live_id,
         "aux": aux, "adapter": adapter, "ledger": ledger, "error": err,
+        "recovery_error": _MODEL_DELETE_RECOVERY_ERROR or None,
         # Phase A (Models → Audio tab) reads these; the chat lists above never see them.
         "audio": audio, "voice": vcfg,
         # The models the user hid — a light view, only ever used to draw the
@@ -1210,10 +1246,12 @@ async def api_pin_model(req: Request) -> JSONResponse:
                          "log": f"pinned {live}"})
 
 
-def _eject_runner() -> None:
-    """Stop the main runner by PORT AND clear the active-model designation
-    (runner.model → empty) so a later Start does NOT silently resurrect the model.
-    Shared by the eject endpoint and the delete endpoint (deleting a live model)."""
+def _eject_runner(*, clear_pin: bool = True) -> list[str]:
+    """Stop the exact owned runner and, for a normal eject, clear its saved pin.
+
+    Model deletion passes ``clear_pin=False`` until its reversible persistence
+    transaction commits. That keeps a failed delete from also changing launch intent.
+    """
     rc = cfg().get("runner", {}) or {}
     port = rc.get("port")
     if port:
@@ -1221,15 +1259,23 @@ def _eject_runner() -> None:
         # was retired 2026-07-23, but still able to reach a process we did not launch.
         # Deleted, not replaced: the ownership-checked port kill is what stops OUR
         # runner, and always was.
-        _kill_port_listener(int(port), force=True, component="runner")
-    (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
+        refused = stop_owned_component("runner", int(port), force=True)
+        if refused:
+            return refused
+        for _ in range(30):
+            if not _port_alive_sync(int(port)):
+                break
+            time.sleep(0.1)
+        if _port_alive_sync(int(port)):
+            return [f"runner port :{port} is still answering after the exact stop; "
+                    "the pin and model files were left unchanged"]
     _clear_expected("runner")     # intentional → "stopped", not "degraded"
     PROV.pop("runner", None)
-    _set_runner_model("")         # no active model — Start must route the user to pick
-    # SSE: the eject transition, at its source (shared by /api/models/eject and by
-    # deleting a live model, so both get the push from one line).
-    publish("model", phase="ejected", done=True)
+    if clear_pin:
+        _set_runner_model("")     # no active model — Start must route the user to pick
+        publish("model", phase="ejected", done=True)
     publish("component", name="runner", state="stopping")
+    return []
 
 
 @app.post("/api/models/eject")
@@ -1237,7 +1283,9 @@ def api_eject_model() -> JSONResponse:
     """Eject the live model (Fable ISSUE 2 state machine): stop the runner by PORT
     AND clear the active-model designation. Going live again requires an explicit
     Load from the Models pane. Frees the main slot's RAM in the ledger."""
-    _eject_runner()
+    refused = _eject_runner()
+    if refused:
+        return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)
     return JSONResponse({"ok": True})
 
 
@@ -1246,39 +1294,8 @@ def api_eject_model() -> JSONResponse:
 # local files under data/models/<folder>/, so we may delete both the files and the
 # registry entry. Read-only imports (lmstudio-import, jan-import) point at files the
 # harness does NOT own (e.g. the user's LM Studio library) — deleting those would
-# nuke the user's data, so they are HARD-refused here (the panel hides Delete for
-# them too). Pure predicate factored out + unit-tested (see bridge/tests).
-_DELETABLE_SOURCES = ("download", "local")
-
-
-def _deletable_target(entry: dict, models_root: str):
-    """Return (target_dir, None) if `entry` is an app-owned model whose files live
-    strictly UNDER models_root and may be safely deleted; else (None, reason).
-
-    Pure/testable: uses only os.path (realpath normalizes even non-existent paths,
-    so tests don't need real files). The target is the model's OWN folder — the
-    first path segment beneath models_root — regardless of whether the registry
-    `path` points at a file (…/model.gguf) or the model dir itself (MLX). Any path
-    that resolves outside models_root (traversal, symlink escape, an import pointing
-    elsewhere) fails the containment check and is refused."""
-    import os as _os
-    src = (entry or {}).get("source")
-    if src not in _DELETABLE_SOURCES:
-        return None, (f"'{src or 'unknown'}' models are read-only imports the harness "
-                      f"does not own — remove them in the app that manages them")
-    path = (entry or {}).get("path")
-    if not path:
-        return None, "no file path on record for this model"
-    real_root = _os.path.realpath(_os.path.expanduser(str(models_root)))
-    real_path = _os.path.realpath(_os.path.expanduser(str(path)))
-    # Must sit strictly under the harness models dir (never the dir itself, never outside).
-    if real_path != real_root and not real_path.startswith(real_root + _os.sep):
-        return None, "model path is outside the harness models directory"
-    rel = _os.path.relpath(real_path, real_root)
-    first = rel.split(_os.sep)[0]
-    if first in ("", ".", ".."):
-        return None, "could not resolve a model folder under the models directory"
-    return _os.path.join(real_root, first), None
+# them too). The path/collision/rollback boundary lives in core/modeldelete.py; this
+# route owns only process quiescence and the user-facing state transition.
 
 
 @app.post("/api/models/delete")
@@ -1288,7 +1305,7 @@ async def api_delete_model(req: Request) -> JSONResponse:
     under data/models/ is ever deleted (never an LM Studio / Jan import, never a path
     outside our dir). If the model is currently live (main runner or aux), it is
     ejected/stopped first."""
-    import os as _os, shutil as _shutil
+    import os as _os
     mid = ((await req.json()).get("id") or "").strip()
     if not mid:
         return JSONResponse({"ok": False, "log": "no model id"}, status_code=400)
@@ -1306,6 +1323,12 @@ async def api_delete_model(req: Request) -> JSONResponse:
             and target.startswith(real_root + _os.sep)):
         print(f"[delete] reject {mid!r}: target {target} not under {real_root}", flush=True)
         return JSONResponse({"ok": False, "log": "refused: unsafe target path"}, status_code=400)
+    collisions = _delete_target_collisions(_registry_models(), mid, target)
+    if collisions:
+        return JSONResponse(
+            {"ok": False,
+             "log": "refused: this filesystem target is also referenced by: "
+                    + ", ".join(collisions)}, status_code=409)
 
     c = cfg()
     rc = c.get("runner", {}) or {}
@@ -1313,18 +1336,28 @@ async def api_delete_model(req: Request) -> JSONResponse:
     live = _live_model_id(int(port)) if port else None
     was_live = (live == mid) or ((rc.get("model") or "") == mid)
     if was_live:
-        _eject_runner()   # stop the runner + clear runner.model before removing files
+        # Stop and verify first, but retain the saved pin until the file+registry
+        # transaction commits. A failed delete may leave the runner stopped; it must
+        # never also make the user's launch intent disappear.
+        refused = _eject_runner(clear_pin=False)
+        if refused:
+            return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)
     # If it's the aux model, stop aux (if up) + clear the aux designation.
     ax = c.get("aux", {}) or {}
     was_aux = (ax.get("model") or "") == mid
     if was_aux:
         if ax.get("port"):
-            # PRINTED, not swallowed: if the aux stop refused, the files are about to
-            # go while a server may still hold them open, and the log is where that is
-            # findable an hour later.
-            for _n in _aux_kill(int(ax["port"])):
-                print(f"[delete] aux stop: {_n}", flush=True)
-        _set_yaml_model("aux", "")
+            aux_notes = _aux_kill(int(ax["port"]))
+            if aux_notes:
+                return JSONResponse({"ok": False, "log": "; ".join(aux_notes)}, status_code=409)
+            for _ in range(30):
+                if not _port_alive_sync(int(ax["port"])):
+                    break
+                await asyncio.sleep(0.1)
+            if _port_alive_sync(int(ax["port"])):
+                return JSONResponse({"ok": False,
+                                     "log": "aux is still answering; model files were left unchanged"},
+                                    status_code=409)
     # If it was a VOICE default, clear that slot too — leaving harness.yaml pointing at
     # deleted weights would only fail later, at speak time, far from this click.
     vc = _voice_cfg()
@@ -1334,12 +1367,30 @@ async def api_delete_model(req: Request) -> JSONResponse:
     # deleted checkpoint from memory.
     if _voice is not None:
         _voice.worker_stop_if_model(mid, "model deleted")
-    for k in was_voice:
-        _set_yaml_scalar("voice", k, "")
 
-    if _os.path.isdir(target):
-        _shutil.rmtree(target, ignore_errors=True)
-    _registry_drop(mid)
+    assignments = []
+    if was_live:
+        old_pin = str(rc.get("model") or "")
+        assignments.append(("runner.model", old_pin, lambda: _set_runner_model(""),
+                            lambda value=old_pin: _set_runner_model(value)))
+    if was_aux:
+        old_aux = str(ax.get("model") or "")
+        assignments.append(("aux.model", old_aux, lambda: _set_yaml_model("aux", ""),
+                            lambda value=old_aux: _set_yaml_model("aux", value)))
+    for key in was_voice:
+        old_voice = str(vc.get(key) or "")
+        assignments.append((f"voice.{key}", old_voice,
+                            lambda field=key: _set_yaml_scalar("voice", field, ""),
+                            lambda field=key, value=old_voice:
+                                _set_yaml_scalar("voice", field, value)))
+    detail = delete_owned_model_transaction(
+        root=ROOT, mid=mid, expected_target=target, assignments=assignments)
+    if detail:
+        print(f"[delete] {mid!r}: {detail}", flush=True)
+        return JSONResponse({"ok": False, "log": detail}, status_code=500)
+
+    if was_live:
+        publish("model", phase="ejected", done=True)
     print(f"[delete] removed {mid!r} (dir {target}, was_live={was_live}, "
           f"was_aux={was_aux}, was_voice={was_voice or 'no'})", flush=True)
     return JSONResponse({"ok": True, "id": mid, "was_live": was_live,
@@ -1365,9 +1416,8 @@ def api_switch_cancel() -> JSONResponse:
     if not _SWITCH.get("busy"):
         return JSONResponse({"ok": False, "log": "no switch in progress"}, status_code=400)
     port = int((cfg().get("runner", {}) or {}).get("port") or 6767)
-    notes = _kill_port_listener(port, force=True, component="runner")
-    notes += reap_pidfile(SWITCH_TRACK,
-                          sigs=(str(ROOT / "scripts" / "start_component.sh"),))
+    notes = stop_owned_component("runner", port, force=True)
+    notes += reap_pidfile(SWITCH_TRACK)
     log = "cancelling — pin will revert to the previous model"
     if notes:
         # An honest cancel says what it could NOT stop. The switch still unwinds (the
@@ -1397,6 +1447,5 @@ def api_switch_cancel() -> JSONResponse:
 # commands are still spelled out.
 def _aux_kill(port: int) -> list:
     """Stop the aux model. Returns the notes for anything it declined to stop."""
-    notes = reap_pidfile("aux", force=True)
-    notes += _kill_port_listener(port, force=True, component="aux")
-    return notes
+    return [note for note in stop_owned_component("aux", port, force=True)
+            if NO_PIDFILE_NOTE not in note]

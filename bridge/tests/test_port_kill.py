@@ -17,17 +17,7 @@ def check(name, cond):
         FAILS.append(name)
 
 
-# ── the takeover path: NO shell string, and still listener-scoped (U64) ───────
-# `_port_kill_cmd` used to live here: a pure helper returning
-# `lsof -ti tcp:N -sTCP:LISTEN | xargs kill` for the HARNESS_PORT_TAKEOVER=1 branch.
-# U64 deleted it. An unowned port clear built from a shell string is the exact move that
-# closed Debi's standalone Unsloth, and the no-name-kills contract bans that pipeline
-# from every shell file in the tree with NO exception list — so keeping a Python copy of
-# it behind an env var was that exception coming in through the back door. The override
-# now walks the SAME `_port_listener_pids` list every other path walks and signals those
-# pids directly: one way to find a process, one way to signal one. The properties this
-# block used to assert on the string are asserted on the BEHAVIOUR below instead
-# (listener scope by construction, int coercion, and the -9 escalation).
+# ── there is no unowned takeover path (U24/U25/U66) ───────────────────────────
 check("the unowned shell-string port clear is gone",
       not hasattr(app, "_port_kill_cmd"))
 
@@ -60,11 +50,7 @@ try:
 finally:
     app.subprocess.run = _orig
 
-# ── the takeover override, exercised (U64) ────────────────────────────────────
-# Same guarantees the deleted string helper carried, now observed on the call:
-# LISTEN-scoped discovery, an int-coerced port, `kill -9` under force, and NO shell.
-import os as _os  # noqa: E402
-
+# ── launch-record authorization, exercised ────────────────────────────────────
 signalled = []
 
 
@@ -74,23 +60,41 @@ def _rec_run(argv, **kw):
 
 
 _orig = app.subprocess.run
-_had = _os.environ.get("HARNESS_PORT_TAKEOVER")
+_orig_cmd = app._proc_cmdline
+_orig_read_owner = app._read_ownership
+_orig_signal_owned = app._ownership.signal_owned
 app.subprocess.run = _rec_run
-_os.environ["HARNESS_PORT_TAKEOVER"] = "1"
 try:
+    app._proc_cmdline = lambda _: "/foreign/llama-server"
+    ownership_calls = []
+    def _refuse(root, component, **kw):
+        ownership_calls.append((root, component, kw))
+        return False, "no matching claim"
+    app._ownership.signal_owned = _refuse
     refused = app._kill_port_listener("6767", force=True, component="runner")
-    check("takeover refuses nothing (that is what the override is for)", refused == [])
-    check("takeover discovery is LISTEN-scoped",
+    check("an unrecorded listener is refused", len(refused) == 1)
+    check("refused discovery is still LISTEN-scoped",
           any("-sTCP:LISTEN" in a for a in signalled[0][0]))
-    check("takeover coerces the port to int", "tcp:6767" in signalled[0][0])
-    check("takeover signals the listener pid with -9, as a real argv (no shell)",
-          signalled[-1][0] == ["kill", "-9", "777"] and not signalled[-1][1].get("shell"))
+    check("refused discovery coerces the port to int", "tcp:6767" in signalled[0][0])
+    check("the unrecorded listener received no signal",
+          all(call[0][0] != "kill" for call in signalled))
+    def _accept(root, component, **kw):
+        ownership_calls.append((root, component, kw))
+        return True, "signalled"
+    app._read_ownership = lambda component: (777, "birth-777")
+    app._ownership.signal_owned = _accept
+    refused = app._kill_port_listener("6767", force=True, component="runner")
+    check("the exact recorded listener is accepted", refused == [])
+    check("force and exact observed pid reach the shared provenance authority",
+          ownership_calls[-1][1] == "runner"
+          and ownership_calls[-1][2] == {
+              "expected_pid": 777, "expected_birth": "birth-777",
+              "force": True, "retire": True})
 finally:
     app.subprocess.run = _orig
-    if _had is None:
-        _os.environ.pop("HARNESS_PORT_TAKEOVER", None)
-    else:
-        _os.environ["HARNESS_PORT_TAKEOVER"] = _had
+    app._read_ownership = _orig_read_owner
+    app._ownership.signal_owned = _orig_signal_owned
+    app._proc_cmdline = _orig_cmd
 
 print()
 if FAILS:

@@ -1,4 +1,4 @@
-/* Executable replay-grammar contract for U31's one live/recovery renderer. */
+/* Executable contract for the complete event grammar M.O.T currently renders. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -87,7 +87,8 @@ async function main(){
     {seq:13, type:'web_sources', data:[{url:'https://example.com', title:'Example'}]},
     {seq:14, type:'vision', source:'precaption', model:'vision-1'},
     {seq:15, type:'proxy_error', error:'upstream'},
-    {seq:16, type:'terminal', state:'completed'},
+    {seq:16, type:'future_upstream_event', detail:'inspect-only'},
+    {seq:17, type:'terminal', state:'completed'},
   ];
   await window.HarnessTurnStream.consume(response(grammar), {turn, holder, body, think});
 
@@ -99,10 +100,12 @@ async function main(){
   if (!holder._visionLine) throw new Error('renderer dropped the vision provenance event');
   if (!holder.children.some(node => node.className === 'sources'))
     throw new Error('renderer dropped web sources');
+  if (!calls.some(call => call[0] === 'inspect' && call[1] === 'future_upstream_event'))
+    throw new Error('unknown upstream events stopped being inspect-visible');
   if (body.textContent !== 'answer\n[proxy error: upstream]')
     throw new Error('delta/proxy text changed: ' + JSON.stringify(body.textContent));
-  if (!turn.done || turn.lastSeq !== 16) throw new Error('terminal/cursor state was not committed');
-  console.log('OK — complete Agent/Hermes event grammar survives the shared live/replay renderer');
+  if (!turn.done || turn.lastSeq !== 17) throw new Error('terminal/cursor state was not committed');
+  console.log('OK — M.O.T-supported Agent event grammar survives the shared live/replay renderer');
 }
 
 main().catch(error => { console.error('FAIL — ' + error.message); process.exit(1); });

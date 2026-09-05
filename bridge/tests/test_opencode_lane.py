@@ -532,11 +532,16 @@ def _run_seed(models, want="", extra_global=None, extra_project=None):
 # days after Debi deleted them in LM Studio.
 _ART = tempfile.mkdtemp(prefix="opencode-artifacts-")
 _GGUF_PATH = os.path.join(_ART, "q.gguf")
-open(_GGUF_PATH, "wb").write(b"x")
+from bridge.tests.model_fixture import gguf_bytes as _valid_gguf_bytes  # noqa: E402
+open(_GGUF_PATH, "wb").write(_valid_gguf_bytes())
 _MLX_PATH = os.path.join(_ART, "Qwen3-8B-4bit")
 os.makedirs(_MLX_PATH, exist_ok=True)
-open(os.path.join(_MLX_PATH, "config.json"), "w").write("{}")
-open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(b"x")
+open(os.path.join(_MLX_PATH, "config.json"), "w").write('{"model_type":"fixture"}')
+_st_header = json.dumps({"weight": {"dtype": "F32", "shape": [1],
+                                     "data_offsets": [0, 4]}},
+                        separators=(",", ":")).encode()
+open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(
+    len(_st_header).to_bytes(8, "little") + _st_header + b"\0\0\0\0")
 
 GGUF = {"id": "Qwen3-9B-Q4_0", "format": "gguf", "path": _GGUF_PATH, "ctx": 32768}
 MLX = {"id": "mlx-community/Qwen3-8B-4bit", "format": "mlx", "path": _MLX_PATH}
@@ -826,6 +831,14 @@ def test_the_provider_check_is_directory_scoped_and_patient():
     assert "-m 25" in seg, (
         "MEASURED: /provider answers with the WHOLE catalogue — 193 providers, 5.2MB — "
         "so an 8s budget was one slow moment from reporting a healthy lane as broken")
+    stamp = '_stamp_pidfile_from_port opencode "$OC_PORT"'
+    assert b.count(stamp) == 2, (
+        "listener identity is checked both before and after /provider; otherwise a "
+        "mid-request process swap can be attributed to the old child")
+    first = b.index(stamp)
+    request = b.index('"http://127.0.0.1:${OC_PORT}/provider"', first)
+    second = b.index(stamp, first + 1)
+    assert first < request < second < b.index("OC_CFGP=", request)
 
 
 def test_the_failure_line_names_the_restart_that_is_actually_needed():

@@ -64,7 +64,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ..core.appctx import PANEL, ROOT, app
 from ..core.events import publish
-from ..core.procs import cfg
+from ..core.procs import _ownership_matches, _read_ownership, cfg
 
 # ── THE RE-EXPORTED CURATION LAYER (bridge/core/comfycur.py) ─────────────────
 # Explicit, not `import *`: the underscore names below are named from the suite and
@@ -102,11 +102,8 @@ def comfy_url(path: str = "") -> str:
 
 
 def comfy_pid() -> "int | None":
-    try:
-        v = int((ROOT / "data" / "comfyui.pid").read_text().strip())
-    except (OSError, ValueError):
-        return None
-    return v if v > 0 else None
+    claim = _read_ownership("comfyui")
+    return claim[0] if claim and _ownership_matches(claim[0], "comfyui") else None
 
 
 def _footprint(pid: "int | None") -> "int | None":

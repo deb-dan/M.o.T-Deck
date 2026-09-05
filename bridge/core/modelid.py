@@ -6,8 +6,24 @@ The wire-identifier / registry-id distinction and the single source of truth for
 from __future__ import annotations
 
 import os
+import json
+import stat
 from .appctx import ROOT
 from .procs import _registry_models, cfg
+
+
+def _read_regular_json(path):
+    """Read one app-generated JSON fact without following links/special files."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"refusing non-regular state file: {path}")
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            return json.load(handle)
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def _runner_engine(rc: dict) -> str:
@@ -98,9 +114,13 @@ def display_model_id(wire: "str | None", models: list) -> str:
 
 
 def runner_wire_model() -> str:
-    """The wire identifier for the ACTIVE runner model (harness.yaml runner.model)."""
-    return wire_model_id((cfg().get("runner", {}) or {}).get("model") or "",
-                         _registry_models())
+    """Wire identifier for the live runner, falling back to intent only when down."""
+    rc = cfg().get("runner", {}) or {}
+    try:
+        live = _live_model_id(int(rc.get("port") or 6767))
+    except (TypeError, ValueError):
+        live = None
+    return wire_model_id(live or rc.get("model") or "", _registry_models())
 
 
 def _display_model(name):
@@ -191,13 +211,63 @@ def _reconcile_live(probed: "str | None", registry_ids: set, intent_model: "str 
     return intent_model or probed
 
 
+def _runner_launch_record() -> "dict | None":
+    """Exact still-live launch provenance, or None.
+
+    This is the authority for engines such as MLX whose ``/v1/models`` response may
+    enumerate cached models rather than identify the one this process loaded. The
+    record is accepted only while its PID and kernel birth stamp are the exact M.O.T
+    ownership claim for the current runner child.
+    """
+    try:
+        from .procs import _ownership_matches, _read_ownership
+        value = _read_regular_json(ROOT / "data" / "runner.active.json")
+        owner = _read_ownership("runner")
+        if (not isinstance(value, dict) or value.get("v") != 1 or not owner
+                or (value.get("pid"), value.get("birth")) != owner
+                or not _ownership_matches(value.get("pid"), "runner")
+                or value.get("engine") not in ("llamacpp", "mlxlm", "mlxvlm")
+                or not isinstance(value.get("model"), str) or not value["model"]
+                or not isinstance(value.get("wire"), str) or not value["wire"]):
+            return None
+        return value
+    except Exception:
+        return None
+
+
 def _live_model_id(port: int) -> "str | None":
-    """Authoritative live id: probe the runner, reconcile against the registry +
-    harness.yaml intent. None ⇒ nothing loaded (single source of truth for 'live')."""
+    """Best available live id, with launch provenance outranking list order.
+
+    A responsive endpoint proves that *a* model service exists, not which MLX cache
+    row it actively serves.  For the configured runner port, the exact owned-child
+    launch record is authoritative.  Without that record, only an exact registry-id
+    or registry-path response is accepted for MLX; ambiguity is reported as no live
+    identity rather than relabelling the saved pin as observed fact.
+    """
     probed = _runner_loaded_id(port)
     if not probed:
         return None
     models = _registry_models()
     ids = {m.get("id") for m in models}
-    intent = (cfg().get("runner", {}) or {}).get("model") or None
-    return _reconcile_live(probed, ids, intent, models)
+    rc = cfg().get("runner", {}) or {}
+    try:
+        is_runner_port = int(rc.get("port") or 6767) == int(port)
+    except (TypeError, ValueError):
+        is_runner_port = False
+    launch = _runner_launch_record() if is_runner_port else None
+    if launch:
+        # Written only after the exact owned child answered readiness. It remains
+        # truthful even if the registry row is later hidden or removed.
+        return launch["model"]
+    if probed in ids:
+        return probed
+    mapped = display_model_id(probed, models)
+    if mapped != probed:
+        return mapped
+    intent = rc.get("model") or None
+    intended = next((m for m in models if m.get("id") == intent), None)
+    if is_runner_port and intended and str(intended.get("format") or "").lower() == "mlx":
+        return None
+    # Legacy/no-marker llama.cpp still exposes its launched alias directly. Preserve
+    # that observed value; never replace it with a different saved intent.
+    return probed

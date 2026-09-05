@@ -298,11 +298,9 @@ def test_no_pattern_or_port_scoped_kills_anywhere_in_this_lane():
     `lsof -ti tcp:3287 | xargs kill -9` to clear "our" ACP port, and closed her Desktop
     app TWICE. Same shape as the recorded Unsloth incident.
 
-    THE GENERAL RULE THIS PINS: a process may be signalled only when its own IDENTITY
-    says it is ours — our child handle, or our pidfile confirmed by reading the live
-    process's command line AND its GOOSE_PATH_ROOT. A port, a name, or a pattern is
-    never identity. So this lane's files may not contain pkill/killall, may not pipe
-    lsof into kill, and every signal must be gated on is_ours().
+    THE GENERAL RULE THIS PINS: a process may be signalled only through its live child
+    handle or an exact PID+kernel-birth launch record. A path, environment, port, name,
+    or pattern is corroboration, never authority.
     """
     for rel in ("bridge/gooseui.py", "bridge/routers/gooseui.py",
                 "scripts/install_goose_ui.sh"):
@@ -317,22 +315,10 @@ def test_no_pattern_or_port_scoped_kills_anywhere_in_this_lane():
     router = open(os.path.join(ROOT, "bridge", "routers", "gooseui.py"),
                   encoding="utf-8").read()
     assert "def is_ours(" in router
-    # EVERY function that signals must ALSO consult is_ours — asserted structurally
-    # (ast), not by text order: "the guard is written above the kill" is a property of
-    # the file's layout, while "this function checks before it kills" is the property
-    # that matters and survives a reshuffle.
-    import ast
-    tree = ast.parse(router)
-    signalling = [fn for fn in ast.walk(tree)
-                  if isinstance(fn, ast.FunctionDef)
-                  and "killpg" in ast.get_source_segment(router, fn)]
-    assert signalling, "no signalling function found — did the stop path move?"
-    for fn in signalling:
-        seg = ast.get_source_segment(router, fn)
-        assert "is_ours(" in seg, f"{fn.name}() signals without an identity check"
-    # …and the identity check demands BOTH facts: our binary AND our fenced path root.
-    assert "goose_bin(ROOT) in out" in router
-    assert 'f"GOOSE_PATH_ROOT={_ui.path_root(ROOT)}" in out' in router
+    assert "_ownership.ownership_matches" in router
+    assert "_ownership.signal_owned" in router
+    assert "expected_birth=" in router and "group=True" in router
+    assert "os.killpg" not in router, "route bypasses the shared locked authority"
 
 
 def test_bundle_target_refuses_traversal():

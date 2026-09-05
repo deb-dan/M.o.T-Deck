@@ -201,6 +201,9 @@ check('a lane switch detaches the running durable turn FIRST, before the lane fl
 before(mode, "await detachTurnNow('lane switch')", 'chatPane.mode = m;',
   '…and detach is ordered before the write');
 check('setMode is async so the stop can be awaited', /async function setMode\(m\)/.test(html));
+check('every Chat↔Agent lane change re-selects the shared session so returning to '
+    + 'the producer lane runs active-turn reconciliation instead of retaining stale DOM',
+  /else \{[\s\S]*loadSessions\(\);[\s\S]*if \(chatPane\.sid\) await selectSession\(chatPane\.sid\);/.test(mode));
 
 /* ── 5. the send path owns + releases the turn ───────────────────────────── */
 /* sendChat is sliced by markers rather than brace-matched: its comments contain
@@ -212,7 +215,7 @@ if (sendAt < 0) throw new Error('sendChat not found in the panel');
 const sendEnd = html.indexOf('/* ====', sendAt);
 const send = html.slice(sendAt, sendEnd > 0 ? sendEnd : sendAt + 20000);
 check('sendChat creates the turn (lane + AbortController + stage) before fetching',
-  /const turn = \{lane: chatPane\.mode, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
+  /const turn = \{lane: chatPane\.mode, session: chatPane\.sid, stage: 'connecting', ctl: new AbortController\(\)/.test(send));
 check('the fetch carries the abort signal — without it nothing can cancel a read',
   /signal: turn\.ctl\.signal/.test(send));
 check('the finally clears the timer AND the turn handle (a stale curTurn would '
@@ -225,6 +228,13 @@ check('a deliberate abort is not reported as a stream error',
 check('conv-mode turn hooks are still inside the send path\'s try/finally, so a '
     + 'force-ended turn still resumes the conversation',
   /convEvent\('turn_start'\)/.test(send) && /convTurnEnd\(holder\)/.test(send));
+check('a pre-acceptance Chat/Agent refusal restores the exact prompt instead of '
+    + 'clearing it under a safe same-session conflict',
+  /turn\.lane !== 'hermes' && !turn\.id/.test(send)
+  && /inp\.value = text \+ \(inp\.value \? '\\n' \+ inp\.value : ''\)/.test(send)
+  && /\[not sent: /.test(send));
+check('a rejected local turn is never stamped as if it reached durable history',
+  /!turn\.detached && \(turn\.lane === 'hermes' \|\| turn\.id\)/.test(send));
 
 /* ── 6. the panel watchdog + the heartbeat it depends on ─────────────────── */
 const arm = grab('turnArm');

@@ -190,6 +190,7 @@ _LANES = (
     "routers.odychat",
     "core.yamlset",
     "routers.model_visibility",
+    "core.modeldelete",
     "routers.models",
     "routers.model_rescan",
     # routers.aux — the aux-runner lane, split out of routers.models by the U64 slice
@@ -282,10 +283,16 @@ _LANES = (
     # routers.components — the ONE identity-verified stop path, which it must never
     # reimplement — so it stays AFTER that lane here as well as on disk.
     "routers.quitall",
+    # Shared launch-provenance authority. Appended by the same new-module rule and
+    # included in the facade so historic bridge.app imports/monkeypatches still reach
+    # the implementation used by process-management lanes.
+    "core.ownership",
     # U31 durable local Chat/Agent turns. Appended: new modules may not separate
     # source-view neighbours which encode the old monolith's route positions.
     "core.turns",
     "routers.turns",
+    # M.O.T-owned reconciliation around Hermes's split WhatsApp enablement state.
+    "routers.hermeschannels",
 )
 
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,

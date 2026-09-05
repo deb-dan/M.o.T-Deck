@@ -125,6 +125,7 @@ def _fake_script(fn):
 orig_script, orig_tracked = app._script, app._script_tracked
 orig_set = app._set_runner_model
 orig_live, orig_reg = app._live_model_id, app._registry_models
+orig_alive = app.model_file_alive
 _fake_script(_ok_script)
 app._set_runner_model = lambda *_: None
 
@@ -139,6 +140,9 @@ _REG_U15 = [{"id": "old", "format": "gguf", "path": str(_TMP)},
             {"id": "deleted-27b", "format": "gguf", "path": "/nowhere/at/all/model.gguf"}]
 app._registry_models = lambda: _REG_U15
 app._live_model_id = lambda *_a, **_k: None      # default: the runner answers nothing
+# This suite owns switch control-flow, not binary format validation. Use an explicit
+# readiness verdict instead of disguising models.json as a GGUF fixture.
+app.model_file_alive = lambda mid: mid in {"old", "new"}
 
 try:
     app._SWITCH.update(busy=True, log="starting…")
@@ -201,6 +205,7 @@ try:
                "or pick another model\n2.49.854.040 W srv operator(): unauthorized\n"))
     app._registry_models = lambda: [
         {"id": "new", "format": "gguf", "path": "/nowhere/at/all/model.gguf"}]
+    app.model_file_alive = lambda _mid: False
     app._SWITCH.update(busy=True, log="starting…")
     app._do_switch("new", "", False, False)
     check("U15 J3: the failure line is a SENTENCE, not log vomit",
@@ -222,6 +227,7 @@ finally:
     app._script, app._script_tracked = orig_script, orig_tracked
     app._set_runner_model = orig_set
     app._live_model_id, app._registry_models = orig_live, orig_reg
+    app.model_file_alive = orig_alive
     app._SWITCH.update(busy=False, log="")
 
 # ══ S28 — THE COHERENCE WAVE: A SWITCH RE-SEEDS EVERY DEPENDENT ═════════════

@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 # app layer instead of one file. Read bridge/appsrc.py's header for why the
 # assertions are source-text in the first place and why order is part of it.
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+from bridge.tests.model_fixture import gguf_bytes              # noqa: E402
 # Neutralize any SOCKS proxy env so importing the app's httpx clients succeeds.
 for _v in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
     os.environ.pop(_v, None)
@@ -56,9 +57,9 @@ def touch(path, size=0):
 
 def touch_gguf(path, size=24):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    header = b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2
+    payload = gguf_bytes()
     with open(path, "wb") as f:
-        f.write(header + b"\0" * max(0, size - len(header)))
+        f.write(payload + b"\0" * max(0, size - len(payload)))
 
 
 # ══ 1. voice.audio_download_entry — the download→registry builder ═══════════════
@@ -378,6 +379,19 @@ legacy_local = {k: v for k, v in same_local.items() if k != "kind"}
 legacy_fresh = sr.merge([downloaded], [], [], [legacy_local])
 check("a legacy format-only fresh row dedupes against a modern download row",
       legacy_fresh == [downloaded])
+
+tts_backbone = os.path.join(identity_root, "tts-backbone.gguf")
+tts_projector_a = os.path.join(identity_root, "tts-projector-a.gguf")
+tts_projector_b = os.path.join(identity_root, "tts-projector-b.gguf")
+for p in (tts_backbone, tts_projector_a, tts_projector_b):
+    touch(p, 8)
+tts_a = {"id": "tts", "source": "download", "format": "tts-gguf",
+         "path": tts_backbone, "mmproj": tts_projector_a}
+tts_b = {"id": "tts", "source": "local", "kind": "audio", "format": "tts-gguf",
+         "path": tts_backbone, "mmproj": tts_projector_b}
+tts_distinct = sr.merge([tts_a], [], [], [tts_b])
+check("TTS rows sharing a backbone but using different projectors remain distinct",
+      len(tts_distinct) == 2 and tts_distinct[1]["id"] == "tts-local")
 
 separate = sr.merge([downloaded], [], [],
                     [audio_row("parakeet-tdt-0.6b-v3", local_dir, "local")])

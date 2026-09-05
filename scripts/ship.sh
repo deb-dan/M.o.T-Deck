@@ -34,9 +34,8 @@ DST="$HOME/Library/Application Support/Harness"
 APP=""
 
 # A Finder install may localize the .app filename (M.O.T.app) while preserving this
-# bundle's internal identity.  Resolve the installed bundle by that identity, never by
-# the display name or filename alone.  `--resolve-app-fixtures` below is a test-only
-# seam: production always considers the four accepted installed locations.
+# bundle's internal identity. Resolve every immediate .app in the two installation
+# roots by that identity, never by display name or an allowlist of filenames.
 RESOLVE_FIXTURES=0
 RESOLVE_FIXTURE_CANDIDATES=()
 CONFIG_FIXTURES=0
@@ -47,6 +46,13 @@ CONFIG_FIXTURE_BINARY=""
 config_changed=0
 
 _swift_string() {   # one Swift string literal payload, with no quoting ambiguity
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+_applescript_string() { # one AppleScript string literal payload
   local value="$1"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
@@ -97,18 +103,19 @@ _resolve_installed_app() {
   elif [[ "$RESOLVE_FIXTURES" -eq 1 ]]; then
     candidates=("${RESOLVE_FIXTURE_CANDIDATES[@]:-}")
   else
-    candidates=(
-      "/Applications/Harness.app"
-      "/Applications/M.O.T.app"
-      "$HOME/Applications/Harness.app"
-      "$HOME/Applications/M.O.T.app"
-    )
+    for candidate in /Applications/*.app "$HOME"/Applications/*.app; do
+      [[ -d "$candidate" ]] && candidates+=("$candidate")
+    done
   fi
 
   for candidate in "${candidates[@]}"; do
     _valid_harness_app "$candidate" || continue
     candidate="$(_canonical_bundle_path "$candidate")" || continue
-    valid+=("$candidate")
+    local seen=0 existing
+    for existing in "${valid[@]:-}"; do
+      [[ "$existing" == "$candidate" ]] && { seen=1; break; }
+    done
+    [[ "$seen" -eq 1 ]] || valid+=("$candidate")
   done
 
   if [[ -n "${HARNESS_APP_PATH:-}" && ${#valid[@]} -eq 0 ]]; then
@@ -119,11 +126,7 @@ _resolve_installed_app() {
   fi
 
   if [[ ${#valid[@]} -eq 0 ]]; then
-    echo "[ship] ERROR: no valid installed Harness bundle found. Accepted locations:"
-    echo "[ship]        /Applications/Harness.app"
-    echo "[ship]        /Applications/M.O.T.app"
-    echo "[ship]        $HOME/Applications/Harness.app"
-    echo "[ship]        $HOME/Applications/M.O.T.app"
+    echo "[ship] ERROR: no valid installed Harness bundle found under /Applications or $HOME/Applications."
     echo "[ship]        Valid bundles require CFBundleIdentifier local.harness.app and"
     echo "[ship]        executable CFBundleExecutable Harness at Contents/MacOS/Harness."
     echo "[ship]        Set HARNESS_APP_PATH to an explicit valid bundle path to override."
@@ -205,6 +208,14 @@ if [[ "$RESOLVE_FIXTURES" -eq 1 ]]; then
   exit 0
 fi
 
+# The bridge must leave this script's process group. Continuing without the one
+# available macOS setsid path knowingly recreates the component-death incident, so
+# reject before touching the snapshot, app, or any running process.
+command -v perl >/dev/null 2>&1 || {
+  echo "[ship] ERROR: perl is unavailable; refusing to launch the bridge without its own session."
+  exit 1
+}
+
 # Config.swift is generated from THIS checkout on every real ship. It is never evidence
 # of a prior root: keeping an old generated file would let an archived checkout survive
 # a rebuild even after all copied code came from the canonical tree. This remains below
@@ -212,23 +223,41 @@ fi
 _prepare_swift_config "$ROOT/app/Config.swift" "$ROOT" \
   || { echo "[ship] ERROR: could not prepare app/Config.swift"; exit 1; }
 
-# The cowork sandbox cannot unlink files under this mount, so an interrupted git
-# operation there leaves .git/HEAD.lock / .git/index.lock behind and every later
-# commit fails with "Unable to create ... File exists". They ARE removable from the
-# Mac, which is the only place ship.sh runs — so clear them here, best-effort.
-# ⚠️ PENDING FABLE QA — ops-path edit. Safe by construction (no git process runs
-# during ship.sh, and failure is swallowed), but ship.sh is Fable-lane.
-rm -f "$ROOT/.git/HEAD.lock" "$ROOT/.git/index.lock" 2>/dev/null || true
-
 [[ -d "$DST" ]] || { echo "[ship] ERROR: no snapshot at $DST (fat app not provisioned?)"; exit 1; }
 # A copied venv can retain console shebangs and PEP 660 editable maps into its former
 # checkout. Repair generated pointers before the gate uses any repo venv; this helper
 # is stdlib-only so it deliberately uses a host python, never the venv it is checking.
 VENV_REPAIR_PY="$(command -v python3 || true)"
 [[ -n "$VENV_REPAIR_PY" ]] || { echo "[ship] ERROR: no host python3 for relocated-venv repair"; exit 1; }
+OWNED_VENV_ARGS=(
+  --owned-venv bridge-venv --owned-venv hermes-venv
+  --owned-venv mlx-venv --owned-venv odysseus-venv --owned-venv searxng-venv
+  --owned-venv aider-venv --owned-venv comfyui-venv --owned-venv music-venv
+  --owned-venv unsloth-venv --owned-venv voicebox-venv --owned-venv voicestudio-venv
+)
+_repair_deepseek_root() { # <root> <helper path>
+  local target="$1" helper="$2" prefix home node=""
+  prefix="$target/data/deepseek/npm"
+  home="$target/data/deepseek/home"
+  # No installed DeepSeek dependency tree means there are no owned profile links to
+  # repair. Once installed, a stale generated tree is a hard refusal, not a warning.
+  [[ -f "$prefix/node_modules/@deepseek-ai/dsh/package.json" ]] || return 0
+  for node in "$target/data/node/bin/node" "$(command -v node 2>/dev/null || true)"; do
+    [[ -n "$node" && -x "$node" ]] && break
+    node=""
+  done
+  [[ -n "$node" ]] || {
+    echo "[ship] ERROR: DeepSeek is installed under $target but no existing node runtime can repair its generated profile links."
+    return 1
+  }
+  "$VENV_REPAIR_PY" "$helper" --prefix "$prefix" --home "$home" --node "$node"
+}
 echo "[ship] repair generated venv pointers in repository"
-"$VENV_REPAIR_PY" "$ROOT/scripts/repair_relocated_venvs.py" --root "$ROOT" \
+"$VENV_REPAIR_PY" "$ROOT/scripts/repair_relocated_venvs.py" --root "$ROOT" "${OWNED_VENV_ARGS[@]}" \
   || { echo "[ship] ERROR: repository relocated-venv repair refused or failed"; exit 1; }
+echo "[ship] repair generated DeepSeek profile links in repository"
+_repair_deepseek_root "$ROOT" "$ROOT/scripts/repair_deepseek_profiles.py" \
+  || { echo "[ship] ERROR: repository DeepSeek profile repair refused or failed"; exit 1; }
 # ── contract gate (runs BEFORE anything is copied) ────────────────────────────
 # The gate used to be a manual step, which means it was a step that could be — and
 # was — skipped. Now the ONLY way past a red gate is to say so out loud.
@@ -319,8 +348,11 @@ done
 # the same narrow repair after the helper itself has reached the snapshot and before a
 # bridge/component can be restarted; a healthy snapshot is simply an idempotent no-op.
 echo "[ship] repair generated venv pointers in snapshot"
-"$VENV_REPAIR_PY" "$DST/scripts/repair_relocated_venvs.py" --root "$DST" \
+"$VENV_REPAIR_PY" "$DST/scripts/repair_relocated_venvs.py" --root "$DST" "${OWNED_VENV_ARGS[@]}" \
   || { echo "[ship] ERROR: snapshot relocated-venv repair refused or failed"; exit 1; }
+echo "[ship] repair generated DeepSeek profile links in snapshot"
+_repair_deepseek_root "$DST" "$DST/scripts/repair_deepseek_profiles.py" \
+  || { echo "[ship] ERROR: snapshot DeepSeek profile repair refused or failed"; exit 1; }
 
 # ── VERSION: the release number the app now READS (U56, 2026-09-02) ───────────
 # Until this line the top-level VERSION file was copied by exactly one thing — the FAT
@@ -497,61 +529,12 @@ fi
 # in the repo would then never reach the app — its card simply never appears. So:
 # ADDITIVE merge only. Existing keys/values in the snapshot are never touched; new
 # components arrive as installed:false (install state is per-machine).
-# Pick a python that HAS pyyaml. The bridge venv always does; a bare system python3
-# often does NOT — and skipping silently there would hide a missing component card
-# (exactly the failure this merge exists to prevent), so a miss is loud.
-MERGE_PY=""
-for _c in "$DST/data/bridge-venv/bin/python" "$ROOT/data/bridge-venv/bin/python" python3; do
-  if "$_c" -c "import yaml" >/dev/null 2>&1; then MERGE_PY="$_c"; break; fi
-done
-if [[ -z "$MERGE_PY" ]]; then
-  echo "[ship] WARN: no python with pyyaml found — MANIFEST MERGE SKIPPED."
-  echo "[ship]       New components will NOT get a Mission Control card until this is fixed."
-else
-"$MERGE_PY" - "$ROOT/harness.yaml" "$DST/harness.yaml" <<'PY'
-import sys, shutil, datetime, yaml
-# CRITICAL: safe_dump writes an EMPTY value as the literal `null`, and the shell
-# readers (awk/sed in start_component.sh) then take the 4-char string "null" as a
-# real value — e.g. `runner.binary:` (empty = auto-discover) became
-# `runner.binary: null` and every model load died with "not executable: null".
-# Emit None as a truly empty scalar so an empty key round-trips as an empty key.
-yaml.add_representer(type(None),
-                     lambda d, _v: d.represent_scalar('tag:yaml.org,2002:null', ''),
-                     Dumper=yaml.SafeDumper)
-src_p, dst_p = sys.argv[1], sys.argv[2]
-try:
-    src = yaml.safe_load(open(src_p)) or {}
-    dst = yaml.safe_load(open(dst_p)) or {}
-except Exception as e:
-    print(f"[ship] WARN: could not read a harness.yaml ({e}) — manifest merge skipped")
-    sys.exit(0)
-added = []
-for k, v in src.items():
-    if k not in dst:
-        dst[k] = v; added.append(k)
-for section, force in (("components", True), ("build", False)):
-    s, d = src.get(section), dst.get(section)
-    if isinstance(s, dict) and isinstance(d, dict):
-        for name, cfg in s.items():
-            if name not in d:
-                if force and isinstance(cfg, dict):
-                    cfg = dict(cfg); cfg["installed"] = False; cfg["enabled"] = False
-                d[name] = cfg; added.append(f"{section}.{name}")
-if added:
-    shutil.copy2(dst_p, dst_p + ".bak-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
-    # keep only the 5 newest backups (Fable QA: unbounded .bak accumulation)
-    import glob, os
-    baks = sorted(glob.glob(dst_p + ".bak-*"))
-    for old in baks[:-5]:
-        try: os.remove(old)
-        except OSError: pass
-    with open(dst_p, "w") as f:
-        yaml.safe_dump(dst, f, sort_keys=False, default_flow_style=False)
-    print("[ship] manifest: added " + ", ".join(added) + " (snapshot backed up)")
-else:
-    print("[ship] manifest: up to date (" + str(len(dst.get("components") or {})) + " components)")
-PY
-fi
+# One stdlib transaction now owns every harness.yaml write: flock, latest read,
+# line-preserving additive transform, same-directory fsync+replace. It never serializes
+# live state through PyYAML, so empty values cannot become literal `null` and comments,
+# ordering, pins, install flags and unrelated bytes remain exact.
+"$DST/data/bridge-venv/bin/python" "$ROOT/scripts/merge_manifest.py" \
+  "$ROOT/harness.yaml" "$DST/harness.yaml"
 
 echo "[ship] restarting app + bridge (components stay up)"
 # ⛔ PROCESS-KILL RULE (CLAUDE.md; U19 echo sweep 2026-08-29). This used to be
@@ -559,65 +542,70 @@ echo "[ship] restarting app + bridge (components stay up)"
 #   lsof -ti tcp:8700 | xargs kill -9  → a port clear with NO ownership check at all
 # Both are the class that closed Debi's standalone Unsloth and goose Desktop. Now:
 #   1. ask OUR app to quit (an Apple Event to the app, not a signal by name);
-#   2. any survivor is identified by its EXECUTABLE PATH being this bundle;
-#   3. the :8700 listener is reaped only if its command line names this snapshot or
-#      this repo — a stranger on :8700 stops the ship with the honest reason instead.
+#   2. a survivor is reported and the ship FAILS — an executable path corroborates
+#      identity but cannot prove that this invocation launched the process;
+#   3. the :8700 listener is reaped only with the exact launch record written by its
+#      spawner — a stranger on :8700 stops the ship with the honest reason instead.
 _ship_app_pids() {   # pids whose executable path IS "$APP" (path evidence, not a name)
   ps -Ao pid=,command= 2>/dev/null | awk -v p="$APP/Contents/MacOS/" \
     '{ pid=$1; $1=""; sub(/^[[:space:]]+/,""); if (index($0, p) == 1) print pid }'
 }
-osascript -e 'tell application id "local.harness.app" to quit' >/dev/null 2>&1 || true
+_APP_AS="$(_applescript_string "$APP")"
+osascript -e "tell application \"$_APP_AS\" to quit" >/dev/null 2>&1 || true
 for _ in $(seq 1 10); do
   [[ -z "$(_ship_app_pids)" ]] && break
   sleep 1
 done
 for _pid in $(_ship_app_pids); do
-  echo "[ship] app pid $_pid did not quit on request — SIGTERM (ours: bundle path verified)"
-  kill "$_pid" 2>/dev/null || true
+  echo "[ship] REFUSING to ship: the selected app's pid $_pid did not quit after the targeted Apple Event."
+  echo "[ship]   Its bundle path matches, but path evidence alone is not launch ownership."
+  echo "[ship]   Quit that M.O.T window explicitly, then re-run ./scripts/ship.sh."
+  exit 1
 done
 sleep 1
-# ── REAPING THE OLD BRIDGE: PIDFILE FIRST, IDENTITY ALWAYS ────────────────────
-# The bridge writes data/bridge.pid at boot (bridge/core/singleton.py), so the pid we
-# stop is the one that ANNOUNCED itself as this harness's bridge — the same standard
-# start_component.sh's _reap_pidfile already holds for components. The :8700 listener
-# is still consulted, because a bridge started before that shipped wrote no pidfile,
-# but a listener is only ever signalled when its FULL command line verifies as ours
-# (this snapshot's or this repo's venv python running `uvicorn bridge.app:app`).
-# Anything else stops the ship with the honest reason. Nothing is killed by name and
-# no port is ever cleared blind (CLAUDE.md PROCESS-KILL RULE).
-_bridge_cmd_is_ours() {   # <command line>
-  local c="$1"
-  [[ -z "$c" ]] && return 1
-  [[ "$c" == *"uvicorn"* && "$c" == *"bridge.app:app"* ]] || return 1
-  [[ "$c" == *"$DST/data/bridge-venv/bin/python"* || "$c" == *"$ROOT/data/bridge-venv/bin/python"* ]]
+# ── REAPING THE OLD BRIDGE: LAUNCH RECORD OR NO SIGNAL ──────────────────────
+# The spawner records the exact child PID plus its kernel birth stamp. Paths, names,
+# CWD, a listener, and a plain pidfile remain diagnostics and never become authority.
+# Verification + signal + cleanup use the same locked primitive as component stops;
+# splitting them into shell syscalls would leave a relaunch race.
+_ownership_cli() {
+  "$DST/data/bridge-venv/bin/python" "$DST/bridge/core/ownership.py" "$@"
 }
+_bridge_owner_ok() { _ownership_cli matches "$DST" bridge "$1" >/dev/null 2>&1; }
 _bridge_stop() {   # <pid> <why>
-  local pid="$1" why="$2" c
-  c="$(ps -o command= -p "$pid" 2>/dev/null | tr '\n' ' ')"
-  if _bridge_cmd_is_ours "$c"; then
-    echo "[ship] stopping the previous bridge, pid $pid ($why, identity verified)"
-    kill "$pid" 2>/dev/null || true       # SIGTERM: --timeout-graceful-shutdown bounds it
-    for _ in $(seq 1 12); do kill -0 "$pid" 2>/dev/null || return 0; sleep 1; done
-    echo "[ship] bridge pid $pid ignored SIGTERM for 12s — SIGKILL (still identity verified)"
-    kill -9 "$pid" 2>/dev/null || true
-    return 0
+  local pid="$1" why="$2" detail birth
+  birth="$(awk -F '\t' -v p="$pid" '$1 == "v1" && $2 == p {print $3; exit}' \
+    "$DST/data/bridge.owner" 2>/dev/null || true)"
+  if ! detail="$(_ownership_cli signal "$DST" bridge "$pid" --birth "$birth" --keep-claim 2>&1)"; then
+    return 1
   fi
-  return 1
+  echo "[ship] stopping the previous bridge, pid $pid ($why, launch record verified)"
+  for _ in $(seq 1 12); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      # The graceful shutdown normally releases its own claim. If hard process exit
+      # skipped that hook, the locked helper recognizes and discards only this stale
+      # claim; a concurrent new bridge claim cannot be erased.
+      _ownership_cli retire "$DST" bridge "$pid" --birth "$birth" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[ship] bridge pid $pid ignored SIGTERM for 12s — SIGKILL (same launch record reverified)"
+  _ownership_cli signal "$DST" bridge "$pid" --birth "$birth" --force >/dev/null 2>&1
 }
 _BPF="$DST/data/bridge.pid"
 if [[ -f "$_BPF" ]]; then
   _bpid="$(tr -cd '0-9' < "$_BPF" 2>/dev/null || true)"
   if [[ -n "$_bpid" ]] && kill -0 "$_bpid" 2>/dev/null; then
     _bridge_stop "$_bpid" "data/bridge.pid" \
-      || echo "[ship] data/bridge.pid names pid $_bpid, which is not this harness's bridge — leaving it alone."
+      || echo "[ship] data/bridge.pid names pid $_bpid without a matching launch record — leaving it alone."
   fi
-  rm -f "$_BPF"
 fi
 for _pid in $(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null); do
   _cmd="$(ps -o command= -p "$_pid" 2>/dev/null | tr '\n' ' ')"
   [[ -z "$_cmd" ]] && continue            # vanished between the probe and the check
-  if ! _bridge_stop "$_pid" "the :8700 listener, no pidfile"; then
-    echo "[ship] REFUSING to ship: :8700 is held by pid $_pid, which is not this harness:"
+  if ! _bridge_stop "$_pid" "the :8700 listener plus exact launch record"; then
+    echo "[ship] REFUSING to ship: :8700 is held by pid $_pid without a matching M.O.T launch record:"
     echo "[ship]   $_cmd"
     echo "[ship]   Stop that process yourself, then re-run ./scripts/ship.sh."
     exit 1
@@ -645,15 +633,16 @@ echo "[ship] starting the snapshot bridge (own session, detached from this scrip
   nohup perl -MPOSIX -e '
     my $s = POSIX::setsid();
     if (!defined($s) || $s < 0) {
-      print STDERR "[ship] detach: setsid failed ($!) - the bridge keeps this script s process group\n";
+      die "[ship] detach: setsid failed ($!) - refusing unsafe bridge launch\n";
     }
     exec { $ARGV[0] } @ARGV or die "[ship] detach: cannot exec $ARGV[0]: $!\n";
   ' -- "$DST/data/bridge-venv/bin/python" -m uvicorn bridge.app:app \
         --host 127.0.0.1 --port 8700 --timeout-graceful-shutdown 10 \
     >>"$DST/data/logs/bridge.log" 2>&1 &
-  # No pidfile is written here on purpose: the bridge records its OWN pid in
-  # data/bridge.pid as its first act (bridge/core/singleton.py), which is the pid a
-  # later ship must reap. A pidfile written from outside could name a wrapper.
+  _bridge_child="$!"
+  # perl execs the bridge without changing PID; this is the exact child handle owned
+  # by this launch site, recorded before the bridge finishes its guarded import.
+  bash "$DST/scripts/start_component.sh" --record-child bridge "$_bridge_child"
 )
 # 90s, not 30: a cold snapshot bridge (imports + registry read) can legitimately
 # take longer than 30s.  GET /api/status is the control API's health truth; a static
@@ -679,6 +668,24 @@ if [[ "$UP" -ne 1 ]]; then
   else
     echo "[ship] (no $DST/data/logs/bridge.log yet)"
   fi
+  exit 1
+fi
+
+# A 2xx alone is not proof that OUR newly launched bridge answered. Bind the response
+# to the exact recorded child and validate the control-API shape before opening M.O.T.
+_served_pid="$(lsof -ti tcp:8700 -sTCP:LISTEN 2>/dev/null | head -1)"
+if [[ -z "$_served_pid" ]] || ! _bridge_owner_ok "$_served_pid"; then
+  echo "[ship] REFUSING to open: /api/status answered, but :8700 is not the exact bridge child this ship launched."
+  exit 1
+fi
+STATUS_JSON="$(curl -sf -m 3 http://127.0.0.1:8700/api/status)"
+if ! printf '%s' "$STATUS_JSON" | "$DST/data/bridge-venv/bin/python" -c '
+import json, sys
+value = json.load(sys.stdin)
+ok = isinstance(value, dict) and value.get("bridge") == "ok" and isinstance(value.get("components"), dict)
+raise SystemExit(0 if ok else 1)
+'; then
+  echo "[ship] REFUSING to open: /api/status did not return the M.O.T control-API contract."
   exit 1
 fi
 

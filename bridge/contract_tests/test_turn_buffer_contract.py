@@ -116,13 +116,18 @@ def test_request_retry_is_idempotent_but_second_active_turn_conflicts():
     asyncio.run(journey())
 
 
-def test_different_lanes_and_sessions_can_run_concurrently():
+def test_chat_and_agent_cannot_write_one_session_concurrently_but_other_sessions_can():
     async def journey():
         store = TurnStore()
-        rows = [await store.create(body("a", "chat", "same")),
-                await store.create(body("b", "agent", "same")),
-                await store.create(body("c", "chat", "other"))]
-        assert len({row[0]["id"] for row in rows}) == 3
+        first = await store.create(body("a", "chat", "same"))
+        try:
+            await store.create(body("b", "agent", "same"))
+        except TurnConflict as exc:
+            assert exc.turn_id == first[0]["id"]
+        else:
+            raise AssertionError("Chat and Agent were allowed to write one session concurrently")
+        other = await store.create(body("c", "agent", "other"))
+        assert other[0]["id"] != first[0]["id"]
 
     asyncio.run(journey())
 
@@ -201,6 +206,69 @@ def test_terminal_records_are_pruned_continuously(monkeypatch):
         await wait_terminal(store, second["id"])
         assert await store.metadata(first["id"]) is None
         assert (await store.metadata(second["id"]))["state"] == "completed"
+
+    monkeypatch.setattr(turnmod, "MAX_TERMINAL_TURNS", 1)
+    asyncio.run(journey())
+
+
+def test_terminal_pruning_cannot_delete_a_frame_from_an_attached_subscriber(monkeypatch):
+    async def journey():
+        store = TurnStore()
+
+        async def first_producer():
+            yield frame({"delta": "visible-before-terminal"})
+            yield "data: [DONE]\n\n"
+
+        async def done_producer():
+            yield "data: [DONE]\n\n"
+
+        first, _ = await store.create(body("first", session="one"))
+        stream = store.events(first["id"])
+        waiting = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)  # attach the subscriber lease before production
+        await store.start(first["id"], first_producer)
+        assert (await waiting)["delta"] == "visible-before-terminal"
+        await wait_terminal(store, first["id"])
+
+        # Completing a newer turn crosses the one-terminal cap. The suspended
+        # first stream must still own and receive its terminal frame.
+        second, _ = await store.create(body("second", session="two"))
+        await store.start(second["id"], done_producer)
+        await wait_terminal(store, second["id"])
+        assert await store.metadata(first["id"]) is not None
+        terminal = await anext(stream)
+        assert terminal["type"] == "terminal" and terminal["state"] == "completed"
+        await stream.aclose()
+        assert await store.metadata(first["id"]) is None
+
+    monkeypatch.setattr(turnmod, "MAX_TERMINAL_TURNS", 1)
+    asyncio.run(journey())
+
+
+def test_route_style_subscription_reserves_lease_before_iteration(monkeypatch):
+    async def journey():
+        store = TurnStore()
+
+        async def done_producer():
+            yield "data: [DONE]\n\n"
+
+        first, _ = await store.create(body("first", session="one"))
+        await store.start(first["id"], done_producer)
+        await wait_terminal(store, first["id"])
+        subscription = await store.subscribe(first["id"])
+        assert subscription is not None
+        stream, release = subscription
+
+        # The HTTP handler has reserved the row but StreamingResponse has not begun
+        # iterating it yet. A newer completion must not prune the reserved final frame.
+        second, _ = await store.create(body("second", session="two"))
+        await store.start(second["id"], done_producer)
+        await wait_terminal(store, second["id"])
+        assert await store.metadata(first["id"]) is not None
+        rows = [row async for row in stream]
+        assert rows[-1]["type"] == "terminal"
+        await release()  # background cleanup is deliberately idempotent
+        assert await store.metadata(first["id"]) is None
 
     monkeypatch.setattr(turnmod, "MAX_TERMINAL_TURNS", 1)
     asyncio.run(journey())

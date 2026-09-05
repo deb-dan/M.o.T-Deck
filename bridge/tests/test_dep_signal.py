@@ -27,6 +27,7 @@ Run: python3 bridge/tests/test_dep_signal.py
 """
 import re
 import sys
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -37,11 +38,20 @@ from bridge.routers.components import (                         # noqa: E402
     NEEDS_SOFT, needs_derive, needs_message, start_failure_reason)
 from bridge.core.health import (                                # noqa: E402
     MODEL_FILE_MISS_GONE, file_state_forget, file_state_track, path_present)
+from bridge.tests.model_fixture import gguf_bytes, safetensors_bytes  # noqa: E402
 
 SWIFT = (ROOT / "app" / "main.swift").read_text()
 
 FAILS = []
 CHECKS = [0]
+
+
+def fake_gguf() -> bytes:
+    return gguf_bytes()
+
+
+def fake_safetensors() -> bytes:
+    return safetensors_bytes()
 
 
 def ok(cond, label):
@@ -344,8 +354,12 @@ def test_two_strikes_before_we_accuse_a_disk():
     ok(MODEL_FILE_MISS_GONE == 2, "…and the threshold is a named constant")
     # A single good sample forgets the whole streak: a mount that comes back must not
     # stay accused, and a file that blips twice a day must never accumulate.
-    ok(file_state_track("t", str(ROOT / "harness.yaml"))["state"] == "ok",
-       "a file that IS there reads ok")
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        present = Path(td, "present.gguf")
+        present.write_bytes(fake_gguf())
+        ok(file_state_track("t", str(present))["state"] == "ok",
+           "a structurally valid file that IS there reads ok")
     file_state_forget("t")
     ok(file_state_track("t", p)["state"] == "checking",
        "…and the next miss starts the streak over from one")
@@ -361,12 +375,15 @@ def test_we_never_claim_what_the_os_would_not_tell_us():
     import tempfile
     ok(path_present("") is None, "no path at all is 'unknown', never 'missing'")
     ok(path_present(None) is None, "…and so is a null path")
-    ok(path_present(str(ROOT / "harness.yaml")) is True, "a real file reads present")
+    with tempfile.TemporaryDirectory() as td:
+        gguf = Path(td, "present.gguf")
+        gguf.write_bytes(fake_gguf())
+        ok(path_present(str(gguf)) is True, "a structurally valid file reads present")
     ok(path_present(str(ROOT)) is False,
        "a DIRECTORY where a gguf should be is not a present gguf")
     with tempfile.TemporaryDirectory() as td:
-        Path(td, "config.json").write_text("{}")
-        Path(td, "model.safetensors").write_bytes(b"x")
+        Path(td, "config.json").write_text('{"model_type":"fixture"}')
+        Path(td, "model.safetensors").write_bytes(fake_safetensors())
         ok(path_present(td, fmt="mlx") is True,
            "…while an mlx entry wants exactly that directory (start_component.sh's rule)")
     ok(file_state_track("u", "")["state"] == "unknown",
@@ -465,10 +482,8 @@ def test_the_card_can_tell_intent_from_fact():
 # turn labels all named a 27B whose weights were deleted — and /api/deps answered
 # {"components":{}}. Every test below is one of those surfaces, as a user story.
 
-def test_the_three_missing_bindings_can_be_read_from_a_file():
-    """§2 of the audit: the S24 note ('Odysseus's binding lives behind its admin API')
-    was STALE — all three are ordinary files. Each reader is exercised against a real
-    temp tree, because 'we could read it' was the claim that went untested."""
+def test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities():
+    """Odysseus/Goose bind on disk; OpenCode binds its catalog at process launch."""
     import json as _json
     import tempfile
     from bridge.routers import components as C
@@ -483,9 +498,11 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
             "providers:\n  custom_mot_deck__local:\n    enabled: true\n"
             "    model: ghost-27B\n    configured: true\n"
             "active_provider: custom_mot_deck__local\n")
-        odir = root / "data" / "opencode" / "xdg" / "config" / "opencode"
-        odir.mkdir(parents=True)
-        (odir / "opencode.json").write_text(_json.dumps({"model": "llama.cpp/ghost-27B"}))
+        (root / "data").mkdir(exist_ok=True)
+        (root / "data" / "opencode.runtime-catalog.json").write_text(_json.dumps({
+            "v": 1, "pid": 123, "birth": "stamp", "connected": True,
+            "models": ["ghost-27B"],
+        }))
         # S29 — `_dangling_only` asks the SHARED enumerator what we offer, and that
         # answer now excludes rows whose file is gone. So this fixture must supply a
         # registry with a REAL artifact: reading it off the dev tree (whose models.json
@@ -494,13 +511,16 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
         # information — dangles() repairs nothing then — so the fixture has to mean
         # something for the readers below to have anything to say.
         live_art = root / "live-4B.gguf"
-        live_art.write_bytes(b"x")
+        live_art.write_bytes(fake_gguf())
         other_art = root / "another-9B.gguf"
-        other_art.write_bytes(b"x")
+        other_art.write_bytes(fake_gguf())
         old_reg = C._registry_models
         old = C.ROOT
+        old_owner, old_matches = C._read_ownership, C._ownership_matches
         try:
             C.ROOT = root
+            C._read_ownership = lambda name: (123, "stamp") if name == "opencode" else None
+            C._ownership_matches = lambda pid, name: pid == 123 and name == "opencode"
             C._registry_models = lambda: [
                 {"id": "live-4B", "format": "gguf", "path": str(live_art)},
                 {"id": "another-9B", "format": "gguf", "path": str(other_art)}]
@@ -508,9 +528,9 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
                              C._opencode_binding("live-4B"))
             ok(ody.get("model") == "ghost-27B", "Odysseus's default_model is readable")
             ok(goo.get("model") == "ghost-27B", "the Goose UI chip's binding is readable")
-            ok(opc.get("model") == "ghost-27B",
-               "OpenCode's default is readable, with OUR provider prefix stripped")
-            for name, b in (("odysseus", ody), ("gooseui", goo), ("opencode", opc)):
+            ok(opc.get("catalog", "").startswith("OpenCode runtime"),
+               "OpenCode's process-bound runtime catalog is readable")
+            for name, b in (("odysseus", ody), ("gooseui", goo)):
                 ok(b.get("live_model") == "live-4B", f"{name} carries the live id too")
             # …and each of the three DECLINES to claim anything when the app is wired
             # somewhere that is not us. A sentence about somebody else's endpoint is a
@@ -520,13 +540,16 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
                              "default_model": "theirs"}))
             (gdir / "config.yaml").write_text(
                 "providers:\n  anthropic:\n    model: claude\nactive_provider: anthropic\n")
-            (odir / "opencode.json").write_text(_json.dumps({"model": "openai/gpt-x"}))
             ok(C._ody_binding("live-4B") == {},
                "Odysseus pointed at another endpoint makes NO claim")
             ok(C._goose_binding("live-4B") == {},
                "goose on somebody else's provider makes NO claim")
+            (root / "data" / "opencode.runtime-catalog.json").write_text(_json.dumps({
+                "v": 1, "pid": 123, "birth": "stamp", "connected": True,
+                "models": ["another-9B", "live-4B"],
+            }))
             ok(C._opencode_binding("live-4B") == {},
-               "OpenCode on another provider makes NO claim")
+               "OpenCode's matching live catalog makes NO claim")
             # …and NO CLAIM about a default the seeder has decided to HONOUR: the
             # banner's only action is "Restart Odysseus", the restart re-runs the
             # seeder, and the seeder honours it again — a button that provably cannot
@@ -556,12 +579,8 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
                 (gdir / "config.yaml").write_text(
                     "providers:\n  custom_mot_deck__local:\n    model: " + _valid
                     + "\nactive_provider: custom_mot_deck__local\n")
-                (odir / "opencode.json").write_text(
-                    _json.dumps({"model": "llama.cpp/" + _valid}))
                 ok(C._goose_binding(_live2) == {},
                    "a stale-but-VALID goose pick derives nothing (Restart honours it)")
-                ok(C._opencode_binding(_live2) == {},
-                   "…and the same for OpenCode's default")
             # …and an absent file is silence, never an accusation.
             C.ROOT = root / "nope"
             ok(C._ody_binding("x") == {} and C._goose_binding("x") == {}
@@ -570,6 +589,7 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
         finally:
             C.ROOT = old
             C._registry_models = old_reg
+            C._read_ownership, C._ownership_matches = old_owner, old_matches
 
 
 def test_two_strikes_before_we_accuse_an_app():
@@ -590,6 +610,27 @@ def test_two_strikes_before_we_accuse_an_app():
     ok(bind_confirmed(None, "", "new")[1] is False
        and bind_confirmed(None, "old", "")[1] is False,
        "we never accuse when either half is unreadable")
+
+
+def test_opencode_catalog_drift_has_a_truthful_working_action():
+    """U38: live process catalog drift is a separate state, not model swapping."""
+    from bridge.routers.components import _BIND_MISS, _bind_track, needs_derive
+    binding = {"catalog": "OpenCode runtime connected · 1 model(s)",
+               "live_catalog": "M.O.T registry · 2 model(s)"}
+    _BIND_MISS.pop("opencode", None)
+    first = _bind_track("opencode", binding)
+    ok(not first.get("catalog"), "one runtime-catalog mismatch remains silent")
+    second = _bind_track("opencode", binding)
+    ok(second.get("catalog") == binding["catalog"],
+       "the same second runtime observation is reportable")
+    out = needs_derive(healthy(), HARD, NEEDS_SOFT, {"opencode": second})
+    need = out["opencode"]["needs"][0]
+    ok(need["state"] == "catalog-stale", "catalog drift has its own state")
+    ok(need["action"] == "restart" and need["target"] == "opencode",
+       "the action restarts the exact component whose Start refreshes /provider")
+    ok("OpenCode runtime" in need["text"] and "M.O.T registry" in need["text"],
+       "the sentence names both compared authorities")
+    _BIND_MISS.pop("opencode", None)
 
 
 def test_the_goose_ui_gets_a_sentence_with_a_working_button():
@@ -822,8 +863,9 @@ for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_the_bridge_stops_repeating_an_exit_code_it_can_check,
            test_the_card_can_tell_intent_from_fact,
            # §7 — the coherence wave (S28)
-           test_the_three_missing_bindings_can_be_read_from_a_file,
-           test_two_strikes_before_we_accuse_an_app,
+    test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities,
+    test_two_strikes_before_we_accuse_an_app,
+    test_opencode_catalog_drift_has_a_truthful_working_action,
            test_the_goose_ui_gets_a_sentence_with_a_working_button,
            test_every_stale_app_in_the_incident_now_derives_a_sentence,
            test_the_pin_affordance_exists_end_to_end,

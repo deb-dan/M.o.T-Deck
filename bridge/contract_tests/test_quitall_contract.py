@@ -246,9 +246,8 @@ def test_the_hard_exit_fallback_exists_and_releases_the_pidfile():
     import inspect
     src = inspect.getsource(schedule_bridge_exit)
     assert "os._exit(0)" in src, "no hard exit — a wedged stream would leave a zombie"
-    assert "bridge.pid" in _code(ROUTER) or "_bridge_pidfile" in src, (
-        "the hard exit must drop our pidfile claim first, or the next bridge sees a "
-        "stale incumbent")
+    assert "release_claim(ROOT, me)" in src, (
+        "the hard exit must use the shared exact-owner release before os._exit")
     assert src.index("os.kill") < src.index("os._exit"), \
         "graceful first, hard exit only as the fallback"
 

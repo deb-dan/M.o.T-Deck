@@ -24,7 +24,6 @@ import importlib.util
 import argparse
 import hashlib
 import sys
-import tempfile
 
 # ── tool-calling capability (2026-08-21) ─────────────────────────────────────
 # `bridge/modeltools.py` owns the verdict for BOTH consumers (this scan and the
@@ -655,15 +654,42 @@ def reconcile_lmstudio(existing, scanned, inventory, protect=()):
     old_rows = [row for row in existing or []
                 if isinstance(row, dict) and row.get("source") == "lmstudio-import"]
     old_by = {}
+    old_by_member = {}
     for row in old_rows:
         identity = _source_identity(row)
         if identity is not None and identity not in old_by:
             old_by[identity] = row
+        observation = row.get("source_observation")
+        if (isinstance(observation, dict)
+                and observation.get("adapter") == MODEL_SOURCES.ADAPTER
+                and isinstance(observation.get("member_key"), str)
+                and observation.get("member_key")
+                and observation.get("format") in ("gguf", "mlx")):
+            member_identity = (observation["format"], observation["member_key"])
+            if member_identity not in old_by_member:
+                old_by_member[member_identity] = row
+    # Stable manager identity outranks path, and is reserved for every member before
+    # any legacy path fallback. Without the two passes, a new catalog item reusing a
+    # moved item's old path could steal its row before the stable key was considered.
+    matched, claimed_old = {}, set()
+    members = list(inventory.get("members") or [])
+    for index, member in enumerate(members):
+        old = old_by_member.get((member["format"], member["member_key"]))
+        if old is not None and id(old) not in claimed_old:
+            matched[index] = old
+            claimed_old.add(id(old))
+    for index, member in enumerate(members):
+        if index in matched:
+            continue
+        old = old_by.get((member["format"], member["path"]))
+        if old is not None and id(old) not in claimed_old:
+            matched[index] = old
+            claimed_old.add(id(old))
     listed, current = [], set()
-    for member in inventory.get("members") or []:
+    for index, member in enumerate(members):
         identity = (member["format"], member["path"])
         current.add(identity)
-        old, scanned_row = old_by.get(identity), scanned_by.get(identity)
+        old, scanned_row = matched.get(index), scanned_by.get(identity)
         row = dict(scanned_row) if scanned_row else _lmstudio_member_entry(member, root)
         if scanned_row and member.get("display_name"):
             row["name"] = member["display_name"]
@@ -680,7 +706,7 @@ def reconcile_lmstudio(existing, scanned, inventory, protect=()):
     protected = {str(item).strip() for item in protect if str(item or "").strip()}
     removed, unlisted = [], []
     for old in old_rows:
-        if _source_identity(old) in current:
+        if id(old) in claimed_old or _source_identity(old) in current:
             continue
         mid = str(old.get("id") or "")
         if mid in protected:
@@ -747,11 +773,13 @@ def _keep_user(entry, existing_user):
 
 
 def _audio_artifact_identity(entry):
-    """Canonical primary-artifact path, or None when it cannot prove identity.
+    """Canonical format + complete launch-artifact identity, or ``None``.
 
     This is deliberately an identity check only: resolving a symlink lets a rescan
     recognise one artifact under two spellings, but never authorizes a caller to
-    alter either target. A missing or unresolvable path is unknown, not equal.
+    alter either target. TTS GGUF requires both its backbone and projector, so rows
+    sharing only the backbone are not the same runnable artifact. A missing or
+    unresolvable required path is unknown, not equal.
     """
     if not isinstance(entry, dict):
         return None
@@ -764,7 +792,14 @@ def _audio_artifact_identity(entry):
     try:
         if not os.path.exists(path):
             return None
-        return os.path.realpath(os.path.abspath(path))
+        primary = os.path.realpath(os.path.abspath(path))
+        projector = ""
+        if fmt == "tts-gguf":
+            mmproj = entry.get("mmproj")
+            if not isinstance(mmproj, str) or not mmproj or not os.path.exists(mmproj):
+                return None
+            projector = os.path.realpath(os.path.abspath(mmproj))
+        return fmt, primary, projector
     except (OSError, TypeError, ValueError):
         return None
 
@@ -1061,29 +1096,9 @@ def missing_confirmation_token(models, ambiguous_ids):
 
 
 def write(path, models):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    # A fresh scan builds the same semantic row through a different carry path than
-    # the first explicit evidence observation.  Canonical keys make that distinction
-    # unobservable, and the byte comparison avoids needless inode/mtime churn on a
-    # genuinely unchanged Rescan.
-    payload = json.dumps({"models": models}, indent=2, sort_keys=True) + "\n"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            if fh.read() == payload:
-                return
-    except (OSError, UnicodeError):
-        pass
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".models-", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    if MODELREG is None:
+        raise RuntimeError("model registry helper is unavailable")
+    MODELREG.write_registry(path, {"models": models})
 
 
 def local_entries_for(local_dir):

@@ -8,6 +8,8 @@ venv/
 .DS_Store
 dist/
 app/Config.swift
+harness.yaml.lock
+.pytest-cache/
 vendor/searxng/
 # aider is a plain pinned clone made by scripts/install_aider.sh (the searxng
 # precedent, never a submodule) — the PIN lives in harness.yaml, the checkout is a

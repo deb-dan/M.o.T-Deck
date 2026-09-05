@@ -69,11 +69,9 @@ fi
 # A LISTENER-scoped kill is still a kill of SOMEBODY ELSE'S process when the port
 # collides: Debi's STANDALONE Unsloth app listens on :8888 and our own start was
 # killing it every time. So establish ownership BEFORE killing.
-# Owned iff  (a) the pid is the one in data/<component>.pid, OR
-#            (b) the command line names a path inside OUR tree (data/ or vendor/), OR
-#            (c) it matches a narrow per-component signature (only where our own
-#                launch legitimately runs a binary from outside the tree).
-# NOT owned → refuse loudly and exit non-zero rather than kill a stranger.
+# Owned iff this script recorded the exact child PID and its kernel start stamp and
+# both still match. A pidfile, path, CWD, executable name, component name, or port by
+# itself is never authority. NOT owned → refuse rather than kill a stranger.
 # ⛔ THERE IS NO KILL BY NAME IN THIS FILE (CLAUDE.md PROCESS-KILL RULE; U19). Stopping
 # a previous instance goes through _reap_pidfile (the pid WE wrote, identity re-verified
 # before the signal); clearing a port goes through _clear_port (ownership-checked, and a
@@ -81,44 +79,135 @@ fi
 # and `hermes dashboard --stop` (which scans for every `hermes dashboard|serve` on the
 # machine and kills them) are banned here and fenced by
 # bridge/contract_tests/test_no_name_kills_contract.py.
-# HARNESS_PORT_TAKEOVER=1 restores the old unconditional behaviour.
 _proc_cmd() { ps -o command= -p "$1" 2>/dev/null | tr '\n' ' '; }
+_ownership_cli() {
+  local py="$ROOT_ABS/data/bridge-venv/bin/python"
+  [[ -x "$py" ]] || py="$(command -v python3 || true)"
+  [[ -n "$py" && -f "$ROOT_ABS/bridge/core/ownership.py" ]] || {
+    echo "ERROR: the shared launch-provenance helper is unavailable; refusing process ownership work." >&2
+    return 2
+  }
+  "$py" "$ROOT_ABS/bridge/core/ownership.py" "$@"
+}
 
-# Pure string logic, exposed for tests via `start_component.sh --owner-check <comp> <cmd>`.
+# Corroborating path evidence, retained for diagnostics only. It never authorizes a
+# signal. Exposed via --owner-check so the compatibility matrix stays observable.
 _cmd_looks_like_ours() {   # <component> <command line>
   local comp="$1" cmd="$2"
-  # A process that vanished between the probe and the check has nothing to protect.
-  [[ -z "$cmd" ]] && return 0
+  [[ -z "$cmd" ]] && return 1
   case "$cmd" in
     *"${ROOT_ABS}/data/"*|*"${ROOT_ABS}/vendor/"*) return 0 ;;
   esac
   case "$comp" in
-    # runner.binary may legitimately point at a backend OUTSIDE the tree (the
-    # LM Studio fallback), so the engine name is the honest signature here. It is
-    # narrowed by the port: this only decides who may hold runner.port. Ledger U19c
-    # tracks tightening it to "the binary harness.yaml actually configured".
-    runner|aux)
-      case "$cmd" in *llama-server*|*mlx_lm.server*|*mlx_vlm.server*) return 0 ;; esac ;;
-    # hermes may already be running from a DIFFERENT harness root (repo vs snapshot),
-    # which ROOT_ABS alone would not match — so widen the evidence, but keep it a
-    # PATH: our Hermes is always the one installed into a harness's data/hermes-venv.
-    # ⛔ NO NAME SIGNATURE (U19, 2026-08-29). "hermes dashboard" in a command line is
-    # exactly the process this guard exists to PROTECT: Debi runs a standalone Hermes
-    # out of ~/.hermes/hermes-agent/venv, and matching it by name is how our Start
-    # would have closed her work — the Unsloth/goose-Desktop class, third strike.
     hermes)
       case "$cmd" in *"/data/hermes-venv/"*) return 0 ;; esac ;;
-    # Deliberately NO name signature for unsloth/comfyui/voicebox/voicestudio: a
-    # standalone install of any of them would match its own name, which is the very
-    # process this guard exists to protect. Our launches all run
-    # "$ROOT/data/<comp>-venv/bin/..." so the path rule above already covers them.
   esac
   return 1
+}
+
+_record_child() {   # <component> <pid> — call only with the `$!` just spawned here
+  local comp="$1" pid="$2" detail
+  if ! detail="$(_ownership_cli record "$ROOT_ABS" "$comp" "$pid" 2>&1)"; then
+    kill -TERM "$pid" 2>/dev/null || true
+    local attempt
+    for attempt in {1..30}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    echo "ERROR: could not record spawned ${comp} pid ${pid}; stopped only that exact child." >&2
+    [[ -n "$detail" ]] && echo "       ${detail}" >&2
+    return 1
+  fi
+}
+
+_ownership_matches() {   # <component> <pid>
+  _ownership_cli matches "$ROOT_ABS" "$1" "$2" >/dev/null 2>&1
+}
+
+_record_runner_active() {   # <engine> <registry id> <wire id>
+  local engine="$1" model="$2" wire="$3"
+  ENGINE="$engine" MODEL="$model" WIRE="$wire" ROOT_ABS="$ROOT_ABS" python3 - <<'PYACTIVE'
+import importlib.util, json, os, tempfile
+root = os.environ["ROOT_ABS"]
+helper = os.path.join(root, "bridge", "core", "ownership.py")
+spec = importlib.util.spec_from_file_location("mot_ownership", helper)
+ownership = importlib.util.module_from_spec(spec); spec.loader.exec_module(ownership)
+claim = ownership.read_claim(root, "runner")
+if not claim:
+    raise SystemExit("runner ownership record is malformed")
+raw_pid, birth = claim
+record = {"v": 1, "pid": int(raw_pid), "birth": birth,
+          "engine": os.environ["ENGINE"], "model": os.environ["MODEL"],
+          "wire": os.environ["WIRE"]}
+directory = os.path.join(root, "data")
+fd, temporary = tempfile.mkstemp(prefix=".runner-active-", suffix=".tmp", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+    os.replace(temporary, os.path.join(directory, "runner.active.json"))
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PYACTIVE
+}
+
+_runner_active_model() {
+  ROOT_ABS="$ROOT_ABS" python3 - <<'PYACTIVE'
+import importlib.util, json, os, stat
+root = os.environ["ROOT_ABS"]
+try:
+    active_path = os.path.join(root, "data", "runner.active.json")
+    fd = os.open(active_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError("active marker is not regular")
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            fd = -1; rec = json.load(handle)
+    finally:
+        if fd >= 0: os.close(fd)
+    pid_path = os.path.join(root, "data", "runner.pid")
+    pfd = os.open(pid_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(pfd).st_mode): raise ValueError("runner pid report is not regular")
+        with os.fdopen(pfd, encoding="ascii") as handle:
+            pfd = -1; pidfile = int(handle.read().strip())
+    finally:
+        if pfd >= 0: os.close(pfd)
+    helper = os.path.join(root, "bridge", "core", "ownership.py")
+    spec = importlib.util.spec_from_file_location("mot_ownership", helper)
+    ownership = importlib.util.module_from_spec(spec); spec.loader.exec_module(ownership)
+    claim = ownership.read_claim(root, "runner")
+    if not claim: raise ValueError("launch claim is absent")
+    pid, birth = claim
+    live_birth = ownership.process_birth(pid)
+    if (pid != pidfile or rec.get("v") != 1
+            or rec.get("pid") != pid or rec.get("birth") != birth
+            or birth != live_birth or not isinstance(rec.get("model"), str)):
+        raise ValueError("launch provenance does not match the live process")
+    print(rec["model"])
+except Exception:
+    raise SystemExit(1)
+PYACTIVE
 }
 
 if [[ "$NAME" == "--owner-check" ]]; then
   shift
   _cmd_looks_like_ours "${1:-}" "${2:-}"; exit $?
+fi
+if [[ "$NAME" == "--ownership-record-check" ]]; then
+  shift
+  _ownership_matches "${1:-}" "${2:-0}"; exit $?
+fi
+if [[ "$NAME" == "--record-child" ]]; then
+  shift
+  [[ $# -eq 2 && "$2" =~ ^[0-9]+$ ]] || {
+    echo "usage: $0 --record-child <component> <pid>" >&2; exit 2; }
+  _record_child "$1" "$2"
+  exit $?
 fi
 
 # ── FULL DETACHMENT AT SPAWN (THE 2026-08-30 SILENT-DEATH INCIDENT) ───────────
@@ -164,37 +253,20 @@ fi
 # and cannot receive a terminal SIGHUP anyway, but the ignore-disposition survives
 # exec for free and the redirection semantics at the call sites are unchanged.
 #
-# If setsid ever fails (it can only fail when the caller is already a process-group
-# leader — i.e. under job control, which this script never enables), we say so in a
-# sentence and launch anyway: a component that starts un-detached is strictly better
-# than a component that does not start, and the line makes it diagnosable instead of
-# silent. Guards speak in sentences.
-#
-# GRACEFUL ABSENCE. perl has shipped with every macOS to date and this harness is
-# macOS-only, so the fallback below should never fire — but "should never" is how a
-# missing dependency turns into a component that simply refuses to start with a
-# cryptic message. If perl is gone we launch the OLD way and say, in one sentence,
-# exactly what the user loses. Starting un-detached is a real regression; not
-# starting at all is a worse one.
+# Detachment is a safety postcondition, not an optional optimization. Starting in the
+# bridge/app process group knowingly recreates the incident this helper exists to
+# prevent, so missing Perl or a failed setsid is a loud refusal. The component remains
+# stopped and the caller reports the dependency failure; it is never launched in a
+# process group an unrelated app quit can address.
 _detached() {   # <cmd> [args…]   — ALWAYS call as: _detached … >>log 2>&1 &
   if ! command -v perl >/dev/null 2>&1; then
-    echo "[harness] detach: perl is not on PATH, so this component cannot be put in its" >&2
-    echo "[harness]   own session. Starting it the old way — it will run, but quitting" >&2
-    echo "[harness]   MOT Deck or shipping may take it down with the bridge (the" >&2
-    echo "[harness]   2026-08-30 incident). Install perl to restore detachment." >&2
-    # `trap '' HUP` + exec, NOT `exec nohup "$@"`: this branch exists because the
-    # environment is already missing something it should have, so it must not lean on
-    # a SECOND external binary. (Measured: with nohup also absent the old form died as
-    # `exec: nohup: not found`, leaving a dead `$!` in the pidfile and a component that
-    # never started — a fallback that fails silently is worse than no fallback.) An
-    # ignored SIGHUP disposition survives exec, so this IS what nohup does.
-    trap '' HUP
-    exec "$@"
+    echo "ERROR: perl is not on PATH; refusing to launch ${NAME:-component} without its own session." >&2
+    return 127
   fi
   exec nohup perl -MPOSIX -e '
     my $s = POSIX::setsid();
     if (!defined($s) || $s < 0) {
-      print STDERR "[harness] detach: setsid failed ($!) - this component keeps the parent process group and can still be reaped with it\n";
+      die "[harness] detach: setsid failed ($!) - refusing unsafe launch\n";
     }
     exec { $ARGV[0] } @ARGV or die "[harness] detach: cannot exec $ARGV[0]: $!\n";
   ' -- "$@"
@@ -212,6 +284,18 @@ if [[ "$NAME" == "--detach-selftest" ]]; then
   echo "$!"
   exit 0
 fi
+if [[ "$NAME" == "--ownership-selftest" ]]; then
+  shift
+  probe_comp="${1:-}"
+  shift || true
+  [[ -n "$probe_comp" && $# -gt 0 ]] || {
+    echo "usage: $0 --ownership-selftest <component> <command> [args...]" >&2; exit 2; }
+  _detached "$@" >/dev/null 2>&1 &
+  probe_pid="$!"
+  _record_child "$probe_comp" "$probe_pid"
+  echo "$probe_pid"
+  exit 0
+fi
 
 # The ONLY sanctioned way to stop a PREVIOUS instance of one of our components: the
 # pid WE recorded, whose identity is re-verified before any signal. Pids are recycled,
@@ -225,47 +309,67 @@ _reap_pidfile() {   # <component> [force]
   # is still unset and dies under `set -u` ("comp: unbound variable"). Found by walking
   # the restart, not by reading — it aborted the whole hermes arm. _clear_port below
   # already had it right; this is the same shape, kept the same way.
-  local comp="$1" force="${2:-}" pid cmd pf sig="-TERM"
+  local comp="$1" force="${2:-}" pid birth cmd pf owner detail claim args=()
   pf="data/${comp}.pid"
-  [[ "$force" == "force" ]] && sig="-KILL"
-  [[ -f "$pf" ]] || return 0
-  pid="$(tr -cd '0-9' < "$pf" 2>/dev/null || true)"
-  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$pf"; return 0; fi
-  cmd="$(_proc_cmd "$pid")"
-  if _cmd_looks_like_ours "$comp" "$cmd"; then
-    kill "$sig" "$pid" 2>/dev/null || true
-  else
-    echo "[harness] ${pf} names pid ${pid} (${cmd}) — that is NOT our ${comp} (recycled pid?);"
-    echo "[harness]   leaving it alone and discarding the stale pidfile."
+  owner="data/${comp}.owner"
+  [[ "$force" == "force" ]] && args+=(--force)
+  claim="$(_ownership_cli claim "$ROOT_ABS" "$comp" 2>/dev/null || true)"
+  pid="${claim%%$'\t'*}"
+  birth="${claim#*$'\t'}"
+  [[ "$claim" == *$'\t'* ]] || { pid=""; birth=""; }
+  if [[ -z "$pid" ]]; then
+    detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" 0 --birth "" ${args[@]+"${args[@]}"} 2>&1 || true)"
+    if [[ -e "$pf" || -L "$pf" || -e "$owner" || -L "$owner" ]]; then
+      echo "[harness] ${detail:-no complete M.O.T launch record; signalled nothing}"
+    fi
+    return 0
   fi
-  rm -f "$pf"
+  cmd="$(_proc_cmd "$pid")"
+  if ! detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" "$pid" --birth "$birth" --keep-claim ${args[@]+"${args[@]}"} 2>&1)"; then
+    echo "[harness] ${pf} names pid ${pid} (${cmd}) but has no matching M.O.T launch record;"
+    echo "[harness]   leaving it alone. ${detail}"
+    return 1
+  fi
+  local attempt
+  for attempt in {1..40}; do
+    _ownership_matches "$comp" "$pid" || break
+    sleep 0.1
+  done
+  if _ownership_matches "$comp" "$pid"; then
+    echo "ERROR: recorded ${comp} pid ${pid} is still alive after its stop signal; refusing a replacement." >&2
+    return 1
+  fi
+  _ownership_cli retire "$ROOT_ABS" "$comp" "$pid" --birth "$birth" >/dev/null 2>&1 || true
 }
 
 _clear_port() {   # <port> <component> [force]
-  local port="$1" comp="$2" force="${3:-}" pid cmd pf sig="-TERM"
-  [[ "$force" == "force" ]] && sig="-KILL"
-  pf="data/${comp}.pid"
+  local port="$1" comp="$2" force="${3:-}" pid birth cmd detail attempt listeners owner args=()
+  owner="data/${comp}.owner"
+  [[ "$force" == "force" ]] && args+=(--force)
   for pid in $(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null); do
-    if [[ "${HARNESS_PORT_TAKEOVER:-0}" == "1" ]]; then
-      kill "$sig" "$pid" 2>/dev/null || true
-      continue
-    fi
-    if [[ -f "$pf" ]] && [[ "$(cat "$pf" 2>/dev/null)" == "$pid" ]]; then
-      kill "$sig" "$pid" 2>/dev/null || true
-      continue
-    fi
-    cmd="$(_proc_cmd "$pid")"
-    if _cmd_looks_like_ours "$comp" "$cmd"; then
-      kill "$sig" "$pid" 2>/dev/null || true
-    else
-      echo "ERROR: port ${port} is held by pid ${pid} (${cmd}) which does not look like ours — refusing to kill it."
-      echo "       Stop that app or set HARNESS_PORT_TAKEOVER=1 to override."
+    birth="$(awk -F '\t' -v p="$pid" '$1 == "v1" && $2 == p {print $3; exit}' "$owner" 2>/dev/null || true)"
+    if ! detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" "$pid" --birth "$birth" --keep-claim ${args[@]+"${args[@]}"} 2>&1)"; then
+      cmd="$(_proc_cmd "$pid")"
+      echo "ERROR: port ${port} is held by pid ${pid} (${cmd}) without a matching M.O.T launch record."
+      echo "       Refusing to kill it; stop that application explicitly, then retry. ${detail}"
       exit 1
     fi
+    for attempt in {1..40}; do
+      listeners="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+      if [[ -z "$listeners" ]] && ! _ownership_matches "$comp" "$pid"; then break; fi
+      sleep 0.1
+    done
+    listeners="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$listeners" ]] || _ownership_matches "$comp" "$pid"; then
+      echo "ERROR: recorded ${comp} pid ${pid} or its listener on :${port} survived the stop signal;" >&2
+      echo "       retaining its ownership claim and refusing to start a replacement." >&2
+      exit 1
+    fi
+    _ownership_cli retire "$ROOT_ABS" "$comp" "$pid" --birth "$birth" >/dev/null 2>&1 || true
   done
 }
 
-# ── U54: THE PIDFILE NAMES THE PROCESS THAT HOLDS THE PORT, NOT THE ONE WE LAUNCHED ──
+# ── U54/U25: THE LISTENER MUST BE THE EXACT CHILD WE RECORDED ────────────────
 #
 # `echo $! > data/<comp>.pid` records a REPORT: "the pid I just backgrounded". After a
 # single launch that report is also the fact (see _detached — the exec chain keeps the
@@ -280,48 +384,23 @@ _clear_port() {   # <port> <component> [force]
 # … pid=$(cat data/runner.pid)" line the panel shows was false; and health never
 # noticed because health is probe-based.
 #
-# THE FIX IS THE HOUSE RULE — AN OBSERVATION OUTRANKS A REPORT (see the U15 header in
-# bridge/routers/components.py). Once the readiness poll says the server is answering,
-# ASK THE PORT who holds it and record THAT.
-#
-# ⛔ AND IT MAY NEVER RECORD A STRANGER (CLAUDE.md PROCESS-KILL RULE). The pidfile is
-# the one input _reap_pidfile trusts enough to signal on sight, so writing an
-# unverified pid into it would turn this helper into a way to make the next Start kill
-# Debi's own llama-server. Every candidate goes through _cmd_looks_like_ours first, an
-# ambiguous answer (no listener we own, or more than one) CHANGES NOTHING and says so
-# in a sentence, and a missing lsof degrades to exactly today's behaviour.
+# The old implementation asked the port who held it and then adopted a listener based
+# on its path/name. That can turn a manually-started process into ours. The corrected
+# rule is opposite: the launch record comes only from `$!`; readiness then proves the
+# one listener is that exact recorded child. A mismatch fails and the recorded child is
+# the only process this script may clean up.
 _stamp_pidfile_from_port() {   # <component> <port>
-  local comp="$1" port="$2" pf was mine pid cmd
-  pf="data/${comp}.pid"
-  was="$(tr -cd '0-9' < "$pf" 2>/dev/null || true)"
-  mine=""
-  for pid in $(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null); do
-    cmd="$(_proc_cmd "$pid")"
-    if _cmd_looks_like_ours "$comp" "$cmd"; then mine="${mine}${pid} "; fi
-  done
-  # `set --` is function-local in bash, and comp/port/pf/was are already read out of
-  # the positional parameters above. Kept as a string + set-- rather than an array
-  # because macOS bash is 3.2, where `${#arr[@]}` on an EMPTY array under `set -u` is
-  # an unbound-variable error (the same reason SPEC_ARGS is expanded with the
-  # `${a[@]+…}` guard everywhere below).
-  set -- $mine
-  if [[ $# -eq 0 ]]; then
-    echo "[harness] ${pf}: nothing we own is listening on :${port} — keeping the launch"
-    echo "[harness]   pid ${was:-<none>}. Stop may have to fall back to clearing the port."
-    return 1
+  local comp="$1" port="$2" recorded listeners pid
+  recorded="$(tr -cd '0-9' < "data/${comp}.pid" 2>/dev/null || true)"
+  listeners="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  set -- $listeners
+  if [[ $# -eq 1 ]] && [[ "$1" == "$recorded" ]] && _ownership_matches "$comp" "$1"; then
+    return 0
   fi
-  for pid in "$@"; do
-    if [[ -n "$was" ]] && [[ "$pid" == "$was" ]]; then return 0; fi   # already true
-  done
-  if [[ $# -gt 1 ]]; then
-    echo "[harness] ${pf}: :${port} has $# listeners that look like ours ($*) — that is"
-    echo "[harness]   ambiguous, so the file keeps ${was:-<none>} rather than guessing."
-    return 1
-  fi
-  echo "$1" > "$pf"
-  echo "[harness] ${pf}: launch reported pid ${was:-<none>}, but :${port} is held by $1 —"
-  echo "[harness]   recorded the listener (U54)."
-  return 0
+  echo "ERROR: :${port} is not held by the exact recorded ${comp} child " \
+       "(${recorded:-none}); observed: ${listeners:-none}." >&2
+  _reap_pidfile "$comp" force
+  return 1
 }
 
 # Self-test hook for the contract suite (same shape as --detach-selftest above): run the
@@ -356,6 +435,7 @@ case "$NAME" in
     R_BIN=$(awk '/^runner:/{f=1} f && /^  binary:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*binary:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
     R_MODEL="$(_normalize_yaml_scalar "$R_MODEL")"
     R_BIN="$(_normalize_yaml_scalar "$R_BIN")"
+    R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
     [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
     # Ensure the registry exists.
@@ -681,13 +761,14 @@ PYRESOLVE
     # "<engine>.*--port"` lines: a pattern match, not identity — U19.)
     _reap_pidfile runner force
     _clear_port "$R_PORT" runner force
+    rm -f data/runner.active.json
     sleep 1
     # Launch + wait for readiness. Factored so a bad speculative-decoding guess can
     # be retried WITHOUT those flags instead of leaving the runner dead (spec flags
     # on a model that has no MTP heads fail the load — self-healing beats a hard stop).
     _launch_llama() {   # args: the full argv after $BIN
       _detached "$BIN" "$@" >> data/logs/runner.log 2>&1 &
-      echo $! > data/runner.pid
+      _record_child runner "$!"
       # THE APPLIED STAMP (S32). b10662 reads --api-key-file exactly ONCE, at this
       # instant — adding a key to the file afterwards does not admit it and removing one
       # does not revoke it (both directions measured). So this records the DIGEST of the
@@ -728,7 +809,7 @@ PYRESOLVE
           # attempt that reaches readiness corrects the pidfile for itself, so the
           # retry arm below cannot leave a losing $! behind. Never fatal — a failure
           # here only means the pidfile keeps the value it already had.
-          _stamp_pidfile_from_port runner "$R_PORT" || true
+          _stamp_pidfile_from_port runner "$R_PORT"
           return 0
         fi
         sleep 2
@@ -749,6 +830,8 @@ PYRESOLVE
       if _launch_llama "${ARGS[@]}"; then up=1; fi
     fi
     if [[ "$up" == "1" ]]; then
+      _record_runner_active llamacpp "$R_MODEL" "$R_MODEL" || \
+        echo "[harness] WARN: runner is live but its launch-provenance marker could not be written"
       SPEC_NOTE=""; [[ ${#SPEC_ARGS[@]} -gt 0 ]] && SPEC_NOTE=" spec=draft-mtp"
       echo "[harness] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX${SPEC_NOTE} pid=$(cat data/runner.pid)"
     else
@@ -801,10 +884,11 @@ PYRESOLVE
     # case) by pidfile, then the port, ownership-checked. Identity, never a name (U19).
     _reap_pidfile runner force
     _clear_port "$R_PORT" runner force
+    rm -f data/runner.active.json
     sleep 1
     _detached "${CMD[@]}" --model "$MODEL_PATH" --host 127.0.0.1 --port "$R_PORT" \
       ${MLX_FLOOR[@]+"${MLX_FLOOR[@]}"} >> data/logs/runner.log 2>&1 &
-    echo $! > data/runner.pid
+    _record_child runner "$!"
     up=0
     TRIES=150
     for _ in $(seq 1 "$TRIES"); do
@@ -819,7 +903,9 @@ PYRESOLVE
       # U54 — same rule for the MLX engines. They launch once, so `$!` is normally
       # already right; the stamp is here so the RULE, not the arm, is what makes the
       # pidfile true, and so a future retry ladder on this arm inherits the fix.
-      _stamp_pidfile_from_port runner "$R_PORT" || true
+      _stamp_pidfile_from_port runner "$R_PORT"
+      _record_runner_active "$ENGINE" "$R_MODEL" "$MODEL_PATH" || \
+        echo "[harness] WARN: runner is live but its launch-provenance marker could not be written"
       echo "[harness] runner ($ENGINE) up on :$R_PORT — model=$R_MODEL pid=$(cat data/runner.pid) (loopback only, no auth)"
     else
       echo "ERROR: runner ($ENGINE) did not become ready on :${R_PORT} in ~5min."
@@ -841,13 +927,16 @@ PYRESOLVE
     # as default model. Runs before the server boots.
     R_ENDPOINT=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     R_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
+    R_ENDPOINT="$(_normalize_yaml_scalar "$R_ENDPOINT")"
+    R_KEY="$(_normalize_yaml_scalar "$R_KEY")"
+    [[ -n "$R_ENDPOINT" ]] || R_ENDPOINT="http://127.0.0.1:6767/v1"
     ( cd vendor/odysseus && JAN_BASE_URL="$R_ENDPOINT" JAN_API_KEY="$R_KEY" python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
     # Start server. cd applies to the whole subshell (Odysseus expects cwd=vendor/odysseus);
     # pid + log use ABSOLUTE paths so the earlier '../../ from wrong cwd' bug can't recur.
     (
       cd vendor/odysseus
       _detached python -m uvicorn app:app --host 127.0.0.1 --port 7860 >>"$ROOT/data/logs/odysseus.log" 2>&1 &
-      echo $! > "$ROOT/data/odysseus.pid"
+      _record_child odysseus "$!"
     )
     sleep 2
     if kill -0 "$(cat data/odysseus.pid)" 2>/dev/null; then
@@ -864,7 +953,7 @@ PYRESOLVE
     _detached env SEARXNG_SETTINGS_PATH="$ROOT/data/searxng/settings.yml" \
       "$ROOT/data/searxng-venv/bin/python" -m searx.webapp \
       >>"$ROOT/data/logs/searxng.log" 2>&1 &
-    echo $! > "$ROOT/data/searxng.pid"
+    _record_child searxng "$!"
     up=0
     for _ in $(seq 1 15); do
       if curl -sf -m 2 "http://127.0.0.1:8080/" >/dev/null 2>&1; then up=1; break; fi
@@ -921,8 +1010,16 @@ PYRESOLVE
     # wins.  ⚠️ PENDING FABLE QA.
     VS_BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     VS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
-    VS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    VS_MODEL=$(_runner_active_model 2>/dev/null || true)
+    VS_MODEL_SOURCE="live runner launch provenance"
+    if [[ -z "$VS_MODEL" ]]; then
+      VS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      VS_MODEL_SOURCE="saved runner pin (no live launch provenance)"
+    fi
     VS_MODEL="$(_normalize_yaml_scalar "$VS_MODEL")"
+    VS_BASE_URL="$(_normalize_yaml_scalar "$VS_BASE_URL")"
+    VS_KEY="$(_normalize_yaml_scalar "$VS_KEY")"
+    [[ -n "$VS_BASE_URL" ]] || VS_BASE_URL="http://127.0.0.1:6767/v1"
     [[ "$VS_MODEL" == \#* ]] && VS_MODEL=""
     # Same WIRE identifier rule as the hermes branch (MLX servers need the PATH).
     if [[ -n "$VS_MODEL" ]]; then
@@ -946,7 +1043,7 @@ PYWIRE
     if [[ -n "$VS_BASE_URL" && -n "$VS_MODEL" ]]; then
       VS_ENV+=(TRANSLATE_BASE_URL="$VS_BASE_URL" TRANSLATE_MODEL="$VS_MODEL")
       [[ -n "$VS_KEY" ]] && VS_ENV+=(TRANSLATE_API_KEY="$VS_KEY")
-      echo "[harness] voicestudio LLM → ${VS_BASE_URL} (${VS_MODEL})"
+      echo "[harness] voicestudio LLM → ${VS_BASE_URL} (${VS_MODEL}; ${VS_MODEL_SOURCE})"
     else
       echo "[harness] voicestudio: no runner model in harness.yaml — leaving its LLM"
       echo "[harness]  unset (TTS/ASR are unaffected; set a provider in its Settings"
@@ -958,7 +1055,7 @@ PYWIRE
       cd vendor/voicestudio
       _detached env "${VS_ENV[@]}" \
         "$VSPY" "${VS_CMD[@]}" >>"$ROOT/data/logs/voicestudio.log" 2>&1 &
-      echo $! > "$ROOT/data/voicestudio.pid"
+      _record_child voicestudio "$!"
     )
     up=0
     # GENEROUS wait: the first boot can pull/load speech models before /health answers.
@@ -1020,7 +1117,7 @@ PYWIRE
     (
       cd vendor/voicebox
       _detached "$VBPY" "${VB_CMD[@]}" >>"$ROOT/data/logs/voicebox.log" 2>&1 &
-      echo $! > "$ROOT/data/voicebox.pid"
+      _record_child voicebox "$!"
     )
     up=0
     # GENEROUS wait: importing torch/transformers alone takes tens of seconds, and the
@@ -1093,7 +1190,7 @@ PYWIRE
     (
       cd vendor/comfyui
       _detached "$CUPY" "${CU_CMD[@]}" >>"$ROOT/data/logs/comfyui.log" 2>&1 &
-      echo $! > "$ROOT/data/comfyui.pid"
+      _record_child comfyui "$!"
     )
     up=0
     # GENEROUS wait: importing torch alone takes tens of seconds on a cold page cache.
@@ -1221,7 +1318,7 @@ PYWIRE
       export UNSLOTH_STUDIO_HOME="$US_HOME"
       unset STUDIO_HOME
       _detached "${US_BIN[@]}" "${US_CMD[@]}" >>"$ROOT/data/logs/unsloth.log" 2>&1 &
-      echo $! > "$ROOT/data/unsloth.pid"
+      _record_child unsloth "$!"
     )
     up=0
     TRIES=150
@@ -1298,8 +1395,14 @@ PYWIRE
     # the user adds in that file (theme, permission presets, other providers) survives.
     DS_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     DS_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
-    DS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    DS_MODEL=$(_runner_active_model 2>/dev/null || true)
+    if [[ -z "$DS_MODEL" ]]; then
+      DS_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    fi
     DS_MODEL="$(_normalize_yaml_scalar "$DS_MODEL")"
+    DS_BASE="$(_normalize_yaml_scalar "$DS_BASE")"
+    DS_KEY="$(_normalize_yaml_scalar "$DS_KEY")"
+    [[ -n "$DS_BASE" ]] || DS_BASE="http://127.0.0.1:6767/v1"
     [[ "$DS_MODEL" == \#* ]] && DS_MODEL=""
     DS_SETTINGS="$DS_HOME/settings.yaml"
     # THE KEY IS NAMED, NOT INLINE. dsh's `apiKeyEnv` holds an env var NAME resolved
@@ -1386,7 +1489,7 @@ PYWIRE
       PATH="$DS_NODE_DIR:$PATH" \
       "$DS_NODE" "$DS_BIN" web --host 127.0.0.1 --port "$DS_PORT" --no-open \
         >>"$ROOT/data/logs/deepseek.log" 2>&1 &
-      echo $! > "$ROOT/data/deepseek.pid"
+      _record_child deepseek "$!"
     )
     up=0
     TRIES=60
@@ -1491,8 +1594,14 @@ PYDS
     # in that file (permissions, themes, other providers) survives a restart.
     OC_BASE=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     OC_KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
-    OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    OC_MODEL=$(_runner_active_model 2>/dev/null || true)
+    if [[ -z "$OC_MODEL" ]]; then
+      OC_MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    fi
     OC_MODEL="$(_normalize_yaml_scalar "$OC_MODEL")"
+    OC_BASE="$(_normalize_yaml_scalar "$OC_BASE")"
+    OC_KEY="$(_normalize_yaml_scalar "$OC_KEY")"
+    [[ -n "$OC_BASE" ]] || OC_BASE="http://127.0.0.1:6767/v1"
     [[ "$OC_MODEL" == \#* ]] && OC_MODEL=""
     OC_CFG="$OC_HOME/config/opencode/opencode.json"
     # SECOND, REDUNDANT HOME for the same provider block: the PROJECT config.
@@ -1506,6 +1615,11 @@ PYDS
     OC_PCFG="$OC_WS/opencode.json"
     OC_CFG="$OC_CFG" OC_PCFG="$OC_PCFG" OC_BASE="$OC_BASE" OC_KEY="$OC_KEY" OC_MODEL="$OC_MODEL" \
       HARNESS_ROOT="$ROOT" python3 scripts/seed_opencode_config.py
+
+    # A catalog file on disk is not evidence of what an already-running OpenCode
+    # process loaded. This marker is written only from that process's own /provider
+    # response below and is bound to the exact child PID + kernel birth stamp.
+    rm -f "$ROOT/data/opencode.runtime-catalog.json"
 
     # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
     _clear_port "$OC_PORT" opencode
@@ -1548,7 +1662,7 @@ PYDS
       OPENCODE_DISABLE_AUTOUPDATE=1 \
       "$OC_BIN" serve --hostname 127.0.0.1 --port "$OC_PORT" \
         >>"$ROOT/data/logs/opencode.log" 2>&1 &
-      echo $! > "$ROOT/data/opencode.pid"
+      _record_child opencode "$!"
     )
     up=0
     TRIES=60
@@ -1564,6 +1678,15 @@ PYDS
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
+      # Readiness alone does not bind the answer to the child above: a stranger could
+      # win the port between our preflight and OpenCode's bind while our child stayed
+      # alive for some unrelated reason. Before trusting /provider, prove that the one
+      # listener is the exact PID+kernel-birth launch we recorded. A mismatch reaps
+      # only that recorded child and fails the Start; it never adopts or signals the
+      # listener that happened to answer.
+      if ! _stamp_pidfile_from_port opencode "$OC_PORT"; then
+        exit 1
+      fi
       # WARM THE PROJECT ROW. OpenCode registers a directory as a project LAZILY, on
       # the first instance-scoped request for it (server cwd is only the default —
       # routes/instance/httpapi/middleware/workspace-routing.ts:87 → instance-store →
@@ -1599,8 +1722,15 @@ PYDS
       curl -sf -m 25 --get --data-urlencode "directory=${OC_WS}" \
         "http://127.0.0.1:${OC_PORT}/provider" -o "$ROOT/data/opencode-provider.json" \
         2>/dev/null || :
-      OC_CFGP="$OC_CFG" python3 - "$ROOT/data/opencode-provider.json" <<'PYOCCHK' || true
-import json, os, sys
+      # Re-bind AFTER the response as well. The first check proves who owned the
+      # listener before the request; only this second check proves that the bytes we
+      # just received still came from that same exact child generation.
+      if ! _stamp_pidfile_from_port opencode "$OC_PORT"; then
+        rm -f "$ROOT/data/opencode-provider.json"
+        exit 1
+      fi
+      OC_CFGP="$OC_CFG" python3 - "$ROOT/data/opencode-provider.json" "$ROOT" <<'PYOCCHK' || true
+import importlib.util, json, os, sys, tempfile
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         d = json.load(fh)
@@ -1609,7 +1739,35 @@ except Exception as e:                                            # noqa: BLE001
     raise SystemExit(0)
 conn = [str(x) for x in (d.get("connected") or [])]
 allp = {p.get("id"): p for p in (d.get("all") or []) if isinstance(p, dict)}
-n = len((allp.get("llama.cpp") or {}).get("models") or {})
+models = (allp.get("llama.cpp") or {}).get("models") or {}
+if not isinstance(models, dict) or any(not isinstance(k, str) for k in models):
+    print("[harness] opencode provider check: llama.cpp returned an unreadable model map")
+    raise SystemExit(0)
+n = len(models)
+# Launch provenance, not a second catalog: this is an observation about the exact
+# current child and is discarded on every Start. The registry remains the inventory.
+try:
+    root = sys.argv[2]
+    helper = os.path.join(root, "bridge", "core", "ownership.py")
+    spec = importlib.util.spec_from_file_location("mot_ownership", helper)
+    ownership = importlib.util.module_from_spec(spec); spec.loader.exec_module(ownership)
+    claim = ownership.read_claim(root, "opencode")
+    if not claim:
+        raise ValueError("ownership record is absent")
+    marker = {"v": 1, "pid": claim[0], "birth": claim[1],
+              "connected": "llama.cpp" in conn, "models": sorted(models)}
+    directory = os.path.join(root, "data")
+    fd, tmp = tempfile.mkstemp(prefix=".opencode-catalog-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(marker, fh, sort_keys=True, separators=(",", ":"))
+            fh.write("\n"); fh.flush(); os.fsync(fh.fileno())
+        os.replace(tmp, os.path.join(directory, "opencode.runtime-catalog.json"))
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+except Exception as e:
+    print("[harness] opencode provider check: runtime marker unavailable (%s)" % e)
 if "llama.cpp" in conn:
     # Settings -> Providers and the composer picker read the SAME payload — the
     # intersection of `all` and `connected` (app/src/hooks/use-providers.ts:52-60,
@@ -1657,26 +1815,25 @@ PYOCCHK
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
     BASE_URL=$(awk '/^runner:/{f=1} f && /^  endpoint:/{print $2; exit}' harness.yaml)
     KEY=$(awk '/^runner:/{f=1} f && /^  api_key:/{print $2; exit}' harness.yaml)
-    MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+    MODEL=$(_runner_active_model 2>/dev/null || true)
+    if [[ -n "$MODEL" ]]; then
+      MSRC="live runner launch provenance"
+    else
+      MODEL=$(awk '/^runner:/{f=1} f && /^  model:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*model:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+      MSRC="saved runner pin (no live launch provenance)"
+    fi
     MODEL="$(_normalize_yaml_scalar "$MODEL")"
+    BASE_URL="$(_normalize_yaml_scalar "$BASE_URL")"
+    KEY="$(_normalize_yaml_scalar "$KEY")"
+    [[ -n "$BASE_URL" ]] || BASE_URL="http://127.0.0.1:6767/v1"
     CTXLEN=$(awk '/^runner:/{f=1} f && /^  ctx_size:/{print $2; exit}' harness.yaml)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
-    # ⚠️ THE RUNNER'S ANSWER OUTRANKS harness.yaml (found live: the pin said a 27B whose
-    # file Debi had deleted while the runner was serving a 4B). What the runner SERVES is
-    # what answers every turn — llama.cpp ignores the request's `model` field entirely
-    # (measured, ledger U13/U16) — so seeding the pinned-but-absent id would make both the
-    # main slot and our "MOT Deck has X loaded" line say something untrue. The pin is the
-    # fallback, for the runner-down Start (config-resident by design).
-    MSRC="pinned in harness.yaml (the runner did not answer)"
-    LIVE_MODEL=$(curl -sf -m 4 -H "Authorization: Bearer $KEY" "${BASE_URL%/}/models" \
-      | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)
-    if [[ -n "$LIVE_MODEL" ]]; then
-      [[ -n "$MODEL" && "$MODEL" != "$LIVE_MODEL" ]] && \
-        echo "[harness] note: harness.yaml pins '$MODEL' but the runner is serving '$LIVE_MODEL' — using what it serves."
-      MODEL="$LIVE_MODEL"
-      MSRC="live from the runner"
-    fi
+    # Launch provenance outranks harness.yaml intent. A first-row `/v1/models` probe
+    # is NOT used here: llama.cpp reports its alias, but MLX may enumerate cache rows
+    # unrelated to the model this child was launched with. `_runner_active_model`
+    # accepts only the exact PID + kernel-birth ownership record written after the
+    # runner became ready; the pin is used only when that live fact is unavailable.
     if [[ -z "$MODEL" ]]; then
       echo "ERROR: could not reach the runner at ${BASE_URL} or no model available."
       echo "Start the Runner first (panel → Runner → Start)."
@@ -1965,6 +2122,21 @@ PYLOFFICE
     _reap_pidfile hermes force
     _clear_port "$PORT" hermes force
     sleep 1
+    # Hermes's WhatsApp onboarding writes BOTH YAML and WHATSAPP_ENABLED=true, while
+    # its dashboard toggle writes only YAML. The env value wins on read. We must not
+    # guess which side of an unjournaled mismatch is newer user intent: startup only
+    # finishes a M.O.T transaction interrupted between its two atomic replacements.
+    # Run after prior owned Hermes quiescence because Hermes does not share our lock.
+    # Pairing credentials and session files remain outside this helper.
+    if [[ -f scripts/reconcile_hermes_whatsapp.py ]]; then
+      [[ -n "$H_PY" ]] || {
+        echo "ERROR: no Python with PyYAML can recover an interrupted Hermes WhatsApp transaction."
+        exit 1
+      }
+      "$H_PY" scripts/reconcile_hermes_whatsapp.py \
+        --home "$(dirname "$HCFG")" --recover \
+        || { echo "ERROR: Hermes WhatsApp transaction recovery failed; credentials were not touched."; exit 1; }
+    fi
     : > data/logs/hermes.log
     # Deterministic dashboard session token (Hermes chat lane): the dashboard seeds
     # its _SESSION_TOKEN from HERMES_DASHBOARD_SESSION_TOKEN (the same trick Hermes's
@@ -1988,7 +2160,7 @@ PYLOFFICE
     # gateway is later run as a component, BOTH would fire cron (no cross-process lock)
     # → dedupe then (single ticker). See CLAUDE.md.
     _detached env HERMES_DESKTOP=1 HERMES_DASHBOARD_SESSION_TOKEN="$HTOKEN" hermes dashboard --no-open --skip-build --host 127.0.0.1 --port "$PORT" >>data/logs/hermes.log 2>&1 &
-    echo $! > data/hermes.pid
+    _record_child hermes "$!"
     up=0
     for _ in $(seq 1 25); do
       if curl -sf -m 1 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1 \

@@ -399,10 +399,10 @@ def test_start_clears_the_port_with_the_ownership_check_and_no_name_signature():
         "ownership for this lane is proven by PATH ($ROOT/data/...), never by name")
 
 
-def test_start_writes_an_absolute_pidfile_and_an_appending_log():
+def test_start_writes_launch_ownership_and_an_appending_log():
     b = branch()
-    assert 'echo $! > "$ROOT/data/deepseek.pid"' in b, (
-        "absolute: the launch runs inside a `cd` to the workspace")
+    assert '_record_child deepseek "$!"' in b, (
+        "the child must have a PID plus birth-fingerprint launch record")
     assert '>>"$ROOT/data/logs/deepseek.log"' in b
     assert "N blocks = N starts, not N servers" in b, (
         "an appending log must say so, or six identical blocks read as six servers")
@@ -634,11 +634,15 @@ def test_the_fan_out_does_not_tell_the_user_to_restart_it():
 
 _ART = tempfile.mkdtemp(prefix="deepseek-artifacts-")
 _GGUF_PATH = os.path.join(_ART, "q.gguf")
-open(_GGUF_PATH, "wb").write(b"x")
+from bridge.tests.model_fixture import gguf_bytes as _valid_gguf_bytes  # noqa: E402
+open(_GGUF_PATH, "wb").write(_valid_gguf_bytes())
 _MLX_PATH = os.path.join(_ART, "Qwen3-8B-4bit")
 os.makedirs(_MLX_PATH, exist_ok=True)
-open(os.path.join(_MLX_PATH, "config.json"), "w").write("{}")
-open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(b"x")
+open(os.path.join(_MLX_PATH, "config.json"), "w").write('{"model_type":"unit-test"}')
+_st_header = json.dumps({"weight": {"dtype": "F32", "shape": [1],
+                         "data_offsets": [0, 4]}}, separators=(",", ":")).encode()
+open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(
+    len(_st_header).to_bytes(8, "little") + _st_header + b"\0\0\0\0")
 # ⚠️ REAL FILES ON DISK, because the enumerator (modelreg.offerable) drops a row whose
 # artifact is provably gone — S29. A fixture with a fake path would silently test the
 # empty case.

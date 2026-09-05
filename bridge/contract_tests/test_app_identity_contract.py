@@ -146,9 +146,9 @@ def test_ship_resolves_installed_bundle_by_identity_and_opens_that_exact_path():
     assert 'CFBundleExecutable' in code and '"$executable" == "Harness"' in code
     assert 'Contents/MacOS/Harness' in code
     assert 'cd -P "$1"' in code and 'pwd -P' in code
-    assert '"/Applications/Harness.app"' in code and '"/Applications/M.O.T.app"' in code
-    assert '"$HOME/Applications/Harness.app"' in code
-    assert '"$HOME/Applications/M.O.T.app"' in code
+    assert '/Applications/*.app' in code and '"$HOME"/Applications/*.app' in code
+    assert "_valid_harness_app" in code, \
+        "every filename candidate must still pass bundle id + executable validation"
     assert 'open "$APP"' in code, "ship must open the precise resolved app, not LS selection"
 
 
@@ -198,6 +198,16 @@ def test_resolver_zero_and_ambiguous_candidates_fail_closed(tmp_path):
     assert str(first) in ambiguous.stdout and str(second) in ambiguous.stdout
 
 
+def test_resolver_deduplicates_two_aliases_of_the_same_canonical_bundle(tmp_path):
+    app = _fixture_app(tmp_path, "Renamed Anything.app")
+    alias = tmp_path / "M.O.T.app"
+    alias.symlink_to(app, target_is_directory=True)
+    result = _resolve_fixture_apps(app, alias)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.count("selected installed app:") == 1
+    assert f"selected installed app: {app.resolve()}" in result.stdout
+
+
 def test_explicit_override_selects_only_its_valid_candidate_and_never_falls_back(tmp_path):
     chosen = _fixture_app(tmp_path, "chosen.app")
     other = _fixture_app(tmp_path, "other.app")
@@ -216,11 +226,25 @@ def test_explicit_override_selects_only_its_valid_candidate_and_never_falls_back
     assert "selected installed app" not in rejected.stdout
 
 
-def test_ship_quits_by_stable_bundle_id_not_a_filename_or_display_name():
+def test_ship_quits_the_exact_resolved_bundle_path_not_an_id_or_display_name():
     code = _code(SHIP)
-    assert "osascript -e 'tell application id \"local.harness.app\" to quit'" in code
+    assert 'tell application \\"$_APP_AS\\" to quit' in code
+    assert '_APP_AS="$(_applescript_string "$APP")"' in code
+    assert "tell application id" not in code, \
+        "a duplicate bundle id could quit a different installed copy"
     assert "osascript -e 'quit app \"Harness\"'" not in code
     assert "tell application \"M.O.T\"" not in code
+
+
+def test_ship_never_promotes_bundle_path_evidence_into_signal_authority():
+    """U104: a matching executable path identifies the selected app for diagnostics,
+    but does not prove this ship invocation launched its process."""
+    code = _code(SHIP)
+    survivor = code.split("for _pid in $(_ship_app_pids); do", 1)[1].split("\ndone", 1)[0]
+    assert "REFUSING to ship" in survivor and "exit 1" in survivor
+    assert not re.search(r"\bkill\b", survivor), (
+        "a selected-bundle survivor must be left for explicit user action, never "
+        "signalled merely because its executable path matches")
 
 
 def test_component_wheelhouse_discovery_covers_both_installed_bundle_names():

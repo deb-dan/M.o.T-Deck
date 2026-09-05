@@ -65,7 +65,6 @@ import os
 import signal
 import threading
 import time
-from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 from fastapi import Request
@@ -73,6 +72,7 @@ from fastapi.responses import JSONResponse
 
 from ..core.appctx import ROOT, app
 from ..core.procs import _port_alive_sync, _running_sync, cfg
+from ..core.singleton import release_claim
 from .components import stop as _component_stop
 
 # ── extras: not manifest components, but real processes of ours ───────────────
@@ -269,10 +269,6 @@ def _still_running(name: str, c: dict) -> bool:
     return _is_running(name, c)
 
 
-def _bridge_pidfile() -> Path:
-    return Path(ROOT) / "data" / "bridge.pid"
-
-
 def schedule_bridge_exit(delay: float = 1.2, grace: float = 15.0) -> None:
     """SIGTERM ourselves after `delay`, and hard-exit if graceful shutdown wedges.
 
@@ -290,12 +286,7 @@ def schedule_bridge_exit(delay: float = 1.2, grace: float = 15.0) -> None:
             pass
         time.sleep(grace)
         # Still alive → uvicorn is waiting on something that will not finish.
-        try:
-            pf = _bridge_pidfile()
-            if pf.read_text().strip() == str(me):
-                pf.unlink()
-        except Exception:                                   # noqa: BLE001
-            pass
+        release_claim(ROOT, me)
         os._exit(0)
 
     threading.Thread(target=_go, daemon=True, name="quitall-bridge-exit").start()

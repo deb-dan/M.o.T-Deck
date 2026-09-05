@@ -3317,7 +3317,7 @@ function navMigrate(raw) {
     .concat(NAV_TOPBAR_UNPINNED.map(id => id + ':0'));
   const got = rows.map(r => (typeof r === 'string' ? r + ':1'
     : (r && typeof r === 'object' && typeof r.id === 'string')
-      ? r.id + ':' + ((r.pinned === undefined ? true : !!r.pinned) ? 1 : 0) : ' '));
+      ? r.id + ':' + ((r.pinned === undefined ? true : !!r.pinned) ? 1 : 0) : ''));
   if (got.join('|') !== want.join('|')) return raw;      // customised — leave it alone
   return { ...raw, topbar: NAV_DEFAULT_TOPBAR.map(id => ({ id, pinned:true }))
     .concat(NAV_TOPBAR_UNPINNED.map(id => ({ id, pinned:false }))) };
@@ -3712,6 +3712,10 @@ function cardHTML(name, c, isBridge, prov) {
     if (drift && !fileIncomplete) {
       actions += ` <button class="primary" onclick="pinServedModel()">Pin this model</button>`;
     }
+    if (name === 'hermes' && c.installed) {
+      actions += ` <button onclick="disableHermesWhatsapp(this)"
+        title="Disable the Hermes WhatsApp channel, keep its login, and restart this M.O.T-owned Hermes process if it is running">Disable WhatsApp (keep login)</button>`;
+    }
   }
   // The pin line. `pin` is the bridge's best-known name; the LABEL is what stops it
   // reading as a claim that the model is loaded and fine (U15 #2).
@@ -3731,6 +3735,22 @@ function cardHTML(name, c, isBridge, prov) {
 function rescanFromCard(){
   showView('models');
   if (typeof rescanModels === 'function') return rescanModels();
+}
+
+async function disableHermesWhatsapp(btn){
+  if (btn) { btn.disabled = true; btn.textContent = 'Disabling WhatsApp…'; }
+  try {
+    const response = await fetch('/api/hermes/channels/whatsapp/disable', {method:'POST'});
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) throw new Error(result.detail || result.error || ('HTTP ' + response.status));
+    feed('hermes', result.restarted
+      ? 'WhatsApp disabled · login kept · Hermes restarted'
+      : 'WhatsApp disabled · login kept · Hermes remains stopped');
+  } catch (error) {
+    feed('hermes', 'WhatsApp disable FAILED — ' + (error && error.message || error));
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Disable WhatsApp (keep login)'; }
+  refresh(true);
 }
 
 /* PIN THE SERVED MODEL (S28) — POSTs /api/models/pin, which writes runner.model to the
@@ -5467,10 +5487,11 @@ function laneNote(m){
 
 async function setMode(m) {
   const prev = chatPane.mode;
-  // 2026-08-14: a lane switch during a live turn used to leave the turn running
-  // AND make Send-becomes-Stop unreachable (the busy branch keyed off the NEW
-  // chip). Stop the turn FIRST — before chatPane.mode flips — so the stop routes on
-  // the lane that is actually streaming.
+  // U31: a Chat/Agent lane switch detaches only this pane's SSE subscription; the
+  // bridge-owned producer continues and is reconciled when its lane/session is
+  // selected again. Hermes keeps its existing gateway lifecycle, but switching
+  // views likewise does not imply an interrupt. Explicit Stop remains the only
+  // path here that cancels upstream work.
   if (chatPane.busy && m !== prev) await detachTurnNow('lane switch');
   chatPane.mode = m;
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
@@ -5502,9 +5523,14 @@ async function setMode(m) {
     loadSessions();
     if (chatPane.hermesStoredSid) selectHermesSession(chatPane.hermesStoredSid);
     else document.getElementById('chat-msgs').innerHTML = '';
-  } else if (prev === 'hermes'){
+  } else {
+    // Chat and Agent share the Odysseus session but do not share an active producer.
+    // Re-select on EVERY direct-lane change, not only when leaving Hermes: this is
+    // what detaches Chat → shows Agent → returns to Chat and reconnects the still-live
+    // Chat turn. Without it a Chat↔Agent switch leaves the old lane's partial DOM under
+    // the new chip and never asks the bridge whether the selected lane is still active.
     loadSessions();
-    if (chatPane.sid) selectSession(chatPane.sid);
+    if (chatPane.sid) await selectSession(chatPane.sid);
     else document.getElementById('chat-msgs').innerHTML = '';
   }
 }
@@ -9471,7 +9497,7 @@ function renderSessions(){
     it.className = 'cs-item' + (s.id === chatPane.sid ? ' on' : '');
     it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectSession(s.id); };
     it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
-      <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}</div>
+      <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}${s.model_status === 'unavailable' ? ' <span class="cs-tag" title="' + esc(s.model_note || '') + '">model unavailable</span>' : ''}</div>
       <div class="cs-act">
         <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
         <button title="Duplicate" onclick="duplicateSession('${s.id}')">⎘</button>
@@ -9581,12 +9607,19 @@ async function selectSession(sid){
     // completes during that fetch, the metadata check below tells us not to paint
     // a second assistant bubble over the answer Odysseus has just persisted.
     const lane = chatPane.mode === 'chat' ? 'chat' : 'agent';
-    const activePromise = window.HarnessTurnStream
-      ? HarnessTurnStream.active(lane, sid).catch(() => null) : Promise.resolve(null);
+    const turnStatePromise = window.HarnessTurnStream
+      ? HarnessTurnStream.reconcile(lane, sid) : Promise.resolve({active:null, interrupted:false});
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
     if (chatPane.sid !== sid || chatPane.mode !== lane) return;
     renderOdyHistory(h);
-    const active = await activePromise;
+    const turnState = await turnStatePromise;
+    const active = turnState.active;
+    if (turnState.interrupted && chatPane.sid === sid && chatPane.mode === lane) {
+      const interrupted = addMsg('assistant',
+        'This turn was interrupted because the local bridge restarted before it completed.');
+      interrupted.classList.add('turn-interrupted');
+      scrollChat();
+    }
     if (!active && chatPane.sid === sid && chatPane.mode === lane) {
       // `/active` and Odysseus history are separate local authorities. They can be
       // served in either order: a turn may commit after the first history snapshot
@@ -9729,7 +9762,8 @@ async function initModels(){
   try {
     const r = await (await fetch('/api/models')).json();
     const n = (r.installed || []).length;
-    if (r.error && !n) stamp.textContent = 'REGISTRY UNAVAILABLE — ' + r.error;
+    if (r.recovery_error) stamp.textContent = 'MODEL RECOVERY NEEDS ATTENTION — ' + r.recovery_error;
+    else if (r.error && !n) stamp.textContent = 'REGISTRY UNAVAILABLE — ' + r.error;
     else {
       stamp.textContent = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED')
                         + ' · ' + n + ' INSTALLED · LOCAL';
@@ -13570,7 +13604,7 @@ async function sendChat() {
   // turn and overwritten by the bridge's `hermes_session` frame for a new (or
   // stale-sid-retried) one — which the bridge always yields BEFORE prompt.submit
   // (bridge/app.py:5046/5062), so a card can never arrive without it.
-  const turn = {lane: chatPane.mode, stage: 'connecting', ctl: new AbortController(),
+  const turn = {lane: chatPane.mode, session: chatPane.sid, stage: 'connecting', ctl: new AbortController(),
                 holder: holder, hermesSid: chatPane.hermesSid || '',
                 ended: false, timer: null, stopArmed: false};
   chatPane.curTurn = turn;
@@ -13598,7 +13632,8 @@ async function sendChat() {
     let resp;
     if (turn.lane !== 'hermes' && window.HarnessTurnStream){
       const made = await HarnessTurnStream.create(turn.lane, reqBody);
-      turn.id = made.id; turn.lastSeq = 0;
+      turn.id = made.id; turn.instance = made.instance || ''; turn.lastSeq = 0;
+      HarnessTurnStream.remember(turn);
       resp = await fetch('/api/turns/' + encodeURIComponent(turn.id) + '/events?after=0',
                          {signal:turn.ctl.signal});
     } else resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
@@ -13611,7 +13646,20 @@ async function sendChat() {
     // would blame the transport for a deliberate stop.
     if (turn.detached) { /* the producer continues; this pane intentionally left */ }
     else if (turn.ended) body.textContent += '\n· interrupted';
-    else body.textContent += `\n[stream error: ${e}]`;
+    else if (turn.lane !== 'hermes' && !turn.id) {
+      // The bridge did not accept this prompt. Most importantly, a Chat producer may
+      // still own the shared Odysseus session after a Chat→Agent lane switch; the 409
+      // is the protection against interleaved history, not permission to eat what the
+      // user typed. Restore the exact attempt ahead of anything typed while the short
+      // create request was in flight, and restore its image only when that one-slot
+      // composer has not meanwhile acquired another. The transient bubbles stay on
+      // screen solely to carry an explicit NOT SENT verdict.
+      inp.value = text + (inp.value ? '\n' + inp.value : '');
+      growInput(inp);
+      if (img && !chatPane.attachedImage) showAttachedImage(img.data, img.name);
+      body.textContent += '\n[not sent: ' + String(e && e.message || e) + ']';
+      holder.classList.add('turn-rejected');
+    } else body.textContent += `\n[stream error: ${e}]`;
   } finally {
     clearTimeout(turn.timer);
     const ownsPane = chatPane.curTurn === turn;
@@ -13631,7 +13679,7 @@ async function sendChat() {
     if (!turn.detached) loadSessions();
     // …and light up this turn's per-message actions + stats stamp (one silent
     // history refetch; never awaited, never allowed to throw into the send path).
-    if (!turn.detached) {
+    if (!turn.detached && (turn.lane === 'hermes' || turn.id)) {
       if (holder._raw === undefined) holder._raw = body.textContent;
       stampLiveTurn(userWrap, holder, text);
     }

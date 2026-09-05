@@ -81,12 +81,14 @@ import re
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 # The NAMED PROVIDER, shared by both goose lanes. Its module docstring carries the whole
 # empirical census (the file goose's own form wrote) — read it before touching anything
 # provider-shaped in here. One writer, two lanes: the CLI lane and the embed lane must
 # not drift into two different ideas of what "MOT Deck (local)" is.
 from . import gooseprov as _prov
+from .core import ownership as _ownership
 
 # The GENERIC pty machinery, imported and not re-implemented. If this import fails the
 # whole module fails, which the router already handles the same way it handles a missing
@@ -949,21 +951,14 @@ def _strip_ansi(s) -> str:
 
 
 # ── the pidfile (the memory ledger's handle) ─────────────────────────────────
-def write_pidfile(root, pid: int) -> None:
-    try:
-        p = pidfile_path(root)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as fh:
-            fh.write(str(int(pid)))
-    except (OSError, TypeError, ValueError):                     # noqa: BLE001
-        pass
+def write_pidfile(root, pid: int) -> tuple[int, str]:
+    """Record the exact child handle; failure is fatal to the new session."""
+    return _ownership.record_child(Path(root), "goose", int(pid))
 
 
-def clear_pidfile(root) -> None:
-    try:
-        os.unlink(pidfile_path(root))
-    except OSError:
-        pass
+def clear_pidfile(root, pid: int, birth: str) -> bool:
+    """Retire only this session generation, including after the child has exited."""
+    return _ownership.retire_owned(Path(root), "goose", int(pid), str(birth or ""))
 
 
 def reap_orphan(root, base_env=None) -> str:
@@ -979,60 +974,38 @@ def reap_orphan(root, base_env=None) -> str:
     directory. That is the exact shape the one-at-a-time claim exists to prevent, so
     the fix belongs here and not in a ledger row.
 
-    ⛔ PROCESS-KILL RULE, IN FULL. The ONLY pid considered is the one in OUR pidfile,
-    and it is killed only after its command line is read back and confirmed to be THIS
-    root's goose binary. A pid that has been recycled onto somebody else's program —
-    Debi's own standalone goose among them — is left alone and the pidfile is simply
-    removed. Never a pattern, never a port. (v1.5.54 fixed this same class for goosed;
-    this is its CLI sibling, and it is written as the general rule.)
+    ⛔ PROCESS-KILL RULE, IN FULL. The ONLY pid considered is the one in OUR reporting
+    file, and it is signalled only while the exact PID+kernel-birth record written from
+    the original Popen child still matches under the shared lock. A recycled pid,
+    Debi's standalone goose, a matching command/path/CWD, and a legacy bare pidfile
+    authorize nothing. Never a pattern, never a port.
     """
-    p = pidfile_path(root)
-    try:
-        with open(p) as fh:
-            pid = int((fh.read() or "0").strip() or 0)
-    except (OSError, TypeError, ValueError):
-        return "none"
-    if pid <= 0:
-        clear_pidfile(root)
+    claim = _ownership.read_claim(Path(root), "goose")
+    pid = _ownership.read_pid_report(Path(root), "goose")
+    if not claim:
+        if pid is None and not os.path.lexists(pidfile_path(root)):
+            return "none"
+        # An empty expected birth can clean legacy bookkeeping but can never match a
+        # complete claim, so a concurrent launch is neither signalled nor erased.
+        _ownership.signal_owned(
+            Path(root), "goose", expected_pid=pid or 0, expected_birth="", force=True)
         return "stale"
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        clear_pidfile(root)
-        return "stale"                       # the row outlived the process; withdraw it
-    want = goose_bin(root)
-    try:
-        r = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
-                           capture_output=True, text=True, timeout=5)
-        cmd = (r.stdout or "").strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unverified"                  # cannot identify ⇒ do NOT touch it
-    if not cmd.startswith(want):
-        # Somebody else holds that pid now. Their process is not ours to end; our
-        # pidfile is ours to withdraw.
-        clear_pidfile(root)
-        return "stale"
-
-    class _Handle:                           # kill_process_group's minimal contract
-        def __init__(self, pid):
-            self.pid = pid
-
-        def poll(self):
-            try:
-                os.kill(self.pid, 0)
-            except OSError:
-                return 0
-            return None
-
-        def terminate(self):
-            os.kill(self.pid, __import__("signal").SIGTERM)
-
-        def kill(self):
-            os.kill(self.pid, __import__("signal").SIGKILL)
-
-    how = kill_process_group(_Handle(pid))
-    clear_pidfile(root)
-    return f"reaped:{how}"
+    pid = claim[0]
+    birth = claim[1]
+    sent, _detail = _ownership.signal_owned(
+        Path(root), "goose", expected_pid=pid, expected_birth=birth,
+        retire=False, group=True)
+    if not sent:
+        return "unverified"
+    for _ in range(50):
+        if _ownership.process_birth(pid) != birth:
+            _ownership.retire_owned(Path(root), "goose", pid, birth)
+            return "reaped:term"
+        time.sleep(0.1)
+    sent, _detail = _ownership.signal_owned(
+        Path(root), "goose", expected_pid=pid, expected_birth=birth,
+        force=True, group=True)
+    return "reaped:kill" if sent else "unverified"
 
 
 # ── the one-at-a-time claim (this lane's OWN state) ──────────────────────────

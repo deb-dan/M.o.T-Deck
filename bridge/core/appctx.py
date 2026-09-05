@@ -33,8 +33,9 @@ from pathlib import Path
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 # ⚠️ parents[2] AND parents[1] — NOT parent.parent AND parent. This file is one
@@ -203,7 +204,52 @@ except Exception:                                # noqa: BLE001
         print(f"[models] modeltools unavailable — no tool-calling pills "
               f"({_MODELTOOLS_ERR})", flush=True)
 
+_MUTATING_HTTP = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def mutation_origin_allowed(method: str, origin: "str | None",
+                            fetch_site: "str | None", server_port) -> bool:
+    """Pure browser-origin fence; headerless non-browser clients remain supported."""
+    if str(method or "").upper() not in _MUTATING_HTTP:
+        return True
+    if str(fetch_site or "").strip().lower() == "cross-site":
+        return False
+    if origin is None or not str(origin).strip():
+        return True
+    try:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(str(origin).strip())
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        return (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost")
+                and int(port) == int(server_port))
+    except (TypeError, ValueError):
+        return False
+
+
+class MutationFencedRoute(APIRoute):
+    """Route-level fence that never wraps or buffers a streaming response body."""
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def fenced(request: Request):
+            server = request.scope.get("server") or ("127.0.0.1", 8700)
+            port = server[1] if len(server) > 1 else 8700
+            if not mutation_origin_allowed(
+                    request.method, request.headers.get("origin"),
+                    request.headers.get("sec-fetch-site"), port):
+                return JSONResponse(
+                    {"ok": False, "error": "cross-site mutation refused"},
+                    status_code=403)
+            return await original(request)
+
+        return fenced
+
+
 app = FastAPI(title="AI Harness Bridge")
+app.router.route_class = MutationFencedRoute
+if _singleton is not None:
+    # Explicit FastAPI lifecycle release is primary; atexit is belt-and-braces.
+    app.router.on_shutdown.append(lambda: _singleton.release_claim(ROOT, os.getpid()))
 
 # Serve the panel's self-hosted assets (Phase 2 artifact renderer: babel/react/prism/
 # markdown-it/dompurify) same-origin at /assets/vendor/*. Fully offline — no runtime CDN.

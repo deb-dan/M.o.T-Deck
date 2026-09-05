@@ -93,6 +93,7 @@ THE ADVERSARIAL FINDINGS THIS FILE FENCES (all fixed):
 Run: python3 bridge/tests/test_gooseui_lane.py
 """
 import os
+import json
 import re
 import sys
 import tempfile
@@ -314,8 +315,11 @@ def test_named_provider_file_matches_what_goose_itself_wrote():
     # in LM Studio days earlier.
     import tempfile as _tf
     _mlxdir = _tf.mkdtemp(prefix="gooseui-mlx-")
-    open(os.path.join(_mlxdir, "config.json"), "w").write("{}")
-    open(os.path.join(_mlxdir, "model.safetensors"), "wb").write(b"x")
+    open(os.path.join(_mlxdir, "config.json"), "w").write('{"model_type":"unit-test"}')
+    _header = json.dumps({"weight": {"dtype": "F32", "shape": [1],
+                          "data_offsets": [0, 4]}}, separators=(",", ":")).encode()
+    open(os.path.join(_mlxdir, "model.safetensors"), "wb").write(
+        len(_header).to_bytes(8, "little") + _header + b"\0\0\0\0")
     m = PR.model_entries([{"id": "g", "format": "gguf"},
                           {"id": "x", "format": "mlx", "path": _mlxdir},
                           {"id": "a", "kind": "audio"},
@@ -445,10 +449,10 @@ def test_the_pidfile_is_consulted_before_it_is_cleared():
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.FunctionDef) and n.name == "_stop_locked")
     seg = ast.get_source_segment(src, fn) or ""
-    head = seg.split("_clear_pidfile()")[0]
+    head = seg.split("_clear_pidfile(")[0]
     ok("_reap_orphan()" in head,
        "A5: the no-handle path reaps through the pidfile BEFORE the pidfile is cleared")
-    ok(seg.index("_reap_orphan()") < seg.index("_clear_pidfile()"),
+    ok(seg.index("_reap_orphan()") < seg.index("_clear_pidfile("),
        "…in that order, which is the whole fix")
     ok('"reaped"' in seg,
        "…and the caller is TOLD a process was terminated: answering \"gone\" while one "

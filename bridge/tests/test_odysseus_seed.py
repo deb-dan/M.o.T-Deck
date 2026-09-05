@@ -30,6 +30,7 @@ import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
+from bridge.tests.model_fixture import gguf_bytes                # noqa: E402
 
 SEED_PATH = os.path.join(ROOT, "scripts", "seed_odysseus_jan.py")
 _spec = importlib.util.spec_from_file_location("harness_seed_odysseus", SEED_PATH)
@@ -51,10 +52,13 @@ def artifact(name, is_dir=False):
     p = os.path.join(_TMP, name)
     if is_dir:
         os.makedirs(p, exist_ok=True)
-        open(os.path.join(p, "config.json"), "w").write("{}")
-        open(os.path.join(p, "model.safetensors"), "wb").write(b"x")
+        open(os.path.join(p, "config.json"), "w").write('{"model_type":"unit-test"}')
+        header = json.dumps({"weight": {"dtype": "F32", "shape": [1],
+                             "data_offsets": [0, 4]}}, separators=(",", ":")).encode()
+        open(os.path.join(p, "model.safetensors"), "wb").write(
+            len(header).to_bytes(8, "little") + header + b"\0\0\0\0")
     else:
-        open(p, "wb").write(b"x")
+        open(p, "wb").write(gguf_bytes())
     return p
 
 
@@ -307,7 +311,7 @@ def test_a_model_whose_file_is_gone_is_never_pinned(tmp_path):
     Odysseus went on pinning it. llama.cpp ignores the request's `model`, so picking one
     ANSWERS — under the dead model's name. That is the lie class, above a crash."""
     alive = str(tmp_path / "alive.gguf")
-    open(alive, "wb").write(b"x")
+    open(alive, "wb").write(gguf_bytes())
     reg = [
         {"id": "alive", "format": "gguf", "path": alive},
         {"id": "Muse-Glimmer-30B-Heretic-Q4_K_S", "format": "gguf",

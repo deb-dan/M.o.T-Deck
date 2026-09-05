@@ -47,6 +47,7 @@ class Turn:
     event_bytes: int = 0
     events: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
     task: asyncio.Task | None = None
+    subscribers: int = 0
 
 
 class TurnStore:
@@ -59,6 +60,10 @@ class TurnStore:
         self._changed = asyncio.Condition()
         self._turns: dict[str, Turn] = {}
         self._requests: dict[tuple[str, str, str], str] = {}
+        # A browser marker may outlive this process. It can call a missing turn an
+        # interruption only when this nonce changed; a record pruned by the same
+        # process is not evidence of a restart.
+        self.instance_id = secrets.token_urlsafe(18)
 
     @staticmethod
     def _public(turn: Turn) -> dict[str, Any]:
@@ -72,8 +77,15 @@ class TurnStore:
             key=lambda turn: turn.updated_at,
             reverse=True,
         )
-        keep = {turn.id for turn in terminal[:MAX_TERMINAL_TURNS]
-                if now - turn.updated_at <= MAX_TERMINAL_AGE}
+        # An attached response may be between frames when another turn completes.
+        # Retain its terminal record until every already-attached subscriber has
+        # consumed it; otherwise pruning can turn a successful final frame into an
+        # unexplained EOF in the panel. Subscriber-held rows are temporary leases,
+        # not an escape from the age/count bound: ``events`` prunes again when the
+        # final lease is released.
+        keep = ({turn.id for turn in terminal[:MAX_TERMINAL_TURNS]
+                 if now - turn.updated_at <= MAX_TERMINAL_AGE}
+                | {turn.id for turn in terminal if turn.subscribers})
         for turn in terminal:
             if turn.id in keep:
                 continue
@@ -102,7 +114,7 @@ class TurnStore:
             if existing_id and existing_id in self._turns:
                 return self._public(self._turns[existing_id]), False
             active = next((turn for turn in self._turns.values()
-                           if turn.lane == lane and turn.session == session
+                           if turn.session == session
                            and turn.state not in TERMINAL), None)
             if active:
                 raise TurnConflict(active.id)
@@ -244,24 +256,62 @@ class TurnStore:
             task.cancel()
         return await self.metadata(turn_id)
 
-    async def events(self, turn_id: str, after: int = 0) -> AsyncIterator[dict[str, Any]]:
+    async def subscribe(self, turn_id: str, after: int = 0):
+        """Reserve a replay lease now, before an HTTP response starts iterating."""
         cursor = max(0, after)
-        while True:
+        async with self._changed:
+            turn = self._turns.get(turn_id)
+            if not turn:
+                return None
+            turn.subscribers += 1
+        released = False
+
+        async def release() -> None:
+            nonlocal released
             async with self._changed:
-                await self._changed.wait_for(
-                    lambda: turn_id not in self._turns
-                    or any(seq > cursor for seq, _ in self._turns[turn_id].events)
-                    or self._turns[turn_id].state in TERMINAL)
-                turn = self._turns.get(turn_id)
-                if not turn:
+                if released:
                     return
-                rows = [(seq, payload) for seq, payload in turn.events if seq > cursor]
-                terminal = turn.state in TERMINAL
-            for seq, payload in rows:
-                cursor = seq
-                yield {"seq": seq, **payload}
-            if terminal:
-                return
+                released = True
+                turn = self._turns.get(turn_id)
+                if turn:
+                    turn.subscribers = max(0, turn.subscribers - 1)
+                self._prune_locked()
+                self._changed.notify_all()
+
+        async def stream():
+            nonlocal cursor
+            try:
+                while True:
+                    async with self._changed:
+                        await self._changed.wait_for(
+                            lambda: turn_id not in self._turns
+                            or any(seq > cursor for seq, _ in self._turns[turn_id].events)
+                            or self._turns[turn_id].state in TERMINAL)
+                        turn = self._turns.get(turn_id)
+                        if not turn:
+                            return
+                        rows = [(seq, payload) for seq, payload in turn.events if seq > cursor]
+                        terminal = turn.state in TERMINAL
+                    for seq, payload in rows:
+                        cursor = seq
+                        yield {"seq": seq, **payload}
+                    if terminal:
+                        return
+            finally:
+                await release()
+        return stream(), release
+
+    async def events(self, turn_id: str, after: int = 0) -> AsyncIterator[dict[str, Any]]:
+        subscription = await self.subscribe(turn_id, after)
+        if subscription is None:
+            return
+        stream, release = subscription
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await stream.aclose()
+            await release()
 
 
 turns = TurnStore()

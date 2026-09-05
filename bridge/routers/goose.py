@@ -117,12 +117,11 @@ def _clear_our_pidfile(sess) -> None:
     own goose Desktop twice."""
     try:
         pid = int(getattr(sess.proc, "pid", 0) or 0)
-        with open(_goose.pidfile_path(ROOT)) as fh:
-            on_disk = int((fh.read() or "0").strip() or 0)
-    except (OSError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return
-    if pid and on_disk == pid:
-        _goose.clear_pidfile(ROOT)
+    birth = str(getattr(sess, "_mot_owner_birth", "") or "")
+    if pid and birth:
+        _goose.clear_pidfile(ROOT, pid, birth)
 
 
 def _sniff_id(sess, data) -> None:
@@ -352,6 +351,61 @@ async def goose_session_remove(request: Request) -> JSONResponse:
     return JSONResponse({"ok": ok, "message": msg}, status_code=200 if ok else 409)
 
 
+@app.post("/api/goose/sessions/prune-empty")
+async def goose_sessions_prune_empty(request: Request) -> JSONResponse:
+    """Remove the exact confirmed historical zero-message sessions through Goose.
+
+    This is intentionally not described as atomic: Goose exposes one confirmed remove
+    operation per session. We re-list before starting, refuse if the confirmed set has
+    changed, exclude the live session, and report any partial completion precisely.
+    """
+    if _goose is None:
+        return _goose_unavailable()
+    try:
+        body = await request.json()
+    except Exception:                                            # noqa: BLE001
+        body = {}
+    supplied = (body or {}).get("ids")
+    if (not isinstance(supplied, list) or not supplied
+            or any(not isinstance(sid, str) or not _goose.SESSION_ID_RE.fullmatch(sid)
+                   for sid in supplied)
+            or len(set(supplied)) != len(supplied)):
+        return JSONResponse({"ok": False, "message": "exact empty-session ids required"},
+                            status_code=400)
+    rows, err = await asyncio.to_thread(_goose.list_sessions, ROOT)
+    if err:
+        return JSONResponse({"ok": False,
+                             "message": f"Goose could not confirm its session list: {err}"},
+                            status_code=409)
+    sess = _goose.current()
+    live = (sess.session_id if sess is not None and sess.alive() else "") or ""
+    current = sorted(r["id"] for r in rows
+                     if int(r.get("messages") or 0) == 0 and r.get("id") != live)
+    wanted = sorted(supplied)
+    if wanted != current:
+        return JSONResponse({
+            "ok": False,
+            "message": "The empty-session list changed; refresh and confirm the new list.",
+            "current_ids": current,
+        }, status_code=409)
+    deleted, failed = [], []
+    for sid in wanted:
+        ok, message = await asyncio.to_thread(_goose.remove_session, ROOT, sid)
+        if ok:
+            deleted.append(sid)
+        else:
+            failed.append({"id": sid, "message": message})
+            break
+    if failed:
+        return JSONResponse({
+            "ok": False, "deleted": deleted, "failed": failed,
+            "message": (f"Removed {len(deleted)} empty session(s), then Goose refused "
+                        f"{failed[0]['id']}: {failed[0]['message']}"),
+        }, status_code=409)
+    return JSONResponse({"ok": True, "deleted": deleted,
+                         "message": f"Removed {len(deleted)} empty session(s)."})
+
+
 def _goose_install_thread() -> None:
     try:
         r = _script("install_goose.sh", timeout=_GOOSE_INSTALL_TIMEOUT)
@@ -473,7 +527,16 @@ async def goose_pty(ws: WebSocket) -> None:
         # loads, because a detached session is a real running process and pretending
         # otherwise would be the ghost-row bug wearing the opposite sign. (The embedded
         # lane writes data/goose-ui.pid and earns its own "Goose UI" row the same way.)
-        _goose.write_pidfile(ROOT, sess.proc.pid)
+        try:
+            _, sess._mot_owner_birth = _goose.write_pidfile(ROOT, sess.proc.pid)
+        except Exception as exc:
+            _goose.release(sess)
+            sess.close()  # exact in-memory child handle; no PID/name discovery
+            _goose_log(f"ownership record FAILED: {exc}")
+            await ws.send_bytes(
+                f"\r\ncould not record goose launch ownership: {exc}\r\n".encode())
+            await ws.close(code=_goose.CLOSE_PRECONDITION, reason="ownership failed")
+            return
         _goose_log(f"session {'resume ' + want if want else 'start'} "
                    f"pid={sess.proc.pid} cwd={cwd} model={env.get('GOOSE_MODEL')} "
                    f"host={env.get('OPENAI_HOST')} {cols}x{rows}")

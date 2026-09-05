@@ -10,9 +10,27 @@
 // `tabs` immediately below. Adding a tab is adding one row to `tabs`.
 
 import Cocoa
+import Darwin
 import WebKit
 
 let bridgeURL = URL(string: "http://127.0.0.1:8700")!
+
+// Failure after Process.run() must never leave an unrecorded child behind. This helper
+// accepts only the Process handle returned by that exact launch, asks it to terminate,
+// waits for exit, and escalates only while the same handle still reports running. It
+// is intentionally not a general PID/name/port cleanup primitive.
+func terminateExactSpawnedChild(_ process: Process) {
+    guard process.isRunning else { return }
+    process.terminate()
+    let deadline = Date().addingTimeInterval(3)
+    while process.isRunning && Date() < deadline {
+        usleep(50_000)
+    }
+    if process.isRunning {
+        Darwin.kill(process.processIdentifier, SIGKILL)
+    }
+    process.waitUntilExit()
+}
 
 // ONE table: the tab strip's labels AND the URL each tab loads. It feeds the single
 // NSSegmentedControl (v2 deleted the right pane's mini strip), `urlForTab`, the
@@ -3386,7 +3404,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         log.seekToEndOfFile()
         p.standardOutput = log
         p.standardError = log
-        do { try p.run(); bridgeProcess = p; spawnedBridge = true } catch {}
+        do {
+            try p.run()
+            // Launch provenance is written by the process that owns the real child
+            // handle. The bridge waits briefly for this exact PID+birth record and
+            // refuses to self-adopt from a path, name, CWD, pidfile, or port.
+            let recorder = Process()
+            recorder.executableURL = URL(fileURLWithPath: "/bin/bash")
+            recorder.arguments = ["\(resolvedRoot)/scripts/start_component.sh",
+                                  "--record-child", "bridge", "\(p.processIdentifier)"]
+            recorder.currentDirectoryURL = URL(fileURLWithPath: resolvedRoot)
+            recorder.standardOutput = log
+            recorder.standardError = log
+            try recorder.run()
+            recorder.waitUntilExit()
+            if recorder.terminationStatus == 0 {
+                bridgeProcess = p
+                spawnedBridge = true
+            } else {
+                terminateExactSpawnedChild(p)
+            }
+        } catch {
+            terminateExactSpawnedChild(p)
+        }
     }
 
     func logPath() -> String {

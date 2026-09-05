@@ -313,7 +313,8 @@ check("ship.sh copies every bridge/*.py (voice.py must reach the snapshot)",
 
 # ── _set_yaml_scalar: it rewrites the USER'S manifest, so exercise it for real ──
 # ast-extracted from app.py with a patched ROOT so nothing here touches the real file.
-_ns = {"ROOT": None}
+from bridge.yamlfile import transform_file as _yaml_transform_file  # noqa: E402
+_ns = {"ROOT": None, "transform_file": _yaml_transform_file}
 for _node in ast.parse(asrc).body:
     if isinstance(_node, ast.FunctionDef) and _node.name == "_set_yaml_scalar":
         exec(compile(ast.Module(body=[_node], type_ignores=[]), "<app>", "exec"), _ns)
@@ -613,9 +614,10 @@ check("the endpoint validates through voice.validate_voice_choice",
       "_voice.validate_voice_choice(" in APP_SRC)
 check("the endpoint writes through the atomic _registry_update helper",
       "def _registry_update(" in APP_SRC and "_registry_update(mid," in APP_SRC)
-check("_registry_update writes atomically (tmp + os.replace), like its siblings",
-      re.search(r"def _registry_update\(.*?_os\.replace\(tmp, reg\)", APP_SRC, re.S)
-      is not None)
+check("_registry_update uses the one deterministic atomic registry writer",
+      re.search(r"def _registry_update\(.*?write_registry\(str\(reg\),", APP_SRC, re.S)
+      is not None
+      and "os.replace(temporary, registry)" in APP_SRC)
 check("an empty voice CLEARS the key rather than storing null",
       '{"voice": v or None}' in APP_SRC)
 

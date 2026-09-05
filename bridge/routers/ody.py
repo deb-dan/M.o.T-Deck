@@ -10,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
 from ..core.modelid import _display_model
-from ..core.procs import cfg
+from ..core.procs import _registry_models, cfg
 from .sidecars import _attachment_forget, _attachment_rows, _thinking_forget, _thinking_rows, attach_images, attach_thinking
 
 
@@ -82,17 +82,57 @@ async def ody_sessions() -> JSONResponse:
         r = await _ody_req("GET", "/api/sessions")
         if r.status_code != 200:
             return JSONResponse([])
-        out = [{
-            "id": s.get("id"),
-            "name": (s.get("name") or "Untitled"),
-            "model": _display_model(s.get("model")),   # wire id (MLX = path) → our id
-            "updated_at": s.get("last_message_at") or s.get("updated_at") or s.get("created_at"),
-            "message_count": s.get("message_count", 0),
-        } for s in r.json() if s.get("id")]
+        registry = _registry_models()
+        out = []
+        for s in r.json():
+            if not s.get("id"):
+                continue
+            availability = historical_model_availability(
+                s.get("model"), s.get("endpoint_url"), registry, cfg())
+            out.append({
+                "id": s.get("id"),
+                "name": (s.get("name") or "Untitled"),
+                "model": _display_model(s.get("model")),  # MLX wire path → registry id
+                "model_status": availability["status"],
+                "model_note": availability["note"],
+                "updated_at": (s.get("last_message_at") or s.get("updated_at")
+                               or s.get("created_at")),
+                "message_count": s.get("message_count", 0),
+            })
         out.sort(key=lambda x: x["updated_at"] or "", reverse=True)
         return JSONResponse(out)
     except Exception:
         return JSONResponse([])
+
+
+def historical_model_availability(raw_model, endpoint_url, registry, config) -> dict:
+    """Label only what current evidence supports about an old Odysseus binding.
+
+    Sessions pointed elsewhere are not ours to judge. For our endpoint, membership in
+    the current offerable inventory means available; absence means unavailable *now*,
+    not "deleted" (the bytes may remain or the source manager may have withdrawn it).
+    """
+    model = str(raw_model or "").strip()
+    endpoint = str(endpoint_url or "").strip().rstrip("/")
+    expected = str(((config or {}).get("runner") or {}).get("endpoint") or "") \
+        .strip().rstrip("/")
+    if not model or not endpoint or not expected or endpoint != expected:
+        return {"status": "", "note": ""}
+    try:
+        from ..core.modelreg import offerable, wire_id
+        offered = offerable(registry or [])
+        accepted = {str(row.get("id") or "").strip() for row in offered}
+        accepted.update(str(wire_id(row) or "").strip() for row in offered)
+    except Exception:                                            # noqa: BLE001
+        return {"status": "", "note": ""}
+    accepted.discard("")
+    if model in accepted:
+        return {"status": "available", "note": ""}
+    return {
+        "status": "unavailable",
+        "note": ("This historical chat names a model that is not available in "
+                 "M.O.T's current model inventory."),
+    }
 
 
 @app.post("/api/ody/session/new")

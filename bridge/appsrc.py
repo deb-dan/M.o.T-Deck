@@ -73,6 +73,7 @@ FILES: tuple[str, ...] = (
     "routers/odychat.py",
     "core/yamlset.py",
     "routers/model_visibility.py",
+    "core/modeldelete.py",
     "routers/models.py",
     "routers/model_rescan.py",
     # routers/aux.py sits immediately after models.py because that is where its code
@@ -138,7 +139,9 @@ FILES: tuple[str, ...] = (
     # U31 durable local Chat/Agent turns. A route-less core still belongs in the
     # source view and facade; both files are appended by the new-module rule.
     "core/turns.py",
+    "core/ownership.py",
     "routers/turns.py",
+    "routers/hermeschannels.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

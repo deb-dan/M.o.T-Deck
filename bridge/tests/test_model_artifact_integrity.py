@@ -13,6 +13,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 from bridge.core import modelreg as MR  # noqa: E402
 from bridge.core.health import file_state_forget, file_state_track  # noqa: E402
+from bridge.tests.model_fixture import (gguf_bytes as valid_gguf_bytes,
+                                        safetensors_bytes)  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("u75_seed", os.path.join(ROOT, "scripts", "seed_registry.py"))
 SR = importlib.util.module_from_spec(_spec)
@@ -20,14 +22,9 @@ _spec.loader.exec_module(SR)
 
 
 def gguf_bytes(version=3):
-    return b"GGUF" + int(version).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2
-
-
-def safetensors_bytes():
-    header = json.dumps({"weight": {
-        "dtype": "F32", "shape": [1], "data_offsets": [0, 4],
-    }}, separators=(",", ":")).encode()
-    return len(header).to_bytes(8, "little") + header + b"\0\0\0\0"
+    if version not in (2, 3):
+        return b"GGUF" + int(version).to_bytes(4, "little") + b"\0" * 32
+    return valid_gguf_bytes(version=version)
 
 
 def gguf(tmp_path, name="model.gguf", data=None, **extra):
@@ -78,6 +75,21 @@ def test_structural_probe_rejects_nonempty_garbage_and_malformed_headers(tmp_pat
     assert MR.artifact_probe(gguf(tmp_path, "one-byte.gguf", b"x"))["reason"] == "invalid-header"
     assert MR.artifact_probe(gguf(tmp_path, "bad-magic.gguf", b"NOPE" + gguf_bytes()[4:]))["reason"] == "invalid-header"
     assert MR.artifact_probe(gguf(tmp_path, "future.gguf", gguf_bytes(99)))["reason"] == "invalid-header"
+    empty_inventory = b"GGUF" + (3).to_bytes(4, "little") + (0).to_bytes(8, "little") * 2
+    assert MR.artifact_probe(gguf(tmp_path, "empty-inventory.gguf", empty_inventory))["reason"] == "invalid-header"
+    truncated_inventory = (b"GGUF" + (3).to_bytes(4, "little")
+                           + (1).to_bytes(8, "little") * 2 + b"x")
+    assert MR.artifact_probe(gguf(tmp_path, "truncated.gguf", truncated_inventory))["reason"] == "invalid-header"
+    outside = valid_gguf_bytes(tensor_offset=4096)
+    assert MR.artifact_probe(gguf(tmp_path, "outside.gguf", outside))["reason"] == "invalid-header"
+    for removed_or_unknown in (4, 5, 31, 32, 33, 36, 37, 38, 43, 1024):
+        data = valid_gguf_bytes(tensor_type=removed_or_unknown)
+        assert MR.artifact_probe(gguf(
+            tmp_path, f"type-{removed_or_unknown}.gguf", data))["reason"] == "invalid-header"
+    for supported in sorted(MR._PINNED_GGML_TYPES):
+        data = valid_gguf_bytes(tensor_type=supported)
+        assert MR.artifact_probe(gguf(
+            tmp_path, f"supported-type-{supported}.gguf", data))["state"] == "ready"
 
     bad_weight = mlx(tmp_path)
     weight = tmp_path / "model-mlx" / "model.safetensors"
@@ -85,9 +97,42 @@ def test_structural_probe_rejects_nonempty_garbage_and_malformed_headers(tmp_pat
     assert MR.artifact_probe(bad_weight)["reason"] == "invalid-weight"
     weight.write_bytes((999).to_bytes(8, "little") + b"{}")
     assert MR.artifact_probe(bad_weight)["reason"] == "invalid-weight"
+    malformed = json.dumps({"weight": {
+        "dtype": "F32", "shape": [2], "data_offsets": [0, 4],
+    }}, separators=(",", ":")).encode()
+    weight.write_bytes(len(malformed).to_bytes(8, "little") + malformed + b"\0\0\0\0")
+    assert MR.artifact_probe(bad_weight)["reason"] == "invalid-weight"
     weight.write_bytes(safetensors_bytes())
     (tmp_path / "model-mlx" / "config.json").write_text("{}")
     assert MR.artifact_probe(bad_weight)["reason"] == "invalid-config"
+
+
+@pytest.mark.parametrize("dtype,shape,payload_bytes", [
+    ("F4", (2,), 1),
+    ("F6_E2M3", (4,), 3),
+    ("F6_E3M2", (4,), 3),
+    ("F8_E4M3FNUZ", (1,), 1),
+    ("F8_E5M2FNUZ", (1,), 1),
+    ("C64", (1,), 8),
+])
+def test_current_safetensors_dtypes_use_their_real_packed_widths(
+        tmp_path, dtype, shape, payload_bytes):
+    row = mlx(tmp_path)
+    weight = tmp_path / "model-mlx" / "model.safetensors"
+    weight.write_bytes(safetensors_bytes(
+        dtype=dtype, shape=shape, payload_bytes=payload_bytes))
+    assert MR.artifact_probe(row)["state"] == "ready"
+
+
+def test_packed_safetensors_reject_fractional_or_mismatched_storage(tmp_path):
+    row = mlx(tmp_path)
+    weight = tmp_path / "model-mlx" / "model.safetensors"
+    weight.write_bytes(safetensors_bytes(dtype="F4", shape=(1,), payload_bytes=1))
+    assert MR.artifact_probe(row)["reason"] == "invalid-weight"
+    weight.write_bytes(safetensors_bytes(dtype="F6_E2M3", shape=(4,), payload_bytes=2))
+    assert MR.artifact_probe(row)["reason"] == "invalid-weight"
+    weight.write_bytes(safetensors_bytes(dtype="F128", shape=(1,), payload_bytes=16))
+    assert MR.artifact_probe(row)["reason"] == "invalid-weight"
 
 
 @pytest.mark.parametrize("config,weights,reason", [

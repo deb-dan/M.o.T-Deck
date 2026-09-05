@@ -1,5 +1,4 @@
-"""PIDFILE ↔ PORT CONTRACT (U54) — data/<comp>.pid names the process that HOLDS the
-port, not the one we reported launching.
+"""PIDFILE ↔ PORT CONTRACT (U54/U25) — readiness verifies the exact spawned child.
 
 THE INCIDENT, measured twice on the live stack (2026-08-30), and pre-existing rather
 than caused by the detachment slice:
@@ -17,19 +16,19 @@ fell through to `_clear_port`, which is why nobody noticed), and the
 never noticed, because health is probe-based — which is exactly why a dead pidfile could
 sit there for weeks.
 
-THE FIX is this repo's oldest rule, applied one field over: AN EXIT CODE — or a `$!` —
-IS A REPORT, NOT A FACT (see the U15 header in bridge/routers/components.py). Once the
-readiness poll says the server answers, `_stamp_pidfile_from_port` ASKS THE PORT who
-holds it and records that.
+THE ORIGINAL FIX asked the port who held it and ADOPTED that process when its path/name
+looked familiar. That violated the stronger ownership doctrine: a manually-started
+server may share the same binary, path, cwd and port. The current contract is stricter:
+`$!` creates an exact PID + kernel-birth ownership record; readiness then asks the port
+and succeeds only when the sole listener is that exact still-owned child. It never
+adopts a port holder.
 
 WHAT THIS FILE FENCES:
-  A. the FENCE     — the helper exists, both runner engines call it at readiness, and it
-                     verifies ownership before writing (a pidfile is the one input
-                     _reap_pidfile signals on sight, so an unverified pid in it would be
-                     a way to make the next Start kill somebody else's process).
-  B. the BEHAVIOUR — LIVE: a pidfile pre-seeded with a lie is corrected to the pid that
-                     really holds the port; a second run is a no-op; and a listener that
-                     is NOT ours is refused, leaving the file untouched.
+  A. the FENCE     — both runner engines verify the listener at readiness and the helper
+                     accepts only `_ownership_matches`.
+  B. the BEHAVIOUR — LIVE: the exact recorded child passes; a different listener is
+                     never adopted or signalled, while the recorded child is the only
+                     process cleanup may touch.
 
 PROCESS-KILL RULE COMPLIANCE (CLAUDE.md): every process this file signals was spawned by
 this file, in this process, and is held in a local handle. Nothing is matched by name,
@@ -69,13 +68,14 @@ def test_the_helper_exists():
 
 
 def test_the_helper_never_records_a_stranger():
-    """The pidfile is the one input _reap_pidfile trusts enough to signal on sight."""
+    """Port/path/name evidence can corroborate ownership but never establish it."""
     body = _code().split("_stamp_pidfile_from_port()")[1].split("\n}")[0]
-    assert "_cmd_looks_like_ours" in body, (
-        "the helper writes a pid into the file _reap_pidfile signals from — every "
-        "candidate must pass the ownership check first (CLAUDE.md PROCESS-KILL RULE)")
-    assert "kill" not in body, (
-        "the helper RECORDS; it must never signal anything itself")
+    assert "_ownership_matches" in body, (
+        "the listener must match the exact PID + birth launch claim")
+    assert "_cmd_looks_like_ours" not in body, (
+        "a familiar command/path is corroboration, never launch ownership")
+    assert "mv " not in body and "> \"data/${comp}.pid\"" not in body, (
+        "the verifier must never replace the launch record with a port observation")
 
 
 def test_both_runner_engines_stamp_at_readiness():
@@ -96,13 +96,25 @@ def test_both_runner_engines_stamp_at_readiness():
         "…and before it returns success")
 
 
-def test_the_stamp_is_never_fatal():
-    """An ambiguous port must cost a sentence, not a start. `set -e` is on in this
-    script, so an un-guarded non-zero return would abort a runner that is UP."""
-    for ln in _code().splitlines():
-        if "_stamp_pidfile_from_port runner" in ln:
-            assert ln.rstrip().endswith("|| true"), (
-                "a failed stamp must never fail the start: " + ln.strip())
+def test_opencode_binds_its_runtime_catalog_to_the_exact_listener():
+    """U103: PID provenance in the marker is insufficient if `/provider` came from a
+    different process which won the configured port."""
+    code = _code()
+    arm = code.split("  opencode)", 1)[1].split("\n  deepseek)", 1)[0]
+    assert '_stamp_pidfile_from_port opencode "$OC_PORT"' in arm
+    assert arm.index('_stamp_pidfile_from_port opencode "$OC_PORT"') \
+        < arm.index('"http://127.0.0.1:${OC_PORT}/provider"'), (
+            "OpenCode must prove its recorded child owns the listener before asking "
+            "that listener for the runtime catalog")
+    assert '_stamp_pidfile_from_port opencode "$OC_PORT" || true' not in arm
+
+
+def test_a_failed_listener_verification_cannot_be_reported_as_a_successful_start():
+    """Responsive stranger + failed child is not a healthy M.O.T runner."""
+    code = _code()
+    assert '_stamp_pidfile_from_port runner "$R_PORT"' in code
+    assert '_stamp_pidfile_from_port runner "$R_PORT" || true' not in code, (
+        "discarding a provenance failure would report somebody else's listener as ours")
 
 
 # ══ B. THE BEHAVIOUR, LIVE ════════════════════════════════════════════════════
@@ -159,58 +171,65 @@ def _stamp(comp: str, port: int) -> str:
 
 
 @pytest.mark.skipif(not START.exists(), reason="no start_component.sh in this tree")
-def test_a_lying_pidfile_is_corrected_to_the_real_port_holder(tmp_path):
-    """THE INCIDENT, re-staged in miniature: the file names a pid that is not serving,
-    and one run of the helper makes it name the one that is."""
+def test_the_exact_recorded_child_is_verified_without_rewriting_ownership(tmp_path):
+    """The process this test spawned, recorded, and put on the port is accepted."""
     port = _free_port()
     comp = "u54test"
     pf = ROOT / "data" / f"{comp}.pid"
     listener = None
     try:
-        # ARGV inside the tree ⇒ _cmd_looks_like_ours' path rule recognises it, exactly
-        # as it recognises data/llamacpp/build/bin/llama-server.
         listener = _Spawned(ROOT / "data" / f"{comp}_listener.py", port)
-        pf.write_text("999999\n")           # the losing retry's $!, in effect
+        record = subprocess.run(["bash", str(START), "--record-child", comp,
+                                 str(listener.proc.pid)], cwd=str(ROOT),
+                                capture_output=True, text=True, timeout=10)
+        assert record.returncode == 0, record.stderr
+        owner_before = (ROOT / "data" / f"{comp}.owner").read_bytes()
         out = _stamp(comp, port)
         assert pf.read_text().strip() == str(listener.proc.pid), (
-            f"the pidfile was not corrected to the port holder\n{out}")
-        assert "U54" in out, "…and it says so, rather than changing the file in silence"
-        # IDEMPOTENT: a second run finds the file already true and changes nothing.
+            f"the exact child was not accepted\n{out}")
+        assert (ROOT / "data" / f"{comp}.owner").read_bytes() == owner_before
         out2 = _stamp(comp, port)
         assert pf.read_text().strip() == str(listener.proc.pid)
-        assert "recorded the listener" not in out2, (
-            "a pidfile that is already correct must not be rewritten (or logged) again")
+        assert "STAMPED" in out2, "verification is idempotent"
     finally:
         if listener:
             listener.close()
         pf.unlink(missing_ok=True)
+        (ROOT / "data" / f"{comp}.owner").unlink(missing_ok=True)
 
 
 @pytest.mark.skipif(not START.exists(), reason="no start_component.sh in this tree")
-def test_a_listener_that_is_not_ours_is_never_recorded(tmp_path):
+def test_a_different_listener_is_never_adopted_or_signalled(tmp_path):
     """⛔ THE SAFETY HALF. Debi runs standalone copies of the apps we embed. Writing a
     stranger's pid here would arm the NEXT start's _reap_pidfile against her process."""
     port = _free_port()
     comp = "u54foreign"
     pf = ROOT / "data" / f"{comp}.pid"
     listener = None
+    recorded = None
     stranger_py = next((p for p in ("/usr/bin/python3", "/usr/bin/perl")
                         if Path(p).exists()), None)
     if not stranger_py:
         pytest.skip("no interpreter outside the tree to stage a stranger with")
     try:
-        # ARGV OUTSIDE the tree — interpreter AND script — ⇒ not ours by any rule.
+        recorded = subprocess.Popen(["/bin/sleep", "120"])
+        made = subprocess.run(["bash", str(START), "--record-child", comp,
+                               str(recorded.pid)], cwd=str(ROOT), capture_output=True,
+                              text=True, timeout=10)
+        assert made.returncode == 0, made.stderr
         listener = _Spawned(tmp_path / "stranger.py", port, python=stranger_py)
-        pf.write_text("999999\n")
         out = _stamp(comp, port)
-        assert pf.read_text().strip() == "999999", (
-            f"a foreign listener was written into our pidfile\n{out}")
-        assert "nothing we own" in out, (
-            "…and the refusal is a sentence, not a silent no-op")
+        assert not pf.exists(), f"failed exact-child record was not withdrawn\n{out}"
+        assert listener.proc.poll() is None, "the stranger listener was signalled"
+        recorded.wait(timeout=5)
+        assert "not held by the exact recorded" in out
     finally:
         if listener:
             listener.close()
+        if recorded and recorded.poll() is None:
+            recorded.kill(); recorded.wait(timeout=5)
         pf.unlink(missing_ok=True)
+        (ROOT / "data" / f"{comp}.owner").unlink(missing_ok=True)
 
 
 def test_the_selftest_hook_is_the_real_helper_and_nothing_else():

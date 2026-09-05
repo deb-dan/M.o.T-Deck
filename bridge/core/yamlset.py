@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .appctx import ROOT
+from ..yamlfile import transform_file
 
 
 # ── Models pane (M2) — list installed from OUR registry, switch the runner ──
@@ -9,17 +10,19 @@ def _set_yaml_model(block: str, new_id: str) -> None:
     """Rewrite <block>.model in harness.yaml (line-scan, preserves everything else)."""
     import re
     p = ROOT / "harness.yaml"
-    lines = p.read_text().split("\n")
-    inside = False
-    for i, ln in enumerate(lines):
-        if re.match(rf'^{block}:\s*$', ln):
-            inside = True; continue
-        if inside and re.match(r'^\S', ln):
-            inside = False
-        if inside and re.match(r'^  model:', ln):
-            lines[i] = f"  model: {new_id}"
-            break
-    p.write_text("\n".join(lines))
+    def edit(text):
+        lines = text.split("\n")
+        inside = False
+        for i, ln in enumerate(lines):
+            if re.match(rf'^{re.escape(block)}:\s*$', ln):
+                inside = True; continue
+            if inside and re.match(r'^\S', ln):
+                inside = False
+            if inside and re.match(r'^  model:', ln):
+                lines[i] = f"  model: {new_id}"
+                break
+        return "\n".join(lines)
+    transform_file(p, edit)
 
 
 def _set_runner_model(new_id: str) -> None:
@@ -35,30 +38,30 @@ def _set_yaml_scalar(block: str, key: str, value: str) -> None:
     they are appended rather than silently dropped."""
     import re
     p = ROOT / "harness.yaml"
-    text = p.read_text()
-    lines = text.split("\n")
-    inside, block_at, last_in_block = False, -1, -1
-    for i, ln in enumerate(lines):
-        if re.match(rf'^{re.escape(block)}:\s*$', ln):
-            inside, block_at = True, i
-            continue
-        if inside and re.match(r'^\S', ln):
-            inside = False
-        if inside:
-            if ln.strip():
-                last_in_block = i
-            if re.match(rf'^  {re.escape(key)}:', ln):
-                suffix = ""
-                m = re.search(r'\s(#.*)$', ln)      # keep any trailing comment
-                if m:
-                    suffix = "  " + m.group(1)
-                lines[i] = (f"  {key}: {value}" if value else f"  {key}:") + suffix
-                p.write_text("\n".join(lines))
-                return
-    new_line = f"  {key}: {value}" if value else f"  {key}:"
-    if block_at < 0:
-        lines.append(f"{block}:")
-        lines.append(new_line)
-    else:
-        lines.insert((last_in_block if last_in_block >= 0 else block_at) + 1, new_line)
-    p.write_text("\n".join(lines))
+    def edit(text):
+        lines = text.split("\n")
+        inside, block_at, last_in_block = False, -1, -1
+        for i, ln in enumerate(lines):
+            if re.match(rf'^{re.escape(block)}:\s*$', ln):
+                inside, block_at = True, i
+                continue
+            if inside and re.match(r'^\S', ln):
+                inside = False
+            if inside:
+                if ln.strip():
+                    last_in_block = i
+                if re.match(rf'^  {re.escape(key)}:', ln):
+                    suffix = ""
+                    m = re.search(r'\s(#.*)$', ln)
+                    if m:
+                        suffix = "  " + m.group(1)
+                    lines[i] = (f"  {key}: {value}" if value else f"  {key}:") + suffix
+                    return "\n".join(lines)
+        new_line = f"  {key}: {value}" if value else f"  {key}:"
+        if block_at < 0:
+            lines.append(f"{block}:")
+            lines.append(new_line)
+        else:
+            lines.insert((last_in_block if last_in_block >= 0 else block_at) + 1, new_line)
+        return "\n".join(lines)
+    transform_file(p, edit)

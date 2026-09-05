@@ -15,8 +15,10 @@ import asyncio
 import os
 import socket
 import subprocess
+import time
 import yaml
 from .appctx import ROOT
+from . import ownership as _ownership
 
 
 
@@ -86,12 +88,11 @@ def _script(name: str, *args: str, timeout: int = 1800) -> subprocess.CompletedP
 
 
 def _pid_alive(name: str) -> bool:
-    import os
     f = ROOT / "data" / f"{name}.pid"
     try:
         pid = int(f.read_text().strip())
         os.kill(pid, 0)
-        return True
+        return _ownership_matches(pid, name)
     except Exception:
         return False
 
@@ -193,34 +194,9 @@ def _running_sync(name: str, c: dict) -> bool:
 # port-kill from start_component.sh/stop SIGTERMed the BRIDGE (graceful "Shutting
 # down" right after POST start). Every port-kill must target ONLY the listener.
 
-# ⚠️ `_port_kill_cmd` IS GONE (U64, 2026-09-02). It returned the shell string
-#   lsof -ti tcp:PORT -sTCP:LISTEN | xargs kill
-# for the HARNESS_PORT_TAKEOVER=1 branch of _kill_port_listener — an unowned port clear,
-# which is the exact move that closed Debi's standalone Unsloth (2026-08-28) and goose
-# Desktop (2026-08-29), and which the no-name-kills contract bans from every shell file
-# in the tree with no exception list. An override does not need a second, uglier
-# implementation: the takeover branch now walks the SAME listener-scoped pid list every
-# other path walks (`_port_listener_pids`) and signals those pids directly, so there is
-# exactly one way this layer finds a process and exactly one way it signals one. The
-# only thing the env var still switches off is the OWNERSHIP CHECK, which is all it ever
-# claimed to do.
-
-
-# ── Port OWNERSHIP (ops slice, 2026-08-21) ───────────────────────────────────
-# Listener-scoped is necessary but not sufficient: when a port collides with another
-# app's server (Debi's STANDALONE Unsloth on :8888), a listener-scoped kill still kills
-# a stranger. So a kill now needs positive evidence that the process is OURS.
-# Signature names are kept narrow ON PURPOSE: a component's own NAME is never a
-# signature, because a standalone install of that same component is exactly what this
-# guard exists to protect.
-_PORT_OWNER_SIGS = {
-    # runner.binary may point at a backend outside the tree (the LM Studio fallback),
-    # so the engine name is the honest signature here.
-    "runner": ("llama-server", "mlx_lm.server", "mlx_vlm.server"),
-    "aux": ("llama-server", "mlx_lm.server", "mlx_vlm.server"),
-    # hermes may already be running from a different root (repo vs snapshot).
-    "hermes": ("hermes dashboard", "hermes serve"),
-}
+# ⚠️ `_port_kill_cmd` AND `HARNESS_PORT_TAKEOVER` ARE GONE. No environment switch may
+# turn a configured port into authority over a process. A collision is resolved by the
+# user stopping the other application, never by M.O.T killing an unowned listener.
 
 
 def _proc_cmdline(pid) -> str:
@@ -233,46 +209,10 @@ def _proc_cmdline(pid) -> str:
         return ""
 
 
-def _port_owner_verdict(cmd: str, root: str, component=None) -> bool:
-    """Pure (unit-tested): does this command line look like a process WE launched?
-
-    An EMPTY cmd means the process vanished between the probe and the check — there is
-    nothing left to protect, so it is not treated as a foreign process."""
-    if not cmd:
-        return True
-    r = str(root).rstrip("/")
-    if r and (f"{r}/data/" in cmd or f"{r}/vendor/" in cmd):
-        return True
-    for sig in _PORT_OWNER_SIGS.get(component or "", ()):
-        if sig in cmd:
-            return True
-    return False
-
-
-# ── PATH-ONLY OWNERSHIP: THE QUESTION A PIDFILE ASKS (U64, 2026-09-02) ───────
-# `_port_owner_verdict` answers "WHO MAY HOLD THIS PORT", and for runner/aux it accepts
-# an ENGINE NAME, because our own launch legitimately runs a binary from outside the
-# tree (the LM Studio / Jan fallback). That is a deliberate, ledgered widening (U19c) of
-# a PORT decision.
-#
-# A PIDFILE asks a different question — "is the pid I wrote down still MY process?" —
-# and the engine name is a catastrophic answer to it. MEASURED, on the live stack, with
-# the first draft of reap_pidfile (2026-09-02): a foreign `llama-server` outside our
-# ROOT, whose pid was planted in data/aux.pid to stand in for a RECYCLED pid, was
-# SIGKILLed by POST /api/aux/stop — because the name matched. That is the exact class
-# U64 exists to remove, rebuilt inside its own fix, and the adversarial pass caught it
-# only because it was walked on real processes.
-#
-# So the reaper gets its own verdict, and it is PATH EVIDENCE ONLY: a command line that
-# names a location inside our tree. No product name, no engine name, no exceptions. When
-# our engine genuinely lives outside the tree, the pidfile reap REFUSES and the
-# ownership-checked PORT kill (which may use the engine name) is what stops it — the
-# layering the two questions deserved all along.
 def _cmd_is_under_root(cmd: str, root: str) -> bool:
-    """Pure. Does this command line name a path inside our tree? ('' = the process
-    vanished between the probe and the check — nothing left to protect.)"""
+    """Corroborating path evidence only; never sufficient signal authority."""
     if not cmd:
-        return True
+        return False
     r = str(root).rstrip("/")
     return bool(r) and (f"{r}/data/" in cmd or f"{r}/vendor/" in cmd)
 
@@ -303,46 +243,58 @@ def _proc_cwd(pid) -> str:
 # become a no-op with a polite sentence, which is a regression on a button Debi presses.
 # (`_clear_port` in the shell survives this only because it checks the pidfile pid FIRST.)
 #
-# THE SECOND FACTOR IS THE PROCESS'S WORKING DIRECTORY, and it is the same KIND of
-# evidence: a path inside our tree, observed on the live process, impossible to spoof by
-# being named like one of our components. Debi's standalone Unsloth/Hermes/goose run out
-# of their own installs, never with a cwd inside this harness.
-def _pid_is_ours(pid, cmd: str, root: str) -> bool:
-    """Is this live pid provably one of OUR processes? PATHS ONLY — command line first
-    (cheap), then its working directory (one lsof). Never a product or engine NAME."""
-    if _cmd_is_under_root(cmd, root):
-        return True
-    cwd = _proc_cwd(pid)
-    r = str(root).rstrip("/")
-    return bool(cwd) and bool(r) and (cwd == r or cwd.startswith(r + "/"))
+# That observation once motivated a CWD fallback. The launch-provenance doctrine later
+# rejected it: a user can manually start a process from this checkout. `_proc_cwd` and
+# `_cmd_is_under_root` remain diagnostic compatibility helpers only; neither participates
+# in a signal decision.
+def _proc_birth(pid) -> str:
+    """Kernel-reported process start stamp used to detect PID reuse."""
+    return _ownership.process_birth(pid)
 
 
-def _port_owner_pidfile_match(pid, component) -> bool:
-    """True when data/<component>.pid names exactly this pid (our own launch record)."""
-    if not component:
-        return False
+def _ownership_path(component: str) -> Path:
+    return ROOT / "data" / f"{component}.owner"
+
+
+def _read_ownership(component: str):
+    """Read `v1<TAB>pid<TAB>birth`; malformed/legacy records authorize nothing."""
+    return _ownership.read_claim(ROOT, component)
+
+
+def _ownership_matches(pid, component) -> bool:
+    """Exact child-handle record + exact kernel birth stamp; paths/names are irrelevant."""
     try:
-        return (ROOT / "data" / f"{component}.pid").read_text().strip() == str(pid)
+        return _ownership.ownership_matches(ROOT, component, int(pid))
     except Exception:
         return False
 
 
 def _kill_port_listener(port: int, force: bool = False, component=None) -> list:
-    """Kill the listener(s) on tcp:port that look like OURS. Returns a list of refusal
-    messages for listeners that did not (empty list = nothing was refused)."""
+    """Signal only listeners covered by an exact M.O.T launch-provenance claim.
+
+    Paths and process names are diagnostic context, never authority. The returned
+    list contains refusal messages; an empty list means nothing was refused.
+    """
     port = int(port)
-    takeover = os.environ.get("HARNESS_PORT_TAKEOVER") == "1"
     refused = []
     for pid in _port_listener_pids(port):
         cmd = _proc_cmdline(pid)
-        if (takeover
-                or _port_owner_pidfile_match(pid, component)
-                or _port_owner_verdict(cmd, str(ROOT), component)):
-            subprocess.run(["kill"] + (["-9"] if force else []) + [str(pid)], check=False)
-        else:
+        claim = _read_ownership(component) if component else None
+        expected_birth = claim[1] if claim and claim[0] == int(pid) else ""
+        try:
+            signalled, detail = _ownership.signal_owned(
+                ROOT, component, expected_pid=int(pid),
+                expected_birth=expected_birth, force=force,
+                # Graceful callers need the same claim for their post-signal wait and
+                # possible retry. A force signal may retire immediately.
+                retire=force)
+        except Exception as exc:
+            signalled, detail = False, str(exc)
+        if not signalled:
             refused.append(
-                f"port :{port} is held by pid {pid} ({cmd}) which does not look like "
-                f"ours — refusing to kill it (set HARNESS_PORT_TAKEOVER=1 to override)")
+                f"port :{port} is held by pid {pid} ({cmd}) without a matching M.O.T "
+                f"launch record — refusing to kill it; stop that application explicitly"
+                + (f" ({detail})" if detail else ""))
     return refused
 
 
@@ -369,9 +321,8 @@ def _port_listener_pids(port: int) -> list:
 #   1. THE PIDFILE NAMES THE PID. We never search for a process; we read the pid we
 #      ourselves wrote down.
 #   2. IDENTITY IS RE-VERIFIED BEFORE THE SIGNAL. Pids are recycled, so a stale pidfile
-#      must never become a stranger's death warrant: the live command line has to be
-#      provably OURS — A PATH INSIDE OUR TREE AND NOTHING ELSE (_pid_is_ours; the two
-#      blocks above it record both measured incidents behind that rule).
+#      must never become a stranger's death warrant: the launch record's PID and
+#      kernel birth fingerprint must still match. Names, paths and CWD are not proof.
 #   3. NO PIDFILE, OR IDENTITY FAILS → WE REFUSE, IN A SENTENCE. There is no fallback
 #      to a name sweep. A refusal the user can read outranks a kill they did not ask
 #      for; that ranking is the doctrine's, and it is the whole point of the rule.
@@ -385,64 +336,98 @@ def _port_listener_pids(port: int) -> list:
 NO_PIDFILE_NOTE = "nothing we can prove is ours to stop"
 
 
-def reap_pidfile(component: str, force: bool = False, sigs=()) -> list:
-    """Stop the process data/<component>.pid names, if it is provably ours.
-
-    `sigs`: extra command-line substrings that also prove ownership. Callers pass only
-    ABSOLUTE paths under ROOT (e.g. the start script's own path) — never a product name,
-    which is the thing this helper exists to protect."""
+def reap_pidfile(component: str, force: bool = False, *, retire: bool = True) -> list:
+    """Stop exactly the recorded child, only while its birth fingerprint still matches."""
     pf = ROOT / "data" / f"{component}.pid"
-    if not pf.exists():
-        return [f"no data/{component}.pid — {NO_PIDFILE_NOTE} "
-                f"(refusing to search for one by name)"]
-    try:
-        pid = int("".join(ch for ch in pf.read_text() if ch.isdigit()) or 0)
-    except Exception:
-        pid = 0
-    if not pid:
-        pf.unlink(missing_ok=True)
-        return [f"data/{component}.pid held no readable pid — discarded it, signalled nothing"]
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        pf.unlink(missing_ok=True)
-        return [f"data/{component}.pid named pid {pid}, which is not running — "
-                f"discarded the stale pidfile"]
-    except PermissionError:
-        # It exists and belongs to ANOTHER USER, so it cannot be a process we spawned.
-        pf.unlink(missing_ok=True)
-        return [f"data/{component}.pid names pid {pid}, which belongs to another user — "
-                f"that is not our {component}; leaving it alone"]
-    except Exception:
-        pass
+    record = _read_ownership(component)
+    if not record:
+        # The compatibility pidfile cannot authorize a signal on its own. The shared
+        # locked primitive discards it without racing a cooperating relaunch.
+        raw_pid = _ownership.read_pid_report(ROOT, component) or 0
+        if os.path.lexists(pf):
+            # No owner claim means no signal can be sent. This call exists only to
+            # discard the legacy/non-regular report under the shared claim lock.
+            _ownership.signal_owned(
+                ROOT, component, expected_pid=raw_pid, expected_birth="", force=force)
+        if raw_pid:
+            return [f"data/{component}.pid names pid {raw_pid} but has no matching "
+                    "M.O.T launch record; leaving the process alone and discarding "
+                    "only the legacy reporting file"]
+        return [f"no complete data/{component}.owner claim — {NO_PIDFILE_NOTE} "
+                "(refusing to search for one by name)"]
+    pid = record[0]
     cmd = _proc_cmdline(pid)
-    # ⛔ PATH EVIDENCE ONLY (_pid_is_ours: our tree in the command line, or our tree as
-    # its working directory) — never _port_owner_verdict, whose runner/aux arm accepts
-    # an ENGINE NAME. See the two blocks above _pid_is_ours for both measured incidents.
-    ours = (_pid_is_ours(pid, cmd, str(ROOT))
-            or any(s and s in cmd for s in sigs))
-    if not ours:
-        pf.unlink(missing_ok=True)
-        return [f"data/{component}.pid names pid {pid} ({cmd}) — that is NOT our "
-                f"{component} (recycled pid?); leaving it alone and discarding the "
-                f"stale pidfile"]
-    subprocess.run(["kill"] + (["-9"] if force else []) + [str(pid)], check=False)
-    pf.unlink(missing_ok=True)
+    try:
+        signalled, detail = _ownership.signal_owned(
+            ROOT, component, expected_pid=pid, expected_birth=record[1],
+            force=force, retire=retire)
+    except Exception as exc:
+        signalled, detail = False, str(exc)
+    if not signalled:
+        return [f"data/{component}.pid names pid {pid} ({cmd}) but has no matching "
+                f"M.O.T launch record (legacy/stale/recycled); leaving it alone"
+                + (f" ({detail})" if detail else "")]
+    return []
+
+
+def stop_owned_component(component: str, port: "int | None" = None,
+                         *, force: bool = True, wait_seconds: float = 3.0) -> list:
+    """Stop and verify one exact M.O.T-launched generation.
+
+    The launch record is checked even before the child has opened its socket.  The
+    claim is retained through the signal/wait transaction, then retired only after
+    that exact PID+birth is gone.  A port is a postcondition and collision detector;
+    it never supplies ownership authority.
+
+    Returns refusal/failure sentences.  An empty list means the exact child is gone
+    (or no child/listener existed) and the configured port is not held by a stranger.
+    """
+    component = str(component or "")
+    claim = _read_ownership(component)
+    pidfile = ROOT / "data" / f"{component}.pid"
+    if not claim:
+        if os.path.lexists(pidfile) or os.path.lexists(_ownership_path(component)):
+            # This also discards only legacy/stale bookkeeping under the shared lock.
+            return reap_pidfile(component, force=force)
+    else:
+        pid, birth = claim
+        try:
+            signalled, detail = _ownership.signal_owned(
+                ROOT, component, expected_pid=pid, expected_birth=birth,
+                force=force, retire=False)
+        except Exception as exc:
+            signalled, detail = False, str(exc)
+        if not signalled:
+            return [f"recorded {component} pid {pid} was not signalled; its exact "
+                    f"launch claim was retained ({detail})"]
+
+        deadline = time.monotonic() + max(0.0, float(wait_seconds))
+        while time.monotonic() < deadline:
+            if _ownership.process_birth(pid) != birth:
+                break
+            time.sleep(0.05)
+        if _ownership.process_birth(pid) == birth:
+            return [f"recorded {component} pid {pid} survived "
+                    f"{'SIGKILL' if force else 'SIGTERM'}; its exact launch claim "
+                    "was retained and no replacement was started"]
+        _ownership.retire_owned(ROOT, component, pid, birth)
+
+    if port is not None:
+        listeners = _port_listener_pids(int(port))
+        if listeners:
+            detail = []
+            for raw_pid in listeners:
+                cmd = _proc_cmdline(raw_pid)
+                detail.append(f"pid {raw_pid} ({cmd})")
+            return [f"port :{int(port)} is still held by " + ", ".join(detail)
+                    + " without a matching live M.O.T launch record — refusing to "
+                      "signal it; stop that application explicitly"]
     return []
 
 
 def write_pidfile(component: str, pid: int) -> None:
-    """Record OUR OWN child's pid so reap_pidfile has an identity to verify later.
-
-    ⛔ Only ever called with a pid we just spawned. The pidfile is the one input
-    reap_pidfile trusts on sight, so writing a pid we did not launch would turn this
-    into a way to kill Debi's own copy of the same app (the shell says the same thing
-    over _stamp_pidfile_from_port)."""
-    try:
-        (ROOT / "data").mkdir(parents=True, exist_ok=True)
-        (ROOT / "data" / f"{component}.pid").write_text(str(int(pid)))
-    except Exception:
-        pass
+    """Record an actual child handle with a PID-reuse-resistant birth fingerprint."""
+    _ownership.record_child(ROOT, component, int(pid))
 
 
 def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
@@ -459,7 +444,12 @@ def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
         argv = ["/bin/bash", str(p), *args]
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, cwd=ROOT)
-    write_pidfile(track, proc.pid)
+    try:
+        write_pidfile(track, proc.pid)
+    except Exception:
+        proc.terminate()                  # exact child handle; no inferred ownership
+        proc.communicate()
+        raise
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -467,7 +457,9 @@ def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
         out, err = proc.communicate()
         raise
     finally:
-        (ROOT / "data" / f"{track}.pid").unlink(missing_ok=True)
+        # If cancellation already retired the claim this is a no-op. If a new child
+        # somehow claimed the same track name, exact release cannot erase it.
+        _ownership.release_owned(ROOT, track, proc.pid)
     return subprocess.CompletedProcess(argv, proc.returncode, out or "", err or "")
 
 

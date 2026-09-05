@@ -43,6 +43,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # assertions are source-text in the first place and why order is part of it.
 import sys as _sys                                          # noqa: E402
 _sys.path.insert(0, str(ROOT))                              # noqa: E402
+from bridge.tests.model_fixture import gguf_bytes            # noqa: E402
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 
 fails = []
@@ -350,7 +351,7 @@ def resolve(entry):
         shutil.copy(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
                     os.path.join(td, "bridge", "core", "modelreg.py"))
         gguf = os.path.join(td, "data", "m.gguf")
-        open(gguf, "w").write("x")
+        open(gguf, "wb").write(gguf_bytes())
         e = dict(entry, path=gguf)
         with open(os.path.join(td, "data", "models.json"), "w") as f:
             json.dump({"models": [e]}, f)

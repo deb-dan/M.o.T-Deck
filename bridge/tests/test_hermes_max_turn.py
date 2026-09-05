@@ -293,11 +293,14 @@ check("ship never claims 'bridge is up' before the UP check",
 check("empty openapi body is NOT hashed",
       'if [[ -z "$API_JSON" ]]' in SHIP
       and "fingerprint unavailable (bridge still starting?)" in SHIP)
-# NEGATIVES — nothing else about ship.sh may change
-check("manifest merge still present", "manifest: added " in SHIP)
-check("additive-merge null representer still present",
-      "tag:yaml.org,2002:null" in SHIP)
-check("lock clear still present", ".git/HEAD.lock" in SHIP)
+# The additive merge moved to one line-preserving transaction helper. Pin both the
+# call and the reason the old PyYAML null representer must not return.
+check("manifest merge still present",
+      'scripts/merge_manifest.py"' in SHIP and '"$ROOT/harness.yaml" "$DST/harness.yaml"' in SHIP)
+check("manifest merge no longer serializes live YAML through a null representer",
+      "tag:yaml.org,2002:null" not in SHIP and "safe_dump" not in SHIP)
+check("ship never guesses that a Git lock is stale",
+      ".git/HEAD.lock" not in SHIP and ".git/index.lock" not in SHIP)
 check("recompile rule still newer-than-binary",
       '"$ROOT/app/main.swift" -nt "$APP/Contents/MacOS/Harness"' in SHIP)
 check("listener-scoped port kill still present", "-sTCP:LISTEN" in SHIP)

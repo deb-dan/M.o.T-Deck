@@ -36,10 +36,22 @@ Exit codes: 0 flipped or already true; 1 the component / its `installed:` key is
 import os
 import re
 import sys
+import importlib.util
 
 _NAME = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(#.*)?$")
 # group 1 = "    installed: ", group 2 = the value token, group 3 = any trailing comment
 _INSTALLED = re.compile(r"^(    installed:[ \t]*)(\S+)(.*)$")
+
+
+def _yamlfile_module():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                        "bridge", "yamlfile.py")
+    spec = importlib.util.spec_from_file_location("harness_yamlfile", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("shared harness.yaml transaction helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def flip(text: str, name: str) -> "tuple[str, str]":
@@ -79,42 +91,36 @@ def main(argv: "list[str]") -> int:
         os.path.dirname(os.path.abspath(__file__)), os.pardir, "harness.yaml")
     path = os.path.abspath(path)
     try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError as e:                                            # noqa: BLE001
-        print(f"[harness] ERROR: cannot read {path}: {e}", file=sys.stderr)
+        txn = _yamlfile_module()
+        def edit(text):
+            new, status = flip(text, name)
+            if status in ("no-component", "no-key"):
+                raise ValueError(status)
+            try:
+                import yaml  # noqa: PLC0415
+                yaml.safe_load(new)
+            except ImportError:
+                pass
+            return new, status
+        status = txn.transform_file(path, edit)
+    except ValueError as exc:
+        if str(exc) == "no-component":
+            print(f"[harness] ERROR: components.{name} is not in {path} — the Mission "
+                  f"Control card reads that flag, so it would stay 'Not installed'.",
+                  file=sys.stderr)
+        elif str(exc) == "no-key":
+            print(f"[harness] ERROR: components.{name} has no `installed:` key in {path} "
+                  f"— add `installed: false` to the block.", file=sys.stderr)
+        else:
+            print(f"[harness] ERROR: the edit would break {path} ({exc}) — nothing written.",
+                  file=sys.stderr)
         return 1
-
-    new, status = flip(text, name)
-    if status == "no-component":
-        print(f"[harness] ERROR: components.{name} is not in {path} — the Mission "
-              f"Control card reads that flag, so it would stay 'Not installed'.",
-              file=sys.stderr)
-        return 1
-    if status == "no-key":
-        print(f"[harness] ERROR: components.{name} has no `installed:` key in {path} "
-              f"— add `installed: false` to the block.", file=sys.stderr)
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"[harness] ERROR: cannot safely update {path}: {exc}", file=sys.stderr)
         return 1
     if status == "already":
         print(f"[harness] {name}: installed flag already true.")
         return 0
-
-    # Refuse to write something that no longer parses, when we have a parser at all.
-    # (The system python3 on macOS has no pyyaml — best-effort by design.)
-    try:
-        import yaml  # noqa: PLC0415
-        yaml.safe_load(new)
-    except ImportError:
-        pass
-    except Exception as e:                                          # noqa: BLE001
-        print(f"[harness] ERROR: the edit would break {path} ({e}) — nothing written.",
-              file=sys.stderr)
-        return 1
-
-    tmp = path + ".flip.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(new)
-    os.replace(tmp, path)
     print(f"[harness] {name}: installed -> true in {path}")
     return 0
 

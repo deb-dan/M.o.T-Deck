@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Repair generated venv pointers after this checkout is copied to a new root.
 
-Only immediate ``ROOT/data/*-venv`` directories with ``pyvenv.cfg`` participate.
+Only exact ``ROOT/data/<name>`` directories explicitly named by the caller participate.
 The repair never follows a link while deciding what it may rewrite, delete, or import.
 """
 from __future__ import annotations
@@ -68,29 +68,67 @@ def _text(path: str, what: str) -> Tuple[str, bytes, os.stat_result]:
         raise RepairError(f"refusing non-UTF-8 {what}: {path}") from exc
 
 
-def _venvs(root: str) -> List[Tuple[str, str]]:
-    """Return only direct data/*-venv directories with pyvenv.cfg."""
+def _venvs(root: str, owned_names: Iterable[str]) -> List[Tuple[str, str]]:
+    """Return only explicitly declared, direct app-owned venv directories."""
     data = os.path.join(root, "data")
     if os.path.islink(data) or not os.path.isdir(data):
         raise RepairError(f"root has no direct, non-symlink data directory: {data}")
     found: List[Tuple[str, str]] = []
-    with os.scandir(data) as entries:
-        for entry in entries:
-            if not entry.name.endswith("-venv"):
-                continue
-            mode = entry.stat(follow_symlinks=False).st_mode
-            if stat.S_ISLNK(mode):
-                raise RepairError(f"refusing symlink venv directory: {entry.path}")
-            if not stat.S_ISDIR(mode):
-                continue
-            cfg = os.path.join(entry.path, "pyvenv.cfg")
-            if os.path.isfile(cfg) and not os.path.islink(cfg):
-                found.append((entry.name, entry.path))
+    for name in sorted(set(owned_names)):
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*-venv", name)
+                or os.path.basename(name) != name):
+            raise RepairError(f"invalid owned venv name: {name!r}")
+        path = os.path.join(data, name)
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise RepairError(f"refusing symlink venv directory: {path}")
+        if not stat.S_ISDIR(mode):
+            raise RepairError(f"owned venv path is not a directory: {path}")
+        cfg = os.path.join(path, "pyvenv.cfg")
+        if not os.path.isfile(cfg) or os.path.islink(cfg):
+            raise RepairError(f"owned venv has no direct pyvenv.cfg: {path}")
+        found.append((name, path))
     return sorted(found)
 
 
+def _generated_console_line(line: str, match: re.Match[str]) -> bool:
+    """Recognize only virtualenv/uv launcher and activation assignment shapes.
+
+    An explicitly owned venv is necessary but not sufficient authority to rewrite an
+    arbitrary string in ``bin``.  The stale root must occupy one of the exact generated
+    positions we have observed and fixture: an interpreter launcher, uv's polyglot exec
+    line, or a shell activation variable.  A comment, Python literal, or unrelated
+    setting containing the same path is an ambiguity and makes the whole repair refuse.
+    """
+    old = re.escape(match.group("path"))
+    shapes = (
+        rf"^#!{old}/bin/python(?:3(?:\.\d+)?)?\s*$",
+        rf"^'''exec'\s+['\"]{old}/bin/python(?:3(?:\.\d+)?)?['\"]\s+\"\$0\"\s+\"\$@\"\s*$",
+        rf"^\s*VIRTUAL_ENV\s*=\s*(['\"]){old}\1\s*$",
+        rf"^\s*setenv\s+VIRTUAL_ENV\s+(['\"]){old}\1\s*$",
+        rf"^\s*set\s+-gx\s+VIRTUAL_ENV\s+(['\"]){old}\1\s*$",
+        rf"^\s*let\s+virtual_env\s*=\s*(['\"]){old}\1\s*$",
+        rf'^\s*@for\s+%%i\s+in\s+\(["\']' + old
+        + rf'["\']\)\s+do\s+@set\s+"VIRTUAL_ENV=%%~fi"\s*$',
+    )
+    return any(re.fullmatch(shape, line) for shape in shapes)
+
+
 def _replace_console(text: str, venv_name: str, venv_path: str) -> str:
-    def replace(match: re.Match[str]) -> str:
+    rewritten: List[str] = []
+    for line_number, line in enumerate(text.splitlines(keepends=True), 1):
+        body = line.rstrip("\r\n")
+        matches = list(_VENV_PATH.finditer(body))
+        if not matches:
+            rewritten.append(line)
+            continue
+        if len(matches) != 1:
+            raise RepairError(
+                f"ambiguous generated console line {line_number} names multiple venv paths")
+        match = matches[0]
         named = match.group("name")
         old = match.group("path")
         if named != venv_name:
@@ -99,9 +137,13 @@ def _replace_console(text: str, venv_name: str, venv_path: str) -> str:
         suffix = "/data/" + venv_name
         if not old.endswith(suffix) or not old[:-len(suffix)].startswith("/"):
             raise RepairError(f"cannot prove exact venv suffix for console path: {old}")
-        return match.group("lead") + venv_path
-
-    return _VENV_PATH.sub(replace, text)
+        if not _generated_console_line(body, match):
+            raise RepairError(
+                f"stale venv path is not in a recognized generated launcher shape "
+                f"(line {line_number})")
+        start, end = match.span("path")
+        rewritten.append(body[:start] + venv_path + body[end:] + line[len(body):])
+    return "".join(rewritten)
 
 
 def _mapped_destination(destination: str, vendor_real: str) -> str:
@@ -257,12 +299,15 @@ def _prove_import(venv: str, package: str, expected_root: str) -> None:
         raise RepairError(f"{package} imported outside canonical vendor root: {origin or 'no origin'}")
 
 
-def repair(root_argument: str) -> int:
+def repair(root_argument: str, owned_names: Iterable[str]) -> int:
     root = os.path.realpath(os.path.abspath(root_argument))
     vendor = os.path.join(root, "vendor")
     if os.path.islink(vendor) or not os.path.isdir(vendor):
         raise RepairError(f"root has no direct, non-symlink vendor directory: {vendor}")
-    venvs = _venvs(root)
+    names = list(owned_names)
+    if not names:
+        raise RepairError("no app-owned venv names were supplied")
+    venvs = _venvs(root, names)
     changes: List[Change] = []
     for name, venv in venvs:
         changes.extend(_console_changes(name, venv))
@@ -298,9 +343,10 @@ def repair(root_argument: str) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True)
+    parser.add_argument("--owned-venv", action="append", default=[])
     args = parser.parse_args(argv)
     try:
-        count = repair(args.root)
+        count = repair(args.root, args.owned_venv)
     except RepairError as exc:
         print(f"[venv-repair] ERROR: {exc}", file=sys.stderr)
         return 1

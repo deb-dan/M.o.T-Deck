@@ -178,7 +178,20 @@ def aux_start(req: Request) -> JSONResponse:
     # which is exactly why it used to reach for a pattern. This is our own child handle
     # (the engine is exec'd directly, no shell between), and only a pid we launched may
     # ever enter a pidfile: reap_pidfile signals what this file names.
-    write_pidfile("aux", proc.pid)
+    try:
+        write_pidfile("aux", proc.pid)
+    except Exception as exc:
+        proc.terminate()  # exact child handle; never search by name or port
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+        logf.close()
+        return JSONResponse({"ok": False,
+                             "log": f"could not record aux launch ownership: {exc}"},
+                            status_code=500)
+    logf.close()
     return JSONResponse({"ok": True, "log": (note + " · " if note else "")
                          + "loading in background — refresh in ~20-60s"})
 

@@ -42,8 +42,11 @@ WIRE = "gemma-4-31B-it-uncensored-biproj-q4_k_m"
 _TMP = tempfile.mkdtemp(prefix="hermes-seed-fixture-")
 MLX_ONE = os.path.join(_TMP, "mlx-one")
 os.makedirs(MLX_ONE, exist_ok=True)
-open(os.path.join(MLX_ONE, "config.json"), "w").write("{}")
-open(os.path.join(MLX_ONE, "model.safetensors"), "wb").write(b"x")
+open(os.path.join(MLX_ONE, "config.json"), "w").write('{"model_type":"unit-test"}')
+_st_header = json.dumps({"weight": {"dtype": "F32", "shape": [1],
+                         "data_offsets": [0, 4]}}, separators=(",", ":")).encode()
+open(os.path.join(MLX_ONE, "model.safetensors"), "wb").write(
+    len(_st_header).to_bytes(8, "little") + _st_header + b"\0\0\0\0")
 
 REGISTRY = {"models": [
     {"id": "chat-a", "format": "gguf", "ctx": 32768},

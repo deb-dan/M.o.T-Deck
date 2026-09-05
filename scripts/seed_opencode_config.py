@@ -65,7 +65,7 @@ def catalog(registry):
         wire = (MR.wire_id(m) if MR is not None else
                 (((m.get("path") or "").strip() or mid)
                  if str(m.get("format") or "gguf").strip().lower() == "mlx" else mid))
-        key = str(mid).replace("/", "_")
+        key = MR.opencode_model_key(mid) if MR is not None else str(mid).replace("/", "_")
         key_of[mid] = key
         entry = {"name": mid, "id": wire}
         # tool_call is declared only when we actually know (bridge/modeltools.py is
@@ -138,7 +138,9 @@ def plan_default(cur, want, key_of, model_keys):
     with no key, upstream falls through to the providers named in cfg.provider — i.e.
     ours — and takes its first model (:2002-2007).
     """
-    want_key = key_of.get(want, str(want or "").replace("/", "_"))
+    fallback_key = (MR.opencode_model_key(want) if MR is not None
+                    else str(want or "").replace("/", "_"))
+    want_key = key_of.get(want, fallback_key)
     if want_key not in model_keys:
         # not in the registry -> deterministic first model of ours, or nothing at all
         want_key = sorted(model_keys)[0] if model_keys else ""

@@ -35,6 +35,7 @@ import os
 import re
 import stat as _stat
 import struct
+import tempfile
 import threading
 from contextlib import contextmanager
 import fcntl
@@ -47,6 +48,32 @@ import fcntl
 ABSENT_KEY = "absent"
 EVIDENCE_KEY = "artifact_evidence"
 _REGISTRY_LOCKS, _REGISTRY_LOCKS_GUARD, _REGISTRY_LOCK_STATE = {}, threading.Lock(), threading.local()
+
+
+def _require_regular(path, *, absent_ok=False):
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        if absent_ok:
+            return None
+        raise
+    if not _stat.S_ISREG(info.st_mode):
+        raise ValueError(f"refusing non-regular model registry state file: {path}")
+    return info
+
+
+def _read_registry_text(path):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"refusing non-regular model registry state file: {path}")
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
+            fd = -1
+            return fh.read()
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 @contextmanager
@@ -65,16 +92,77 @@ def registry_lock(path: str | None = None):
                 held[registry] -= 1
             return
         os.makedirs(os.path.dirname(registry) or ".", exist_ok=True)
-        fd = os.open(registry + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        lock_path = registry + ".lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600)
         held[registry] = 1
         _REGISTRY_LOCK_STATE.held = held
         try:
+            if not _stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError(f"refusing non-regular model registry lock: {lock_path}")
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         finally:
             held.pop(registry, None)
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
+
+
+def write_registry(path: str, data: dict) -> bool:
+    """One deterministic, crash-resistant writer for ``models.json``.
+
+    Callers normally hold :func:`registry_lock` across their read/modify/write; this
+    helper takes it re-entrantly as a guard against future direct callers. Returns
+    False for a byte-identical no-op and True after replacement.
+    """
+    registry = os.path.abspath(path)
+    payload = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    with registry_lock(registry):
+        try:
+            if _read_registry_text(registry) == payload:
+                return False
+        except FileNotFoundError:
+            pass
+        except UnicodeError:
+            # A corrupt regular registry is recoverable from a validated fresh scan.
+            pass
+        directory = os.path.dirname(registry) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".models-", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            _require_regular(registry, absent_ok=True)
+            os.replace(temporary, registry)
+            temporary = ""
+            try:
+                dir_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
+        finally:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+        return True
+
+
+def opencode_model_key(model_id) -> str:
+    """The current OpenCode address key for one M.O.T registry id.
+
+    Kept here so the seeder and the running-process drift probe cannot silently use
+    different normalizations. Collision-free escaping is a separate migration: the
+    legacy slash-to-underscore contract is preserved until existing saved defaults
+    and live catalogs can be migrated coherently.
+    """
+    return str(model_id or "").replace("/", "_")
 
 # Registry formats whose artifact is a DIRECTORY rather than a single file. Byte for
 # byte the rule scripts/start_component.sh resolves with, widened to the audio kinds
@@ -83,6 +171,12 @@ def registry_lock(path: str | None = None):
 _DIR_FORMATS_PREFIX = ("stt-", "tts-")
 _GGUF_SHARD_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I)
 _MLX_SHARD_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.safetensors$", re.I)
+# Exact ``enum ggml_type`` values in the pinned llama.cpp b10662 reader. Removed
+# historical slots are intentionally absent. A future type must first arrive through
+# a pin update plus its own fixture; an invented numeric ceiling is not format proof.
+_PINNED_GGML_TYPES = frozenset(
+    (0, 1, 2, 3, *range(6, 31), 34, 35, 39, 40, 41, 42)
+)
 
 
 def wants_dir(fmt: "str | None") -> bool:
@@ -111,18 +205,131 @@ def _stat_required(path, label, *, missing_reason, invalid_reason):
 
 
 def _gguf_header(path, label, *, invalid_reason):
-    """Validate the fixed GGUF prefix without parsing or loading tensor data."""
+    """Validate the bounded GGUF metadata and tensor-info structure.
+
+    Tensor payload bytes are never read and semantic/runnable validity remains the
+    serving engine's job. Unlike the rejected prefix-only draft, however, nonzero
+    inventory counters are not trusted until every declared metadata value and tensor
+    descriptor can be walked within the real file bounds.
+    """
     try:
         with open(path, "rb") as fh:
-            header = fh.read(24)
+            size = os.fstat(fh.fileno()).st_size
+            structure_limit = min(size, 256 * 1024 * 1024)
+
+            def take(n):
+                n = int(n)
+                if n < 0 or n > structure_limit - fh.tell():
+                    raise ValueError("truncated structure")
+                value = fh.read(n)
+                if len(value) != n:
+                    raise ValueError("truncated structure")
+                return value
+
+            def skip(n):
+                n = int(n)
+                if n < 0 or n > structure_limit - fh.tell():
+                    raise ValueError("structure exceeds bounded header budget")
+                fh.seek(n, os.SEEK_CUR)
+
+            def u32():
+                return struct.unpack("<I", take(4))[0]
+
+            def u64():
+                return struct.unpack("<Q", take(8))[0]
+
+            def text(*, maximum=8 * 1024 * 1024):
+                length = u64()
+                if length > maximum:
+                    raise ValueError("implausible string length")
+                return take(length).decode("utf-8")
+
+            fixed = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4,
+                     6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+
+            def value(vtype, *, keep_u32=False):
+                if vtype in fixed:
+                    raw = take(fixed[vtype])
+                    return struct.unpack("<I", raw)[0] if keep_u32 and vtype == 4 else None
+                if vtype == 8:                       # GGUF string
+                    text()
+                    return None
+                if vtype != 9:                       # GGUF array
+                    raise ValueError("unknown metadata type")
+                element_type, count = u32(), u64()
+                if element_type == 9:
+                    raise ValueError("nested metadata array")
+                if element_type in fixed:
+                    skip(fixed[element_type] * count)
+                    return None
+                if element_type == 8:
+                    # Each string needs at least its uint64 length prefix. This bound
+                    # prevents an attacker declaring billions of empty strings and
+                    # turning Rescan into an unbounded loop.
+                    if count > (structure_limit - fh.tell()) // 8:
+                        raise ValueError("implausible string array length")
+                    for _ in range(count):
+                        text()
+                    return None
+                raise ValueError("unknown array element type")
+
+            if take(4) != b"GGUF":
+                raise ValueError("wrong magic")
+            version = u32()
+            if version == 1:
+                tensor_count, metadata_count = u32(), u32()
+            elif version in (2, 3):
+                tensor_count, metadata_count = u64(), u64()
+            else:
+                raise ValueError("unsupported version")
+            if tensor_count < 1 or tensor_count > 10_000_000:
+                raise ValueError("empty or implausible tensor inventory")
+            if metadata_count < 1 or metadata_count > 100_000:
+                raise ValueError("empty or implausible metadata inventory")
+
+            alignment = 32
+            metadata_keys = set()
+            for _ in range(metadata_count):
+                key = text()
+                if not key or key in metadata_keys:
+                    raise ValueError("empty or duplicate metadata key")
+                metadata_keys.add(key)
+                vtype = u32()
+                kept = value(vtype, keep_u32=(key == "general.alignment"))
+                if key == "general.alignment":
+                    if kept is None or kept < 1 or kept > 4096 or kept & (kept - 1):
+                        raise ValueError("invalid tensor alignment")
+                    alignment = kept
+
+            tensor_names, offsets = set(), []
+            for _ in range(tensor_count):
+                name = text(maximum=64)
+                if not name or name in tensor_names:
+                    raise ValueError("empty or duplicate tensor name")
+                tensor_names.add(name)
+                dimensions = u32()
+                if dimensions < 1 or dimensions > 4:
+                    raise ValueError("invalid tensor rank")
+                if any(u64() < 1 for _ in range(dimensions)):
+                    raise ValueError("empty tensor dimension")
+                tensor_type = u32()
+                if tensor_type not in _PINNED_GGML_TYPES:
+                    raise ValueError("tensor type is not supported by the pinned reader")
+                offset = u64()
+                if offset % alignment:
+                    raise ValueError("misaligned tensor offset")
+                offsets.append(offset)
+
+            data_start = fh.tell() + ((-fh.tell()) % alignment)
+            if data_start >= size or len(set(offsets)) != len(offsets):
+                raise ValueError("missing tensor data or duplicate offsets")
+            if any(offset > size - data_start - 1 for offset in offsets):
+                raise ValueError("tensor offset is outside the data buffer")
     except OSError:
         return _verdict("unknown", "unreadable", f"could not read {label}")
-    if len(header) < 24 or header[:4] != b"GGUF":
-        return _verdict("incomplete", invalid_reason, f"{label} has no valid GGUF header")
-    version = int.from_bytes(header[4:8], "little")
-    if version not in (1, 2, 3):
+    except (UnicodeError, ValueError, TypeError, struct.error, OverflowError):
         return _verdict("incomplete", invalid_reason,
-                        f"{label} uses an unsupported GGUF version")
+                        f"{label} has no valid GGUF structure")
     return None
 
 
@@ -141,16 +348,36 @@ def _safetensors_header(path, label, *, invalid_reason):
         header = json.loads(raw.decode("utf-8"))
         if not isinstance(header, dict):
             raise ValueError("header is not an object")
+        metadata = header.get("__metadata__")
+        if metadata is not None and (not isinstance(metadata, dict)
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       for k, v in metadata.items())):
+            raise ValueError("metadata is malformed")
         tensors = [(name, spec) for name, spec in header.items() if name != "__metadata__"]
         if not tensors:
             raise ValueError("header has no tensors")
         payload = size - 8 - header_len
+        # Current safetensors core enum, including packed sub-byte and float8 forms.
+        # A guessed regex such as F<number> would accept spellings no reader supports;
+        # a stale short allowlist would reject valid MXFP4/FP8 models. Keep this list
+        # pinned to the upstream enum and cover every width in fixtures.
+        dtype_bits = {
+            "BOOL": 8, "F4": 4, "F6_E2M3": 6, "F6_E3M2": 6,
+            "U8": 8, "I8": 8, "F8_E4M3": 8, "F8_E5M2": 8,
+            "F8_E8M0": 8, "F8_E4M3FNUZ": 8, "F8_E5M2FNUZ": 8,
+            "I16": 16, "U16": 16, "F16": 16, "BF16": 16,
+            "F32": 32, "I32": 32, "U32": 32,
+            "F64": 64, "I64": 64, "U64": 64, "C64": 64,
+        }
+        intervals = []
         for name, spec in tensors:
             if not isinstance(name, str) or not name or not isinstance(spec, dict):
                 raise ValueError("tensor entry is malformed")
             dtype, shape, offsets = spec.get("dtype"), spec.get("shape"), spec.get("data_offsets")
             if not isinstance(dtype, str) or not dtype:
                 raise ValueError("tensor dtype is absent")
+            if dtype not in dtype_bits:
+                raise ValueError("tensor dtype is unsupported")
             if (not isinstance(shape, list)
                     or any(isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in shape)):
                 raise ValueError("tensor shape is malformed")
@@ -158,6 +385,20 @@ def _safetensors_header(path, label, *, invalid_reason):
                     or any(isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in offsets)
                     or offsets[0] > offsets[1] or offsets[1] > payload):
                 raise ValueError("tensor byte interval is malformed")
+            elements = 1
+            for dimension in shape:
+                elements *= dimension
+            bits = elements * dtype_bits[dtype]
+            if bits % 8 or offsets[1] - offsets[0] != bits // 8:
+                raise ValueError("tensor byte interval does not match dtype and shape")
+            intervals.append((offsets[0], offsets[1]))
+        cursor = 0
+        for start, end in sorted(intervals):
+            if start != cursor:
+                raise ValueError("tensor intervals overlap or leave a hole")
+            cursor = end
+        if cursor != payload:
+            raise ValueError("tensor intervals do not cover the data buffer")
     except OSError:
         return _verdict("unknown", "unreadable", f"could not read {label}")
     except (UnicodeError, ValueError, TypeError, struct.error):

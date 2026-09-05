@@ -1089,10 +1089,11 @@ def test_the_startup_sweep_reaps_only_what_is_provably_ours():
     with tempfile.TemporaryDirectory() as td:
         ok(G.reap_orphan(td) == "none", "no pidfile → nothing to do")
         # a pidfile naming a pid that is gone: withdraw the row, kill nothing
-        G.write_pidfile(td, 999999)
+        os.makedirs(os.path.join(td, "data"), exist_ok=True)
+        open(G.pidfile_path(td), "w").write("999999")
         ok(G.reap_orphan(td) == "stale", "a dead pid is a stale ROW, not a kill")
         ok(not os.path.exists(G.pidfile_path(td)), "…and the row is withdrawn")
-        G.write_pidfile(td, 0)
+        open(G.pidfile_path(td), "w").write("0")
         ok(G.reap_orphan(td) == "stale" and not os.path.exists(G.pidfile_path(td)),
            "a junk pidfile is withdrawn, never signalled")
 
@@ -1101,10 +1102,10 @@ def test_the_startup_sweep_reaps_only_what_is_provably_ours():
         victim = subprocess.Popen(["/bin/cat"], stdin=subprocess.PIPE,
                                   stdout=subprocess.DEVNULL)
         try:
-            G.write_pidfile(td, victim.pid)
+            open(G.pidfile_path(td), "w").write(str(victim.pid))
             verdict = G.reap_orphan(td)
             ok(verdict == "stale",
-               f"a live pid whose command line is NOT this root's goose is NOT ours "
+               f"a live pid without this root's launch record is NOT ours "
                f"(got {verdict})")
             time.sleep(0.3)
             ok(victim.poll() is None,
@@ -1116,6 +1117,19 @@ def test_the_startup_sweep_reaps_only_what_is_provably_ours():
         finally:
             victim.kill()               # our own child, spawned four lines up
             victim.wait(timeout=5)
+
+        owned = subprocess.Popen(["/bin/cat"], stdin=subprocess.PIPE,
+                                 stdout=subprocess.DEVNULL, start_new_session=True)
+        try:
+            G.write_pidfile(td, owned.pid)
+            verdict = G.reap_orphan(td)
+            ok(verdict.startswith("reaped:"),
+               "an exact child+birth launch record authorizes the orphan signal")
+            owned.wait(timeout=5)
+        finally:
+            if owned.poll() is None:
+                owned.kill()
+            owned.wait(timeout=5)
 
 
 def test_the_store_readout_never_reports_a_number_it_did_not_measure():

@@ -31,6 +31,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "data" / "aider-venv" / "bin" / "aider"
+PYTHON = ROOT / "data" / "aider-venv" / "bin" / "python"
 
 
 def _help():
@@ -53,22 +54,27 @@ skip_if_absent = pytest.mark.skipif(HELP is None,
                                     reason="aider not installed (or not runnable here)")
 
 
-def _assert_edit_format_parser(binary):
-    """Prove the parser accepts our format and rejects a control value."""
+def _assert_edit_format_parser(python):
+    """Invoke Aider's actual parser without starting a session or using ``--help``."""
     sentinel = "__harness_invalid_format__"
+    program = (
+        "import sys; from aider.args import get_parser; "
+        "parsed=get_parser([], None).parse_args(['--edit-format', sys.argv[1]]); "
+        "print(parsed.edit_format)"
+    )
     try:
-        valid = subprocess.run([str(binary), "--edit-format", "whole", "--help"],
+        valid = subprocess.run([str(python), "-c", program, "whole"],
                                capture_output=True, text=True, timeout=120)
-        invalid = subprocess.run([str(binary), "--edit-format", sentinel, "--help"],
+        invalid = subprocess.run([str(python), "-c", program, sentinel],
                                  capture_output=True, text=True, timeout=120)
     except Exception as exc:                                      # noqa: BLE001
         raise AssertionError(
-            f"aider parser probe could not run for {binary}; its --help was runnable"
+            f"aider parser probe could not run for {python}; its --help was runnable"
         ) from exc
 
     valid_text = (valid.stdout or "") + (valid.stderr or "")
     assert valid.returncode == 0, valid_text
-    assert "usage" in valid_text.lower(), valid_text
+    assert valid.stdout.strip().splitlines()[-1] == "whole", valid_text
 
     invalid_text = (invalid.stdout or "") + (invalid.stderr or "")
     assert invalid.returncode != 0, invalid_text
@@ -87,19 +93,20 @@ def test_launch_flags_still_exist():
 def test_edit_format_whole_is_still_offered():
     """`whole` is the only format a 4B reliably produces (recon §2.1). If upstream ever
     removes it, the lane needs a new default, not a silent fallback."""
-    _assert_edit_format_parser(BIN)
+    assert PYTHON.is_file(), "aider launcher exists but its venv python is missing"
+    _assert_edit_format_parser(PYTHON)
 
 
 def test_edit_format_parser_fixture_exercises_valid_and_invalid_branches(tmp_path):
     """The optional runtime probe must reject a bad format as well as accept ``whole``."""
-    fixture = tmp_path / "aider"
+    fixture = tmp_path / "python"
     fixture.write_text(
         "#!/bin/sh\n"
-        "if [ \"$2\" = whole ]; then\n"
-        "    echo 'usage: aider'\n"
+        "if [ \"$3\" = whole ]; then\n"
+        "    echo whole\n"
         "    exit 0\n"
         "fi\n"
-        "echo \"error: invalid edit format $2\" >&2\n"
+        "echo \"error: invalid edit format $3\" >&2\n"
         "exit 2\n"
     )
     fixture.chmod(0o755)

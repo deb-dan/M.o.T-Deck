@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
 from ..core.events import publish
 from ..core.modelid import _live_model_id
-from ..core.procs import PROV, _clear_expected, _closure, _kill_port_listener, _mark_expected, _port_alive_sync, _port_listener_pids, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile
+from ..core import ownership as _ownership
+from ..core.procs import PROV, _clear_expected, _closure, _kill_port_listener, _mark_expected, _port_alive_sync, _port_listener_pids, _read_ownership, _registry_models, _running, _running_sync, _script, cfg, reap_pidfile, stop_owned_component
 from .models import live_tools_warning
 from .sampling import _record_load_launch
 
@@ -118,8 +119,10 @@ def stop(name: str) -> JSONResponse:
         # match OUR process — only somebody else's, which is the one thing a kill by
         # pattern is actually good at. Deleted, not replaced: the ownership-checked
         # listener kill below is what has been stopping the runner all along.
-        refused = _kill_port_listener(int(port), force=True, component="runner")
-        (ROOT / "data" / "runner.pid").unlink(missing_ok=True)
+        # The launch record—not the socket—is the authority. A runner can spend a
+        # long time loading before it binds :6767; stopping only a listener would
+        # strand that exact child and then clear the user's pin beneath it.
+        refused = stop_owned_component("runner", int(port), force=True)
         if refused:
             return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)
         # ⚠️ WAIT FOR THE PORT TO ACTUALLY RELEASE BEFORE SAYING THE STOP IS DONE.
@@ -173,14 +176,19 @@ def stop(name: str) -> JSONResponse:
     # Pids are recycled (and this file has been observed stale — see the hermes note
     # below), so on a machine where Debi runs standalone copies of the very components
     # we embed, a stale number was a stranger's death warrant with our name on it.
-    # It now goes through core/procs.reap_pidfile: the pid we wrote, its live command
-    # line re-verified as ours, no signal at all when that cannot be proven — the same
-    # helper and the same sentences the shell's _reap_pidfile has used since U19.
+    # It now goes through core/procs.reap_pidfile: the exact child PID plus kernel-birth
+    # launch record we wrote, no signal at all when that cannot be proven — the same
+    # helper and the same sentences the shell's _reap_pidfile uses.
     notes = []
     pidf = ROOT / "data" / f"{name}.pid"
-    if pidf.exists():
-        _was = "".join(ch for ch in pidf.read_text(errors="replace") if ch.isdigit())
-        _refused = reap_pidfile(name)
+    _claim = _read_ownership(name)
+    _was = str(_claim[0]) if _claim else ""
+    _birth = _claim[1] if _claim else ""
+    if pidf.exists() or _claim:
+        # Keep the exact launch claim while SIGTERM drains. If the listener remains,
+        # the port path can still reverify the same child; retiring the claim at signal
+        # time would turn our own slow shutdown into an unowned-listener refusal.
+        _refused = reap_pidfile(name, retire=False)
         notes += _refused or [f"stopped pid {_was} (identity verified as ours)"]
     # ALWAYS verify the port afterwards — a stale/absent pid file must never mask a
     # live process (observed: hermes.pid held 36254 while the real hermes was 41584 →
@@ -188,19 +196,54 @@ def stop(name: str) -> JSONResponse:
     comp = cfg().get("components", {}).get(name, {})
     port = comp.get("port") or comp.get("mcp_port")
     if port:
-        for _ in range(6):              # up to ~1.5s for a just-SIGTERMed listener to release
-            if not _port_listener_pids(int(port)):
+        for _ in range(12):             # up to ~3s for process + listener to release
+            still_owned = bool(_was) and _ownership.ownership_matches(ROOT, name, int(_was))
+            if not _port_listener_pids(int(port)) and not still_owned:
                 break
             time.sleep(0.25)
-        if _port_listener_pids(int(port)):
+        listeners = _port_listener_pids(int(port))
+        still_owned = bool(_was) and _ownership.ownership_matches(ROOT, name, int(_was))
+        if listeners:
             refused = _kill_port_listener(int(port), component=name)
-            notes.append("; ".join(refused) if refused
-                         else f"port :{port} still held — killed listener")
+            if refused:
+                return JSONResponse({"ok": False, "log": "; ".join(refused)}, status_code=409)
+            # A second graceful signal was delivered under the still-live claim.
+            for _ in range(12):
+                if (not _port_listener_pids(int(port))
+                        and not _ownership.ownership_matches(ROOT, name, int(_was))):
+                    break
+                time.sleep(0.25)
+            listeners = _port_listener_pids(int(port))
+            still_owned = _ownership.ownership_matches(ROOT, name, int(_was))
+        if listeners or still_owned:
+            return JSONResponse(
+                {"ok": False,
+                 "log": f"{name} is still shutting down after 6s; its exact launch "
+                        "claim was retained and no replacement was started"},
+                status_code=409)
+        if _was:
+            # Shutdown completed. Remove only the claim that still names this exact
+            # child; a concurrently launched replacement is left intact.
+            _ownership.retire_owned(ROOT, name, int(_was), _birth)
+    elif _was:
+        # A component without a listener still owns a real child. The first candidate
+        # retained its claim forever because retirement happened only inside the port
+        # branch. Wait on the same PID+birth identity and retire that generation only.
+        for _ in range(24):
+            if not _ownership.ownership_matches(ROOT, name, int(_was)):
+                break
+            time.sleep(0.25)
+        if _ownership.ownership_matches(ROOT, name, int(_was)):
+            return JSONResponse(
+                {"ok": False,
+                 "log": f"{name} is still shutting down after 6s; its exact launch "
+                        "claim was retained"}, status_code=409)
+        _ownership.retire_owned(ROOT, name, int(_was), _birth)
     if notes:
         return JSONResponse({"ok": True, "log": "; ".join(notes)})
     if port:
         return JSONResponse({"ok": True, "log": f"nothing running on :{port}"})
-    return JSONResponse({"ok": False, "log": "no pid file and no port to kill by"})
+    return JSONResponse({"ok": False, "log": "no ownership claim and no port to stop"})
 
 
 @app.post("/api/components/{name}/restart")

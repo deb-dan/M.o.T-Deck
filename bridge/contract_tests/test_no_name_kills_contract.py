@@ -129,14 +129,13 @@ def test_no_kill_by_name_in_shell_layer(path):
 
 
 def test_every_kill_is_reachable_only_through_a_verified_path():
-    """Any `kill` in start_component.sh lives in _reap_pidfile or _clear_port —
-    the only two places that hold the ownership evidence."""
+    """Every signal names the exact child/listener PID, never a pattern or name."""
     code = _code(START)
     lines = [(i + 1, ln) for i, ln in enumerate(code.splitlines())
              if re.search(r"^\s*kill\s", ln) and "kill -0" not in ln]
     # every signalling site uses the verified $pid variable, never a pattern/name
     for num, ln in lines:
-        assert re.search(r'kill\s+("\$sig"|-0|"\$pid")', ln), \
+        assert re.search(r'kill\s+(-(TERM|KILL)\s+"\$pid"|"\$sig"|-0|"\$pid")', ln), \
             f"start_component.sh:{num}: unverified kill: {ln.strip()}"
 
 
@@ -145,10 +144,10 @@ def test_reap_pidfile_exists_and_verifies_before_signalling():
     code = _code(START)
     assert "_reap_pidfile() {" in code, "the pidfile-scoped reaper is gone"
     body = code.split("_reap_pidfile() {", 1)[1].split("\n_clear_port", 1)[0]
-    assert "_cmd_looks_like_ours" in body, "reaping without an identity check"
-    assert body.index("_cmd_looks_like_ours") < body.index('kill "$sig"'), \
-        "the identity check must come BEFORE the signal"
-    assert "kill -0" in body, "a dead/absent pid must be detected, not signalled blindly"
+    assert "_ownership_cli signal" in body, \
+        "reaping must use the shared locked verify+signal primitive"
+    assert 'kill "$sig"' not in body and 'kill "$pid"' not in body, \
+        "shell check-then-kill reopens the ownership race"
 
 
 def test_hermes_arm_reaps_by_pidfile_then_ownership_checks_the_port():
@@ -178,22 +177,26 @@ def test_runner_arms_reap_by_pidfile_not_by_engine_pattern():
 
 def test_ship_quits_the_app_by_apple_event_and_verified_bundle_path():
     code = _code(SHIP)
-    assert "osascript -e 'tell application id \"local.harness.app\" to quit'" in code, \
-        "ship.sh must ASK the app by stable bundle id, not signal a process by name"
+    assert 'tell application \\"$_APP_AS\\" to quit' in code, \
+        "ship.sh must ASK the exact resolved bundle path, not signal a process by name"
     assert "osascript -e 'quit app \"Harness\"'" not in code, \
         "the old filename-based Apple Event quit is back"
     assert '$APP/Contents/MacOS/' in code, \
         "a surviving app pid must be identified by its bundle path"
-    assert "REFUSING to ship" in code and "not this harness" in code, \
+    assert "REFUSING to ship" in code and "without a matching M.O.T launch record" in code, \
         "a foreign :8700 holder must stop the ship, not be killed"
 
 
 def test_stop_routes_every_stop_through_the_owner_check_seam():
     code = _code(STOP)
-    assert "--owner-check" in code, \
-        "stop.sh must reuse start_component.sh's single ownership rule"
+    assert "bridge/core/ownership.py" in code and " signal " in code, \
+        "stop.sh must use the shared locked verify+signal primitive"
+    assert 'kill "$pid"' not in code, \
+        "stop.sh must not split ownership verification from signalling"
     assert "-sTCP:LISTEN" in code, "the bridge stop must be listener-scoped"
-    assert "left alone" in code, "a foreign bridge-port holder must be reported, not killed"
+    assert "left alone" in code, "an unrecorded bridge-port holder must be reported, not killed"
+    listener = code.split('for pid in $(lsof -ti tcp:"$BR_PORT"', 1)[1]
+    assert 'kill "$pid"' not in listener, "the diagnostic bridge-port sweep became a kill"
 
 
 def test_owner_check_seam_answers_correctly_live():
@@ -293,13 +296,13 @@ def test_no_kill_by_name_in_the_python_layer(path):
 
 def test_python_has_no_unowned_port_clear_helper():
     """`_port_kill_cmd` built `lsof -ti tcp:N -sTCP:LISTEN | xargs kill` for the
-    HARNESS_PORT_TAKEOVER branch — the move that closed Debi's Unsloth. The override
-    now walks the same listener pid list every other path walks."""
+    old HARNESS_PORT_TAKEOVER branch — the move that closed Debi's Unsloth. No
+    environment variable may restore an unowned kill."""
     procs = _read(os.path.join(BRIDGE, "core", "procs.py"))
     assert "_port_kill_cmd" not in _code(os.path.join(BRIDGE, "core", "procs.py")), \
         "the unowned port-clear helper is back"
-    assert "HARNESS_PORT_TAKEOVER" in procs, \
-        "the override vanished — it is the documented escape hatch, keep it"
+    assert 'os.environ.get("HARNESS_PORT_TAKEOVER")' not in procs, \
+        "an environment-controlled unowned port kill is back"
 
 
 def test_reap_pidfile_verifies_identity_before_signalling():
@@ -308,20 +311,12 @@ def test_reap_pidfile_verifies_identity_before_signalling():
     code = _code(os.path.join(BRIDGE, "core", "procs.py"))
     assert "def reap_pidfile(" in code, "the pidfile-scoped reaper is gone"
     body = code.split("def reap_pidfile(", 1)[1].split("\ndef ", 1)[0]
-    assert "_pid_is_ours" in body, "reaping without an identity check"
-    # ⛔ AND THE IDENTITY MUST BE A PATH, NOT A NAME. The first draft of this reaper
-    # reused `_port_owner_verdict`, whose runner/aux arm accepts an ENGINE NAME
-    # (legitimately, for the port question — U19c). Measured consequence on the live
-    # stack: a foreign llama-server whose pid was planted in data/aux.pid was SIGKILLed
-    # by POST /api/aux/stop. The class, rebuilt inside its own fix.
-    assert "_port_owner_verdict" not in body, (
-        "reap_pidfile is consulting the PORT-ownership verdict again, which accepts an "
-        "engine NAME for runner/aux — that makes a recycled pid a name-match kill")
-    assert 'subprocess.run(["kill"]' in body, "the signal site moved — re-read this fence"
-    assert body.index("_pid_is_ours") < body.index('subprocess.run(["kill"]'), \
-        "the identity check must come BEFORE the signal"
-    assert "os.kill(pid, 0)" in body, \
-        "a dead/absent pid must be detected, not signalled blindly"
+    assert "_ownership.signal_owned" in body, \
+        "reaping must use the shared locked verify+signal primitive"
+    assert "_cmd_is_under_root" not in body and "_proc_cwd" not in body, (
+        "path or CWD evidence has become signal authority again")
+    assert 'subprocess.run(["kill"]' not in body, \
+        "Python check-then-kill reopens the ownership race"
 
 
 def test_aux_stop_is_pidfile_first_then_ownership_checked_port():
@@ -329,10 +324,15 @@ def test_aux_stop_is_pidfile_first_then_ownership_checked_port():
     matched a port number. Now it reaps data/aux.pid, then ownership-checks the port."""
     code = _code(os.path.join(BRIDGE, "routers", "models.py"))
     body = code.split("def _aux_kill(", 1)[1].split("\ndef ", 1)[0]
-    assert 'reap_pidfile("aux"' in body, "the aux stop no longer starts from our pidfile"
-    assert '_kill_port_listener(port' in body
-    assert body.index('reap_pidfile("aux"') < body.index("_kill_port_listener(port"), \
-        "pidfile identity comes first; the port is the fallback, not the primary"
+    assert 'stop_owned_component("aux", port' in body, \
+        "the aux stop no longer uses the shared launch-record-first transaction"
+    primitive = _code(os.path.join(BRIDGE, "core", "procs.py")).split(
+        "def stop_owned_component(", 1)[1].split("\ndef ", 1)[0]
+    assert "_read_ownership(component)" in primitive
+    assert "_port_listener_pids(int(port))" in primitive
+    assert primitive.index("_read_ownership(component)") < primitive.index(
+        "_port_listener_pids(int(port))"), \
+        "launch provenance must be checked before the port postcondition"
     # …and the pidfile only exists because the START writes it. Without this the reap
     # above degrades to a no-op and the fix is decoration. (The aux ROUTES moved to
     # routers/aux.py in the same slice; _aux_kill stayed in models.py because the
@@ -354,7 +354,8 @@ def test_component_stop_routes_the_pid_kill_through_the_verified_reaper():
     """The sixth site. It signalled data/<name>.pid unverified, and its
     PermissionError branch signalled a pid it had just proven belonged to someone else."""
     code = _code(os.path.join(BRIDGE, "routers", "component_lifecycle.py"))
-    assert "reap_pidfile(name)" in code, "the generic component stop is unverified again"
+    assert "reap_pidfile(name, retire=False)" in code, \
+        "the generic component stop is not retaining its verified claim through shutdown"
     assert 'subprocess.run(["kill", str(pid)]' not in code, \
         "the unverified pid signal is back in the generic stop"
 
@@ -388,7 +389,7 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
         with open(pf, "w") as fh:
             fh.write(str(foreign.pid))
         notes = procs.reap_pidfile("u64probe")
-        assert notes and "NOT our" in notes[0], \
+        assert notes and "no matching M.O.T launch record" in notes[0], \
             f"a foreign pid was not refused: {notes}"
         assert foreign.poll() is None, "IT KILLED A PROCESS THAT WAS NOT OURS"
         assert not os.path.exists(pf), "the stale pidfile should be discarded"
@@ -409,8 +410,7 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
         fh.write("import time\ntime.sleep(37)\n")
     mine = sp.Popen([sys.executable, mine_bin])
     try:
-        with open(pf, "w") as fh:
-            fh.write(str(mine.pid))
+        procs.write_pidfile("u64probe", mine.pid)
         notes = procs.reap_pidfile("u64probe", force=True)
         assert notes == [], f"our own process was refused: {notes}"
         for _ in range(20):
@@ -454,12 +454,15 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
     try:
         for comp in ("aux", "runner"):
             real = os.path.join(data, f"{comp}.pid")
-            if os.path.exists(real):
-                saved[comp] = _read(real)
+            owner = os.path.join(data, f"{comp}.owner")
+            for candidate in (real, owner):
+                if os.path.exists(candidate):
+                    saved[candidate] = _read(candidate)
+                    os.remove(candidate)
             with open(real, "w") as fh:
                 fh.write(str(stranger.pid))
             notes = procs.reap_pidfile(comp)
-            assert notes and "NOT our" in notes[0], (comp, notes)
+            assert notes and "no matching M.O.T launch record" in notes[0], (comp, notes)
             assert stranger.poll() is None, (
                 f"AN ENGINE NAME PROVED OWNERSHIP FOR {comp} — a recycled pid just "
                 f"became a name-match kill, which is the whole of U64")
@@ -468,12 +471,13 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
         stranger.wait()
         _sh.rmtree(tmpd, ignore_errors=True)
         for comp in ("aux", "runner"):
-            real = os.path.join(data, f"{comp}.pid")
-            if comp in saved:                 # put the real pidfile back, byte for byte
-                with open(real, "w") as fh:
-                    fh.write(saved[comp])
-            elif os.path.exists(real):        # …and never leave a probe's file behind
-                os.remove(real)
+            for candidate in (os.path.join(data, f"{comp}.pid"),
+                              os.path.join(data, f"{comp}.owner")):
+                if candidate in saved:         # put live bookkeeping back byte for byte
+                    with open(candidate, "w") as fh:
+                        fh.write(saved[candidate])
+                elif os.path.exists(candidate):
+                    os.remove(candidate)
 
     # (d) NO PIDFILE AT ALL → a sentence, and nothing signalled. There is no fallback
     #     to a name sweep, which is the entire point of the rule.

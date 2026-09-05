@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 import yaml  # noqa: F401 -- this interpreter is the resolver's known-good candidate
+from bridge.tests.model_fixture import gguf_bytes
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -41,7 +42,7 @@ def _runner_fixture(tmp_path, model):
     shutil.copy2(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
                  root / "bridge" / "core" / "modelreg.py")
     (root / "data" / "logs").mkdir(parents=True)
-    (root / "data" / "fake.gguf").write_bytes(b"fixture")
+    (root / "data" / "fake.gguf").write_bytes(gguf_bytes())
     (root / "data" / "models.json").write_text(
         '{"models": [{"id": "fixture-model", "path": "data/fake.gguf", "format": "gguf"}]}')
     foreign = (root / "home" / "Library" / "Application Support" / "Jan" / "data"
