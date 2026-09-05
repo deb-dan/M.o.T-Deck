@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.79** (see `VERSION`). Written 2026-09-05.
+Current version: **v1.5.80** (see `VERSION`). Written 2026-09-05.
 
 ---
 
@@ -42,13 +42,19 @@ cheap structured integrity verdict for GGUF, split GGUF, declared projections, a
 config/index/weight manifests. Discovery, every catalog, status, main/aux launch,
 switching, and the panel now agree: incomplete artifacts are diagnosed and retained for
 inspection, but never offered for a fresh load.
-U76 (v1.5.79) keeps source availability as a separate evidence layer: an explicit
+U76 (v1.5.79) keeps physical source availability as a separate evidence layer: an explicit
 Rescan records the ready artifact's real path, device, mounted ancestor, and names-only
 manifest. A later missing artifact on the same available source is removed per row;
 an unavailable mount is retained; and a legacy missing row without trustworthy evidence
 requires an exact, transactional second-step confirmation. Registry writers now share
 one re-entrant cross-process lock and atomic deterministic serialization, so concurrent
-Rescan/status/download work cannot lose an update.
+Rescan/status/download work cannot lose an update. v1.5.80 corrects the claims that were
+too broad: the original U75 probe is structural completeness, not proof of runnability,
+and U76 alone cannot see a manager-level removal while bytes remain. Source adapters now
+apply manager membership only to manager-owned rows (LM Studio today), preserve unmanaged
+filesystem rows, and reconcile into the existing registry rather than creating a second
+catalog. Format-aware GGUF/safetensors/MLX checks, row fingerprints for confirmation,
+legacy audio dedupe, and crash-recoverable app-owned deletion close the demonstrated gaps.
 
 **Local API access.** Mintable/revocable API keys apps' own Add-Provider forms can
 consume (`--api-key-file`, unions with the built-in key) plus an Unsloth-style API page —
@@ -91,8 +97,23 @@ runner's pidfile now records the actual port listener rather than a `$!` that ca
 losing retry attempt (U54, v1.5.72). A stale Failed-card banner that kept naming an old
 error after the runner recovered is fixed — a running-twice observation retracts the
 sentence entirely (U60, v1.5.72). The whole family of kills is pidfile-scoped and
-identity-verified in shell scripts (U19, v1.5.58) — see Next below for the Python-side
-half of that rule.
+identity-verified in shell scripts (U19, v1.5.58). v1.5.80 replaces the remaining
+name/path/port ownership guesses with no-follow launch-provenance claims bound to PID and
+kernel birth, then re-verifies the claim immediately before signalling. PID files are
+reports, not authority; known detachment failure stops the launch rather than falling
+back into the unsafe process group. YAML and registry writes share locked atomic writers,
+the bridge releases only its own PID claim, and cross-site mutating requests fail closed.
+
+**Conversation continuity and embedded apps.** v1.5.80 keeps Chat and Agent producers
+alive when the panel detaches, changes lane, or reloads. A bounded 32 MiB/8-active-turn
+replay store preserves the complete event grammar and reconnects the selected lane; a
+request marker verifies Odysseus history persistence and makes the remaining at-least-once
+limit visible. LOffice reloads a read-only projection of its stored visible transcript,
+never its hidden workbook grounding, and names its own stored session without overwriting
+an older conflicting `loffice` history. Hermes WhatsApp disable now reconciles YAML,
+environment and owned process state transactionally while keeping credential deletion a
+separate explicit action. Goose empty-session cleanup, historical Odysseus unavailable-
+model labels, live-model reporting, and OpenCode runtime-catalog drift are also closed.
 
 **Recovery and canonical-root independence.** v1.5.77 makes shipping resolve the app by
 its stable bundle identity rather than assuming its Finder filename; protects live YAML
@@ -117,11 +138,9 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-The v1.5.77 recovery wave, v1.5.78 U75 integrity slice, and v1.5.79 U76
-source-availability slice are closed. No model-registry change remains in flight.
-
-The earlier U56/U64 work is closed in v1.5.74, U69/U74/U77–U81 are closed in
-v1.5.77, U75 is closed in v1.5.78, and U76 is closed in v1.5.79.
+The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the ledger;
+the U82–U138 rows remain the adversarial incident trail explaining why each first
+candidate was rejected or narrowed, not unfinished release blockers.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
@@ -143,11 +162,7 @@ Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — 
   goose-lane P4 row from before Goose shipped that likely needs re-verification against
   the ladder now in place.
 - **Small, contained fixes queued 🔵 NEXT:** the dependency banner's "open" action always
-  lands on MOT Deck regardless of which pane actually fixes the problem (U22); OpenCode
-  can't be rebound without a restart and the deps banner doesn't know it (U38); goose
-  records an empty session on every launch (U27); LOffice's AI panel loses its visible
-  transcript on reload though the conversation survives server-side (U30); Odysseus
-  session records can point at a deleted model with no healing path (U35); two installers
+  lands on MOT Deck regardless of which pane actually fixes the problem (U22); two installers
   (`install_searxng.sh`, `install_music.sh`'s acestep weights) still float on an unpinned
   upstream HEAD (A11, A12); a couple of stale/red test fences that need re-pointing, not
   re-arguing (A7, U40, U49).
@@ -169,9 +184,18 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   the two remaining sighted call sites.
 - **Contrast:** `studio-light` under a dark theme pack drops sidebar text to ~2.3-2.5:1
   (A9) — a reachable but rare combination.
-- **Origin fencing (U63):** no mutating bridge route checks `Sec-Fetch-Site`/`Origin`,
-  so any page open in the same browser could POST to `127.0.0.1:8700`. Not new, and
-  deliberately not a login — a `Sec-Fetch-Site: cross-site` refusal is the cheap fix.
+- **Known reliability limits:** Direct Chat history persistence is at-least-once until
+  Odysseus exposes an idempotent insert primitive (U139); Hermes-lane generation is still
+  owned by the upstream browser request and does not yet inherit U31 durability (U106);
+  old pre-provenance installs need an explicit operator-visible migration command (U130).
+- **Security and breadth:** move static/plaintext secrets out of live YAML (U71); extend
+  the path guard to real shell execution boundaries rather than command-string parsing
+  (U72); add model-manager adapters only when M.O.T gains a launch/import contract for
+  them (U91). U73 remains measure-first prompt-cache performance work.
+- **Harness/product cleanup:** modernize the legacy standalone tests coherently (U95),
+  resolve possible OpenCode normalized-key collisions (U94), complete the manual Goose
+  minted-key Add Provider walk (U51), and prove dirty-tree seed stamping in the next fat
+  installer build (U59).
 - Digest-pinning the remaining tag-only installers (A13); Hermes v0.20.x update retry,
   parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office bump, parked on upstream's
   next release (P2).

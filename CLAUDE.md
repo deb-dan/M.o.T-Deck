@@ -1,6 +1,6 @@
 # New Harness — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-05, v1.5.79 model-source wave shipped) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-05, v1.5.80 reliability and preservation wave shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -18,11 +18,16 @@
 > discovery, catalogs, health, launch/switch preflight, and every first-party load
 > action, so zero-byte, partial-shard, malformed-manifest, and config-only artifacts
 > remain visible with a specific diagnosis but cannot be offered as fresh targets.
-> v1.5.79 closes U76: explicit Rescan records validated path/device/mount evidence for
-> ready chat artifacts, distinguishes an available-disk deletion from an unavailable
-> model library per row, and requires an exact second-step confirmation for ambiguous
-> legacy rows. Registry planning/writes share one cross-process lock and one atomic,
-> deterministic writer; audio rows and live YAML remain outside this decision. Read
+> v1.5.79 closes the narrower physical-source-availability part of U76. v1.5.80 is the
+> corrective reliability wave: source-specific model membership (without a second
+> registry), semantic GGUF/safetensors/MLX structure checks, row-bound Rescan consent,
+> crash-recoverable app-owned deletion, launch-provenance process ownership, atomic
+> state writes, origin fencing, durable Chat/Agent turns across lane changes and reloads,
+> truthful LOffice history, live OpenCode/model binding, conflict-safe LOffice naming,
+> and transactional Hermes WhatsApp disable all passed the full gates and real-stack
+> journeys. Existing UI intent was explicitly preserved: the sessions divider, pointer
+> affordances, controls, labels, navigation and design/theme surfaces were not removed.
+> Exact-once Direct-history writes remain U139; Hermes-lane durability remains U106. Read
 > `docs/ROADMAP.md` for the full picture before treating the older banners below as current.
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
