@@ -47,7 +47,7 @@ function grab(name) {
   throw new Error('unbalanced braces extracting ' + name);
 }
 
-const NAMES = ['laneModelLabel', 'fieldTip', 'sliderPos'];
+const NAMES = ['laneModelLabel', 'fieldTip', 'sliderPos', 'modelActionState'];
 const P = new Function(NAMES.map(grab).join('\n') + '\nreturn {' + NAMES.join(',') + '};')();
 const L = P.laneModelLabel;
 
@@ -122,7 +122,54 @@ check('undefined is empty too', P.sliderPos(undefined, 1, 32) === 1);
 check('a junk range never returns NaN', P.sliderPos(5, 'a', 'b') === 0);
 check('NaN input parks at the minimum', P.sliderPos(NaN, 1, 32) === 1);
 
-// ── 4. wiring: the label helper is what the byline actually uses ────────────────
+// ── 4. incomplete model actions — inspect/eject is not a fresh target ────────
+const IA = { file: 'incomplete' }, OK = { file: 'ready' };
+check('a stopped incomplete model disables a fresh Load/Switch and Set aux',
+      P.modelActionState(IA, false).every(Boolean));
+check('a live incomplete model remains ejectable but is never a fresh aux target',
+      P.modelActionState(IA, true)[0] && !P.modelActionState(IA, true)[1]
+      && P.modelActionState(IA, true)[2]);
+check('a configured incomplete Aux cannot expose Start or Start anyway',
+      P.modelActionState(IA, false)[0] === true);
+check('a ready model keeps both fresh actions available',
+      P.modelActionState(OK, false).every(x => !x));
+function fakeEl() { return { style: {}, children: [], appendChild(x) { this.children.push(x); return x; } }; }
+const auxFoot = fakeEl();
+const auxDoc = { getElementById() { return auxFoot; }, createElement() { return fakeEl(); } };
+const auxRender = new Function('document', 'auxWarn', 'auxStop', 'auxStart', 'esc',
+  grab('modelActionState') + '\n' + grab('renderAux') + '\nreturn renderAux;')(
+    auxDoc, 'fit warning', () => {}, () => {}, String);
+auxRender({ aux: { model: 'bad', port: 6768, up: false },
+            installed: [{ id: 'bad', file: 'incomplete', file_detail: 'index malformed' }] });
+const auxCard = auxFoot.children[0], auxButton = auxCard.children[0];
+check('the rendered incomplete Aux card disables its action and suppresses Start anyway',
+      auxButton.textContent === 'Model incomplete' && auxButton.disabled === true
+      && !auxButton.onclick && auxCard.children.length === 1);
+const detailSrc = grab('renderDetail');
+check('the incomplete action fact gates both launch/apply and any retained fit consent',
+      detailSrc.includes('!incomplete && (samp || ld) ? renderLaunch(m) :')
+      && detailSrc.includes('!incomplete && fitConsent && fitConsent.id === m.id'));
+check('the Models detail keeps a live incomplete row ejectable but suppresses Pin and Aux',
+      detailSrc.includes('isLive && !incomplete && r.live_id')
+      && detailSrc.includes('if (!incomplete){const auxBtn'));
+const popSrc = grab('renderModelPop'), cardSrc = html.slice(html.indexOf('function cardHTML('), html.indexOf('\nfunction rescanFromCard'));
+check('composer and Mission Control suppress Pin/Aux persistence for incomplete live rows',
+      popSrc.includes("m.file!=='incomplete'&&modelActiveId")
+      && popSrc.includes("if(m.file!=='incomplete'){const ax")
+      && cardSrc.includes('if (drift && !fileIncomplete)'));
+const popFail = new Function('auxSet', 'document', 'setTimeout',
+  "let modelAuxId='old';async " + grab('popAuxSet') + ';return {run:popAuxSet,id:()=>modelAuxId};')(
+    async () => ({ok:false,detail:'model incomplete'}), {body:{contains:()=>true}}, () => {});
+const refusedChip = { textContent: 'Aux', disabled: false, title: '' };
+const refusedRun = popFail.run('bad', refusedChip);
+const refusedStamp = {textContent:''};
+const auxReject = new Function('fetch', 'document', 'initModels',
+  'async ' + grab('auxSet') + ';return auxSet;')(
+    async () => ({json:async()=>({ok:false,detail:'model incomplete'})}),
+    {getElementById:()=>refusedStamp}, () => { throw new Error('unexpected refresh'); });
+const auxRejectRun = auxReject('bad');
+
+// ── 5. wiring: the label helper is what the byline actually uses ────────────────
 // 2026-08-21 (chat-split Phase 0): the sticky model echo moved from the bare
 // `chatModel` global onto the ONE chatPane state object. Same value, same helper,
 // same byline — only the name of the thing holding it changed.
@@ -139,6 +186,14 @@ check('...and passes BOTH the pin and its running gate (a stopped pin lies)',
 check('the session-model fallback is no longer mangled by a dash split',
       html.indexOf(".split('-').slice(0,2).join('-') || 'model'") < 0);
 
-console.log('');
-console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
-process.exit(fails.length ? 1 : 0);
+async function finish(){
+  const rejected=await auxRejectRun; await refusedRun;
+  check('a detail Aux rejection returns refusal and writes the existing Models stamp',
+    !rejected.ok && refusedStamp.textContent==='AUX: MODEL INCOMPLETE');
+  check('an Aux preflight refusal never claims Aux ✓ locally',
+    popFail.id()==='old' && refusedChip.textContent==='Aux refused' && refusedChip.title==='model incomplete');
+  console.log('');
+  console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
+  process.exit(fails.length ? 1 : 0);
+}
+finish();

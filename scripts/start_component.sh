@@ -364,19 +364,32 @@ case "$NAME" in
     # MLX models are DIRECTORIES (safetensors); GGUF models are files — validate
     # accordingly so the auto/mlx path resolves an mlx model dir.
     RESOLVED=$(R_MODEL="$R_MODEL" python3 - <<'PYRESOLVE'
-import os, json, sys
+import importlib.util, os, json, sys
 mid = os.environ["R_MODEL"]
 try:
     models = json.load(open("data/models.json")).get("models", [])
 except Exception:
     models = []
 m = next((x for x in models if x.get("id") == mid), None)
-fmt = (m or {}).get("format", "gguf")
-path = (m or {}).get("path")
-ok = bool(m and path) and (os.path.isdir(path) if fmt == "mlx" else os.path.isfile(path))
-if not ok:
-    sys.stderr.write(f"model '{mid}' not in registry — run scripts/seed_registry.py or pick another model\n")
+helper = os.path.join(os.getcwd(), "bridge", "core", "modelreg.py")
+spec = importlib.util.spec_from_file_location("harness_modelreg", helper)
+if spec is None or spec.loader is None:
+    sys.stderr.write("model integrity helper unavailable (packaging error)\n")
     sys.exit(1)
+modelreg = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(modelreg)
+except Exception as exc:
+    sys.stderr.write(f"model integrity helper unavailable (packaging error): {exc}\n")
+    sys.exit(1)
+if not m:
+    sys.stderr.write(f"model '{mid}' not in registry — Rescan or pick another model\n")
+    sys.exit(1)
+probe = modelreg.artifact_probe(m)
+if probe.get("state") != "ready":
+    sys.stderr.write(f"model '{mid}' is {probe.get('state')}: {probe.get('detail')}. Rescan or pick another model\n")
+    sys.exit(1)
+fmt = m.get("format", "gguf")
 print(m["path"])
 print(m.get("mmproj") or "")
 print(m.get("ctx") if m.get("ctx") not in (None, "") else "")
@@ -425,7 +438,7 @@ print(_kv(_l, ("ctx", "gpu_layers", "flash_attn", "kv_quant", "threads",
                "batch", "ubatch", "mlock", "mmap",
                "rope_freq_base", "rope_freq_scale")))
 PYRESOLVE
-) || { echo "ERROR: $(R_MODEL="$R_MODEL" python3 -c 'import os,json,sys;print("model \x27%s\x27 not in registry — run scripts/seed_registry.py or pick another model"%os.environ["R_MODEL"])')"; exit 1; }
+) || { echo "ERROR: runner model resolution failed — see the diagnostic above."; exit 1; }
     MODEL_PATH=$(sed -n '1p' <<<"$RESOLVED")
     MMPROJ_PATH=$(sed -n '2p' <<<"$RESOLVED")
     REG_CTX=$(sed -n '3p' <<<"$RESOLVED")

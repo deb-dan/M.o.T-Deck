@@ -47,12 +47,14 @@ _TMP = tempfile.mkdtemp(prefix="ody-seed-fixture-")
 
 
 def artifact(name, is_dir=False):
-    """A real file (gguf) or directory (mlx) the file check will find."""
+    """A minimally valid non-empty GGUF or MLX artifact."""
     p = os.path.join(_TMP, name)
     if is_dir:
         os.makedirs(p, exist_ok=True)
+        open(os.path.join(p, "config.json"), "w").write("{}")
+        open(os.path.join(p, "model.safetensors"), "wb").write(b"x")
     else:
-        open(p, "wb").close()
+        open(p, "wb").write(b"x")
     return p
 
 
@@ -305,7 +307,7 @@ def test_a_model_whose_file_is_gone_is_never_pinned(tmp_path):
     Odysseus went on pinning it. llama.cpp ignores the request's `model`, so picking one
     ANSWERS — under the dead model's name. That is the lie class, above a crash."""
     alive = str(tmp_path / "alive.gguf")
-    open(alive, "wb").close()
+    open(alive, "wb").write(b"x")
     reg = [
         {"id": "alive", "format": "gguf", "path": alive},
         {"id": "Muse-Glimmer-30B-Heretic-Q4_K_S", "format": "gguf",

@@ -11,7 +11,7 @@ from .events import publish
 # S29 — the FILE half of "is this model real" has ONE definition, in core/modelreg.py
 # (stdlib-only and importable by path, because three of the four seeders are standalone
 # scripts). Re-exported here so every existing `health.path_present` caller is unmoved.
-from .modelreg import path_present, wants_dir as _wants_dir     # noqa: F401
+from .modelreg import artifact_probe, path_present, wants_dir as _wants_dir     # noqa: F401
 
 
 
@@ -165,10 +165,11 @@ _FILE_MISS: dict = {}           # key -> {"path": str, "misses": int}
 # changed when they moved.
 
 
-def file_state_track(key: str, path: str, fmt: str = "gguf",
+def file_state_track(key: str, path: "str | dict", fmt: str = "gguf",
                      gone_at: int = MODEL_FILE_MISS_GONE) -> dict:
     """DEBOUNCED verdict for one model artifact. Returns
-        {"path": …, "fmt": …, "state": ok|checking|gone|unknown, "misses": int}
+        {"path": …, "fmt": …,
+         "state": ok|checking|gone|incomplete|unknown, "misses": int}
 
     `key` is the caller's identity for this claim (the model id, or "runner:<id>") —
     two callers watching the same file keep independent streaks on purpose, so the
@@ -181,18 +182,29 @@ def file_state_track(key: str, path: str, fmt: str = "gguf",
     health_verdict() above follows."""
     if not isinstance(gone_at, int) or isinstance(gone_at, bool) or gone_at < 1:
         gone_at = MODEL_FILE_MISS_GONE
-    present = path_present(path, fmt)
-    if present is None:
+    entry = path if isinstance(path, dict) else {"path": path, "format": fmt}
+    path = str(entry.get("path") or "")
+    fmt = str(entry.get("format") or fmt)
+    probe = artifact_probe(entry)
+    state, reason, detail = probe["state"], probe["reason"], probe["detail"]
+    if state == "unknown":
         _FILE_MISS.pop(key, None)
-        return {"path": path or "", "fmt": fmt, "state": "unknown", "misses": 0}
-    if present:
+        return {"path": path, "fmt": fmt, "state": "unknown", "misses": 0,
+                "reason": reason, "detail": detail}
+    if state == "ready":
         _FILE_MISS.pop(key, None)
-        return {"path": path, "fmt": fmt, "state": "ok", "misses": 0}
+        return {"path": path, "fmt": fmt, "state": "ok", "misses": 0,
+                "reason": reason, "detail": detail}
+    if state == "incomplete":
+        _FILE_MISS.pop(key, None)
+        return {"path": path, "fmt": fmt, "state": "incomplete", "misses": 0,
+                "reason": reason, "detail": detail}
     prev = _FILE_MISS.get(key)
     n = (prev["misses"] + 1) if (prev and prev.get("path") == path) else 1
     _FILE_MISS[key] = {"path": path, "misses": n}
     return {"path": path, "fmt": fmt,
-            "state": ("gone" if n >= gone_at else "checking"), "misses": n}
+            "state": ("gone" if n >= gone_at else "checking"), "misses": n,
+            "reason": reason, "detail": detail}
 
 
 def file_state_forget(key: "str | None" = None) -> None:

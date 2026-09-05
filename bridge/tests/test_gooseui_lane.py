@@ -314,6 +314,8 @@ def test_named_provider_file_matches_what_goose_itself_wrote():
     # in LM Studio days earlier.
     import tempfile as _tf
     _mlxdir = _tf.mkdtemp(prefix="gooseui-mlx-")
+    open(os.path.join(_mlxdir, "config.json"), "w").write("{}")
+    open(os.path.join(_mlxdir, "model.safetensors"), "wb").write(b"x")
     m = PR.model_entries([{"id": "g", "format": "gguf"},
                           {"id": "x", "format": "mlx", "path": _mlxdir},
                           {"id": "a", "kind": "audio"},

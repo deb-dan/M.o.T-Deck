@@ -67,6 +67,16 @@ def _load_modelreg():
 
 MODELREG = _load_modelreg()
 
+
+def _ready_chat(entry):
+    """Discovery accepts only the shared, structurally ready chat-artifact verdict."""
+    if MODELREG is None:
+        return False
+    try:
+        return MODELREG.artifact_probe(entry).get("state") == "ready"
+    except Exception:
+        return False
+
 # ⚠️ The IMPORT SOURCE DIRS. merge() replaces each of these scans WHOLESALE, which is
 # what makes a deletion made in LM Studio (or Jan) propagate on the next rescan — the
 # models arrived through this walk and they leave through it. The env overrides exist so
@@ -113,7 +123,11 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
     if not os.path.isdir(jan_dir):
         return entries
     ctx_by_id = _load_preset(preset_path)
-    for name in sorted(os.listdir(jan_dir)):
+    try:
+        names = sorted(os.listdir(jan_dir))
+    except OSError:
+        return entries
+    for name in names:
         folder = os.path.join(jan_dir, name)
         if not os.path.isdir(folder):
             continue
@@ -126,7 +140,7 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
             size_bytes = os.path.getsize(model_path)
         except OSError:
             size_bytes = None
-        entries.append({
+        entry = {
             "id": name,
             "name": name,
             "format": "gguf",
@@ -136,7 +150,9 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
             "ctx": ctx_by_id.get(name),
             "vision": bool(mmproj),
             "source": "jan-import",
-        })
+        }
+        if _ready_chat(entry):
+            entries.append(entry)
     return entries
 
 
@@ -150,7 +166,11 @@ def scan_local(local_dir):
     entries = []
     if not os.path.isdir(local_dir):
         return entries
-    for name in sorted(os.listdir(local_dir)):
+    try:
+        names = sorted(os.listdir(local_dir))
+    except OSError:
+        return entries
+    for name in names:
         folder = os.path.join(local_dir, name)
         if not os.path.isdir(folder):
             continue
@@ -163,7 +183,7 @@ def scan_local(local_dir):
             size_bytes = os.path.getsize(model_path)
         except OSError:
             size_bytes = None
-        entries.append({
+        entry = {
             "id": name,
             "name": name,
             "format": "gguf",
@@ -173,7 +193,9 @@ def scan_local(local_dir):
             "ctx": None,
             "vision": bool(mmproj),
             "source": "local",
-        })
+        }
+        if _ready_chat(entry):
+            entries.append(entry)
     return entries
 
 
@@ -477,16 +499,28 @@ def scan_lmstudio(lms_dir):
     entries = []
     if not os.path.isdir(lms_dir):
         return entries
-    for publisher in sorted(os.listdir(lms_dir)):
+    try:
+        publishers = sorted(os.listdir(lms_dir))
+    except OSError:
+        return entries
+    for publisher in publishers:
         pub_dir = os.path.join(lms_dir, publisher)
         if not os.path.isdir(pub_dir):
             continue
-        for model_dir_name in sorted(os.listdir(pub_dir)):
+        try:
+            model_dirs = sorted(os.listdir(pub_dir))
+        except OSError:
+            continue
+        for model_dir_name in model_dirs:
             model_dir = os.path.join(pub_dir, model_dir_name)
             if not os.path.isdir(model_dir):
                 continue
-            files = os.listdir(model_dir)
-            # GGUF files directly inside the model dir (skip mmproj files).
+            try:
+                files = sorted(os.listdir(model_dir))
+            except OSError:
+                continue
+            # GGUF files directly inside the model dir (skip mmproj files). Numbered
+            # split groups are ONE model at part 1; the shared probe owns completeness.
             ggufs = [f for f in sorted(files)
                      if f.endswith(".gguf") and "mmproj" not in f
                      and os.path.isfile(os.path.join(model_dir, f))]
@@ -495,31 +529,47 @@ def scan_lmstudio(lms_dir):
                             and os.path.isfile(os.path.join(model_dir, f))]
             mmproj = (os.path.abspath(os.path.join(model_dir, mmproj_files[0]))
                       if len(mmproj_files) == 1 else None)
+            gguf_candidates, seen_groups = [], set()
             for fname in ggufs:
+                group = MODELREG.split_gguf_group(fname) if MODELREG else None
+                if group:
+                    if group in seen_groups:
+                        continue
+                    seen_groups.add(group)
+                    fname, stem = f"{group[0]}-00001-of-{group[1]:05d}.gguf", group[0]
+                else:
+                    stem = os.path.splitext(fname)[0]
+                gguf_candidates.append((fname, stem))
+            for fname, stem in gguf_candidates:
                 fpath = os.path.join(model_dir, fname)
-                stem = os.path.splitext(fname)[0]
-                try:
-                    size_bytes = os.path.getsize(fpath)
-                except OSError:
-                    size_bytes = None
-                entries.append({
-                    "id": stem,
-                    "name": stem,
-                    "format": "gguf",
-                    "path": os.path.abspath(fpath),
-                    "mmproj": mmproj,
-                    "size_bytes": size_bytes,
-                    "ctx": None,
-                    "vision": bool(mmproj),
+                entry = {
+                    "id": stem, "name": stem, "format": "gguf",
+                    "path": os.path.abspath(fpath), "mmproj": mmproj,
+                    "size_bytes": None, "ctx": None, "vision": bool(mmproj),
                     "source": "lmstudio-import",
-                })
-            # MLX model dir (config.json + safetensors).
+                }
+                probe = MODELREG.artifact_probe(entry) if MODELREG else {}
+                if probe.get("state") != "ready":
+                    continue
+                try:
+                    entry["size_bytes"] = sum(os.path.getsize(os.path.join(model_dir, n))
+                                              for n in probe["evidence"]["manifest"]["files"]
+                                              if n.endswith(".gguf") and "mmproj" not in n.lower())
+                except OSError:
+                    continue
+                entries.append(entry)
+            # MLX model dir. The shared probe verifies config + direct weight shape.
             config_path = os.path.join(model_dir, "config.json")
-            safetensors = [f for f in files if f.endswith(".safetensors")
-                           and os.path.isfile(os.path.join(model_dir, f))]
-            if os.path.isfile(config_path) and safetensors:
+            mlx_entry = {
+                "id": model_dir_name, "name": model_dir_name, "format": "mlx",
+                "path": os.path.abspath(model_dir), "mmproj": None, "size_bytes": 0,
+                "ctx": None, "vision": False, "source": "lmstudio-import",
+            }
+            if _ready_chat(mlx_entry):
                 total = 0
-                for f in safetensors:
+                for f in files:
+                    if not f.endswith(".safetensors"):
+                        continue
                     try:
                         total += os.path.getsize(os.path.join(model_dir, f))
                     except OSError:
@@ -531,17 +581,8 @@ def scan_lmstudio(lms_dir):
                     vision = "vision_config" in cfg
                 except Exception:
                     vision = False
-                entries.append({
-                    "id": model_dir_name,
-                    "name": model_dir_name,
-                    "format": "mlx",
-                    "path": os.path.abspath(model_dir),
-                    "mmproj": None,
-                    "size_bytes": total,
-                    "ctx": None,
-                    "vision": vision,
-                    "source": "lmstudio-import",
-                })
+                mlx_entry["size_bytes"], mlx_entry["vision"] = total, vision
+                entries.append(mlx_entry)
     return entries
 
 
@@ -676,7 +717,29 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
             m["ctx"] = existing_ctx[m["id"]]
         m = _keep_user(m, existing_user)
         local_filled.append(m)
-    kept = [m for m in existing if m.get("source") not in RESCANNED_SOURCES]
+    fresh_keys = {(str(m.get("source") or ""), str(m.get("id") or ""))
+                  for m in list(jan_entries) + list(local_entries)
+                  + list(lmstudio_entries) + list(audio_cache_entries)
+                  if isinstance(m, dict)}
+    # A re-scan learns nothing from an unreadable import root. Preserve an unknown or
+    # incomplete existing row until a fresh same-source/id row replaces it; `prune_absent`
+    # keeps the incomplete row visible while a definite missing row still deletes.
+    def preserve_unavailable(m):
+        if not isinstance(m, dict) or m.get("source") not in RESCANNED_SOURCES or MODELREG is None:
+            return isinstance(m, dict) and m.get("source") not in RESCANNED_SOURCES
+        # U75 owns chat-model artifacts only. Audio's engine validators and wholesale
+        # cache/local scan semantics remain authoritative, including a cache row whose
+        # directory is no longer there; never preserve it through the chat probe.
+        fmt = str(m.get("format") or "").lower()
+        if m.get("kind") == "audio" or fmt.startswith(("tts-", "stt-")):
+            return False
+        if (str(m.get("source") or ""), str(m.get("id") or "")) in fresh_keys:
+            return False
+        try:
+            return MODELREG.artifact_probe(m).get("state") in ("unknown", "incomplete")
+        except Exception:
+            return True
+    kept = [m for m in existing if preserve_unavailable(m)]
     kept_audio_paths = {_audio_artifact_identity(m) for m in kept}
     kept_audio_paths.discard(None)
     result = kept + list(jan_entries)
@@ -737,6 +800,7 @@ def prune_absent(models, protect=(), present_of=None):
     helper could not be loaded at all this whole pass is skipped by main(), because
     "we cannot check" must never become "everything is gone".
     """
+    use_probe = present_of is None
     if present_of is None:
         if MODELREG is None:
             return list(models or []), [], []
@@ -747,6 +811,14 @@ def prune_absent(models, protect=(), present_of=None):
     for m in (models or []):
         if not isinstance(m, dict):
             continue
+        if use_probe:
+            try:
+                probe = MODELREG.artifact_probe(m)
+            except Exception:
+                probe = {"state": "unknown"}
+            if probe.get("state") == "incomplete":
+                kept.append(m)  # observable broken artifact belongs in Models, not a silent prune
+                continue
         try:
             present = present_of(m)
         except Exception:                                      # noqa: BLE001
@@ -803,6 +875,8 @@ def annotate_tools(models):
 
 
 def main():
+    if MODELREG is None:
+        raise SystemExit("ERROR: model integrity helper unavailable; registry left unchanged")
     local_entries = local_entries_for(LOCAL_MODELS_DIR)
     audio_local = [m for m in local_entries if m.get("kind") == "audio"]
     audio_cache = scan_audio_hf_cache(AUDIO_HF_CACHE_DIR)

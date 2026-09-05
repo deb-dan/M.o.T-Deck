@@ -3607,6 +3607,7 @@ function cardHTML(name, c, isBridge, prov) {
   const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
   const isRunner = (name === 'runner');
   const fileGone = isRunner && (c.model_file === 'gone' || c.model_file === 'unregistered');
+  const fileIncomplete=isRunner&&c.model_file==='incomplete',fileUnavailable=fileGone||fileIncomplete;
   const le = (c.last_error && c.last_error.text) ? c.last_error : null;
   // OBSERVABLY UP AND HEALTHY, AT THIS INSTANT — the fact that outranks any stored
   // report about a past start attempt (U60). `h` is the bridge's DEBOUNCED verdict, so
@@ -3621,10 +3622,10 @@ function cardHTML(name, c, isBridge, prov) {
   // the general case (pin names a healthy model that simply is not loaded) said
   // nothing at all. Reasoning + states: test_dep_signal.py §7.
   const drift = isRunner && !!(c.live_id && c.pin_intent && c.live_id !== c.pin_intent);
-  if (fileGone) {
+  if (fileUnavailable) {
     why = (drift ? 'serving ' + c.live_id + ' right now, but the pin points elsewhere — '
                  : '')
-        + (c.model_note || 'the pinned model is no longer usable')
+        + (c.model_note||'model unavailable')
         + (drift ? ' · “Pin this model” makes the two agree without a reload.' : '');
   } else if (drift) {
     why = 'serving ' + c.live_id + ' right now, but the pin still points at '
@@ -3642,7 +3643,7 @@ function cardHTML(name, c, isBridge, prov) {
   // …and the same fact decides whether the sentence gets an ACTION beside it: a card
   // whose component is up must not grow an "Open Models" button because of a sentence
   // about a start that is over (fileGone is a NOW fact and keeps its buttons).
-  const wantsModels = fileGone || !!(le && le.target === 'models' && !upOk);
+  const wantsModels = fileUnavailable || !!(le && le.target === 'models' && !upOk);
   let dot, state, actions = '';
   const provisioning = (ps === 'starting' || ps === 'pending' || ps === 'blocked');
   if (provisioning) {
@@ -3650,14 +3651,13 @@ function cardHTML(name, c, isBridge, prov) {
     state = ps === 'starting' ? 'Starting…' : ps === 'pending' ? 'Pending…' : 'Blocked';
   } else if (ps === 'failed') {
     dot = 'bad'; state = 'Failed';
-  } else if (isRunner && c.loaded && fileGone) {
+  } else if (isRunner && c.loaded && fileUnavailable) {
     // GREEN IS NOT THE WHOLE TRUTH HERE, AND THIS IS THE BRANCH THAT SAYS SO. llama.cpp
     // mmaps the weights, so it keeps serving a file that has been deleted underneath it
     // — genuinely working, and doomed at the next start. Amber, not red: nothing is
     // broken yet, and the runner must not be described as down while it answers.
     dot = 'warn';
-    state = (c.model_file === 'gone') ? 'Online — model file gone'
-                                      : 'Online — pinned model missing';
+    state=fileIncomplete?'Online — model incomplete':c.model_file==='gone'?'Online — model file gone':'Online — pinned model missing';
   } else if (h === 'lost') {
     dot = 'bad'; state = 'Degraded';   // was started, health now failing (crashed)
   } else if (h === 'transient') {
@@ -3686,11 +3686,7 @@ function cardHTML(name, c, isBridge, prov) {
       actions = `<button class="primary" onclick="startAny('${name}')">Restart</button>
                  <button onclick="act('${name}','stop')">Stop</button>`;
     } else if (isRunner) {
-      actions = c.running
-        ? `<button onclick="act('${name}','stop')">Stop</button>`
-        : c.port_up
-          ? `<button disabled>Loading…</button>`
-          : `<button class="primary" onclick="startRunner()">Start</button>`;
+      actions=c.running?`<button onclick="act('${name}','stop')">Stop</button>`:c.port_up?`<button disabled>Loading…</button>`: fileUnavailable?'':`<button class="primary" onclick="startRunner()">Start</button>`;
     } else {
       actions = c.running
         ? `<button onclick="act('${name}','stop')">Stop</button>`
@@ -3706,13 +3702,13 @@ function cardHTML(name, c, isBridge, prov) {
     if (wantsModels) {
       actions += ` <button class="primary" onclick="showView('models')">Open Models</button>`;
     }
-    if (fileGone) {
+    if (fileUnavailable) {
       actions += ` <button onclick="rescanFromCard()">Rescan models</button>`;
     }
     // THE CLICK THAT ENDS THE DRIFT (S28). Without it pin ≠ served is a STABLE state:
     // the served model's row offers Eject, and "pick another model" cannot target the
     // model already serving. No load, no restart — it is already up.
-    if (drift) {
+    if (drift && !fileIncomplete) {
       actions += ` <button class="primary" onclick="pinServedModel()">Pin this model</button>`;
     }
   }
@@ -7797,18 +7793,12 @@ function renderModelPop(){
      bad news; every place that offers a CHOICE offers only real ones.
      ⚠️ `file === 'checking'` (one missed stat, which a sleeping network volume
      produces) is deliberately NOT filtered — same two-strike discipline as the chip. */
-  /* ⚠️ …EXCEPT THE MODEL THAT IS RUNNING RIGHT NOW (adversarial pass). Its weights are
-     already in RAM, so "the file is gone" says nothing about whether it works — and
-     dropping its row would leave the chip naming a model the popover does not list,
-     with no way to Eject it or set it as Aux. A live row is never hidden, whatever the
-     disk says; the Models view's chip is where that fact is told. */
-  const pickable = modelEntries.filter(
-    m => (modelLiveId && m.id === modelLiveId) || !(m.absent || m.file === 'gone'));
+  const pickable=modelEntries.filter(m=>(modelLiveId&&m.id===modelLiveId)||!(m.absent||m.file === 'gone'||m.file === 'incomplete'));
   if (!pickable.length){
     const e = document.createElement('div');
     e.className = 'mp-empty';
     e.textContent = modelEntries.length
-      ? 'No loadable models — every entry’s file is missing. Open Models → RESCAN.'
+      ? 'No loadable models — missing/incomplete. Open Models → RESCAN.'
       : 'No models installed — open Models to download one.';
     pop.appendChild(e); return;
   }
@@ -7852,7 +7842,7 @@ function renderModelPop(){
     acts.className = 'mp-acts';
     if (isLive){
       // S28: the live row shows the drift, so it carries the fix. Only while it drifts.
-      if (modelActiveId && modelActiveId !== m.id){
+      if (m.file!=='incomplete'&&modelActiveId && modelActiveId !== m.id){
         const pn = document.createElement('button');
         pn.className = 'mp-act'; pn.textContent = 'Pin';
         pn.title = 'harness.yaml still points at ' + modelActiveId
@@ -7872,12 +7862,10 @@ function renderModelPop(){
       sw.onclick = (e) => { e.stopPropagation(); closeModelPop(); chatModelChange(m.id); };
       acts.appendChild(sw);
     }
-    const ax = document.createElement('button');
-    ax.className = 'mp-act';
-    ax.textContent = (modelAuxId && m.id === modelAuxId) ? 'Aux ✓' : 'Aux';
-    ax.title = 'Use for background tasks (titles, search queries)';
-    ax.onclick = (e) => { e.stopPropagation(); popAuxSet(m.id, ax); };
-    acts.appendChild(ax);
+    if(m.file!=='incomplete'){const ax=document.createElement('button');
+      ax.className='mp-act'; ax.textContent=(modelAuxId&&m.id===modelAuxId)?'Aux ✓':'Aux';
+      ax.title='Use for background tasks (titles, search queries)';
+      ax.onclick=e=>{e.stopPropagation();popAuxSet(m.id,ax);}; acts.appendChild(ax);}
     meta.appendChild(acts);
     row.appendChild(meta);
 
@@ -7895,7 +7883,8 @@ function renderModelPop(){
 async function popAuxSet(id, chip){
   const prev = chip.textContent;
   chip.disabled = true;
-  try { await auxSet(id); } catch (_) {}
+  const r=await auxSet(id);
+  if(!r||!r.ok){chip.textContent='Aux refused';chip.title=(r&&r.detail)||'request failed';chip.disabled=false;return;}
   modelAuxId = id;
   chip.textContent = 'aux ✓';
   setTimeout(() => { chip.disabled = false;
@@ -9868,6 +9857,7 @@ function modelAction(isActive, runnerUp, anyLive){
   if (isActive && runnerUp) return 'Eject';
   return anyLive ? 'Switch' : 'Load';
 }
+function modelActionState(m,isLive){const i=m&&m.file==='incomplete';return [i,i&&!isLive,i];}
 
 function quantOf(id){
   const m = (id || '').match(/IQ\d_\w+|Q\d_K_\w+|Q\d_0|\d+bit/i);
@@ -10304,7 +10294,9 @@ function modelRowHtml(m, isActive, isAux, runnerUp){
   // S29 adds the PERSISTED half: `absent` is the same verdict written into the registry
   // row, which is what every app catalog acts on. Either one draws the chip, so this
   // pane and the third-party pickers can never disagree about a model's reality.
-  if (m.file === 'gone' || m.absent) {
+  if (m.file === 'incomplete') {
+    badges.push('<span class="mpill gone" title="'+esc(m.file_detail||'')+'">model incomplete</span>');
+  } else if (m.file === 'gone' || m.absent) {
     badges.push('<span class="mpill gone" title="The file this entry points at is not '
       + 'on disk (deleted outside MOT Deck — LM Studio?). It is excluded from the chat '
       + 'picker and from every app catalog. RESCAN removes entries like this — and '
@@ -10334,8 +10326,7 @@ function renderList(r){
      user the bad news, and the only pane that offers RESCAN), but they stop occupying
      the top of a list of things you might load. STABLE: everything else keeps the
      bridge's order exactly, so a rescan never appears to shuffle the library. */
-  const rows = (r.installed || []).slice().sort((a, b) =>
-    ((a.absent || a.file === 'gone') ? 1 : 0) - ((b.absent || b.file === 'gone') ? 1 : 0));
+  const rows=(r.installed||[]).slice().sort((a,b)=>+(a.absent||a.file === 'gone'||a.file === 'incomplete')-+(b.absent||b.file === 'gone'||b.file === 'incomplete'));
   for (const m of rows){
     // "live" = the model the RUNNER actually reports serving (ISSUE C), not merely the
     // harness.yaml intent — so the pill matches MC and post-eject reality.
@@ -10350,20 +10341,21 @@ function renderList(r){
   paintFitChips();          // fill any verdicts we already hold for these rows
 }
 
-// Aux runner control — full-width strip under the split (unchanged behavior).
 function renderAux(r){
   const foot = document.getElementById('models-aux'); foot.innerHTML = '';
   const aux = r.aux || {};
+  const bad=(r.installed||[]).find(m=>m.id===aux.model), blocked=modelActionState(bad,false)[0];
   const strip = document.createElement('div'); strip.className = 'card'; strip.style.marginTop = '20px';
   strip.innerHTML = `<div class="name">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
       <div class="meta wrap">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
   if (aux.model){
-    const b = document.createElement('button'); b.style.marginTop = '11px';
+    const b=document.createElement('button'); b.style.marginTop = '11px';
     if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
+    else if (blocked){ b.textContent='Model incomplete'; b.disabled=true; b.title=bad.file_detail||'Pick another model'; }
     else { b.textContent = 'Start'; b.onclick = () => auxStart(false); }
     strip.appendChild(b);
   }
-  if (auxWarn && !aux.up){
+  if (auxWarn && !aux.up && !blocked){
     const warn = document.createElement('div');
     warn.className = 'fit-consent';
     warn.innerHTML = `<div class="fc-head">Probably will not fit beside what is loaded</div>
@@ -11952,24 +11944,19 @@ function renderDetail(){
     const meta = [esc(m.id), esc(m.engine || ''), fmtGB(m.size_bytes),
                   (m.ctx ? (m.ctx.toLocaleString() + ' ctx') : ''), esc(m.source || '')]
                  .filter(Boolean).join(' · ');
-    // Capability pills. Same absent-not-greyed rule as the rows: a null tools verdict
-    // draws nothing at all rather than claiming the model cannot call tools.
     const caps = [];
     if ((m.capabilities || []).includes('vision')) caps.push('<span class="mpill vision">vision</span>');
     if (modelHasTools(m)) caps.push('<span class="mpill vision" title="' + TOOLS_PILL_TITLE + '">tools</span>');
-    // Empty when the bridge sent no `sampling` (older bridge) — then the wrapper is
-    // omitted entirely rather than leaving an empty section's margin behind.
     const samp = renderSampling(m);
     const ld = renderLoad(m);
-    // v2.1: the Apply row is shared and sits under whichever groups exist — so an
-    // MLX model (Sampling only, no Load flags) still has somewhere to apply from.
-    const lau = (samp || ld) ? renderLaunch(m) : '';
+    const [incomplete,primaryUnavailable,auxUnavailable]=modelActionState(m,isLive);
+    const lau = !incomplete && (samp || ld) ? renderLaunch(m) : '';
     d.innerHTML = `<div class="md-title">${esc(m.name || m.id)}</div>
       <div class="md-meta">${meta}</div>
       ${caps.length ? `<div class="mbadges" style="margin-top:6px">${caps.join('')}</div>` : ''}
       ${fitDetailHtml(m.id)}
       <div class="md-actions" id="md-actions"></div>
-      ${(fitConsent && fitConsent.id === m.id) ? fitConsentHtml() : ''}
+      ${(!incomplete && fitConsent && fitConsent.id === m.id) ? fitConsentHtml() : ''}
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
       ${lau ? `<div class="md-sec" id="md-launch">${lau}</div>` : ''}
@@ -11978,7 +11965,7 @@ function renderDetail(){
     const acts = d.querySelector('#md-actions');
     // Fable ISSUE 2 state machine: "live" = the model the RUNNER reports (ISSUE C).
     // No model live → every action is Load; one live → it = Eject, others = Switch.
-    const anyLive = !!r.live_id;
+    const anyLive=!!r.live_id;
     const label = modelAction(isLive, !!r.runner_up, anyLive);
     const primary = document.createElement('button'); primary.className = 'primary';
     if (loadingThis){
@@ -11987,13 +11974,14 @@ function renderDetail(){
       primary.textContent = 'Loading…'; primary.disabled = true;
     } else {
       primary.textContent = label;
-      if (label === 'Eject'){ primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
+      if (primaryUnavailable){ primary.disabled=true; primary.title=m.file_detail||'Model incomplete'; }
+      else if (label === 'Eject'){ primary.title = 'Unload — frees RAM'; primary.onclick = ejectModel; }
       else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
     }
     acts.appendChild(primary);
     // PIN THIS MODEL (S28). LIVE row only, and only while the pin points elsewhere —
     // absent, not greyed, when there is nothing to fix.
-    if (isLive && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
+    if (isLive && !incomplete && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
       const pinB = document.createElement('button');
       pinB.textContent = 'Pin this model';
       pinB.title = 'harness.yaml still points at ' + (r.active || '?')
@@ -12002,12 +11990,11 @@ function renderDetail(){
       pinB.onclick = async () => { pinB.disabled = true; await pinServedModel(); };
       acts.appendChild(pinB);
     }
-    const auxBtn = document.createElement('button');
-    if (isAux){ auxBtn.textContent = 'Aux ✓'; auxBtn.disabled = true; }
-    else { auxBtn.textContent = 'Set aux'; auxBtn.title = 'Use for background tasks (titles, search queries)';
-           auxBtn.disabled = !!switchingId;   // no aux fiddling while a load is in flight
-           auxBtn.onclick = () => auxSet(m.id); }
-    acts.appendChild(auxBtn);
+    if (!incomplete){const auxBtn=document.createElement('button');
+      if (isAux){ auxBtn.textContent='Aux ✓'; auxBtn.disabled=true; }
+      else { auxBtn.textContent='Set aux'; auxBtn.title='Use for background tasks';
+             auxBtn.disabled=!!switchingId; auxBtn.onclick=()=>auxSet(m.id); }
+      acts.appendChild(auxBtn);}
     // Delete — ONLY for app-owned models (download/local, files under data/models/).
     // Read-only imports show a greyed note instead (deleting would touch files the
     // harness does not own). Two-step arm→confirm (WKWebView has no confirm()).
@@ -12120,9 +12107,10 @@ async function doDeleteModel(id, name){
 }
 
 async function auxSet(id){
-  try { await fetch('/api/aux/set', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({id})}); } catch {}
-  initModels();
+  try { const r=await (await fetch('/api/aux/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+    if(r.ok){initModels();return r;} const s=document.getElementById('models-stamp');
+    if(s)s.textContent='AUX: '+String(r.detail||r.log||'REFUSED').toUpperCase(); return r;
+  } catch { const s=document.getElementById('models-stamp');if(s)s.textContent='AUX: REQUEST FAILED';return {ok:false,detail:'request failed'}; }
 }
 async function auxStart(go){
   const st = document.getElementById('models-stamp');

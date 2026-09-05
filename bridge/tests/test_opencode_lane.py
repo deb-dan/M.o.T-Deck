@@ -532,9 +532,11 @@ def _run_seed(models, want="", extra_global=None, extra_project=None):
 # days after Debi deleted them in LM Studio.
 _ART = tempfile.mkdtemp(prefix="opencode-artifacts-")
 _GGUF_PATH = os.path.join(_ART, "q.gguf")
-open(_GGUF_PATH, "wb").close()
+open(_GGUF_PATH, "wb").write(b"x")
 _MLX_PATH = os.path.join(_ART, "Qwen3-8B-4bit")
 os.makedirs(_MLX_PATH, exist_ok=True)
+open(os.path.join(_MLX_PATH, "config.json"), "w").write("{}")
+open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(b"x")
 
 GGUF = {"id": "Qwen3-9B-Q4_0", "format": "gguf", "path": _GGUF_PATH, "ctx": 32768}
 MLX = {"id": "mlx-community/Qwen3-8B-4bit", "format": "mlx", "path": _MLX_PATH}

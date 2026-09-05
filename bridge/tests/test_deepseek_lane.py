@@ -634,9 +634,11 @@ def test_the_fan_out_does_not_tell_the_user_to_restart_it():
 
 _ART = tempfile.mkdtemp(prefix="deepseek-artifacts-")
 _GGUF_PATH = os.path.join(_ART, "q.gguf")
-open(_GGUF_PATH, "wb").close()
+open(_GGUF_PATH, "wb").write(b"x")
 _MLX_PATH = os.path.join(_ART, "Qwen3-8B-4bit")
 os.makedirs(_MLX_PATH, exist_ok=True)
+open(os.path.join(_MLX_PATH, "config.json"), "w").write("{}")
+open(os.path.join(_MLX_PATH, "model.safetensors"), "wb").write(b"x")
 # ⚠️ REAL FILES ON DISK, because the enumerator (modelreg.offerable) drops a row whose
 # artifact is provably gone — S29. A fixture with a fake path would silently test the
 # empty case.

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
 from ..core.health import file_state_track
+from ..core.modelreg import artifact_probe
 from ..core.modelid import _live_model_id
 from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
@@ -467,9 +468,8 @@ def api_models() -> JSONResponse:
             audio = [_voice.audio_entry_view(m) for m in _audio_models]
         _file_states: dict = {}
         for m in models:
-            _fs = file_state_track(f"models:{m.get('id')}",
-                                   str(m.get("path") or ""),
-                                   str(m.get("format") or "gguf"))["state"]
+            _file_probe = file_state_track(f"models:{m.get('id')}", m)
+            _fs = _file_probe["state"]
             _file_states[m.get("id")] = _fs
             installed.append({
                 "id": m.get("id"), "name": m.get("name") or m.get("id"),
@@ -487,9 +487,11 @@ def api_models() -> JSONResponse:
                 # U15 — IS THE FILE STILL THERE? One stat(), debounced two-strikes
                 # (health.file_state_track), so a sleeping network mount cannot make
                 # the pane accuse the user of deleting a model they still have. Values:
-                # ok | checking | gone | unknown. Only "gone" draws a chip; "checking"
-                # is deliberately invisible, which is the whole point of the debounce.
+                # ok | checking | gone | incomplete | unknown. "checking" is deliberately
+                # invisible, while an observable broken artifact is shown immediately.
                 "file": _fs,
+                "file_reason": _file_probe.get("reason"),
+                "file_detail": _file_probe.get("detail"),
                 # S29 — THE PERSISTED verdict, as opposed to `file` above, which is this
                 # process's live debounce. The panel needs both: `file` draws the chip
                 # the instant we know, `absent` is what every OTHER enumerator (the four
@@ -649,9 +651,7 @@ def model_file_alive(mid: str) -> bool:
     entry = next((m for m in _registry_models() if m.get("id") == mid), None)
     if entry is None:
         return False
-    from ..core.health import path_present
-    return path_present(str(entry.get("path") or ""),
-                        str(entry.get("format") or "gguf")) is True
+    return artifact_probe(entry).get("state") == "ready"
 
 
 # ══ THE COHERENCE WAVE (S28) — AFTER A SWITCH, NOTHING MAY KEEP NAMING THE OLD MODEL ══
@@ -1156,6 +1156,16 @@ async def api_switch_model(req: Request) -> JSONResponse:
     _bad = _reject_if_audio(new_id)
     if _bad is not None:
         return _bad
+    entry = next((m for m in _registry_models() if m.get("id") == new_id), None)
+    if entry is None:
+        return JSONResponse({"ok": False, "log": f"model '{new_id}' not in registry"}, status_code=400)
+    probe = artifact_probe(entry)
+    if probe["state"] != "ready":
+        status = 400 if probe["state"] == "missing" else 409
+        return JSONResponse(
+            {"ok": False,
+             "log": f"model '{new_id}' is {probe['state']}: {probe['detail']}. "
+                    "Rescan or pick another model"}, status_code=status)
     old_id = (c.get("runner", {}) or {}).get("model") or ""
     # ── THE LOAD CONSENT GATE (v1.5.30) ──────────────────────────────────────
     # THIS USED TO BE A WALL AND IS NOW AN ADVISOR, and it is the same engine the

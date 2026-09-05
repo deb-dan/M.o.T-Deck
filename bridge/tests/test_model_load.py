@@ -29,6 +29,7 @@ Run: python3 bridge/tests/test_model_load.py
 import ast
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -345,6 +346,9 @@ def resolve(entry):
     """Run the REAL in-script resolver against a temp registry; return its 8 lines."""
     with tempfile.TemporaryDirectory() as td:
         os.makedirs(os.path.join(td, "data"))
+        os.makedirs(os.path.join(td, "bridge", "core"))
+        shutil.copy(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
+                    os.path.join(td, "bridge", "core", "modelreg.py"))
         gguf = os.path.join(td, "data", "m.gguf")
         open(gguf, "w").write("x")
         e = dict(entry, path=gguf)
@@ -354,6 +358,7 @@ def resolve(entry):
         open(p, "w").write(pyr)
         r = subprocess.run([sys.executable, p], cwd=td, capture_output=True, text=True,
                            env=dict(os.environ, R_MODEL=e["id"]))
+        assert r.returncode == 0, r.stderr
         return r.stdout.splitlines()
 
 

@@ -60,14 +60,21 @@ DEAD = ["Muse-Glimmer-30B-Heretic-Q4_K_S",
 
 def _alive(tmp_path, name="alive.gguf"):
     p = tmp_path / name
-    p.write_bytes(b"")
+    p.write_bytes(b"x")
     return str(p)
+
+
+def _mlx(tmp_path, name="mlx-model"):
+    p = tmp_path / name
+    p.mkdir()
+    (p / "config.json").write_text("{}")
+    (p / "model.safetensors").write_bytes(b"x")
+    return p
 
 
 # ══ A. ONE DEFINITION ════════════════════════════════════════════════════════
 def test_the_one_rule_keeps_only_models_that_are_real(tmp_path):
-    alive, mlx = _alive(tmp_path), tmp_path / "mlx-model"
-    mlx.mkdir()
+    alive, mlx = _alive(tmp_path), _mlx(tmp_path)
     reg = [
         {"id": "keep-gguf", "format": "gguf", "path": alive},
         {"id": "keep-mlx", "format": "mlx", "path": str(mlx)},
@@ -96,7 +103,7 @@ def test_an_mlx_row_is_addressed_by_path_and_a_gguf_row_by_id(tmp_path):
     assert MR.wire_id({"id": "x", "format": "mlx"}) == "x"
 
 
-def test_absence_is_not_information():
+def test_absence_is_not_information(tmp_path):
     """★ THE GUARD THAT KEEPS THIS FROM BECOMING ITS OWN LIE. os.stat on a sleeping
     SMB/NFS mount or a spun-down external disk answers ENOENT rather than raising, and
     a permission error is not absence either. Telling a user their models are gone
@@ -106,7 +113,7 @@ def test_absence_is_not_information():
     assert MR.path_present("/etc/hosts") is True
     assert MR.path_present("/definitely/not/here.gguf") is False
     # kind matters: a FILE is not an mlx model dir, and a DIR is not a gguf
-    assert MR.path_present("/etc", "mlx") is True
+    assert MR.path_present(str(_mlx(tmp_path)), "mlx") is True
     assert MR.path_present("/etc", "gguf") is False
     # a row with no path at all is unknown, and unknown is always KEPT
     assert [m["id"] for m in MR.offerable([{"id": "u"}])] == ["u"]
@@ -147,7 +154,7 @@ def test_the_running_model_is_never_hidden_from_the_picker():
     naming a model the popover does not list, with no way to Eject it."""
     i = PANEL.index("function renderModelPop()")
     body = PANEL[i:i + 2200]
-    assert "(modelLiveId && m.id === modelLiveId) ||" in body
+    assert "(modelLiveId && m.id === modelLiveId)" in body
 
 
 def test_the_active_model_leads_the_wire_list(tmp_path):
@@ -163,17 +170,19 @@ def test_every_enumerator_goes_through_the_one_definition():
     we offer" lived in five places. This test is what stops a sixth appearing: each
     enumerator must NAME the shared helper, and the old inline audio/hidden pair must
     not be re-derived beside it."""
-    for rel in ("bridge/gooseprov.py", "scripts/seed_odysseus_jan.py",
-                "scripts/seed_hermes_provider.py", "scripts/seed_opencode_config.py"):
+    for rel in ("bridge/gooseprov.py", "bridge/gooseui.py",
+                "scripts/seed_odysseus_jan.py", "scripts/seed_hermes_provider.py",
+                "scripts/seed_opencode_config.py", "scripts/seed_deepseek_config.py"):
         src = (ROOT / rel).read_text(errors="replace")
-        assert "modelreg" in src or "offerable" in src, (
+        assert ("modelreg" in src or "offerable" in src
+                or (rel == "bridge/gooseui.py" and "gooseprov as _prov" in src)), (
             f"{rel} enumerates models without the shared rule — that is how OpenCode "
             f"kept offering models deleted days earlier")
     # the OpenCode arm no longer carries its own copy at all
     assert "<<'PYOC'" not in START, "the opencode heredoc must be gone, not bypassed"
     assert "scripts/seed_opencode_config.py" in START
     # and the FILE half has exactly one implementation
-    assert "from .modelreg import path_present" in (
+    assert "artifact_probe" in (
         ROOT / "bridge" / "core" / "health.py").read_text(), (
         "health.py must re-export the shared path check, never re-implement it")
 
@@ -264,7 +273,7 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
     for pub, fname in (("Parable-4B", "Parable-4B.gguf"),
                        ("Muse-Glimmer-30B", DEAD[0] + ".gguf")):
         (lms / "pub" / pub).mkdir(parents=True)
-        (lms / "pub" / pub / fname).write_bytes(b"")
+        (lms / "pub" / pub / fname).write_bytes(b"x")
     (root / "harness.yaml").write_text("runner:\n  model: Parable-4B\n  port: 6767\n")
     # A source 'download' row whose weights are long gone — the class merge() preserves
     # untouched by design and therefore can never prune on its own.
@@ -333,7 +342,7 @@ def test_the_composer_picker_excludes_what_cannot_load():
     spends 60-90s to fail, and listing it is the invitation to do that."""
     i = PANEL.index("function renderModelPop()")
     body = PANEL[i:i + 3000]
-    assert "!(m.absent || m.file === 'gone')" in body, (
+    assert "m.file === 'incomplete'" in body and "m.file === 'gone'" in body, (
         "the composer picker must enumerate exactly what the app catalogs enumerate")
     assert "No loadable models" in body, (
         "graceful absence: every state the user can reach lands on something usable")

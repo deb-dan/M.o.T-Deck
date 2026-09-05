@@ -42,6 +42,8 @@ WIRE = "gemma-4-31B-it-uncensored-biproj-q4_k_m"
 _TMP = tempfile.mkdtemp(prefix="hermes-seed-fixture-")
 MLX_ONE = os.path.join(_TMP, "mlx-one")
 os.makedirs(MLX_ONE, exist_ok=True)
+open(os.path.join(MLX_ONE, "config.json"), "w").write("{}")
+open(os.path.join(MLX_ONE, "model.safetensors"), "wb").write(b"x")
 
 REGISTRY = {"models": [
     {"id": "chat-a", "format": "gguf", "ctx": 32768},

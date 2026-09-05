@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.77** (see `VERSION`). Written 2026-09-05.
+Current version: **v1.5.78** (see `VERSION`). Written 2026-09-05.
 
 ---
 
@@ -37,7 +37,11 @@ patterns (U23, v1.5.63). A model switch now rebinds every dependent lane automat
 Hermes, Odysseus, both goose slugs — and a stable Pin-this-model action ends pin≠served
 drift in one click (S28, v1.5.62, "the coherence wave"). RAM/resource gates warn and
 recommend with measured numbers; they never hard-block (Debi's advisory-gates ruling,
-2026-08-28).
+2026-08-28). U75 (v1.5.78) replaces the old file/directory existence shortcut with one
+cheap structured integrity verdict for GGUF, split GGUF, declared projections, and MLX
+config/index/weight manifests. Discovery, every catalog, status, main/aux launch,
+switching, and the panel now agree: incomplete artifacts are diagnosed and retained for
+inspection, but never offered for a fresh load.
 
 **Local API access.** Mintable/revocable API keys apps' own Add-Provider forms can
 consume (`--api-key-file`, unions with the built-in key) plus an Unsloth-style API page —
@@ -106,18 +110,16 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-The v1.5.77 recovery wave is closed. The next two model-registry changes are deliberately
-separate releases because each changes what the app may call a usable or absent model:
+The v1.5.77 recovery wave and v1.5.78 U75 integrity slice are closed. The next
+model-registry change remains a separate release because it changes what the app may
+call an absent model:
 
-- **U75** — one shared, cheap artifact-integrity predicate for MLX model directories,
-  used by scan, offerability, and launch; config-only or deleted-shard directories must
-  never remain selectable.
 - **U76** — retain the unplugged-volume guard while persisting enough source/device
   evidence to distinguish a missing mount from a deliberate mass deletion. Legacy
   all-missing evidence must ask for explicit confirmation rather than guessing.
 
-The earlier U56/U64 work is closed in v1.5.74, and U69/U74/U77–U81 are closed in
-v1.5.77; none of those remains in flight.
+The earlier U56/U64 work is closed in v1.5.74, U69/U74/U77–U81 are closed in
+v1.5.77, and U75 is closed in v1.5.78; none of those remains in flight.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:

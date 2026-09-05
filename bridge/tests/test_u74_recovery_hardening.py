@@ -37,6 +37,9 @@ def _runner_fixture(tmp_path, model):
     root = tmp_path / "fixture"
     (root / "scripts").mkdir(parents=True)
     shutil.copy2(START, root / "scripts" / "start_component.sh")
+    (root / "bridge" / "core").mkdir(parents=True)
+    shutil.copy2(os.path.join(ROOT, "bridge", "core", "modelreg.py"),
+                 root / "bridge" / "core" / "modelreg.py")
     (root / "data" / "logs").mkdir(parents=True)
     (root / "data" / "fake.gguf").write_bytes(b"fixture")
     (root / "data" / "models.json").write_text(

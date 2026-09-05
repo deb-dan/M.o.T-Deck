@@ -47,6 +47,8 @@ ABSENT_KEY = "absent"
 # (checkpoint directories). Anything unrecognised is treated as a file, which is what
 # `gguf` — the overwhelming majority — is.
 _DIR_FORMATS_PREFIX = ("stt-", "tts-")
+_GGUF_SHARD_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I)
+_MLX_SHARD_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.safetensors$", re.I)
 
 
 def wants_dir(fmt: "str | None") -> bool:
@@ -54,17 +56,41 @@ def wants_dir(fmt: "str | None") -> bool:
     return f == "mlx" or f.startswith(_DIR_FORMATS_PREFIX)
 
 
-def path_present(path: "str | None", fmt: str = "gguf") -> "bool | None":
-    """RAW, undebounced: is this artifact on disk right now?
+def _verdict(state, reason, detail, evidence=None):
+    return {"state": state, "reason": reason, "detail": detail,
+            "evidence": evidence or {}}
 
-    True  — there, and the right KIND (a dir for mlx, a file for gguf)
-    False — the OS answered, and the answer was "no"
-    None  — we could not tell, so we say nothing (no path; or a stat that failed for a
-            reason that is not absence). None is never rendered as a problem anywhere.
 
-    One stat() per call. Nothing here reads, opens or sizes the file — a 20GB GGUF on a
-    spinning disk must cost the same as a 2KB one.
-    """
+def _stat_required(path, label, *, missing_reason, invalid_reason):
+    """A cheap regular/non-empty direct-file check for the shared probe."""
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None, _verdict("incomplete", missing_reason, f"{label} is missing")
+    except OSError:
+        return None, _verdict("unknown", "unreadable", f"could not read {label}")
+    except Exception:                                            # noqa: BLE001
+        return None, _verdict("unknown", "unreadable", f"could not read {label}")
+    if not _stat.S_ISREG(st.st_mode) or st.st_size <= 0:
+        return None, _verdict("incomplete", invalid_reason, f"{label} is empty or not a file")
+    return st, None
+
+
+def split_gguf_group(name: str):
+    """(prefix, total) for a numbered GGUF member, else None (shared with discovery)."""
+    m = _GGUF_SHARD_RE.match(str(name or ""))
+    if not m:
+        return None
+    ordinal, total = int(m.group(2)), int(m.group(3))
+    return (m.group(1), total) if 1 <= ordinal <= total else None
+
+
+def _shard_names(prefix, total, suffix):
+    return [f"{prefix}-{n:05d}-of-{total:05d}{suffix}" for n in range(1, total + 1)]
+
+
+def _audio_type_present(path, fmt):
+    """The pre-U75 audio compatibility rule; audio owns separate validators."""
     if not path or not isinstance(path, str):
         return None
     try:
@@ -72,18 +98,181 @@ def path_present(path: "str | None", fmt: str = "gguf") -> "bool | None":
     except (FileNotFoundError, NotADirectoryError):
         return False
     except OSError:
-        return None                      # permission / timeout / loop — NOT a claim
+        return None
     except Exception:                                            # noqa: BLE001
         return None
-    return bool(_stat.S_ISDIR(st.st_mode) if wants_dir(fmt)
-                else _stat.S_ISREG(st.st_mode))
+    return bool(_stat.S_ISDIR(st.st_mode) if wants_dir(fmt) else _stat.S_ISREG(st.st_mode))
+
+
+def artifact_probe(entry: dict) -> dict:
+    """Cheap, read-only integrity verdict for one chat GGUF or MLX artifact.
+
+    The probe intentionally reads only direct metadata: one directory listing, tiny JSON
+    manifests and direct stats. It never hashes or recursively sizes model weights.
+    """
+    if not isinstance(entry, dict):
+        return _verdict("unknown", "invalid-entry", "model entry is not readable")
+    fmt = str(entry.get("format") or "gguf").strip().lower()
+    path = entry.get("path")
+    if not isinstance(path, str) or not path:
+        return _verdict("unknown", "no-path", "model path is not recorded")
+    if is_audio(entry):
+        present = _audio_type_present(path, fmt)
+        state = "ready" if present is True else ("missing" if present is False else "unknown")
+        return _verdict(state, "audio-type" if present is not None else "unreadable",
+                        "audio artifact is available" if present else "could not read audio artifact")
+    try:
+        root = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return _verdict("missing", "path-missing", "model artifact is missing")
+    except OSError:
+        return _verdict("unknown", "unreadable", "could not read model artifact")
+    except Exception:                                            # noqa: BLE001
+        return _verdict("unknown", "unreadable", "could not read model artifact")
+    if fmt == "mlx":
+        if not _stat.S_ISDIR(root.st_mode):
+            return _verdict("incomplete", "wrong-kind", "MLX model path is not a directory")
+        try:
+            names = os.listdir(path)
+        except OSError:
+            return _verdict("unknown", "unreadable", "could not read MLX model directory")
+        config = os.path.join(path, "config.json")
+        _, bad = _stat_required(config, "config.json", missing_reason="missing-config",
+                                invalid_reason="invalid-config")
+        if bad:
+            return bad
+        try:
+            with open(config, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+        except OSError:
+            return _verdict("unknown", "unreadable", "could not read config.json")
+        except (ValueError, TypeError):
+            return _verdict("incomplete", "invalid-config", "config.json is not valid JSON")
+        if not isinstance(cfg, dict):
+            return _verdict("incomplete", "invalid-config", "config.json is not a JSON object")
+        names = sorted(names)
+        weights = [n for n in names if n.endswith(".safetensors")]
+        if not weights:
+            return _verdict("incomplete", "missing-weight", "MLX model has no weight file")
+        required = {"config.json"}
+        indexes = [n for n in names if n.endswith(".safetensors.index.json")]
+        if indexes:
+            valid_weight = False
+            for n in weights:
+                st, _ = _stat_required(os.path.join(path, n), n, missing_reason="missing-weight",
+                                       invalid_reason="invalid-weight")
+                valid_weight = valid_weight or st is not None
+            if not valid_weight:
+                return _verdict("incomplete", "invalid-weight", "MLX model has no usable weight file")
+            for n in indexes:
+                required.add(n)
+                _, bad = _stat_required(os.path.join(path, n), n, missing_reason="missing-index",
+                                        invalid_reason="invalid-index")
+                if bad:
+                    return bad
+                try:
+                    with open(os.path.join(path, n), encoding="utf-8") as fh:
+                        idx = json.load(fh)
+                    weight_map = idx.get("weight_map") if isinstance(idx, dict) else None
+                except OSError:
+                    return _verdict("unknown", "unreadable", f"could not read {n}")
+                except (ValueError, TypeError):
+                    return _verdict("incomplete", "invalid-index", f"{n} is not valid JSON")
+                if not isinstance(weight_map, dict) or not weight_map:
+                    return _verdict("incomplete", "invalid-weight-map", f"{n} has no weight map")
+                targets = []
+                for target in weight_map.values():
+                    if (not isinstance(target, str) or not target.endswith(".safetensors")
+                            or target in (".", "..") or "/" in target or "\\" in target
+                            or os.path.basename(target) != target):
+                        return _verdict("incomplete", "invalid-index-target",
+                                        f"{n} names an invalid weight path")
+                    targets.append(target)
+                for target in sorted(set(targets)):
+                    _, bad = _stat_required(os.path.join(path, target), target,
+                                            missing_reason="missing-indexed-shard",
+                                            invalid_reason="invalid-indexed-shard")
+                    if bad:
+                        return bad
+                    required.add(target)
+        else:
+            groups = {}
+            for n in weights:
+                m = _MLX_SHARD_RE.match(n)
+                if m:
+                    ordinal, total = int(m.group(2)), int(m.group(3))
+                    if not 1 <= ordinal <= total:
+                        return _verdict("incomplete", "invalid-shard-name",
+                                        f"{n} has invalid shard numbering")
+                    groups[(m.group(1), total)] = True
+            grouped = {n for prefix, total in groups for n in _shard_names(prefix, total, ".safetensors")}
+            for n in weights:
+                if n in grouped:
+                    continue
+                _, bad = _stat_required(os.path.join(path, n), n, missing_reason="missing-weight",
+                                        invalid_reason="invalid-weight")
+                if bad:
+                    return bad
+                required.add(n)
+            for (prefix, total) in groups:
+                for shard in _shard_names(prefix, total, ".safetensors"):
+                    _, bad = _stat_required(os.path.join(path, shard), shard,
+                                            missing_reason="missing-shard", invalid_reason="invalid-shard")
+                    if bad:
+                        return bad
+                    required.add(shard)
+        return _verdict("ready", "ready", "model artifact is ready", {
+            "v": 1, "real_path": os.path.realpath(path), "device": root.st_dev,
+            "manifest": {"kind": "mlx", "files": sorted(required)}})
+    if not _stat.S_ISREG(root.st_mode):
+        return _verdict("incomplete", "wrong-kind", "GGUF model path is not a file")
+    name = os.path.basename(path)
+    group = split_gguf_group(name)
+    if _GGUF_SHARD_RE.match(name) and group is None:
+        return _verdict("incomplete", "invalid-shard-name",
+                        f"{name} has invalid shard numbering")
+    required = [name]
+    if group:
+        required = _shard_names(group[0], group[1], ".gguf")
+        parent = os.path.dirname(path)
+        for shard in required:
+            _, bad = _stat_required(os.path.join(parent, shard), shard,
+                                    missing_reason="missing-shard", invalid_reason="invalid-shard")
+            if bad:
+                return bad
+    elif root.st_size <= 0:
+        return _verdict("incomplete", "empty-file", "GGUF model file is empty")
+    mmproj = entry.get("mmproj")
+    if mmproj not in (None, "") and not isinstance(mmproj, str):
+        return _verdict("incomplete", "invalid-mmproj", "projection file path is invalid")
+    if isinstance(mmproj, str) and mmproj:
+        _, bad = _stat_required(mmproj, "projection file", missing_reason="missing-mmproj",
+                                invalid_reason="invalid-mmproj")
+        if bad:
+            return bad
+        required.append(os.path.basename(mmproj))
+    return _verdict("ready", "ready", "model artifact is ready", {
+        "v": 1, "real_path": os.path.realpath(path), "device": root.st_dev,
+        "manifest": {"kind": "gguf", "files": required}})
+
+
+def path_present(path: "str | None", fmt: str = "gguf") -> "bool | None":
+    """Three-valued compatibility mapping of the structured artifact probe."""
+    f = str(fmt or "gguf").lower()
+    if f.startswith(_DIR_FORMATS_PREFIX):
+        return _audio_type_present(path, f)
+    state = artifact_probe({"path": path, "format": f}).get("state")
+    return True if state == "ready" else (False if state in ("missing", "incomplete") else None)
 
 
 def entry_present(m: dict) -> "bool | None":
     """path_present for a whole registry row (three-valued, same contract)."""
     if not isinstance(m, dict):
         return None
-    return path_present(str(m.get("path") or ""), str(m.get("format") or "gguf"))
+    if is_audio(m):
+        return _audio_type_present(str(m.get("path") or ""), str(m.get("format") or "gguf"))
+    state = artifact_probe(m).get("state")
+    return True if state == "ready" else (False if state in ("missing", "incomplete") else None)
 
 
 def is_absent(m: dict) -> bool:
@@ -135,7 +324,7 @@ def offerable(registry, require_file: bool = True) -> list:
     already holds a fresher verdict (the bridge's debounced tracker) and only wants the
     flag/hidden/audio half. It does NOT exist as a convenience for skipping the stat.
     """
-    out, dropped_for_file = [], []
+    out, missing, eligible = [], [], 0
     for m in (registry or []):
         if not isinstance(m, dict):
             continue
@@ -143,9 +332,14 @@ def offerable(registry, require_file: bool = True) -> list:
             continue
         if is_audio(m) or m.get("hidden") or is_absent(m):
             continue
-        if require_file and entry_present(m) is False:
-            dropped_for_file.append(m)
-            continue
+        eligible += 1
+        if require_file:
+            state = artifact_probe(m).get("state")
+            if state == "incomplete":
+                continue
+            if state == "missing":
+                missing.append(m)
+                continue
         out.append(m)
     # ★ THE UNPLUGGED-DISK GUARD (adversarial pass, this slice). Debi keeps models on an
     # external volume and in LM Studio's library; pull the cable and EVERY path answers
@@ -157,8 +351,8 @@ def offerable(registry, require_file: bool = True) -> list:
     # what we cannot see we do not claim. So the FILE clause abstains entirely in that
     # case (audio/hidden/absent still apply — those are recorded facts, not stats).
     # A registry that is genuinely empty stays empty: the guard needs candidates to fire.
-    if dropped_for_file and not out:
-        return list(dropped_for_file)
+    if missing and not out and len(missing) == eligible:
+        return list(missing)
     return out
 
 

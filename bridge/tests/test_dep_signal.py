@@ -296,13 +296,36 @@ def test_a_runner_that_is_merely_down_is_unchanged():
     # not started — must keep its old sentence and its old Start button. A new state
     # that swallowed the ordinary one would be a worse bug than the one it fixed.
     c = healthy()
-    for mf in (None, "ok", "checking", "unknown"):
+    for mf in (None, "ok", "checking"):
         c["runner"] = {"installed": True, "running": False, "port_up": False,
                        "loaded": False, "model_file": mf}
         n = derive(c, bound())["hermes"]["needs"][0]
         ok(n["state"] == "down" and n["action"] == "start",
            f"[model_file={mf}] a plain stopped runner still offers Start")
     ok(True, "…including 'checking', which is the FIRST missed stat (see the debounce)")
+    c["runner"] = {"installed": True, "running": False, "port_up": False,
+                   "loaded": False, "model_file": "unknown",
+                   "model_note": "could not read model artifact"}
+    n = derive(c, bound())["hermes"]["needs"][0]
+    ok(n["state"] == "model-unavailable" and n["action"] == "open",
+       "an unreadable one-shot runner artifact is safe-refused instead of started")
+
+
+def test_an_incomplete_runner_never_advertises_a_dead_end_start():
+    c = healthy()
+    c["runner"] = {"installed": True, "running": False, "port_up": False,
+                   "loaded": False, "model_file": "incomplete",
+                   "model_note": "model incomplete: config.json is not valid JSON"}
+    n = derive(c, bound())["hermes"]["needs"][0]
+    ok(n["state"] == "model-unavailable" and n["action"] == "open",
+       "an incomplete runner dependency opens Models instead of advertising Start")
+    ok("config.json is not valid JSON" in n["text"],
+       "…and carries the bridge-specific integrity detail")
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text(errors="replace")
+    ok("const fileIncomplete" in panel and "Online — model incomplete" in panel,
+       "Mission Control renders a loaded incomplete runner as amber/serving")
+    ok(": fileUnavailable" in panel and "onclick=\"startRunner()\"" in panel,
+       "a stopped incomplete runner has no fresh Start branch")
 
 
 def test_two_strikes_before_we_accuse_a_disk():
@@ -335,13 +358,17 @@ def test_two_strikes_before_we_accuse_a_disk():
 
 
 def test_we_never_claim_what_the_os_would_not_tell_us():
+    import tempfile
     ok(path_present("") is None, "no path at all is 'unknown', never 'missing'")
     ok(path_present(None) is None, "…and so is a null path")
     ok(path_present(str(ROOT / "harness.yaml")) is True, "a real file reads present")
     ok(path_present(str(ROOT)) is False,
        "a DIRECTORY where a gguf should be is not a present gguf")
-    ok(path_present(str(ROOT), fmt="mlx") is True,
-       "…while an mlx entry wants exactly that directory (start_component.sh's rule)")
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "config.json").write_text("{}")
+        Path(td, "model.safetensors").write_bytes(b"x")
+        ok(path_present(td, fmt="mlx") is True,
+           "…while an mlx entry wants exactly that directory (start_component.sh's rule)")
     ok(file_state_track("u", "")["state"] == "unknown",
        "an unknown never becomes an accusation, however many times it is sampled")
     ok(file_state_track("u", "")["state"] == "unknown", "…twice")
@@ -467,9 +494,9 @@ def test_the_three_missing_bindings_can_be_read_from_a_file():
         # information — dangles() repairs nothing then — so the fixture has to mean
         # something for the readers below to have anything to say.
         live_art = root / "live-4B.gguf"
-        live_art.write_bytes(b"")
+        live_art.write_bytes(b"x")
         other_art = root / "another-9B.gguf"
-        other_art.write_bytes(b"")
+        other_art.write_bytes(b"x")
         old_reg = C._registry_models
         old = C.ROOT
         try:
@@ -776,7 +803,7 @@ def test_the_card_can_never_pair_a_green_dot_with_a_bare_failure():
        "…and a component that is up NEVER gets an unlabelled failure sentence")
     ok("le.target === 'models' && !upOk" in card,
        "…nor an Open Models button hung off a start that is over")
-    ok(card.split("const wantsModels")[1][:40].find("fileGone") >= 0,
+    ok(card.split("const wantsModels")[1][:50].find("fileUnavailable") >= 0,
        "…while a dead model FILE is a now-fact and keeps every button it had")
 
 
@@ -788,6 +815,7 @@ for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_the_shell_renders_it,
            test_a_dead_model_file_never_offers_a_dead_button,
            test_a_runner_that_is_merely_down_is_unchanged,
+           test_an_incomplete_runner_never_advertises_a_dead_end_start,
            test_two_strikes_before_we_accuse_a_disk,
            test_we_never_claim_what_the_os_would_not_tell_us,
            test_the_failure_sentence_is_a_sentence,

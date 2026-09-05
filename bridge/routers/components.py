@@ -225,7 +225,8 @@ def runner_model_view(c: "dict | None" = None) -> dict:
     network mount answers ENOENT rather than raising, so a single sample is not
     evidence and must never flip a claim).
 
-    Keys: pin · path · format · file ("ok"|"checking"|"gone"|"unknown"|"unregistered")
+    Keys: pin · path · format · file
+          ("ok"|"checking"|"gone"|"incomplete"|"unknown"|"unregistered")
           · note (the user-facing sentence, or "")."""
     c = c if isinstance(c, dict) else cfg()
     rc = (c.get("runner") or {}) if isinstance(c.get("runner"), dict) else {}
@@ -242,12 +243,16 @@ def runner_model_view(c: "dict | None" = None) -> dict:
                         f"rescan in Models, or pick another model"}
     path = str(entry.get("path") or "")
     fmt = str(entry.get("format") or "gguf")
-    st = file_state_track(f"runner:{pin}", path, fmt)
+    st = file_state_track(f"runner:{pin}", entry)
     note = ""
     if st["state"] == "gone":
         note = (f"model file gone (deleted outside MOT Deck — LM Studio?) — {path}. "
                 f"The runner will not start again until you pick another model.")
-    return {"pin": pin, "path": path, "format": fmt, "file": st["state"], "note": note}
+    elif st["state"] == "incomplete":
+        note = (f"model incomplete: {st.get('detail') or 'artifact is structurally broken'}. "
+                "The running model may keep serving, but it will not restart until you pick another model.")
+    return {"pin": pin, "path": path, "format": fmt, "file": st["state"],
+            "reason": st.get("reason"), "detail": st.get("detail"), "note": note}
 
 
 def runner_serving(c: "dict | None" = None) -> "str | None":
@@ -336,7 +341,7 @@ async def status() -> dict:
             "pin_intent": mv["pin"],       # harness.yaml runner.model — INTENT, always
             "live_id": live_id or "",      # what the runner answers — FACT, or ""
             "model_path": mv["path"],
-            "model_file": mv["file"],      # ok | checking | gone | unknown | unregistered
+            "model_file": mv["file"],      # ok | checking | gone | incomplete | unknown | unregistered
             "model_note": mv["note"],
             "last_error": _fail_note("runner"),
             "running": loaded,
@@ -528,6 +533,11 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
                          f"registry — rescan or pick another model in MOT Deck → Models."),
                 "action": "open", "target": "mc",
                 "action_label": "Open MOT Deck"}
+    if state == "model-unavailable":
+        return {"dep": dep, "state": state,
+                "text": f"{who} needs {what}, but its pinned model cannot start: "
+                        f"{detail.get('detail') or 'artifact unavailable'} — pick another model in MOT Deck → Models.",
+                "action": "open", "target": "mc", "action_label": "Open MOT Deck"}
     if state == "no-model":
         return {"dep": dep, "state": state,
                 "text": f"{who} needs a model — {what} is up but nothing is loaded. "
@@ -607,6 +617,10 @@ def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
                         needs.append(needs_message(
                             name, dep, "model-unregistered",
                             {"bound": d.get("pin_intent") or ""}))
+                    elif mf in ("incomplete", "unknown"):
+                        needs.append(needs_message(
+                            name, dep, "model-unavailable",
+                            {"detail": d.get("model_note") or "model artifact is unavailable"}))
                     else:
                         needs.append(needs_message(name, dep, "down", {}))
                     continue

@@ -1,6 +1,6 @@
 # New Harness — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-05, v1.5.77 recovery wave shipped) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-05, v1.5.78 model-integrity wave shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -14,7 +14,10 @@
 > closes the recovery wave: U74/U69 recovery hardening, U78 bundle-identity shipping,
 > U77 router extraction, U79's truthful Aider parser probe, U80 audio deduplication,
 > and U81 canonical-root severance all passed the repository gates and the real-stack
-> ship journey. Read
+> ship journey. v1.5.78 closes U75: one structured GGUF/MLX artifact probe now governs
+> discovery, catalogs, health, launch/switch preflight, and every first-party load
+> action, so zero-byte, partial-shard, malformed-manifest, and config-only artifacts
+> remain visible with a specific diagnosis but cannot be offered as fresh targets. Read
 > `docs/ROADMAP.md` for the full picture before treating the older banners below as current.
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
