@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from ..core.appctx import ROOT, app
 from ..core.modelid import _display_model
 from ..core.procs import _registry_models, cfg
@@ -24,10 +24,119 @@ ODY_BASE = "http://127.0.0.1:7860"
 _ody = httpx.AsyncClient(base_url=ODY_BASE, timeout=httpx.Timeout(30, read=None))
 
 
-async def _ody_login() -> bool:
+def _ody_managed_credentials() -> tuple[str, str]:
+    """Return the protected admin identity already used by the bridge proxy.
+
+    This is deliberately the same ``cfg()`` overlay boundary as ``_ody_login``.
+    The handoff below must never grow a second password reader or copy a credential
+    into a URL, browser script, log, or response body.
+    """
     comp = cfg().get("components", {}).get("odysseus", {})
-    username = str(comp.get("admin_user") or "").strip()
-    password = str(comp.get("admin_password") or "").strip()
+    return (str(comp.get("admin_user") or "").strip(),
+            str(comp.get("admin_password") or "").strip())
+
+
+def _ody_handoff_error(text: str, status: int) -> HTMLResponse:
+    """Small first-party failure page; no upstream body or credential is reflected."""
+    body = (
+        "<!doctype html><meta charset='utf-8'><title>Odysseus sign-in</title>"
+        "<body style='margin:0;background:#0b0a10;color:#c9c4d4;"
+        "font-family:-apple-system,system-ui;display:flex;align-items:center;"
+        "justify-content:center;min-height:100vh'>"
+        "<main style='max-width:520px;padding:32px;line-height:1.55'>"
+        "<h2 style='color:#efe7d7;font-weight:500'>Odysseus sign-in stopped</h2>"
+        f"<p>{text}</p><p>Nothing was changed. Return to MOT Deck and restart "
+        "Odysseus, then open this tab again.</p></main></body>"
+    )
+    return HTMLResponse(body, status_code=status,
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/odysseus", include_in_schema=False)
+async def ody_managed_workspace(request: Request):
+    """Enter the embedded Odysseus workspace without exposing its managed password.
+
+    U145: v1.5.81 correctly moved and rotated the weak repository password, but the
+    native tab still opened Odysseus's ordinary login form.  The form therefore kept
+    offering a credential that no longer existed, while the replacement was (rightly)
+    inaccessible to browser JavaScript and logs.
+
+    The bridge authenticates through Odysseus's own public login API and transfers only
+    the resulting HttpOnly cookie. Cookies are host-scoped, not port-scoped, so a cookie
+    set by 127.0.0.1:8700 is sent to 127.0.0.1:7860. An existing valid browser cookie is
+    checked first and reused: opening a split copy or relaunching the shell does not mint
+    an unbounded trail of sessions. A logout on the upstream page remains a logout until
+    the app deliberately enters through this route again.
+
+    Explicit cross-site navigations are rejected. A native WKWebView load reports
+    ``Sec-Fetch-Site: none`` (or omits the header on older WebKit); same-origin/same-site
+    links are also legitimate. This is defence in depth beside the global mutation
+    fence: no password or session value is ever accepted from the browser.
+    """
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if fetch_site == "cross-site":
+        return _ody_handoff_error("A cross-site page cannot start a managed login.", 403)
+
+    username, password = _ody_managed_credentials()
+    if not username or not password:
+        return _ody_handoff_error(
+            "M.O.T's protected Odysseus login is not provisioned.", 503)
+
+    try:
+        async with httpx.AsyncClient(base_url=ODY_BASE, timeout=10.0,
+                                     follow_redirects=False) as client:
+            current = request.cookies.get("odysseus_session")
+            if current:
+                status = await client.get(
+                    "/api/auth/status", cookies={"odysseus_session": current})
+                if status.status_code == 200:
+                    try:
+                        if status.json().get("authenticated") is True:
+                            return RedirectResponse(ODY_BASE + "/", status_code=303,
+                                headers={"Cache-Control": "no-store"})
+                    except (TypeError, ValueError):
+                        pass
+
+            login = await client.post("/api/auth/login", json={
+                "username": username,
+                "password": password,
+                "remember": True,
+                "totp_code": None,
+            })
+    except (httpx.HTTPError, OSError):
+        return _ody_handoff_error("Odysseus did not answer its login API.", 502)
+
+    if login.status_code != 200:
+        return _ody_handoff_error(
+            "Odysseus rejected M.O.T's protected local login.", 502)
+    try:
+        payload = login.json()
+    except (TypeError, ValueError):
+        payload = {}
+    if payload.get("requires_totp"):
+        return _ody_handoff_error(
+            "The managed account requires a 2FA code, so M.O.T cannot complete "
+            "the local handoff automatically.", 409)
+    if payload.get("ok") is not True:
+        return _ody_handoff_error(
+            "Odysseus did not confirm the managed local login.", 502)
+    try:
+        session = login.cookies.get("odysseus_session")
+    except KeyError:
+        session = None
+    if not session:
+        return _ody_handoff_error(
+            "Odysseus confirmed login but returned no session cookie.", 502)
+
+    response = RedirectResponse(ODY_BASE + "/", status_code=303,
+                                headers={"Cache-Control": "no-store"})
+    response.set_cookie("odysseus_session", session, max_age=60 * 60 * 24 * 7,
+                        httponly=True, samesite="lax", secure=False, path="/")
+    return response
+
+
+async def _ody_login() -> bool:
+    username, password = _ody_managed_credentials()
     if not username or not password:
         return False
     r = await _ody.post("/api/auth/login", json={

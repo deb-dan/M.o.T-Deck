@@ -51,7 +51,14 @@ let tabRegistry: [HarnessTab] = [
     // app's home, the page the bridge-wait screen writes into, and the only file-drop
     // target (DropOverlay). Keep it first. (The id stays "mc": ids are internal keys.)
     HarnessTab(id: "mc", title: "MOT Deck", url: bridgeURL),
-    HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:7860")!),
+    // Enter through the bridge's managed-cookie handoff, then redirect to Odysseus's
+    // own unmodified page on :7860. v1.5.81 rotated the old repository password into
+    // the protected local store, but a direct URL still showed the ordinary login form
+    // with no safe way for the user to know that replacement. The handoff authenticates
+    // server-to-server through Odysseus's own API and gives WebKit only its HttpOnly
+    // session cookie — never the password, never injected JavaScript. See U145 and
+    // bridge/routers/ody.py:ody_managed_workspace.
+    HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:8700/odysseus")!),
     HarnessTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
     // Optional components — usually NOT running, so their first load normally fails into
     // the shared "Not reachable yet" placeholder and retries on re-select / ⌘R.

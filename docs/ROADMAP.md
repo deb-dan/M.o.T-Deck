@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.81** (see `VERSION`). Written 2026-09-05.
+Current version: **v1.5.82** (see `VERSION`). Written 2026-09-06.
 
 ---
 
@@ -68,6 +68,11 @@ visible in process arguments. The real Goose Add Provider journey used one tempo
 minted key for a real 27B prompt, then removed only that key/provider and restored the
 original managed provider. Auxiliary-key rotation remains separate because its existing
 Odysseus Background Tasks endpoint may be user-owned (U142).
+v1.5.82 closes the human-workflow gap that release missed: the native Odysseus tab now
+enters through M.O.T's bridge, reuses a valid browser session or logs in server-to-server
+with the protected credential, transfers only Odysseus's HttpOnly session cookie, and
+redirects into the unmodified upstream workspace. The weak repository password is not
+restored, printed, placed in a URL, or injected into browser JavaScript.
 
 **Component isolation ladder.** Odysseus, Hermes, Goose (CLI + UI), and OpenCode each
 gained a named local provider/config entry mirroring the full model registry, so picking
@@ -166,9 +171,10 @@ The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the le
 the U82–U138 rows remain the adversarial incident trail explaining why each first
 candidate was rejected or narrowed, not unfinished release blockers.
 
-The v1.5.81 remaining-reliability wave is shipped. U143 records its full repository,
-installed-stack, Goose UI, and clean FAT evidence. No open item below is concealed by
-that release claim.
+The v1.5.81 remaining-reliability wave and v1.5.82 Odysseus-login hotfix are shipped.
+U143 records v1.5.81's full repository, installed-stack, Goose UI, and clean FAT evidence;
+U145 records the missed human-login journey and its correction. No open item below is
+concealed by either release claim.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
