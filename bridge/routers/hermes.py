@@ -1265,8 +1265,19 @@ async def hermes_session_rename(sid: str, req: Request) -> JSONResponse:
                 json={"title": name},
                 headers={"X-Hermes-Session-Token": tok})
         if r.status_code >= 400:
-            return JSONResponse({"error": f"rename failed ({r.status_code})"},
-                                status_code=502)
+            try:
+                upstream = r.json()
+                detail = str(upstream.get("detail") or "").strip()
+            except Exception:  # noqa: BLE001 - upstream error bodies are untrusted
+                detail = ""
+            error = detail or f"rename failed ({r.status_code})"
+            if r.status_code == 400:
+                status = 409 if "already in use by session" in detail else 400
+            elif r.status_code == 404:
+                status = 404
+            else:
+                status = 502
+            return JSONResponse({"error": error[:300]}, status_code=status)
         return JSONResponse({"ok": True, "name": name})
     except Exception as e:
         return JSONResponse({"error": str(e)[:300]}, status_code=502)

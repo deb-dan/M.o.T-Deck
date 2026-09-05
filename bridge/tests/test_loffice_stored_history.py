@@ -33,6 +33,10 @@ class _Client:
         self.calls.append((url, kwargs))
         return self.response
 
+    async def patch(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.response
+
 
 def test_stored_history_is_read_only_and_normalized(monkeypatch):
     import httpx
@@ -139,3 +143,23 @@ def test_unknown_dashboard_response_shape_fails_instead_of_showing_empty_history
     response = TestClient(facade.app).get("/api/hermes/session/stored-3/history")
     assert response.status_code == 502
     assert "unsupported response shape" in response.json()["error"]
+
+
+def test_rename_preserves_the_upstream_title_conflict(monkeypatch):
+    import httpx
+    _Client.calls = []
+    _Client.response = _Response(status=400, payload={
+        "detail": "Title 'loffice' is already in use by session older-row"})
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(hermes, "_hermes_token", lambda: "secret")
+    monkeypatch.setattr(hermes, "_hermes_port", lambda: 8642)
+    response = TestClient(facade.app).post(
+        "/api/hermes/session/current-row/rename", json={"name": "loffice"})
+    assert response.status_code == 409
+    assert response.json()["error"] == (
+        "Title 'loffice' is already in use by session older-row")
+    assert _Client.calls == [(
+        "http://127.0.0.1:8642/api/sessions/current-row",
+        {"json": {"title": "loffice"},
+         "headers": {"X-Hermes-Session-Token": "secret"}},
+    )]

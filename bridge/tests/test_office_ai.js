@@ -2180,6 +2180,11 @@ check('…once, and never load-bearing: a rename that fails costs a beacon and r
       && /if \(!r\.ok \|\| j\.ok !== true\)/.test(grab('agentName'))
       && /agentNamed = false/.test(grab('agentName'))
       && /agent-name-fail/.test(code));
+check('a real Hermes title conflict preserves the older session and retries with this '
+      + 'exact durable id rather than guessing, deleting, or overwriting',
+      /result\.r\.status === 409/.test(grab('agentName'))
+      && /AGENT_SESSION_NAME \+ ' · ' \+ agentStored/.test(grab('agentName'))
+      && /result = await requestName\(chosen\)/.test(grab('agentName')));
 check('…only after the durable turn work completes, so first-turn auto-title cannot '
       + 'win behind it',
       asend.indexOf('await csAfterTurn(turn);') < asend.indexOf('await agentName();'));

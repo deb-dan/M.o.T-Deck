@@ -8622,16 +8622,29 @@ async function agentName() {
   if (agentNamed || agentNaming || !agentStored) return;
   agentNaming = true;
   try {
-    const r = await fetch('/api/hermes/session/' + encodeURIComponent(agentStored) + '/rename', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: AGENT_SESSION_NAME }),
-    });
-    const j = await r.json().catch(() => ({}));
+    const requestName = async name => {
+      const r = await fetch('/api/hermes/session/' + encodeURIComponent(agentStored)
+                            + '/rename', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name }),
+      });
+      return { r: r, j: await r.json().catch(() => ({})) };
+    };
+    let chosen = AGENT_SESSION_NAME;
+    let result = await requestName(chosen);
+    // Hermes titles are globally unique. Preserve an older `loffice` transcript
+    // rather than silently renaming/deleting it; this exact durable id makes the
+    // current continuation visibly distinct and collision-free.
+    if (result.r.status === 409) {
+      chosen = AGENT_SESSION_NAME + ' · ' + agentStored;
+      result = await requestName(chosen);
+    }
+    const r = result.r, j = result.j;
     if (!r.ok || j.ok !== true) {
       throw new Error(j.error || 'the bridge refused the session name');
     }
     agentNamed = true;
-    bx('agent-named', AGENT_SESSION_NAME + ' ' + agentStored);
+    bx('agent-named', chosen + ' ' + agentStored);
   } catch (e) {
     agentNamed = false; // the next completed turn may retry
     bx('agent-name-fail', String((e && e.message) || e).slice(0, 120));
