@@ -9,10 +9,11 @@ way to take it back from one app without taking it back from all of them. Debi's
 "apps' Add-Provider forms should have real keys to consume — an additional route, no
 need to remove the existing routes."
 
-So this is ADDITIVE in the strictest sense. The built-in `runner.api_key` stays:
-it is still passed as `--api-key`, it is still what `start_component.sh`'s readiness
-poll sends, it is still what every bridge-internal caller uses, and nothing in the tree
-had to learn a new name. What is new is a SECOND source of accepted keys.
+So this is ADDITIVE in the strictest sense. The built-in `runner.api_key` stays: it is
+still what `start_component.sh`'s readiness poll sends and what every bridge-internal
+caller uses. At launch it is combined with the named keys in a derived 0600 file,
+passed only as a file path, and that derived file is unlinked after llama-server parses
+it. The secret never appears in process argv.
 
 ═══ THE CONTRACT, MEASURED AT OUR PIN (llama.cpp b10662, data/llamacpp) ═══════════════
 
@@ -67,8 +68,9 @@ that sentence; it does not invent rows.
 ═══ THE STORE ════════════════════════════════════════════════════════════════════════
 
 data/api_keys.json   the named keys, and the only place a minted secret is kept.
-data/api_keys.keys   what the runner is launched against — one key per line, generated
-                     from the store on every write, never hand-edited.
+data/api_keys.keys   named-key launch input — one key per line, generated from the
+                     store on every write, never hand-edited. start_component.sh
+                     derives a temporary file containing this set + the built-in key.
 data/api_keys.applied  written by scripts/start_component.sh at the moment it launches
                      the runner: the digest of the key set that launch actually got.
 
@@ -174,8 +176,8 @@ def _atomic_secret(path, text: str) -> None:
 def read_store() -> dict:
     """FORGIVING ON DISK (nav.py's rule verbatim). A hand-edited, truncated or
     older/newer api_keys.json must never be able to stop the panel booting or the
-    runner starting — the worst it may cost is the named keys, and the built-in key
-    still works because it travels on `--api-key`."""
+    runner starting — the worst it may cost is the named keys. The built-in key is
+    supplied independently through the protected local-secret overlay."""
     try:
         raw = json.loads(_p(STORE).read_text(encoding="utf-8"))
     except Exception:                                                # noqa: BLE001

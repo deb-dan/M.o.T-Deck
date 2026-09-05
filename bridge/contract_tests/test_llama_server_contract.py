@@ -157,8 +157,8 @@ def test_start_component_ungated_block_has_not_grown_silently():
 # arm and the API page are BUILT on, so each one is pinned at the seam it can break:
 #
 #   F1  --api-key-file exists; one key per line; `#` lines are comments.
-#   F2  it COMBINES with --api-key (the accepted set is the union) — which is the only
-#       reason the harness-local built-in key survives this feature untouched.
+#   F2  the file may contain both the built-in and named keys. Production now uses one
+#       derived launch file so no secret appears in process argv.
 #   F3  there is NO hot-reload: the file is read once, at argument-parse time. Adding a
 #       key to a running server does not admit it; removing one does not revoke it.
 #       Mint AND revoke therefore bind at the next runner start, and the panel says so.
@@ -234,10 +234,14 @@ def test_start_component_arms_the_key_file_and_the_metrics_flag():
     assert '--api-key-file' in src and 'grep -q -- "--api-key-file"' in src, (
         "the --api-key-file flag is no longer EVIDENCE-GATED against the binary's own "
         "--help, so a pin that drops it would kill the launch instead of degrading")
-    assert '[[ -s "$KEYFILE" ]]' in src, (
-        "the runner arm passes --api-key-file without checking the file exists. F5: "
-        "an unreadable key file is a fatal argv error, so this takes the whole model "
-        "lane down the first time somebody deletes data/api_keys.keys.")
+    assert 'LAUNCH_KEYFILE="$ROOT_ABS/data/.runner-api.keys"' in src
+    assert 'printf \'%s\\n\' "$R_KEY"' in src, (
+        "the derived launch file no longer includes the protected built-in key")
+    assert 'ARGS+=(--api-key-file "$LAUNCH_KEYFILE")' in src
+    assert 'rm -f "$LAUNCH_KEYFILE"' in src, (
+        "the parsed launch-only secret file is no longer unlinked")
+    assert 'trap _cleanup_runner_launch_key EXIT' in src, (
+        "an interrupted runner launch can strand the derived built-in-key file")
     assert 'grep -q -- "--metrics"' in src, (
         "--metrics is no longer gated/passed; the API page's totals go blank")
     assert "data/api_keys.applied" in src, (
@@ -245,10 +249,8 @@ def test_start_component_arms_the_key_file_and_the_metrics_flag():
         "hot-reload, so WITHOUT that stamp the panel cannot tell a key that is live "
         "from one that needs a restart — and would imply every minted key works "
         "immediately, which is the LIE-TO-USER class this stamp exists to prevent.")
-    assert 'ARGS+=(--api-key "$R_KEY")' in src, (
-        "the harness-local built-in key is no longer passed as --api-key. F2 says the "
-        "two flags UNION, which is the whole reason named keys were additive; dropping "
-        "the built-in breaks the readiness poll and every internal caller.")
+    assert 'ARGS+=(--api-key "$R_KEY")' not in src, (
+        "the protected built-in key is exposed in llama-server process argv")
 
 
 def test_the_route_catalogue_matches_what_this_launch_actually_enables():

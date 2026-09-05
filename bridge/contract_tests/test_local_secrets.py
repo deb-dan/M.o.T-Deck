@@ -150,3 +150,10 @@ def test_odysseus_installer_seeds_runner_through_the_secret_overlay():
     assert 'JAN_BASE_URL="$RUNNER_ENDPOINT" JAN_API_KEY="$RUNNER_KEY"' in arm
     assert 'runner.api_key is not provisioned; Odysseus was not seeded' in arm
     assert 'JAN_API_KEY="harness-local"' not in arm
+
+
+def test_runner_secret_never_appears_in_process_argv():
+    source = (ROOT / "scripts" / "start_component.sh").read_text()
+    assert 'ARGS+=(--api-key "$R_KEY")' not in source
+    assert 'ARGS+=(--api-key-file "$LAUNCH_KEYFILE")' in source
+    assert 'LAUNCH_KEYFILE="$ROOT_ABS/data/.runner-api.keys"' in source
