@@ -72,6 +72,11 @@ def _mlx(tmp_path, name="mlx-model"):
     return p
 
 
+def _evidence(path):
+    return {"v": 1, "real_path": str(path), "device": os.stat("/").st_dev,
+            "mount_root": "/", "manifest": {"kind": "gguf", "files": [Path(path).name]}}
+
+
 # ══ A. ONE DEFINITION ════════════════════════════════════════════════════════
 def test_the_one_rule_keeps_only_models_that_are_real(tmp_path):
     alive, mlx = _alive(tmp_path), _mlx(tmp_path)
@@ -79,7 +84,7 @@ def test_the_one_rule_keeps_only_models_that_are_real(tmp_path):
         {"id": "keep-gguf", "format": "gguf", "path": alive},
         {"id": "keep-mlx", "format": "mlx", "path": str(mlx)},
         {"id": "keep-no-path-recorded"},                 # unknown ⇒ kept, see below
-        {"id": DEAD[0], "format": "gguf", "path": str(tmp_path / "deleted.gguf")},
+        {"id": DEAD[0], "format": "gguf", "path": str(tmp_path / "deleted.gguf"), "artifact_evidence": _evidence(tmp_path / "deleted.gguf")},
         {"id": "flagged", "format": "gguf", "path": alive, "absent": True},
         {"id": "hidden-one", "format": "gguf", "path": alive, "hidden": True},
         {"id": "voice", "kind": "audio", "format": "stt-mlx", "path": str(mlx)},
@@ -130,8 +135,10 @@ def test_an_unplugged_disk_does_not_empty_every_picker(tmp_path):
            {"id": "b", "format": "gguf", "path": str(tmp_path / "b.gguf")}]
     assert [m["id"] for m in MR.offerable(reg)] == ["a", "b"], (
         "the FILE clause abstains when it would drop everything")
-    # …but ONE missing model among survivors is a real deletion and IS dropped
+    # …but a missing model with evidence on the still-available source is dropped.
     reg.append({"id": "c", "format": "gguf", "path": _alive(tmp_path, "c.gguf")})
+    reg[0]["artifact_evidence"] = _evidence(reg[0]["path"])
+    reg[1]["artifact_evidence"] = _evidence(reg[1]["path"])
     assert [m["id"] for m in MR.offerable(reg)] == ["c"]
     # …and the guard never resurrects a recorded fact: audio/hidden/absent still apply
     assert MR.offerable([{"id": "x", "format": "gguf", "path": "/gone", "hidden": True}]) == []
@@ -141,11 +148,12 @@ def test_an_unplugged_disk_does_not_empty_every_picker(tmp_path):
     assert MR.offerable([]) == []
 
 
-def test_the_bridge_does_not_flag_everything_absent_over_a_cable():
+def test_the_bridge_decides_absence_per_source_not_by_a_blanket_count():
     from bridge.appsrc import APP_SOURCE as APP
     body = APP[APP.index("def _persist_absent"):APP.index("@app.get(\"/api/models\")")]
-    assert 'all(v == "gone" for v in states.values())' in body, (
-        "one cable-out must not propagate into four app catalogs")
+    assert "probe = artifact_probe(m)" in body
+    assert "source_availability(m, probe)" in body
+    assert 'probe.get("state") == "missing" and source == "available"' in body
 
 
 def test_the_running_model_is_never_hidden_from_the_picker():
@@ -209,7 +217,7 @@ def test_a_deleted_model_is_removed_and_the_removal_is_printed(tmp_path):
     alive = _alive(tmp_path)
     reg = [{"id": "keeper", "format": "gguf", "path": alive, "source": "download"}] + [
         {"id": d, "format": "gguf", "path": str(tmp_path / (d + ".gguf")),
-         "source": "download"} for d in DEAD]
+         "source": "download", "artifact_evidence": _evidence(tmp_path / (d + ".gguf"))} for d in DEAD]
     kept, removed, flagged = SR.prune_absent(reg)
     assert [m["id"] for m in kept] == ["keeper"]
     assert removed == DEAD and flagged == []
@@ -218,8 +226,8 @@ def test_a_deleted_model_is_removed_and_the_removal_is_printed(tmp_path):
 def test_the_pinned_or_live_model_is_flagged_and_kept_never_removed(tmp_path):
     """The runner card's honest 'Online — pinned model missing' needs the row it is
     talking about. Removing it would swap one honest sentence for a vaguer one."""
-    reg = [{"id": "the-pin", "format": "gguf", "path": str(tmp_path / "gone.gguf")},
-           {"id": "other", "format": "gguf", "path": str(tmp_path / "gone2.gguf")}]
+    reg = [{"id": "the-pin", "format": "gguf", "path": str(tmp_path / "gone.gguf"), "artifact_evidence": _evidence(tmp_path / "gone.gguf")},
+           {"id": "other", "format": "gguf", "path": str(tmp_path / "gone2.gguf"), "artifact_evidence": _evidence(tmp_path / "gone2.gguf")}]
     kept, removed, flagged = SR.prune_absent(reg, protect=["the-pin"])
     assert [m["id"] for m in kept] == ["the-pin"]
     assert kept[0]["absent"] is True and flagged == ["the-pin"] and removed == ["other"]
@@ -279,22 +287,23 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
     # untouched by design and therefore can never prune on its own.
     (root / "data" / "models.json").write_text(json.dumps({"models": [
         {"id": "old-download", "source": "download", "format": "gguf",
-         "path": str(tmp_path / "long-gone.gguf"), "voice": "af_heart"}]}))
+         "path": str(tmp_path / "long-gone.gguf"), "voice": "af_heart",
+         "artifact_evidence": _evidence(tmp_path / "long-gone.gguf")}]}))
 
     def rescan(protect=""):
         r = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "seed_registry.py")],
+            [sys.executable, str(ROOT / "scripts" / "seed_registry.py"), "--json"],
             cwd=str(root), capture_output=True, text=True, timeout=120,
             env=dict(os.environ, HARNESS_LMSTUDIO_DIR=str(lms),
                      HARNESS_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
                      HARNESS_PROTECT_MODELS=protect))
         assert r.returncode == 0, r.stderr
         reg = json.loads((root / "data" / "models.json").read_text())["models"]
-        return r.stdout, {m["id"] for m in reg}
+        return json.loads(r.stdout), {m["id"] for m in reg}
 
     out, ids = rescan()
     assert ids == {"Parable-4B", DEAD[0]}, "both LM Studio models are on disk here"
-    assert "removed: old-download" in out, (
+    assert "old-download" in out["pruned"], (
         "the stat pass prunes the source 'download' row merge() preserves — and SAYS SO")
 
     # NOW: Debi deletes the muse model in LM Studio. She clicks RESCAN.
@@ -309,9 +318,10 @@ def test_rescan_end_to_end_prunes_a_download_row_and_re_walks_lm_studio(tmp_path
     shutil.rmtree(lms / "pub" / "Parable-4B")
     (root / "data" / "models.json").write_text(json.dumps({"models": [
         {"id": "Parable-4B", "source": "download", "format": "gguf",
-         "path": str(lms / "pub" / "Parable-4B" / "Parable-4B.gguf")}]}))
+             "path": str(lms / "pub" / "Parable-4B" / "Parable-4B.gguf"),
+             "artifact_evidence": _evidence(lms / "pub" / "Parable-4B" / "Parable-4B.gguf")}]}))
     out, ids = rescan()
-    assert ids == {"Parable-4B"} and "flagged absent" in out
+    assert ids == {"Parable-4B"} and "Parable-4B" in out["flagged"]
     row = json.loads((root / "data" / "models.json").read_text())["models"][0]
     assert row["absent"] is True
 

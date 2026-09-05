@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, _modeltools, _voice, app
 from ..core.events import publish
 from ..core.hfclient import _HF
+from ..core.modelreg import registry_lock
 
 # ── SSE (2026-08-28): how often a running download is allowed to push ────────
 # ⚠️ THE ONE EMITTER THAT NEEDS A THROTTLE, AND THE NUMBER IS NOT ARBITRARY. The read
@@ -71,20 +72,21 @@ def _registry_add(entry: dict) -> None:
     atomic write (tmp + os.replace)."""
     import json as _json, os as _os
     reg = ROOT / "data" / "models.json"
-    try:
-        data = _json.loads(reg.read_text())
-        if not isinstance(data, dict) or "models" not in data:
+    with registry_lock(str(reg)):
+        try:
+            data = _json.loads(reg.read_text())
+            if not isinstance(data, dict) or "models" not in data:
+                data = {"models": []}
+        except Exception:
             data = {"models": []}
-    except Exception:
-        data = {"models": []}
-    models = [m for m in data.get("models", []) if m.get("id") != entry.get("id")]
-    models.append(entry)
-    data["models"] = models
-    reg.parent.mkdir(parents=True, exist_ok=True)
-    tmp = str(reg) + ".harness-tmp"
-    with open(tmp, "w") as f:
-        _json.dump(data, f, indent=2)
-    _os.replace(tmp, reg)
+        models = [m for m in data.get("models", []) if m.get("id") != entry.get("id")]
+        models.append(entry)
+        data["models"] = models
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(reg) + ".harness-tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f, indent=2)
+        _os.replace(tmp, reg)
 
 
 def _registry_update(mid: str, patch: dict) -> "dict | None":
@@ -96,29 +98,30 @@ def _registry_update(mid: str, patch: dict) -> "dict | None":
     voice picker's "model default" is the absence of a `voice` key, not a null."""
     import json as _json, os as _os
     reg = ROOT / "data" / "models.json"
-    try:
-        data = _json.loads(reg.read_text())
-        if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+    with registry_lock(str(reg)):
+        try:
+            data = _json.loads(reg.read_text())
+            if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+                return None
+        except Exception:
             return None
-    except Exception:
-        return None
-    out = None
-    for m in data["models"]:
-        if isinstance(m, dict) and m.get("id") == mid:
-            for k, v in (patch or {}).items():
-                if v is None:
-                    m.pop(k, None)
-                else:
-                    m[k] = v
-            out = m
-            break
-    if out is None:
-        return None
-    tmp = str(reg) + ".harness-tmp"
-    with open(tmp, "w") as f:
-        _json.dump(data, f, indent=2)
-    _os.replace(tmp, reg)
-    return out
+        out = None
+        for m in data["models"]:
+            if isinstance(m, dict) and m.get("id") == mid:
+                for k, v in (patch or {}).items():
+                    if v is None:
+                        m.pop(k, None)
+                    else:
+                        m[k] = v
+                out = m
+                break
+        if out is None:
+            return None
+        tmp = str(reg) + ".harness-tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f, indent=2)
+        _os.replace(tmp, reg)
+        return out
 
 
 def _registry_drop(mid: str) -> None:
@@ -127,17 +130,18 @@ def _registry_drop(mid: str) -> None:
     (merge preserves non-rescanned sources), so we drop it explicitly here."""
     import json as _json, os as _os
     reg = ROOT / "data" / "models.json"
-    try:
-        data = _json.loads(reg.read_text())
-        if not isinstance(data, dict) or "models" not in data:
+    with registry_lock(str(reg)):
+        try:
+            data = _json.loads(reg.read_text())
+            if not isinstance(data, dict) or "models" not in data:
+                return
+        except Exception:
             return
-    except Exception:
-        return
-    data["models"] = [m for m in data.get("models", []) if m.get("id") != mid]
-    tmp = str(reg) + ".harness-tmp"
-    with open(tmp, "w") as f:
-        _json.dump(data, f, indent=2)
-    _os.replace(tmp, reg)
+        data["models"] = [m for m in data.get("models", []) if m.get("id") != mid]
+        tmp = str(reg) + ".harness-tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f, indent=2)
+        _os.replace(tmp, reg)
 
 
 def _mlx_registry_entry(e: dict) -> dict:

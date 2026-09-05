@@ -9700,11 +9700,6 @@ async function initModels(){
     const n = (r.installed || []).length;
     if (r.error && !n) stamp.textContent = 'REGISTRY UNAVAILABLE — ' + r.error;
     else {
-      // The old "RAM used / budget_gb" figure is GONE from this line as of v1.5.30:
-      // it was file-size arithmetic against a hand-written budget, and the memory
-      // strip below now says the same thing measured, in words, with the pressure
-      // state that decides whether the number is even worth worrying about. Two
-      // memory readouts that disagree is worse than one that is late.
       stamp.textContent = (r.runner_up ? 'RUNNER LIVE' : 'RUNNER STOPPED')
                         + ' · ' + n + ' INSTALLED · LOCAL';
     }
@@ -9716,24 +9711,30 @@ async function initModels(){
 
 // Re-scan the model folders → prune models deleted in LM Studio/Jan, pick up new
 // ones. seed_registry.merge() preserves source "download" entries + known ctx.
-async function rescanModels(){
+let rescanConsent=null;
+async function rescanModels(confirm){
   const btn = document.getElementById('models-rescan');
   const stamp = document.getElementById('models-stamp');
   const prevBtn = btn ? btn.textContent : '';
   if (btn){ btn.disabled = true; btn.textContent = 'RESCANNING…'; }
   if (stamp) stamp.textContent = 'RESCANNING…';
+  const consent=confirm&&rescanConsent;
+  if(!confirm)rescanConsent=null;
   try {
-    const res = await fetch('/api/models/rescan', { method:'POST' });
+    const res = await fetch('/api/models/rescan', consent?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_missing:true,ids:consent})}:{method:'POST'});
     const j = await res.json().catch(() => ({}));
+    if(j.requires_confirmation){
+      const ids=Array.isArray(j.ambiguous_missing)?j.ambiguous_missing:[];
+      rescanConsent=ids;
+      if(stamp)stamp.innerHTML='RESCAN PAUSED — missing entries could be an unavailable library: '+ids.map(esc).join(', ')+' <button onclick="rescanModels(true)">Remove missing entries</button>';
+      return;
+    }
+    rescanConsent=null;
     if (!res.ok || !j.ok){
       if (stamp) stamp.textContent = 'RESCAN FAILED — ' + ((j && j.error) || res.status);
     } else {
       mSel = null;          // selection may have been pruned; let initModels re-pick
       await initModels();   // re-fetch list + refresh stamp/count
-      /* S29 — A LIST THAT SHRANK MUST SAY WHY. The bridge returns the exact rows the
-         seed removed and the catalogs it refreshed; without this the user sees a
-         shorter library and cannot tell a prune from a bug. Appended to the stamp
-         initModels just rewrote, so it survives until the next refresh. */
       const j2 = j || {};
       const bits = [];
       if ((j2.pruned || []).length)

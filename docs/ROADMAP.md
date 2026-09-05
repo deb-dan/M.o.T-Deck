@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.78** (see `VERSION`). Written 2026-09-05.
+Current version: **v1.5.79** (see `VERSION`). Written 2026-09-05.
 
 ---
 
@@ -42,6 +42,13 @@ cheap structured integrity verdict for GGUF, split GGUF, declared projections, a
 config/index/weight manifests. Discovery, every catalog, status, main/aux launch,
 switching, and the panel now agree: incomplete artifacts are diagnosed and retained for
 inspection, but never offered for a fresh load.
+U76 (v1.5.79) keeps source availability as a separate evidence layer: an explicit
+Rescan records the ready artifact's real path, device, mounted ancestor, and names-only
+manifest. A later missing artifact on the same available source is removed per row;
+an unavailable mount is retained; and a legacy missing row without trustworthy evidence
+requires an exact, transactional second-step confirmation. Registry writers now share
+one re-entrant cross-process lock and atomic deterministic serialization, so concurrent
+Rescan/status/download work cannot lose an update.
 
 **Local API access.** Mintable/revocable API keys apps' own Add-Provider forms can
 consume (`--api-key-file`, unions with the built-in key) plus an Unsloth-style API page —
@@ -110,16 +117,11 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-The v1.5.77 recovery wave and v1.5.78 U75 integrity slice are closed. The next
-model-registry change remains a separate release because it changes what the app may
-call an absent model:
-
-- **U76** — retain the unplugged-volume guard while persisting enough source/device
-  evidence to distinguish a missing mount from a deliberate mass deletion. Legacy
-  all-missing evidence must ask for explicit confirmation rather than guessing.
+The v1.5.77 recovery wave, v1.5.78 U75 integrity slice, and v1.5.79 U76
+source-availability slice are closed. No model-registry change remains in flight.
 
 The earlier U56/U64 work is closed in v1.5.74, U69/U74/U77–U81 are closed in
-v1.5.77, and U75 is closed in v1.5.78; none of those remains in flight.
+v1.5.77, U75 is closed in v1.5.78, and U76 is closed in v1.5.79.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:

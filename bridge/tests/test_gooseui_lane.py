@@ -321,7 +321,10 @@ def test_named_provider_file_matches_what_goose_itself_wrote():
                           {"id": "a", "kind": "audio"},
                           {"id": "h", "hidden": True},
                           {"id": "deleted-in-lmstudio", "format": "gguf",
-                           "path": os.path.join(_mlxdir, "gone.gguf")},
+                           "path": os.path.join(_mlxdir, "gone.gguf"),
+                               "artifact_evidence": {"v": 1, "real_path": os.path.realpath(os.path.join(_mlxdir, "gone.gguf")),
+                                                 "device": os.stat("/").st_dev, "mount_root": "/",
+                                                 "manifest": {"kind": "gguf", "files": ["gone.gguf"]}}},
                           {"id": "flagged-absent", "format": "gguf", "absent": True},
                           {"id": "g", "format": "gguf"}])
     ok([e["name"] for e in m] == ["g", _mlxdir],

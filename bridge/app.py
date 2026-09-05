@@ -191,6 +191,7 @@ _LANES = (
     "core.yamlset",
     "routers.model_visibility",
     "routers.models",
+    "routers.model_rescan",
     # routers.aux — the aux-runner lane, split out of routers.models by the U64 slice
     # (models.py had reached the app layer's 1,500-line limit). It IMPORTS from
     # routers.models, so it is listed after it; the dependency runs one way only, and

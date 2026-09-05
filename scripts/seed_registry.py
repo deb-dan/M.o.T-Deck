@@ -21,6 +21,9 @@ import os
 import json
 import configparser
 import importlib.util
+import argparse
+import sys
+import tempfile
 
 # ── tool-calling capability (2026-08-21) ─────────────────────────────────────
 # `bridge/modeltools.py` owns the verdict for BOTH consumers (this scan and the
@@ -705,17 +708,31 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     # id -> {user key: value}. Same rule for the pinned voice, the pinned reference
     # clip + its transcript, and the hidden flag: all four are USER decisions that
     # live nowhere on disk, so a file scan would silently erase them.
-    existing_user = {}
+    existing_user, existing_evidence = {}, {}
     for m in existing:
         keep = {k: m.get(k) for k in USER_KEYS if m.get(k) not in (None, "", False)}
         if keep:
             existing_user[m.get("id")] = keep
+        evidence = m.get("artifact_evidence")
+        if isinstance(evidence, dict):
+            existing_evidence[(str(m.get("source") or ""), str(m.get("id") or ""))] = evidence
+
+    def carry_evidence(m):
+        evidence = existing_evidence.get((str(m.get("source") or ""), str(m.get("id") or "")))
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("real_path"), str):
+            return m
+        path = m.get("path")
+        try:
+            same = isinstance(path, str) and os.path.realpath(path) == evidence["real_path"]
+        except (OSError, TypeError, ValueError):
+            same = False
+        return dict(m, artifact_evidence=evidence) if same else m
     local_filled = []
     for m in local_entries:
         if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
             m = dict(m)
             m["ctx"] = existing_ctx[m["id"]]
-        m = _keep_user(m, existing_user)
+        m = carry_evidence(_keep_user(m, existing_user))
         local_filled.append(m)
     fresh_keys = {(str(m.get("source") or ""), str(m.get("id") or ""))
                   for m in list(jan_entries) + list(local_entries)
@@ -736,13 +753,15 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         if (str(m.get("source") or ""), str(m.get("id") or "")) in fresh_keys:
             return False
         try:
-            return MODELREG.artifact_probe(m).get("state") in ("unknown", "incomplete")
+            probe = MODELREG.artifact_probe(m)
+            state = probe.get("state")
+            return state in ("unknown", "incomplete", "missing")
         except Exception:
             return True
     kept = [m for m in existing if preserve_unavailable(m)]
     kept_audio_paths = {_audio_artifact_identity(m) for m in kept}
     kept_audio_paths.discard(None)
-    result = kept + list(jan_entries)
+    result = kept + [carry_evidence(_keep_user(m, existing_user)) for m in jan_entries]
     used = {m.get("id") for m in result}
     for m in local_filled:
         if m.get("kind") == "audio":
@@ -759,12 +778,12 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
             m = dict(m)
             m["id"] = f"{m['id']}-lms"
         used.add(m.get("id"))
-        result.append(_keep_user(m, existing_user))
+        result.append(carry_evidence(_keep_user(m, existing_user)))
     for m in audio_cache_entries:
         if m.get("id") in used:
             continue
         used.add(m.get("id"))
-        result.append(_keep_user(m, existing_user))
+        result.append(carry_evidence(_keep_user(m, existing_user)))
     return result
 
 
@@ -792,7 +811,7 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
 # ONLY under an explicit human RESCAN, and it always says which rows it took.
 # ⚠️ AND IT NEVER TOUCHES MODEL FILES. This function edits data/models.json and nothing
 # else; deleting weights is /api/models/delete's job and a different consent.
-def prune_absent(models, protect=(), present_of=None):
+def prune_absent(models, protect=(), present_of=None, confirm_missing=(), details=False):
     """PURE-ish (one stat per row via `present_of`). Returns (kept, removed, flagged).
 
     `protect` — ids that must be FLAGGED rather than removed (pin + live model).
@@ -807,22 +826,51 @@ def prune_absent(models, protect=(), present_of=None):
         present_of = MODELREG.entry_present
     absent_key = MODELREG.ABSENT_KEY if MODELREG else "absent"
     keep_ids = {str(x).strip() for x in (protect or []) if str(x or "").strip()}
-    kept, removed, flagged = [], [], []
+    kept, removed, flagged, ambiguous = [], [], [], []
+    confirmed = {str(x).strip() for x in (confirm_missing or ()) if str(x).strip()}
     for m in (models or []):
         if not isinstance(m, dict):
+            continue
+        # Audio has its own scanner/engine contract.  It never carries chat artifact
+        # evidence, so it must never enter the U76 missing-source consent planner.
+        # Keep the pre-U76 wholesale-rescan behavior: a preserved/download audio row
+        # is not probed, previewed, flagged, or removed by this chat-artifact pass.
+        if MODELREG is not None and MODELREG.is_audio(m):
+            kept.append(m)
             continue
         if use_probe:
             try:
                 probe = MODELREG.artifact_probe(m)
             except Exception:
                 probe = {"state": "unknown"}
-            if probe.get("state") == "incomplete":
+            state = probe.get("state")
+            if state == "incomplete":
                 kept.append(m)  # observable broken artifact belongs in Models, not a silent prune
                 continue
-        try:
-            present = present_of(m)
-        except Exception:                                      # noqa: BLE001
-            present = None
+            if state == "unknown":
+                kept.append(m)
+                continue
+            if state == "missing":
+                availability = MODELREG.source_availability(m, probe).get("state")
+                if availability == "unavailable":
+                    kept.append(m)
+                    continue
+                if availability == "unknown":
+                    mid = str(m.get("id") or "")
+                    ambiguous.append(mid)
+                    if mid not in confirmed:
+                        kept.append(m)
+                        continue
+                # available is a confirmed deletion; confirmed legacy-unknown is an
+                # explicit human decision after this exact row was re-probed.
+                present = False
+            else:
+                present = state == "ready"
+        else:
+            try:
+                present = present_of(m)
+            except Exception:                                  # noqa: BLE001
+                present = None
         if present is True:
             if m.get(absent_key) is not None:
                 m = {k: v for k, v in m.items() if k != absent_key}
@@ -837,14 +885,50 @@ def prune_absent(models, protect=(), present_of=None):
             flagged.append(mid)
         else:
             removed.append(mid)
+    if details:
+        return kept, removed, flagged, sorted(set(x for x in ambiguous if x))
     return kept, removed, flagged
+
+
+def apply_artifact_evidence(models):
+    """Explicit-Rescan-only observation writer; audio and non-ready rows are unchanged."""
+    out = []
+    for m in models or []:
+        if not isinstance(m, dict) or MODELREG is None or MODELREG.is_audio(m):
+            out.append(m)
+            continue
+        try:
+            evidence = MODELREG.artifact_evidence(m)
+        except Exception:
+            evidence = None
+        out.append(dict(m, artifact_evidence=evidence) if evidence else m)
+    return out
 
 
 def write(path, models):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump({"models": models}, fh, indent=2)
-        fh.write("\n")
+    # A fresh scan builds the same semantic row through a different carry path than
+    # the first explicit evidence observation.  Canonical keys make that distinction
+    # unobservable, and the byte comparison avoids needless inode/mtime churn on a
+    # genuinely unchanged Rescan.
+    payload = json.dumps({"models": models}, indent=2, sort_keys=True) + "\n"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            if fh.read() == payload:
+                return
+    except (OSError, UnicodeError):
+        pass
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".models-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def local_entries_for(local_dir):
@@ -874,27 +958,65 @@ def annotate_tools(models):
         return models
 
 
-def main():
+def main(argv=None):
+    if argv is None:
+        argv = []
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--json", action="store_true", dest="json_mode")
+    parser.add_argument("--confirm-missing", action="append", default=[])
+    args = parser.parse_args(argv)
     if MODELREG is None:
+        if args.json_mode:
+            print(json.dumps({"ok": False, "error": "model integrity helper unavailable"}))
+            return 1
         raise SystemExit("ERROR: model integrity helper unavailable; registry left unchanged")
     local_entries = local_entries_for(LOCAL_MODELS_DIR)
     audio_local = [m for m in local_entries if m.get("kind") == "audio"]
     audio_cache = scan_audio_hf_cache(AUDIO_HF_CACHE_DIR)
     jan_entries = scan_jan(JAN_MODELS_DIR)
     lmstudio_entries = scan_lmstudio(LMSTUDIO_MODELS_DIR)
-    existing = load_existing(REGISTRY_PATH)
-    merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
-                   audio_cache)
-    merged = annotate_tools(merged)
-    # RESCAN IS THE PRUNE (see prune_absent). Protected = harness.yaml's pin plus
-    # whatever the caller knows is LIVE (the bridge's rescan route exports
-    # HARNESS_PROTECT_MODELS); those are flagged, never removed, so the runner card's
-    # honest "pinned model missing" keeps the row it is talking about.
-    removed, flagged = [], []
-    if MODELREG is not None:
-        merged, removed, flagged = prune_absent(
-            merged, protect=MODELREG.protected_ids("."))
-    write(REGISTRY_PATH, merged)
+    # All registry writers share this lock: the evidence/confirmation plan must be
+    # computed from the same bytes it atomically replaces.
+    with MODELREG.registry_lock(REGISTRY_PATH):
+        existing = load_existing(REGISTRY_PATH)
+        merged = merge(existing, jan_entries, lmstudio_entries, local_entries,
+                       audio_cache)
+        merged = annotate_tools(merged)
+        explicit = args.json_mode or bool(args.confirm_missing)
+        if explicit:
+            merged = apply_artifact_evidence(merged)
+        # RESCAN IS THE PRUNE (see prune_absent). Protected = harness.yaml's pin plus
+        # whatever the caller knows is LIVE (the bridge's rescan route exports
+        # HARNESS_PROTECT_MODELS); those are flagged, never removed, so the runner card's
+        # honest "pinned model missing" keeps the row it is talking about.
+        removed, flagged, ambiguous = [], [], []
+        merged, removed, flagged, ambiguous = prune_absent(
+            merged, protect=MODELREG.protected_ids("."),
+            confirm_missing=args.confirm_missing, details=True)
+        supplied = {str(x).strip() for x in args.confirm_missing if str(x).strip()}
+        # Consent is bound to the exact re-probed ambiguity set, never merely a row name.
+        # If an artifact reappeared or a source changed after preview, the old consent is
+        # stale and the whole transaction refuses without writing or fanning out.
+        if supplied and supplied != set(ambiguous):
+            if args.json_mode:
+                print(json.dumps({"ok": False, "error": "confirmation ids changed", "ambiguous_missing": ambiguous}))
+                return 1
+            raise SystemExit("ERROR: confirmation ids changed; registry left unchanged")
+        if ambiguous and not supplied:
+            if args.json_mode:
+                print(json.dumps({"ok": False, "count": len(merged), "pruned": removed,
+                                  "flagged": flagged, "requires_confirmation": True,
+                                  "ambiguous_missing": ambiguous,
+                                  "log": "missing entries could be an unavailable model library"}))
+                return 3
+            # Non-explicit startup seeding must never turn legacy uncertainty into authority.
+            return 0
+        write(REGISTRY_PATH, merged)
+    if args.json_mode:
+        print(json.dumps({"ok": True, "count": len(merged), "pruned": removed,
+                          "flagged": flagged, "requires_confirmation": False,
+                          "ambiguous_missing": []}))
+        return 0
     print(f"seeded {len(merged)} models "
           f"({len(local_entries)} local, {len(jan_entries)} jan-imports, "
           f"{len(lmstudio_entries)} lmstudio-imports, "
@@ -905,7 +1027,8 @@ def main():
         print(f"removed: {mid} — its file is no longer on disk")
     for mid in flagged:
         print(f"flagged absent (kept — it is the pinned/live model): {mid}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(sys.argv[1:]))

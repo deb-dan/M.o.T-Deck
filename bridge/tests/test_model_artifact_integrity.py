@@ -151,7 +151,7 @@ def test_unknown_incomplete_and_missing_have_distinct_catalog_and_health_rules(t
     assert [m["id"] for m in MR.offerable([ready, broken])] == ["ready"]
     assert MR.offerable([broken]) == []             # U76 fallback never resurrects incomplete
     assert [m["id"] for m in MR.offerable([missing])] == ["missing"]
-    assert MR.offerable([broken, missing]) == []
+    assert [m["id"] for m in MR.offerable([broken, missing])] == ["missing"]
     file_state_forget()
     st = file_state_track("broken", broken)
     assert st["state"] == "incomplete" and st["reason"] == "empty-file"
@@ -209,7 +209,7 @@ def test_merge_keeps_unknown_rescanned_row_and_helper_absence_writes_nothing(tmp
         def artifact_probe(row):
             return {"state": {"unknown": "unknown", "incomplete": "incomplete", "audio": "unknown"}.get(row["id"], "missing")}
     monkeypatch.setattr(SR, "MODELREG", Probe())
-    assert [m["id"] for m in SR.merge([unknown, incomplete, missing, audio], [], [], [])] == ["unknown", "incomplete"]
+    assert [m["id"] for m in SR.merge([unknown, incomplete, missing, audio], [], [], [])] == ["unknown", "incomplete", "missing"]
     fresh_unknown = dict(unknown, path="fresh")
     fresh_incomplete = dict(incomplete, path="fresh-empty")
     merged = SR.merge([unknown, incomplete], [], [fresh_unknown, fresh_incomplete], [])

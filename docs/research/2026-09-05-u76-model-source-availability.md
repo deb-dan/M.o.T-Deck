@@ -1,5 +1,10 @@
 # U76 — Distinguish deleted artifacts from an unavailable model library
 
+Status: shipped in v1.5.79 on 2026-09-05 after the complete fixture and real-stack
+journeys below passed. The live walk also exposed first-to-second Rescan key-order churn;
+deterministic atomic serialization plus a byte-equality fast path fixed it, and a
+corrupt-UTF-8 recovery regression found during echo review is permanently covered.
+
 Decision-complete build brief. U75 supplies one structured, read-only artifact probe;
 U76 persists the minimum evidence needed to decide whether a later `missing` result
 means the artifact was deleted from an available filesystem or its whole filesystem is
@@ -110,6 +115,38 @@ If this UI/API addition exceeds the existing Rescan surface's safe scope, the mi
 acceptable migration is a CLI-only explicit `seed_registry.py --confirm-missing ID`
 with the API returning the exact command; silently deleting legacy ambiguous rows is not
 acceptable.
+
+## Implementation protocol and module budget
+
+The confirmation flow is transactional and machine-readable; do not make the router
+scrape human prose:
+
+- Preserve the current human-readable `seed_registry.py` invocation. Add `--json` for
+  bridge use and repeatable `--confirm-missing ID` arguments for explicit consent.
+- JSON mode emits one document with `ok`, `count`, `pruned`, `flagged`,
+  `requires_confirmation`, and `ambiguous_missing`. A preview that needs consent exits
+  with a distinct documented code (use 3), writes neither registry nor catalogs, and
+  reports sorted unique ids. Ordinary failures remain nonzero and are not mislabeled as
+  confirmation.
+- `POST /api/models/rescan` continues accepting an empty body. It also accepts the exact
+  confirmation object above, invokes JSON mode, maps the preview exit to HTTP 409, and
+  runs the catalog fan-out only after a successful registry transaction.
+- Confirmation is all-or-nothing. Recompute the plan and re-probe every supplied id.
+  If any id is not in the current ambiguous set, refuse the whole write. A reappeared row
+  survives; a protected still-ambiguous row is retained with `absent:true`; only named,
+  still-missing, legacy-unknown, non-protected rows are pruned.
+- Validate persisted evidence before any stat: `v == 1`; absolute `real_path` and
+  `mount_root`; integer-but-not-bool device; mount root is an ancestor of real path; and
+  a names-only manifest object. Malformed evidence is `unknown` and never authorizes a
+  prune. Never follow a registry-provided relative mount path.
+- Keep `bridge/routers/models.py` below the binding 1,500-line ceiling (it begins this
+  slice at 1,461). If the route cannot stay comfortably below the fence, extract the
+  complete Rescan route/planner seam into a purpose-named router module and register it
+  through the existing facade/app-source machinery; do not compress unrelated code or
+  raise the ceiling.
+- The panel confirmation must render the exact preview ids, require a deliberate second
+  action labelled `Remove missing entries`, send those exact ids, and clear stale consent
+  after any new Rescan result. A failed/changed confirmation never claims removal.
 
 ## Permanent journeys
 

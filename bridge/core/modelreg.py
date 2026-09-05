@@ -34,6 +34,9 @@ import json
 import os
 import re
 import stat as _stat
+import threading
+from contextlib import contextmanager
+import fcntl
 
 # The persisted flag. `absent: true` on a registry row means: the two-strike file check
 # said this row's artifact is not on disk. The row KEEPS ITS IDENTITY (its id, its ctx,
@@ -41,6 +44,36 @@ import stat as _stat
 # merely unplugged — we never silently delete a row over a stat. Removal happens in
 # exactly one place, and only on an explicit human action: the Models view's RESCAN.
 ABSENT_KEY = "absent"
+EVIDENCE_KEY = "artifact_evidence"
+_REGISTRY_LOCKS, _REGISTRY_LOCKS_GUARD, _REGISTRY_LOCK_STATE = {}, threading.Lock(), threading.local()
+
+
+@contextmanager
+def registry_lock(path: str | None = None):
+    """Cross-process, re-entrant exclusion for one registry read-modify-replace."""
+    registry = os.path.abspath(path or os.path.join("data", "models.json"))
+    with _REGISTRY_LOCKS_GUARD:
+        mutex = _REGISTRY_LOCKS.setdefault(registry, threading.RLock())
+    with mutex:
+        held = getattr(_REGISTRY_LOCK_STATE, "held", {})
+        if held.get(registry):
+            held[registry] += 1
+            try:
+                yield
+            finally:
+                held[registry] -= 1
+            return
+        os.makedirs(os.path.dirname(registry) or ".", exist_ok=True)
+        fd = os.open(registry + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        held[registry] = 1
+        _REGISTRY_LOCK_STATE.held = held
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            held.pop(registry, None)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
 # Registry formats whose artifact is a DIRECTORY rather than a single file. Byte for
 # byte the rule scripts/start_component.sh resolves with, widened to the audio kinds
@@ -256,6 +289,107 @@ def artifact_probe(entry: dict) -> dict:
         "manifest": {"kind": "gguf", "files": required}})
 
 
+def _mount_root(real_path: str, device: int) -> str | None:
+    """Deepest mounted ancestor observed with a ready artifact; never raises."""
+    try:
+        here = real_path if os.path.isdir(real_path) else os.path.dirname(real_path)
+        while True:
+            parent = os.path.dirname(here)
+            if here == parent or os.path.ismount(here):
+                return here
+            if os.stat(parent).st_dev != device:
+                return here
+            here = parent
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def artifact_evidence(entry: dict, probe: dict | None = None) -> dict | None:
+    """Names-only v1 identity evidence for an explicit ready Rescan observation."""
+    probe = probe or artifact_probe(entry)
+    if not isinstance(probe, dict) or probe.get("state") != "ready" or is_audio(entry):
+        return None
+    evidence = probe.get("evidence") if isinstance(probe.get("evidence"), dict) else {}
+    real_path, device, manifest = evidence.get("real_path"), evidence.get("device"), evidence.get("manifest")
+    if not isinstance(real_path, str) or not os.path.isabs(real_path) or isinstance(device, bool) or not isinstance(device, int):
+        return None
+    if not _entry_matches_evidence(entry, real_path, manifest):
+        return None
+    mount_root = _mount_root(real_path, device)
+    return ({"v": 1, "real_path": real_path, "device": device,
+             "mount_root": mount_root, "manifest": manifest} if mount_root else None)
+
+
+def _valid_manifest(manifest) -> bool:
+    if not isinstance(manifest, dict) or set(manifest) != {"kind", "files"}:
+        return False
+    if manifest.get("kind") not in ("gguf", "mlx"):
+        return False
+    files = manifest.get("files")
+    return (isinstance(files, list) and bool(files) and len(files) == len(set(files))
+            and all(isinstance(f, str) and f and f not in (".", "..") and not os.path.isabs(f)
+                    and os.path.basename(f) == f and os.path.normpath(f) == f for f in files))
+
+
+def _entry_matches_evidence(entry, real_path, manifest) -> bool:
+    """Evidence authorizes only the exact artifact and shape that was observed."""
+    if not isinstance(entry, dict) or not _valid_manifest(manifest):
+        return False
+    path = entry.get("path")
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        if os.path.realpath(path) != real_path:
+            return False
+    except (OSError, TypeError, ValueError):
+        return False
+    expected_kind = "mlx" if str(entry.get("format") or "gguf").lower() == "mlx" else "gguf"
+    return manifest.get("kind") == expected_kind
+
+
+def _valid_evidence(evidence) -> bool:
+    if (not isinstance(evidence, dict) or set(evidence) != {"v", "real_path", "device", "mount_root", "manifest"}
+            or isinstance(evidence.get("v"), bool) or evidence.get("v") != 1):
+        return False
+    real_path, mount_root, device = evidence.get("real_path"), evidence.get("mount_root"), evidence.get("device")
+    if (not isinstance(real_path, str) or not isinstance(mount_root, str)
+            or not os.path.isabs(real_path) or not os.path.isabs(mount_root)
+            or os.path.normpath(real_path) != real_path or os.path.normpath(mount_root) != mount_root
+            or isinstance(device, bool) or not isinstance(device, int) or not _valid_manifest(evidence.get("manifest"))):
+        return False
+    try:
+        return os.path.commonpath((real_path, mount_root)) == mount_root
+    except (TypeError, ValueError):
+        return False
+
+
+def source_availability(entry: dict, probe: dict | None = None) -> dict:
+    """Classify a missing chat artifact's source without trusting legacy guesses."""
+    probe = probe or artifact_probe(entry)
+    state = probe.get("state") if isinstance(probe, dict) else "unknown"
+    if state in ("ready", "incomplete"):
+        return {"state": "available", "reason": state, "detail": "artifact probe is not missing"}
+    if state != "missing":
+        return {"state": "unknown", "reason": "probe-unknown", "detail": "artifact could not be checked"}
+    evidence = entry.get(EVIDENCE_KEY) if isinstance(entry, dict) else None
+    if not _valid_evidence(evidence):
+        return {"state": "unknown", "reason": "invalid-evidence", "detail": "no valid ready artifact evidence"}
+    if not _entry_matches_evidence(entry, evidence["real_path"], evidence["manifest"]):
+        return {"state": "unknown", "reason": "identity-mismatch",
+                "detail": "current artifact path or format differs from ready evidence"}
+    root = evidence["mount_root"]
+    try:
+        st = os.stat(root)
+        mounted = root == os.path.sep or os.path.ismount(root)
+    except (FileNotFoundError, NotADirectoryError):
+        return {"state": "unavailable", "reason": "mount-missing", "detail": "recorded model source is unavailable"}
+    except (OSError, TypeError, ValueError):
+        return {"state": "unknown", "reason": "mount-unreadable", "detail": "could not read recorded model source"}
+    if not _stat.S_ISDIR(st.st_mode) or not mounted or st.st_dev != evidence["device"]:
+        return {"state": "unavailable", "reason": "mount-unavailable", "detail": "recorded model source is unavailable"}
+    return {"state": "available", "reason": "mount-present", "detail": "recorded model source is available"}
+
+
 def path_present(path: "str | None", fmt: str = "gguf") -> "bool | None":
     """Three-valued compatibility mapping of the structured artifact probe."""
     f = str(fmt or "gguf").lower()
@@ -324,7 +458,7 @@ def offerable(registry, require_file: bool = True) -> list:
     already holds a fresher verdict (the bridge's debounced tracker) and only wants the
     flag/hidden/audio half. It does NOT exist as a convenience for skipping the stat.
     """
-    out, missing, eligible = [], [], 0
+    out = []
     for m in (registry or []):
         if not isinstance(m, dict):
             continue
@@ -332,27 +466,15 @@ def offerable(registry, require_file: bool = True) -> list:
             continue
         if is_audio(m) or m.get("hidden") or is_absent(m):
             continue
-        eligible += 1
         if require_file:
-            state = artifact_probe(m).get("state")
+            probe = artifact_probe(m)
+            state = probe.get("state")
             if state == "incomplete":
                 continue
             if state == "missing":
-                missing.append(m)
-                continue
+                if source_availability(m, probe).get("state") == "available":
+                    continue
         out.append(m)
-    # ★ THE UNPLUGGED-DISK GUARD (adversarial pass, this slice). Debi keeps models on an
-    # external volume and in LM Studio's library; pull the cable and EVERY path answers
-    # ENOENT at once. Without this, one enumeration would empty Hermes's row, collapse
-    # OpenCode's catalog to its placeholder, and strip Odysseus's pins — over a cable,
-    # and the next seed with the disk back would not undo the confusion it caused.
-    # "Every single model in the registry vanished simultaneously" is not a user
-    # deleting models; it is us losing sight of the disk, and the standing rule is that
-    # what we cannot see we do not claim. So the FILE clause abstains entirely in that
-    # case (audio/hidden/absent still apply — those are recorded facts, not stats).
-    # A registry that is genuinely empty stays empty: the guard needs candidates to fire.
-    if missing and not out and len(missing) == eligible:
-        return list(missing)
     return out
 
 

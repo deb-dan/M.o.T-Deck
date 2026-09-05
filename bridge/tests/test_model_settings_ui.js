@@ -168,6 +168,18 @@ const auxReject = new Function('fetch', 'document', 'initModels',
     async () => ({json:async()=>({ok:false,detail:'model incomplete'})}),
     {getElementById:()=>refusedStamp}, () => { throw new Error('unexpected refresh'); });
 const auxRejectRun = auxReject('bad');
+const rescanBtn = {textContent:'RESCAN',disabled:false}, rescanStamp = {_text:'',innerHTML:'',
+  get textContent(){return this._text}, set textContent(v){this._text=v;this.innerHTML='';}};
+const rescanDoc = {getElementById:id=>id==='models-rescan'?rescanBtn:rescanStamp};
+const rescanCalls = [], rescanReplies = [
+  {ok:false,json:async()=>({ok:false,requires_confirmation:true,ambiguous_missing:['a','b']})},
+  {ok:false,json:async()=>({ok:false,error:'confirmation ids changed'})},
+];
+const rescanRun = new Function('document','fetch','esc','initModels',
+  "let rescanConsent=null;async " + grab('rescanModels') + ';return {run:rescanModels,consent:()=>rescanConsent};')(
+    rescanDoc, async (...args)=>{rescanCalls.push(args);return rescanReplies.shift();}, String, async()=>{});
+let rescanPreview='';
+const rescanJourney = (async()=>{await rescanRun.run();rescanPreview=rescanStamp.innerHTML;await rescanRun.run(true);})();
 
 // ── 5. wiring: the label helper is what the byline actually uses ────────────────
 // 2026-08-21 (chat-split Phase 0): the sticky model echo moved from the bare
@@ -187,11 +199,15 @@ check('the session-model fallback is no longer mangled by a dash split',
       html.indexOf(".split('-').slice(0,2).join('-') || 'model'") < 0);
 
 async function finish(){
-  const rejected=await auxRejectRun; await refusedRun;
+  const rejected=await auxRejectRun; await refusedRun; await rescanJourney;
   check('a detail Aux rejection returns refusal and writes the existing Models stamp',
     !rejected.ok && refusedStamp.textContent==='AUX: MODEL INCOMPLETE');
   check('an Aux preflight refusal never claims Aux ✓ locally',
     popFail.id()==='old' && refusedChip.textContent==='Aux refused' && refusedChip.title==='model incomplete');
+  check('rescan preview renders exact ids, sends only them on confirmation, and clears stale consent',
+    rescanPreview.includes('a, b') && rescanPreview.includes('Remove missing entries')
+    && rescanStamp.textContent.indexOf('RESCAN FAILED')===0 && rescanStamp.innerHTML===''
+    && rescanCalls[1][1].body==='{"confirm_missing":true,"ids":["a","b"]}' && rescanRun.consent()===null);
   console.log('');
   console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');
   process.exit(fails.length ? 1 : 0);

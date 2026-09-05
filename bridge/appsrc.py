@@ -74,6 +74,7 @@ FILES: tuple[str, ...] = (
     "core/yamlset.py",
     "routers/model_visibility.py",
     "routers/models.py",
+    "routers/model_rescan.py",
     # routers/aux.py sits immediately after models.py because that is where its code
     # sat until the U64 slice split it out — the aux routes were the LAST thing in
     # models.py, so "neighbours stay neighbours" holds for every source assertion.

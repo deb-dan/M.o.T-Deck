@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _voice, app
 from ..core.events import publish
 from ..core.health import file_state_track
-from ..core.modelreg import artifact_probe
+from ..core.modelreg import artifact_probe, registry_lock, source_availability
 from ..core.modelid import _live_model_id
 from ..core.procs import PROV, _clear_expected, _kill_port_listener, _port_alive_sync, _registry_models, _running_sync, _script, _script_tracked, cfg, reap_pidfile
 from ..core.yamlset import _set_runner_model, _set_yaml_model, _set_yaml_scalar
@@ -393,32 +393,37 @@ def _persist_absent(states: dict) -> None:
     """`states` is {model id: file_state}. Best-effort; never raises into the route."""
     import json as _json
     from ..core.modelreg import ABSENT_KEY
-    # ★ THE UNPLUGGED-DISK GUARD, same rule as modelreg.offerable's (adversarial pass).
-    # If EVERY model went "gone" in the same pass, that is not a user deleting their
-    # library — it is us losing sight of the disk. Persisting a flag on all of them
-    # would propagate one cable-out into four app catalogs, so this abstains entirely.
-    if states and all(v == "gone" for v in states.values()):
-        return
     try:
         reg = ROOT / "data" / "models.json"
-        data = _json.loads(reg.read_text())
-        models = data.get("models") or []
-        dirty = False
-        for m in models:
-            if not isinstance(m, dict):
-                continue
-            st = states.get(m.get("id"))
-            if st == "gone" and m.get(ABSENT_KEY) is not True:
-                m[ABSENT_KEY] = True
-                dirty = True
-            elif st == "ok" and m.get(ABSENT_KEY) is not None:
-                m.pop(ABSENT_KEY, None)
-                dirty = True
-        if not dirty:
-            return
-        tmp = reg.with_suffix(".json.tmp")
-        tmp.write_text(_json.dumps(data, indent=2) + "\n")
-        os.replace(str(tmp), str(reg))
+        with registry_lock(str(reg)):
+            data = _json.loads(reg.read_text())
+            models = data.get("models") or []
+            dirty = False
+            for m in models:
+                if not isinstance(m, dict):
+                    continue
+                st = states.get(m.get("id"))
+                if st == "gone" and m.get(ABSENT_KEY) is not True:
+                    try:
+                        probe = artifact_probe(m)
+                        source = source_availability(m, probe).get("state")
+                    except Exception:                              # noqa: BLE001
+                        probe = {"state": "unknown"}
+                        source = "unknown"
+                    # The two-strike response can be stale by this second read.  Only a
+                    # fresh missing probe authorizes an absent flag; ready clears through
+                    # the normal `ok` pass rather than turning a returned model red.
+                    if probe.get("state") == "missing" and source == "available":
+                        m[ABSENT_KEY] = True
+                        dirty = True
+                elif st == "ok" and m.get(ABSENT_KEY) is not None:
+                    m.pop(ABSENT_KEY, None)
+                    dirty = True
+            if not dirty:
+                return
+            tmp = reg.with_suffix(".json.tmp")
+            tmp.write_text(_json.dumps(data, indent=2) + "\n")
+            os.replace(str(tmp), str(reg))
     except Exception:                                          # noqa: BLE001
         pass                              # a registry we cannot rewrite is not an alarm
 
@@ -537,84 +542,6 @@ def api_models() -> JSONResponse:
         # The models the user hid — a light view, only ever used to draw the
         # "N hidden — show" affordance and to unhide them again.
         "hidden": hidden})
-
-
-@app.post("/api/models/rescan")
-def api_models_rescan() -> JSONResponse:
-    """Re-run the registry seed the same way api_models / start_component.sh do it
-    (subprocess to scripts/seed_registry.py). seed_registry.merge() prunes the
-    re-scanned sets ('local'/'jan-import'/'lmstudio-import') by replacing them with a
-    fresh scan, so models the user deleted in LM Studio (or Jan) drop out; source
-    "download" entries + known ctx are preserved. Does NOT touch the runner/live
-    model. Returns {ok, count} (models after rescan); never raises into the caller.
-
-    ⚠️ S29 — RESCAN IS ALSO THE PRUNE, AND THE FAN-OUT. Debi's words: "isn't there a way
-    to make the different apps scan?" Three things now happen behind this one click:
-
-      1. the import source dirs are re-walked (merge(), unchanged — an LM Studio
-         deletion propagates because that scan is what put the row there in the first
-         place);
-      2. EVERY row is stat'd, source-blind, and one whose file is provably gone is
-         REMOVED with a printed line — unless it is the pin or the live model, which is
-         flagged `absent: true` and kept, so the runner card keeps its subject;
-      3. every dependent app's catalog is rebuilt from what survived — Odysseus, both
-         goose lanes, Hermes and OpenCode — through the SAME fan-out a model switch
-         uses. Without (3) the registry would be clean and every third-party picker
-         would still be offering the dead models, which is precisely the state she was
-         looking at.
-
-    NOTHING here deletes a model FILE. Registry rows only.
-    """
-    import json as _json
-    try:
-        # The two ids the prune must never remove: harness.yaml's pin (an intent record
-        # — the card's honest "pinned model missing" needs the row to point at) and
-        # whatever the runner is actually serving.
-        _rc = cfg().get("runner", {}) or {}
-        _protect = [str(_rc.get("model") or "")]
-        try:
-            _p = _rc.get("port")
-            _protect.append(str(_live_model_id(int(_p)) or "") if _p else "")
-        except Exception:                                      # noqa: BLE001
-            pass
-        r = subprocess.run(
-            ["python3", "scripts/seed_registry.py"],
-            cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
-            env=dict(os.environ,
-                     HARNESS_PROTECT_MODELS="\n".join(x for x in _protect if x)))
-        if r.returncode != 0:
-            return JSONResponse(
-                {"ok": False, "error": (r.stderr or r.stdout or "seed failed")[:300]},
-                status_code=500)
-        reg = ROOT / "data" / "models.json"
-        count = len(_json.loads(reg.read_text()).get("models", []))
-        # The seed prints one line per row it took; hand those to the panel verbatim so
-        # a list that shrank always says WHY it shrank.
-        # Just the ids — the seed's line carries its own "— its file is no longer on
-        # disk" tail, and the panel already says "(file gone)" once for the whole group.
-        pruned = [ln.split("removed: ", 1)[1].split(" — ")[0]
-                  for ln in (r.stdout or "").splitlines() if ln.startswith("removed: ")]
-        flagged = [ln.split(": ", 1)[1] for ln in (r.stdout or "").splitlines()
-                   if ln.startswith("flagged absent")]
-        # U15: the registry just changed under every path claim we were tracking —
-        # drop the streaks so a re-pointed entry starts from a clean sample rather
-        # than inheriting the old path's misses.
-        from ..core.health import file_state_forget
-        file_state_forget()
-        # THE ANSWER TO "can the different apps scan?" — they cannot, and they should
-        # not have to: they read OUR registry, so the rescan pushes the pruned list into
-        # every catalog through the same fan-out a switch uses. Best-effort and never
-        # fatal: a registry that is now clean beats a rescan that refused because one
-        # dependent was mid-restart.
-        fan = ""
-        try:
-            fan = _rescan_fanout()
-        except Exception as e:                                 # noqa: BLE001
-            fan = f"catalog refresh failed: {str(e)[:120]}"
-        return JSONResponse({"ok": True, "count": count, "pruned": pruned,
-                             "flagged": flagged, "apps": fan})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)[:300]}, status_code=500)
 
 
 _SWITCH = {"busy": False, "log": ""}

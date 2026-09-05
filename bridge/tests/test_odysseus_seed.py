@@ -311,7 +311,10 @@ def test_a_model_whose_file_is_gone_is_never_pinned(tmp_path):
     reg = [
         {"id": "alive", "format": "gguf", "path": alive},
         {"id": "Muse-Glimmer-30B-Heretic-Q4_K_S", "format": "gguf",
-         "path": str(tmp_path / "deleted-in-lmstudio.gguf")},
+         "path": str(tmp_path / "deleted-in-lmstudio.gguf"),
+         "artifact_evidence": {"v": 1, "real_path": os.path.realpath(str(tmp_path / "deleted-in-lmstudio.gguf")),
+                               "device": os.stat("/").st_dev, "mount_root": "/",
+                               "manifest": {"kind": "gguf", "files": ["deleted-in-lmstudio.gguf"]}}},
         # the persisted flag alone is enough, even without a stat-able path
         {"id": "flagged-absent", "format": "gguf", "absent": True},
     ]
